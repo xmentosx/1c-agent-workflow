@@ -40,7 +40,12 @@ function Get-ItlVerificationExecutionDecision {
     if (-not $providerPolicy) { $providerPolicy = 'auto' }
     $providerOverride = $providerKey -and $providerPolicy -eq 'off' -and $isExplicit
     $outsideNamedScope = $Trigger -eq 'explicit' -and -not $namedComponent
-    $run = if ($outsideNamedScope) {
+    # A runner filter is diagnostic-only and proves nothing for the other runner;
+    # its unnamed full suite would only cost time. Naming it runs it as before.
+    $diagnosticFilter = if ($Component -eq 'yaxunit' -and (Test-ItlVanessaDiagnosticScope) -and -not (Test-ItlYAxUnitDiagnosticScope)) { 'Vanessa feature/tag' }
+        elseif ($Component -eq 'vanessa' -and (Test-ItlYAxUnitDiagnosticScope) -and -not (Test-ItlVanessaDiagnosticScope)) { 'YAxUnit module' } else { '' }
+    $outsideDiagnosticScope = $diagnosticFilter -and -not $namedComponent
+    $run = if ($outsideNamedScope -or $outsideDiagnosticScope) {
         $false
     } elseif (-not $mode.valid) {
         $false
@@ -57,6 +62,8 @@ function Get-ItlVerificationExecutionDecision {
     }
     $reason = if ($outsideNamedScope) {
         "$Component is outside the named invocation scope"
+    } elseif ($outsideDiagnosticScope) {
+        "diagnostic $diagnosticFilter filter run; name -ExplicitVerificationComponent $Component or all to include $Component"
     } elseif (-not $mode.valid) {
         "invalid $($mode.key)='$($mode.raw)'; set auto, manual, or off before running $Component"
     } elseif (-not $providerValid) {
@@ -422,6 +429,10 @@ function Assert-ItlVerificationRepairScope {
     param([ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger)
 
     if ($Trigger -ne "repair" -or -not (Test-ItlDiagnosticVerificationScope)) { return }
+    if (Test-ItlYAxUnitDiagnosticScope) {
+        Set-RunFailureContext -Category "runner" -RequiredAction "repeat-original-diagnostic-without-repair-session"
+        throw "VerificationTrigger=repair cannot be combined with YAxUnitModule. A filtered YAxUnit run is diagnostic only; repeat it without a repair session."
+    }
     if (-not $RepairSessionId -and -not $VerificationRepairKind) {
         Set-RunFailureContext -Category "runner" -RequiredAction "repeat-original-diagnostic-without-repair-session"
         throw "VerificationTrigger=repair cannot be combined with VanessaFeaturePath or VanessaFilterTags for canonical-repair. A filtered run is diagnostic only; use an explicitly scoped scenario-loop session."

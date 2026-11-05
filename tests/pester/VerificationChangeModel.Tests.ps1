@@ -532,3 +532,126 @@ Describe 'Current change proof and whole task acceptance' {
         }
     }
 }
+
+Describe 'Automatic re-registration of an unchanged plan in check-dev-branch' {
+    BeforeAll {
+        function Enter-RebindFixture {
+            param([string]$Root, [scriptblock]$Body)
+            New-ChangeFixture $Root
+            $module=Join-Path $Root 'src/cf/Общий модуль'
+            New-Item -ItemType Directory -Force -Path $module | Out-Null
+            [IO.File]::WriteAllText((Join-Path $module 'Модуль расчёта.bsl'),"Procedure Calc()`nEndProcedure`n",[Text.UTF8Encoding]::new($false))
+            & git -C $Root config core.autocrlf false
+            & git -C $Root add -- .
+            & git -C $Root commit -qm 'module with LF reference'
+            $script:RebindBody=$Body
+            Enter-ChangeFixture $Root {
+                function Get-DevBranchKind { param($State) 'configuration' }
+                function Assert-VerificationClassificationReady { param($Reason,[switch]$RequireVanessa,[switch]$RequireYAxUnit) }
+                function Invoke-DevBranchVanessaRuntimeRelease { throw 'stop-after-change-preflight' }
+                function Invoke-RebindCheck {
+                    $output=@(& { try { Invoke-DevBranchCheck } catch { "FAILURE: $($_.Exception.Message)" } } 6>&1 | ForEach-Object { [string]$_ })
+                    return ($output -join "`n")
+                }
+                function Set-RebindContent { param([string]$Text) [IO.File]::WriteAllText($script:RebindFull,$Text,[Text.UTF8Encoding]::new($false)) }
+                $script:RebindPath='src/cf/Общий модуль/Модуль расчёта.bsl'
+                $script:RebindFull=Join-Path $Root $script:RebindPath
+                Set-RebindContent "Procedure Calc()`n  Fixed = 1;`nEndProcedure`n"
+                $script:RebindPlan=Write-CurrentPlan -Path $script:RebindPath
+                $script:RebindFirst=Start-VerificationChange -EvidencePath $script:RebindPlan
+                . $script:RebindBody
+            }
+        }
+    }
+
+    It 'rebinds the unchanged plan to the edited tree, names line-ending repairs and stays deterministic except runToken' {
+        Enter-RebindFixture (Join-Path $TestDrive 'Цикл правки теста') {
+            # Repeating the manual registration on the same tree is deterministic.
+            $repeat=Start-VerificationChange -EvidencePath $script:RebindPlan
+            $strip={ param($v) $o=$v|ConvertTo-Json -Depth 16|ConvertFrom-Json; $o.PSObject.Properties.Remove('runToken'); $o.PSObject.Properties.Remove('lineEndingRepairedPaths'); $o|ConvertTo-Json -Depth 16 }
+            (& $strip $repeat) | Should -BeExactly (& $strip $script:RebindFirst)
+            $repeat.runToken | Should -Not -Be $script:RebindFirst.runToken
+
+            # Next debugging round: the agent edits the planned file with CRLF.
+            Set-RebindContent "Procedure Calc()`r`n  Fixed = 2;`r`nEndProcedure`r`n"
+            $text=Invoke-RebindCheck
+            $text | Should -Match 'stop-after-change-preflight'
+            $text | Should -Not -Match 'VERIFICATION_CHANGE_STALE'
+            $current=Read-VerificationChange
+            $current.tree | Should -BeExactly (Get-VerificationSelectionEffectiveTree)
+            $current.tree | Should -Not -Be $repeat.tree
+            $current.status | Should -BeExactly 'pending'
+            $current.runToken | Should -Not -Be $repeat.runToken
+            $text | Should -Match ([regex]::Escape("rebound to tree $($current.tree); line endings restored: $script:RebindPath."))
+            [IO.File]::ReadAllText($script:RebindFull) | Should -BeExactly "Procedure Calc()`n  Fixed = 2;`nEndProcedure`n"
+
+            # A further edit is again one command; an unchanged tree needs no rebind.
+            Set-RebindContent "Procedure Calc()`n  Fixed = 3;`nEndProcedure`n"
+            (Invoke-RebindCheck) | Should -Match 'line endings restored: <none>\.'
+            $token=(Read-VerificationChange).runToken
+            (Invoke-RebindCheck) | Should -Not -Match 'rebound to tree'
+            (Read-VerificationChange).runToken | Should -BeExactly $token
+        }
+    }
+
+    It 'keeps VERIFICATION_CHANGE_STALE without registering for <Case>' -TestCases @(
+        @{Case='a new path without a decision'},
+        @{Case='a planned path that is no longer changed'},
+        @{Case='an edited plan file'},
+        @{Case='an edited requirement file'},
+        @{Case='a changed assessor'}
+    ) {
+        param($Case)
+        $script:RebindCase=$Case
+        Enter-RebindFixture (Join-Path $TestDrive ('Барьер ' + $Case)) {
+            # The accepted base predates the module, so removing it restores the base.
+            if ($script:RebindCase -eq 'a planned path that is no longer changed') { Remove-Item -LiteralPath $script:RebindFull }
+            else { Set-RebindContent "Procedure Calc()`n  Fixed = 2;`nEndProcedure`n" }
+            switch ($script:RebindCase) {
+                'a new path without a decision' { Write-Utf8TextAtomic -Path (Join-Path $Root 'src/cf/other.bsl') -Value 'Other changed' }
+                'an edited plan file' { [IO.File]::AppendAllText((Join-Path $Root $script:RebindPlan), ' ') }
+                'an edited requirement file' { Write-Utf8TextAtomic -Path (Join-Path $Root 'requirements.md') -Value 'AC-01: Current result. AC-02: Web acceptance. Clarified.' }
+                'a changed assessor' { function global:Test-VerificationChangeAssessorRevision { 'changed' } }
+            }
+            try {
+                $before=(Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash
+                $text=Invoke-RebindCheck
+                $text | Should -Match 'FAILURE: VERIFICATION_CHANGE_STALE: .*begin-verification-change -VerificationEvidencePath'
+                $text | Should -Not -Match 'rebound to tree'
+                (Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash | Should -BeExactly $before
+                if ($script:RebindCase -eq 'a new path without a decision') {
+                    { Start-VerificationChange -EvidencePath $script:RebindPlan } | Should -Throw "*VERIFICATION_CHANGE_PATH_PENDING: 'src/cf/other.bsl'*"
+                }
+            } finally { Remove-Item -LiteralPath 'Function:\Test-VerificationChangeAssessorRevision' -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'never registers from selection planning' {
+        Enter-RebindFixture (Join-Path $TestDrive 'Выбор наборов без записи') {
+            Set-RebindContent "Procedure Calc()`n  Fixed = 2;`nEndProcedure`n"
+            $before=(Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash
+            { Get-VerificationChangeSelectionPlan -Plan ([pscustomobject]@{mode='full';selectedSuiteIds=@();acceptanceSuiteIds=@()}) } | Should -Throw '*VERIFICATION_CHANGE_STALE*'
+            (Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash | Should -BeExactly $before
+        }
+    }
+
+    It 'keeps an accepted change behind VERIFICATION_CHANGE_STALE' {
+        $root=Join-Path $TestDrive 'Принятое изменение'
+        New-ChangeFixture $root -WithoutCatalog
+        Enter-ChangeFixture $root {
+            function Get-DevBranchKind { param($State) 'configuration' }
+            function Assert-VerificationClassificationReady { param($Reason,[switch]$RequireVanessa,[switch]$RequireYAxUnit) }
+            function Invoke-DevBranchVanessaRuntimeRelease { throw 'stop-after-change-preflight' }
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan -Finish) | Out-Null
+            Set-CurrentObservation first; Set-CurrentEventEvidence
+            (Complete-VerificationChange).changeStatus | Should -BeExactly 'accepted'
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix after acceptance'
+            $before=(Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash
+            { Invoke-DevBranchCheck } | Should -Throw '*VERIFICATION_CHANGE_STALE*'
+            (Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash | Should -BeExactly $before
+            (Read-VerificationChange).status | Should -BeExactly 'accepted'
+        }
+    }
+}

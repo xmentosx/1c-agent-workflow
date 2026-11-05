@@ -868,6 +868,10 @@ Describe 'Classification before infobase preparation' {
         function Restore-ConfigDumpInfoLoadSnapshot { $script:PreflightEvents.Add('restore') }
         function Remove-ConfigDumpInfoLoadSnapshot {}
         function Assert-ItlVerificationRepairScope {}
+        # Diagnostic filters belong to the Vanessa/YAxUnit owners; this preflight runs unfiltered.
+        function Get-YAxUnitModuleFilter { @() }
+        function Test-ItlVanessaDiagnosticScope { $false }
+        function Test-ItlYAxUnitDiagnosticScope { $false }
         function Repair-OneCSourceLineEndings { $script:PreflightEvents.Add('normalize') }
         function Update-VerificationSuiteInventory {
             $script:PreflightEvents.Add('classify')

@@ -131,4 +131,29 @@ of pending work; older helpers retain their content-only receipt semantics and
 do not implement the opt-in. Source tests or a new executable hash alone do not
 qualify the helper/facade pair for native operation.
 
+## Diagnostic module filter and timeout
+
+While fixing a test, pass `-YAxUnitModule <Module>[,<Module>]` to the normal
+`check-dev-branch` command. Names are test `CommonModules` of the configured
+test extension; an unknown name stops before the load. The helper passes them
+to YAxUnit `filter.modules` (supported by the pinned 25.12 release). The run is
+diagnostic only: it records no YAxUnit status or component evidence, uses the
+test-extension readiness proof when sources are unchanged, and does not start
+unnamed Vanessa. Name `-ExplicitVerificationComponent vanessa` or `all` to add
+it. A Vanessa feature or tag diagnostic run likewise skips unnamed YAxUnit. A
+filter cannot be combined with a repair session. Finish with an unfiltered check.
+
+In the `change` model a filtered run may close a one-off criterion whose
+`admissibleProof` includes `yaxunit-junit`: begin the proof, run the filter,
+then complete it with `artifactPaths` set to that run's `junit.xml` and
+`diagnostic-inputs.json`. The manifest binds the module sources, the whole test
+extension source and the loaded target; an edit afterwards invalidates the
+receipt. Without a receipt the filtered result closes nothing.
+
+`YAXUNIT_TEST_TIMEOUT_SECONDS` (default `1800`) bounds one YAxUnit run. On
+`ITL_YAXUNIT_TIMEOUT` the message names the value, elapsed time and completed
+tests. For a larger suite set the value in the project `.dev.env` above the
+measured full run, then repeat the original command; do not override it only for
+one process.
+
 Do not commit the downloaded CFE, generated JSON, logs, or reports. Do not call a locally installed unpinned YAxUnit build. `ITL_YAXUNIT_TESTING=off` may skip execution, but skipped executable verification is partial evidence and must never be reported as verified or done.

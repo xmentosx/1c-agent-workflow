@@ -925,9 +925,60 @@ function Ensure-ProjectTestsReady {
     return $State
 }
 
+function Get-YAxUnitModuleFilter {
+    # Diagnostic-only -YAxUnitModule: comma-separated test module names, resolved
+    # to their exact source names before any 1C process starts.
+    $raw = [string](Get-Variable -Name YAxUnitModule -ValueOnly -ErrorAction SilentlyContinue)
+    $requested = @($raw -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($requested.Count -eq 0) { return @() }
+    $known = @(Get-YAxUnitModuleFiles | ForEach-Object { [pscustomobject]@{ name = Get-YAxUnitModuleNameFromPath -Path $_; path = $_ } } | Where-Object name)
+    $selected = [Collections.Generic.List[object]]::new()
+    foreach ($name in $requested) {
+        $match = @($known | Where-Object { $_.name -ieq $name })
+        if ($match.Count -ne 1) {
+            $sample = @($known | Select-Object -First 20 | ForEach-Object name) -join ', '
+            throw "ITL_YAXUNIT_MODULE_FILTER_UNKNOWN: '$name' is not a test module under '$(Get-YAxUnitTestsPath)'. Known modules: $(if ($sample) { $sample } else { '<none>' }). Correct -YAxUnitModule and repeat the original command."
+        }
+        if (@($selected | Where-Object { $_.name -ceq $match[0].name }).Count -eq 0) { $selected.Add($match[0]) }
+    }
+    return @($selected.ToArray())
+}
+
+function Write-YAxUnitDiagnosticInputManifest {
+    # Same receipt contract as a named Vanessa run: the filtered modules, their
+    # sources, the whole test-extension source and the loaded target.
+    param([string]$RunDirectory, [object[]]$Modules, [object]$State)
+    $manifest = [ordered]@{
+        schemaVersion = 1; kind = 'yaxunit-diagnostic-inputs'; modules = @($Modules | ForEach-Object { [string]$_.name })
+        files = @($Modules | ForEach-Object { [ordered]@{ path = Get-VerificationRepoRelativePath -Path $_.path; sha256 = (Get-FileHash -LiteralPath $_.path -Algorithm SHA256).Hash.ToLowerInvariant() } })
+        testsSourceFingerprint = [string](Get-ConfigSourceFingerprint -ExportPath (Get-YAxUnitTestsPath)).fingerprint
+        loadedBaseIdentity = Get-VerificationLoadedBaseIdentity -State $State
+    }
+    $path = Join-Path $RunDirectory 'diagnostic-inputs.json'
+    Write-Utf8TextAtomic -Path $path -Value (($manifest | ConvertTo-Json -Depth 6) + "`n")
+    return $path
+}
+
+function Get-YAxUnitTimeoutMessage {
+    param([int]$TimeoutSeconds, [double]$ElapsedSeconds, [string]$ReportPath, [string]$NativeMessage)
+    # A report interrupted by the timeout is usually truncated XML; count its
+    # written cases as text instead of rejecting it.
+    $completed = 'unknown (no partial JUnit report)'
+    if (Test-Path -LiteralPath $ReportPath -PathType Leaf) {
+        $completed = [string][regex]::Matches((Read-Utf8Text -Path $ReportPath), '<(?:[\w.-]+:)?testcase\b').Count
+    }
+    $configured = Get-EnvValue -Name 'YAXUNIT_TEST_TIMEOUT_SECONDS' -Default ''
+    $source = if ($configured) { 'configured' } else { 'default' }
+    return "ITL_YAXUNIT_TIMEOUT: YAxUnit stopped at YAXUNIT_TEST_TIMEOUT_SECONDS=$TimeoutSeconds ($source) after $([int][Math]::Round($ElapsedSeconds)) s; completed tests: $completed. For a larger suite set YAXUNIT_TEST_TIMEOUT_SECONDS in the project .dev.env above the full run duration, then repeat the original command. Report: $ReportPath. $NativeMessage"
+}
+
 function Invoke-YAxUnitVerification {
     param([Parameter(Mandatory = $true)][object]$State)
 
+    # A module filter makes this run diagnostic: it records no YAxUnit evidence;
+    # a one-off JUnit receipt is the only way its result can close a criterion.
+    $moduleFilter = @(Get-YAxUnitModuleFilter)
+    $diagnostic = $moduleFilter.Count -gt 0
     if (-not (Test-YAxUnitSuitePresent)) {
         $baseline = Get-StateValue -State $State -Name "yaxunitApplicabilityBaseline" -Default $null
         $legacy = [bool](Get-StateValue -State $baseline -Name "legacy" -Default $false)
@@ -957,10 +1008,13 @@ function Invoke-YAxUnitVerification {
     $entry = Get-YAxUnitPinnedEntry
 
     try {
-        $State = Ensure-ProjectTestsReady -State $State
+        $State = Ensure-ProjectTestsReady -State $State -TrustCurrentProof:$diagnostic
+        $diagnosticInputManifest = if ($diagnostic) { Write-YAxUnitDiagnosticInputManifest -RunDirectory $runDirectory -Modules $moduleFilter -State $State } else { '' }
 
+        $filter = [ordered]@{ extensions = @($testsExtensionName) }
+        if ($diagnostic) { $filter.modules = @($moduleFilter | ForEach-Object { [string]$_.name }) }
         $config = [ordered]@{
-            filter = [ordered]@{ extensions = @($testsExtensionName) }
+            filter = $filter
             reportFormat = "jUnit"
             reportPath = $reportPath
             closeAfterTests = $true
@@ -972,12 +1026,18 @@ function Invoke-YAxUnitVerification {
         }
         Write-Utf8TextAtomic -Path $configPath -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
         $timeoutSeconds = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "YAXUNIT_TEST_TIMEOUT_SECONDS" -Default 1800) -Default 1800
-        Set-RunStage -Stage "yaxunit.run" -Detail "Running YAxUnit verification."
-        Invoke-Enterprise `
-            -InfoBasePath ([string]$State.devBranchInfoBasePath) `
-            -InfoBaseKind ([string]$State.infoBaseKind) `
-            -EnterpriseArgs @("/C", "RunUnitTests=$configPath") `
-            -TimeoutSeconds $timeoutSeconds | Out-Null
+        Set-RunStage -Stage "yaxunit.run" -Detail $(if ($diagnostic) { "Running diagnostic YAxUnit modules: $(@($filter.modules) -join ', ')." } else { "Running YAxUnit verification." })
+        $runClock = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            Invoke-Enterprise `
+                -InfoBasePath ([string]$State.devBranchInfoBasePath) `
+                -InfoBaseKind ([string]$State.infoBaseKind) `
+                -EnterpriseArgs @("/C", "RunUnitTests=$configPath") `
+                -TimeoutSeconds $timeoutSeconds | Out-Null
+        } catch {
+            if ($_.Exception.Message -notmatch '^1C Enterprise timed out after ') { throw }
+            throw (Get-YAxUnitTimeoutMessage -TimeoutSeconds $timeoutSeconds -ElapsedSeconds $runClock.Elapsed.TotalSeconds -ReportPath $reportPath -NativeMessage $_.Exception.Message)
+        }
 
         Set-RunStage -Stage "yaxunit.postprocess" -Detail "Reading YAxUnit verification evidence."
         $summary = Get-YAxUnitJunitSummary -Path $reportPath
@@ -990,6 +1050,10 @@ function Invoke-YAxUnitVerification {
             if ($runnerExitCode -and $runnerExitCode -ne "0") {
                 Write-Host "[WARN] YAxUnit exit-code file says '$runnerExitCode', while the authoritative JUnit report passed."
             }
+        }
+        if ($diagnostic) {
+            Write-Host "YAxUnit diagnostic run passed for modules $(@($filter.modules) -join ', '): tests=$($summary.tests), skipped=$($summary.skipped). It is not verification evidence. Report: $reportPath; inputs: $diagnosticInputManifest"
+            return [pscustomobject]@{ status = "diagnostic-passed"; tests = $summary.tests; reportPath = $reportPath; diagnosticInputsPath = $diagnosticInputManifest }
         }
         $passedUpdates = @{
             lastYAxUnitStatus = "passed"
@@ -1011,7 +1075,7 @@ function Invoke-YAxUnitVerification {
         return [pscustomobject]@{ status = "passed"; tests = $summary.tests; reportPath = $reportPath }
     } catch {
         $failure = $_
-        try { $failedUpdates = @{
+        if (-not $diagnostic) { try { $failedUpdates = @{
             lastYAxUnitStatus = "failed"
             lastYAxUnitReason = $failure.Exception.Message
             lastYAxUnitTestAt = (Get-Date).ToString("o")
@@ -1020,9 +1084,11 @@ function Invoke-YAxUnitVerification {
         }
         Add-VerificationComponentEvidenceUpdates -Updates $failedUpdates -State $State -Component 'yaxunit' -Status 'failed'
         Update-DevBranchState -State $State -Updates $failedUpdates
-        } catch { Write-Warning "Could not persist YAxUnit failure state: $($_.Exception.Message)" }
+        } catch { Write-Warning "Could not persist YAxUnit failure state: $($_.Exception.Message)" } }
         Set-RunFailureContextFromMessage -Message $failure.Exception.Message -RequestedAction "check-dev-branch"
         if (-not $script:RunRequiredAction) { Set-RunFailureContext -RequiredAction "/itl-verify-fix" }
+        # A filtered failure is fixed and repeated in the same scope, not repaired.
+        if ($diagnostic -and $script:RunRequiredAction -ceq '/itl-verify-fix') { $script:RunRequiredAction = 'fix-and-repeat-original-check' }
         throw $failure
     }
 }

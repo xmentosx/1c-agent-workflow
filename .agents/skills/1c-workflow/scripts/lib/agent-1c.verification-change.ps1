@@ -234,7 +234,7 @@ function Start-VerificationChange {
     if ($null -ne $previous -and [string]$previous.taskId -cne [string]$plan.taskId -and -not [bool](Get-VerificationChangeTaskAssessment -Change $previous).accepted) {
         throw 'VERIFICATION_CHANGE_TASK_PENDING: finish or explicitly resolve the previous task acceptance; a new task name cannot discard its remaining criteria.'
     }
-    Repair-OneCSourceLineEndings | Out-Null
+    $lineEndingRepairs = @(Repair-OneCSourceLineEndings)
     $base = Get-VerificationChangeBaseTree -State $state -Previous $previous
     $tree = Get-VerificationSelectionEffectiveTree
     $changed = @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree $tree)
@@ -355,7 +355,54 @@ function Start-VerificationChange {
     }
     $value | Add-Member -NotePropertyName scopeIdentity -NotePropertyValue (Get-VerificationChangeScopeIdentity -Change $value)
     Write-Utf8TextAtomic -Path (Get-VerificationChangePath) -Value (($value | ConvertTo-Json -Depth 16) + "`n")
+    # Reported only; the persisted record and its scope identity stay unchanged.
+    $value | Add-Member -NotePropertyName lineEndingRepairedPaths -NotePropertyValue $lineEndingRepairs
     return $value
+}
+
+function Get-VerificationChangeRebindAssessment {
+    # The only owner of automatic re-registration: allowed solely when the tree
+    # changed and the agent's unchanged plan still decides exactly the current
+    # delta. Everything else keeps VERIFICATION_CHANGE_STALE and its continuation.
+    param([Parameter(Mandatory=$true)][object]$Change, [Parameter(Mandatory=$true)][object]$State)
+    $tree = Get-VerificationSelectionEffectiveTree
+    $result = [pscustomobject]@{eligible=$false; tree=$tree; reason=''}
+    if ([string]$Change.tree -ceq $tree) { $result.reason='tree unchanged'; return $result }
+    if ([string]$Change.status -cne 'pending') { $result.reason="change status is '$([string]$Change.status)'"; return $result }
+    if ([string]$Change.checkerIdentity -cne (Get-VerificationChangeCheckerIdentity)) { $result.reason='verification assessor changed'; return $result }
+    try {
+        Assert-VerificationArtifactReferences -Artifacts @($Change.planArtifact)
+        if (@($Change.requirements).Count -gt 0) { Assert-VerificationArtifactReferences -Artifacts @($Change.requirements) }
+    } catch { $result.reason='plan or requirement file changed'; return $result }
+    $target = Get-VerificationChangeTarget -State $State
+    if (([string]$Change.targetIdentity -and [string]$Change.targetIdentity -cne $target.identity) -or
+        (-not [string]$Change.targetIdentity -and [string](Get-VerificationCatalogValue -Value $Change -Name unboundTargetIdentity -Default '') -cne $target.unbound)) {
+        $result.reason='verification target changed'; return $result
+    }
+    $base = Get-VerificationChangeBaseTree -State $State -Previous $Change
+    $changed = @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree $tree)
+    $planned = @($Change.paths | ForEach-Object { [string]$_.path })
+    $system = Get-VerificationChangeSystemInput -ChangedPaths $changed -CurrentTree $tree
+    $decided = @($changed | Where-Object { $_ -cin $planned -or $_ -cnotin @($system.paths) })
+    if (@($decided | Where-Object { $_ -cnotin $planned }).Count -gt 0 -or @($planned | Where-Object { $_ -cnotin $changed }).Count -gt 0) {
+        $result.reason='changed paths differ from the plan paths'; return $result
+    }
+    $result.eligible = $true
+    return $result
+}
+
+function Update-VerificationChangeForCurrentTree {
+    # check-dev-branch entry only: repeat the same registration as
+    # begin-verification-change -VerificationEvidencePath <unchanged plan>.
+    param([Parameter(Mandatory=$true)][object]$State, [string[]]$RepairedPaths = @())
+    $change = Read-VerificationChange
+    if ($null -eq $change) { return $null }
+    $assessment = Get-VerificationChangeRebindAssessment -Change $change -State $State
+    if (-not $assessment.eligible) { return $null }
+    $updated = Start-VerificationChange -EvidencePath ([string]$change.planArtifact.path)
+    $repaired = @(@($RepairedPaths) + @($updated.lineEndingRepairedPaths) | Where-Object { $_ } | Sort-VerificationIdentityStrings -Unique)
+    Write-Host "Verification change plan '$([string]$change.planArtifact.path)' rebound to tree $([string]$updated.tree); line endings restored: $(if ($repaired.Count -gt 0) { $repaired -join ', ' } else { '<none>' })."
+    return $updated
 }
 
 function Get-VerificationChangeSelectionPlan {

@@ -77,6 +77,7 @@ param(
     [string]$VanessaFeaturePath,
     [string]$VanessaProfileOwnerId,
     [string]$VanessaFilterTags,
+    [string]$YAxUnitModule,
     [int]$VanessaTestPort = 0,
     [int]$VanessaMcpPort = 0,
     [int]$RoctupMcpPort = 0,
@@ -336,6 +337,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFeaturePath" -Value $VanessaFeaturePath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaProfileOwnerId" -Value $VanessaProfileOwnerId
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFilterTags" -Value $VanessaFilterTags
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "YAxUnitModule" -Value $YAxUnitModule
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaTestPort" -Value $(if ($VanessaTestPort -ne 0) { $VanessaTestPort } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaMcpPort" -Value $(if ($VanessaMcpPort -ne 0) { $VanessaMcpPort } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "RoctupMcpPort" -Value $(if ($RoctupMcpPort -ne 0) { $RoctupMcpPort } else { $null })
