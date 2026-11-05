@@ -51,6 +51,15 @@ normal check runs the complete existing acceptance set for them.
 Instead of creating a new observation, `checks` may reference an existing
 acceptance `suiteId` or default-fast `groupId`; use its existing obligation id in `checkIds`. A named explicit diagnostic run can supply a current one-off JUnit receipt; diagnostic status alone does not close acceptance.
 
+After an edit within the recorded plan, `check-dev-branch` repeats this same
+registration itself, line-ending repair included, only when the tree alone
+changed: the plan, requirements, assessor and target are unchanged, the
+unaccepted delta has exactly the plan's `paths`, and the change is still
+`pending`. It prints the rebound tree and the repaired files. A new or vanished
+path, an edited plan or requirement, a changed assessor or an accepted change
+still stops with `VERIFICATION_CHANGE_STALE`; update the plan and repeat
+`begin-verification-change` as before.
+
 The agent owns semantic sufficiency and impact analysis. In this same plan,
 choose the least costly sufficient combination of existing or new checks for
 the changed decisions, invariants and material interaction risks. Each added
@@ -176,3 +185,5 @@ prevents a passed result. Include this manifest alongside the JUnit file in a
 one-off diagnostic proof's `artifactPaths`. Its bytes and referenced feature
 content are checked during assessment. Diagnostic success alone cannot complete
 ordinary retained coverage or pending task criteria.
+A `-YAxUnitModule` diagnostic run saves the same manifest for its modules and
+test-extension source; see `yaxunit-tests.md`.

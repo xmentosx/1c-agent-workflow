@@ -21175,6 +21175,8 @@ function Invoke-DevBranchCheck {
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
     Assert-ItlVerificationRepairScope -Trigger $trigger
+    # Reject an unknown diagnostic module before any load or 1C process.
+    Get-YAxUnitModuleFilter | Out-Null
     $state = Read-DevBranchState -Name $DevBranchName
     $checkExportPath = if ((Get-DevBranchKind -State $state) -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
     $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Assert-ExportPathInsideProject -ExportPath $checkExportPath)
@@ -21187,11 +21189,17 @@ function Invoke-DevBranchCheck {
     if (-not $script:ActiveAuxiliaryVanessaContext) {
         $classificationYaxunit = Get-ItlVerificationExecutionDecision -Component 'yaxunit' -Trigger $trigger -ExplicitComponents $explicit
         $classificationVanessa = Get-ItlVerificationExecutionDecision -Component 'vanessa' -Trigger $trigger -ExplicitComponents $explicit
+        $lineEndingRepairs = @()
         if ($classificationYaxunit.run -or $classificationVanessa.run -or (Get-VerificationModel) -eq 'change') {
             # Assess the same prepared source bytes that the load will consume.
-            Repair-OneCSourceLineEndings | Out-Null
+            $lineEndingRepairs = @(Repair-OneCSourceLineEndings)
         }
-        if ((Get-VerificationModel) -eq 'change') { Assert-VerificationChangeReady -State $state | Out-Null }
+        if ((Get-VerificationModel) -eq 'change') {
+            # An edit within the recorded plan repeats its registration here;
+            # any other staleness still stops in the assertion below.
+            Update-VerificationChangeForCurrentTree -State $state -RepairedPaths $lineEndingRepairs | Out-Null
+            Assert-VerificationChangeReady -State $state | Out-Null
+        }
         if ($classificationYaxunit.run -or $classificationVanessa.run) {
             # Keep the cycle's assessment: preparation may still change inputs.
             Assert-VerificationClassificationReady -Reason 'check-dev-branch before infobase load' -RequireVanessa:$classificationVanessa.run -RequireYAxUnit:$classificationYaxunit.run | Out-Null

@@ -535,6 +535,10 @@ function Get-WorkflowVerificationFailureContext {
     } elseif ($messageText -match '^ITL_(?:TOOLING_|DESIGNER_AGENT_|PROJECT_TESTS_)') {
         $category = 'runner'
         $requiredAction = 'repair-dev-branch-tooling'
+    } elseif ($messageText -match '^ITL_YAXUNIT_TIMEOUT\b') {
+        # Project setting, not a product or test defect.
+        $category = 'runner'
+        $requiredAction = 'set-yaxunit-test-timeout-in-dev-env-and-repeat-original-command'
     } elseif ($messageText -match '^ITL_YAXUNIT_ZERO_TESTS') {
         $category = 'missing-suite'
     } elseif ($messageText -match '^ITL_YAXUNIT_TESTS_FAILED') {

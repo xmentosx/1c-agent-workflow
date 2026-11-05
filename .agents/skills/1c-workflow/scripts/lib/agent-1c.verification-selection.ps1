@@ -2,9 +2,15 @@
     param([string]$ManifestPath, [AllowNull()][object]$State = $null)
     try {
         $manifest = Read-Utf8Text -Path $ManifestPath | ConvertFrom-Json -ErrorAction Stop
-        if ([int]$manifest.schemaVersion -ne 1 -or [string]$manifest.kind -cne 'vanessa-diagnostic-inputs' -or @($manifest.features).Count -eq 0) { return $false }
+        $files = @(switch -CaseSensitive ([string]$manifest.kind) {
+            'vanessa-diagnostic-inputs' { @($manifest.features) }
+            'yaxunit-diagnostic-inputs' { @($manifest.files) }
+        })
+        if ([int]$manifest.schemaVersion -ne 1 -or $files.Count -eq 0) { return $false }
+        if ([string]$manifest.kind -ceq 'yaxunit-diagnostic-inputs' -and (@($manifest.modules).Count -eq 0 -or
+            [string]$manifest.testsSourceFingerprint -cne [string](Get-ConfigSourceFingerprint -ExportPath (Get-YAxUnitTestsPath)).fingerprint)) { return $false }
         if ($null -ne $State -and [string]$manifest.loadedBaseIdentity -cne (Get-VerificationLoadedBaseIdentity -State $State)) { return $false }
-        foreach ($file in @($manifest.features)) {
+        foreach ($file in $files) {
             $path = Resolve-ProjectPath ([string]$file.path)
             [void](Get-VerificationRepoRelativePath -Path $path)
             if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$file.sha256) { return $false }
@@ -299,7 +305,7 @@ function Get-VerificationOneOffCheckerIdentity {
     if ($ProofType -in @('vanessa-junit', 'yaxunit-junit')) {
         $names += @('Assert-VerificationOneOffJUnitEvidence', 'Assert-VerificationArtifactReferences')
     }
-    if ($ProofType -eq 'vanessa-junit') { $names += 'Test-VerificationDiagnosticInputsCurrent' }
+    if ($ProofType -in @('vanessa-junit', 'yaxunit-junit')) { $names += 'Test-VerificationDiagnosticInputsCurrent' }
     if ($ProofType -eq 'yaxunit-junit') { $names += 'Get-YAxUnitJunitSummary' }
     if ($ProofType -eq 'event-log') {
         $names += @('Test-DevBranchEventLogAfterVanessa', 'Read-DevBranchEventLogErrors',
@@ -390,8 +396,8 @@ function Get-VerificationOneOffProofAssessment {
                 throw "artifact changed or is missing: $relative"
             }
         }
-        foreach ($artifact in @($proof.artifacts | Where-Object { [string]$proof.proofType -ceq 'vanessa-junit' -and [IO.Path]::GetFileName([string]$_.path) -ceq 'diagnostic-inputs.json' })) {
-            if (-not (Test-VerificationDiagnosticInputsCurrent -ManifestPath (Resolve-ProjectPath ([string]$artifact.path)) -State $State)) { throw 'Diagnostic feature inputs changed; repeat the original diagnostic and record its current manifest.' }
+        foreach ($artifact in @($proof.artifacts | Where-Object { [string]$proof.proofType -cin @('vanessa-junit', 'yaxunit-junit') -and [IO.Path]::GetFileName([string]$_.path) -ceq 'diagnostic-inputs.json' })) {
+            if (-not (Test-VerificationDiagnosticInputsCurrent -ManifestPath (Resolve-ProjectPath ([string]$artifact.path)) -State $State)) { throw 'Diagnostic test inputs changed; repeat the original diagnostic and record its current manifest.' }
         }
         if (@($proof.artifacts).Count -eq 0) { throw 'no observed artifact was retained' }
         if ([string]$proof.proofType -in @('vanessa-junit', 'yaxunit-junit')) {
@@ -513,7 +519,7 @@ function Complete-VerificationOneOffProof {
     if ($artifacts.Count -eq 0) {
         throw "VERIFICATION_ONE_OFF_ARTIFACT_MISSING: '$id' needs a retained result artifact."
     }
-    if ([string]$evidence.proofType -eq 'vanessa-junit' -and $artifacts.Count -gt 0) {
+    if ([string]$evidence.proofType -in @('vanessa-junit', 'yaxunit-junit') -and $artifacts.Count -gt 0) {
         $junit = Resolve-ProjectPath ([string]$artifacts[0].path)
         $manifest = Join-Path (Split-Path -Parent $junit) 'diagnostic-inputs.json'
         if ((Test-Path -LiteralPath $manifest -PathType Leaf) -and

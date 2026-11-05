@@ -4195,9 +4195,18 @@ function Protect-VanessaVerificationDiagnosticText {
     return $safe
 }
 
-function Test-ItlDiagnosticVerificationScope {
+function Test-ItlVanessaDiagnosticScope {
     return (-not [string]::IsNullOrWhiteSpace([string]$VanessaFeaturePath) -or
         -not [string]::IsNullOrWhiteSpace([string]$VanessaFilterTags))
+}
+
+function Test-ItlYAxUnitDiagnosticScope {
+    return -not [string]::IsNullOrWhiteSpace([string](Get-Variable -Name YAxUnitModule -ValueOnly -ErrorAction SilentlyContinue))
+}
+
+function Test-ItlDiagnosticVerificationScope {
+    # Any runner filter makes the whole invocation diagnostic-only.
+    return ((Test-ItlVanessaDiagnosticScope) -or (Test-ItlYAxUnitDiagnosticScope))
 }
 
 function Get-VanessaDiagnosticSignature {

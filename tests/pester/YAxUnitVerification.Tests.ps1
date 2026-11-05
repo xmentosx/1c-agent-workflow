@@ -589,3 +589,196 @@ Describe "Pinned YAxUnit diagnostic caller binding" {
         }
     }
 }
+
+Describe 'YAxUnit test iteration loop' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $loopContext = Initialize-WorkflowPesterContext
+        . $loopContext.HelperPath -ProjectRoot $loopContext.RepoRoot -Action help *> $null
+        $script:savedLoopEnv = @{}
+        function Write-LoopJunit {
+            param([string]$Path, [int]$Cases, [switch]$Failure, [switch]$Partial)
+            $body = (1..$Cases | ForEach-Object { if ($Failure -and $_ -eq 1) { "<testcase name=`"Тест $_`"><failure message=`"Ожидалось 1`"/></testcase>" } else { "<testcase name=`"Тест $_`"/>" } }) -join ''
+            $failures = if ($Failure) { 1 } else { 0 }
+            $text = "<testsuites><testsuite name=`"ТестРасчёта`" tests=`"$Cases`" failures=`"$failures`" errors=`"0`" skipped=`"0`">$body"
+            if (-not $Partial) { $text += '</testsuite></testsuites>' }
+            [IO.Directory]::CreateDirectory((Split-Path -Parent $Path)) | Out-Null
+            [IO.File]::WriteAllText($Path, $text, [Text.UTF8Encoding]::new($false))
+        }
+    }
+    BeforeEach {
+        foreach ($name in @('YAXUNIT_TEST_TIMEOUT_SECONDS', 'AGENT_1C_YAXUNIT_TEST_TIMEOUT_SECONDS', 'ITL_YAXUNIT_TESTING', 'ITL_VANESSA_TESTING', 'ITL_CHECK_EVENT_LOG', 'TOOL_BROWSER')) {
+            $script:savedLoopEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+        }
+        $script:savedLoopRoot = $script:ProjectRoot
+        $script:ProjectRoot = Join-Path $TestDrive ('Проект ИТЛ ' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+        foreach ($module in @('ТестРасчёта', 'ТестДругой')) {
+            $directory = Join-Path $script:ProjectRoot "tests\yaxunit\CommonModules\$module\Ext"
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+            [IO.File]::WriteAllText((Join-Path $directory 'Module.bsl'), "Процедура ИсполняемыеСценарии() Экспорт`nКонецПроцедуры`n", [Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'tests\yaxunit\Configuration.xml'), '<MetaDataObject><Configuration><Properties><Name>Тесты</Name></Properties></Configuration></MetaDataObject>', [Text.UTF8Encoding]::new($true))
+        New-Item -ItemType Directory -Force -Path (Join-Path $script:ProjectRoot 'evidence') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $script:ProjectRoot '.gitignore'), "build/`n.agent-1c/verification-selection/`nevidence/`n.dev.env`n", [Text.UTF8Encoding]::new($false))
+        & git -C $script:ProjectRoot init -q -b master
+        & git -C $script:ProjectRoot config core.autocrlf false
+        & git -C $script:ProjectRoot config user.email 'test@example.com'
+        & git -C $script:ProjectRoot config user.name 'Test User'
+        & git -C $script:ProjectRoot add -- .
+        & git -C $script:ProjectRoot commit -qm 'tests baseline'
+        $script:loopState = [pscustomobject]@{
+            stateProjectRoot = $script:ProjectRoot; devBranchName = 'branch'; infoBaseKind = 'file'; devBranchInfoBasePath = (Join-Path $script:ProjectRoot 'База ветки')
+            toolingInfoBaseGeneration = 'generation'; vanessaServiceInfoBaseGeneration = 'runner'; lastConfigDesignerFingerprint = 'config'; configLoadStatus = 'passed'
+        }
+        $script:loopUpdates = [Collections.Generic.List[object]]::new()
+        $script:loopRuns = [Collections.Generic.List[object]]::new()
+        $script:loopRunMode = 'pass'
+        $YAxUnitModule = ''
+        $VanessaFeaturePath = ''
+        $VanessaFilterTags = ''
+        Mock Get-YAxUnitTestsPath { 'tests/yaxunit' }
+        Mock Get-YAxUnitExtensionName { 'YAXUNIT' }
+        Mock Get-YAxUnitTestsExtensionName { 'Тесты' }
+        Mock Get-YAxUnitPinnedEntry { [pscustomobject]@{ sha256 = ('a' * 64); version = '25.12' } }
+        Mock Ensure-ProjectTestsReady { param($State, [switch]$TrustCurrentProof) $State }
+        Mock Read-DevBranchState { $script:loopState }
+        Mock Assert-DevelopmentBranchWorktreeContext {}
+        Mock Update-DevBranchState { param($State, $Updates) $script:loopUpdates.Add($Updates) }
+        Mock Invoke-Enterprise {
+            param($InfoBasePath, $InfoBaseKind, $EnterpriseArgs, $TimeoutSeconds)
+            $configPath = ([string]$EnterpriseArgs[1]).Substring('RunUnitTests='.Length)
+            $config = Read-Utf8Text -Path $configPath | ConvertFrom-Json
+            $script:loopRuns.Add([pscustomobject]@{ config = $config; timeoutSeconds = $TimeoutSeconds })
+            switch ($script:loopRunMode) {
+                'timeout' { Write-LoopJunit -Path $config.reportPath -Cases 3 -Partial; throw "1C Enterprise timed out after $TimeoutSeconds seconds. PID: 42. Log: C:\Логи 1С\run.log" }
+                'fail' { Write-LoopJunit -Path $config.reportPath -Cases 2 -Failure }
+                default { Write-LoopJunit -Path $config.reportPath -Cases 2 }
+            }
+        }
+    }
+    AfterEach {
+        $script:ProjectRoot = $script:savedLoopRoot
+        foreach ($name in @($script:savedLoopEnv.Keys)) { [Environment]::SetEnvironmentVariable($name, $script:savedLoopEnv[$name], 'Process') }
+        $script:RunErrorCategory = ''
+        $script:RunRequiredAction = ''
+    }
+
+    It 'reports the timeout value, duration, completed tests and the .dev.env continuation, then applies the project value' {
+        $script:loopRunMode = 'timeout'
+        { Invoke-YAxUnitVerification -State $script:loopState } | Should -Throw '*ITL_YAXUNIT_TIMEOUT: YAxUnit stopped at YAXUNIT_TEST_TIMEOUT_SECONDS=1800 (default) after * s; completed tests: 3. For a larger suite set YAXUNIT_TEST_TIMEOUT_SECONDS in the project .dev.env*repeat the original command.*'
+        $script:RunErrorCategory | Should -BeExactly 'runner'
+        $script:RunRequiredAction | Should -BeExactly 'set-yaxunit-test-timeout-in-dev-env-and-repeat-original-command'
+        $script:loopUpdates[-1].lastYAxUnitStatus | Should -BeExactly 'failed'
+
+        # Continuation: the project setting, not a process override, bounds the repeated command.
+        [IO.File]::WriteAllText((Join-Path $script:ProjectRoot '.dev.env'), "YAXUNIT_TEST_TIMEOUT_SECONDS=2700`n", [Text.UTF8Encoding]::new($false))
+        Import-DotEnv -Path (Join-Path $script:ProjectRoot '.dev.env')
+        $script:RunErrorCategory = ''; $script:RunRequiredAction = ''
+        { Invoke-YAxUnitVerification -State $script:loopState } | Should -Throw '*YAXUNIT_TEST_TIMEOUT_SECONDS=2700 (configured)*'
+        $script:loopRuns[-1].timeoutSeconds | Should -Be 2700
+        $script:loopRunMode = 'pass'
+        (Invoke-YAxUnitVerification -State $script:loopState).status | Should -BeExactly 'passed'
+        $script:loopRuns[-1].timeoutSeconds | Should -Be 2700
+    }
+
+    It 'passes only the named module to filter.modules and records no YAxUnit evidence' {
+        $YAxUnitModule = 'тестрасчёта'
+        Test-ItlDiagnosticVerificationScope | Should -BeTrue
+        Test-ItlFullVerificationProofEligible -Trigger command | Should -BeFalse
+        $result = Invoke-YAxUnitVerification -State $script:loopState
+        $result.status | Should -BeExactly 'diagnostic-passed'
+        @($script:loopRuns[0].config.filter.modules) | Should -Be @('ТестРасчёта')
+        @($script:loopRuns[0].config.filter.extensions) | Should -Be @('Тесты')
+        $script:loopUpdates.Count | Should -Be 0
+        Should -Invoke Ensure-ProjectTestsReady -Times 1 -Exactly -ParameterFilter { $TrustCurrentProof }
+        $manifest = Read-Utf8Text -Path $result.diagnosticInputsPath | ConvertFrom-Json
+        $manifest.kind | Should -BeExactly 'yaxunit-diagnostic-inputs'
+        @($manifest.files.path) | Should -Be @('tests/yaxunit/CommonModules/ТестРасчёта/Ext/Module.bsl')
+
+        $script:loopRunMode = 'fail'
+        { Invoke-YAxUnitVerification -State $script:loopState } | Should -Throw '*ITL_YAXUNIT_TESTS_FAILED*'
+        $script:loopUpdates.Count | Should -Be 0
+        $script:RunRequiredAction | Should -BeExactly 'fix-and-repeat-original-check'
+    }
+
+    It 'keeps the unfiltered proof run unchanged' {
+        Test-ItlDiagnosticVerificationScope | Should -BeFalse
+        (Invoke-YAxUnitVerification -State $script:loopState).status | Should -BeExactly 'passed'
+        $script:loopRuns[0].config.filter.PSObject.Properties.Name | Should -Be @('extensions')
+        $script:loopUpdates[-1].lastYAxUnitStatus | Should -BeExactly 'passed'
+        Should -Invoke Ensure-ProjectTestsReady -Times 1 -Exactly -ParameterFilter { -not $TrustCurrentProof }
+    }
+
+    It 'rejects an unknown module before 1C and refuses a filter in a repair session' {
+        $YAxUnitModule = 'ТестРасчёта, НетТакого'
+        { Invoke-YAxUnitVerification -State $script:loopState } | Should -Throw "*ITL_YAXUNIT_MODULE_FILTER_UNKNOWN: 'НетТакого'*Known modules: *ТестРасчёта*"
+        Should -Invoke Invoke-Enterprise -Times 0 -Exactly
+        Should -Invoke Ensure-ProjectTestsReady -Times 0 -Exactly
+        $YAxUnitModule = 'ТестРасчёта'
+        { Assert-ItlVerificationRepairScope -Trigger repair } | Should -Throw '*cannot be combined with YAxUnitModule*'
+    }
+
+    It 'selects components for diagnostic filters: <Case>' -TestCases @(
+        @{ Case = 'Vanessa feature without a named component'; Feature = 'tests/features/Один сценарий.feature'; Module = ''; Named = @(); YAxUnit = $false; Vanessa = $true }
+        @{ Case = 'Vanessa tag with yaxunit and vanessa named'; Feature = ''; Tags = '@smoke'; Module = ''; Named = @('yaxunit', 'vanessa'); YAxUnit = $true; Vanessa = $true }
+        @{ Case = 'Vanessa feature with all named'; Feature = 'tests/features/Один сценарий.feature'; Module = ''; Named = @('all'); YAxUnit = $true; Vanessa = $true }
+        @{ Case = 'YAxUnit module without a named component'; Feature = ''; Module = 'ТестРасчёта'; Named = @(); YAxUnit = $true; Vanessa = $false }
+        @{ Case = 'YAxUnit module with vanessa named'; Feature = ''; Module = 'ТестРасчёта'; Named = @('vanessa'); YAxUnit = $true; Vanessa = $true }
+        @{ Case = 'full check without filters'; Feature = ''; Module = ''; Named = @(); YAxUnit = $true; Vanessa = $true }
+    ) {
+        param($Feature, $Tags, $Module, $Named, $YAxUnit, $Vanessa)
+        $VanessaFeaturePath = $Feature; $VanessaFilterTags = [string]$Tags; $YAxUnitModule = $Module
+        $yax = Get-ItlVerificationExecutionDecision -Component yaxunit -Trigger command -ExplicitComponents $Named
+        $van = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger command -ExplicitComponents $Named
+        $yax.run | Should -Be $YAxUnit
+        $van.run | Should -Be $Vanessa
+        if (-not $YAxUnit) { $yax.reason | Should -BeExactly 'diagnostic Vanessa feature/tag filter run; name -ExplicitVerificationComponent yaxunit or all to include yaxunit' }
+        if (-not $Vanessa) { $van.reason | Should -BeExactly 'diagnostic YAxUnit module filter run; name -ExplicitVerificationComponent vanessa or all to include vanessa' }
+        if (-not $Feature -and -not $Tags -and -not $Module) { Test-ItlFullVerificationProofEligible -Trigger command -ExplicitComponents $Named | Should -BeTrue }
+    }
+
+    It 'runs a named Vanessa scenario without unnamed YAxUnit and prepares tests through the readiness owner' {
+        $VanessaFeaturePath = 'tests/features/Один сценарий.feature'
+        $script:loopOrder = [Collections.Generic.List[string]]::new()
+        Mock Assert-VerificationClassificationReady {}
+        Mock Invoke-YAxUnitVerification { throw 'unnamed YAxUnit must not start' }
+        Mock Assert-DevBranchExtensionInitialized {}
+        Mock Ensure-ProjectTestsReady { param($State, [switch]$TrustCurrentProof) $script:loopOrder.Add("tests:$([bool]$TrustCurrentProof)"); $State }
+        Mock Assert-DevBranchApplicationReady { $script:loopOrder.Add('application'); throw 'stop-after-application-readiness' }
+        $output = @(& { try { Invoke-ItlVerificationCycle -Trigger command } catch { "FAILURE: $($_.Exception.Message)" } } 6>&1 | ForEach-Object { [string]$_ })
+        ($output -join "`n") | Should -Match 'Verification component yaxunit: SKIP \(diagnostic Vanessa feature/tag filter run'
+        ($output -join "`n") | Should -Match 'FAILURE: stop-after-application-readiness'
+        Should -Invoke Invoke-YAxUnitVerification -Times 0 -Exactly
+        $script:loopOrder | Should -Be @('tests:True', 'application')
+    }
+
+    It 'closes a criterion only through a current one-off receipt for the filtered run and rejects it after an input edit' {
+        $script:loopObligation = [pscustomobject]@{ id = 'calc-boundary'; expectedResult = 'Граничные строки округляются'; inputPaths = @('tests/yaxunit/CommonModules/ТестРасчёта/**'); admissibleProof = @('yaxunit-junit'); retention = 'one-off'; retentionReason = 'Current change'; cadence = 'explicit' }
+        Mock Get-VerificationOneOffObligations { @($script:loopObligation) }
+        $draft = Start-VerificationOneOffProof -ObligationId calc-boundary
+        $YAxUnitModule = 'ТестРасчёта'
+        $run = Invoke-YAxUnitVerification -State $script:loopState
+        $script:loopUpdates.Count | Should -Be 0
+        (Get-VerificationOneOffProofAssessment -Obligation $script:loopObligation -State $script:loopState).passed | Should -BeFalse
+
+        $junit = Get-VerificationRepoRelativePath -Path $run.reportPath
+        $inputs = Get-VerificationRepoRelativePath -Path $run.diagnosticInputsPath
+        $evidence = [ordered]@{ obligationId = 'calc-boundary'; runToken = $draft.runToken; expectedResult = $script:loopObligation.expectedResult; status = 'passed'; proofType = 'yaxunit-junit'; actualResult = 'Два теста модуля прошли'; providerId = 'yaxunit'; runnerVersion = '25.12'; steps = @(@{ action = 'check-dev-branch -YAxUnitModule ТестРасчёта'; actual = 'tests=2, failures=0' }); artifactPaths = @($junit) }
+        Write-Utf8TextAtomic -Path (Join-Path $script:ProjectRoot 'evidence/calc.json') -Value ($evidence | ConvertTo-Json -Depth 6)
+        { Complete-VerificationOneOffProof -EvidencePath 'evidence/calc.json' } | Should -Throw '*VERIFICATION_ONE_OFF_DIAGNOSTIC_MANIFEST_REQUIRED*'
+        $evidence.artifactPaths = @($junit, $inputs)
+        Write-Utf8TextAtomic -Path (Join-Path $script:ProjectRoot 'evidence/calc.json') -Value ($evidence | ConvertTo-Json -Depth 6)
+        (Complete-VerificationOneOffProof -EvidencePath 'evidence/calc.json').status | Should -BeExactly 'passed'
+        (Get-VerificationOneOffProofAssessment -Obligation $script:loopObligation -State $script:loopState).passed | Should -BeTrue
+        $script:loopUpdates.Count | Should -Be 0
+
+        # A test-extension edit outside the obligation inputs still invalidates the filtered receipt.
+        Add-Content -LiteralPath (Join-Path $script:ProjectRoot 'tests\yaxunit\CommonModules\ТестДругой\Ext\Module.bsl') -Value '// правка'
+        $after = Get-VerificationOneOffProofAssessment -Obligation $script:loopObligation -State $script:loopState
+        $after.passed | Should -BeFalse
+        $after.issue | Should -Match 'Diagnostic test inputs changed'
+        Add-Content -LiteralPath (Join-Path $script:ProjectRoot 'tests\yaxunit\CommonModules\ТестРасчёта\Ext\Module.bsl') -Value '// правка'
+        (Get-VerificationOneOffProofAssessment -Obligation $script:loopObligation -State $script:loopState).issue | Should -Match 'checked inputs or loaded test infobase changed'
+    }
+}
