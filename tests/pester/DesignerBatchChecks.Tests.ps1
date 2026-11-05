@@ -1202,4 +1202,60 @@ Describe 'Project-test installation uses its own execution prerequisites' {
             $actual.runtimeReads | Should -Be 1
         }
     }
+
+    It 'groups the 2026-11-03 PM5 -AllExtensions module findings by owning extension without changing the verdict' {
+        $fixtureLog=Join-Path $repoRoot 'tests/fixtures/gate6-extension-findings/1c-20261103-092351-091-40172-01de3bdd.out.txt'
+        $root=Join-Path $TestDrive ('Проект тестов '+[guid]::NewGuid().ToString('N'))
+        $source=Join-Path $root 'tests/yaxunit'
+        $repositoryExtension=Join-Path $root 'src/cfe/Доработки проекта'
+        New-Item -ItemType Directory -Force -Path $source,$repositoryExtension | Out-Null
+        [IO.File]::WriteAllText((Join-Path $source 'Configuration.xml'),'<MetaDataObject><Configuration><Properties><Name>tests</Name></Properties></Configuration></MetaDataObject>',[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $repositoryExtension 'Configuration.xml'),'<MetaDataObject><Configuration><Properties><Name>ДоработкиПроекта</Name></Properties></Configuration></MetaDataObject>',[Text.UTF8Encoding]::new($false))
+        $actual=& {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $script:Config=[pscustomobject]@{yaxunit=[pscustomobject]@{testsPath='tests/yaxunit';testsExtensionName='tests'}}
+            $script:fixtureWarnings=[Collections.Generic.List[string]]::new()
+            function Write-Warning { param([string]$Message) $script:fixtureWarnings.Add($Message) }
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{fingerprint='v2|git-tree-sha256|'+('a'*64)} }
+            function Get-PlatformPath { 'fixture-1cv8.exe' }
+            function Invoke-Designer {
+                param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
+                $op=$DesignerArgs[0]
+                if($op -eq '/DumpIB'){[IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]](1,2,3))}
+                $script:LastLogPath=Join-Path $root ('журнал '+[guid]::NewGuid().ToString('N')+'.log')
+                $failed=$op -in @('/CheckModules','/CheckConfig')
+                if($op -eq '/CheckModules'){[IO.File]::Copy($fixtureLog,$script:LastLogPath)}
+                else{[IO.File]::WriteAllText($script:LastLogPath,$(if($failed){'Расширение3: Ошибка компиляции старого модуля.'}else{'Ошибок: 0; предупреждений: 0'}),[Text.UTF8Encoding]::new($false))}
+                $index=[Array]::IndexOf($DesignerArgs,'/DumpResult')
+                if($index -ge 0){[IO.File]::WriteAllText($DesignerArgs[$index+1],$(if($failed){'101'}else{'0'}),[Text.UTF8Encoding]::new($false))}
+                if($failed){
+                    $error=[Exception]::new('native check exit 101')
+                    $error.Data['ItlDesignerBatchResult']=[pscustomobject]@{operation=$op;ownedProcessesReleased=$true;infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;exitCode=101}
+                    throw $error
+                }
+            }
+            $evidence=Invoke-ConfigLoadDesignerAttempt -InfoBasePath (Join-Path $root 'База 1С') -InfoBaseKind file `
+                -ExtensionName 'tests' -SourceFingerprint ('v2|git-tree-sha256|'+('a'*64)) -ValidationPurpose project-tests `
+                -DesignerArgs @('/LoadConfigFromFiles',$source,'-Extension','tests','-Format','Hierarchical','/UpdateDBCfg') `
+                -AfterApply { }
+            $synthetic=([IO.File]::ReadAllText($fixtureLog)) + "`r`n{tests ОбщийМодуль.ТестМодуль.Модуль(5,1)}: Ошибка теста`r`n`tконтекст (Проверка: Сервер)`r`n{ДоработкиПроекта ОбщийМодуль.Доработка.Модуль(7,2)}: Ошибка доработки`r`n{ОбщийМодуль.Основной.Модуль(9,3)}: Ошибка конфигурации`r`nНеразобранная строка платформы`r`n"
+            [pscustomobject]@{
+                evidence=$evidence
+                warnings=@($script:fixtureWarnings.ToArray())
+                groups=ConvertTo-ItlGate6ExtensionFindingGroups -Text $synthetic -TestsExtensionName 'tests' -RepositoryExtensionNames @(Get-ItlRepositoryExtensionNames)
+            }
+        }
+        $actual.evidence.cleanPassed | Should -BeFalse
+        @($actual.evidence.steps | Where-Object { -not $_.nativePassed -and $_.diagnosticOnly }) | Should -HaveCount 2
+        $modules=@($actual.warnings | Where-Object { $_ -like 'GATE6_PROJECT_TESTS_ENVIRONMENT:*' })
+        $modules[0] | Should -Match '^GATE6_PROJECT_TESTS_ENVIRONMENT: native modules did not pass; result=.*; log=.*журнал '
+        $modules | Should -Contain 'GATE6_PROJECT_TESTS_ENVIRONMENT: findings in tests: 0'
+        @($modules | Where-Object { $_ -match '^GATE6_PROJECT_TESTS_ENVIRONMENT: extensions outside the repository: _54200=5, Расширение3=6; findings: 11; log=.*журнал ' }) | Should -HaveCount 1
+        @($modules | Where-Object { $_ -match 'findings not attributable to an extension: 1; log=' }) | Should -HaveCount 1
+        $actual.groups.tests | Should -Be 1
+        @($actual.groups.repository | ForEach-Object { "$($_.name)=$($_.count)" }) | Should -Be @('ДоработкиПроекта=1')
+        $actual.groups.configuration | Should -Be 1
+        @($actual.groups.outsideRepository | ForEach-Object { "$($_.name)=$($_.count)" }) | Should -Be @('_54200=5','Расширение3=6')
+        $actual.groups.unattributed | Should -Be 1
+    }
 }

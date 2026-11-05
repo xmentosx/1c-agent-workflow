@@ -1907,6 +1907,39 @@ function New-ProductionPlatformLegacyContext {
     return $context
 }
 
+function Get-ItlRepositoryExtensionNames {
+    # Extension sources tracked by this project: each src/cfe directory and the
+    # name its dumped Configuration.xml declares.
+    $root = Resolve-ProjectPath (Get-ExtensionsPath)
+    $names = [Collections.Generic.List[string]]::new()
+    foreach ($directory in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+        $names.Add($directory.Name)
+        $configurationPath = Join-Path $directory.FullName 'Configuration.xml'
+        if (Test-Path -LiteralPath $configurationPath -PathType Leaf) {
+            $match = [regex]::Match((Read-Utf8Text -Path $configurationPath), '<Name>(?<name>[^<]+)</Name>')
+            if ($match.Success) { $names.Add($match.Groups['name'].Value.Trim()) }
+        }
+    }
+    return @($names.ToArray() | Select-Object -Unique)
+}
+
+function Write-ItlGate6ProjectTestsFindingGroups {
+    param([string]$LogPath, [string]$TestsExtensionName)
+
+    # Output only: the diagnostic-only verdict above is unchanged and the full
+    # -AllExtensions findings remain in the native log.
+    try {
+        $text = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($LogPath))
+        $groups = ConvertTo-ItlGate6ExtensionFindingGroups -Text $text -TestsExtensionName $TestsExtensionName `
+            -RepositoryExtensionNames @(Get-ItlRepositoryExtensionNames)
+        foreach ($line in @(Format-ItlGate6ExtensionFindingGroups -Groups $groups -TestsExtensionName $TestsExtensionName -LogPath $LogPath)) {
+            Write-Warning "GATE6_PROJECT_TESTS_ENVIRONMENT: $line"
+        }
+    } catch {
+        Write-Warning "GATE6_PROJECT_TESTS_ENVIRONMENT: findings could not be grouped by extension: $($_.Exception.Message); log=$LogPath"
+    }
+}
+
 function Invoke-DesignerGate6CheckLadder {
     param(
         [Parameter(Mandatory = $true)][string]$InfoBasePath,
@@ -2005,6 +2038,7 @@ function Invoke-DesignerGate6CheckLadder {
                 throw "GATE6_CHECK_FAILED: invalid project-test environment evidence; step=$($step.name); $(@($verdict.reasons) -join '; '). Repeat through the original owner."
             }
             Write-Warning "GATE6_PROJECT_TESTS_ENVIRONMENT: native $($step.name) did not pass; result=$resultPath; log=$logPath. Installation requires exact applicability, database apply and fresh runtime readiness; test execution remains authoritative for test results."
+            Write-ItlGate6ProjectTestsFindingGroups -LogPath $logPath -TestsExtensionName $ExtensionName
         } elseif (-not $verdict.passed) {
             if ($null -eq $assessment -or -not $assessment.applyAllowed) {
                 $assessmentDetail = if ($null -ne $assessment) { "; assessment=$($assessment.evidencePath)" } else { '' }

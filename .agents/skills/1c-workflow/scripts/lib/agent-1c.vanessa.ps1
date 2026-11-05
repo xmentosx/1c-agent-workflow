@@ -3449,6 +3449,176 @@ function Get-OneCEventLogNonBlockingClassification {
     return ""
 }
 
+function ConvertTo-VanessaRunWindowLocalTime {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [datetimeoffset]) { return ([datetimeoffset]$Value).LocalDateTime }
+    if ($Value -is [datetime]) {
+        $date = [datetime]$Value
+        return $(if ($date.Kind -eq [DateTimeKind]::Utc) { $date.ToLocalTime() } else { $date })
+    }
+    $parsed = [datetimeoffset]::MinValue
+    if ([datetimeoffset]::TryParse([string]$Value, [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AssumeLocal, [ref]$parsed)) {
+        return $parsed.LocalDateTime
+    }
+    return $null
+}
+
+function Get-VanessaDiagnosticRunWindows {
+    param(
+        [datetime]$From,
+        [datetime]$To,
+        [string]$ExcludeRunDirectory = ""
+    )
+
+    # The window is the run's own artifact: the runner records it in the run
+    # cursor; runs written before that use the directory timestamp and the last
+    # file written by the run. Only diagnostic (non-proof) runs are returned.
+    $reportsRoot = Resolve-ProjectPath (Get-VanessaReportsPath)
+    if (-not (Test-Path -LiteralPath $reportsRoot -PathType Container -ErrorAction SilentlyContinue)) { return @() }
+    $excluded = $(if ($ExcludeRunDirectory) { (Resolve-Agent1cFullPath -Path $ExcludeRunDirectory).TrimEnd('\', '/') } else { "" })
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $windows = @()
+    foreach ($directory in @(Get-ChildItem -LiteralPath $reportsRoot -Directory -Filter "run-*" -ErrorAction SilentlyContinue)) {
+        if ($excluded -and [string]::Equals($directory.FullName.TrimEnd('\', '/'), $excluded, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $nameStart = [datetime]::MinValue
+        if (-not [datetime]::TryParseExact($directory.Name, "'run-'yyyyMMdd-HHmmss-fff", $culture,
+            [Globalization.DateTimeStyles]::AssumeLocal, [ref]$nameStart)) { continue }
+        if ($nameStart -gt $To) { continue }
+        $cursorPath = Join-Path $directory.FullName "event-log-cursor.json"
+        $cursor = $null
+        if (Test-Path -LiteralPath $cursorPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            try { $cursor = Read-Utf8Text -Path $cursorPath | ConvertFrom-Json } catch { $cursor = $null }
+        }
+        $diagnosticProperty = $(if ($null -ne $cursor) { $cursor.PSObject.Properties["diagnosticRun"] } else { $null })
+        $diagnostic = $(if ($null -ne $diagnosticProperty) { [bool]$diagnosticProperty.Value } else {
+            Test-Path -LiteralPath (Join-Path $directory.FullName "diagnostic-inputs.json") -PathType Leaf })
+        if (-not $diagnostic) { continue }
+        $startedAt = ConvertTo-VanessaRunWindowLocalTime -Value $(if ($null -ne $cursor) { Get-StateValue -State $cursor -Name "runStartedAt" -Default $null } else { $null })
+        if ($null -eq $startedAt) { $startedAt = $nameStart }
+        $finishedAt = ConvertTo-VanessaRunWindowLocalTime -Value $(if ($null -ne $cursor) { Get-StateValue -State $cursor -Name "runFinishedAt" -Default $null } else { $null })
+        if ($null -eq $finishedAt) {
+            $lastWrite = @(Get-ChildItem -LiteralPath $directory.FullName -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -notlike "event-log-*.json" } |
+                Sort-Object LastWriteTime | Select-Object -Last 1)
+            $finishedAt = $(if ($lastWrite.Count -gt 0) { $lastWrite[0].LastWriteTime } else { $startedAt })
+        }
+        if ($finishedAt -lt $From) { continue }
+        $windows += [pscustomobject]@{
+            runId = $directory.Name
+            runDirectory = $directory.FullName
+            startedAt = [datetime]$startedAt
+            finishedAt = [datetime]$finishedAt
+        }
+    }
+    return @($windows | Sort-Object startedAt)
+}
+
+function Get-VanessaEventLogDiagnosticRunAttribution {
+    param(
+        [object[]]$Errors = @(),
+        [datetime]$From,
+        [datetime]$To,
+        [string]$ExcludeRunDirectory = ""
+    )
+
+    # Output-only provenance: the time window marks errors that appeared while
+    # a registered diagnostic run was active. Sessions are deliberately not
+    # used because background jobs started by the test run in their own ones.
+    $marks = @{}
+    $groups = @()
+    if (@($Errors).Count -eq 0) { return [pscustomobject]@{ marks = $marks; runs = @() } }
+    $skew = Get-VanessaEventLogClockSkewSeconds
+    $windows = @(Get-VanessaDiagnosticRunWindows -From $From.AddSeconds(-$skew) -To $To.AddSeconds($skew) -ExcludeRunDirectory $ExcludeRunDirectory)
+    if ($windows.Count -eq 0) { return [pscustomobject]@{ marks = $marks; runs = @() } }
+    for ($index = 0; $index -lt @($Errors).Count; $index++) {
+        $eventDate = ConvertTo-VanessaRunWindowLocalTime -Value $Errors[$index].date
+        if ($null -eq $eventDate) { continue }
+        foreach ($window in $windows) {
+            # 1C stores whole seconds; widen by the existing clock-skew tolerance.
+            if ($eventDate -ge $window.startedAt.AddSeconds(-$skew) -and $eventDate -le $window.finishedAt.AddSeconds($skew)) {
+                $marks[$index] = $window
+                break
+            }
+        }
+    }
+    foreach ($window in $windows) {
+        $indexes = @($marks.Keys | Where-Object { $marks[$_].runId -ceq $window.runId } | Sort-Object)
+        if ($indexes.Count -eq 0) { continue }
+        $firstLine = (@(([string]$Errors[$indexes[0]].comment) -split '\r\n|\n|\r' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -First 1)
+        $groups += [pscustomobject]@{
+            runId = $window.runId
+            runDirectory = $window.runDirectory
+            startedAt = $window.startedAt
+            finishedAt = $window.finishedAt
+            errorCount = $indexes.Count
+            firstLine = Protect-VanessaVerificationDiagnosticText -Text ([string]$firstLine) -MaxLength 300
+        }
+    }
+    return [pscustomobject]@{ marks = $marks; runs = @($groups) }
+}
+
+function Complete-VanessaRunEventLogWindow {
+    param([string]$CursorPath, [datetime]$FinishedAt)
+
+    try {
+        $cursor = Read-Utf8Text -Path $CursorPath | ConvertFrom-Json
+        $cursor | Add-Member -NotePropertyName runFinishedAt -NotePropertyValue $FinishedAt.ToString("o") -Force
+        Write-Utf8TextAtomic -Path $CursorPath -Value (($cursor | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+    } catch {
+        Write-Host "[WARN] Vanessa run window end was not recorded: $($_.Exception.Message). Later attribution uses the run's last written file."
+    }
+}
+
+function Test-VanessaRunEventLogPreviewRequested {
+    param([switch]$AuxiliaryVerification)
+
+    # Only a named invocation that leaves event-log out of its scope gets the
+    # preview; ITL_CHECK_EVENT_LOG=off remains the user's opt-out.
+    if ($AuxiliaryVerification -or -not $script:ItlSkipEventLogForVerification) { return $false }
+    $named = ([string]$ExplicitVerificationComponent).Trim().ToLowerInvariant()
+    if (-not $named -or $named -in @('event-log', 'all')) { return $false }
+    $mode = Get-ItlVerificationMode -Component 'event-log'
+    return ([bool]$mode.valid -and $mode.effective -ne 'off')
+}
+
+function Write-VanessaRunEventLogPreview {
+    param(
+        [object]$State,
+        [string]$RunDirectory,
+        [string]$CursorPath,
+        [datetime]$RunStartedAt,
+        [datetime]$RunFinishedAt
+    )
+
+    # Diagnostic output for a named run without the event-log component: the
+    # existing reader scans this run's window from the run cursor copy. It
+    # writes no verification state, debt or pending-cursor movement.
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $preview = Test-DevBranchEventLogAfterVanessa -State $State -RunStartedAt $RunStartedAt -RunFinishedAt $RunFinishedAt `
+            -RunDirectory $RunDirectory -CursorPath $CursorPath -BoundaryStartedAt $RunStartedAt `
+            -CursorScope 'explicit-run-preview' -ReportFileName 'event-log-preview.json'
+        $stopwatch.Stop()
+        if ([int]$preview.newErrorCount -gt 0) {
+            $first = ""
+            try {
+                $report = Read-Utf8Text -Path $preview.reportPath | ConvertFrom-Json
+                $firstComment = [string](@($report.errors)[0].comment)
+                $first = Protect-VanessaVerificationDiagnosticText -Text ((@($firstComment -split '\r\n|\n|\r' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -First 1)) -MaxLength 300
+            } catch { $first = "" }
+            Write-Host "[WARN] VANESSA_EVENT_LOG_PREVIEW: $($preview.newErrorCount) new 1C event-log error signature(s) during this run window, including background jobs; first: $first; report=$($preview.reportPath); durationMs=$($stopwatch.ElapsedMilliseconds). Diagnostic output only: the run result, verification evidence and event-log cursor are unchanged."
+        } else {
+            Write-Host "Vanessa event-log preview: no new error signatures during this run window; durationMs=$($stopwatch.ElapsedMilliseconds). Diagnostic output only."
+        }
+    } catch {
+        if ($stopwatch.IsRunning) { $stopwatch.Stop() }
+        Write-Host "[WARN] VANESSA_EVENT_LOG_PREVIEW_UNAVAILABLE: $($_.Exception.Message); durationMs=$($stopwatch.ElapsedMilliseconds). The run result is unchanged."
+    }
+}
+
 function Test-DevBranchEventLogAfterVanessa {
     param(
         [object]$State,
@@ -3457,7 +3627,8 @@ function Test-DevBranchEventLogAfterVanessa {
         [string]$RunDirectory,
         [string]$CursorPath = "",
         [Nullable[datetime]]$BoundaryStartedAt = $null,
-        [string]$CursorScope = "vanessa-only"
+        [string]$CursorScope = "vanessa-only",
+        [ValidatePattern('^event-log-[a-z-]+\.json$')][string]$ReportFileName = "event-log-new-errors.json"
     )
 
     $stateWithBaseline = Ensure-DevBranchEventLogBaseline -State $State
@@ -3499,9 +3670,18 @@ function Test-DevBranchEventLogAfterVanessa {
         }
     }
 
+    $attribution = [pscustomobject]@{ marks = @{}; runs = @() }
+    if ($newErrors.Count -gt 0) {
+        try {
+            $attribution = Get-VanessaEventLogDiagnosticRunAttribution -Errors $newErrors -From $effectiveStartTime -To $checkedUntil -ExcludeRunDirectory $RunDirectory
+        } catch {
+            Write-Host "[WARN] Diagnostic Vanessa run attribution is unavailable: $($_.Exception.Message). Event-log evidence is unchanged."
+        }
+    }
+
     $reportPath = ""
     if ($newErrors.Count -gt 0 -or $warnings.Count -gt 0) {
-        $reportPath = Join-Path $RunDirectory "event-log-new-errors.json"
+        $reportPath = Join-Path $RunDirectory $ReportFileName
         $payload = [ordered]@{
             schemaVersion = 2
             startedAt = $effectiveStartTime.ToString("o")
@@ -3519,15 +3699,30 @@ function Test-DevBranchEventLogAfterVanessa {
             newErrorCount = $newErrors.Count
             warningCount = $warnings.Count
             legacyErrorCount = $legacyCount
-            errors = @($newErrors | ForEach-Object {
+            errors = @(for ($errorIndex = 0; $errorIndex -lt $newErrors.Count; $errorIndex++) {
+                $item = $newErrors[$errorIndex]
+                $entry = [ordered]@{
+                    date = $item.date.ToString("o")
+                    level = $item.level
+                    event = $item.event
+                    metadata = $item.metadata
+                    dataPresentation = $item.dataPresentation
+                    comment = $item.comment
+                    signature = $item.signature
+                }
+                if ($attribution.marks.ContainsKey($errorIndex)) {
+                    $entry["diagnosticRunId"] = $attribution.marks[$errorIndex].runId
+                    $entry["diagnosticRunDirectory"] = $attribution.marks[$errorIndex].runDirectory
+                }
+                $entry
+            })
+            diagnosticRuns = @($attribution.runs | ForEach-Object {
                 [ordered]@{
-                    date = $_.date.ToString("o")
-                    level = $_.level
-                    event = $_.event
-                    metadata = $_.metadata
-                    dataPresentation = $_.dataPresentation
-                    comment = $_.comment
-                    signature = $_.signature
+                    runId = $_.runId
+                    runDirectory = $_.runDirectory
+                    startedAt = $_.startedAt.ToString("o")
+                    finishedAt = $_.finishedAt.ToString("o")
+                    errorCount = $_.errorCount
                 }
             })
             warnings = @($warnings | ForEach-Object {
@@ -3555,10 +3750,22 @@ function Test-DevBranchEventLogAfterVanessa {
     } else {
         "1C event log contains no new error signatures in scope '$CursorScope' from '$($effectiveStartTime.ToString("o"))'. Legacy suppressed errors: $legacyCount; scan mode: $($readResult.scanMode)."
     }
+    $diagnosticRunErrorCount = 0
+    foreach ($run in @($attribution.runs)) { $diagnosticRunErrorCount += [int]$run.errorCount }
+    if ($diagnosticRunErrorCount -gt 0) {
+        $reason += " Of these, $diagnosticRunErrorCount occurred inside diagnostic Vanessa run window(s): " +
+            ((@($attribution.runs | ForEach-Object { "$($_.runId)=$($_.errorCount)" })) -join ", ") +
+            "; they remain event-log evidence and close only through the existing continuation. Report: $reportPath."
+        foreach ($run in @($attribution.runs)) {
+            Write-Host "Event-log errors during diagnostic Vanessa run $($run.runId): $($run.errorCount); window $($run.startedAt.ToString("o"))..$($run.finishedAt.ToString("o")); first: $($run.firstLine); run=$($run.runDirectory)"
+        }
+    }
 
     return [pscustomobject]@{
         status = $status
         reason = $reason
+        diagnosticRunErrorCount = $diagnosticRunErrorCount
+        diagnosticRuns = @($attribution.runs)
         reader = $readResult.reader
         baselinePath = $baselinePath
         reportPath = $reportPath
@@ -4444,6 +4651,44 @@ function Test-VanessaTestClientStartupMonitor {
     return $false
 }
 
+function Get-VanessaErrorDetailsFocus {
+    param([string]$Text, [string]$ReportPath = "")
+
+    # Vanessa Automation 1.2.043.42 (upstream a0ce2ee9, form module
+    # УправляемаяФорма) appends the TestClient exception after its localized
+    # "ДеталиОшибки:" marker (English locale: "ErrorDetails:") at the end of the
+    # "Технические данные" ("Technical data") block. Lines are read before any
+    # whitespace compression, so the first exception and stack lines stay exact.
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+    $lines = @($Text -split '\r\n|\n|\r')
+    $technicalIndex = -1
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($lines[$index] -match '^\s*(?:Технические данные|Technical data)\s*:\s*$') { $technicalIndex = $index; break }
+    }
+    $markerIndex = -1
+    for ($index = [Math]::Max(0, $technicalIndex + 1); $index -lt $lines.Count; $index++) {
+        if ($lines[$index] -match '^\s*(?:ДеталиОшибки|ErrorDetails):\s*$') { $markerIndex = $index; break }
+    }
+    if ($markerIndex -lt 0) { return $null }
+    $exception = ""
+    $stack = ""
+    for ($index = $markerIndex + 1; $index -lt $lines.Count; $index++) {
+        $line = $lines[$index].Trim()
+        if (-not $line) { continue }
+        if (-not $exception) { $exception = $line; continue }
+        if ($line -match '^\{[^{}]+\}:?') { $stack = $line; break }
+    }
+    if (-not $exception) { return $null }
+    $serviceEnd = $(if ($technicalIndex -ge 0) { $technicalIndex } else { $markerIndex })
+    $service = (@($lines | Select-Object -First $serviceEnd | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join " ")
+    $parts = @($exception)
+    if ($stack) { $parts += $stack }
+    $focus = $parts -join " "
+    if ($service) { $focus += " | Vanessa: $service" }
+    if ($technicalIndex -ge 0 -and $ReportPath) { $focus += " | Technical data: $ReportPath" }
+    return [pscustomobject]@{ text = $focus; exception = $exception; stack = $stack }
+}
+
 function Get-VanessaJunitSummary {
     param([string]$RunDirectory, [string[]]$ReportPaths = @())
 
@@ -4534,13 +4779,27 @@ function Get-VanessaJunitSummary {
                     (Get-VanessaDiagnosticSignature -Text $primaryDiagnostic) -ne (Get-VanessaDiagnosticSignature -Text $junitDiagnostic)) {
                     $secondaryDiagnostic = Protect-VanessaVerificationDiagnosticText -Text $junitDiagnostic
                 }
+                # Display focus only: signature and classification keep the
+                # complete original text, so routing and repeat decisions stay.
+                $classificationDiagnostic = Protect-VanessaVerificationDiagnosticText -Text $primaryDiagnostic
+                $displayDiagnostic = $classificationDiagnostic
+                $diagnosticFocus = ""
+                if ($primarySource -eq "junit-failure") {
+                    $focus = Get-VanessaErrorDetailsFocus -Text $primaryDiagnostic -ReportPath $file.FullName
+                    if ($null -ne $focus) {
+                        $displayDiagnostic = Protect-VanessaVerificationDiagnosticText -Text $focus.text
+                        $diagnosticFocus = "vanessa-error-details"
+                    }
+                }
                 $summary.testCases += [pscustomobject][ordered]@{
                     name = $(if ($case.Attributes["name"]) { [string]$case.Attributes["name"].Value } else { "" })
                     className = $(if ($case.Attributes["classname"]) { [string]$case.Attributes["classname"].Value } else { "" })
                     skipped = $caseSkipped
                     failure = $caseFailure
                     error = $caseError
-                    diagnostic = Protect-VanessaVerificationDiagnosticText -Text $primaryDiagnostic
+                    diagnostic = $displayDiagnostic
+                    classificationDiagnostic = $classificationDiagnostic
+                    diagnosticFocus = $diagnosticFocus
                     diagnosticSignature = Get-VanessaDiagnosticSignature -Text $primaryDiagnostic
                     diagnosticSource = $primarySource
                     secondaryDiagnostic = $secondaryDiagnostic
@@ -4635,13 +4894,14 @@ function Get-VanessaVerificationStatus {
         if (($junit.failures + $junit.errors) -gt 0) {
             $failedCases = @($junit.testCases | Where-Object { $_.failure -or $_.error })
             $diagnostic = if ($failedCases.Count -gt 0) { [string]$failedCases[0].diagnostic } else { "" }
-            $failureContext = Get-WorkflowVerificationFailureContext -Message $diagnostic
+            $classificationDiagnostic = if ($failedCases.Count -gt 0) { [string](Get-StateValue -State $failedCases[0] -Name "classificationDiagnostic" -Default $diagnostic) } else { "" }
+            $failureContext = Get-WorkflowVerificationFailureContext -Message $classificationDiagnostic
             $failureCategory = [string]$failureContext.category
             $failureRequiredAction = [string]$failureContext.requiredAction
             # Empty remains the established JUnit product-failure default for existing readers.
             if ($failureCategory -eq 'product-assertion') { $failureCategory = '' }
             if ($failureContext.requiredAction -ne 'repair-dev-branch-tooling' -and $failureCategory -ne 'test-fixture' -and
-                (Test-VanessaTestClientConnectionFailure -Diagnostic $diagnostic)) {
+                (Test-VanessaTestClientConnectionFailure -Diagnostic $classificationDiagnostic)) {
                 $failureCategory = 'runner'
                 $failureRequiredAction = 'inspect-testclient-startup-diagnostics-and-repeat-original-command'
             }
@@ -5427,7 +5687,24 @@ function Run-DevBranchTests {
     $runCursorEvidence = Read-Utf8Text -Path $runEventLogCursorPath | ConvertFrom-Json
     $runCursorEvidence | Add-Member -NotePropertyName scope -NotePropertyValue $EventLogCursorScope -Force
     $runCursorEvidence | Add-Member -NotePropertyName boundaryAt -NotePropertyValue ([datetime]$EventLogBoundaryAt).ToString("o") -Force
+    # The run window and its diagnostic role are output provenance for later
+    # event-log reports; they do not move or replace any event-log cursor.
+    $runCursorEvidence | Add-Member -NotePropertyName runStartedAt -NotePropertyValue (Get-Date).ToString("o") -Force
+    $runCursorEvidence | Add-Member -NotePropertyName diagnosticRun -NotePropertyValue (-not [bool]$RecordFullVerificationEvidence) -Force
     Write-Utf8TextAtomic -Path $runEventLogCursorPath -Value (($runCursorEvidence | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+    $eventLogPreviewRequested = Test-VanessaRunEventLogPreviewRequested -AuxiliaryVerification:$auxiliaryVerification
+    $eventLogPreviewCursorPath = ""
+    if ($eventLogPreviewRequested) {
+        # A run-local byte cursor taken immediately before TestManager bounds the
+        # preview scan to this run's own records instead of the whole pending
+        # debt range; the lifecycle cursor and its copy above stay untouched.
+        try {
+            $eventLogPreviewCursorPath = New-DevBranchEventLogCursor -State $state -Path (Join-Path $runDirectory "event-log-preview-cursor.json")
+        } catch {
+            $eventLogPreviewCursorPath = $runEventLogCursorPath
+            Write-Host "[WARN] Vanessa event-log preview cursor was not captured: $($_.Exception.Message). The preview scans from the run cursor copy."
+        }
+    }
     $paramsPath = New-VanessaParamsFile `
         -FeaturePath $featuresPath `
         -RunDirectory $runDirectory `
@@ -5520,6 +5797,7 @@ function Run-DevBranchTests {
         Set-RunStage -Stage "vanessa.postprocess" -Detail "Cleaning up and reading verification evidence after a failed runner."
         $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $runFinishedAt = Get-Date
+        Complete-VanessaRunEventLogWindow -CursorPath $runEventLogCursorPath -FinishedAt $runFinishedAt
         $logPath = $script:LastLogPath
         Write-OneCVanessaProcessDiagnostics -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify failed; active 1C process diagnostics"
         $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -5549,6 +5827,9 @@ function Run-DevBranchTests {
         $failureReason = $_.Exception.Message
         if ($eventLogReason) {
             $failureReason = "$failureReason Event log: $eventLogReason"
+        }
+        if ($eventLogPreviewRequested) {
+            Write-VanessaRunEventLogPreview -State $state -RunDirectory $runDirectory -CursorPath $eventLogPreviewCursorPath -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt
         }
         $updates = @{
             lastVanessaTestAt = (Get-Date).ToString("o")
@@ -5595,6 +5876,7 @@ function Run-DevBranchTests {
     }
     Set-RunStage -Stage "vanessa.postprocess" -Detail "Cleaning up and reading JUnit and event-log evidence."
     $runFinishedAt = Get-Date
+    Complete-VanessaRunEventLogWindow -CursorPath $runEventLogCursorPath -FinishedAt $runFinishedAt
     $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $verification = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
     $tagFilterEvidence = $null
@@ -5658,6 +5940,11 @@ function Run-DevBranchTests {
         -Verification $verification `
         -EventLogVerification $eventLogVerification
     $postProcessStopwatch.Stop()
+    if ($eventLogPreviewRequested) {
+        # Outside the post-process timing: the preview is diagnostic output
+        # with its own measured duration and never alters this verification.
+        Write-VanessaRunEventLogPreview -State $state -RunDirectory $runDirectory -CursorPath $eventLogPreviewCursorPath -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt
+    }
     if ($eventLogVerification.status -eq "failed") {
         $verification.status = "failed"
         $verification.reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
