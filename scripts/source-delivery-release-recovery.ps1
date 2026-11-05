@@ -97,7 +97,7 @@ function Get-DeliveryStaleBranchUpdates {
 }
 
 function Invoke-DeliveryStandOwner {
-    param([string]$CandidateRoot, [string]$Name, [string[]]$Arguments, [int]$BudgetSeconds)
+    param([string]$CandidateRoot, [string]$Name, [string[]]$Arguments, [int]$BudgetSeconds, [Collections.IDictionary]$EnvironmentOverrides = $null)
     $logs = Join-Path $CandidateRoot 'build/test-results/delivery'
     [void][IO.Directory]::CreateDirectory($logs)
     $stdout = Join-Path $logs ($Name + '.stdout.log'); $stderr = Join-Path $logs ($Name + '.stderr.log')
@@ -105,7 +105,7 @@ function Invoke-DeliveryStandOwner {
     $process = $null; $job = [IntPtr]::Zero; $priorError = ''
     $watch = [Diagnostics.Stopwatch]::StartNew()
     try {
-        $started = Start-DeliveryProcess -ArgumentList ($quoted -join ' ') -WorkingDirectory $CandidateRoot -StandardOutputPath $stdout -StandardErrorPath $stderr
+        $started = Start-DeliveryProcess -ArgumentList ($quoted -join ' ') -WorkingDirectory $CandidateRoot -StandardOutputPath $stdout -StandardErrorPath $stderr -EnvironmentOverrides $EnvironmentOverrides
         $process = $started.process; $job = [IntPtr]$started.jobHandle
         while (-not $process.WaitForExit(5000)) {
             if ($watch.Elapsed.TotalSeconds -ge $BudgetSeconds) { throw "DELIVERY_STAND_PREPARATION_TIMEOUT: $Name; resume the same PublishDevelop after inspecting owner logs $stdout and $stderr; receipts and capsules were preserved." }
@@ -221,7 +221,11 @@ function Invoke-DeliveryStandPreparationOwners {
         $scopePath = Join-Path $CandidateRoot 'build/test-results/delivery/stand-update-roots.json'
         [void][IO.Directory]::CreateDirectory((Split-Path -Parent $scopePath))
         [IO.File]::WriteAllText($scopePath, ([ordered]@{schemaVersion=1;projectRoot=$Preparation.projectRoot;sourceCommit=$Preparation.sourceCommit;roots=@($Preparation.roots)} | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
-        $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name 'stand-workflow-update' -BudgetSeconds 3600 -Arguments @('-File',(Join-Path $CandidateRoot 'scripts/update-installed-workflow.ps1'),'-ProjectRoot',$Preparation.projectRoot,'-SourceRoot',$CandidateRoot,'-WorkflowUpdateBranchRootsFile',$scopePath)
+        # The candidate may pin a fork release that is published only after
+        # Develop; the stand installs it from the exact checkout the plan resolved.
+        $rules = Get-Variable AiRulesSource -ValueOnly -ErrorAction SilentlyContinue
+        $environment = if ($rules) { @{ ITL_AI_RULES_SOURCE_PATH = [IO.Path]::GetFullPath([string]$rules) } } else { $null }
+        $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name 'stand-workflow-update' -BudgetSeconds 3600 -EnvironmentOverrides $environment -Arguments @('-File',(Join-Path $CandidateRoot 'scripts/update-installed-workflow.ps1'),'-ProjectRoot',$Preparation.projectRoot,'-SourceRoot',$CandidateRoot,'-WorkflowUpdateBranchRootsFile',$scopePath)
         Write-DevelopPublicationAttempt -Attempt $Attempt
     }
     foreach ($capsule in $Preparation.capsules) {

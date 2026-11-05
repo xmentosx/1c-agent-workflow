@@ -282,6 +282,32 @@ Start-Sleep -Seconds 300
             @(Get-Content -LiteralPath (Join-Path $script:standCandidate 'prewarm-starts.txt')).Count | Should -Be 2
         } finally { Remove-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue }
     }
+    It 'installs the pinned fork on the stand from the resolved local checkout without leaking it to the publisher' {
+        # A fork release is pushed only after Develop, so the stand update must
+        # not resolve the candidate's pinned tag from the fork remote.
+        $updater=Get-Content -LiteralPath (Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1') -Raw -Encoding UTF8
+        $updater=$updater.Replace("[Console]::WriteLine(`$ProjectRoot)","[IO.File]::WriteAllText((Join-Path `$ProjectRoot 'rules-source.txt'),[string]`$env:ITL_AI_RULES_SOURCE_PATH,[Text.UTF8Encoding]::new(`$false))")
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        $observed=Join-Path $script:standRoot 'rules-source.txt'
+        $previous=$env:ITL_AI_RULES_SOURCE_PATH
+        $env:ITL_AI_RULES_SOURCE_PATH=$null
+        $rules=Join-Path $TestDrive 'форк путь с пробелом'
+        [void][IO.Directory]::CreateDirectory($rules)
+        try {
+            $script:AiRulesSource=$rules
+            Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation ([pscustomobject]@{phase='candidate-built'})
+            [Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($observed)) | Should -BeExactly $rules
+            $env:ITL_AI_RULES_SOURCE_PATH | Should -BeNullOrEmpty
+            $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+            # Without a resolved fork checkout the stand keeps the configured remote.
+            Remove-Variable -Name AiRulesSource -Scope Script
+            Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation ([pscustomobject]@{phase='candidate-built'})
+            [IO.File]::ReadAllText($observed) | Should -BeNullOrEmpty
+        } finally {
+            Remove-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue
+            $env:ITL_AI_RULES_SOURCE_PATH=$previous
+        }
+    }
     It 'prepares through native owners before freezing, then resumes without replan and blocks unexpected drift' {
         $RequireRelease=$true;$frozenPlan=$null;$priorAttempt=$null;$Replan='';$remoteBefore='base'
         $worktree=[pscustomobject]@{path=$script:standCandidate};$attempt=[pscustomobject]@{phase='candidate-built'}
