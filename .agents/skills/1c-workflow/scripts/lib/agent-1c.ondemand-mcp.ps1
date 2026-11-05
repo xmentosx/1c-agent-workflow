@@ -1812,6 +1812,8 @@ function Start-ItlOnDemandBackendInstanceCore {
                 throw "ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED: run configure-dev-branch-unsafe-action-protection for this worktree."
             }
             $serviceState = Ensure-VanessaMcpInstalled -State $primaryState -ServiceAdmissionPlan $ServiceAdmissionPlan
+            # The TestClient executes project test-extension code in the primary base.
+            if (-not $AuxiliaryContour) { $serviceState = Ensure-ProjectTestsReady -State $serviceState -TrustCurrentProof }
             $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $serviceState
             $vanessa = Get-VanessaAutomationState
             if (-not $vanessa.ready) { throw "Vanessa Automation runtime is not installed." }

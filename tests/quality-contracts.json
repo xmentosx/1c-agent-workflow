@@ -2063,7 +2063,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/YAxUnitVerification.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1"],
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1", "tests/fixtures/project-tests-readiness/*"],
       "tests": ["tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/YAxUnitApplicability.Tests.ps1", "tests/pester/ToolingReadiness.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1"]
     },
     {

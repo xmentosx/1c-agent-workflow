@@ -573,17 +573,131 @@ function Get-YAxUnitJunitSummary {
     }
 }
 
+function Test-ProjectTestsAdoptedObjects {
+    # Adoption belongs to the test source snapshot; the proof stores it with testsFingerprint.
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $false }
+    foreach ($file in [IO.Directory]::EnumerateFiles($Path, '*.xml', [IO.SearchOption]::AllDirectories)) {
+        if ([regex]::IsMatch((Read-Utf8Text -Path $file), '<(?:[\w.-]+:)?ObjectBelonging>\s*Adopted\s*</')) { return $true }
+    }
+    return $false
+}
+
+function ConvertTo-ProjectTestsBslCodeLines {
+    # Removes comments, string contents (including multi-line '|' literals) and
+    # preprocessor lines, preserving line numbers for diagnostics.
+    param([string]$Text)
+    $code = [regex]::Replace(($Text -replace "`r", ''), '//[^\n]*|"(?:""|[^"])*(?:"|$)', {
+        param($match)
+        if ($match.Value.StartsWith('/')) { return '' }
+        return '"' + ("`n" * ([regex]::Matches($match.Value, "`n").Count)) + '"'
+    })
+    return @($code -split "`n" | ForEach-Object { if ($_.TrimStart().StartsWith('#')) { '' } else { $_ } })
+}
+
+function Get-ProjectTestsInsteadWithoutProceed {
+    # Static diagnostic only: textual ПродолжитьВызов does not prove the
+    # interceptor is free of a copied algorithm, and absence never blocks.
+    param([string]$Path)
+    $findings = [Collections.Generic.List[object]]::new()
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return @() }
+    $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/')
+    $proceed = '(?i)(?<![\p{L}\p{N}_.])(?:ПродолжитьВызов|ProceedWithCall)\s*\('
+    foreach ($file in @([IO.Directory]::EnumerateFiles($Path, '*.bsl', [IO.SearchOption]::AllDirectories) | Sort-Object)) {
+        $text = Read-Utf8Text -Path $file
+        $raw = @(($text -replace "`r", '') -split "`n")
+        $lines = @(ConvertTo-ProjectTestsBslCodeLines -Text $text)
+        $relative = $file
+        if ($file.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { $relative = $file.Substring($root.Length + 1) }
+        $relative = $relative.Replace('\', '/')
+        $pending = $null
+        $current = $null
+        for ($n = 0; $n -lt $lines.Count; $n++) {
+            $code = $lines[$n].Trim()
+            if (-not $code) { continue }
+            if ($null -ne $current) {
+                if ($code -match $proceed) { $current.proceeds = $true }
+                if ($code -match '(?i)^(?:КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)(?![\p{L}\p{N}_])') {
+                    if (-not $current.proceeds) { $findings.Add([pscustomobject]@{ file = $relative; line = $current.line; method = $current.method; target = $current.target }) }
+                    $current = $null
+                }
+                continue
+            }
+            if ($code.StartsWith('&')) {
+                if ($code -match '(?i)^&\s*(?:Вместо|Around)\s*\(') {
+                    $target = [regex]::Match([string]$raw[$n], '(?i)&\s*(?:Вместо|Around)\s*\(\s*"([^"]*)"').Groups[1].Value
+                    $pending = [pscustomobject]@{ line = $n + 1; target = $target }
+                }
+                continue
+            }
+            $declaration = [regex]::Match($code, '(?i)^(?:(?:Асинх|Async)\s+)?(?:Процедура|Функция|Procedure|Function)\s+([\p{L}_][\p{L}\p{N}_]*)')
+            if ($declaration.Success -and $null -ne $pending) {
+                $current = [pscustomobject]@{ line = $pending.line; method = $declaration.Groups[1].Value; target = $pending.target; proceeds = $false }
+            }
+            $pending = $null
+        }
+    }
+    return @($findings.ToArray())
+}
+
+function Write-ProjectTestsInterceptorWarnings {
+    param([string]$Path)
+    try {
+        foreach ($finding in @(Get-ProjectTestsInsteadWithoutProceed -Path $Path)) {
+            Write-Host "[WARN] ITL_PROJECT_TESTS_INSTEAD_WITHOUT_PROCEED: file=$($finding.file); line=$($finding.line); method=$($finding.method); target=$($finding.target). This &Вместо does not call ПродолжитьВызов; check the interceptor preference order in references/yaxunit-tests.md (Test seam). Loading continues."
+        }
+    } catch {
+        Write-Host "[WARN] ITL_PROJECT_TESTS_INTERCEPTOR_SCAN_FAILED: $($_.Exception.Message) Loading continues."
+    }
+}
+
+function Assert-ProjectTestsApplicable {
+    # Read-only check of the already loaded test extension against the changed
+    # main configuration; it never reloads or rolls back the infobase.
+    param([Parameter(Mandatory = $true)][object]$State, [Parameter(Mandatory = $true)][string]$ExtensionName)
+    $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
+    New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
+    $resultPath = New-TimestampedFilePath -Directory $logsPath -Prefix '1c-project-tests-applicability-' -Extension '.result'
+    Set-RunStage -Stage 'yaxunit.project-tests-applicability' -Detail "Checking that '$ExtensionName' applies to the changed configuration."
+    $exitCode = 0
+    $logPath = ''
+    try {
+        Invoke-Designer -InfoBasePath ([string]$State.devBranchInfoBasePath) -InfoBaseKind ([string]$State.infoBaseKind) `
+            -DesignerArgs @('/CheckCanApplyConfigurationExtensions', '-Extension', $ExtensionName, '/DumpResult', $resultPath) | Out-Null
+        $logPath = [string]$script:LastLogPath
+    } catch {
+        $native = $_.Exception.Data['ItlDesignerBatchResult']
+        if ($null -eq $native -or [string]$native.operation -cne '/CheckCanApplyConfigurationExtensions' -or -not [bool]$native.ownedProcessesReleased) { throw }
+        $exitCode = [int]$native.exitCode
+        $logPath = [string]$native.logPath
+    }
+    $verdict = Get-DesignerBatchCheckVerdict -ExitCode $exitCode -ResultPath $resultPath -LogPath $logPath
+    if ($verdict.resultCode -eq 0 -and $exitCode -eq 0) { return $verdict }
+    if ($null -eq $verdict.resultCode -or $verdict.resultCode -eq 0) {
+        throw "ITL_PROJECT_TESTS_APPLICABILITY_UNKNOWN: extension='$ExtensionName'; $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath. Tests were not started; restore the native check through repair-dev-branch-tooling, then repeat the original command."
+    }
+    $lines = @()
+    if ($logPath -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+        $lines = @((Read-Utf8Text -Path $logPath) -split '\r?\n' | ForEach-Object { $_.Trim([char]0xFEFF, ' ', "`t") } | Where-Object { $_ })
+    }
+    $methods = @($lines | ForEach-Object { [regex]::Match($_, '"([^"]+)"').Groups[1].Value } | Where-Object { $_ } | Select-Object -Unique)
+    $diagnostics = @($lines | Select-Object -First 20 | ForEach-Object { $_.Substring(0, [Math]::Min(300, $_.Length)) }) -join ' | '
+    throw "ITL_PROJECT_TESTS_NOT_APPLICABLE: extension='$ExtensionName' does not apply to the changed loaded configuration; methods=$($methods -join ', '); diagnostics=$diagnostics; result=$resultPath; log=$logPath. YAxUnit and Vanessa were not started. Correct these interceptors in $(Get-YAxUnitTestsPath) to the current configuration methods (references/yaxunit-tests.md, Test seam), then repeat the original command; changed test sources reload with full applicability."
+}
+
 function New-YAxUnitInstallationProof {
     param([object]$State, [object]$Identity, [object]$Entry, [object]$Source, [object]$Engine, [object]$Tests,
         [switch]$TrackProjectSettings, [bool]$RequireProjectSafeModeOff = $false,
         [bool]$ProjectSettingsPending = $false, [AllowNull()][object]$ProtectionBefore = $null,
-        [AllowNull()][object]$CapabilityEvidence = $null)
+        [AllowNull()][object]$CapabilityEvidence = $null,
+        [string]$ConfigurationFingerprint = '', [bool]$AdoptedObjects = $false)
 
     $proof = [ordered]@{
         schemaVersion=1;generation=[string]$State.toolingInfoBaseGeneration;infoBaseKey=[string]$Identity.key
         engineName=[string]$Engine.name;testsName=[string]$Tests.name
         engineSha256=[string]$Entry.sha256;engineRuntimeHash=[string]$Engine.contentHash
         testsFingerprint=[string]$Source.fingerprint;testsRuntimeHash=[string]$Tests.contentHash;verifiedAt=(Get-Date).ToString('o')
+        testsAdoptedObjects=$AdoptedObjects;configurationFingerprint=$ConfigurationFingerprint
     }
     if ($TrackProjectSettings) {
         $proof['testsSafeModeRequired']=$RequireProjectSafeModeOff
@@ -635,7 +749,26 @@ function Ensure-YAxUnitExtensions {
         ((Get-StateValue $proof 'testsUnsafeActionProtection' $null) -is [bool])
     $settingsReady = -not $projectSafeModeOff -or ($testsMatch -and $settingsEvidenceComplete -and
         $tests.safeMode -is [bool] -and $tests.unsafeActionProtection -is [bool] -and -not $tests.safeMode)
-    if ($engineMatches -and $testsMatch -and $settingsReady -and -not $pending) { return $State }
+    # An unchanged extension that adopts configuration objects is rechecked,
+    # without reload, after the loaded main configuration changed. An empty
+    # current fingerprint is not evidence of an unchanged configuration.
+    $configurationFingerprint = [string](Get-StateValue $State 'lastConfigDesignerFingerprint' '')
+    $proofAdopted = Get-StateValue $proof 'testsAdoptedObjects' $null
+    $adoptedObjects = if ($testsMatch -and $proofAdopted -is [bool]) { [bool]$proofAdopted } else { Test-ProjectTestsAdoptedObjects -Path $testsPath }
+    $proofConfiguration = Get-StateValue $proof 'configurationFingerprint' $null
+    $applicabilityRequired = $testsMatch -and $adoptedObjects -and (-not $configurationFingerprint -or [string]$proofConfiguration -cne $configurationFingerprint)
+    if ($applicabilityRequired) { Assert-ProjectTestsApplicable -State $State -ExtensionName $testsExtensionName | Out-Null }
+    if ($engineMatches -and $testsMatch -and $settingsReady -and -not $pending) {
+        if ($applicabilityRequired -or $proofAdopted -isnot [bool] -or $null -eq $proofConfiguration) {
+            $current = [ordered]@{}
+            foreach ($property in $proof.PSObject.Properties) { $current[$property.Name] = $property.Value }
+            $current['testsAdoptedObjects'] = $adoptedObjects
+            $current['configurationFingerprint'] = $configurationFingerprint
+            Update-DevBranchState -State $State -Updates @{ yaxunitInstallationProof = [pscustomobject]$current }
+            $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue ([pscustomobject]$current) -Force
+        }
+        return $State
+    }
 
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "YAxUnit extension synchronization"
     $synchronize = {
@@ -654,6 +787,7 @@ function Ensure-YAxUnitExtensions {
             -User ([string](Get-EnvValue -Name "IB_USER")) -Password ([string](Get-EnvValue -Name "IB_PASSWORD")) -Scope "yaxunit" -ReconcileYAxUnitProtections)
     }
     if (-not $testsMatch) {
+        Write-ProjectTestsInterceptorWarnings -Path $testsPath
         Invoke-ConfigLoadDesignerAttempt -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
             -ExtensionName $testsExtensionName -SourceFingerprint $source.fingerprint -ValidationPurpose 'project-tests' `
             -AfterApply {
@@ -686,7 +820,8 @@ function Ensure-YAxUnitExtensions {
             # Old fields retain their content-only meaning. This additive marker
             # prevents the new owner from treating an unknown setter as completed.
             $contentProof = New-YAxUnitInstallationProof -State $State -Identity $identity -Entry $entry -Source $source -Engine $engine -Tests $tests `
-                -TrackProjectSettings -RequireProjectSafeModeOff $true -ProjectSettingsPending $true -ProtectionBefore $protectionBefore
+                -TrackProjectSettings -RequireProjectSafeModeOff $true -ProjectSettingsPending $true -ProtectionBefore $protectionBefore `
+                -ConfigurationFingerprint $configurationFingerprint -AdoptedObjects $adoptedObjects
             Update-DevBranchState -State $State -Updates @{yaxunitInstallationProof=$contentProof}
             $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $contentProof -Force
             $guardContext = [string][Environment]::GetEnvironmentVariable('ITL_EXECUTION_CONTEXT','Process')
@@ -715,7 +850,8 @@ function Ensure-YAxUnitExtensions {
         if ([string]$currentSource.fingerprint -cne [string]$source.fingerprint) { throw 'ITL_PROJECT_TESTS_SOURCE_CHANGED: source changed during synchronization; repeat the original owner operation on one stable snapshot.' }
     }
     $updates = @{ yaxunitInstallationProof = (New-YAxUnitInstallationProof -State $State -Identity $identity -Entry $entry -Source $source -Engine $engine -Tests $tests `
-        -TrackProjectSettings:($projectSafeModeOff -or $pending) -RequireProjectSafeModeOff $projectSafeModeOff -ProtectionBefore $protectionBefore -CapabilityEvidence $capabilityEvidence) }
+        -TrackProjectSettings:($projectSafeModeOff -or $pending) -RequireProjectSafeModeOff $projectSafeModeOff -ProtectionBefore $protectionBefore -CapabilityEvidence $capabilityEvidence `
+        -ConfigurationFingerprint $configurationFingerprint -AdoptedObjects $adoptedObjects) }
     if ($contentChanged -or $settingsChanged) {
         $updates['toolingMutationId']=[guid]::NewGuid().ToString('N')
         $updates['toolingMutationAt']=(Get-Date).ToString('o')
@@ -728,6 +864,65 @@ function Ensure-YAxUnitExtensions {
         return Invoke-WithOneCExecutionGuard -Admissions @($admission) -Purpose 'project-tests-safe-mode' -ScriptBlock $synchronize
     }
     return & $synchronize
+}
+
+function Get-ProjectTestsReadinessKey {
+    param([object]$State, [string]$SourceFingerprint)
+    $proof = Get-StateValue $State 'yaxunitInstallationProof' $null
+    return (@(
+        [string](Get-StateValue $State 'devBranchName' ''), [string](Get-StateValue $State 'infoBaseKind' ''),
+        ([string](Get-StateValue $State 'devBranchInfoBasePath' '')).ToLowerInvariant(),
+        [string](Get-StateValue $State 'toolingInfoBaseGeneration' ''), [string](Get-StateValue $State 'lastConfigDesignerFingerprint' ''),
+        $SourceFingerprint, [string](Get-StateValue $proof 'testsFingerprint' ''), [string](Get-StateValue $proof 'testsRuntimeHash' ''),
+        [string](Get-YAxUnitProjectTestsSafeModeOptIn)
+    ) -join '|')
+}
+
+function Test-ProjectTestsProofCurrent {
+    # Recorded-proof trust for diagnostic runs and Vanessa UI MCP: every input
+    # that selects reload, applicability or settings must still match.
+    param([object]$State, [string]$SourceFingerprint)
+    $proof = Get-StateValue $State 'yaxunitInstallationProof' $null
+    if ($null -eq $proof -or (Get-StateValue $proof 'schemaVersion' 0) -ne 1) { return $false }
+    $generation = [string](Get-StateValue $State 'toolingInfoBaseGeneration' '')
+    if (-not $generation -or [string](Get-StateValue $proof 'generation' '') -cne $generation) { return $false }
+    $identity = Get-OneCInfoBaseIdentity -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath
+    if ([string](Get-StateValue $proof 'infoBaseKey' '') -cne [string]$identity.key -or
+        [string](Get-StateValue $proof 'engineName' '') -cne (Get-YAxUnitExtensionName) -or
+        [string](Get-StateValue $proof 'testsName' '') -cne (Get-YAxUnitTestsExtensionName) -or
+        [string](Get-StateValue $proof 'engineSha256' '') -cne [string](Get-YAxUnitPinnedEntry).sha256 -or
+        -not [string](Get-StateValue $proof 'engineRuntimeHash' '') -or -not [string](Get-StateValue $proof 'testsRuntimeHash' '') -or
+        [string](Get-StateValue $proof 'testsFingerprint' '') -cne $SourceFingerprint -or
+        (Get-StateValue $proof 'projectTestsSettingsPending' $false) -ne $false) { return $false }
+    if ((Get-YAxUnitProjectTestsSafeModeOptIn) -and -not ([bool](Get-StateValue $proof 'testsSafeModeRequired' $false) -and (Get-StateValue $proof 'testsSafeMode' $true) -eq $false)) { return $false }
+    $adopted = Get-StateValue $proof 'testsAdoptedObjects' $null
+    if ($adopted -isnot [bool]) { return $false }
+    if ($adopted) {
+        $configuration = [string](Get-StateValue $State 'lastConfigDesignerFingerprint' '')
+        if (-not $configuration -or [string](Get-StateValue $proof 'configurationFingerprint' '') -cne $configuration) { return $false }
+    }
+    return $true
+}
+
+function Ensure-ProjectTestsReady {
+    # Single owner of project test-extension readiness for every run that
+    # executes its code: YAxUnit, Vanessa verification/diagnostics and the
+    # Vanessa UI MCP TestClient target. A second call in one check is a no-op.
+    param([Parameter(Mandatory = $true)][object]$State, [switch]$TrustCurrentProof)
+    if (-not (Test-YAxUnitSuitePresent)) { return $State }
+    $source = [string](Get-ConfigSourceFingerprint -ExportPath (Get-YAxUnitTestsPath)).fingerprint
+    $prepared = Get-Variable -Name ProjectTestsReadinessKey -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($prepared -and $prepared -ceq (Get-ProjectTestsReadinessKey -State $State -SourceFingerprint $source)) {
+        Write-Host 'Project tests readiness: already prepared in this check.'
+        return $State
+    }
+    if ($TrustCurrentProof -and (Test-ProjectTestsProofCurrent -State $State -SourceFingerprint $source)) {
+        Write-Host 'Project tests readiness: sources and configuration match the recorded installation proof; no reload or fresh probe for this run.'
+        return $State
+    }
+    $State = Ensure-YAxUnitExtensions -State $State
+    $script:ProjectTestsReadinessKey = Get-ProjectTestsReadinessKey -State $State -SourceFingerprint $source
+    return $State
 }
 
 function Invoke-YAxUnitVerification {
@@ -762,7 +957,7 @@ function Invoke-YAxUnitVerification {
     $entry = Get-YAxUnitPinnedEntry
 
     try {
-        $State = Ensure-YAxUnitExtensions -State $State
+        $State = Ensure-ProjectTestsReady -State $State
 
         $config = [ordered]@{
             filter = [ordered]@{ extensions = @($testsExtensionName) }

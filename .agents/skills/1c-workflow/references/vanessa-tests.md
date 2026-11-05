@@ -31,6 +31,7 @@ or long regressions only when explicitly requested.
    `acceptance|explicit` purpose and production `ownerPaths`; follow
    `verification-suite-selection.md`.
 7. Run the final ITL assessment for applicable obligations. Vanessa UI MCP may aid test development but is not the saved test runner.
+8. Scenario-called test-extension code follows the `yaxunit-tests.md` interceptor rule.
 
 ## Development And Verification
 
