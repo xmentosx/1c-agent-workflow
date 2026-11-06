@@ -107,12 +107,20 @@ function Read-VerificationObligationDecisions {
     }
     $entryId = if ($Runner -eq 'vanessa') { 'suiteId' } else { 'groupId' }
     $proofType = if ($Runner -eq 'vanessa') { 'vanessa-junit' } else { 'yaxunit-junit' }
+    # A retained entry's own test sources are inputs of its result, so editing a
+    # test module or feature is covered by the entry that runs it.
+    $testSourceName = if ($Runner -eq 'vanessa') { 'featurePaths' } else { 'modulePaths' }
+    $entryInputs = {
+        param([object]$Entry, [string[]]$Declared)
+        return @(@($Declared) + @(Get-VerificationCatalogValue -Value $Entry -Name $testSourceName -Default @()) |
+            ForEach-Object { [string]$_ -replace '\\', '/' } | Where-Object { $_ } | Select-Object -Unique)
+    }
     if ($schema -eq 1) {
         return @($RetainedEntries | ForEach-Object {
             [pscustomobject][ordered]@{
                 id = "$Runner/$($_.id)"
                 expectedResult = 'The retained test passes.'
-                inputPaths = @($_.ownerPaths)
+                inputPaths = @(& $entryInputs $_ @($_.ownerPaths))
                 admissibleProof = @($proofType)
                 retention = 'retained'
                 retentionReason = 'Existing schema-1 suite is preserved.'
@@ -164,6 +172,7 @@ function Read-VerificationObligationDecisions {
         if ($boundEntry -and $proofType -notin $proof) {
             throw "VERIFICATION_OBLIGATION_PROOF_INVALID: retained '$id' needs '$proofType' in admissibleProof."
         }
+        if ($boundEntry) { $inputs = @(& $entryInputs @($RetainedEntries | Where-Object { $_.id -eq $boundEntry })[0] $inputs) }
         $decisions.Add([pscustomobject][ordered]@{
             id = $id
             expectedResult = $expected.Trim()
@@ -906,8 +915,11 @@ function Get-VerificationSelectionChangedPaths {
 }
 
 function Get-VerificationOwnerPaths {
-    # Workflow-owned verification code: a change selects the complete acceptance set.
+    # Workflow-owned verification code and its pinned runtime: a change selects the
+    # complete acceptance set. The changed-path owner drops a lock edit that leaves
+    # every verification-relevant pin unchanged.
     return @(
+        '.agent-1c/dependency-lock.json',
         '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1',
         '.agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1',
         '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1',
@@ -1259,10 +1271,6 @@ function New-VerificationCumulativeSelectionPlan {
             foreach ($obligation in $declaredObligations) {
                 if ($obligation.cadence -eq 'affected') { [void]$selectedIds.Add([string]$obligation.suiteId) }
             }
-            continue
-        }
-        if ($changedPath -eq ".agent-1c/dependency-lock.json") {
-            $fullReasons.Add("The pinned verification runtime changed; the complete acceptance set is required.")
             continue
         }
         if ($changedPath -in @(Get-VerificationOwnerPaths)) {

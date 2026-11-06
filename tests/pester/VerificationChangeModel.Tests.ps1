@@ -227,22 +227,53 @@ Describe 'Change mode recovery and reuse boundaries' {
         [IO.File]::WriteAllText((Join-Path $root 'src/cf/other.bsl'),'Master change',[Text.UTF8Encoding]::new($false))
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $root $owner)) | Out-Null
         [IO.File]::WriteAllText((Join-Path $root $owner),'# updated workflow owner',[Text.UTF8Encoding]::new($false))
+        # update-workflow pins a new verification runtime in the same workflow commit.
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dependency-lock.json'),'{"dependencies":{"itlOndemandMcp":{"version":"0.4.27","sha256":"new"}}}',[Text.UTF8Encoding]::new($false))
         & git -C $root add -- .; & git -C $root commit -qm 'master change and workflow update'
         & git -C $root checkout -q itldev/change
         & git -C $root merge -q --no-edit master
         $LASTEXITCODE | Should -Be 0
+        $owners=@('.agent-1c/dependency-lock.json',$owner)
         Enter-ChangeFixture $root {
             $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
             $preview=Start-VerificationChange
             @($preview.changedPaths) | Should -Be @('src/cf/current.bsl')
             @($preview.systemCoveredPaths.importedPaths) | Should -Be @('src/cf/other.bsl')
-            @($preview.systemCoveredPaths.verificationOwnerPaths) | Should -Be @($owner)
+            @($preview.systemCoveredPaths.verificationOwnerPaths) | Should -Be $owners
             $file=Write-CurrentPlan
             $change=Start-VerificationChange -EvidencePath $file
             @($change.systemInput.importedPaths) | Should -Be @('src/cf/other.bsl')
-            @((Read-VerificationChange).systemInput.verificationOwnerPaths) | Should -Be @($owner)
+            @((Read-VerificationChange).systemInput.verificationOwnerPaths) | Should -Be $owners
             [IO.File]::WriteAllText((Join-Path $root 'src/cf/other.bsl'),'Branch edit of the import',[Text.UTF8Encoding]::new($false))
             { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_PATH_PENDING: 'src/cf/other.bsl'*"
+        }
+    }
+    It 'names the declared and covering checks for an undecided path and covers a YAxUnit test module by its group' {
+        $root=Join-Path $TestDrive 'Модуль теста группы с пробелами'; New-ChangeFixture $root
+        $module='tests/yaxunit/CommonModules/УТ_ТекущийРезультат/Ext/Module.bsl'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $root $module)) | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root $module),'Procedure Existing() Export EndProcedure',[Text.UTF8Encoding]::new($false))
+        $catalog=@{schemaVersion=1;registrationPaths=@();groups=@(@{id='current';purpose='default-fast';modulePaths=@($module);ownerPaths=@('src/cf/current.bsl')})}
+        [IO.File]::WriteAllText((Join-Path $root 'tests/yaxunit-suites.branch.json'),($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+        # The retained group belongs to the branch baseline, not to the task delta.
+        & git -C $root add -- .; & git -C $root commit -q --amend --no-edit
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root $module) -Value 'Procedure Existing() Export EndProcedure Procedure NewCase() Export EndProcedure'
+            $file=Write-CurrentPlan
+            $p=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $p.paths=@(@{path=$module;checkIds=@();reason='A new case of the retained group.'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($p|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_PATH_UNCOVERED: '$module' lists no checkIds. No declared check has inputPaths that cover it*Declared check ids: 'first'.*"
+            $p.paths[0].checkIds=@('yaxunit/missing')
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($p|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_CHECK_UNKNOWN: '$module' references undeclared check ids 'yaxunit/missing'. Declared check ids: 'first'.*"
+            $p.checks=@($p.checks[0],@{groupId='current'})
+            $p.paths[0].checkIds=@('first')
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($p|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_PATH_UNCOVERED: 'first' does not cover '$module'. Checks whose inputPaths cover it: 'yaxunit/current'.*"
+            $p.paths[0].checkIds=@('yaxunit/current')
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($p|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Not -Throw
         }
     }
     It 'keeps task remainder when switching mode and rejects changed observations and target generations' {

@@ -255,13 +255,20 @@ function Start-VerificationChange {
             throw "VERIFICATION_CHANGE_PATH_PENDING: '$path' needs one impact decision, reason and sufficient checkIds; update the plan and repeat begin-verification-change."
         }
         $ids = @($entry[0].checkIds)
-        if ($ids.Count -eq 0 -or @($ids | Where-Object { $_ -notin @($checks.id) }).Count -gt 0) {
-            throw "VERIFICATION_CHANGE_PATH_UNCOVERED: '$path' has no declared current check."
+        $declared = "Declared check ids: $((@($checks.id) | ForEach-Object { "'$_'" }) -join ', ')."
+        $covering = @($checks | Where-Object { @($_.inputPaths | Where-Object { Test-VerificationRepoPathPattern -Path $path -Pattern $_ }).Count -gt 0 } | ForEach-Object { "'$($_.id)'" })
+        $coveringText = if ($covering.Count -gt 0) { "Checks whose inputPaths cover it: $($covering -join ', ')." } else { 'No declared check has inputPaths that cover it; declare one.' }
+        if ($ids.Count -eq 0) {
+            throw "VERIFICATION_CHANGE_PATH_UNCOVERED: '$path' lists no checkIds. $coveringText $declared"
+        }
+        $unknown = @($ids | Where-Object { $_ -notin @($checks.id) })
+        if ($unknown.Count -gt 0) {
+            throw "VERIFICATION_CHANGE_CHECK_UNKNOWN: '$path' references undeclared check ids $((@($unknown) | ForEach-Object { "'$_'" }) -join ', '). $declared"
         }
         foreach ($id in $ids) {
             $check = @($checks | Where-Object id -eq $id)[0]
             if (@($check.inputPaths | Where-Object { Test-VerificationRepoPathPattern -Path $path -Pattern $_ }).Count -eq 0) {
-                throw "VERIFICATION_CHANGE_PATH_UNCOVERED: '$id' does not cover '$path'."
+                throw "VERIFICATION_CHANGE_PATH_UNCOVERED: '$id' does not cover '$path'. $coveringText"
             }
         }
     }
