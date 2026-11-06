@@ -191,6 +191,17 @@ function Install-ItlOnDemandMcp {
         throw "ITL_ONDEMAND_UNSUPPORTED_PLATFORM: v1 supports Windows x64 only."
     }
     $contract = Get-ItlOnDemandMcpFacadeContract
+    $runEntry = $null
+    if (-not $ForceDownload) {
+        # One update-workflow run proves the shared executable once per exact
+        # facade pin and install root, not once per development worktree.
+        $runEntry = Get-WorkflowUpdateRunSharedEntry -Kind 'itl-ondemand-mcp' -Identity ([ordered]@{ entry = $contract.entry
+            root = [string](Get-ItlOnDemandMcpInstallRoot); sourceBuild = [string][Environment]::GetEnvironmentVariable('ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE', 'Process') })
+        if ($null -ne $runEntry -and $runEntry.ContainsKey('value')) {
+            Write-Host "ITL on-demand MCP executable verified earlier in this update run: $($runEntry['value'].path)"
+            return $runEntry['value']
+        }
+    }
     $entry = $contract.entry
     $version = $contract.version
     $url = [string](Get-ConfigValueFromObject -Object $entry -Path "url" -Default "")
@@ -272,7 +283,9 @@ function Install-ItlOnDemandMcp {
     }
     Write-Host "ITL on-demand MCP executable: $targetPath"
     Write-Host "ITL on-demand MCP SHA256: $actual"
-    return [pscustomobject]@{ path = $targetPath; version = $version; sha256 = $actual }
+    $installed = [pscustomobject]@{ path = $targetPath; version = $version; sha256 = $actual }
+    if ($null -ne $runEntry) { $runEntry['value'] = $installed }
+    return $installed
 }
 
 function Get-ItlOnDemandMcpEndpointDescriptors {

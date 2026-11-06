@@ -787,6 +787,22 @@ function Get-AiRulesCandidateInstallInventory {
     param([Parameter(Mandatory = $true)][object]$Checkout, [Parameter(Mandatory = $true)][string[]]$Tools)
 
     Assert-AiRulesMigrationCandidateScope -RulesRoot $Checkout.root
+    # The verified checkout is immutable per exact commit, so one update run
+    # plans the isolated install once per commit and client set.
+    if ([string](Get-ConfigValueFromObject -Object $Checkout -Path 'commit' -Default '') -notmatch '^[a-f0-9]{40}$') {
+        return @(Get-AiRulesCandidateInstallInventoryCore -Checkout $Checkout -Tools $Tools)
+    }
+    $step =Invoke-WorkflowUpdateRunSharedStep -Kind 'ai-rules-candidate-inventory' -Identity ([ordered]@{
+        root = [string]$Checkout.root; commit = [string]$Checkout.commit; tools = @($Tools) }) -Prepare {
+        , @(Get-AiRulesCandidateInstallInventoryCore -Checkout $Checkout -Tools $Tools)
+    }
+    if ($step.reused) { Write-Host "Fork candidate preflight reused for $($Tools -join ', ') in this update run." }
+    return @($step.value)
+}
+
+function Get-AiRulesCandidateInstallInventoryCore {
+    param([Parameter(Mandatory = $true)][object]$Checkout, [Parameter(Mandatory = $true)][string[]]$Tools)
+
     $preflightRoot = Join-Path (Get-Agent1cTempRoot) ("itl-ai-rules-preflight-" + [guid]::NewGuid().ToString("N"))
     try {
         New-Item -ItemType Directory -Force -Path $preflightRoot | Out-Null

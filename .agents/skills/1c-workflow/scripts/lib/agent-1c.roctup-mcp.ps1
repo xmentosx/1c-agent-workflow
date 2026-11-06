@@ -277,6 +277,18 @@ function Install-RoctupMcpArtifact {
     param([switch]$ForceDownload)
 
     $asset = Get-RoctupMcpReleaseAssetInfo
+    $runEntry = $null
+    if ($ForceDownload) {
+        # One update-workflow run reacquires the shared artifact and skills
+        # cache once per exact pin; every worktree still records its settings.
+        $runEntry = Get-WorkflowUpdateRunSharedEntry -Kind 'roctup-mcp-artifact' -Identity ([ordered]@{ asset = $asset; installRoot = [string](Get-RoctupMcpInstallRoot) })
+        if ($null -ne $runEntry -and $runEntry.ContainsKey('value')) {
+            $shared = $runEntry['value']
+            Write-Host "ROCTUP MCP artifact verified earlier in this update run."
+            Save-RoctupMcpInstallSettingsToDotEnv -EpfPath $shared.path -Version $shared.version -Sha256 $shared.sha256
+            return $shared
+        }
+    }
     $expected = ([string]$asset.expectedSha256).ToLowerInvariant()
     $existingEpf = Find-RoctupMcpEpf
     if ($existingEpf -and -not $ForceDownload) {
@@ -318,6 +330,7 @@ function Install-RoctupMcpArtifact {
     $artifact = Save-RoctupMcpArtifact -AssetInfo $asset
     Save-RoctupMcpInstallSettingsToDotEnv -EpfPath $artifact.path -Version $artifact.version -Sha256 $artifact.sha256
     Install-RoctupMcpSkillsBestEffort -Version $artifact.version -InstallRoot (Get-RoctupMcpInstallRoot)
+    if ($null -ne $runEntry) { $runEntry['value'] = $artifact }
     return $artifact
 }
 

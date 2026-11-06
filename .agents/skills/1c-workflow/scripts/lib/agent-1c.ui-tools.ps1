@@ -279,15 +279,23 @@ function Install-ItlUiTools {
     }
     $failures = @()
     foreach ($tool in @("agent-browser", "windows-mcp")) {
+        $runEntry = $null
         try {
             if ($BestEffort) {
                 $policy = Get-ItlUiToolPolicy -Tool $tool
                 if (-not $policy.valid) { throw "ITL_UI_TOOL_POLICY_INVALID: $($policy.key)='$($policy.raw)'; set auto, off, or required before automatic preparation." }
                 if ($policy.effective -eq 'off') { Write-Host "$tool preparation skipped: $($policy.key)=off. A named install action may override this for one invocation."; continue }
+                # User-scope preparation is attempted and reported once per
+                # update-workflow run for the same pin, not once per worktree.
+                $component = if ($tool -eq 'agent-browser') { 'agentBrowser' } else { 'windowsMcp' }
+                $runEntry = Get-WorkflowUpdateRunSharedEntry -Kind 'ui-tool-preparation' -Identity ([ordered]@{ tool = $tool; pin = (Get-ItlUiToolsLock -Name $component).$component })
+                if ($null -ne $runEntry -and $runEntry.ContainsKey('outcome')) { continue }
             }
             if ($tool -eq "agent-browser") { Install-ItlAgentBrowser } else { Install-ItlWindowsMcp }
+            if ($null -ne $runEntry) { $runEntry['outcome'] = 'prepared' }
         } catch {
             if (-not $BestEffort) { throw }
+            if ($null -ne $runEntry) { $runEntry['outcome'] = 'failed' }
             $failures += "$tool`: $($_.Exception.Message)"
             Write-Warning "UI tool preparation is non-blocking: $tool failed. $($_.Exception.Message)"
         }

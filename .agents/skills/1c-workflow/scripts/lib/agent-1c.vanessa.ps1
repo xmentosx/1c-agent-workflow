@@ -399,7 +399,20 @@ function Install-VanessaAutomation {
     Write-Section "Install Vanessa Automation"
 
     $downloadInfo = Get-VanessaAutomationDownloadInfo
-    $state = Get-VanessaAutomationState
+    # One update-workflow run hashes the shared EPF once per exact pin and path.
+    $pin = Get-WorkflowDependencyEntry -Name "vanessaAutomation"
+    $runEntry = Get-WorkflowUpdateRunSharedEntry -Kind 'vanessa-automation-epf' -Identity ([ordered]@{
+        pin = [ordered]@{ version = [string](Get-ConfigValueFromObject $pin 'version' ''); compatibilityVersion = [string](Get-ConfigValueFromObject $pin 'compatibilityVersion' '')
+            downstreamRevision = [string](Get-ConfigValueFromObject $pin 'downstreamRevision' ''); sha256 = [string](Get-ConfigValueFromObject $pin 'sha256' '')
+            epfSha256 = [string](Get-ConfigValueFromObject $pin 'epfSha256' '') }
+        epfPath = [string](Get-VanessaAutomationEpfPath) })
+    if ($null -ne $runEntry -and $runEntry.ContainsKey('readyState')) {
+        $state = $runEntry['readyState']
+        Write-Host "Vanessa Automation EPF verified earlier in this update run."
+    } else {
+        $state = Get-VanessaAutomationState
+        if ($null -ne $runEntry -and $state.ready) { $runEntry['readyState'] = $state }
+    }
     if ($state.ready) {
         Write-Host "Vanessa Automation is already installed: $($state.epfPath)"
         Save-VanessaAutomationSettingsToDotEnv -EpfPath $state.epfPath -Version $downloadInfo.compatibilityVersion -DownstreamRevision $downloadInfo.downstreamRevision
@@ -8148,7 +8161,29 @@ function Install-VanessaMcpArtifacts {
 function Update-VanessaMcpArtifacts {
     Write-Section "Update Vanessa UI MCP artifacts"
 
-    $artifacts = Install-VanessaMcpArtifacts -ForceDownload
+    if (-not (Test-WorkflowUpdateRunSharedInputsActive)) {
+        $artifacts = Install-VanessaMcpArtifacts -ForceDownload
+    } else {
+        # One update-workflow run reacquires each shared CFE once per exact pin
+        # and target; every worktree still records its lock entry and settings.
+        $artifacts = @()
+        foreach ($definition in Get-VanessaMcpArtifactDefinitions) {
+            $identity = [ordered]@{ key = [string]$definition.lockKey; asset = (Get-VanessaMcpReleaseAssetInfo -Definition $definition)
+                path = [string](Get-VanessaMcpManagedArtifactPath -Definition $definition) }
+            $step = Invoke-WorkflowUpdateRunSharedStep -Kind 'vanessa-ui-mcp-artifact' -Identity $identity -Prepare {
+                $lockBefore = ConvertTo-Json -InputObject (Get-VanessaMcpArtifactLockEntry -Definition $definition) -Depth 8 -Compress
+                $acquired = Install-VanessaMcpArtifact -Definition $definition -ForceDownload
+                $lockAfter = ConvertTo-Json -InputObject (Get-VanessaMcpArtifactLockEntry -Definition $definition) -Depth 8 -Compress
+                [pscustomobject]@{ artifact = $acquired; lockRecorded = ($lockBefore -cne $lockAfter) }
+            }
+            if ($step.reused) {
+                Write-Host "Vanessa UI MCP $($definition.lockKey) artifact verified earlier in this update run."
+                if ($step.value.lockRecorded) { Update-VanessaMcpArtifactLockEntry -Artifact $step.value.artifact }
+            }
+            $artifacts += $step.value.artifact
+        }
+        Save-VanessaMcpArtifactSettingsToDotEnv -Artifacts $artifacts
+    }
     foreach ($artifact in $artifacts) {
         Write-Host "Vanessa UI MCP $($artifact.key) CFE: $($artifact.path)"
     }
