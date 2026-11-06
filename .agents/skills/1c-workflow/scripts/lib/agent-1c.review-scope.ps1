@@ -1,6 +1,15 @@
 ﻿# Review scope is a read-only projection of the branch transfer scope base:
 # everything that still differs from it, by file kind. It writes no branch
 # state, index, worktree, Git objects or refs and takes no lifecycle lock.
+# The verification fingerprint owner builds a temporary tree; its objects go to
+# a discarded object directory, so even that read leaves the repository as is.
+
+# A separate review above this much BSL change text does not fit one reviewer
+# context; measured on PM5 branches (2026-11-07), none fell between 90 KB and
+# 526 KB. The commit picker shows at most this many entries.
+$script:ReviewScopeLargeBslBytes = 307200
+$script:ReviewScopePickerLimit = 15
+$script:ReviewScopePickerScanLimit = 200
 
 function ConvertTo-ReviewScopePowerShellLiteral {
     param([AllowNull()][string]$Value)
@@ -114,6 +123,247 @@ function Get-ReviewScopeEntries {
     return [pscustomobject]@{ rules = $rules; entries = $entries }
 }
 
+function Get-ReviewScopeGitText {
+    param([string[]]$Arguments)
+    # The shared path-list transport owns quoting and UTF-8 decoding; BSL diff
+    # text has no NUL, so it comes back as one piece.
+    return (@(Get-GitPathList -Arguments $Arguments) -join '')
+}
+
+function Test-ReviewScopeBslSubject {
+    param([string]$Path, [object]$Rules)
+    return $Path.EndsWith('.bsl', [StringComparison]::OrdinalIgnoreCase) -and (Get-ReviewScopePathKind -Path $Path -Rules $Rules) -ceq 'subject'
+}
+
+function Get-ReviewScopeBslSize {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseCommit,
+        [Parameter(Mandatory = $true)][object]$Rules,
+        [string[]]$UntrackedPaths = @()
+    )
+
+    $roots = @($Rules.exportPath, $Rules.extensionsPath | Where-Object { $_ })
+    $tracked = @()
+    if ($roots.Count -gt 0) {
+        $tracked = @(Get-GitPathList -Arguments (@('diff', '--no-renames', '--name-only', '-z', $BaseCommit, '--') + $roots) |
+            ForEach-Object { ([string]$_).Replace('\', '/') } | Where-Object { Test-ReviewScopeBslSubject -Path $_ -Rules $Rules })
+    }
+    $untracked = @($UntrackedPaths | Where-Object { Test-ReviewScopeBslSubject -Path $_ -Rules $Rules })
+    $bytes = [long]0; $added = 0; $removed = 0
+    # Chunks keep the native command line far below the Windows limit.
+    for ($offset = 0; $offset -lt $tracked.Count; $offset += 100) {
+        $chunk = @($tracked[$offset..([Math]::Min($offset + 99, $tracked.Count - 1))])
+        $text = Get-ReviewScopeGitText -Arguments (@('diff', '--no-renames', $BaseCommit, '--') + $chunk)
+        $bytes += [Text.Encoding]::UTF8.GetByteCount($text)
+        foreach ($record in @(Get-GitPathList -Arguments (@('diff', '--no-renames', '--numstat', '-z', $BaseCommit, '--') + $chunk))) {
+            $fields = ([string]$record) -split "`t", 3
+            if ($fields.Count -lt 3) { continue }
+            if ($fields[0] -match '^\d+$') { $added += [int]$fields[0] }
+            if ($fields[1] -match '^\d+$') { $removed += [int]$fields[1] }
+        }
+    }
+    foreach ($path in $untracked) {
+        $full = Join-Path $script:ProjectRoot $path
+        if (-not [IO.File]::Exists($full)) { continue }
+        $content = [IO.File]::ReadAllBytes($full)
+        $bytes += $content.Length
+        $added += @($content | Where-Object { $_ -eq 10 }).Count + 1
+    }
+    return [pscustomobject]@{
+        modules = $tracked.Count + $untracked.Count
+        addedLines = $added
+        removedLines = $removed
+        bytes = $bytes
+        sizeClass = $(if ($bytes -gt $script:ReviewScopeLargeBslBytes) { 'large' } else { 'normal' })
+    }
+}
+
+function Format-ReviewScopeSize {
+    param([object]$Size)
+    $class = if ($Size.sizeClass -ceq 'large') { 'большой' } else { 'нормальный' }
+    $kb = [Math]::Ceiling([double]$Size.bytes / 1024)
+    return "модулей BSL: $($Size.modules), строк +$($Size.addedLines)/-$($Size.removedLines), текст изменений $kb КБ — $class"
+}
+
+function Get-ReviewScopeAutomaticCommitLabels {
+    # Subjects of commits the helper itself creates with the developer's work
+    # inside; ReviewScope.Tests checks this table against their producers.
+    return @(
+        @{ pattern = '^chore: checkpoint before branch refresh$'; label = 'автосохранение работы перед обновлением из master' },
+        @{ pattern = '^chore: checkpoint before branch reset$'; label = 'автосохранение работы перед сбросом ветки' },
+        @{ pattern = '^chore: checkpoint before source sync with (?<arg>.+)$'; label = 'автосохранение работы перед синхронизацией исходников с {0}' },
+        @{ pattern = '^chore: checkpoint before source group (?<arg>.+)$'; label = 'автосохранение работы перед группой исходников {0}' },
+        @{ pattern = '^chore: checkpoint before fork to (?<arg>.+)$'; label = 'автосохранение работы перед ответвлением в {0}' },
+        @{ pattern = '^sync: copy combined 1C sources from (?<arg>.+)$'; label = 'копия исходников 1С из ветки {0}' }
+    )
+}
+
+function Get-ReviewScopeCommitLabel {
+    param([string]$Subject)
+    foreach ($entry in Get-ReviewScopeAutomaticCommitLabels) {
+        if ($Subject -cmatch $entry.pattern) { return ($entry.label -f [string]$Matches['arg']) }
+    }
+    return $Subject
+}
+
+function Get-ReviewScopeObjectName {
+    param([string]$Path, [object]$Rules)
+    foreach ($root in @($Rules.exportPath, $Rules.extensionsPath | Where-Object { $_ })) {
+        if (-not (Test-ReviewScopePathUnder -Path $Path -Root $root)) { continue }
+        $relative = $Path.Substring($root.Length).Trim('/')
+        $prefix = ''
+        if ($root -ceq $Rules.extensionsPath) {
+            $segments = @($relative -split '/', 2)
+            if ($segments.Count -lt 2) { return $Path }
+            $prefix = "$($segments[0]): "; $relative = $segments[1]
+        }
+        $converted = ConvertTo-ConfigRepositoryTransferPath -RelativePath $relative
+        if ($null -ne $converted) { return $prefix + [string]$converted.objectName }
+        if ($relative -ieq 'Configuration.xml') { return $prefix + 'Конфигурация (состав объектов)' }
+        return $Path
+    }
+    return $Path
+}
+
+function Get-ReviewScopeCommitPicker {
+    param(
+        [Parameter(Mandatory = $true)][string]$BranchBase,
+        [Parameter(Mandatory = $true)][object]$Rules,
+        [object]$State,
+        [string[]]$UntrackedPaths = @(),
+        [string]$VerifiedCommit = ''
+    )
+
+    # First-parent commits after the last refresh merge or reset: a range
+    # starting at any of them holds no master changes.
+    $log = @(Get-GitPathList -Arguments @('log', '--first-parent', '-z', "--max-count=$script:ReviewScopePickerScanLimit",
+        '--format=%H%x1f%P%x1f%an%x1f%aI%x1f%s', 'HEAD', "^$BranchBase"))
+    $resetHead = [string](Get-StateValue -State $State -Name 'resetNewHead' -Default '')
+    $commits = [Collections.Generic.List[object]]::new()
+    foreach ($record in $log) {
+        $fields = ([string]$record).Trim("`n") -split [char]0x1f, 5
+        if ($fields.Count -lt 5) { continue }
+        $parents = @($fields[1] -split ' ' | Where-Object { $_ })
+        $anchor = if ($parents.Count -gt 1) { 'merge' } elseif ($fields[0] -ceq $resetHead -or $fields[4] -ceq 'chore: reset branch for next change') { 'reset' } else { '' }
+        $commits.Add([pscustomobject]@{ commit = $fields[0]; parent = $(if ($parents.Count -gt 0) { $parents[0] } else { '' }); author = $fields[2]; date = $fields[3]; subject = $fields[4]; anchor = $anchor })
+        if ($anchor) { break }
+    }
+
+    # Only the dump roots can hold subject paths; a commit that touches
+    # thousands of other files is not classified path by path.
+    $roots = @($Rules.exportPath, $Rules.extensionsPath | Where-Object { $_ })
+    $items = [Collections.Generic.List[object]]::new()
+    $service = 0
+    foreach ($commit in $commits) {
+        if ($items.Count -ge $script:ReviewScopePickerLimit) { break }
+        $base = if ($commit.anchor) { $commit.commit } else { $commit.parent }
+        $item = [pscustomobject]@{
+            commit = $commit.commit; base = $base; author = $commit.author; date = $commit.date; anchor = $commit.anchor
+            label = $(switch ($commit.anchor) { 'merge' { 'обновление из master' } 'reset' { 'сброс ветки' } default { Get-ReviewScopeCommitLabel -Subject $commit.subject } })
+            objects = @(); addedLines = 0; removedLines = 0; serviceBefore = $service; size = $null
+            verified = ($VerifiedCommit -and $commit.commit -ceq $VerifiedCommit)
+        }
+        if (-not $commit.anchor) {
+            $paths = @(Get-GitPathList -Arguments (@('diff', '--no-renames', '--name-only', '-z', $commit.parent, $commit.commit, '--') + $roots) |
+                ForEach-Object { ([string]$_).Replace('\', '/') } | Where-Object { (Get-ReviewScopePathKind -Path $_ -Rules $Rules) -ceq 'subject' })
+            if ($paths.Count -eq 0) { $service++; continue }
+            $item.objects = @($paths | ForEach-Object { Get-ReviewScopeObjectName -Path $_ -Rules $Rules } | Sort-Object -Unique)
+            $bsl = @($paths | Where-Object { $_.EndsWith('.bsl', [StringComparison]::OrdinalIgnoreCase) })
+            if ($bsl.Count -gt 0) {
+                foreach ($numstat in @(Get-GitPathList -Arguments (@('diff', '--no-renames', '--numstat', '-z', $commit.parent, $commit.commit, '--') + $bsl))) {
+                    $fields = ([string]$numstat) -split "`t", 3
+                    if ($fields.Count -ge 3 -and $fields[0] -match '^\d+$') { $item.addedLines += [int]$fields[0]; $item.removedLines += [int]$fields[1] }
+                }
+            }
+        }
+        $item.serviceBefore = $service
+        $service = 0
+        $item.size = Get-ReviewScopeBslSize -BaseCommit $base -Rules $Rules -UntrackedPaths $UntrackedPaths
+        $items.Add($item)
+    }
+    return [pscustomobject]@{
+        items = @($items)
+        serviceAfter = $service
+        allowed = @($commits | ForEach-Object commit)
+        multipleAuthors = (@($items | ForEach-Object author | Sort-Object -Unique).Count -gt 1)
+        complete = ($commits.Count -gt 0 -and [bool]$commits[$commits.Count - 1].anchor)
+    }
+}
+
+function Resolve-ReviewScopeSinceBase {
+    param([string]$ReviewSince, [object]$Picker)
+    $resolved = ''
+    try { $resolved = ([string](Get-GitOutput @('rev-parse', '--verify', '--quiet', "$ReviewSince^{commit}"))).Trim() } catch { $resolved = '' }
+    $commit = @($Picker.allowed | Where-Object { $_ -ceq $resolved })
+    if (-not $resolved -or $commit.Count -eq 0) {
+        throw "REVIEW_SCOPE_SINCE_NOT_ALLOWED: commit '$ReviewSince' is not one the review range can start from: it must be on this branch after the last update from master or reset. Repeat get-review-scope -ReviewPurpose review without -ReviewRange and pick an entry from its list, or use -ReviewRange branch."
+    }
+    $item = @($Picker.items | Where-Object commit -ceq $resolved)
+    if ($item.Count -gt 0) { return [string]$item[0].base }
+    # An allowed commit outside the shown list: an anchor starts after itself.
+    $parents = @(([string](Get-GitOutput @('rev-list', '--parents', '-n', '1', $resolved))).Trim() -split ' ' | Select-Object -Skip 1)
+    if ($parents.Count -ne 1) { return $resolved }
+    return [string]$parents[0]
+}
+
+function Invoke-ReviewScopeWithDiscardedObjects {
+    param([Parameter(Mandatory = $true)][scriptblock]$Script)
+
+    # New objects land in a temporary directory; existing ones stay readable as
+    # an alternate. Refs, index, worktree and the object store stay unchanged.
+    $objects = ([string](Get-GitOutput @('rev-parse', '--git-path', 'objects'))).Trim()
+    if (-not [IO.Path]::IsPathRooted($objects)) { $objects = Join-Path $script:ProjectRoot $objects }
+    $objects = [IO.Path]::GetFullPath($objects)
+    $temporary = Join-Path ([IO.Path]::GetTempPath()) ("agent-1c-review-objects-" + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($temporary)
+    $names = @('GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_OPTIONAL_LOCKS')
+    $saved = @{}
+    foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+    try {
+        [Environment]::SetEnvironmentVariable('GIT_OBJECT_DIRECTORY', $temporary, 'Process')
+        # A quoted entry keeps a path with ';' as one alternate.
+        [Environment]::SetEnvironmentVariable('GIT_ALTERNATE_OBJECT_DIRECTORIES', '"' + $objects.Replace('\', '/').Replace('"', '\"') + '"', 'Process')
+        [Environment]::SetEnvironmentVariable('GIT_OPTIONAL_LOCKS', '0', 'Process')
+        return (& $Script)
+    } finally {
+        foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-ReviewScopeVerification {
+    param([object]$State)
+
+    $unknown = { param([string]$Reason) [pscustomobject]@{ status = 'unknown'; label = "не определено: $Reason"; verifiedCommit = ''; verifiedAt = ''; note = ''; gate1Evidence = $false } }
+    if ($null -eq $State) { return (& $unknown 'нет состояния ветки разработки') }
+    try {
+        $verification = Invoke-ReviewScopeWithDiscardedObjects { Get-VerificationState -State $State }
+    } catch {
+        return (& $unknown $_.Exception.Message)
+    }
+    $raw = [string]$verification.status
+    $status = if ($raw -in @('', 'missing')) { 'not-run' }
+        elseif ($raw -ceq 'failed') { 'failed' }
+        elseif (-not [string]$verification.currentFingerprint) { 'unknown' }
+        elseif ($raw -ceq 'passed' -and [string]$verification.verifiedFingerprint -and [string]$verification.verifiedFingerprint -ceq [string]$verification.currentFingerprint) { 'current' }
+        elseif ($raw -ceq 'partial') { 'partial' }
+        else { 'stale' }
+    $label = switch ($status) {
+        'current' { 'пройдена на текущем коде' }
+        'stale' { 'устарела: код менялся после проверки' }
+        'partial' { 'неполная: часть проверок пропущена' }
+        'failed' { 'не пройдена' }
+        'not-run' { 'не выполнялась' }
+        default { 'не определено: текущий отпечаток кода не получен' }
+    }
+    $note = if ($status -ceq 'current' -and -not $verification.isFreshPassed) { 'приёмка задачи или обязательства проверки не завершены; доказательство синтаксиса это не отменяет' } else { '' }
+    return [pscustomobject]@{
+        status = $status; label = $label
+        verifiedCommit = [string]$verification.verifiedCommit; verifiedAt = [string]$verification.verifiedAt
+        note = $note; gate1Evidence = ($status -ceq 'current')
+    }
+}
+
 function Get-ReviewScopeRefusal {
     param([string]$Message)
 
@@ -152,10 +402,20 @@ function Resolve-ReviewScopeBranchBase {
 }
 
 function Get-ReviewScope {
-    param([ValidateSet('', 'review', 'self')][string]$ReviewPurpose = '')
+    param(
+        [ValidateSet('', 'review', 'self')][string]$ReviewPurpose = '',
+        [ValidateSet('', 'branch', 'uncommitted', 'since')][string]$ReviewRange = '',
+        [string]$ReviewSince = ''
+    )
 
     if (-not $ReviewPurpose) {
         throw "REVIEW_SCOPE_PURPOSE_REQUIRED: pass -ReviewPurpose review (a separately requested review) or -ReviewPurpose self (the author's self-review)."
+    }
+    if ($ReviewRange -and $ReviewPurpose -cne 'review') {
+        throw "REVIEW_SCOPE_RANGE_REVIEW_ONLY: -ReviewRange applies to a separately requested review; repeat with -ReviewPurpose review, or without -ReviewRange for the self-review."
+    }
+    if (($ReviewRange -ceq 'since') -ne [bool]$ReviewSince) {
+        throw "REVIEW_SCOPE_SINCE_REQUIRED: -ReviewRange since needs -ReviewSince <commit> from the list get-review-scope shows, and -ReviewSince needs -ReviewRange since."
     }
     $refusal = $null
     try {
@@ -171,16 +431,71 @@ function Get-ReviewScope {
         if (-not $head) { throw "$($refusal.code): $($refusal.message) The local delta needs a HEAD commit." }
         $baseline = [pscustomobject]@{ commit = $head; provenance = 'local-delta'; completedAt = '' }
     }
+    $state = $null
+    try { $state = Read-DevBranchState -Name $DevBranchName } catch { $state = $null }
+    $verification = Get-ReviewScopeVerification -State $state
+    $mode = $(if ($null -eq $refusal) { 'branch' } else { 'local-delta' })
+    $size = $null
+    $choice = $null
+    if ($ReviewPurpose -ceq 'review') {
+        $branchBase = [string]$baseline.commit
+        $rules = Get-ReviewScopeKindRules -BaseCommit $branchBase
+        $untracked = @(Get-GitPathList -Arguments @('ls-files', '-z', '--others', '--exclude-standard') | ForEach-Object { ([string]$_).Replace('\', '/') })
+        $needsPicker = $ReviewRange -ceq 'since'
+        if (-not $ReviewRange) {
+            $size = Get-ReviewScopeBslSize -BaseCommit $branchBase -Rules $rules -UntrackedPaths $untracked
+            $needsPicker = $size.sizeClass -ceq 'large'
+        }
+        $picker = $null
+        if ($needsPicker) {
+            $picker = Get-ReviewScopeCommitPicker -BranchBase $branchBase -Rules $rules -State $state -UntrackedPaths $untracked -VerifiedCommit $verification.verifiedCommit
+        }
+        switch ($ReviewRange) {
+            'uncommitted' {
+                $head = Get-GitCommitOrEmpty 'HEAD'
+                $baseline = [pscustomobject]@{ commit = $head; provenance = 'uncommitted'; completedAt = '' }
+                $mode = 'uncommitted'
+            }
+            'since' {
+                $sinceBase = Resolve-ReviewScopeSinceBase -ReviewSince $ReviewSince -Picker $picker
+                $baseline = [pscustomobject]@{ commit = $sinceBase; provenance = "since:$ReviewSince"; completedAt = '' }
+                $mode = 'since'
+            }
+        }
+        if ($ReviewRange -and -not $size) {
+            $size = Get-ReviewScopeBslSize -BaseCommit ([string]$baseline.commit) -Rules $rules -UntrackedPaths $untracked
+        }
+        if (-not $ReviewRange -and $size.sizeClass -ceq 'large') {
+            $head = Get-GitCommitOrEmpty 'HEAD'
+            $uncommittedSize = Get-ReviewScopeBslSize -BaseCommit $head -Rules $rules -UntrackedPaths $untracked
+            $roots = @($rules.exportPath, $rules.extensionsPath | Where-Object { $_ })
+            $uncommittedSubject = @(Get-GitPathList -Arguments (@('diff', '--no-renames', '--name-only', '-z', $head, '--') + $roots) | ForEach-Object { ([string]$_).Replace('\', '/') }) +
+                @($untracked | Where-Object { $path = $_; @($roots | Where-Object { Test-ReviewScopePathUnder -Path $path -Root $_ }).Count -gt 0 }) |
+                Where-Object { (Get-ReviewScopePathKind -Path $_ -Rules $rules) -ceq 'subject' }
+            $choice = [pscustomobject]@{
+                uncommitted = $(if (@($uncommittedSubject).Count -gt 0) { [pscustomobject]@{ size = $uncommittedSize; files = @($uncommittedSubject).Count } } else { $null })
+                picker = $picker
+            }
+            $mode = 'range-required'
+        }
+    }
     $scope = Get-ReviewScopeEntries -BaseCommit ([string]$baseline.commit)
-    $subjectPaths = @($scope.entries | Where-Object kind -eq 'subject' | ForEach-Object path)
-    $objects = Get-ReviewScopeSubjectObjects -Rules $scope.rules -BaseCommit ([string]$baseline.commit) -SubjectPaths $subjectPaths
+    $objects = $null
+    if ($mode -cne 'range-required') {
+        $subjectPaths = @($scope.entries | Where-Object kind -eq 'subject' | ForEach-Object path)
+        $objects = Get-ReviewScopeSubjectObjects -Rules $scope.rules -BaseCommit ([string]$baseline.commit) -SubjectPaths $subjectPaths
+    }
     return [pscustomobject]@{
         purpose = $ReviewPurpose
-        mode = $(if ($null -eq $refusal) { 'branch' } else { 'local-delta' })
+        mode = $mode
+        range = $(if ($ReviewRange) { $ReviewRange } elseif ($mode -ceq 'branch') { 'branch' } else { '' })
         baseCommit = [string]$baseline.commit
         baseProvenance = [string]$baseline.provenance
         recordedCommit = [string](Get-StateValue -State $baseline -Name 'recordedCommit' -Default '')
         refusal = $refusal
+        size = $size
+        choice = $choice
+        verification = $verification
         entries = @($scope.entries)
         objects = $objects
     }
@@ -209,7 +524,8 @@ function Write-ReviewScopeRunUserReport {
     $entries = @($Scope.entries)
     $byKind = @{}
     foreach ($kind in @('subject', 'tests', 'requirements', 'unclassified', 'excluded', 'always-excluded')) { $byKind[$kind] = @($entries | Where-Object kind -eq $kind) }
-    $objectCount = (@($Scope.objects.groups | ForEach-Object { @($_.items).Count }) | Measure-Object -Sum).Sum
+    # A range choice stops before the object list is built.
+    $objectCount = if ($null -eq $Scope.objects) { 0 } else { (@($Scope.objects.groups | ForEach-Object { @($_.items).Count }) | Measure-Object -Sum).Sum }
     $lines = [Collections.Generic.List[string]]::new()
     $lines.Add('## Объём ревью')
     Add-RunUserReportLine -Lines $lines -Label 'Назначение' -Value $Scope.purpose
@@ -221,6 +537,19 @@ function Write-ReviewScopeRunUserReport {
         Add-RunUserReportLine -Lines $lines -Label 'Охват' -Value "limited: $($Scope.refusal.code)"
         Add-RunUserReportLine -Lines $lines -Label 'Причина' -Value $Scope.refusal.message
         Add-RunUserReportLine -Lines $lines -Label 'Рекомендация пользователю' -Value $Scope.refusal.continuation
+    }
+    if ($null -ne $Scope.size) { Add-RunUserReportLine -Lines $lines -Label 'Размер объёма' -Value (Format-ReviewScopeSize -Size $Scope.size) }
+    $verification = $Scope.verification
+    $verificationText = $verification.label
+    if ($verification.verifiedCommit -and $verification.status -notin @('not-run', 'unknown')) { $verificationText += "; коммит $($verification.verifiedCommit), $($verification.verifiedAt)" }
+    if ($verification.note) { $verificationText += "; $($verification.note)" }
+    Add-RunUserReportLine -Lines $lines -Label 'Проверка /itl-check' -Value $verificationText
+    Add-RunUserReportLine -Lines $lines -Label 'Гейт 1 (синтаксис)' -Value $(if ($verification.gate1Evidence) { 'подтверждён проверкой /itl-check на текущем коде' } else { 'не подтверждён; рекомендация пользователю: запустите /itl-check в чате разработки этой ветки' })
+    if ($Scope.mode -ceq 'range-required') {
+        Write-ReviewScopeRangeChoice -Lines $lines -Scope $Scope
+        Set-RunStage -Stage 'review-scope.range-required' -Detail ("base=$($Scope.baseCommit); bslBytes=$($Scope.size.bytes); threshold=$script:ReviewScopeLargeBslBytes; verification=$($verification.status)")
+        Write-AndSetRunUserReport -Lines $lines
+        return
     }
     if ($entries.Count -eq 0) {
         Add-RunUserReportLine -Lines $lines -Label 'Результат' -Value 'изменений для ревью нет'
@@ -259,11 +588,70 @@ function Write-ReviewScopeRunUserReport {
     $lines.Add('## Не классифицирован')
     Add-ReviewScopeGroupedLines -Lines $lines -Entries $byKind.unclassified
     Set-RunStage -Stage 'review-scope.ready' -Detail ("mode=$($Scope.mode); base=$($Scope.baseCommit); provenance=$($Scope.baseProvenance); subject=$($byKind.subject.Count); objects=$([int]$objectCount); tests=$($byKind.tests.Count); requirements=$($byKind.requirements.Count); unclassified=$($byKind.unclassified.Count); excluded=$($byKind.excluded.Count + $byKind['always-excluded'].Count)" +
+        $(if ($null -ne $Scope.size) { "; size=$($Scope.size.sizeClass); bslBytes=$($Scope.size.bytes)" } else { '' }) +
+        "; verification=$($Scope.verification.status)" +
         $(if ($null -ne $Scope.refusal) { "; limited=$($Scope.refusal.code)" } else { '' }))
     Write-AndSetRunUserReport -Lines $lines
 }
 
+function Get-ReviewScopeRangeCommand {
+    param([string]$Range, [string]$Since = '')
+    $command = 'powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action get-review-scope -ReviewPurpose review -ReviewRange ' + $Range
+    if ($Since) { $command += " -ReviewSince $Since" }
+    return $command
+}
+
+function Write-ReviewScopeRangeChoice {
+    param([Collections.Generic.List[string]]$Lines, [object]$Scope)
+
+    $picker = $Scope.choice.picker
+    $Lines.Add('')
+    $Lines.Add('## Нужен выбор объёма ревью')
+    $Lines.Add('')
+    $Lines.Add("Объём ревью большой (порог $([int]($script:ReviewScopeLargeBslBytes / 1024)) КБ текста изменений BSL). Не начинайте ревью. Задайте пользователю вопрос «Какой объём ревьюировать?» с вариантами ниже, сохранив их текст и цифры, затем выполните команду выбранного варианта.")
+    $number = 1
+    if ($null -ne $Scope.choice.uncommitted) {
+        $Lines.Add('')
+        $Lines.Add("### $number. Только незакоммиченные изменения")
+        $Lines.Add("- $(Format-ReviewScopeSize -Size $Scope.choice.uncommitted.size); файлов предмета ревью: $($Scope.choice.uncommitted.files)")
+        $Lines.Add("- команда: $(Get-ReviewScopeRangeCommand -Range uncommitted)")
+        $number++
+    }
+    $Lines.Add('')
+    $Lines.Add("### $number. Начиная с коммита")
+    if (@($picker.items).Count -eq 0) { $Lines.Add('- коммитов с изменениями 1С после последнего обновления из master нет') }
+    foreach ($item in @($picker.items)) {
+        if ($item.serviceBefore -gt 0) { $Lines.Add("- служебные коммиты ITL без изменений 1С: $($item.serviceBefore)") }
+        $when = [string]$item.date
+        $parsed = [DateTimeOffset]::MinValue
+        if ([DateTimeOffset]::TryParse($item.date, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+            $when = $parsed.ToLocalTime().ToString('dd.MM HH:mm')
+        }
+        $parts = @("$when · $($item.label)")
+        if ($picker.multipleAuthors) { $parts += $item.author }
+        if (@($item.objects).Count -gt 0) {
+            $shown = @($item.objects | Select-Object -First 3) -join ', '
+            if (@($item.objects).Count -gt 3) { $shown += ", ещё $(@($item.objects).Count - 3)" }
+            $parts += $shown
+        }
+        if ($item.addedLines -gt 0 -or $item.removedLines -gt 0) { $parts += "BSL +$($item.addedLines)/-$($item.removedLines)" }
+        if ($item.verified) { $parts += 'здесь пройдена /itl-check' }
+        $from = if ($item.anchor) { 'после этого' } else { 'с этого коммита' }
+        $Lines.Add("- $($parts -join ' · ')")
+        $Lines.Add("  - $from`: $(Format-ReviewScopeSize -Size $item.size)")
+        $Lines.Add("  - команда: $(Get-ReviewScopeRangeCommand -Range since -Since $item.commit.Substring(0, 12))")
+    }
+    if ($picker.serviceAfter -gt 0) { $Lines.Add("- служебные коммиты ITL без изменений 1С: $($picker.serviceAfter)") }
+    if (-not $picker.complete) { $Lines.Add('- более ранние коммиты в список не вошли; их покрывает вариант «вся работа ветки»') }
+    $number++
+    $Lines.Add('')
+    $Lines.Add("### $number. Вся работа ветки (большой объём)")
+    $Lines.Add("- $(Format-ReviewScopeSize -Size $Scope.size)")
+    $Lines.Add('- синтаксис подтверждается только свежей /itl-check; гейты 2–3 запускаются текстом по изменённым процедурам, выбранным по риску; остальное помечается как «не проверено автоматически»')
+    $Lines.Add("- команда: $(Get-ReviewScopeRangeCommand -Range branch)")
+}
+
 function Invoke-ReviewScopeAction {
-    param([string]$ReviewPurpose)
-    Write-ReviewScopeRunUserReport -Scope (Get-ReviewScope -ReviewPurpose $ReviewPurpose)
+    param([string]$ReviewPurpose, [string]$ReviewRange = '', [string]$ReviewSince = '')
+    Write-ReviewScopeRunUserReport -Scope (Get-ReviewScope -ReviewPurpose $ReviewPurpose -ReviewRange $ReviewRange -ReviewSince $ReviewSince)
 }
