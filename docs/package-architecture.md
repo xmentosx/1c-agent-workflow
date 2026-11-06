@@ -200,6 +200,14 @@ existing host lease/scheduler delegates eligibility to native owners; current,
 rollback, pinned, unfinished, failed and unclassified legacy data stays protected.
 No new service, elevation or global WSL reset authority is introduced.
 
+On 2026-11-06 the user approved a durable machine-local
+[ai_rules_1c source cache](ai-rules-fork-upgrades.md#local-source-cache-integrity):
+one bare mirror per repository plus immutable exact-commit checkouts under the
+ITL artifact cache, replacing per-project TEMP clones that Storage Sense
+partially deleted. `Sync-AiRules1cCheckout` stays the only owner; publication is
+an atomic move without a lock or coordinator. No installed-state migration:
+rollback restores TEMP clones, and only idle generated legacy TEMP names are removed.
+
 The user approved producer-marked diagnostic retention on 2026-10-22. The
 existing artifact-retention owner consumes immutable completion receipts for
 individual native temporary files and derived XML/ETLX, preserving original
