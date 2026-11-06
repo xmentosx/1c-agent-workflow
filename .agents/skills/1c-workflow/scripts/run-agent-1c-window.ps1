@@ -745,7 +745,9 @@ try {
     [Console]::Error.WriteLine(`$_.Exception.Message)
     `$agent1cExitCode = 1
 }
-[Environment]::Exit(`$agent1cExitCode)
+# Leave through the host: [Environment]::Exit on the pipeline thread races the
+# console host's shutdown and can surface 0x80131029 instead of this code.
+exit `$agent1cExitCode
 "@
 
 $argumentLine = Join-NativeCommandLineArguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $commandText)

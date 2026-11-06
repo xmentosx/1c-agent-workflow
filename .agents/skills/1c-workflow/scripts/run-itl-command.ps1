@@ -969,7 +969,9 @@ try {
         Write-ItlCompactRunLogRecord ('  {0,-7} {1}        run' -f 'total', (`$itlEndedAt - `$itlRunStartedAt).ToString('hh\:mm\:ss\.fff')) `$itlEndedAt
     } catch { [Console]::Error.WriteLine("ITL run timing table skipped: `$(`$_.Exception.Message)") }
 }
-[Environment]::Exit(`$helperExitCode)
+# Leave through the host: [Environment]::Exit on the pipeline thread races the
+# console host's shutdown and can surface 0x80131029 instead of this code.
+exit `$helperExitCode
 "@
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
     $staleWarningSeconds = Get-PositiveRunnerSetting -Name "ITL_RUNNER_STATUS_STALE_WARNING_SECONDS" -Default 45
