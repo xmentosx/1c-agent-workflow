@@ -668,6 +668,21 @@ function Set-RunFailureContextFromMessage {
     Set-RunFailureContext -Category $category -RequiredAction $requiredAction
 }
 
+function Clear-RunLivenessEvidence {
+    $script:RunLiveness = ""
+    $script:RunNoProgressSeconds = 0
+    $script:RunStallTimeoutRemainingSeconds = 0
+    $script:RunTimeoutRemainingSeconds = 0
+    $script:RunOwnedProcessIds = @()
+    $script:RunProbePhase = ""
+    $script:RunProbeStartedAt = ""
+    $script:RunProbeAgeSeconds = 0
+    $script:RunProbeLastCompletedAt = ""
+    $script:RunCpuDeltaMilliseconds = 0
+    $script:RunWorkingSetMb = 0
+    $script:RunLogGrowthBytes = 0
+}
+
 function Set-RunStage {
     param(
         [string]$Stage,
@@ -675,19 +690,13 @@ function Set-RunStage {
     )
 
     $designerMonitorStage = $Stage -match '(^|\.)designer-(running|wait|stalled-suspected|stalled-timeout)$'
-    if (-not $designerMonitorStage) {
-        $script:RunLiveness = ""
-        $script:RunNoProgressSeconds = 0
-        $script:RunStallTimeoutRemainingSeconds = 0
-        $script:RunTimeoutRemainingSeconds = 0
-        $script:RunOwnedProcessIds = @()
-        $script:RunProbePhase = ""
-        $script:RunProbeStartedAt = ""
-        $script:RunProbeAgeSeconds = 0
-        $script:RunProbeLastCompletedAt = ""
-        $script:RunCpuDeltaMilliseconds = 0
-        $script:RunWorkingSetMb = 0
-        $script:RunLogGrowthBytes = 0
+    if (-not $designerMonitorStage) { Clear-RunLivenessEvidence }
+    $stageLogPath = [string](Get-Variable -Name RunLogPath -ValueOnly -ErrorAction SilentlyContinue)
+    $previousStage = [string](Get-Variable -Name RunStage -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    if (-not [string]::IsNullOrWhiteSpace($stageLogPath) -and $Stage -cne $previousStage) {
+        # Captured helper output flows only into the run log. Its single writer
+        # turns these transitions into the per-stage duration table.
+        Write-Host "ITL stage: $Stage"
     }
     Start-RunPhaseTiming -Stage $Stage
     $script:RunStage = $Stage

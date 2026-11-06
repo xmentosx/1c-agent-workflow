@@ -792,6 +792,9 @@ function Invoke-Agent1cFreshProcess {
         $exitCode = [int]$nativeResult.exitCode
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
+        # The wait monitor's running evidence describes the finished child, not
+        # any later terminal status written by this process.
+        Clear-RunLivenessEvidence
     }
     if ($continuesLifecycleOperation) {
         $terminal = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
@@ -822,8 +825,34 @@ function Invoke-Agent1cFreshProcess {
         [Console]::Error.WriteLine($message)
         $exitCode = 1
     }
-    if ($ReturnExitStatus) { return [pscustomobject]@{ exitCode = [int]$exitCode; terminalStatus = $freshRelay.terminalStatus } }
+    if ($ReturnExitStatus) {
+        if ($exitCode -eq 0) { Import-Agent1cFreshProcessTerminalResult -Terminal $freshRelay.terminalStatus }
+        return [pscustomobject]@{ exitCode = [int]$exitCode; terminalStatus = $freshRelay.terminalStatus }
+    }
     exit $exitCode
+}
+
+function Import-Agent1cFreshProcessTerminalResult {
+    # A caller that continues after a successful child writes the external
+    # terminal itself. The forwarded child terminal (already the deepest nested
+    # writer's) owns the result; adopt it so 'reexec' and an empty report
+    # cannot replace it. Later stages or reports of this caller still win.
+    param([AllowNull()][object]$Terminal)
+
+    if ($Terminal -isnot [Collections.IDictionary] -or [string]$Terminal['status'] -cne 'succeeded') { return }
+    $fields = [ordered]@{
+        stage = 'RunStage'; stageDetail = 'RunStageDetail'; userReport = 'RunUserReport'
+        resultPath = 'RunResultPath'; resultManifestPath = 'RunResultManifestPath'
+        sourceIntegrityReportPath = 'RunSourceIntegrityReportPath'; refreshMasterCommit = 'RunRefreshMasterCommit'
+        devBranch = 'RunDevBranch'; worktreePath = 'RunWorktreePath'; extensionInitializationStatus = 'RunExtensionInitializationStatus'
+    }
+    foreach ($field in $fields.Keys) {
+        $value = [string]$Terminal[$field]
+        if (-not [string]::IsNullOrWhiteSpace($value)) { Set-Variable -Name $fields[$field] -Scope Script -Value $value }
+    }
+    # A stage and its detail are one observation; never pair the child's stage
+    # with this caller's 'reexec' detail.
+    if (-not [string]::IsNullOrWhiteSpace([string]$Terminal['stage'])) { $script:RunStageDetail = [string]$Terminal['stageDetail'] }
 }
 
 function Import-Agent1cFreshProcessFailure {
