@@ -31,7 +31,7 @@ using System.Threading;
 
 public sealed class ItlForegroundEventV2 {
     public DateTime TimeUtc; public string Kind; public long Window; public int ProcessId; public string ClassName; public string Title;
-    public DateTime ProcessStartUtc; public string ImagePath; public string CommandLine;
+    public DateTime ProcessStartUtc; public string ImagePath; public string CommandLine; public long InputIdleMs; public long ForegroundLockTimeoutMs;
 }
 
 public static class ItlForegroundRecorderV2 {
@@ -40,6 +40,8 @@ public static class ItlForegroundRecorderV2 {
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct WNDCLASSEX { public uint cbSize; public uint style; public WndProc lpfnWndProc; public int cbClsExtra; public int cbWndExtra; public IntPtr hInstance; public IntPtr hIcon; public IntPtr hCursor; public IntPtr hbrBackground; public string lpszMenuName; public string lpszClassName; public IntPtr hIconSm; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
     [StructLayout(LayoutKind.Sequential)]
     struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int x; public int y; }
 
@@ -65,11 +67,14 @@ public static class ItlForegroundRecorderV2 {
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr handle, out long creation, out long exit, out long kernel, out long user);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr handle, int flags, StringBuilder name, ref int size);
+    [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+    [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, out uint value, uint winIni);
     [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr handle, int infoClass, IntPtr buffer, int length, out int returned);
 
     const uint EVENT_SYSTEM_FOREGROUND = 3, WINEVENT_OUTOFCONTEXT = 0, WM_CLIPBOARDUPDATE = 0x031D, WM_QUIT = 0x0012;
     const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     const int ProcessCommandLineInformation = 60;
+    const uint SPI_GETFOREGROUNDLOCKTIMEOUT = 0x2000;
     static readonly IntPtr HWND_MESSAGE = new IntPtr(-3);
     public static readonly ConcurrentQueue<ItlForegroundEventV2> Events = new ConcurrentQueue<ItlForegroundEventV2>();
     static WinEventProc hookProc; static WndProc windowProc; static Thread loop; static uint loopThread; static string startError;
@@ -103,12 +108,22 @@ public static class ItlForegroundRecorderV2 {
         return facts;
     }
 
+    // Windows lets a background process take the foreground once the user has
+    // been idle longer than the foreground lock timeout; both are readable unelevated.
+    public static long ForegroundLockTimeoutMs() { uint value; return SystemParametersInfo(SPI_GETFOREGROUNDLOCKTIMEOUT, 0, out value, 0) ? (long)value : -1L; }
+
+    public static long InputIdleMs() {
+        var info = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO)) };
+        return GetLastInputInfo(ref info) ? (long)unchecked((uint)Environment.TickCount - info.dwTime) : -1;
+    }
+
     static ItlForegroundEventV2 Describe(string kind, IntPtr hwnd) {
         int pid = 0; var cls = new StringBuilder(256); var title = new StringBuilder(512);
         if (hwnd != IntPtr.Zero) { GetWindowThreadProcessId(hwnd, out pid); GetClassName(hwnd, cls, cls.Capacity); GetWindowText(hwnd, title, title.Capacity); }
         var record = kind == "foreground" || kind == "initial" ? ReadProcess(pid) : new ItlForegroundEventV2 { ImagePath = "", CommandLine = "" };
         record.TimeUtc = DateTime.UtcNow; record.Kind = kind; record.Window = hwnd.ToInt64(); record.ProcessId = pid;
         record.ClassName = cls.ToString(); record.Title = title.ToString();
+        record.InputIdleMs = InputIdleMs(); record.ForegroundLockTimeoutMs = ForegroundLockTimeoutMs();
         return record;
     }
 
@@ -285,6 +300,7 @@ try {
                 className = $event.ClassName; title = $event.Title
                 launch = Get-OneCLaunchMode $event.CommandLine $name
                 commandLine = ConvertTo-RedactedCommandLine $event.CommandLine
+                inputIdleMs = $event.InputIdleMs; foregroundLockTimeoutMs = $event.ForegroundLockTimeoutMs
                 appearance = ''
             }
             $record.appearance = Get-ForegroundAppearance $state $record
