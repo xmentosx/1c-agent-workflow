@@ -1067,15 +1067,22 @@ function Resolve-DevelopFailingEntryDeferral {
     $entries = @($attempt.queue)
     if ($entries.Count -lt 2) { return $null }
     $preserved = Get-Variable -Name DeliveryPreservedCandidate -Scope Script -ValueOnly -ErrorAction SilentlyContinue
-    $logRoot = if ($preserved) { [string]$preserved.path } else { Join-Path ([IO.Path]::GetTempPath()) ('itl-source-attribution-' + [guid]::NewGuid().ToString('N')) }
+    # Without a preserved candidate the probe logs have no owner after this
+    # attribution: its result carries the evidence, so the log root goes too.
+    $ownedLogRoot = if ($preserved) { '' } else { Join-Path ([IO.Path]::GetTempPath()) ('itl-source-attribution-' + [guid]::NewGuid().ToString('N')) }
+    $logRoot = if ($preserved) { [string]$preserved.path } else { $ownedLogRoot }
     $remoteBefore = [string]$attempt.remoteBefore
-    if ((Test-DeliveryPesterFilesAt -StartPoint $remoteBefore -Entries @() -Files $files -LogRoot $logRoot -Name 'attribution-baseline') -cne 'passed') { return $null }
     $failing = @()
-    foreach ($entry in $entries) {
-        $name = 'attribution-' + ([string]$entry.id -replace '[^A-Za-z0-9._-]', '-')
-        $outcome = Test-DeliveryPesterFilesAt -StartPoint $remoteBefore -Entries @($entry) -Files $files -LogRoot $logRoot -Name $name
-        if ($outcome -ceq 'inconclusive') { return $null }
-        if ($outcome -ceq 'failed') { $failing += $entry }
+    try {
+        if ((Test-DeliveryPesterFilesAt -StartPoint $remoteBefore -Entries @() -Files $files -LogRoot $logRoot -Name 'attribution-baseline') -cne 'passed') { return $null }
+        foreach ($entry in $entries) {
+            $name = 'attribution-' + ([string]$entry.id -replace '[^A-Za-z0-9._-]', '-')
+            $outcome = Test-DeliveryPesterFilesAt -StartPoint $remoteBefore -Entries @($entry) -Files $files -LogRoot $logRoot -Name $name
+            if ($outcome -ceq 'inconclusive') { return $null }
+            if ($outcome -ceq 'failed') { $failing += $entry }
+        }
+    } finally {
+        if ($ownedLogRoot -and (Test-Path -LiteralPath $ownedLogRoot -PathType Container)) { Remove-Item -LiteralPath $ownedLogRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
     if ($failing.Count -ne 1) { return $null }
     $planId = if ($attempt.PSObject.Properties['planId']) { [string]$attempt.planId } else { '' }

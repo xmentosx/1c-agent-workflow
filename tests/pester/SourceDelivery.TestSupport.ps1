@@ -155,7 +155,19 @@ exit 0
     }
     function Remove-DeliveryFixture {
         param([object]$Fixture)
-        if ($Fixture) {
-            & git -C $Fixture.root worktree prune *> $null; Remove-Item -LiteralPath $Fixture.root -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $Fixture.remote -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not $Fixture) { return }
+        # Delivery runs create registration, supervisor and candidate worktrees
+        # of this fixture in the system temp; prune alone would orphan them.
+        $root = [IO.Path]::GetFullPath([string]$Fixture.root).TrimEnd('\')
+        if (Test-Path -LiteralPath (Join-Path $root '.git') -PathType Container) {
+            $tokens = @(& { param($helper, $repository) . $helper; Get-RepositoryGitPathList -RepositoryRoot $repository -Arguments @('worktree', 'list', '--porcelain', '-z') } (Join-Path $RepoRoot 'scripts\git-path-list.ps1') $root)
+            $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+            foreach ($token in @($tokens | Where-Object { ([string]$_).StartsWith('worktree ') })) {
+                $path = [IO.Path]::GetFullPath(([string]$token).Substring(9)).TrimEnd('\')
+                if ([string]::Equals($path, $root, [StringComparison]::OrdinalIgnoreCase)) { continue }
+                & git -C $root worktree remove --force --force -- $path *> $null
+                if ((Test-Path -LiteralPath $path) -and $path.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue }
+            }
         }
+        & git -C $root worktree prune *> $null; Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $Fixture.remote -Recurse -Force -ErrorAction SilentlyContinue
     }

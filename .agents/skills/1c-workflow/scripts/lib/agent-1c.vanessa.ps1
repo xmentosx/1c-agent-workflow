@@ -434,8 +434,14 @@ function Install-VanessaAutomation {
 
     Write-Host "Vanessa Automation install root: $installRoot"
     Write-Host "Vanessa Automation download metadata source: $($downloadInfo.source)"
+    # The verified download is only a transfer buffer: the immutable install
+    # root keeps the extracted EPF, so a per-install archive must not pile up.
     $archivePath = Save-VanessaAutomationArchive -DownloadInfo $downloadInfo
-    $epfPath = Expand-VanessaAutomationArchive -ArchivePath $archivePath -InstallRoot $installRoot -ExpectedEpfSha256 $downloadInfo.expectedEpfSha256
+    try {
+        $epfPath = Expand-VanessaAutomationArchive -ArchivePath $archivePath -InstallRoot $installRoot -ExpectedEpfSha256 $downloadInfo.expectedEpfSha256
+    } finally {
+        Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+    }
     Save-VanessaAutomationSettingsToDotEnv -EpfPath $epfPath -Version $downloadInfo.compatibilityVersion -DownstreamRevision $downloadInfo.downstreamRevision
     Write-Host "Vanessa Automation EPF: $epfPath"
 }

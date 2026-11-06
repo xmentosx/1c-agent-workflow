@@ -210,6 +210,9 @@ function Remove-SourceDeliveryStaleOperationWorktrees {
     # left by an interrupted operation has no diagnostic value and goes once it
     # is idle past the creation window. Removal takes the exact branch (a
     # supervisor is detached), or a leftover directory no repository owns.
+    # A publication, plan or attribution candidate that is still registered
+    # belongs to the resource ledger; only its unregistered remnant (an
+    # interrupted or partly failed worktree removal) is handled here.
     $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
     $temp = [IO.Path]::GetFullPath($TempRoot).TrimEnd('\')
     $registered = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -217,13 +220,14 @@ function Remove-SourceDeliveryStaleOperationWorktrees {
         $registered[[IO.Path]::GetFullPath([string]$worktree.path).TrimEnd('\')] = [string]$worktree.branch
     }
     $owned = [Collections.Generic.List[object]]::new()
-    foreach ($directory in @(Get-ChildItem -LiteralPath $temp -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -match '^itl-source-(register|supervisor)-[0-9a-f]{32}$' })) {
+    foreach ($directory in @(Get-ChildItem -LiteralPath $temp -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -match '^itl-source-(register|supervisor|publish-develop|release-master|plan-develop|attribute)-[0-9a-f]{32}$' })) {
         $path = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
         $shortBranch = if ($directory.Name -like 'itl-source-register-*') { 'itl/register-' + $directory.Name.Substring('itl-source-register-'.Length) } else { '' }
+        $remnantOnly = $directory.Name -notmatch '^itl-source-(register|supervisor)-'
         if ((Test-SourceDeliveryPathInUse -Path $path) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $path)) { $retained++; continue }
         $isRegistered = $registered.ContainsKey($path)
         if ($isRegistered) {
-            if ($registered[$path] -cne $(if ($shortBranch) { "refs/heads/$shortBranch" } else { '' })) { $retained++; continue }
+            if ($remnantOnly -or $registered[$path] -cne $(if ($shortBranch) { "refs/heads/$shortBranch" } else { '' })) { $retained++; continue }
         } else {
             # Another clone's worktree points its .git file at a live gitdir;
             # a directory .git is a repository. Neither belongs to this cleanup.
@@ -236,10 +240,11 @@ function Remove-SourceDeliveryStaleOperationWorktrees {
         }
         $owned.Add([pscustomobject]@{ directory = $directory; path = $path; shortBranch = $shortBranch; registered = $isRegistered }) | Out-Null
     }
-    $keptRegistrations = @($owned | Where-Object { $_.shortBranch -and (-not (Test-SourceDeliveryArtifactExpired -Item $_.directory -MinimumAgeHours $MinimumAgeHours)) } |
+    # A remnant its repository no longer registers cannot serve a retry.
+    $keptRegistrations = @($owned | Where-Object { $_.shortBranch -and $_.registered -and (-not (Test-SourceDeliveryArtifactExpired -Item $_.directory -MinimumAgeHours $MinimumAgeHours)) } |
         Sort-Object { $_.directory.LastWriteTimeUtc } -Descending | Select-Object -First ([Math]::Max(0, $KeepRegistrations)) | ForEach-Object { $_.path })
     foreach ($entry in $owned) {
-        if ($entry.shortBranch) { if ($keptRegistrations -contains $entry.path) { $retained++; continue } }
+        if ($entry.shortBranch -and $entry.registered) { if ($keptRegistrations -contains $entry.path) { $retained++; continue } }
         elseif (-not (Test-SourceDeliveryArtifactExpired -Item $entry.directory -MinimumAgeHours ([Math]::Max(1, $InterruptedAgeHours)))) { $retained++; continue }
         $path = $entry.path; $shortBranch = $entry.shortBranch
         $bytes = Get-SourceDeliveryTreeBytes -Path $path
@@ -253,6 +258,26 @@ function Remove-SourceDeliveryStaleOperationWorktrees {
         } else {
             Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
         }
+        $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $path; bytes = $bytes }) | Out-Null
+    }
+    return [pscustomobject]@{ removedDirectories = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
+}
+
+function Remove-SourceDeliveryExpiredOperationLogs {
+    param([string]$TempRoot = ([IO.Path]::GetTempPath()), [int]$MinimumAgeHours = 168)
+
+    # Failing-entry attribution and a gate stand build keep step logs in temp;
+    # only a failed operation's diagnostic names them. Another clone may be
+    # writing its own directory now, so even a manual sweep waits a day.
+    $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
+    $temp = [IO.Path]::GetFullPath($TempRoot).TrimEnd('\')
+    foreach ($directory in @(Get-ChildItem -LiteralPath $temp -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -match '^itl-(source-attribution|gate-stand-logs)-[0-9a-f]{32}$' })) {
+        $path = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
+        if (-not (Test-SourceDeliveryArtifactExpired -Item $directory -MinimumAgeHours ([Math]::Max(24, $MinimumAgeHours))) -or
+            (Test-Path -LiteralPath (Join-Path $path '.git')) -or (Test-SourceDeliveryPathInUse -Path $path) -or
+            (Test-SourceDeliveryTreeHasReparsePoint -Path $path)) { $retained++; continue }
+        $bytes = Get-SourceDeliveryTreeBytes -Path $path
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
         $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $path; bytes = $bytes }) | Out-Null
     }
     return [pscustomobject]@{ removedDirectories = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
@@ -346,9 +371,12 @@ function Remove-SourceDeliveryStaleTestFixtures {
             $path = [IO.Path]::GetFullPath([string]$_.path).TrimEnd('\')
             if ([string]::Equals($path, $fixtureRoot, [StringComparison]::OrdinalIgnoreCase)) { return $false }
             $leaf = Split-Path -Leaf $path; $branch = [string]$_.branch
-            $generatedCandidate = [string]::Equals((Split-Path -Parent $path), $root, [StringComparison]::OrdinalIgnoreCase) -and
-                $leaf -match '^itl-source-(publish-develop|release-master|cleanup-executor)-([0-9a-f]{32})$' -and
-                $branch -ceq "refs/heads/itl/$($matches[1])-$($matches[2])"
+            # Every delivery operation the fixture ran created its own exact
+            # worktree shape here; a supervisor is detached.
+            $generatedCandidate = [string]::Equals((Split-Path -Parent $path), $root, [StringComparison]::OrdinalIgnoreCase) -and (
+                ($leaf -match '^itl-source-(publish-develop|release-master|cleanup-executor|register|plan-develop|attribute)-([0-9a-f]{32})$' -and
+                    $branch -ceq "refs/heads/itl/$($matches[1])-$($matches[2])") -or
+                ($leaf -match '^itl-source-supervisor-[0-9a-f]{32}$' -and $branch -ceq ''))
             $parallelFixture = [string]::Equals((Split-Path -Parent $path), $root, [StringComparison]::OrdinalIgnoreCase) -and
                 $leaf -match '^itl parallel worktree [0-9a-f]{32}$' -and $branch -ceq 'refs/heads/topic-two'
             return -not ($generatedCandidate -or $parallelFixture)
@@ -445,6 +473,7 @@ function Invoke-SourceDeliveryPostSuccessCleanup {
     foreach ($step in @(
         [pscustomobject]@{ name = 'sourceCandidates'; action = { Remove-SourceDeliveryStaleCandidateWorktrees -PreservePaths $PreservePaths } },
         [pscustomobject]@{ name = 'operationWorktrees'; action = { Remove-SourceDeliveryStaleOperationWorktrees -MinimumAgeHours $minimumAgeHours } },
+        [pscustomobject]@{ name = 'operationLogs'; action = { Remove-SourceDeliveryExpiredOperationLogs -MinimumAgeHours $minimumAgeHours } },
         [pscustomobject]@{ name = 'supersededGateStands'; action = { Remove-SourceDeliverySupersededGateStands -MinimumAgeHours $minimumAgeHours } },
         [pscustomobject]@{ name = 'interruptedTestArtifacts'; action = { Remove-SourceDeliveryInterruptedTestArtifacts -MinimumAgeHours 1 } },
         [pscustomobject]@{ name = 'sourceTestFixtures'; action = { Remove-SourceDeliveryStaleTestFixtures } },

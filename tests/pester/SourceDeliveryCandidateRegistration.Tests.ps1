@@ -226,3 +226,21 @@ if ($Mode -eq 'Targeted') {
         }
     }
 }
+Describe 'Source delivery fixture removal' {
+    It 'removes the registration, supervisor and candidate worktrees a delivery fixture created in the system temp' {
+        $fixture = New-DeliveryFixture
+        $temp = [IO.Path]::GetTempPath()
+        $ids = @{}; foreach ($name in @('register', 'publish-develop', 'supervisor')) { $ids[$name] = [guid]::NewGuid().ToString('N') }
+        $paths = @{}; foreach ($name in $ids.Keys) { $paths[$name] = Join-Path $temp "itl-source-$name-$($ids[$name])" }
+        try {
+            & git -C $fixture.root worktree add --quiet -b "itl/register-$($ids.register)" $paths.register *> $null
+            & git -C $fixture.root worktree add --quiet -b "itl/publish-develop-$($ids['publish-develop'])" $paths['publish-develop'] *> $null
+            & git -C $fixture.root worktree add --quiet --detach $paths.supervisor *> $null
+            New-Item -ItemType Directory -Force -Path (Join-Path $paths['publish-develop'] 'build\test-results') | Out-Null
+            foreach ($path in $paths.Values) { Test-Path -LiteralPath $path | Should -BeTrue -Because $path }
+        } finally {
+            Remove-DeliveryFixture -Fixture $fixture
+        }
+        foreach ($path in @($paths.Values) + @($fixture.root, $fixture.remote)) { Test-Path -LiteralPath $path | Should -BeFalse -Because $path }
+    }
+}

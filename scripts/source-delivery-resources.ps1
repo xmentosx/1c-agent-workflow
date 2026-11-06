@@ -258,11 +258,50 @@ function Set-DeliveryResourceState {
     return $true
 }
 
+function Get-DeliveryClosedCandidatePlans {
+    # A retained candidate is diagnosis for a plan that can still be retried.
+    # A plan is closed only on positive evidence: one of its candidates is
+    # reachable from a published tracking branch, or Replan archived its
+    # checkpoint. Missing, stale or unreadable evidence keeps the candidate.
+    param([Parameter(Mandatory = $true)][object]$Ledger)
+    $closed = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $candidates = @($Ledger.resources | Where-Object {
+        [string]$_.kind -eq 'candidate-worktree' -and [string]$_.state -eq 'retained' -and [bool](Test-DeliveryLedgerResourceOwnership -Resource $_).owned
+    })
+    if ($candidates.Count -eq 0) { return ,$closed }
+    $remote = [string](Get-Variable -Name Remote -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    if (-not $remote) { $remote = 'origin' }
+    $published = @(foreach ($branch in @('develop', 'master')) {
+        $ref = "refs/remotes/$remote/$branch"
+        if ((Invoke-DeliveryGit -Arguments @('rev-parse', '--verify', '--quiet', "$ref^{commit}") -AllowFailure).exitCode -eq 0) { $ref }
+    })
+    $archiveRoot = Join-Path (Get-DeliveryCommonGitDirectory) 'itl\publication-attempts\replaced'
+    foreach ($plan in @($candidates | Group-Object { [string]$_.planId })) {
+        $planId = [string]$plan.Name
+        if ($planId -cmatch '^[a-f0-9]{64}$' -and (Test-Path -LiteralPath (Join-Path $archiveRoot $planId) -PathType Container)) { [void]$closed.Add($planId); continue }
+        :candidate foreach ($resource in @($plan.Group)) {
+            $commit = if ($resource.identity.PSObject.Properties['candidate']) { [string]$resource.identity.candidate } else { '' }
+            if ($commit -cnotmatch '^[a-f0-9]{40}$') { continue }
+            foreach ($ref in $published) {
+                if ((Invoke-DeliveryGit -Arguments @('merge-base', '--is-ancestor', $commit, $ref) -AllowFailure).exitCode -eq 0) { [void]$closed.Add($planId); break candidate }
+            }
+        }
+    }
+    return ,$closed
+}
+
 function Update-DeliveryFailedPlanRetention {
     $ledger = Read-DeliveryResourceLedger
     $now = [DateTime]::UtcNow
     $checkpointHeld = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $changed = $false
+    # Candidates of a published or archived plan cannot serve a retry; release
+    # them before the failed-plan quota so it counts only open plans.
+    $closedPlans = Get-DeliveryClosedCandidatePlans -Ledger $ledger
+    foreach ($resource in @($ledger.resources | Where-Object { [string]$_.kind -eq 'candidate-worktree' -and [string]$_.state -eq 'retained' -and $closedPlans.Contains([string]$_.planId) })) {
+        if (-not [bool](Test-DeliveryLedgerResourceOwnership -Resource $resource).owned) { continue }
+        $resource.state = 'cleanup-pending'; $resource.updatedAt = $now.ToString('o'); $changed = $true
+    }
     foreach ($resource in @($ledger.resources | Where-Object { $_.kind -in @('release-snapshot','capability-generation') -and $_.state -in @('retained','cleanup-pending') })) {
         try {
             if (Test-DeliveryReleaseResourceReferencedByCheckpoint -Path $resource.identity.path -WorktreePath $resource.identity.worktreePath -Directory:($resource.kind -eq 'capability-generation')) {

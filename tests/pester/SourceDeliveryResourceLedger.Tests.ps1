@@ -796,6 +796,48 @@ public static class $typeName
         @($states.resources | Where-Object state -eq 'cleanup-pending' | Select-Object -ExpandProperty planId | Sort-Object) | Should -Be @('plan-1','plan-3')
     }
 
+    It 'releases retained candidates only of published or archived plans before the failed-plan quota' {
+        $root = New-LedgerRepository
+        & git -C $root config user.name 'ITL Test'; & git -C $root config user.email 'itl-test@example.invalid'
+        $commits = @{}
+        foreach ($name in @('published', 'retry', 'open', 'archived', 'foreign')) {
+            [IO.File]::WriteAllText((Join-Path $root 'tracked.txt'), $name, [Text.UTF8Encoding]::new($false))
+            & git -C $root add -- tracked.txt; & git -C $root commit --quiet -m $name
+            $commits[$name] = (& git -C $root rev-parse HEAD).Trim()
+            if ($name -eq 'published') { & git -C $root update-ref refs/remotes/origin/develop $commits.published }
+            if ($name -eq 'retry') { & git -C $root reset --quiet --hard $commits.published }
+        }
+        $plan = @{}; foreach ($name in @('published', 'archived', 'open', 'active', 'foreign')) { $plan[$name] = Get-DeliveryTextSha256 -Text "plan-$name" }
+        $archive = Join-Path (Get-DeliveryCommonGitDirectory) "itl\publication-attempts\replaced\$($plan.archived)"
+        New-Item -ItemType Directory -Force -Path $archive | Out-Null
+        function Add-Candidate { param([string]$Plan, [string]$Name, [string]$Commit, [string]$State = 'retained', [string]$Owner = 'source-delivery')
+            Register-DeliveryResource -PlanId $Plan -Kind candidate-worktree -Owner $Owner -Identity ([ordered]@{ path=(Join-Path $TestDrive "candidate-$Name"); branch="itl/publish-develop-$Name"; candidate=$Commit }) -State $State
+        }
+        # Any published candidate closes its plan, including a retry built on another commit.
+        $publishedIds = @((Add-Candidate -Plan $plan.published -Name published -Commit $commits.published), (Add-Candidate -Plan $plan.published -Name retry -Commit $commits.retry))
+        $archivedId = Add-Candidate -Plan $plan.archived -Name archived -Commit $commits.archived
+        $openId = Add-Candidate -Plan $plan.open -Name open -Commit $commits.open
+        $activeId = Add-Candidate -Plan $plan.active -Name active -Commit $commits.published -State active
+        $foreignId = Add-Candidate -Plan $plan.foreign -Name foreign -Commit $commits.published -Owner delivery
+        Update-DeliveryFailedPlanRetention
+        $states = @{}; foreach ($resource in @((Read-DeliveryResourceLedger).resources)) { $states[[string]$resource.resourceId] = [string]$resource.state }
+        foreach ($id in @($publishedIds + $archivedId)) { $states[$id] | Should -Be 'cleanup-pending' }
+        $states[$openId] | Should -Be 'retained'
+        $states[$activeId] | Should -Be 'active'
+        $states[$foreignId] | Should -Be 'retained'
+    }
+
+    It 'keeps every retained candidate when no published or archive evidence exists' {
+        $root = New-LedgerRepository
+        & git -C $root config user.name 'ITL Test'; & git -C $root config user.email 'itl-test@example.invalid'
+        [IO.File]::WriteAllText((Join-Path $root 'tracked.txt'), 'failed', [Text.UTF8Encoding]::new($false))
+        & git -C $root add -- tracked.txt; & git -C $root commit --quiet -m failed
+        $commit = (& git -C $root rev-parse HEAD).Trim()
+        $id = Register-DeliveryResource -PlanId (Get-DeliveryTextSha256 -Text 'release-master-failed') -Kind candidate-worktree -Owner source-delivery -Identity ([ordered]@{ path=(Join-Path $TestDrive 'candidate-release'); branch='itl/release-master-x'; candidate=$commit }) -State retained
+        Update-DeliveryFailedPlanRetention
+        @((Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $id)[0].state | Should -Be 'retained'
+    }
+
     It 'reads JSON timestamps independently of the current culture' {
         New-LedgerRepository | Out-Null
         Register-DeliveryResource -PlanId 'culture-plan' -Kind 'candidate-worktree' -Owner 'delivery' -Identity ([ordered]@{ path=(Join-Path $TestDrive 'culture-candidate') }) -State retained | Out-Null
