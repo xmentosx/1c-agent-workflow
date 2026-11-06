@@ -46,7 +46,9 @@ When an interaction fails twice without new evidence, change the route (recordin
 
 ## Failure Handling
 
-For connection/cleanup failures, use the existing facade owner in [local MCP recovery](../1c-workflow/references/mcp.md#availability-recovery-and-return-to-work) before fallback; do not request a manual reset. Recovery does not replay an unknown UI action.
+For connection/cleanup failures, use the existing facade owner in [local MCP recovery](../1c-workflow/references/mcp.md#availability-recovery-and-return-to-work) before fallback; do not request a manual reset. Recovery does not replay an unknown UI action. For `ITL_VANESSA_TESTCLIENT_NOT_CONNECTED`, call `itl_recover_connection` before the next UI call.
+
+A request-phase deadline returns `callOutcome: unknown` with the last received `lastProgress` step. The facade has stopped that backend, so `get_test_results` cannot report the call. After a mutating scenario times out, first run a read-only probe of the affected state, then repeat only the missing part; never blindly rerun setup that may duplicate data. A read-only scenario may simply be repeated.
 
 If a call fails, report the structured facade error and its log path when present. Classify facade/backend/TestClient/path/unsafe-action failures as runner infrastructure and keep a previously passing feature unchanged. Treat syntax, unsupported-step, assertion, and product-behavior failures separately; do not relabel them as runner failures. Ignore stale or foreign-instance evidence. Then use static analysis only as an explicitly labelled diagnostic fallback: it cannot prove the missing runtime behavior.
 
