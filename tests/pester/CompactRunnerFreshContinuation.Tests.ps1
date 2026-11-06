@@ -104,6 +104,11 @@ try {
     $result=Invoke-Agent1cFreshProcess -ScriptPath (Join-Path $fixture.root 'child.ps1') -ReturnExitStatus
     # The real post-copy parent wraps a failed child like this.
     if($fixture.mode -eq 'catalog-blocker' -and $result.exitCode -ne 0){throw "WORKFLOW_UPDATE_POST_COPY_INCOMPLETE: fixture snapshot preserved. $(Import-Agent1cFreshProcessFailure -Result $result -Operation 'Fresh workflow post-copy process')"}
+    if($fixture.mode -eq 'nested-report' -and $result.exitCode -eq 0){
+        # The real post-copy parent continues and writes its own terminal.
+        Complete-Agent1cLifecycleOperation -Status succeeded -ExitCode 0
+        Write-RunStatus -Status succeeded -ExitCode 0
+    }
     exit $result.exitCode
 } catch {
     $message=$_.Exception.Message
@@ -155,6 +160,17 @@ if($fixture.mode -eq 'nested') {
     $script:Agent1cReexecArguments=@('-Action',$Action,'-ProjectRoot',$fixture.root,'-RunStatusPath',$RunStatusPath,'-RunLogPath',$RunLogPath,'-FixtureSource',$fixture.source,'-Mode','success','-SilentSeconds',[string]$fixture.seconds,'-RoundTrip',$fixture.roundTrip,'-OriginalStatusPath',$fixture.external)
     $nestedResult=Invoke-Agent1cFreshProcess -ScriptPath (Join-Path $fixture.root 'child.ps1') -ReturnExitStatus
     exit $nestedResult.exitCode
+}
+if($fixture.mode -eq 'nested-report') {
+    # Intermediate helper: a workflow-update.branches helper restart.
+    [IO.File]::WriteAllText((Join-Path $fixture.root 'immediate-child-pid.txt'),[string]$PID,[Text.Encoding]::ASCII)
+    $script:Agent1cReexecArguments=@('-Action',$Action,'-ProjectRoot',$fixture.root,'-RunStatusPath',$RunStatusPath,'-RunLogPath',$RunLogPath,'-FixtureSource',$fixture.source,'-Mode','report','-SilentSeconds',[string]$fixture.seconds,'-RoundTrip',$fixture.roundTrip,'-OriginalStatusPath',$fixture.external)
+    Invoke-Agent1cFreshProcess -ScriptPath (Join-Path $fixture.root 'child.ps1')
+}
+if($fixture.mode -eq 'report') {
+    Write-Section 'Отчёт внука'
+    Set-RunUserReport -Report "## Workflow обновлён`n`nОтчёт внука с пробелом и кириллицей."
+    Set-RunResultArtifacts -ResultPath (Join-Path $fixture.root 'результат внука.json') -ResultManifestPath ''
 }
 Write-Output ('UTF8 stdout: ' + $fixture.roundTrip)
 [Console]::Error.WriteLine('UTF8 stderr: Кириллица с пробелом')
@@ -453,6 +469,53 @@ exit 0
             $fixture.status.pid | Should -Be $fixture.lifecycle.pid
             $fixture.status.pid | Should -Not -Be $grandchildPid
             (Get-Content -LiteralPath $fixture.summary.logPath -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('UTF8 stdout: '+$fixture.roundTrip))
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'keeps the grandchild report, final stage and terminal liveness after a nested reexec under a continuing parent' {
+        $fixture=Invoke-FreshCompactFixture -Mode nested-report -SilentSeconds 2
+        try {
+            $fixture.result.exitCode | Should -Be 0 -Because (Get-FreshCompactFixtureDiagnostic -Fixture $fixture)
+            $grandchildPid=[int](Get-Content -LiteralPath (Join-Path $fixture.root 'child-pid.txt'))
+            $immediatePid=[int](Get-Content -LiteralPath (Join-Path $fixture.root 'immediate-child-pid.txt'))
+            $grandchildPid | Should -Not -Be $immediatePid
+            $expectedResult=Join-Path $fixture.root 'результат внука.json'
+            foreach ($observed in @($fixture.status, $fixture.summary)) {
+                $observed.status | Should -Be 'succeeded'
+                $observed.stage | Should -Be 'fixture.actual-terminal'
+                $observed.stageDetail | Should -Be 'Точный финал дочернего процесса'
+                $observed.liveness | Should -Not -Match '^running'
+                $observed.resultPath | Should -Be $expectedResult
+            }
+            $fixture.status.userReport | Should -Match '^## Workflow обновлён'
+            if ($fixture.summary.PSObject.Properties['userReportOmitted'] -and $fixture.summary.userReportOmitted) {
+                (Get-Content -LiteralPath $fixture.summary.userReportPath -Raw -Encoding UTF8) | Should -Match '## Workflow обновлён'
+            } else {
+                $fixture.summary.userReport | Should -Match '^## Workflow обновлён'
+            }
+            $fixture.status.pid | Should -Be $fixture.lifecycle.pid
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'timestamps every compact run-log record and appends nested stage and section durations without changing stdout' {
+        $fixture=Invoke-FreshCompactFixture -Mode nested-report -SilentSeconds 2
+        try {
+            $fixture.result.exitCode | Should -Be 0 -Because (Get-FreshCompactFixtureDiagnostic -Fixture $fixture)
+            $lines=@([IO.File]::ReadAllLines($fixture.summary.logPath,[Text.UTF8Encoding]::new($false)))
+            $lines.Count | Should -BeGreaterThan 5
+            foreach ($line in $lines) { $line | Should -Match '^\d{2}:\d{2}:\d{2}\.\d{3} ' }
+            # Stages of the parent, the intermediate and the grandchild reach the one writer.
+            @($lines | Where-Object { $_ -cmatch '^\S+ ITL stage: workflow-update\.branches$' }).Count | Should -Be 2
+            @($lines | Where-Object { $_ -cmatch '^\S+ ITL stage: reexec$' }).Count | Should -Be 2
+            $tableStart=[Array]::FindIndex($lines,[Predicate[string]]{ param($l) $l -cmatch '^\S+ ITL run timings \(kind, duration, count, name\):$' })
+            $tableStart | Should -BeGreaterThan 0
+            $table=@($lines[($tableStart+1)..($lines.Count-1)])
+            $duration='\d{2}:\d{2}:\d{2}\.\d{3}'
+            @($table | Where-Object { $_ -cmatch "^\S+   stage   $duration    2x  workflow-update\.branches$" }).Count | Should -Be 1
+            @($table | Where-Object { $_ -cmatch "^\S+   stage   $duration    2x  reexec$" }).Count | Should -Be 1
+            @($table | Where-Object { $_ -cmatch "^\S+   section $duration    1x  Отчёт внука$" }).Count | Should -Be 1
+            $table[-1] | Should -Match "^\S+   total   $duration        run$"
+            $fixture.result.stdout | Should -Not -Match 'ITL stage:|ITL run timings|^\d{2}:\d{2}:\d{2}\.\d{3} '
         } finally { Remove-FreshCompactFixture $fixture }
     }
 

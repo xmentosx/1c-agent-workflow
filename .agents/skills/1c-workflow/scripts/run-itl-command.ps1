@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -922,9 +922,32 @@ if ($windowed) {
 `$consoleApi::SetConsoleCtrlHandler([IntPtr]::Zero, `$false) | Out-Null
 `$helperExitCode = 1
 `$global:LASTEXITCODE = `$null
+# This wrapper is the only compact run-log writer: it alone timestamps records
+# and appends the stage/section duration table. Agent stdout stays unchanged.
+`$itlRunLogPath = $(ConvertTo-PowerShellLiteral -Value $logPath)
+`$itlRunStartedAt = [DateTime]::Now
+`$itlRunTimings = [ordered]@{}
+`$itlRunOpenSpans = @{}
+function Write-ItlCompactRunLogRecord([string]`$Text, [DateTime]`$At) {
+    [IO.File]::AppendAllText(`$itlRunLogPath, (`$At.ToString('HH:mm:ss.fff') + ' ' + `$Text + [Environment]::NewLine), `$utf8)
+}
+function Step-ItlCompactRunTiming([string]`$Kind, [string]`$Name, [DateTime]`$At) {
+    `$open = `$itlRunOpenSpans[`$Kind]
+    if (`$null -ne `$open) {
+        `$key = `$Kind + [char]0 + `$open.name
+        if (-not `$itlRunTimings.Contains(`$key)) { `$itlRunTimings[`$key] = [pscustomobject]@{kind=`$Kind; name=`$open.name; count=0; ticks=[int64]0} }
+        `$itlRunTimings[`$key].count++
+        `$itlRunTimings[`$key].ticks += (`$At - `$open.startedAt).Ticks
+    }
+    `$itlRunOpenSpans[`$Kind] = if (`$Name) { @{name=`$Name; startedAt=`$At} } else { `$null }
+}
 try {
     $helperInvocation *>&1 | ForEach-Object {
-        [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), ([string]`$_ + [Environment]::NewLine), `$utf8)
+        `$itlAt = [DateTime]::Now
+        `$itlText = [string]`$_
+        if (`$itlText -cmatch '^ITL stage: (.+)$') { Step-ItlCompactRunTiming 'stage' `$Matches[1].Trim() `$itlAt }
+        elseif (`$itlText -cmatch '^== (.+) ==$') { Step-ItlCompactRunTiming 'section' `$Matches[1].Trim() `$itlAt }
+        Write-ItlCompactRunLogRecord `$itlText `$itlAt
     }
     `$pipelineSucceeded = `$?
     if (`$LASTEXITCODE -is [int] -and `$LASTEXITCODE -ne 0) { `$helperExitCode = [int]`$LASTEXITCODE }
@@ -932,8 +955,19 @@ try {
     else { `$helperExitCode = 1 }
 } catch {
     [Console]::Error.WriteLine(`$_.Exception.Message)
-    [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), (`$_.Exception.Message + [Environment]::NewLine), `$utf8)
+    Write-ItlCompactRunLogRecord `$_.Exception.Message ([DateTime]::Now)
     `$helperExitCode = 1
+} finally {
+    try {
+        `$itlEndedAt = [DateTime]::Now
+        Step-ItlCompactRunTiming 'stage' '' `$itlEndedAt
+        Step-ItlCompactRunTiming 'section' '' `$itlEndedAt
+        Write-ItlCompactRunLogRecord 'ITL run timings (kind, duration, count, name):' `$itlEndedAt
+        foreach (`$row in `$itlRunTimings.Values) {
+            Write-ItlCompactRunLogRecord ('  {0,-7} {1} {2,4}x  {3}' -f `$row.kind, ([TimeSpan]`$row.ticks).ToString('hh\:mm\:ss\.fff'), `$row.count, `$row.name) `$itlEndedAt
+        }
+        Write-ItlCompactRunLogRecord ('  {0,-7} {1}        run' -f 'total', (`$itlEndedAt - `$itlRunStartedAt).ToString('hh\:mm\:ss\.fff')) `$itlEndedAt
+    } catch { [Console]::Error.WriteLine("ITL run timing table skipped: `$(`$_.Exception.Message)") }
 }
 [Environment]::Exit(`$helperExitCode)
 "@
