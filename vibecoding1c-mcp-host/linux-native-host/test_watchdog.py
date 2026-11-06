@@ -5,7 +5,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('watchdog', Path(__file__).with_name('watchdog.py'))
 host = importlib.util.module_from_spec(spec)
@@ -84,6 +86,55 @@ class RecoveryBoundaries(unittest.TestCase):
             self.assertEqual(json.loads(result.stdout)['status'], 'maintenance-active')
         with host.maintenance_lock(self.config['lockPath']) as acquired:
             self.assertTrue(acquired)
+
+
+class StatusWriteBoundaries(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.TemporaryDirectory(prefix='статус хоста с пробелом ')
+        self.path = Path(self.root.name) / 'состояние обновления.json'
+        host.write_status(self.path, {'state': 'старое'})
+
+    def tearDown(self):
+        self.root.cleanup()
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows rename sharing denial')
+    def test_transient_windows_reader_is_retried_and_replaces_status(self):
+        reader = self.path.open('rb')
+        release = threading.Timer(0.2, reader.close)
+        original_replace = os.replace
+        try:
+            with patch.object(host.os, 'replace', wraps=original_replace) as replacing:
+                release.start()
+                host.write_status(self.path, {'state': 'новое'})
+                self.assertGreater(replacing.call_count, 1)
+        finally:
+            release.cancel()
+            if release.ident is not None:
+                release.join()
+            reader.close()
+        self.assertEqual(json.loads(self.path.read_text(encoding='utf-8')), {'state': 'новое'})
+        self.assertEqual(list(Path(self.root.name).glob('*.tmp')), [])
+
+    def test_persistent_denial_is_bounded_and_keeps_previous_status(self):
+        denied = PermissionError(13, 'denied')
+        denied.winerror = 5
+        with patch.object(host.os, 'replace', side_effect=denied) as replacing, \
+                patch.object(host.time, 'perf_counter', side_effect=[0.0, 0.0, 0.6, 1.1]), \
+                patch.object(host.time, 'sleep'):
+            with self.assertRaises(PermissionError) as failure:
+                host.write_status(self.path, {'state': 'новое'})
+        self.assertIs(failure.exception, denied)
+        self.assertGreater(replacing.call_count, 1)
+        self.assertEqual(json.loads(self.path.read_text(encoding='utf-8')), {'state': 'старое'})
+        self.assertEqual(list(Path(self.root.name).glob('*.tmp')), [])
+
+    def test_unrelated_replace_failure_is_not_retried(self):
+        failure = OSError(22, 'invalid operation')
+        with patch.object(host.os, 'replace', side_effect=failure) as replacing:
+            with self.assertRaises(OSError):
+                host.write_status(self.path, {'state': 'новое'})
+        self.assertEqual(replacing.call_count, 1)
+        self.assertEqual(json.loads(self.path.read_text(encoding='utf-8')), {'state': 'старое'})
 
 
 if __name__ == '__main__':

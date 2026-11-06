@@ -112,8 +112,24 @@ def write_status(path, status):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.' + str(os.getpid()) + '.tmp')
-    temporary.write_text(json.dumps(status, ensure_ascii=False) + '\n', encoding='utf-8')
-    os.replace(temporary, path)
+    try:
+        temporary.write_text(json.dumps(status, ensure_ascii=False) + '\n', encoding='utf-8')
+        # Windows readers and scanners may briefly deny rename sharing on the
+        # target. Keep the previous status and retry only that native boundary.
+        # perf_counter keeps this bound independent of callers' wait clocks.
+        deadline = time.perf_counter() + 1.0
+        while True:
+            try:
+                os.replace(temporary, path)
+                break
+            except OSError as exc:
+                remaining = deadline - time.perf_counter()
+                if getattr(exc, 'winerror', None) not in (5, 32, 33) or remaining <= 0:
+                    raise
+                time.sleep(min(0.05, remaining))
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def main():
