@@ -13,6 +13,14 @@
             [IO.File]::WriteAllText((Join-Path $folder 'dependency-lock.json'),($lock|ConvertTo-Json -Depth 100),[Text.UTF8Encoding]::new($false))
         }
     }
+    BeforeEach {
+        # Rules checkouts live in the durable ITL artifact cache; each case owns one.
+        $savedArtifactCache = [Environment]::GetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', 'Process')
+        [Environment]::SetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', (Join-Path $TestDrive ('артефакты кэш ' + [guid]::NewGuid().ToString('N'))), 'Process')
+    }
+    AfterEach {
+        [Environment]::SetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', $savedArtifactCache, 'Process')
+    }
 
     It "offers the executing client first as recommended and selects it when the wizard answer is skipped" {
         $results = & {
@@ -881,10 +889,13 @@ $text = [IO.File]::ReadAllText((Join-Path $Source 'content/skills/grill-me/agent
         $savedTemp = $env:TEMP
         $savedSource = $env:ITL_AI_RULES_SOURCE_PATH
         Remove-Item Env:ITL_AI_RULES_SOURCE_PATH -ErrorAction SilentlyContinue
+        $savedArtifactCache = [Environment]::GetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', 'Process')
         $fixture = New-CacheIntegrityFixture
         $env:TEMP = $fixture.cache
+        [Environment]::SetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', $fixture.cache, 'Process')
     }
     AfterEach {
+        [Environment]::SetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', $savedArtifactCache, 'Process')
         $env:TEMP = $savedTemp
         $env:ITL_AI_RULES_SOURCE_PATH = $savedSource
     }
@@ -928,9 +939,16 @@ $text = [IO.File]::ReadAllText((Join-Path $Source 'content/skills/grill-me/agent
             [IO.File]::ReadAllText((Join-Path $second.root $relative)) | Should -BeExactly 'exact unchanged metadata'
             $second.commit | Should -Be $(if ($advance) { $fixture.next } else { $fixture.old })
             @(Get-GitPathListAt -Root $second.root -Arguments @('status','--porcelain=v1','-z','--untracked-files=all')).Count | Should -Be 0
-            ($warningMessages -join ' ') | Should -Match 'AI_RULES_CACHE_RECOVERED.*expectedCommit=.*diagnostic='
-            $preserved = if ($damage -in @('wrong-origin','corrupt-git')) { $first.root } else {
-                @(Get-ChildItem -LiteralPath $fixture.cache -Directory -Filter 'ai_rules_1c-invalid-*')[0].FullName
+            if ($advance) {
+                # Checkouts are keyed by exact commit: the new pin never reads
+                # or relocates the damaged copy of the previous commit.
+                $second.root | Should -Not -Be $first.root
+                ($warningMessages -join ' ') | Should -Not -Match 'AI_RULES_CACHE_RECOVERED'
+                $preserved = $first.root
+            } else {
+                ($warningMessages -join ' ') | Should -Match 'AI_RULES_CACHE_RECOVERED.*expectedCommit=.*diagnostic='
+                $preserved = [regex]::Match(($warningMessages -join ' '), "diagnostic='([^']+)'").Groups[1].Value
+                if ($damage -in @('wrong-origin','corrupt-git')) { $preserved | Should -Be $first.root } else { $preserved | Should -Match '[\\/]invalid-[0-9a-f]{12}$' }
             }
             [IO.File]::ReadAllText((Join-Path $preserved ('.git/' + $receiptName))) | Should -BeExactly $(if ($receiptName -eq 'HEAD') {'broken HEAD'} else {'preserve diagnostic bytes'})
             switch ($damage) {
@@ -986,7 +1004,7 @@ $text = [IO.File]::ReadAllText((Join-Path $Source 'content/skills/grill-me/agent
             try {
                 { Sync-AiRules1cCheckout } | Should -Throw '*AI_RULES_CACHE_BUSY*repeat the original operation*'
                 Test-Path -LiteralPath $lockPath | Should -BeTrue
-                @(Get-ChildItem -LiteralPath $fixture.cache -Directory -Filter 'ai_rules_1c-invalid-*').Count | Should -Be 0
+                @(Get-ChildItem -LiteralPath $fixture.cache -Directory -Recurse -Filter 'invalid-*').Count | Should -Be 0
             } finally { $handle.Dispose(); Remove-Item -LiteralPath $lockPath }
             $retried = Sync-AiRules1cCheckout
             Test-Path -LiteralPath (Join-Path $retried.root 'content/skills/grill-me/agents/openai.yaml') | Should -BeTrue
@@ -1010,5 +1028,81 @@ $text = [IO.File]::ReadAllText((Join-Path $Source 'content/skills/grill-me/agent
             $result.commit | Should -Be $fixture.old
             (Get-FileHash -LiteralPath (Join-Path $fixture.source '.git/config')).Hash | Should -Be $configHash
         }
+    }
+
+    It 'shares one durable exact-commit checkout and restores TEMP-sweeper deletions from the local mirror without the source' {
+        # Windows Storage Sense removed tracked files that were not accessed
+        # for seven days from project-keyed TEMP checkouts, forcing full clones.
+        $sweptTemp = Join-Path $fixture.root 'очищаемый temp'
+        [void][IO.Directory]::CreateDirectory($sweptTemp)
+        $env:TEMP = $sweptTemp
+        $projectTwo = Join-Path $fixture.root 'проект два'
+        [void][IO.Directory]::CreateDirectory((Join-Path $projectTwo '.agent-1c'))
+        Copy-Item -LiteralPath (Join-Path $fixture.project 'templates') -Destination $projectTwo -Recurse
+        Copy-Item -LiteralPath (Join-Path $fixture.project '.agent-1c/project.json') -Destination (Join-Path $projectTwo '.agent-1c/project.json')
+        $first = & { . $HelperPath -ProjectRoot $fixture.project -Action help *> $null; Sync-AiRules1cCheckout }
+        $second = & { . $HelperPath -ProjectRoot $projectTwo -Action help *> $null; Sync-AiRules1cCheckout }
+        $second.root | Should -Be $first.root
+        $first.root.StartsWith((Join-Path $fixture.cache 'ai_rules_1c') + '\', [StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+        @(Get-ChildItem -LiteralPath $sweptTemp -Force).Count | Should -Be 0
+
+        Remove-Item -LiteralPath (Join-Path $first.root 'version.txt'), (Join-Path $first.root '.gitignore')
+        $offlineSource = $fixture.source + ' offline'
+        Rename-Item -LiteralPath $fixture.source -NewName (Split-Path -Leaf $offlineSource)
+        try {
+            & {
+                . $HelperPath -ProjectRoot $projectTwo -Action help *> $null
+                $captured = @(Sync-AiRules1cCheckout 3>&1)
+                $warnings = @($captured | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }) -join ' '
+                $restored = @($captured | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                $warnings | Should -Match 'AI_RULES_CACHE_RECOVERED'
+                $restored.root | Should -Be $first.root
+                $restored.commit | Should -Be $fixture.old
+                [IO.File]::ReadAllText((Join-Path $restored.root 'version.txt')) | Should -BeExactly 'r49'
+                @(Get-GitPathListAt -Root $restored.root -Arguments @('status','--porcelain=v1','-z','--untracked-files=all','--ignored=matching')).Count | Should -Be 0
+            }
+        } finally {
+            Rename-Item -LiteralPath $offlineSource -NewName (Split-Path -Leaf $fixture.source)
+        }
+    }
+
+    It 'removes only idle generated legacy TEMP checkouts and expired durable cache entries' {
+        $legacyTemp = Join-Path $fixture.root 'старый temp'
+        [void][IO.Directory]::CreateDirectory($legacyTemp)
+        $env:TEMP = $legacyTemp
+        $idle = (Get-Date).AddDays(-3)
+        function New-AgedDirectory {
+            param([string]$Path, [datetime]$Time, [switch]$Git, [string]$Marker = '')
+            [void][IO.Directory]::CreateDirectory($Path)
+            [IO.File]::WriteAllText((Join-Path $Path 'content.txt'), 'bytes')
+            if ($Git) {
+                [void][IO.Directory]::CreateDirectory((Join-Path $Path '.git'))
+                foreach ($name in @('HEAD', 'index')) { [IO.File]::WriteAllText((Join-Path $Path ".git/$name"), 'x') }
+                if ($Marker) { [IO.File]::WriteAllText((Join-Path $Path ".git/$Marker"), '') }
+            }
+            foreach ($item in @(Get-ChildItem -LiteralPath $Path -Recurse -Force) + @(Get-Item -LiteralPath $Path -Force)) { $item.LastWriteTime = $Time }
+        }
+        $hex64 = 'a' * 64
+        New-AgedDirectory -Path (Join-Path $legacyTemp "ai_rules_1c-$hex64") -Time $idle -Git
+        New-AgedDirectory -Path (Join-Path $legacyTemp ('ai_rules_1c-invalid-' + ('b' * 32))) -Time $idle -Git
+        New-AgedDirectory -Path (Join-Path $legacyTemp ('ai_rules_1c-prepare-' + ('c' * 32))) -Time $idle
+        New-AgedDirectory -Path (Join-Path $legacyTemp ('ai_rules_1c-' + ('d' * 64))) -Time (Get-Date) -Git
+        New-AgedDirectory -Path (Join-Path $legacyTemp 'ai_rules_1c') -Time $idle -Git
+        New-AgedDirectory -Path (Join-Path $legacyTemp 'ai_rules_1c-заметки пользователя') -Time $idle -Git
+
+        $first = & { . $HelperPath -ProjectRoot $fixture.project -Action help *> $null; Sync-AiRules1cCheckout }
+        $repoCache = Split-Path -Parent $first.root
+        New-AgedDirectory -Path (Join-Path $repoCache '0123456789ab') -Time (Get-Date).AddDays(-40) -Git -Marker 'itl-last-used'
+        New-AgedDirectory -Path (Join-Path $repoCache 'prepare-0123456789ab') -Time $idle
+        New-AgedDirectory -Path (Join-Path $repoCache 'prepare-ba9876543210') -Time (Get-Date)
+        foreach ($day in 3, 4, 5) { New-AgedDirectory -Path (Join-Path $repoCache ("invalid-00000000000$day")) -Time (Get-Date).AddDays(-$day) -Git }
+        New-AgedDirectory -Path (Join-Path $repoCache 'notes пользователя') -Time (Get-Date).AddDays(-40)
+
+        $again = & { . $HelperPath -ProjectRoot $fixture.project -Action help *> $null; Sync-AiRules1cCheckout }
+        $again.root | Should -Be $first.root
+        @(Get-ChildItem -LiteralPath $legacyTemp -Directory -Force | ForEach-Object Name | Sort-Object) |
+            Should -Be @(@('ai_rules_1c', ('ai_rules_1c-' + ('d' * 64)), 'ai_rules_1c-заметки пользователя') | Sort-Object)
+        @(Get-ChildItem -LiteralPath $repoCache -Directory -Force | ForEach-Object Name | Sort-Object) |
+            Should -Be @(@((Split-Path -Leaf $first.root), 'invalid-000000000003', 'invalid-000000000004', 'mirror.git', 'notes пользователя', 'prepare-ba9876543210') | Sort-Object)
     }
 }

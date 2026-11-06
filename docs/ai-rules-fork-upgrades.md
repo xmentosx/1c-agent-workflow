@@ -2,20 +2,41 @@
 
 ## Local source cache integrity
 
-`Sync-AiRules1cCheckout` owns preparation of the per-project temporary rules
-checkout. A matching HEAD alone is insufficient: before reuse and after checkout
-it checks repository identity, physical checkout boundaries, index/worktree state,
-untracked/ignored files and index flags that can hide missing files. The existing
-project lifecycle lease covers preparation and installer reads; no global cache
-lock is added.
+`Sync-AiRules1cCheckout` owns the rules source cache under the ITL artifact
+cache (`%LOCALAPPDATA%\ITL\artifacts\ai_rules_1c`, or `ITL_ARTIFACT_CACHE_ROOT`).
+It is never in TEMP: Windows Storage Sense deleted tracked files that had not
+been accessed for seven days from the former per-project TEMP checkouts, so
+every affected project and worktree re-cloned the fork.
 
-An invalid copy is preserved while a fresh pinned source is prepared and checked.
-A recognized physical checkout is then moved to the logged diagnostic directory.
-Foreign, linked or unrecognizable directories remain in place; that invocation
-uses its isolated verified replacement. Preparation failures preserve both copies
-and report how to repeat the original operation. An existing Git index lock is
-never removed or bypassed: wait for its owner and retry. `ITL_AI_RULES_SOURCE_PATH`
-retains its clean-source/origin checks and is never automatically repaired.
+Each repository identity has one bare `mirror.git` and one standalone checkout
+per exact pinned commit (`<repo16>\<commit12>`), shared by every project and
+worktree pinned to it. The mirror is fetched only when the pinned tag is absent
+locally or resolves to another commit; tag/commit mismatch still fails. A
+published checkout is never fetched, checked out or reconfigured again, so
+projects on different pins never share mutable Git state. A matching HEAD alone
+is insufficient: before reuse and after preparation the owner checks repository
+identity, physical checkout boundaries, index/worktree state without optional
+locks, untracked/ignored files and index flags that can hide missing files. No
+global cache lock is added: a new checkout is prepared in `prepare-<id>` and
+published by an atomic directory move; a concurrent loser uses the winner's
+verified copy.
+
+An invalid copy is preserved while a fresh pinned source is prepared from the
+local mirror (no network) and checked. A recognized physical checkout is then
+moved to `invalid-<id>`. Foreign, linked or unrecognizable directories remain in
+place; that invocation uses its isolated verified preparation. Preparation
+failures preserve both copies and report how to repeat the original operation.
+An existing Git index lock is never removed or bypassed: wait for its owner and
+retry. `ITL_AI_RULES_SOURCE_PATH` retains its clean-source/origin checks, is
+never automatically repaired and is only fetched from into the mirror.
+
+After each successful preparation, retention removes exact-commit checkouts
+unused for 30 days, `prepare-*` older than one day and all but the two newest
+`invalid-*`; the current checkout is always kept. It also removes, within a
+60-second budget, generated legacy TEMP names (`ai_rules_1c-<64 hex>`,
+`ai_rules_1c-invalid|prepare-<32 hex>`) whose directory and Git state were idle
+for 24 hours, so an older helper still using one is not disturbed. Other TEMP
+entries, including the old shared `ai_rules_1c`, stay untouched.
 
 On the 2026-10-30 disposable local-Git fixture, three alternating healthy-cache
 runs had median preparation times of 0.40 s before and 0.99 s after these checks.

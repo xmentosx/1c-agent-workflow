@@ -5429,13 +5429,14 @@ function Test-AiRules1cForkRepository {
 function Invoke-AiRules1cFetchWithRetry {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
+        [string[]]$Arguments = @("fetch", "--all", "--tags", "--prune"),
         [int]$MaxAttempts = 3
     )
 
     $failure = $null
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         try {
-            Invoke-GitAt -Root $Root -Arguments @("fetch", "--all", "--tags", "--prune")
+            Invoke-GitAt -Root $Root -Arguments $Arguments
             return
         } catch {
             $failure = $_
@@ -5471,7 +5472,9 @@ function Get-AiRules1cCacheState {
         $owned = $true
         $headCommit = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--verify', 'HEAD^{commit}')).Trim()
         if ($ExpectedCommit -and $headCommit -cne $ExpectedCommit) { throw 'HEAD does not match the pinned commit' }
-        $changes = @(Get-GitPathListAt -Root $Root -Arguments @('status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'))
+        # Shared exact-commit checkouts are validated by several projects; a
+        # read-only status must never take the index lock another reader sees.
+        $changes = @(Get-GitPathListAt -Root $Root -Arguments @('--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'))
         if ($changes.Count) { throw "index/worktree changes: $($changes.Count) records; $(@($changes | Select-Object -First 5) -join '; ')" }
         # A clean status can hide missing files behind sparse/assume-unchanged bits.
         $hidden = @(Get-GitPathListAt -Root $Root -Arguments @('ls-files', '-v', '-z') | Where-Object { -not $_.StartsWith('H ') })
@@ -5482,6 +5485,212 @@ function Get-AiRules1cCacheState {
     }
 }
 
+function Get-AiRules1cCacheRoot {
+    # Durable machine-local cache beside the immutable artifact cache. Windows
+    # Storage Sense deletes TEMP files that were not accessed for days, which
+    # left TEMP checkouts with hundreds of missing tracked files.
+    return (Join-Path (Get-ItlSharedArtifactCacheRoot) 'ai_rules_1c')
+}
+
+function New-AiRules1cCacheId {
+    return [guid]::NewGuid().ToString('N').Substring(0, 12)
+}
+
+function Test-AiRules1cPhysicalDirectory {
+    param([string]$Path)
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        return ($item.PSIsContainer -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint))
+    } catch {
+        return $false
+    }
+}
+
+function Test-AiRules1cBareMirror {
+    param([string]$Root)
+    if (-not (Test-AiRules1cPhysicalDirectory -Path $Root)) { return $false }
+    try {
+        $bare = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--is-bare-repository')).Trim()
+        $gitDir = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--absolute-git-dir')).Trim()
+        return ($bare -eq 'true' -and (Resolve-Agent1cFullPath -Path $gitDir) -ieq (Resolve-Agent1cFullPath -Path $Root))
+    } catch {
+        return $false
+    }
+}
+
+function Get-AiRules1cMirrorTagCommit {
+    param([string]$Mirror, [string]$Tag)
+    $tagRef = "refs/tags/$Tag"
+    if (-not (Test-GitRefExistsAt -Root $Mirror -Ref $tagRef)) { return '' }
+    return (Get-GitOutputAt -Root $Mirror -Arguments @('rev-parse', "$tagRef^{commit}")).Trim()
+}
+
+function Set-AiRules1cCacheLastUsed {
+    param([string]$Root)
+    try {
+        $marker = Join-Path $Root '.git\itl-last-used'
+        if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+            [IO.File]::WriteAllText($marker, '')
+        }
+        [IO.File]::SetLastWriteTimeUtc($marker, [DateTime]::UtcNow)
+    } catch {
+        # Usage time only steers retention; a concurrent reader may own the file.
+    }
+}
+
+function Get-AiRules1cCacheLastUsedUtc {
+    param([string]$Root)
+    foreach ($path in @((Join-Path $Root '.git\itl-last-used'), $Root)) {
+        try {
+            if (Test-Path -LiteralPath $path) { return (Get-Item -LiteralPath $path -Force).LastWriteTimeUtc }
+        } catch {
+        }
+    }
+    return [DateTime]::MinValue
+}
+
+function Resolve-AiRules1cMirror {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoCache,
+        [Parameter(Mandatory = $true)][string]$SourceRepo,
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][string]$Commit
+    )
+
+    $mirror = Join-Path $RepoCache 'mirror.git'
+    if ((Test-Path -LiteralPath $mirror) -and -not (Test-AiRules1cBareMirror -Root $mirror)) {
+        if (-not (Test-AiRules1cPhysicalDirectory -Path $mirror)) {
+            throw "AI_RULES_CACHE_FOREIGN: '$mirror' is not an ITL ai_rules_1c mirror. Move it away and repeat the original operation."
+        }
+        $diagnostic = Join-Path $RepoCache ('invalid-' + (New-AiRules1cCacheId))
+        Move-Item -LiteralPath $mirror -Destination $diagnostic -ErrorAction Stop
+        Write-Warning "AI_RULES_CACHE_INVALID path='$mirror' state='not a bare repository' diagnostic='$diagnostic'. Recreating the shared mirror."
+    }
+    if (-not (Test-Path -LiteralPath $mirror)) {
+        $prepare = Join-Path $RepoCache ('prepare-' + (New-AiRules1cCacheId))
+        try {
+            Invoke-GitAt -Root $RepoCache -Arguments @('clone', '--bare', '--quiet', $SourceRepo, $prepare)
+        } catch {
+            throw "Failed to clone ai_rules_1c from '$SourceRepo' into '$prepare': $($_.Exception.Message). Existing caches are preserved; resolve the source/transport failure and repeat the original operation."
+        }
+        try {
+            Move-Item -LiteralPath $prepare -Destination $mirror -ErrorAction Stop
+        } catch {
+            # A concurrent preparation published the mirror first.
+            if (-not (Test-AiRules1cBareMirror -Root $mirror)) {
+                throw "AI_RULES_CACHE_PUBLISH_FAILED: cannot publish '$prepare' as '$mirror': $($_.Exception.Message). Repeat the original operation."
+            }
+            Remove-Item -LiteralPath $prepare -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $tagCommit = Get-AiRules1cMirrorTagCommit -Mirror $mirror -Tag $Tag
+    if ($tagCommit -cne $Commit) {
+        # Fetch only when the exact pinned tag is absent or differs locally;
+        # an existing immutable commit needs no network access.
+        try {
+            Invoke-AiRules1cFetchWithRetry -Root $mirror -Arguments @('fetch', '--quiet', $SourceRepo, '+refs/heads/*:refs/heads/*', '+refs/tags/*:refs/tags/*')
+        } catch {
+            throw "Failed to update ai_rules_1c in '$mirror': $($_.Exception.Message). Preserve the cache and repeat the original operation after resolving the fetch failure."
+        }
+        $tagCommit = Get-AiRules1cMirrorTagCommit -Mirror $mirror -Tag $Tag
+    }
+    if (-not $tagCommit) {
+        throw "Configured ai_rules_1c ref is not an available tag: $Tag"
+    }
+    if ($tagCommit -cne $Commit) {
+        throw "ai_rules_1c tag/commit mismatch for '$Tag': tag=$tagCommit lock=$Commit"
+    }
+    return $mirror
+}
+
+function Invoke-AiRules1cCacheRetention {
+    param(
+        [Parameter(Mandatory = $true)][string]$CacheRoot,
+        [string]$KeepRoot = '',
+        [int]$UnusedDays = 30
+    )
+
+    $nowUtc = [DateTime]::UtcNow
+    $keep = if ($KeepRoot) { (Resolve-Agent1cFullPath -Path $KeepRoot).TrimEnd('\', '/') } else { '' }
+    foreach ($repoCache in @(Get-ChildItem -LiteralPath $CacheRoot -Directory -Force -ErrorAction SilentlyContinue)) {
+        if ($repoCache.Name -notmatch '^[0-9a-f]{16}$' -or ($repoCache.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+        $children = @(Get-ChildItem -LiteralPath $repoCache.FullName -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $_.FullName.TrimEnd('\', '/') -ine $keep })
+        $expired = [System.Collections.Generic.List[string]]::new()
+        foreach ($child in $children) {
+            if ($child.Name -match '^[0-9a-f]{12}$' -and (Get-AiRules1cCacheLastUsedUtc -Root $child.FullName) -lt $nowUtc.AddDays(-$UnusedDays)) {
+                $expired.Add($child.FullName) | Out-Null
+            } elseif ($child.Name -match '^prepare-[0-9a-f]{12}$' -and (Get-AiRules1cCacheLastUsedUtc -Root $child.FullName) -lt $nowUtc.AddDays(-1)) {
+                $expired.Add($child.FullName) | Out-Null
+            }
+        }
+        foreach ($child in @($children | Where-Object { $_.Name -match '^invalid-[0-9a-f]{12}$' } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -Skip 2)) {
+            $expired.Add($child.FullName) | Out-Null
+        }
+        foreach ($path in $expired) {
+            try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop } catch { }
+        }
+        $mirror = Join-Path $repoCache.FullName 'mirror.git'
+        $remaining = @(Get-ChildItem -LiteralPath $repoCache.FullName -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(?:[0-9a-f]{12}|(?:prepare|invalid)-[0-9a-f]{12})$' })
+        $repoKept = $keep -and $keep.StartsWith(($repoCache.FullName.TrimEnd('\', '/') + '\'), [StringComparison]::OrdinalIgnoreCase)
+        if (-not $repoKept -and $remaining.Count -eq 0 -and (Test-AiRules1cBareMirror -Root $mirror) -and
+            (Get-Item -LiteralPath $mirror -Force).LastWriteTimeUtc -lt $nowUtc.AddDays(-$UnusedDays)) {
+            try {
+                Remove-Item -LiteralPath $mirror -Recurse -Force -ErrorAction Stop
+                if (@(Get-ChildItem -LiteralPath $repoCache.FullName -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+                    Remove-Item -LiteralPath $repoCache.FullName -Force -ErrorAction Stop
+                }
+            } catch { }
+        }
+    }
+}
+
+function Remove-AiRules1cLegacyTempCaches {
+    param(
+        [Parameter(Mandatory = $true)][string]$TempRoot,
+        [int]$IdleHours = 24,
+        [int]$BudgetSeconds = 60
+    )
+
+    # Project-keyed checkouts from earlier helpers lived directly in TEMP. Only
+    # their exact generated names are removed, and only after a full idle day,
+    # so an older helper still installing from one is never disturbed.
+    $deadlineUtc = [DateTime]::UtcNow.AddSeconds($BudgetSeconds)
+    $cutoffUtc = [DateTime]::UtcNow.AddHours(-$IdleHours)
+    $removed = 0
+    $failed = 0
+    foreach ($directory in @(Get-ChildItem -LiteralPath $TempRoot -Directory -Force -Filter 'ai_rules_1c-*' -ErrorAction SilentlyContinue)) {
+        if ([DateTime]::UtcNow -gt $deadlineUtc) { break }
+        if ($directory.Name -notmatch '^ai_rules_1c-(?:[0-9a-f]{64}|(?:invalid|prepare)-[0-9a-f]{32})$') { continue }
+        if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        $gitDir = Join-Path $directory.FullName '.git'
+        $gitItem = Get-Item -LiteralPath $gitDir -Force -ErrorAction SilentlyContinue
+        if ($null -ne $gitItem -and (-not $gitItem.PSIsContainer -or ($gitItem.Attributes -band [IO.FileAttributes]::ReparsePoint))) { continue }
+        if ($null -eq $gitItem -and $directory.Name -notmatch '^ai_rules_1c-prepare-') { continue }
+        $recent = @(foreach ($path in @($directory.FullName, $gitDir, (Join-Path $gitDir 'index'), (Join-Path $gitDir 'HEAD'), (Join-Path $gitDir 'FETCH_HEAD'))) {
+            try { (Get-Item -LiteralPath $path -Force -ErrorAction Stop).LastWriteTimeUtc } catch { }
+        }) | Where-Object { $_ -gt $cutoffUtc }
+        if (@($recent).Count) { continue }
+        try {
+            Remove-Item -LiteralPath $directory.FullName -Recurse -Force -ErrorAction Stop
+            $removed++
+        } catch {
+            $failed++
+        }
+    }
+    if ($removed -or $failed) {
+        Write-Host "Removed $removed legacy ai_rules_1c TEMP checkout(s) from '$TempRoot'; $failed left for a later run."
+    }
+}
+
+function Invoke-AiRules1cCacheMaintenance {
+    param([string]$CacheRoot, [string]$KeepRoot)
+    try { Invoke-AiRules1cCacheRetention -CacheRoot $CacheRoot -KeepRoot $KeepRoot } catch { }
+    try { Remove-AiRules1cLegacyTempCaches -TempRoot (Get-Agent1cTempRoot) } catch { }
+}
+
 function Sync-AiRules1cCheckout {
     param(
         [string]$RepoOverride = "",
@@ -5489,19 +5698,15 @@ function Sync-AiRules1cCheckout {
         [string]$CommitOverride = ""
     )
 
-
     $lockedEntry = Get-WorkflowDependencyEntry -Name aiRules1c
     $repo = if ($RepoOverride) {$RepoOverride} else {[string](Get-ConfigValueFromObject $lockedEntry 'repo' '')}
     $configuredRef = if ($RefOverride) {$RefOverride} else {[string](Get-ConfigValueFromObject $lockedEntry 'ref' '')}
-    $lockedRef = $configuredRef
     $lockedCommit = if ($CommitOverride) {$CommitOverride} else {[string](Get-ConfigValueFromObject $lockedEntry 'commit' '')}
-    $dependencyMode = 'workflow'
     if (-not $repo -or -not $configuredRef -or $lockedCommit -notmatch '^[a-f0-9]{40}$') {
         throw 'DEPENDENCY_RULES_PIN_REQUIRED: the selected rules require repo, immutable ref and exact commit. Complete update-workflow with the dependency decision.'
     }
-
-    if ((Test-AiRules1cForkRepository -Repo $repo) -and -not ($configuredRef -or $lockedRef)) {
-        throw "The controlled ai_rules_1c fork requires an immutable configured tag in aiRules.ref; fork main is not allowed."
+    if ((Test-AiRules1cForkRepository -Repo $repo) -and $configuredRef -notlike "itl-*") {
+        throw "Controlled fork ref must be an immutable ITL tag matching 'itl-*': $configuredRef"
     }
 
     $checkoutRepo = $repo
@@ -5522,126 +5727,88 @@ function Sync-AiRules1cCheckout {
         $checkoutRepo = $sourceRoot
     }
 
-    $tempRoot = Get-Agent1cTempRoot
-    $projectCacheIdentity = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd('\', '/').ToLowerInvariant()
-    $projectCacheKey = Get-StringSha256 -Value $projectCacheIdentity
-    $rulesDir = Resolve-Agent1cFullPath -Path (Join-Path $tempRoot ("ai_rules_1c-" + $projectCacheKey))
+    # One bare mirror per repository and one immutable checkout per exact
+    # commit, shared by every project and worktree pinned to that commit.
+    $cacheRoot = Resolve-Agent1cFullPath -Path (Get-AiRules1cCacheRoot)
+    $repoKey = (Get-StringSha256 -Value (Get-AiRules1cRepositoryIdentity -Repo $repo)).Substring(0, 16)
+    $repoCache = Join-Path $cacheRoot $repoKey
+    try {
+        [void][IO.Directory]::CreateDirectory($repoCache)
+    } catch {
+        throw "AI_RULES_CACHE_UNAVAILABLE: cannot create '$repoCache': $($_.Exception.Message). Make the ITL artifact cache writable or set ITL_ARTIFACT_CACHE_ROOT, then repeat the original operation."
+    }
+    $target = Join-Path $repoCache $lockedCommit.Substring(0, 12)
+    $mirror = Resolve-AiRules1cMirror -RepoCache $repoCache -SourceRepo $checkoutRepo -Tag $configuredRef -Commit $lockedCommit
 
-    $cacheRoot = $rulesDir
-    $cacheState = $null
-    if (Test-Path -LiteralPath $cacheRoot) {
-        $cacheState = Get-AiRules1cCacheState -Root $cacheRoot -Repo $repo
-        if ($cacheState.owned -and (Test-Path -LiteralPath (Join-Path $cacheRoot '.git/index.lock'))) {
-            throw "AI_RULES_CACHE_BUSY: preserve '$cacheRoot' and its Git lock. Wait for the owning Git operation to finish, then repeat the original operation. $(Get-GitIndexLockRecoveryHint -Root $cacheRoot)"
+    $targetState = $null
+    if (Test-Path -LiteralPath $target) {
+        $targetState = Get-AiRules1cCacheState -Root $target -Repo $repo -ExpectedCommit $lockedCommit
+        if ($targetState.owned -and (Test-Path -LiteralPath (Join-Path $target '.git/index.lock'))) {
+            throw "AI_RULES_CACHE_BUSY: preserve '$target' and its Git lock. Wait for the owning Git operation to finish, then repeat the original operation. $(Get-GitIndexLockRecoveryHint -Root $target)"
         }
-        if (-not $cacheState.valid) {
-            # Prepare beside the old copy. Failure/interruption leaves it intact;
-            # no reset/clean, lock removal, or mutation of an unknown directory.
-            $rulesDir = Join-Path $tempRoot ('ai_rules_1c-prepare-' + [guid]::NewGuid().ToString('N'))
-            Write-Warning "AI_RULES_CACHE_INVALID path='$cacheRoot' expectedCommit='$lockedCommit' state='$($cacheState.reason)' replacement='$rulesDir'. Preparing a verified source before installation."
+        if ($targetState.valid) {
+            Set-AiRules1cCacheLastUsed -Root $target
+            Invoke-AiRules1cCacheMaintenance -CacheRoot $cacheRoot -KeepRoot $target
+            return [pscustomobject]@{ root = $target; repo = $repo; ref = $configuredRef; commit = $lockedCommit }
         }
-    } else {
-        $rulesDir = Join-Path $tempRoot ('ai_rules_1c-prepare-' + [guid]::NewGuid().ToString('N'))
+        Write-Warning "AI_RULES_CACHE_INVALID path='$target' expectedCommit='$lockedCommit' state='$($targetState.reason)'. Preparing a verified source before installation."
     }
 
-    if (Test-Path -LiteralPath $rulesDir) {
-        try {
-            $currentOrigin = (Get-GitOutputAt -Root $rulesDir -Arguments @("remote", "get-url", "origin")).Trim()
-            if ($currentOrigin -ne $checkoutRepo) {
-                Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $checkoutRepo)
-            }
-            try {
-                Invoke-AiRules1cFetchWithRetry -Root $rulesDir
-            } finally {
-                if ($checkoutRepo -ne $repo) {
-                    Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
-                }
-            }
-        } catch {
-            throw "Failed to update ai_rules_1c in '$rulesDir': $($_.Exception.Message). Preserve the cache and repeat the original operation after resolving the fetch failure."
-        }
-    } else {
-        try {
-            Invoke-GitAt -Root $tempRoot -Arguments @("-c", "core.longpaths=true", "clone", "--config", "core.longpaths=true", $checkoutRepo, $rulesDir)
-            if ($checkoutRepo -ne $repo) {
-                Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
-            }
-        } catch {
-            throw "Failed to clone ai_rules_1c from '$repo' into '$rulesDir': $($_.Exception.Message). Previous cache '$cacheRoot' is preserved; resolve the source/transport failure and repeat the original operation."
-        }
+    # Prepare beside the published copy. Failure/interruption leaves both the
+    # partial preparation and any damaged copy intact for diagnosis.
+    $prepare = Join-Path $repoCache ('prepare-' + (New-AiRules1cCacheId))
+    try {
+        Invoke-GitAt -Root $repoCache -Arguments @("-c", "core.longpaths=true", "clone", "--quiet", "--no-checkout", "--config", "core.longpaths=true", $mirror, $prepare)
+        Invoke-GitAt -Root $prepare -Arguments @("remote", "set-url", "origin", $repo)
+        Invoke-GitAt -Root $prepare -Arguments @("-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", $lockedCommit)
+    } catch {
+        throw "Failed to prepare ai_rules_1c '$configuredRef' in '$prepare': $($_.Exception.Message). Previous cache '$target' is preserved; resolve the failure and repeat the original operation."
     }
-
-    $resolvedRef = ""
-    $effectiveTagRef = $(if ($configuredRef) { $configuredRef } elseif (Test-AiRules1cForkRepository -Repo $repo) { $lockedRef } else { "" })
-    if ($effectiveTagRef) {
-        if ((Test-AiRules1cForkRepository -Repo $repo) -and $effectiveTagRef -notlike "itl-*") {
-            throw "Controlled fork ref must be an immutable ITL tag matching 'itl-*': $effectiveTagRef"
-        }
-        $tagRef = "refs/tags/$effectiveTagRef"
-        if (-not (Test-GitRefExistsAt -Root $rulesDir -Ref $tagRef)) {
-            throw "Configured ai_rules_1c ref is not an available tag: $effectiveTagRef"
-        }
-        $tagCommit = (Get-GitOutputAt -Root $rulesDir -Arguments @("rev-parse", "$tagRef^{commit}")).Trim()
-        if ($lockedCommit -and $tagCommit -ne $lockedCommit) {
-            throw "ai_rules_1c tag/commit mismatch for '$effectiveTagRef': tag=$tagCommit lock=$lockedCommit"
-        }
-        try {
-            Invoke-GitAt -Root $rulesDir -Arguments @("checkout", "--detach", $tagCommit)
-        } catch {
-            throw "Failed to checkout pinned ai_rules_1c tag '$effectiveTagRef' in $rulesDir"
-        }
-        $resolvedRef = $effectiveTagRef
-    } elseif ($dependencyMode -eq "locked" -or $lockedCommit) {
-        $checkoutTarget = $(if ($lockedCommit) { $lockedCommit } else { $lockedRef })
-        try {
-            Invoke-GitAt -Root $rulesDir -Arguments @("checkout", "--detach", $checkoutTarget)
-        } catch {
-            throw "Failed to checkout locked ai_rules_1c revision '$checkoutTarget' in $rulesDir"
-        }
-        $resolvedRef = $checkoutTarget
-    } else {
-        try {
-            $originHead = (Get-GitOutputAt -Root $rulesDir -Arguments @("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")).Trim()
-            if (-not $originHead) {
-                $originHead = "origin/HEAD"
-            }
-            Invoke-GitAt -Root $rulesDir -Arguments @("checkout", "--detach", $originHead)
-            $resolvedRef = $originHead
-        } catch {
-            throw "Failed to checkout latest ai_rules_1c origin HEAD in $rulesDir"
-        }
-    }
-
-    $ready = Get-AiRules1cCacheState -Root $rulesDir -Repo $repo -ExpectedCommit $lockedCommit
+    $ready = Get-AiRules1cCacheState -Root $prepare -Repo $repo -ExpectedCommit $lockedCommit
     if (-not $ready.valid) {
-        throw "AI_RULES_SOURCE_NOT_READY: path='$rulesDir' expectedCommit='$lockedCommit' state='$($ready.reason)'. Preserve this diagnostic copy, resolve the source integrity failure and repeat the original operation; this source was not passed to the installer."
+        throw "AI_RULES_SOURCE_NOT_READY: path='$prepare' expectedCommit='$lockedCommit' state='$($ready.reason)'. Preserve this diagnostic copy, resolve the source integrity failure and repeat the original operation; this source was not passed to the installer."
     }
-    if ($rulesDir -ne $cacheRoot) {
-        $diagnostic = $cacheRoot
-        if ($null -ne $cacheState -and $cacheState.owned) {
-            # The existing lifecycle lease covers this project's preparation and
-            # installer reads. Recheck physical ownership before the only move.
-            $beforeMove = Get-AiRules1cCacheState -Root $cacheRoot -Repo $repo
-            $parent = (Resolve-Agent1cFullPath -Path $tempRoot).TrimEnd('\', '/')
-            if ($beforeMove.owned -and (Split-Path -Parent $cacheRoot) -ieq $parent) {
-                $diagnostic = Join-Path $tempRoot ('ai_rules_1c-invalid-' + [guid]::NewGuid().ToString('N'))
-                Move-Item -LiteralPath $cacheRoot -Destination $diagnostic -ErrorAction Stop
+    Set-AiRules1cCacheLastUsed -Root $prepare
+
+    $root = $prepare
+    $diagnostic = $target
+    if ($null -ne $targetState -and $targetState.owned) {
+        # Recheck physical ownership before the only move of a damaged copy.
+        $beforeMove = Get-AiRules1cCacheState -Root $target -Repo $repo
+        if ($beforeMove.owned) {
+            $candidate = Join-Path $repoCache ('invalid-' + (New-AiRules1cCacheId))
+            try {
+                Move-Item -LiteralPath $target -Destination $candidate -ErrorAction Stop
+                $diagnostic = $candidate
+            } catch {
+                # A reader still holds the damaged copy; this invocation uses
+                # its verified private preparation instead.
             }
         }
-        if (-not (Test-Path -LiteralPath $cacheRoot)) {
-            Move-Item -LiteralPath $rulesDir -Destination $cacheRoot -ErrorAction Stop
-            $rulesDir = $cacheRoot
-        }
-        if ($null -ne $cacheState) {
-            Write-Warning "AI_RULES_CACHE_RECOVERED path='$cacheRoot' expectedCommit='$lockedCommit' result='verified source ready' source='$rulesDir' diagnostic='$diagnostic'. Unknown directories remain untouched."
+    }
+    if (-not (Test-Path -LiteralPath $target)) {
+        try {
+            Move-Item -LiteralPath $prepare -Destination $target -ErrorAction Stop
+            $root = $target
+        } catch {
+            # A concurrent preparation may have published the same commit first.
+            if ((Get-AiRules1cCacheState -Root $target -Repo $repo -ExpectedCommit $lockedCommit).valid) {
+                Remove-Item -LiteralPath $prepare -Recurse -Force -ErrorAction SilentlyContinue
+                $root = $target
+                Set-AiRules1cCacheLastUsed -Root $target
+            }
         }
     }
+    if ($null -ne $targetState) {
+        Write-Warning "AI_RULES_CACHE_RECOVERED path='$target' expectedCommit='$lockedCommit' result='verified source ready' source='$root' diagnostic='$diagnostic'. Unknown directories remain untouched."
+    }
+    Invoke-AiRules1cCacheMaintenance -CacheRoot $cacheRoot -KeepRoot $root
 
     return [pscustomobject]@{
-        root = $rulesDir
+        root = $root
         repo = $repo
-        ref = $resolvedRef
-        commit = (Get-GitOutputAt -Root $rulesDir -Arguments @("rev-parse", "HEAD")).Trim()
+        ref = $configuredRef
+        commit = (Get-GitOutputAt -Root $root -Arguments @("rev-parse", "HEAD")).Trim()
     }
 }
 
