@@ -407,7 +407,9 @@ update owner. Update waits at most 3600 seconds, each Capture or preflight 900 s
 recovery retains its existing 7800-second allowance. Cancellation uses the
 existing owned child/job cleanup. Retry continues the unplanned checkpoint and
 the original lifecycle receipt; once a plan exists, unexpected drift still
-requires the existing explicit Replan. Original capsules, databases and SHA,
+requires the existing explicit Replan. That Replan prepares again only when the
+preparation owner finds a selected root without the new candidate's workflow
+package; a frozen ResumePlan never prepares. Original capsules, databases and SHA,
 business bytes, rollback snapshots, Windows/client/server support and all gates
 remain with their owners. Native Unicode-path composition, durable scope retry,
 ordinary full rollout and unexpected-drift regressions are the local canary;

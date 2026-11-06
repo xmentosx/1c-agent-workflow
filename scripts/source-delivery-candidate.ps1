@@ -788,13 +788,19 @@ function Publish-AccumulatedDevelop {
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $standReadyBeforePlan = $false
         # Once a plan is frozen, do not repair drift before comparing its inputs.
-        # Preparation belongs to the existing unplanned publication checkpoint.
-        if (-not $frozenPlan -and (-not $priorAttempt -or -not $priorAttempt.PSObject.Properties['planId'] -or -not [string]$priorAttempt.planId)) {
+        # An unplanned checkpoint always prepares. A pinned earlier plan (a Replan
+        # that built a new candidate) prepares only when the stand owner finds a
+        # root without this candidate's workflow package; gate-moved branch heads
+        # alone are not re-admitted here.
+        if (-not $frozenPlan) {
             $preparation = Get-DeliveryStandPreparation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -RequireRelease:$RequireRelease
-            if (-not $Replan) { $replacementAccepted = $true }
-            Invoke-DeliveryStandPreparation -CandidateRoot $worktree.path -Preparation $preparation -Attempt $attempt -RequireRelease:$RequireRelease
-            if ($RequireRelease) { Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path }
-            $standReadyBeforePlan = $true
+            $priorPlanPinned = $priorAttempt -and $priorAttempt.PSObject.Properties['planId'] -and [string]$priorAttempt.planId
+            if (-not $priorPlanPinned -or ($preparation -and $preparation.requiresWorkflowUpdate)) {
+                if (-not $Replan) { $replacementAccepted = $true }
+                Invoke-DeliveryStandPreparation -CandidateRoot $worktree.path -Preparation $preparation -Attempt $attempt -RequireRelease:$RequireRelease
+                if ($RequireRelease) { Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path }
+                $standReadyBeforePlan = $true
+            }
         }
         $customGate = [bool]$script:DeliveryCustomGateBoundary
         $deliveryPlan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$fullReleaseRequested -ReleaseCapability $componentReleaseCapabilities -AllowCustomGateFixture:$customGate

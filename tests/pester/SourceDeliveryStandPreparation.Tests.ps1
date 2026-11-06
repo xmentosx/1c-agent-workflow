@@ -19,7 +19,7 @@
     $null=Import-StandTestOwner 'scripts/source-delivery-cleanup.ps1' @('Invoke-PublishDevelopWithCleanup','Add-DeliveryCleanupResults')
     $script:publisherAst=Import-StandTestOwner 'scripts/source-delivery-candidate.ps1' @()
     $script:prepareDecision=@($script:publisherAst.FindAll({param($n)
-        $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text -match '^if \(-not \$frozenPlan -and'
+        $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text -match '^if \(-not \$frozenPlan\)'
     },$true) | Where-Object { $_.Extent.Text -match 'Invoke-DeliveryStandPreparation' })[0]
     function Write-DevelopPublicationAttempt { param($Attempt) $script:savedAttempt=$Attempt | ConvertTo-Json -Depth 32 | ConvertFrom-Json }
 }
@@ -218,7 +218,7 @@ $ErrorActionPreference='Stop'
 $scope=Get-Content -LiteralPath $WorkflowUpdateBranchRootsFile -Raw -Encoding UTF8 | ConvertFrom-Json
 if($scope.projectRoot -ine $ProjectRoot -or $scope.roots.Count -ne 1 -or $scope.roots[0] -ine $ProjectRoot){throw 'wrong scope'}
 Add-Content -LiteralPath (Join-Path $ProjectRoot 'order.txt') -Value 'update' -Encoding UTF8
-[IO.File]::WriteAllText((Join-Path $ProjectRoot 'installed.txt'),'candidate',[Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $ProjectRoot 'installed.txt'),[string]$scope.sourceCommit,[Text.UTF8Encoding]::new($false))
 [Console]::WriteLine($ProjectRoot)
 '@
         $capture=@'
@@ -332,6 +332,54 @@ Start-Sleep -Seconds 300
         Mock Get-DeliveryPlanRoot { $TestDrive }
         { Assert-DeliveryQualityPlanMayRun $plan } | Should -Throw '*DELIVERY_RESUME_PLAN_MISMATCH*'
         @(Get-Content $script:order) | Should -HaveCount 5
+    }
+    It 'prepares a pinned plan only when its stand lacks the candidate package, as after a Replan that built a new candidate' {
+        # Mirrors the stand owner: a root is stale when its installed workflow
+        # package differs from the candidate (real comparison covered above).
+        function Get-DeliveryStandPreparation {
+            param($CandidateRoot,$BaseCommit,[switch]$RequireRelease)
+            $installed=Join-Path $script:standRoot 'installed.txt'
+            $current=if(Test-Path -LiteralPath $installed){[IO.File]::ReadAllText($installed)}else{''}
+            $script:standPreparation.requiresWorkflowUpdate=($current -cne [string]$script:standPreparation.sourceCommit)
+            $script:standPreparation
+        }
+        Mock Invoke-DeliveryReleaseStandRecovery { Add-Content -LiteralPath $script:order -Value 'recovery' -Encoding UTF8 }
+        $installed=Join-Path $script:standRoot 'installed.txt'
+        $RequireRelease=$true;$frozenPlan=$null;$remoteBefore='base'
+        $worktree=[pscustomobject]@{path=$script:standCandidate}
+        # (a) Replan: the stand still has the previous candidate; the replacement
+        # attempt is new and the prior attempt pinned the original plan.
+        [IO.File]::WriteAllText($installed,'previous-candidate',[Text.UTF8Encoding]::new($false))
+        $Replan='original-plan';$priorAttempt=[pscustomobject]@{planId='original-plan';candidate='previous-candidate'}
+        $attempt=[pscustomobject]@{phase='candidate-built';candidate='candidate'}
+        $standReadyBeforePlan=$false;$replacementAccepted=$false
+        . ([scriptblock]::Create($script:prepareDecision.Extent.Text))
+        @(Get-Content $script:order) | Should -Be @('recovery','verify','update','capture','readiness')
+        [IO.File]::ReadAllText($installed) | Should -BeExactly 'candidate'
+        $standReadyBeforePlan | Should -BeTrue
+        $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+        $script:savedAttempt.standPreparation.identity.sourceCommit | Should -Be 'candidate'
+        # Preparation alone does not accept the replacement; a later failure
+        # still restores the original checkpoint.
+        $replacementAccepted | Should -BeFalse
+        # (b) Resume of the same candidate on a ready stand: the replacement plan
+        # is pinned (continuation) or the earlier plan is resumed unchanged.
+        foreach($case in @(@('original-plan','replacement-plan'),@('','original-plan'))) {
+            Remove-Item -LiteralPath $script:order -ErrorAction SilentlyContinue
+            $Replan=$case[0];$priorAttempt=[pscustomobject]@{planId=$case[1];candidate='candidate'}
+            $attempt=[pscustomobject]@{phase='develop-qualified';candidate='candidate'}
+            $standReadyBeforePlan=$false;$script:savedAttempt=$null
+            . ([scriptblock]::Create($script:prepareDecision.Extent.Text))
+            Test-Path -LiteralPath $script:order | Should -BeFalse
+            $standReadyBeforePlan | Should -BeFalse
+            $script:savedAttempt | Should -BeNullOrEmpty
+        }
+        # A frozen plan never repairs drift before comparing its inputs.
+        [IO.File]::WriteAllText($installed,'previous-candidate',[Text.UTF8Encoding]::new($false))
+        $frozenPlan=[pscustomobject]@{planId='original-plan'};$Replan=''
+        . ([scriptblock]::Create($script:prepareDecision.Extent.Text))
+        Test-Path -LiteralPath $script:order | Should -BeFalse
+        $standReadyBeforePlan | Should -BeFalse
     }
     It 'preserves the unplanned checkpoint and immutable capsule on owner rejection; the same scope can continue' {
         [IO.File]::WriteAllText((Join-Path $script:standRoot 'business-drift.txt'),'unexpected')
