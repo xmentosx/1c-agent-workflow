@@ -300,3 +300,83 @@ Describe 'Vanessa agent launch keeps the TestClient out of the foreground' {
         }
     }
 }
+
+Describe 'Foreground measurement separates new 1C process windows from reactivation' {
+    BeforeAll {
+        $script:MeasureScript = Join-Path $script:FocusRepo 'scripts/measure-foreground-changes.ps1'
+    }
+
+    It 'describes a 1C process at a whitespace Cyrillic path by launch mode and masks its passwords: <launch>' -TestCases @(
+        @{ launch = 'designer'; mode = 'DESIGNER' },
+        @{ launch = 'testclient'; mode = 'ENTERPRISE /TESTCLIENT /TPort 48100' },
+        @{ launch = 'testmanager'; mode = 'ENTERPRISE /TESTMANAGER' }
+    ) {
+        param($launch, $mode)
+        # A copied PowerShell stands in for the platform: the hook reads facts of the
+        # 1cv8 image, and the comment makes it ignore the 1C arguments.
+        $platform = Join-Path $TestDrive ('Платформа 1С с пробелом ' + $launch)
+        [void][IO.Directory]::CreateDirectory($platform)
+        $image = Join-Path $platform '1cv8.exe'
+        Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Destination $image
+        $start = [Diagnostics.ProcessStartInfo]::new()
+        $start.FileName = $image
+        $start.Arguments = '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 60 # ' + $mode +
+            ' /F "C:\База с пробелом\ИБ" /N "Агент ИТЛ" /P "секрет пароль" /ConfigurationRepositoryPтайное' +
+            ' /IBConnectionString "File=""C:\ИБ с пробелом"";Usr=""Агент"";Pwd=""тайна два"";"'
+        $start.UseShellExecute = $false; $start.CreateNoWindow = $true
+        $before = [DateTime]::UtcNow.AddSeconds(-1)
+        $process = [Diagnostics.Process]::Start($start)
+        try {
+            Start-Sleep -Milliseconds 300
+            $facts = & $script:MeasureScript -DescribeProcessId $process.Id
+        } finally { $process.Kill(); $process.WaitForExit(); $process.Dispose() }
+
+        $facts.process | Should -Be '1cv8'
+        $facts.launch | Should -Be $launch
+        $facts.imagePath | Should -Be $image
+        [DateTime]::Parse($facts.processStartUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) | Should -BeGreaterThan $before
+        $facts.commandLine | Should -BeLike ('*' + $mode + ' /F "C:\База с пробелом\ИБ" /N "Агент ИТЛ" /P *** /ConfigurationRepositoryP*** *')
+        $facts.commandLine | Should -BeLike '*Usr=""Агент"";Pwd=***;"'
+        $facts.commandLine | Should -Not -Match 'секрет|тайн'
+    }
+
+    It 'counts the first window of a process started during the recording apart from reactivations' {
+        $t0 = [DateTime]::new(2026, 11, 6, 13, 0, 0, [DateTimeKind]::Utc)
+        function New-Line([int]$Second, [string]$Kind, [int]$ProcessId, [string]$Process, [int]$StartSecond, [long]$Window, [string]$CommandLine) {
+            [ordered]@{
+                timeUtc = $t0.AddSeconds($Second).ToString('o'); kind = $Kind; window = $Window; processId = $ProcessId; process = $Process
+                processStartUtc = $t0.AddSeconds($StartSecond).ToString('o'); className = 'V8TopLevelFrameSDI'; title = 'Конфигурация с пробелом'
+                commandLine = $CommandLine
+            } | ConvertTo-Json -Compress
+        }
+        $designer = '"C:\Program Files\1cv8\8.3.27\bin\1cv8.exe" DESIGNER /F "C:\ИБ с пробелом" /DisableStartupDialogs'
+        $client = '"C:\Program Files\1cv8\8.3.27\bin\1cv8c.exe" ENTERPRISE /F "C:\ИБ с пробелом" /TESTCLIENT /TPort 48100'
+        $stand = '"C:\Program Files\1cv8\8.3.27\bin\1cv8c.exe" /F "C:\ИБ с пробелом"'
+        $lines = @(
+            (New-Line 0 'initial' 100 'Code' -900 1 'Code.exe'),
+            (New-Line 2 'foreground' 200 '1cv8' 1 21 $designer),        # new-process designer
+            (New-Line 3 'foreground' 200 '1cv8' 1 22 $designer),        # new-window designer
+            (New-Line 4 'clipboard' 200 '1cv8' 1 22 ''),
+            (New-Line 5 'foreground' 100 'Code' -900 1 'Code.exe'),     # not 1C
+            (New-Line 6 'foreground' 200 '1cv8' 1 21 $designer),        # reactivation designer
+            (New-Line 7 'foreground' 300 '1cv8c' -60 31 $stand),        # reactivation: predates the recording
+            (New-Line 8 'foreground' 400 '1cv8c' 7 41 $client),         # new-process testclient
+            (New-Line 9 'foreground' 200 '1cv8' 8 23 $designer),        # reused PID, new process
+            (New-Line 20 'initial' 100 'Code' -900 1 'Code.exe'),       # second appended segment
+            (New-Line 21 'foreground' 400 '1cv8c' 7 41 $client)         # predates the second segment
+        )
+        $path = Join-Path $TestDrive 'Замер переднего плана с пробелом.jsonl'
+        [IO.File]::WriteAllLines($path, [string[]]$lines, [Text.UTF8Encoding]::new($false))
+
+        $rows = @(& $script:MeasureScript -SummarizePath $path)
+        $table = @{}
+        foreach ($row in $rows) { $table[$row.appearance + '/' + $row.launch + '/' + $row.process] = '{0}:{1}' -f $row.count, $row.processes }
+        $table.Keys.Count | Should -Be 6
+        $table['new-process/designer/1cv8'] | Should -Be '2:1' -Because 'a reused PID with a new start time is a new process'
+        $table['new-window/designer/1cv8'] | Should -Be '1:1'
+        $table['reactivation/designer/1cv8'] | Should -Be '1:1'
+        $table['new-process/testclient/1cv8c'] | Should -Be '1:1'
+        $table['reactivation/enterprise/1cv8c'] | Should -Be '1:1'
+        $table['reactivation/testclient/1cv8c'] | Should -Be '1:1' -Because 'each appended initial record starts a new segment'
+    }
+}
