@@ -149,6 +149,59 @@ Scenario: Stored expression is not executed here
         @($warnings | Select-Object -ExpandProperty line) | Should -Be @(5, 6, 11, 16)
     }
 
+    It "warns once for adjacent same-context TestClient code steps only" {
+        $featurePath = Join-Path $script:LintRoot "tests\features\adjacent-code.feature"
+        @"
+Feature: Adjacent code
+Scenario: Two client steps
+    And $script:ClientCodePhrase
+        """bsl
+        A = 1;
+        """
+    # The comment does not separate the steps.
+    And $script:ClientCodePhrase
+        """bsl
+        B = 2;
+        """
+Scenario: Mixed contexts and a step between
+    And $script:ServerExtensionCodePhrase
+        """bsl
+        A = 1;
+        """
+    And $script:ClientCodePhrase
+        """bsl
+        B = 2;
+        """
+    And another action
+    And $script:ClientCodePhrase
+        """bsl
+        C = 3;
+        """
+Scenario: The boundary resets
+    And $script:ClientCodePhrase
+        """bsl
+        D = 4;
+        """
+Scenario: Two server extension steps
+    And $script:ServerExtensionCodePhrase
+        """bsl
+        A = 1;
+        """
+    And $script:ServerExtensionCodePhrase
+        """bsl
+        B = 2;
+        """
+"@ | Set-Content -LiteralPath $featurePath -Encoding UTF8
+
+        $warnings = & {
+            . $HelperPath -ProjectRoot $script:LintRoot -Action help *> $null
+            Get-VanessaAuthoringLintWarnings -FeatureRecords @([pscustomobject]@{ path = 'tests/features/adjacent-code.feature' })
+        }
+
+        @($warnings | Select-Object -ExpandProperty code -Unique) | Should -Be @('ITL_VANESSA_LINT_ADJACENT_CODE_STEPS')
+        @($warnings | Select-Object -ExpandProperty line) | Should -Be @(8, 36)
+    }
+
     It "bounds warning output and does not echo feature contents" {
         $featurePath = Join-Path $script:LintRoot "tests\features\bounded.feature"
         $secret = 'secret-marker-that-must-not-be-printed'

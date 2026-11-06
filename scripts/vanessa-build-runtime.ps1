@@ -13,7 +13,15 @@
         $changes += ,@(' Enterprise /F""" + КаталогБазы', ' Enterprise /N""" + ПолучитьПеременнуюСреды("ITL_VANESSA_BUILD_USER") + """ /F""" + КаталогБазы')
         $changes += ,@('ЗапуститьПриложение(СтрокаКоманды, , Ложь, retCode);', 'retCode = 0; // ITL: no directory window during a noninteractive build.')
         $cacheRead = 'Стр = Текст.Прочитать();'
+        # A library whose patched module fails to compile drops out of the step cache.
         $cacheCheck = $cacheRead + [Environment]::NewLine + 'Если Найти(Стр, "ЯЗапускаюМониторингКаталогаДляВнешнихСобытийРасширение") = 0 Тогда ВызватьИсключение "VANESSA_BUILD_VAEXTENSION_STEPS_MISSING"; КонецЕсли;'
+        foreach ($librarySteps in @(
+            @('ЯЭмулируюВводТекста', 'VANESSA_BUILD_VANESSAEXT_STEPS_MISSING'),
+            @('КликНаКартинку', 'VANESSA_BUILD_SIKULIX_STEPS_MISSING'),
+            @('ЯДелаюКликПоЭлементуФормыUIAutomation', 'VANESSA_BUILD_UIAUTOMATION_STEPS_MISSING')
+        )) {
+            $cacheCheck += [Environment]::NewLine + 'Если Найти(Стр, "' + $librarySteps[0] + '") = 0 Тогда ВызватьИсключение "' + $librarySteps[1] + '"; КонецЕсли;'
+        }
         $changes += ,@($cacheRead, $cacheCheck)
     }
     foreach ($change in $changes) {

@@ -5176,6 +5176,10 @@ try {
                 $params.useaddin | Should -BeTrue
                 $params.useaddinforscreencapture | Should -BeTrue
                 $params.QuitIfSilentInstallationAddinFails | Should -BeTrue
+                # The ITL Vanessa patch reads the agent launch from ДополнительныеПараметры.
+                $params.dopparams.ITLAgentLaunch | Should -BeTrue
+                $params.dopparams.ITLClientCodeChannelRoot | Should -Be (Join-Path $runDirectory "cc")
+                Test-Path -LiteralPath (Join-Path $runDirectory "cc") -PathType Container | Should -BeTrue
                 $command | Should -Be "StartFeaturePlayer;QuietInstallVanessaExt;DisableFirstRunHelper;VAParams=$paramsPath"
                 $command | Should -Not -Match 'VAParams="'
             }

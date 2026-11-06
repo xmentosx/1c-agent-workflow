@@ -83,6 +83,22 @@ outcome in run artifacts and remove only that generation's files. Installed
 authoring guidance, native restart-interruption acceptance, original BDR
 acceptance and normal delivery remain open parts of item 10.
 
+## Agent route of the plain code steps (1.2.043.42-itl-r10)
+
+ITL launches mark VAParams `dopparams` with `ITLAgentLaunch` and a channel root
+(`Add-VanessaAgentLaunchParams`, used by the runner and the on-demand MCP).
+In such a launch the plain `(Расширение)` client and server steps use this
+channel instead of opening `VAExtension_ВыполнитьПроизвольныйКод`: no TestClient
+form and no OS clipboard. The step starts one monitor per selected client
+lazily, sends the code with a trailing `Результат = Неопределено;` (the
+consumer's local result is never a step value), keeps the form's privileged
+server mode, and waits in the same step. A failure reports the original error
+and the step code. A request unclaimed for 60 seconds restarts the monitor once
+for the same request; a request still unclaimed is withdrawn by taking the
+consumer's exclusive claim and publishing a failed result, so it never runs
+later. Manual launches, internal library callers and a root without MAX_PATH
+room keep the form route. Executable evidence: `VanessaAgentFocus.Tests.ps1`.
+
 ## Connection identity and native evidence
 
 The registered r11 change at `75a36db` passed 578 Targeted tests. Its paired native

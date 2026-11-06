@@ -360,6 +360,13 @@ function Get-ItlOnDemandRuntimeRoot {
     return (Join-Path $script:ProjectRoot ".agent-1c\mcp\ondemand")
 }
 
+function Get-ItlOnDemandVanessaClientCodeRoot {
+    # Kept outside the runtime root: its JSON files are channel records, not runtime
+    # records. The short name leaves MAX_PATH room for the channel's own layout.
+    param([string]$InstanceId)
+    return (Join-Path (Join-Path $script:ProjectRoot ".agent-1c\mcp\vcc") $InstanceId)
+}
+
 function Get-ItlOnDemandRuntimePath {
     param([string]$Family, [string]$InstanceId)
     return (Join-Path (Join-Path (Get-ItlOnDemandRuntimeRoot) $Family) "$InstanceId.json")
@@ -435,6 +442,7 @@ function New-ItlOnDemandVanessaParamsFile {
         dosleepusingping = $false
     }
     $params[(ConvertFrom-Utf8Base64 "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP")] = $testClients
+    Add-VanessaAgentLaunchParams -Params $params -ClientCodeChannelRoot (Get-ItlOnDemandVanessaClientCodeRoot -InstanceId $InstanceId) | Out-Null
     Write-Utf8Text -Path $path -Value (($params | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
     return $path
 }
@@ -1093,6 +1101,10 @@ function Stop-ItlOnDemandBackendInstanceCore {
         }
         $paramsPath = [string](Get-ConfigValueFromObject -Object $runtimeState -Path "vanessaParamsPath" -Default "")
         if ($paramsPath -and (Test-Path -LiteralPath $paramsPath -PathType Leaf)) { Remove-Item -LiteralPath $paramsPath -Force }
+        if ($Family -eq "vanessa-ui") {
+            # The owned TestClient (the channel consumer) has exited above.
+            [void](Remove-VanessaAgentClientCodeChannel -Root (Get-ItlOnDemandVanessaClientCodeRoot -InstanceId $InstanceId))
+        }
         if ($claimedPath) { Remove-Item -LiteralPath $claimedPath -Force }
         return [pscustomobject]@{ schemaVersion = 2; status = "stopped"; family = $Family; instanceId = $InstanceId; pid = 0; port = 0; testClientPort = 0; url = "" }
     } catch {
@@ -2018,6 +2030,7 @@ function Start-ItlOnDemandBackendInstanceCore {
             if ($testClientPortFamily -and $testClientPortKey) { Release-ItlOnDemandManagedPortLease -Family $testClientPortFamily -Key $testClientPortKey -LeaseToken $testClientPortLeaseToken }
             if ($vanessaParamsPath -and (Test-Path -LiteralPath $vanessaParamsPath -PathType Leaf)) {
                 Remove-Item -LiteralPath $vanessaParamsPath -Force -ErrorAction SilentlyContinue
+                try { [void](Remove-VanessaAgentClientCodeChannel -Root (Get-ItlOnDemandVanessaClientCodeRoot -InstanceId $InstanceId)) } catch { }
             }
         }
         if (-not $canFinalizeCleanup) {

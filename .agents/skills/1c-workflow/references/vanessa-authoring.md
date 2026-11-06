@@ -12,7 +12,7 @@ Known inner tools may be passed directly to `call_tool`: `search_for_steps_by_ke
 
 The search schema is `search_name`, `search_description`, `search_type`, `exclude_name`, `exclude_description`, `exclude_type`, and `limit`. Never invent `keywords`, call the private endpoint through raw HTTP, or treat KB/reference text as proof that the current runtime exposes a step. If semantic search and local libraries do not reveal a suitable standard step, `frequently_used_steps` is an optional fallback, not a mandatory inventory dump. Query `get_data_from_knowledge_base` only for a named gap and only in small portions; never default to `format=all`. Its text `search_string` is a string; prefer a narrow `question_search` or `answers_search`, and use `questions_only` plus one `one_question` when browsing by question number is cheaper. When interpreting a run, pair `run_scenario` with `get_test_results` from the same facade instance and feature SHA; do not aggregate stale calls, screenshots, or evidence from another instance.
 
-Source-only lint warns about SQL-style `''` inside single-quoted Gherkin values, current-row selection without concrete positioning, unexplained `Пауза`, unsupported cross-step state, and mixed client/server BSL context. These warnings are cheap preflight diagnostics; they neither execute nor certify a scenario.
+Source-only lint warns about SQL-style `''` inside single-quoted Gherkin values, current-row selection without concrete positioning, unexplained `Пауза`, unsupported cross-step state, mixed client/server BSL context, and adjacent same-context code steps. These warnings are cheap preflight diagnostics; they neither execute nor certify a scenario.
 
 For a concrete scenario pattern, open only the selected section of `vanessa-recipes.md` and its matching file under `assets/vanessa-authoring-examples`. A `@template` example must have all `<...>` markers replaced and its exact steps/selectors validated in the current project. Do not copy upstream AI prompts or external features wholesale.
 
@@ -34,6 +34,8 @@ Use the established navigation-link pair:
 In BSL use `ПолучитьНавигационнуюСсылку(Объект.Ссылка)`. A local server-block variable does not become a Vanessa `$Переменная$`; consume it inside that block or transfer it through supported Vanessa context/library steps.
 
 For arbitrary BSL, classify the execution context before authoring. The plain server step runs in the empty TestManager service infobase; product metadata managers and database access must use the TestClient-side `на сервере (Расширение)` step. Forms and client-only common modules also run in the TestClient/extension context. When both are required, compute and serialize the reference on the server, store it through a supported Vanessa variable step, and restore it in the client block. Do not use `СохранитьЗначение`/`ВосстановитьЗначение` to bridge VAExtension steps.
+
+ITL runs execute the plain `(Расширение)` code steps through the file-code channel: no TestClient form opens and a failure reports the original error. The code runs outside a form, so do not reference `ЭтаФорма`. Combine adjacent code of one context into one step. Use ROCTUP `execute_query` to explore or diagnose data; keep business assertions in the scenario, because an external query never replaces them.
 
 ## Diagnose One Run
 

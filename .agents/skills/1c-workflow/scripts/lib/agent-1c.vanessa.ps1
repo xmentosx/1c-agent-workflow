@@ -1309,12 +1309,14 @@ function Get-VanessaAuthoringLintWarnings {
         $positionPending = $false
         $positionTableRows = 0
         $hasReliablePosition = $false
+        $previousStepCodeContext = ""
 
         for ($index = 0; $index -lt $lines.Count; $index++) {
             if ($warnings.Count -ge $MaxWarnings) { break }
             $line = [string]$lines[$index]
             $trimmed = $line.Trim()
             $docStringMarkers = ([regex]::Matches($line, '"""')).Count
+            if (-not $insideDocString -and $line -match $scenarioPattern) { $previousStepCodeContext = "" }
             if (-not $insideDocString -and $line -match $stepPattern) {
                 $pendingCodeContext = ""
                 if ($line.IndexOf($serverExtensionCodePhrase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
@@ -1323,6 +1325,19 @@ function Get-VanessaAuthoringLintWarnings {
                     $pendingCodeContext = "manager-server"
                 } elseif ($line.IndexOf($clientCodePhrase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
                     $pendingCodeContext = "client"
+                }
+                # Each plain (Extension) code step is its own TestClient round trip.
+                if ($pendingCodeContext -in @("client", "server") -and $pendingCodeContext -eq $previousStepCodeContext) {
+                    $warnings.Add([pscustomobject][ordered]@{
+                        code = "ITL_VANESSA_LINT_ADJACENT_CODE_STEPS"
+                        path = $relativePath
+                        line = $index + 1
+                        message = "Adjacent arbitrary-code steps of one context can be one step; each step is a separate TestClient round trip."
+                    })
+                    if ($warnings.Count -ge $MaxWarnings) { break }
+                    $previousStepCodeContext = ""
+                } else {
+                    $previousStepCodeContext = $pendingCodeContext
                 }
             }
             if ($insideDocString) {
@@ -3820,6 +3835,44 @@ function New-VanessaTestClientAdditionalParams {
     return (Join-NativeCommandLineArguments -Arguments $args)
 }
 
+function Add-VanessaAgentLaunchParams {
+    # Single owner of the agent-launch contract that the ITL Vanessa patch reads
+    # from ДополнительныеПараметры (VAParams "dopparams"). Both the run and the
+    # on-demand MCP producers call it; a manual Vanessa launch never carries it.
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Params,
+        [Parameter(Mandatory = $true)][string]$ClientCodeChannelRoot
+    )
+
+    $agent = [ordered]@{ ITLAgentLaunch = $true }
+    $root = [IO.Path]::GetFullPath($ClientCodeChannelRoot).TrimEnd('\', '/')
+    # Longest name the patched channel creates below its root:
+    # \itl-<uuid>\events\Pending_ITL_<uuid>.json.tmp
+    $suffixLength = 1 + 40 + 1 + 6 + 1 + 12 + 36 + 9
+    # The 1C file API is limited to MAX_PATH. A root that cannot hold the channel
+    # keeps the agent launch and leaves the plain code steps on their form path.
+    if (($root.Length + $suffixLength) -le 259) {
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $agent["ITLClientCodeChannelRoot"] = $root
+    }
+    $Params["dopparams"] = $agent
+    return $agent
+}
+
+function Remove-VanessaAgentClientCodeChannel {
+    # Called only after the consuming TestClient has exited. Every acknowledged
+    # request is complete; an unacknowledged one is retained as recovery evidence.
+    param([string]$Root)
+
+    if (-not $Root -or -not (Test-Path -LiteralPath $Root -PathType Container)) { return $true }
+    foreach ($pending in @(Get-ChildItem -LiteralPath $Root -Recurse -File -Filter "Pending_ITL_*.json" -ErrorAction Stop)) {
+        $ack = Join-Path $pending.DirectoryName ("Ack_ITL_" + $pending.Name.Substring(12))
+        if (-not (Test-Path -LiteralPath $ack -PathType Leaf)) { return $false }
+    }
+    Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction Stop
+    return $true
+}
+
 function New-VanessaStartFeaturePlayerCommand {
     param([string]$ParamsPath)
 
@@ -4366,6 +4419,8 @@ function New-VanessaParamsFile {
     $params["useaddin"] = $true
     $params["useaddinforscreencapture"] = $true
     $params["QuitIfSilentInstallationAddinFails"] = $true
+    # Channel records stay with this run's evidence.
+    Add-VanessaAgentLaunchParams -Params $params -ClientCodeChannelRoot (Join-Path $RunDirectory "cc") | Out-Null
 
     $normalizedFilterTags = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
     if ($normalizedFilterTags.Count -gt 0) {

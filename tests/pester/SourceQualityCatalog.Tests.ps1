@@ -448,14 +448,18 @@ Describe 'Source quality catalog contracts' {
         # Vanessa failure-focus and event-log diagnostic-run output regressions are one
         # explicit vanessa.ps1 addition with their own fixture owner, outside the counts.
         $diagnosticsConsumer = 'tests/pester/VanessaVerificationDiagnostics.Tests.ps1'
+        # The agent-launch focus regression is another explicit vanessa.ps1 addition with its own fixture owner.
+        $agentFocusConsumer = 'tests/pester/VanessaAgentFocus.Tests.ps1'
         # Keep the historical 57/80 cohort. The third registry consumer proves
         # native input independently of setup; account for its own owner/budget
         # rather than changing the historical counts or dropping its selection.
         # The concurrent snapshot regression is another explicit addition.
-        @($selection.tests | Where-Object { $_ -notin $splitWorkflowConsumers -and $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer }).Count | Should -Be 57
-        @($selection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + 1 + 1)
+        @($selection.tests | Where-Object { $_ -notin $splitWorkflowConsumers -and $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer -and $_ -ne $agentFocusConsumer }).Count | Should -Be 57
+        @($selection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer -and $_ -ne $agentFocusConsumer}).Count | Should -Be 80
+        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + 1 + 1 + 1)
         @($selection.tests) | Should -Contain $diagnosticsConsumer
+        @($selection.tests) | Should -Contain $agentFocusConsumer
+        @((@($catalog.contracts | Where-Object id -eq 'vanessa-agent-focus')[0]).tests) | Should -Be @($agentFocusConsumer)
         @((@($catalog.contracts | Where-Object id -eq 'vanessa-verification')[0]).tests) | Should -Contain $diagnosticsConsumer
         $diagnosticsOwner = @($catalog.contracts | Where-Object id -eq 'vanessa-verification-diagnostics')[0]
         @($diagnosticsOwner.tests) | Should -Be @($diagnosticsConsumer)
@@ -548,9 +552,12 @@ Describe 'Source quality catalog contracts' {
         # VanessaVerificationDiagnostics.Tests.ps1: 8 cases, 6.2s in WinPS 5.1 and
         # 6.1s in pwsh 7.6.5 (2026-11-06); reserve 15s for this explicit addition.
         $diagnosticsSeconds = 15.0
+        # VanessaAgentFocus.Tests.ps1: 16 cases, 5.4s in WinPS 5.1 (2026-11-06); reserve 15s for this explicit addition.
+        $agentFocusSeconds = 15.0
         [double]$diagnosticsOwner.budgetSeconds | Should -BeGreaterOrEqual $diagnosticsSeconds
+        [double](@($catalog.contracts | Where-Object id -eq 'vanessa-agent-focus')[0]).budgetSeconds | Should -BeGreaterOrEqual $agentFocusSeconds
         [double]$changeModelOwner.budgetSeconds | Should -BeGreaterOrEqual $changeModelSeconds
-        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds + $snapshotSeconds + $changeModelSeconds + $reviewScopeSeconds + $diagnosticsSeconds
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds + $snapshotSeconds + $changeModelSeconds + $reviewScopeSeconds + $diagnosticsSeconds + $agentFocusSeconds
         $estimatedCriticalPath | Should -BeGreaterThan 1200
         ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
         # Catalog-only changes now select static catalog proof. An explicitly
@@ -566,8 +573,8 @@ Describe 'Source quality catalog contracts' {
         # remain unchanged, and the exact added selection is checked below. The
         # fork binding asserts over catalog entries, so it is a catalog consumer.
         $catalogInvariantConsumer = 'tests/pester/DevelopForkConsumerInventory.Tests.ps1'
-        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $routingConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $catalogInvariantConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer}).Count | Should -Be 84
-        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count + 1 + 1 + 1)
+        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $routingConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $catalogInvariantConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer -and $_ -ne $agentFocusConsumer}).Count | Should -Be 84
+        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count + 1 + 1 + 1 + 1)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests -and $_ -notin $splitIncrementalConsumers }) | Should -Be @(
             $catalogInvariantConsumer,
             "tests/pester/HostTestSelection.Tests.ps1",
@@ -583,7 +590,7 @@ Describe 'Source quality catalog contracts' {
         # capacity model; no removed cohort, timeout change or cache assumption.
         $autonomyObservedSeconds = 33.218
         [double]$trackedTimings.files.'LifecycleGitContinuation.Tests.ps1' | Should -Be ([Math]::Ceiling($autonomyObservedSeconds))
-        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve + $autonomyObservedSeconds + $snapshotSeconds + $changeModelSeconds + $diagnosticsSeconds
+        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve + $autonomyObservedSeconds + $snapshotSeconds + $changeModelSeconds + $diagnosticsSeconds + $agentFocusSeconds
         $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
         ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
         [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)

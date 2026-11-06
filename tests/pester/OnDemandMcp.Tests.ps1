@@ -321,13 +321,13 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.backendVersions.clientMcp | Should -Be "v0.6.5"
         $manifest.families.'vanessa-ui'.backendVersions.vaExtension | Should -Be "1.2.043.42"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaAutomation | Should -Be "1.2.043.42"
-        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r8"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "4a0283c645ecc15192e17fad9bee16ebfed0ecdcdbf67bff60b24fcacb4eab46"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "feb10667879c02851123b739c69c0b9aea9dbc8303d991df8f26a305e1c575e6"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.manifestSha256 | Should -Be "fe142dcb11bbc48ee548059515fcb4d0fce74921d6d7a4f81a0e7d8ee0924f70"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.patchSha256 | Should -Be "3906026164a83fb5603a755bebdad9b6fb951a40be9585ea3dcc46e9a9f120ee"
-        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.assetName | Should -Be "VAExtension.1.32-itl-r8.cfe"
-        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.sha256 | Should -Be "7c9e792fcae9901fff34e3b6b3e80238c0e645574d9a1d14632b640a016f00bb"
+        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r10"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "8ebb9fded91fb2fdffd97bc1246a6ef19e69db83f8799f0eab334f016619f708"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "aef679579f8d1b8c928110dd62e5b4d58cdf49d77f2f257e5d04d567d4e4e1eb"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.manifestSha256 | Should -Be "82fdc600f67ea88789b74b5561281f11f334ea74115d958b7fb305c1fccf5c3d"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.patchSha256 | Should -Be "09199eedec48c5c1f75c112bb0c0716136b0334dc9dc7b0a048e0dc3dd41397c"
+        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.assetName | Should -Be "VAExtension.1.32-itl-r10.cfe"
+        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.sha256 | Should -Be "86abe091674d6742ad067e717b0efd1947b6741e44f91e85c37a5a617b1b5510"
         $manifest.families.'vanessa-ui'.pairedExtensionArtifact.protocol | Should -Be "itl-file-code-v1"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaExt | Should -Be "1.3.9.139"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.139"
@@ -977,8 +977,18 @@ Describe "ITL on-demand MCP facade" {
                     port = $profile.$portKey
                     range = Get-ItlOnDemandVanessaTestClientPortRange
                     portKey = Get-ItlOnDemandVanessaTestClientPortKey -State $state -InstanceId ("a" * 32)
+                    agentLaunch = $params.dopparams.ITLAgentLaunch
+                    channelRoot = [string]$params.dopparams.ITLClientCodeChannelRoot
+                    expectedChannelRoot = Get-ItlOnDemandVanessaClientCodeRoot -InstanceId ("a" * 32)
+                    runtimeRecords = @(Get-ItlOnDemandRuntimeRecordFiles -RuntimeRoot (Get-ItlOnDemandRuntimeRoot) | ForEach-Object Name)
                 }
             }
+            $result.agentLaunch | Should -BeTrue
+            $result.channelRoot | Should -Be $result.expectedChannelRoot
+            Test-Path -LiteralPath $result.channelRoot -PathType Container | Should -BeTrue
+            # Channel JSON files are never enumerated as on-demand runtime records.
+            $result.channelRoot.StartsWith((Join-Path $tempRoot ".agent-1c\mcp\ondemand"), [StringComparison]::OrdinalIgnoreCase) | Should -BeFalse
+            $result.runtimeRecords | Should -BeNullOrEmpty
             $result.useaddin | Should -BeTrue
             $result.screenshotAddin | Should -BeTrue
             $result.failClosed | Should -BeTrue

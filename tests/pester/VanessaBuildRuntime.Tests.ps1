@@ -145,9 +145,15 @@ Describe 'Pinned upstream build execution adapters' {
         $expected = $original.Replace('КаталогБазы = ПолучитьИмяВременногоФайла();', ('УправлениеКонфигуратором.ПутьКПлатформе1С(ПолучитьПеременнуюСреды("PLATFORM_PATH"));' + [Environment]::NewLine + 'КаталогБазы = ПолучитьПеременнуюСреды("ITL_VANESSA_BUILD_SCRATCH_BASE");')).Replace(
             ' Enterprise /F""" + КаталогБазы', ' Enterprise /N""" + ПолучитьПеременнуюСреды("ITL_VANESSA_BUILD_USER") + """ /F""" + КаталогБазы').Replace(
             'ЗапуститьПриложение(СтрокаКоманды, , Ложь, retCode);', 'retCode = 0; // ITL: no directory window during a noninteractive build.').Replace(
-            'Стр = Текст.Прочитать();', ('Стр = Текст.Прочитать();' + [Environment]::NewLine + 'Если Найти(Стр, "ЯЗапускаюМониторингКаталогаДляВнешнихСобытийРасширение") = 0 Тогда ВызватьИсключение "VANESSA_BUILD_VAEXTENSION_STEPS_MISSING"; КонецЕсли;'))
+            'Стр = Текст.Прочитать();', ('Стр = Текст.Прочитать();' + [Environment]::NewLine + 'Если Найти(Стр, "ЯЗапускаюМониторингКаталогаДляВнешнихСобытийРасширение") = 0 Тогда ВызватьИсключение "VANESSA_BUILD_VAEXTENSION_STEPS_MISSING"; КонецЕсли;' +
+                [Environment]::NewLine + 'Если Найти(Стр, "ЯЭмулируюВводТекста") = 0 Тогда ВызватьИсключение "VANESSA_BUILD_VANESSAEXT_STEPS_MISSING"; КонецЕсли;' +
+                [Environment]::NewLine + 'Если Найти(Стр, "КликНаКартинку") = 0 Тогда ВызватьИсключение "VANESSA_BUILD_SIKULIX_STEPS_MISSING"; КонецЕсли;' +
+                [Environment]::NewLine + 'Если Найти(Стр, "ЯДелаюКликПоЭлементуФормыUIAutomation") = 0 Тогда ВызватьИсключение "VANESSA_BUILD_UIAUTOMATION_STEPS_MISSING"; КонецЕсли;'))
         $execution | Should -BeExactly $expected
-        $execution | Should -Match 'VANESSA_BUILD_VAEXTENSION_STEPS_MISSING'
+        # Every patched step library that can drop out of the cache on a compile failure is required.
+        foreach ($marker in @('VAEXTENSION', 'VANESSAEXT', 'SIKULIX', 'UIAUTOMATION')) {
+            $execution | Should -Match ('VANESSA_BUILD_' + $marker + '_STEPS_MISSING')
+        }
         $result.sourceSha256 | Should -Be $hash
         $result.executionSha256 | Should -Be (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
     }
