@@ -22,9 +22,32 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: change-review criteria and scope, local r52
+## Current candidate: local minor review fixes, local r53
 
-The selected candidate is `itl-main-2f640143-r52`, exact commit
+The selected candidate is `itl-main-2f640143-r53`, exact commit
+`b09126bf08d6da188c3543539c114afcbd976fbd`, continuing r52 with upstream
+unchanged at `2f640143756ecd01fed42100e412632aa9082385`. After a full-cycle or
+OpenSpec apply review the parent fixed only `critical` / `major` findings and
+listed every `minor` one, so minor defects in code the agent had just written
+stayed open until the user asked again.
+
+`review-criteria.md → Actions by role` now has the parent also fix each `minor`
+finding in lines the current task added or changed when the fix is local (no
+behaviour, file or object outside the task; no check beyond the task's own),
+recheck the affected scope after any fix, and list every other `minor` finding
+with a reason: outside the task, needs checks outside the task, or judgement
+call. A subagent and a separately requested review still only report and mark
+each `minor` finding the same way. Soft gate C, Stage 4b and the severity
+vocabulary in `subagent-core.md` route to that owner instead of calling `minor`
+informational. The full-cycle set grows 154,528 -> 154,933 normalized bytes
+(+405, about 101 tokens at bytes/4); its ceiling moves 151 -> 152 KiB. Subagent
+start 31,558 -> 31,618 and root 13,742 stay within their unchanged ceilings.
+`compatibilityStatus` is `pending` until the publication owner qualifies the
+exact pin; the scoped-memory policy names the same commit.
+
+## Earlier candidate: change-review criteria and scope, local r52
+
+The earlier candidate is `itl-main-2f640143-r52`, exact commit
 `6dff08fee894e1ba8ff5508781c6174bb511c894`, continuing r51 with upstream
 unchanged at `2f640143756ecd01fed42100e412632aa9082385`. The review checklist,
 verdict and report lived only in `1c-code-reviewer`, which the reviewer model
