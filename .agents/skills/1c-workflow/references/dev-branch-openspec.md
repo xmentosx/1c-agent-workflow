@@ -29,7 +29,7 @@ OpenSpec используем для задач, где нужно описат�
 Синхронизируй spec deltas OpenSpec change <change-id> с основными specs после проверки конфликтов
 ```
 
-Оба режима используют один согласованный OpenSpec root, общий preflight и fresh `/itl-check`. Сначала проверьте закреплённую пару Node + OpenSpec CLI через helper. Если она отсутствует, выполните явное `-Action provision-openspec-cli` в этом checkout; глобальный `openspec` не заменяет проектный pin. Не запускайте произвольный `openspec update`: обновление installed bundle и документов имеет отдельного владельца. До отдельного релиза внешнего store все шесть фаз работают только с локальным `openspec/` этого checkout: вызовите `-Action openspec-context` перед записью, а `OPEN_SPEC_EXTERNAL_STORE_DEFERRED` не обходите прямым `--store` или перемещением файлов.
+Оба режима используют один согласованный OpenSpec root, общий preflight и fresh `/itl-check`. Сначала проверьте закреплённую пару Node + OpenSpec CLI через helper. Если она отсутствует, выполните явное `-Action provision-openspec-cli` в этом checkout; глобальный `openspec` не заменяет проектный pin. Не запускайте произвольный `openspec update`: обновление installed bundle и документов имеет отдельного владельца. До отдельного релиза внешнего store все шесть фаз работают только с локальным `openspec/` этого checkout: вызовите `agent-1c.ps1 -Action openspec-context -OpenSpecChangeId <change-id>` (не compact runner) перед записью, а `OPEN_SPEC_EXTERNAL_STORE_DEFERRED` не обходите прямым `--store` или перемещением файлов.
 
 ### 0. Исследовать контекст, если нужно
 

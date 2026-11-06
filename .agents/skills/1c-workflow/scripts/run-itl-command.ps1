@@ -843,7 +843,7 @@ $allowedActions = @(
 )
 $action = Get-ArgumentValue -Arguments @($helperArgs) -Name "-Action"
 if ($action -notin $allowedActions) {
-    throw "run-itl-command.ps1 accepts only compact ITL actions: $($allowedActions -join ', ')."
+    throw "run-itl-command.ps1 accepts only compact ITL actions: $($allowedActions -join ', '). If '$action' is a documented non-compact helper action (references/advanced-actions.md), run it directly: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action $action <arguments>."
 }
 foreach ($reserved in @("-RunStatusPath", "-RunLogPath", "-ProjectRoot")) {
     if (@($helperArgs | Where-Object { [string]$_ -ieq $reserved }).Count -gt 0) {

@@ -46,8 +46,10 @@ source in this same runtime record. Do not invent an OpenSpec change.
 Use actual project paths and the helper's exact path list, including deletions
 and uncommitted edits. Each path needs a reason and sufficient current checks.
 Paths the helper reports under `systemCoveredPaths` (unchanged imports from the
-accepted master ancestor and workflow-owned verification code) need no entry: the
-normal check runs the complete existing acceptance set for them.
+accepted master ancestor, workflow-owned verification code and a changed pinned
+verification runtime in `.agent-1c/dependency-lock.json`) need no entry: the
+normal check runs the complete existing acceptance set for them. A retained
+group or suite also covers its own test modules or features.
 Instead of creating a new observation, `checks` may reference an existing
 acceptance `suiteId` or default-fast `groupId`; use its existing obligation id in `checkIds`. A named explicit diagnostic run can supply a current one-off JUnit receipt; diagnostic status alone does not close acceptance.
 

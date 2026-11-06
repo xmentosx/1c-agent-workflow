@@ -148,6 +148,9 @@
         $result.missing.assignments[0].groupId | Should -Be '__unclassified__'
         $result.classified.classificationComplete | Should -BeTrue
         $result.classified.assignments[0].groupId | Should -Be 'plan'
+        # The group's own test module is an input of its retained result.
+        $result.classified.obligations[0].id | Should -BeExactly 'yaxunit/plan'
+        @($result.classified.obligations[0].inputPaths) | Should -Be @('src/cf/CommonModules/PlanCalculation/**', 'tests/yaxunit/CommonModules/PlanCalculation/Ext/Module.bsl')
     }
 
     It "reads schema-2 YAxUnit obligations while preserving the legacy default-fast selection" {
@@ -170,6 +173,7 @@
         $result.classificationComplete | Should -BeTrue
         $result.obligations[0].id | Should -Be 'plan-result'
         $result.obligations[0].cadence | Should -Be 'affected'
+        @($result.obligations[0].inputPaths) | Should -Be @('src/cf/CommonModules/PlanCalculation/**', 'tests/yaxunit/CommonModules/PlanCalculation/Ext/Module.bsl')
     }
 
     It "rejects an explicit benchmark referenced by ordinary registration" {
