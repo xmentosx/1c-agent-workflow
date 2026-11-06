@@ -487,18 +487,6 @@ function Get-ItlOnDemandOwnedTestClientProcesses {
     return @($result)
 }
 
-function Wait-ItlOnDemandTestClientReady {
-    param([System.Diagnostics.Process]$Process, [int]$TimeoutSeconds = 120)
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    while ((Get-Date) -lt $deadline) {
-        $Process.Refresh()
-        if ($Process.HasExited) { return $false }
-        if ($Process.MainWindowHandle -ne [IntPtr]::Zero -or -not [string]::IsNullOrWhiteSpace([string]$Process.MainWindowTitle)) { return $true }
-        Start-Sleep -Milliseconds 250
-    }
-    return $false
-}
-
 function Wait-ItlOnDemandTestClientPortReady {
     param([System.Diagnostics.Process]$Process, [int]$Port, [int]$TimeoutSeconds = 120)
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)

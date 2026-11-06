@@ -8482,7 +8482,11 @@ function Start-EnterpriseBackground {
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
+    # TestClient is the UI under test: VanessaExt finds it and lists or captures windows only while
+    # its main window is visible, and 1C ignores minimized/no-activate start states. Keep it shown;
+    # TESTMANAGER and other background sessions stay hidden.
     $process = Start-OneCProcessBackground `
+        -Visible:$UseTestClient `
         -FilePath $platformPath `
         -Arguments $args `
         -InfoBaseKind $InfoBaseKind `
