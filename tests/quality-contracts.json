@@ -2478,6 +2478,8 @@
       "VerificationRepairGrantSource": "repair-session",
       "CleanupDryRun": "core",
       "ReviewPurpose": "review-scope",
+      "ReviewRange": "review-scope",
+      "ReviewSince": "review-scope",
       "ConfirmBranchDeletion": "core",
       "AuxiliaryContourName": "auxiliary",
       "AuxiliaryDisplayName": "auxiliary",

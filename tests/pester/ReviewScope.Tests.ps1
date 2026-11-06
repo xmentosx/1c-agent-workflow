@@ -516,11 +516,186 @@
         }
         $agent = Get-Content -Raw -Encoding UTF8 $HelperPath
         $agent | Should -Match '\[ValidateSet\("", "review", "self"\)\]\s*\[string\]\$ReviewPurpose'
-        $agent | Should -Match '"get-review-scope" \{ Invoke-ReviewScopeAction -ReviewPurpose \$ReviewPurpose \}'
+        $agent | Should -Match '"get-review-scope" \{ Invoke-ReviewScopeAction -ReviewPurpose \$ReviewPurpose -ReviewRange \$ReviewRange -ReviewSince \$ReviewSince \}'
+        $agent | Should -Match '\[ValidateSet\("", "branch", "uncommitted", "since"\)\]\s*\[string\]\$ReviewRange'
         (Get-Content -Raw (Join-Path (Split-Path -Parent $HelperPath) 'run-itl-command.ps1')) | Should -Match '"get-review-scope"'
         $overlay = (Get-Content -Raw -Encoding UTF8 (Join-Path $context.RepoRoot 'templates/ai-rules-overlay/AGENTS.md')) -replace '\s+', ' '
         $overlay | Should -Match ([regex]::Escape('For a code review, including `/ponytail-review`, take the scope from the helper action `get-review-scope`'))
         $overlay | Should -Match ([regex]::Escape('verification-result.md#review-scope'))
         (Get-Content -Raw -Encoding UTF8 (Join-Path (Split-Path -Parent (Split-Path -Parent $HelperPath)) 'references/verification-result.md')) | Should -Match '(?m)^## Review scope?$'
+    }
+
+    Context 'size, range choice and itl-check freshness' {
+        BeforeAll {
+            function New-ReviewLargeText {
+                param([string]$Tag)
+                # ~320 KB of Cyrillic BSL: above the 300 KB separate-review threshold.
+                $line = "Процедура Обработка$Tag() Экспорт // длинный комментарий для объёма текста изменений"
+                return ((1..2400 | ForEach-Object { "$line $_" }) -join "`n")
+            }
+            function New-ReviewRefreshedLargeBranch {
+                param([string]$Name)
+                $fixture = New-ReviewRepository $Name
+                Write-ReviewFile $fixture.root 'src/cf/CommonModules/Большой модуль/Ext/Module.bsl' (New-ReviewLargeText 'А')
+                $checkpoint = Save-ReviewCommit $fixture.root 'chore: checkpoint before branch refresh'
+                Invoke-ReviewGit $fixture.root checkout --quiet master | Out-Null
+                Write-ReviewFile $fixture.root 'src/cf/CommonModules/Чужой модуль/Ext/Module.bsl' 'master change'
+                $master = Save-ReviewCommit $fixture.root 'master'
+                Invoke-ReviewGit $fixture.root checkout --quiet $script:ReviewBranch | Out-Null
+                Invoke-ReviewGit $fixture.root merge --quiet --no-edit master | Out-Null
+                $merge = ([string](Invoke-ReviewGit $fixture.root rev-parse HEAD)).Trim()
+                $state = New-ReviewState $fixture
+                Write-ReviewFile $fixture.root 'src/cf/CommonModules/Общий модуль/Ext/Module.bsl' 'fix after refresh'
+                $fix = Save-ReviewCommit $fixture.root 'fix: исправление после обновления'
+                Write-ReviewFile $fixture.root 'docs/Заметка.md' 'note'
+                $service = Save-ReviewCommit $fixture.root 'chore: persist branch configuration synchronization cursor'
+                Write-ReviewFile $fixture.root 'src/cf/CommonModules/Общий модуль/Ext/Module.bsl' 'fix after refresh, uncommitted'
+                return [pscustomobject]@{ root = $fixture.root; initial = $fixture.initial; checkpoint = $checkpoint; master = $master; merge = $merge; fix = $fix; service = $service; state = $state }
+            }
+            function Complete-ReviewRefreshFixture {
+                # Needs the dot-sourced helper: the refresh proof owner records the base.
+                param([object]$Fixture)
+                Set-ReviewRefreshProof $Fixture $Fixture.state $Fixture.master
+            }
+        }
+
+        It 'classifies a large separate review, offers the ranges and keeps self-review unchanged' {
+            $fixture = New-ReviewRefreshedLargeBranch 'большой объём'
+            & {
+                . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+                Complete-ReviewRefreshFixture $fixture
+                $choice = Get-ReviewScope -ReviewPurpose review
+                $choice.mode | Should -Be 'range-required'
+                $choice.size.sizeClass | Should -Be 'large'
+                $choice.size.bytes | Should -BeGreaterThan 307200
+                $choice.size.modules | Should -Be 2
+                $choice.choice.uncommitted.size.modules | Should -Be 1
+                $choice.choice.uncommitted.size.sizeClass | Should -Be 'normal'
+                $picker = $choice.choice.picker
+                @($picker.items | ForEach-Object commit) | Should -Be @($fixture.fix, $fixture.merge)
+                $picker.items[0].serviceBefore | Should -Be 1
+                $picker.items[0].objects | Should -Be @('ОбщийМодуль.Общий модуль')
+                $picker.items[0].size.modules | Should -Be 1
+                $picker.items[1].anchor | Should -Be 'merge'
+                $picker.items[1].label | Should -Be 'обновление из master'
+                $picker.items[1].size.sizeClass | Should -Be 'normal'
+                $picker.complete | Should -BeTrue
+                $picker.allowed | Should -Not -Contain $fixture.checkpoint
+
+                $uncommitted = Get-ReviewScope -ReviewPurpose review -ReviewRange uncommitted
+                $uncommitted.mode | Should -Be 'uncommitted'
+                $uncommitted.baseCommit | Should -Be $fixture.service
+                Get-ReviewKind $uncommitted 'subject' | Should -Be @('src/cf/CommonModules/Общий модуль/Ext/Module.bsl')
+
+                $branch = Get-ReviewScope -ReviewPurpose review -ReviewRange branch
+                $branch.mode | Should -Be 'branch'
+                $branch.size.sizeClass | Should -Be 'large'
+                $branch.baseCommit | Should -Be $fixture.master
+                Get-ReviewKind $branch 'subject' | Should -Contain 'src/cf/CommonModules/Большой модуль/Ext/Module.bsl'
+
+                $self = Get-ReviewScope -ReviewPurpose self
+                $self.mode | Should -Be 'branch'
+                $self.choice | Should -BeNullOrEmpty
+                { Get-ReviewScope -ReviewPurpose self -ReviewRange branch } | Should -Throw '*REVIEW_SCOPE_RANGE_REVIEW_ONLY*'
+                { Get-ReviewScope -ReviewPurpose review -ReviewRange since } | Should -Throw '*REVIEW_SCOPE_SINCE_REQUIRED*'
+            }
+        }
+
+        It 'starts a range at a listed commit without master changes and refuses a commit before the refresh' {
+            $fixture = New-ReviewRefreshedLargeBranch 'с коммита'
+            & {
+                . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+                Complete-ReviewRefreshFixture $fixture
+                $afterRefresh = Get-ReviewScope -ReviewPurpose review -ReviewRange since -ReviewSince $fixture.merge.Substring(0, 12)
+                $afterRefresh.mode | Should -Be 'since'
+                $afterRefresh.baseCommit | Should -Be $fixture.merge
+                Get-ReviewKind $afterRefresh 'subject' | Should -Be @('src/cf/CommonModules/Общий модуль/Ext/Module.bsl')
+                $fromFix = Get-ReviewScope -ReviewPurpose review -ReviewRange since -ReviewSince $fixture.fix
+                $fromFix.baseCommit | Should -Be $fixture.merge
+                $fromFix.size.sizeClass | Should -Be 'normal'
+                Get-ReviewKind $fromFix 'subject' | Should -Not -Contain 'src/cf/CommonModules/Чужой модуль/Ext/Module.bsl'
+                $failure = $null
+                try { Get-ReviewScope -ReviewPurpose review -ReviewRange since -ReviewSince $fixture.checkpoint | Out-Null } catch { $failure = $_.Exception.Message }
+                $failure | Should -BeLike 'REVIEW_SCOPE_SINCE_NOT_ALLOWED:*'
+                $failure | Should -Match '-ReviewRange branch'
+            }
+        }
+
+        It 'reports the range question through the compact action and stops before the file lists' {
+            $fixture = New-ReviewRefreshedLargeBranch 'вопрос'
+            & { . $HelperPath -ProjectRoot $fixture.root -Action help *> $null; Complete-ReviewRefreshFixture $fixture }
+            $statusPath = Join-Path $TestDrive "review-range-$([guid]::NewGuid().ToString('N')).json"
+            $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $HelperPath + '"'), '-ProjectRoot', ('"' + $fixture.root + '"'),
+                '-Action', 'get-review-scope', '-ReviewPurpose', 'review', '-RunStatusPath', ('"' + $statusPath + '"'))
+            $process = Start-Process -FilePath powershell -ArgumentList $arguments -PassThru -WindowStyle Hidden
+            $process.WaitForExit(180000) | Should -BeTrue
+            $status = [IO.File]::ReadAllText($statusPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            $process.ExitCode | Should -Be 0 -Because ([string]$status.errorMessage)
+            $status.stage | Should -Be 'review-scope.range-required'
+            $status.userReport | Should -Match 'Нужен выбор объёма ревью'
+            $status.userReport | Should -Match 'Только незакоммиченные изменения'
+            $status.userReport | Should -Match ([regex]::Escape("-ReviewRange since -ReviewSince $($fixture.merge.Substring(0, 12))"))
+            $status.userReport | Should -Match 'обновление из master'
+            $status.userReport | Should -Match 'служебные коммиты ITL без изменений 1С: 1'
+            $status.userReport | Should -Match 'Вся работа ветки \(большой объём\)'
+            $status.userReport | Should -Match 'Проверка /itl-check'
+            $status.userReport | Should -Not -Match '## Предмет ревью: файлы'
+        }
+
+        It 'reports itl-check freshness without changing objects, index or state on a dirty tree' {
+            $fixture = New-ReviewRepository 'свежесть проверки'
+            & {
+                . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+                Write-ReviewFile $fixture.root 'src/cf/CommonModules/Общий модуль/Ext/Module.bsl' 'checked'
+                $checked = Save-ReviewCommit $fixture.root 'work'
+                $state = New-ReviewState $fixture
+                $statePath = Save-ReviewState $fixture $state
+                (Get-ReviewScope -ReviewPurpose review).verification.status | Should -Be 'not-run'
+
+                $state.lastVerificationStatus = 'passed'; $state.lastVerifiedCommit = $checked; $state.lastVerifiedAt = '2026-11-06T18:00:00+03:00'
+                $state.lastVerifiedFingerprint = Get-VerificationFingerprint
+                Save-ReviewState $fixture $state | Out-Null
+                $current = Get-ReviewScope -ReviewPurpose review
+                $current.verification.status | Should -Be 'current'
+                $current.verification.gate1Evidence | Should -BeTrue
+                $current.verification.verifiedCommit | Should -Be $checked
+
+                Write-ReviewFile $fixture.root 'src/cf/CommonModules/Общий модуль/Ext/Module.bsl' 'changed after the check'
+                $snapshot = {
+                    [pscustomobject]@{
+                        status = (Invoke-ReviewGit $fixture.root status --porcelain=v1 --untracked-files=all) -join "`n"
+                        index = (Get-FileHash -LiteralPath (Join-Path $fixture.root '.git/index')).Hash
+                        state = [IO.File]::ReadAllText($statePath)
+                        refs = (Invoke-ReviewGit $fixture.root for-each-ref) -join "`n"
+                        objects = (Invoke-ReviewGit $fixture.root count-objects -v) -join "`n"
+                    }
+                }
+                $before = & $snapshot
+                $stale = Get-ReviewScope -ReviewPurpose self
+                $after = & $snapshot
+                ($after | ConvertTo-Json) | Should -Be ($before | ConvertTo-Json)
+                $stale.verification.status | Should -Be 'stale'
+                $stale.verification.gate1Evidence | Should -BeFalse
+
+                $state.lastVerificationStatus = 'failed'
+                Save-ReviewState $fixture $state | Out-Null
+                (Get-ReviewScope -ReviewPurpose review).verification.status | Should -Be 'failed'
+            }
+        }
+
+        It 'labels every automatic commit subject the helper creates' {
+            $libRoot = Join-Path (Split-Path -Parent $HelperPath) 'lib'
+            $subjects = @(Get-ChildItem -LiteralPath $libRoot -Filter '*.ps1' | ForEach-Object {
+                [regex]::Matches([IO.File]::ReadAllText($_.FullName), '"(?<subject>(?:chore: checkpoint before|sync: copy combined)[^"]*)"') | ForEach-Object { $_.Groups['subject'].Value }
+            } | Sort-Object -Unique)
+            $subjects.Count | Should -BeGreaterThan 4
+            & {
+                . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+                foreach ($subject in $subjects) {
+                    $sample = [regex]::Replace($subject, '\$\([^)]*\)\)?|\$[A-Za-z_][A-Za-z0-9_]*', 'itldev/пример')
+                    (Get-ReviewScopeCommitLabel -Subject $sample) | Should -Not -Be $sample -Because "the picker explains '$subject'"
+                }
+            }
+        }
     }
 }

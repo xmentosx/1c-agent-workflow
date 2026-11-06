@@ -113,6 +113,9 @@ param(
     [string]$Mode = "status",
     [ValidateSet("", "review", "self")]
     [string]$ReviewPurpose = "",
+    [ValidateSet("", "branch", "uncommitted", "since")]
+    [string]$ReviewRange = "",
+    [string]$ReviewSince = "",
     [ValidateSet("run", "analyze", "compare")]
     [string]$BenchmarkMode = "analyze",
     [string]$BenchmarkModel = "",
@@ -361,6 +364,8 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Client" -Value $Client
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Mode" -Value $Mode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ReviewPurpose" -Value $ReviewPurpose
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ReviewRange" -Value $ReviewRange
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ReviewSince" -Value $ReviewSince
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationTrigger" -Value $VerificationTrigger
     if ($ResultPurpose -eq 'production') { Add-Agent1cReexecArgument -Arguments $arguments -Name 'ResultPurpose' -Value $ResultPurpose }
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExplicitVerificationComponent" -Value $ExplicitVerificationComponent
@@ -681,7 +686,7 @@ try {
         "reset-dev-branch" { Reset-DevBranch }
         "lock-config-repository-objects" { Lock-ConfigRepositoryObjects }
         "export-dev-branch-result" { Export-DevBranchResult }
-        "get-review-scope" { Invoke-ReviewScopeAction -ReviewPurpose $ReviewPurpose }
+        "get-review-scope" { Invoke-ReviewScopeAction -ReviewPurpose $ReviewPurpose -ReviewRange $ReviewRange -ReviewSince $ReviewSince }
         "close-dev-branch" { Close-DevBranch }
         "switch-master" { Switch-Master }
         "switch-dev-branch" { Switch-DevBranch }
