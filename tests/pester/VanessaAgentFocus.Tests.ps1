@@ -338,6 +338,9 @@ Describe 'Foreground measurement separates new 1C process windows from reactivat
         $facts.commandLine | Should -BeLike ('*' + $mode + ' /F "C:\База с пробелом\ИБ" /N "Агент ИТЛ" /P *** /ConfigurationRepositoryP*** *')
         $facts.commandLine | Should -BeLike '*Usr=""Агент"";Pwd=***;"'
         $facts.commandLine | Should -Not -Match 'секрет|тайн'
+        # Every record carries the unelevated reasons Windows lets a background window in.
+        [ItlForegroundRecorderV2]::ForegroundLockTimeoutMs() | Should -BeGreaterOrEqual 0
+        [ItlForegroundRecorderV2]::InputIdleMs() | Should -BeGreaterOrEqual 0
     }
 
     It 'counts the first window of a process started during the recording apart from reactivations' {
