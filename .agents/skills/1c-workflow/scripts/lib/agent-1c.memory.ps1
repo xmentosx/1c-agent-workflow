@@ -465,6 +465,12 @@ function Invoke-ItlMemoryRecall {
     $ids=@($selected|ForEach-Object {$_.datasetId}|Select-Object -Unique)
     $result=Invoke-ItlMemoryHttp $Binding.provider POST '/api/v1/recall' @{query=$Query;dataset_ids=$ids;search_type=$SearchType;top_k=24;only_context=$false} $deadline
     if($result.status -ne 200){return @{cards=@();coverage='unavailable';continuation='Preserve the scope and verify native access; required coverage remains incomplete.'}}
+    # Native Cognee answers datasets without graph data by one system status
+    # row instead of chunks. That is known absence, not unattributed results.
+    $statusRows=@(@($result.body)|Where-Object {([string](Get-ItlCatalogField $_ 'source')) -ceq 'system' -and -not (Get-ItlCatalogField $_ 'dataset_id')})
+    if($statusRows.Count -and $statusRows.Count -eq @($result.body).Count -and -not @($statusRows|Where-Object {([string](Get-ItlCatalogField $_ 'status')) -cne 'memory_warming_up'}).Count){
+        return [ordered]@{cards=@();coverage='empty';backendStatus='memory_warming_up';sourceLookups=0;backendCalls=2;continuation='Selected datasets hold no indexed notes yet: absence, not partial coverage. A just-saved note may still be indexing; check it by exact memory_status.';context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
+    }
     $cards=@();$seen=@{};$lookups=0;$bytes=0;$partial=$false
     if(-not (Test-Path -LiteralPath 'Function:\Measure-ItlMemoryTokens')){. (Join-Path $PSScriptRoot 'agent-1c.memory-tokens.ps1')}
     # D8 bounds tokens, not UTF-8 bytes. The native transport already bounds

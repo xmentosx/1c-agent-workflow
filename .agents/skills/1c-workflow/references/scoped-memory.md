@@ -125,6 +125,7 @@ Mapping the named encoding to the actual client/model and whole-task costs/quali
 remain G5; no measurement is invented for another tokenizer or hidden chat framing.
 The total deadline is 20 seconds; write/status use 60 seconds. Capped/time-limited
 results report partial coverage. Native original lookups are separate bounded calls.
+A native `memory_warming_up` status reports `coverage=empty`: no indexed notes yet.
 
 `memory_status(dataset_name, note_id|data_id)` reconciles the exact source and
 updates its local receipt/pending. Dataset

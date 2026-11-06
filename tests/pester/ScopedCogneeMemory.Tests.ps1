@@ -235,6 +235,26 @@
         $lexical.PSObject.Properties.Name | Should -Not -Contain reformulation
 
     }
+    It 'reports native warming-up status as empty memory, not partial coverage' {
+        # Exact native shape observed from the qualified deployment while every
+        # admitted dataset was still empty (2026-11-06 pilot branches).
+        Mock Invoke-ItlMemoryHttp {param($Provider,$Method,$Path,$Body)
+            $script:Calls.Add(@{method=$Method;path=$Path;body=$Body})
+            @{status=200;body=@(@{source='system';status='memory_warming_up';text='Memory is still warming up: no knowledge graph data exists yet for the requested datasets.';datapoint_count=0;threshold=1;error_class=$null;error_message=$null})}
+        } -ParameterFilter {$Path -eq '/api/v1/recall'}
+        $empty=Invoke-ItlMemoryRecall $b 'PM5 задачи пакетная выдача'
+        @($empty.cards).Count | Should -Be 0
+        $empty.coverage | Should -BeExactly empty
+        $empty.backendStatus | Should -BeExactly memory_warming_up
+        $empty.sourceLookups | Should -Be 0
+        @($script:Calls|Where-Object path -Like '*/raw').Count | Should -Be 0
+
+        # An unknown system status stays conservative.
+        Mock Invoke-ItlMemoryHttp {param($Provider,$Method,$Path,$Body)
+            @{status=200;body=@(@{source='system';status='something_else';datapoint_count=0})}
+        } -ParameterFilter {$Path -eq '/api/v1/recall'}
+        (Invoke-ItlMemoryRecall $b query).coverage | Should -BeExactly partial
+    }
     It 'retires one exact note without deleting the dataset' {
         $r=Invoke-ItlMemoryRemember $b 'Retire me' 'itl_project_customer' 'old'
         $key=Get-ItlMemoryRecordKey $b (Get-ProjectDataset $b).datasetId old
