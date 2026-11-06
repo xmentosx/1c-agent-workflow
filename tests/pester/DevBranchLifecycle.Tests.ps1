@@ -5274,6 +5274,51 @@ try {
         }
     }
 
+    It "launches the owned TestClient with a shown window and keeps TestManager and background Enterprise hidden" {
+        # VanessaExt FindTestClient/GetWindowList see only a visible TestClient main window; a hidden
+        # TestClient start broke vanessa-ui get_window_list_os on current Windows builds.
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl enterprise видимость " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "1cv8.exe") -Encoding ASCII -Value "fake"
+            Set-Content -LiteralPath (Join-Path $tempRoot "1cv8c.exe") -Encoding ASCII -Value "fake"
+
+            $starts = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:ProcessStarts = @()
+                function Get-PlatformPath { return (Join-Path $tempRoot "1cv8.exe") }
+                function Assert-InfoBaseAvailable {}
+                function Start-Process {
+                    param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$PassThru)
+                    $script:ProcessStarts += [pscustomobject]@{
+                        filePath = [string]$FilePath
+                        argumentList = [string]$ArgumentList
+                        windowStyleBound = $PSBoundParameters.ContainsKey('WindowStyle')
+                        windowStyle = [string]$WindowStyle
+                    }
+                    return [pscustomobject]@{ Id = 8300 + $script:ProcessStarts.Count; Handle = [IntPtr]::Zero }
+                }
+
+                Start-EnterpriseBackground -InfoBasePath $tempRoot -InfoBaseKind file -UseTestClient -TestClientPort 48161 | Out-Null
+                Start-EnterpriseBackground -InfoBasePath $tempRoot -InfoBaseKind file -UseTestManager -TestClientPort 48162 | Out-Null
+                Start-EnterpriseBackground -InfoBasePath $tempRoot -InfoBaseKind file -EnterpriseArgs @('/C', 'probe') | Out-Null
+                @($script:ProcessStarts)
+            }
+
+            $starts.Count | Should -Be 3
+            $starts[0].argumentList | Should -Match '/TESTCLIENT -TPort 48161'
+            $starts[0].windowStyleBound | Should -BeFalse
+            $starts[1].argumentList | Should -Match '/TESTMANAGER -TPort 48162'
+            $starts[1].windowStyle | Should -Be 'Hidden'
+            $starts[2].argumentList | Should -Not -Match '/TEST(CLIENT|MANAGER)'
+            $starts[2].windowStyle | Should -Be 'Hidden'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "uses the thin client by default for Enterprise roles and keeps thick client explicit" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-enterprise-client-type-" + [guid]::NewGuid().ToString("N"))
         try {
