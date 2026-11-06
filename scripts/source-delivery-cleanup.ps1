@@ -147,6 +147,32 @@ function Remove-SourceDeliveryExpiredArtifactHolds {
     return [pscustomobject]@{ removedDirectories = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
 }
 
+function Test-SourceDeliveryCandidateHeldByStandUpdate {
+    # Stand preparation fails before a plan registers its candidate in the
+    # ledger. A pending lifecycle update on a root of the candidate's own
+    # recorded scope then resumes only from that recorded source, so the
+    # candidate stays until the update owner completes or abandons it.
+    # Read-only; an unreadable scope or receipt cannot prove release.
+    param([Parameter(Mandatory = $true)][string]$CandidatePath)
+
+    $scopePath = Join-Path $CandidatePath 'build/test-results/delivery/stand-update-roots.json'
+    if (-not (Test-Path -LiteralPath $scopePath -PathType Leaf)) { return $false }
+    try { $scope = [IO.File]::ReadAllText($scopePath, [Text.Encoding]::UTF8) | ConvertFrom-Json -ErrorAction Stop } catch { return $true }
+    $candidate = [IO.Path]::GetFullPath($CandidatePath).TrimEnd('\', '/')
+    foreach ($root in @(@($scope.projectRoot) + @($scope.roots) | Where-Object { $_ } | Select-Object -Unique)) {
+        $snapshots = Join-Path ([string]$root) '.agent-1c/snapshots/workflow-update'
+        foreach ($snapshot in @(Get-ChildItem -LiteralPath $snapshots -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue)) {
+            $receiptPath = Join-Path $snapshot.FullName 'transaction.json'
+            try {
+                $receipt = [IO.File]::ReadAllText($receiptPath, [Text.Encoding]::UTF8) | ConvertFrom-Json -ErrorAction Stop
+                $source = [string]$receipt.sourceRoot
+                if ($source -and [string]::Equals([IO.Path]::GetFullPath($source).TrimEnd('\', '/'), $candidate, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+            } catch { return $true }
+        }
+    }
+    return $false
+}
+
 function Remove-SourceDeliveryStaleCandidateWorktrees {
     param([string[]]$PreservePaths = @())
 
@@ -161,7 +187,8 @@ function Remove-SourceDeliveryStaleCandidateWorktrees {
         if (-not $path.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or
             $leaf -notmatch '^itl-source-(publish-develop|release-master|cleanup-executor)-([0-9a-f]{32})$' -or
             $branch -cne "refs/heads/itl/$($matches[1])-$($matches[2])" -or $preserved.Contains($path) -or
-            (Test-SourceDeliveryPathInUse -Path $path)) { continue }
+            (Test-SourceDeliveryPathInUse -Path $path) -or
+            (Test-SourceDeliveryCandidateHeldByStandUpdate -CandidatePath $path)) { continue }
         $trackedStatus = Invoke-RepositoryGit -RepositoryRoot $path -Arguments @('status', '--porcelain', '--untracked-files=no') -AllowFailure
         if ($trackedStatus.exitCode -ne 0 -or [string]$trackedStatus.stdout) { continue }
         $shortBranch = $branch.Substring('refs/heads/'.Length)

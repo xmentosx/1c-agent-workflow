@@ -416,6 +416,14 @@ ordinary full rollout and unexpected-drift regressions are the local canary;
 live publication acceptance remains outstanding. Rollback stops the new
 composition and retains all existing owner receipts for manual continuation.
 The publication already running at approval time is outside this change.
+The 2026-11-06 r10 publication showed two gaps inside that boundary. The update
+now receives the gate's read-only artifact binding for owned assets published
+only after Develop, as it already received the resolved fork checkout. A failed
+update precedes plan registration, so its candidate had no ledger record and the
+next pre-operation cleanup removed the source its retained receipt resumes from;
+candidate cleanup now keeps a candidate while a pending receipt in its own
+recorded update scope names it, and an unreadable scope or receipt keeps it too.
+Cleanup authority only narrows; no state, lock or coordinator is added.
 
 On 2026-10-28 the user approved abandoning a failed uncommitted branch update.
 Invariant: a defective candidate cannot lock a development branch, because the
