@@ -1872,6 +1872,16 @@
       "tests": ["tests/pester/VanessaAgentFocus.Tests.ps1"]
     },
     {
+      "id": "workflow-update-run-shared-inputs",
+      "owner": "update-workflow run scope: shared artifact proofs, registry, fork preflight and UI tool preparation once per pin across master and branch copies",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/WorkflowUpdateRunSharedInputs.Tests.ps1",
+      "paths": ["tests/pester/WorkflowUpdateRunSharedInputs.Tests.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1"],
+      "reuseInputPaths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1"],
+      "tests": ["tests/pester/WorkflowUpdateRunSharedInputs.Tests.ps1"]
+    },
+    {
       "id": "vanessa-verification-diagnostics",
       "owner": "Vanessa failure focus and event-log diagnostic-run output on real PM5 artifacts",
       "gate": "targeted",

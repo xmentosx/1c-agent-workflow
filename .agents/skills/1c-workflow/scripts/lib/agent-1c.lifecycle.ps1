@@ -6202,7 +6202,9 @@ function Update-AiRules1c {
     Invoke-AiRules1cInstaller -Command "update"
     Update-AgentGuidanceBridge
     Update-UserRules
-    Sync-KiloItlCommandSurface
+    # Workflow file post-copy generates the surface once after this install.
+    $deferred = Get-Variable -Name ItlWorkflowPostCopyDefersClientSurfaces -Scope Script -ErrorAction SilentlyContinue
+    if ($null -eq $deferred -or -not $deferred.Value) { Sync-KiloItlCommandSurface }
 }
 
 function Get-WorkflowPackageDefaultRepo {
@@ -9697,8 +9699,11 @@ function Invoke-WorkflowPackageFilePostCopyCore {
     $previousMcpProtectionValue = if ($null -ne $previousMcpProtection) { $previousMcpProtection.Value } else { $null }
     $previousOpenCodeMode = Get-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -ErrorAction SilentlyContinue
     $previousOpenCodeModeValue = if ($null -ne $previousOpenCodeMode) { $previousOpenCodeMode.Value } else { $null }
+    $previousSurfaceDeferral = Get-Variable -Name ItlWorkflowPostCopyDefersClientSurfaces -Scope Script -ErrorAction SilentlyContinue
+    $previousSurfaceDeferralValue = if ($null -ne $previousSurfaceDeferral) { $previousSurfaceDeferral.Value } else { $null }
     try {
         $script:ItlMcpPreserveUserChanges = $true
+        $script:ItlWorkflowPostCopyDefersClientSurfaces = $true
         $policyPending = Get-WorkflowUpdatePendingSnapshot
         . Import-ItlProductProjectSetup
         $catalogTransition=$null
@@ -9746,13 +9751,14 @@ function Invoke-WorkflowPackageFilePostCopyCore {
         Sync-ItlOnDemandMcpDependencyLock | Out-Null
         Install-ItlOnDemandMcp | Out-Null
 
+        # The client surface is generated once below, after the final rules
+        # installation, guidance bridge and UI tool preparation.
         if ($SkipAiRules) {
             Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
             $migrationPlan = Get-AiRulesMigrationPlan
             if ($migrationPlan.status -eq "eligible") {
                 Write-Host "ai_rules_1c migration remains pending because -SkipAiRules was specified: $($migrationPlan.target.ref)"
             }
-            Sync-KiloItlCommandSurface
         } else {
             $migration = Invoke-AiRulesBaselineMigration
             Assert-AiRulesBaselineMigrationResult -Migration $migration
@@ -9830,6 +9836,11 @@ function Invoke-WorkflowPackageFilePostCopyCore {
             Set-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -Value $previousOpenCodeModeValue
         } else {
             Remove-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $previousSurfaceDeferral) {
+            Set-Variable -Name ItlWorkflowPostCopyDefersClientSurfaces -Scope Script -Value $previousSurfaceDeferralValue
+        } else {
+            Remove-Variable -Name ItlWorkflowPostCopyDefersClientSurfaces -Scope Script -ErrorAction SilentlyContinue
         }
     }
 }
@@ -10742,6 +10753,14 @@ function Resolve-WorkflowUpdateLegacyExecutor {
 }
 
 function Update-WorkflowPackage {
+    if (-not (Test-WorkflowUpdateRunSharedInputsActive)) {
+        # Master and all development worktrees of this process share one set of
+        # verified machine-scoped inputs; branch-local writes stay per root.
+        # Re-enter this exact definition, never a same-named one in scope.
+        $updateWorkflowEntry = $MyInvocation.MyCommand.ScriptBlock
+        Invoke-WorkflowUpdateRunSharedInputs { & $updateWorkflowEntry }
+        return
+    }
     Write-Section "Update ITL workflow package"
     if ($LifecyclePhase -ne 'post-copy' -and $WorkflowUpdateRecovery -eq 'legacy-status') {
         Start-WorkflowLegacyCopyRecovery -Review | ConvertTo-Json -Depth 5

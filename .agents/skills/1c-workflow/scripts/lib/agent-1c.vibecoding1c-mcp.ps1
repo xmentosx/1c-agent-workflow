@@ -365,7 +365,13 @@ function Invoke-Vibecoding1cMcpRegistryOperation {
     param([Parameter(Mandatory = $true)][scriptblock]$Operation)
     $existing = Get-Variable -Name ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue
     if ($null -ne $existing) { return (& $Operation) }
-    $script:ItlMcpRegistryOperation = @{ attempted = $false; snapshot = $null; error = $null }
+    # An update-workflow run refreshes each registry checkout once and gives
+    # master and every development worktree the same captured publication.
+    $runEntry = Get-WorkflowUpdateRunSharedEntry -Kind 'vibecoding1c-mcp-registry' -Identity ([string](Get-Vibecoding1cMcpRegistryRoot))
+    if ($null -ne $runEntry -and -not $runEntry.ContainsKey('attempted')) {
+        $runEntry['attempted'] = $false; $runEntry['snapshot'] = $null; $runEntry['error'] = $null
+    }
+    $script:ItlMcpRegistryOperation = if ($null -ne $runEntry) { $runEntry } else { @{ attempted = $false; snapshot = $null; error = $null } }
     try { & $Operation } finally { Remove-Variable -Name ItlMcpRegistryOperation -Scope Script }
 }
 

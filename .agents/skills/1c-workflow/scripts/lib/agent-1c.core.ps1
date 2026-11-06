@@ -493,6 +493,43 @@ function Invoke-WithRunStatusHeartbeat {
     }
 }
 
+# One update-workflow process applies master and every development worktree in
+# sequence. Machine-scoped inputs (verified shared artifacts, the registry
+# snapshot, isolated rules preflight, user-scope UI tool preparation) are
+# prepared once per process and reused while the branch pins are identical.
+# The state is in memory only and disappears with the operation.
+function Test-WorkflowUpdateRunSharedInputsActive {
+    $run = Get-Variable -Name ItlWorkflowUpdateRunInputs -Scope Script -ErrorAction SilentlyContinue
+    return ($null -ne $run -and $null -ne $run.Value)
+}
+
+function Invoke-WorkflowUpdateRunSharedInputs {
+    param([Parameter(Mandatory = $true)][scriptblock]$Body)
+    if (Test-WorkflowUpdateRunSharedInputsActive) { return (& $Body) }
+    $script:ItlWorkflowUpdateRunInputs = @{}
+    try { & $Body } finally { Remove-Variable -Name ItlWorkflowUpdateRunInputs -Scope Script -ErrorAction SilentlyContinue }
+}
+
+function Get-WorkflowUpdateRunSharedEntry {
+    param([Parameter(Mandatory = $true)][string]$Kind, [AllowNull()][object]$Identity)
+    if (-not (Test-WorkflowUpdateRunSharedInputsActive)) { return $null }
+    $key = $Kind + '|' + (ConvertTo-Json -InputObject $Identity -Depth 12 -Compress)
+    if (-not $script:ItlWorkflowUpdateRunInputs.ContainsKey($key)) { $script:ItlWorkflowUpdateRunInputs[$key] = @{} }
+    return $script:ItlWorkflowUpdateRunInputs[$key]
+}
+
+function Invoke-WorkflowUpdateRunSharedStep {
+    param([Parameter(Mandatory = $true)][string]$Kind, [AllowNull()][object]$Identity,
+        [Parameter(Mandatory = $true)][scriptblock]$Prepare)
+    $entry = Get-WorkflowUpdateRunSharedEntry -Kind $Kind -Identity $Identity
+    if ($null -ne $entry -and $entry.ContainsKey('value')) {
+        return [pscustomobject]@{ reused = $true; value = $entry['value'] }
+    }
+    $value = & $Prepare
+    if ($null -ne $entry) { $entry['value'] = $value }
+    return [pscustomobject]@{ reused = $false; value = $value }
+}
+
 function Set-RunUserReport {
     param([AllowEmptyString()][string]$Report)
 
