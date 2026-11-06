@@ -1904,6 +1904,9 @@ VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
         $vanessaSkill | Should -Match 'get_window_list_os.*get_window_screenshot_os'
         $vanessaSkill | Should -Match 'questions_only.*one_question'
         $vanessaSkill | Should -Match 'reloadAndRunFromLine'
+        $vanessaSkill | Should -Match '`callOutcome: unknown`.*`lastProgress`'
+        $vanessaSkill | Should -Match 'mutating scenario times out, first run a read-only probe of the affected state, then repeat only the missing part'
+        $vanessaSkill | Should -Match '`ITL_VANESSA_TESTCLIENT_NOT_CONNECTED`, call `itl_recover_connection`'
 
         $knowledgeTool = @($catalog.tools | Where-Object name -eq 'get_data_from_knowledge_base')[0]
         $searchType = [string]$knowledgeTool.inputSchema.properties.search_string.type

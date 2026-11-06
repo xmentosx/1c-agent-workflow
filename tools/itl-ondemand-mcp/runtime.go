@@ -70,6 +70,11 @@ type progressRoute struct {
 	path      string
 	tool      string
 	backend   *mcp.ClientSession
+	// The latest notification received from the backend for this call, kept
+	// in memory only so an unknown-outcome error can name the last step.
+	lastMu   sync.Mutex
+	last     *progressSnapshot
+	received uint64
 }
 
 const (
@@ -330,6 +335,12 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		}
 		if forwardedProtocolError != nil {
 			return forwardedProtocolError, nil
+		}
+		if r.family == "vanessa-ui" && protocolErrorReportsTestClientDisconnected(err) {
+			return testClientDisconnectedFailure(toolName, err), nil
+		}
+		if phaseDeadlineExceeded(ctx, err) {
+			return phaseDeadlineFailure(toolName, err, route, !isIdempotentTool(r.family, tool)), nil
 		}
 		return toolError("ITL_ONDEMAND_BACKEND_CALL_FAILED", err.Error(), nil), nil
 	}
@@ -906,6 +917,7 @@ func (r *runtime) forwardProgress(ctx context.Context, params *mcp.ProgressNotif
 	route := r.progress[key]
 	r.progressMu.Unlock()
 	if route != nil {
+		route.recordProgress(params)
 		forwarded := *params
 		forwarded.ProgressToken = route.token
 		if route.session.NotifyProgress(ctx, &forwarded) == nil {

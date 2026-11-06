@@ -27,7 +27,17 @@ ten-minute phase when metadata is absent. Nested broker calls inherit its
 remaining time without restarting it or extending a shorter parent deadline.
 The five-minute fallback still applies to broker calls outside a request phase;
 cleanup retains its separate bounded owner budget. Unknown modifying outcomes
-are never replayed merely because a deadline expired.
+are never replayed merely because a deadline expired. An expired call keeps
+`ITL_ONDEMAND_BACKEND_CALL_FAILED` and adds `callOutcome: unknown`,
+`partialEffectsPossible`, the count and in-memory snapshot of the last progress
+notification received for that call (`lastProgress`: number, total, message),
+and the next action. The failed call has already stopped the owned backend, so
+its result store is gone: a modifying call needs a read-only state probe before
+any retry. Without a caller `progressToken` no progress is requested.
+
+A Vanessa `ACTION_FAILED` that names a disconnected TestClient returns
+`ITL_VANESSA_TESTCLIENT_NOT_CONNECTED` with `action: itl_recover_connection`;
+the facade does not recover or replay it automatically.
 
 If native cleanup is unconfirmed, the original execution keeps its guard. Before
 dispatching a new call, the facade retries its existing owned stop under that
