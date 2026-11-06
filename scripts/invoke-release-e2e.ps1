@@ -360,13 +360,72 @@ function Invoke-E2EHelperAtRoot {
     return (Complete-E2EHelperProcess -Invocation $invocation -TimeoutSeconds $TimeoutSeconds -AllowFailure:$AllowFailure)
 }
 
+function Read-E2EHelperJsonResult {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    $line = @([IO.File]::ReadAllLines($Path, [Text.UTF8Encoding]::new($false)) | Where-Object { $_.TrimStart().StartsWith('{') } | Select-Object -Last 1)
+    if ($line.Count -eq 0) { return $null }
+    try { return ($line[0] | ConvertFrom-Json -ErrorAction Stop) } catch { return $null }
+}
+
+function Initialize-E2EVerificationChangePlan {
+    # The installed default ITL_VERIFICATION_MODEL=change admits a check only under
+    # a registered plan for the full unaccepted delta. The Release fixture plans its
+    # own acceptance suite for exactly that delta through the installed owner, as
+    # the Develop journey does; it never takes over or narrows another task.
+    $inspection = Invoke-E2EHelper -Action 'begin-verification-change' -TimeoutSeconds 300 -AllowFailure -SkipVerificationChangePlan
+    $view = Read-E2EHelperJsonResult -Path $inspection.stdoutPath
+    if ([int]$inspection.exitCode -ne 0) {
+        $text = (Get-Content -LiteralPath $inspection.stdoutPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue) + (Get-Content -LiteralPath $inspection.stderrPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue)
+        # An explicit cumulative project keeps its catalog-wide assessment.
+        if ($text -match 'VERIFICATION_CHANGE_MODEL: select ITL_VERIFICATION_MODEL=change') { return }
+        throw "RELEASE_E2E_VERIFICATION_CHANGE_INSPECTION_FAILED: see $($inspection.stdoutPath) and $($inspection.stderrPath)"
+    }
+    if ($null -eq $view -or [string]$view.model -cne 'change') { return }
+    if ([string]$view.status -cne 'planning' -or [string]$view.tree -cnotmatch '^[a-f0-9]{40}$') {
+        throw "RELEASE_E2E_VERIFICATION_CHANGE_SCOPE_UNSUPPORTED: status '$([string]$view.status)'; inspect the fixture task through its owner."
+    }
+    $taskId = 'release-e2e'
+    $checkId = 'vanessa/itl-release-e2e'
+    $expected = 'The Release E2E fixture acceptance suite reaches its stage-specific result on the current branch source and target.'
+    $criteria = @($view.criteria)
+    if (($view.taskId -and [string]$view.taskId -cne $taskId) -or @($view.requirementPaths).Count -or
+        ($criteria.Count -and ($criteria.Count -ne 1 -or [string]$criteria[0].id -cne 'AC-release-e2e' -or [string]$criteria[0].expectedResult -cne $expected))) {
+        throw 'RELEASE_E2E_VERIFICATION_CHANGE_SCOPE_UNSUPPORTED: preserve the existing task criteria.'
+    }
+    $paths = @($view.changedPaths | ForEach-Object { [string]$_ })
+    if ($paths.Count -eq 0) { return }
+    # The fixture suite owns exactly these inputs (its catalog mirrors the Develop journey).
+    $runtimePaths = @('.agent-1c/dependency-lock.json') + @('vanessa','yaxunit','verification-selection','verification-change','verification-modes' | ForEach-Object { ".agents/skills/1c-workflow/scripts/lib/agent-1c.$_.ps1" })
+    foreach ($path in $paths) {
+        if ($path -cnotlike 'src/cf/*' -and $path -cnotlike 'tests/features/*' -and $path -cnotlike 'tests/*-suites.*.json' -and $path -cnotin $runtimePaths) {
+            throw "RELEASE_E2E_VERIFICATION_CHANGE_SCOPE_UNSUPPORTED: review '$path' before planning its verification."
+        }
+    }
+    $plan = [ordered]@{
+        taskId = $taskId; taskDescription = $expected
+        sourceReference = 'PublishDevelop owned Release E2E fixture'
+        requirementPaths = @(); retainedDispositions = @()
+        checks = @(@{ suiteId = 'itl-release-e2e' })
+        criteria = @(@{ id = 'AC-release-e2e'; expectedResult = $expected; decision = 'check'; checkIds = @($checkId) })
+        paths = @($paths | ForEach-Object { @{ path = $_; checkIds = @($checkId); reason = 'The owned Release fixture source, scenarios and suite catalogs require the fixture acceptance suite.' } })
+    }
+    $directory = Join-Path $worktreePath ('.agent-1c\runs\release-e2e-change-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($directory)
+    $planPath = Join-Path $directory 'plan.json'
+    [IO.File]::WriteAllText($planPath, ($plan | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    [void](Invoke-E2EHelper -Action 'begin-verification-change' -TimeoutSeconds 300 -AdditionalArguments @('-VerificationEvidencePath', $planPath) -SkipVerificationChangePlan)
+}
+
 function Invoke-E2EHelper {
     param(
         [string]$Action,
         [int]$TimeoutSeconds,
         [string[]]$AdditionalArguments = @(),
-        [switch]$AllowFailure
+        [switch]$AllowFailure,
+        [switch]$SkipVerificationChangePlan
     )
+    if ($Action -ceq 'check-dev-branch' -and -not $SkipVerificationChangePlan) { Initialize-E2EVerificationChangePlan }
     return (Invoke-E2EHelperAtRoot `
         -Root $worktreePath `
         -BranchName $devBranchName `
@@ -530,7 +589,7 @@ function New-E2EVanessaFixtureCommit {
       "id": "itl-release-e2e",
       "purpose": "acceptance",
       "featurePaths": ["tests/features/*.feature"],
-      "ownerPaths": ["src/cf/Configuration.xml"]
+      "ownerPaths": ["src/cf/**", "tests/features/**", "tests/verification-suites.shared.json", "tests/verification-suites.branch.json", "tests/yaxunit-suites.shared.json", "tests/yaxunit-suites.branch.json", ".agent-1c/dependency-lock.json", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1"]
     }
   ]
 }

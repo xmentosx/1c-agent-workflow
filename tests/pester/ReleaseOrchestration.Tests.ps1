@@ -101,7 +101,7 @@ Describe "Release E2E orchestration" {
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)
             Set-Content -LiteralPath $helperPath -Encoding UTF8 -Value @'
 [CmdletBinding()]
-param([string]$ProjectRoot, [string]$Action, [string]$AgentTarget, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [string]$ReleaseSnapshotPath, [switch]$PreserveReleaseSnapshotApplicationProof, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto", [string]$InternalOnDemandOperation, [string]$InternalOnDemandFamily)
+param([string]$ProjectRoot, [string]$Action, [string]$AgentTarget, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [string]$ReleaseSnapshotPath, [switch]$PreserveReleaseSnapshotApplicationProof, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto", [string]$InternalOnDemandOperation, [string]$InternalOnDemandFamily, [string]$VerificationEvidencePath)
 if ($Action -and $AgentTarget -cne "kilocode") { throw "The unattended fixture helper must receive its configured Kilo client explicitly." }
 $actionLogPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-actions.log"
 Add-Content -LiteralPath $actionLogPath -Encoding UTF8 -Value $Action
@@ -111,8 +111,33 @@ if ($InternalOnDemandOperation -eq "stop-all") {
 }
 $statePath = Join-Path $ProjectRoot ".agent-1c\dev-branches\workflow-release-e2e.json"
 $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+# ITL_VERIFICATION_MODEL=change: a check is admitted only under a plan registered
+# for the current tree and the complete unaccepted delta (here: since master).
+$changePlanPath = Join-Path $ProjectRoot ".agent-1c\dev-branches\verification-change.json"
+$changedPaths = @(& git -C $ProjectRoot -c core.quotepath=false diff --name-only master -- | Where-Object { $_ } | Sort-Object)
+$currentTree = (& git -C $ProjectRoot rev-parse 'HEAD^{tree}').Trim()
 switch ($Action) {
+    "begin-verification-change" {
+        $registered = if (Test-Path -LiteralPath $changePlanPath) { Get-Content -LiteralPath $changePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+        if (-not $VerificationEvidencePath) {
+            $view = [ordered]@{ model = "change"; status = "planning"; baseTree = ("0" * 40); tree = $currentTree; changedPaths = @($changedPaths)
+                taskId = $(if ($registered) { [string]$registered.taskId } else { "" }); criteria = @($(if ($registered) { $registered.criteria })); requirementPaths = @() }
+            Write-Output ($view | ConvertTo-Json -Depth 8 -Compress)
+            break
+        }
+        $plan = Get-Content -LiteralPath $VerificationEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (@($plan.checks).Count -ne 1 -or [string]$plan.checks[0].suiteId -cne "itl-release-e2e") { throw "release E2E plan must reference its own acceptance suite" }
+        if ((@($plan.paths | ForEach-Object { [string]$_.path } | Sort-Object) -join "|") -cne ($changedPaths -join "|")) { throw "VERIFICATION_CHANGE_PATH_UNCOVERED: the plan must cover exactly the unaccepted delta" }
+        if (@($plan.paths | Where-Object { @($_.checkIds) -cnotcontains "vanessa/itl-release-e2e" -or -not [string]$_.reason }).Count) { throw "every planned path needs the suite obligation and a reason" }
+        Add-Content -LiteralPath $actionLogPath -Encoding UTF8 -Value ("plan:" + @($changedPaths).Count)
+        Set-Content -LiteralPath $changePlanPath -Encoding UTF8 -Value ([ordered]@{ tree = $currentTree; paths = @($changedPaths); taskId = [string]$plan.taskId; criteria = @($plan.criteria) } | ConvertTo-Json -Depth 8)
+    }
     "check-dev-branch" {
+        $registered = if (Test-Path -LiteralPath $changePlanPath) { Get-Content -LiteralPath $changePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+        if ($null -eq $registered -or [string]$registered.tree -cne $currentTree -or (@($registered.paths) -join "|") -cne ($changedPaths -join "|")) {
+            [Console]::Error.WriteLine("VERIFICATION_CHANGE_REQUIRED: use begin-verification-change")
+            [Environment]::Exit(1)
+        }
         $firstRun = -not $state.PSObject.Properties["lastConfigDesignerLoadedAt"]
         $previousCheckCount = if ($state.PSObject.Properties["releaseCheckCount"]) { [int]$state.releaseCheckCount } else { 0 }
         $releaseCheckCount = $previousCheckCount + 1
@@ -292,7 +317,12 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             @($releaseCatalog.suites).Count | Should -Be 1
             $releaseCatalog.suites[0].purpose | Should -Be "acceptance"
             @($releaseCatalog.suites[0].featurePaths) | Should -Be @("tests/features/*.feature")
-            @($releaseCatalog.suites[0].ownerPaths) | Should -Be @("src/cf/Configuration.xml")
+            # Under the change model the fixture suite owns every fixture input it plans,
+            # exactly like the Develop journey suite.
+            @($releaseCatalog.suites[0].ownerPaths) | Should -Contain "src/cf/**"
+            @($releaseCatalog.suites[0].ownerPaths) | Should -Contain "tests/features/**"
+            @($releaseCatalog.suites[0].ownerPaths) | Should -Contain "tests/verification-suites.branch.json"
+            @($releaseCatalog.suites[0].ownerPaths) | Should -Contain ".agent-1c/dependency-lock.json"
 
             $staleResultRoot = Join-Path $worktreeRoot "build\result"
             $staleSnapshotRoot = Join-Path $worktreeRoot ".agent-1c\snapshots"
@@ -387,6 +417,9 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $actions | Should -Contain "release-e2e-prepare-ondemand"
             $actions | Should -Contain "stop-dev-branch-test-clients"
             @($actions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 4
+            # Every check runs under a plan registered for its own tree and delta.
+            @($actions | Where-Object { $_ -like "plan:*" }).Count | Should -Be 4
+            @($actions | Where-Object { $_ -eq "begin-verification-change" }).Count | Should -Be 8
             $actions | Should -Not -Contain "release-e2e-approve-vanessa-fixture"
             @($actions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
