@@ -143,8 +143,12 @@ best-effort post-success cleanup of exact ITL-generated candidate worktrees,
 failed-registration candidates (`itl-source-register-*`; the newest two within
 seven days stay for diagnosis, none after an explicit `-Action Cleanup`; a
 leftover directory only when no repository owns it), stable supervisors left by
-an interrupted operation (`itl-source-supervisor-*`) and test artifacts a killed
-Pester shard left in temp (both once idle for an hour), this clone's superseded
+an interrupted operation (`itl-source-supervisor-*`), unregistered remnants of
+publication, plan and attribution candidates whose `.git` link no repository
+owns, and test artifacts a killed Pester shard left in temp (all once idle for
+an hour), attribution and gate-stand build logs (`itl-source-attribution-*`,
+`itl-gate-stand-logs-*`; after seven days, a day after an explicit
+`-Action Cleanup`), this clone's superseded
 gate stands with their sibling worktrees (the newest one within seven days
 stays, none after an explicit `-Action Cleanup`; only a stand whose
 `.git/itl/gate-stand-owner.json` names this clone),
@@ -155,6 +159,10 @@ active paths, incomplete-branch state, and manually named backups are preserved;
 cleanup warnings do not rewrite a verified publication as failed. They produce
 `completed-with-cleanup-warnings`, remain in `.git/itl/resources/v1/ledger.json`,
 and are retried by the next publication/release or explicit `-Action Cleanup`.
+A retained candidate worktree is released as soon as its plan is closed: one of
+the plan's candidates is reachable from the published `develop` or `master`
+tracking branch, or `-Replan` archived the plan's checkpoint; without that
+evidence it stays for diagnosis and retry.
 Only the newest two failed plans are retained, never beyond seven days; configured
 reusable stands and active plan resources are never removed, except that a Release
 copy whose capsule's stand is no longer this clone's gate stand (or whose capsule

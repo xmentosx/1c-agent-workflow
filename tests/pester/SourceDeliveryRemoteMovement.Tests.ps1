@@ -80,9 +80,13 @@ Describe 'Failing registered range deferral' {
             $beta=Add-FrozenTask $fixture beta
             Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','beta') | Out-Null
             $promoter=@('-CompatibilityPromoterScript',('"'+$fixture.promoter+'"'))
+            $attributionLogs={ @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Force -Filter 'itl-source-attribution-*' | ForEach-Object FullName) }
+            $logsBefore=& $attributionLogs
 
             $run=Invoke-FrozenDelivery $fixture PublishDevelop $promoter
             $published=$run.stdout | ConvertFrom-Json
+            # Attribution without a preserved candidate owns its temp log root.
+            @(& $attributionLogs | Where-Object { $_ -notin $logsBefore }) | Should -BeNullOrEmpty
             & git -C $fixture.root merge-base --is-ancestor $alpha $published.commit; $LASTEXITCODE | Should -Be 0
             & git -C $fixture.root merge-base --is-ancestor $beta $published.commit; $LASTEXITCODE | Should -Not -Be 0
             @($published.deferredEntries.id) | Should -Be @('beta')

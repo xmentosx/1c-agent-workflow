@@ -103,12 +103,19 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $before = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
         [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $script:FixtureArchivePath, "Process")
 
+        $downloads = [Collections.Generic.List[string]]::new()
         $result = & {
             . $helperPath -ProjectRoot $testProjectPath -Action help *> $null
+            # Observe the real transfer buffer the installer downloads.
+            $saveArchive = ${function:Save-VanessaAutomationArchive}
+            function Save-VanessaAutomationArchive { param([object]$DownloadInfo); $archive = & $saveArchive -DownloadInfo $DownloadInfo; $downloads.Add([string]$archive); return $archive }
             Install-VanessaAutomation *> $null
             Get-VanessaAutomationState
         }
 
+        # The shared temp cache must not keep one archive per install.
+        $downloads.Count | Should -Be 1
+        Test-Path -LiteralPath $downloads[0] | Should -BeFalse
         $result.ready | Should -BeTrue
         $result.version | Should -Be "1.2.043.42"
         $result.downstreamRevision | Should -Be "itl-r10"

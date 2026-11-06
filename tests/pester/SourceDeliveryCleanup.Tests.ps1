@@ -143,6 +143,59 @@ Describe 'Source delivery post-success cleanup' {
         }
     }
 
+    It 'removes unregistered candidate remnants and dangling registrations but leaves registered candidates to the ledger' {
+        $container = Join-Path $TestDrive ('remnants ' + [char]0x041F + ' ' + [guid]::NewGuid().ToString('N'))
+        $temp = Join-Path $container 'temp root'; $root = Join-Path $container 'main repo'; $other = Join-Path $container 'other clone'
+        $ids = @{}; foreach ($name in @('remnant', 'attribute', 'fresh', 'registered', 'otherClone', 'danglingRegister')) { $ids[$name] = [guid]::NewGuid().ToString('N') }
+        $path = @{
+            remnant = Join-Path $temp "itl-source-publish-develop-$($ids.remnant)"
+            attribute = Join-Path $temp "itl-source-attribute-$($ids.attribute)"
+            fresh = Join-Path $temp "itl-source-release-master-$($ids.fresh)"
+            registered = Join-Path $temp "itl-source-publish-develop-$($ids.registered)"
+            otherClone = Join-Path $temp "itl-source-plan-develop-$($ids.otherClone)"
+            danglingRegister = Join-Path $temp "itl-source-register-$($ids.danglingRegister)"
+        }
+        try {
+            [void][IO.Directory]::CreateDirectory($temp)
+            New-CleanupRepository -Root $root
+            New-CleanupRepository -Root $other
+            & git -C $root worktree add --quiet -b "itl/publish-develop-$($ids.registered)" $path.registered
+            & git -C $other worktree add --quiet -b "itl/plan-develop-$($ids.otherClone)" $path.otherClone
+            # A partly failed worktree removal leaves files without the .git link.
+            foreach ($name in @('remnant', 'attribute', 'fresh')) { [void][IO.Directory]::CreateDirectory((Join-Path $path[$name] 'build\test-results')) }
+            [void][IO.Directory]::CreateDirectory((Join-Path $path.danglingRegister 'build'))
+            Set-Content -LiteralPath (Join-Path $path.danglingRegister '.git') -Encoding ASCII -Value ('gitdir: ' + (Join-Path $container 'removed fixture\.git\worktrees\gone'))
+            foreach ($name in @('remnant', 'attribute', 'registered', 'otherClone', 'danglingRegister')) { (Get-Item -LiteralPath $path[$name]).LastWriteTimeUtc = [DateTime]::UtcNow.AddHours(-2) }
+            $script:Root = $root
+            function Invoke-DeliveryGit { param([string[]]$Arguments, [switch]$AllowFailure); Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure }
+            . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+            $result = Remove-SourceDeliveryStaleOperationWorktrees -TempRoot $temp -MinimumAgeHours 168
+            @($result.entries | ForEach-Object path | Sort-Object) | Should -Be @(@($path.remnant, $path.attribute, $path.danglingRegister) | Sort-Object)
+            $result.retained | Should -Be 3
+            foreach ($name in @('fresh', 'registered', 'otherClone')) { Test-Path -LiteralPath $path[$name] | Should -BeTrue -Because $name }
+            @(& git -C $root branch --list "itl/publish-develop-$($ids.registered)").Count | Should -Be 1
+        } finally {
+            foreach ($repo in @($root, $other)) { if (Test-Path -LiteralPath $repo) { foreach ($name in $path.Keys) { & git -C $repo worktree remove --force $path[$name] 2>$null } } }
+            Remove-Item -LiteralPath $container -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'removes only expired operation log directories and keeps a current one even in a manual sweep' {
+        $temp = Join-Path $TestDrive ('logs ' + [char]0x0416 + ' temp')
+        $old = @((Join-Path $temp ('itl-source-attribution-' + ('a' * 32))), (Join-Path $temp ('itl-gate-stand-logs-' + ('b' * 32))))
+        $current = Join-Path $temp ('itl-gate-stand-logs-' + ('c' * 32))
+        $foreign = @((Join-Path $temp 'itl-gate-stand-logs-not-generated'), (Join-Path $temp ('itl-source-attribution-' + ('d' * 32))))
+        foreach ($path in @($old + $current + $foreign)) { [void][IO.Directory]::CreateDirectory($path); [IO.File]::WriteAllText((Join-Path $path 'step.stdout.log'), 'log') }
+        [void][IO.Directory]::CreateDirectory((Join-Path $foreign[1] '.git'))
+        foreach ($path in @($old + $foreign)) { (Get-Item -LiteralPath $path).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-2) }
+        (Get-Item -LiteralPath $current).LastWriteTimeUtc = [DateTime]::UtcNow.AddHours(-2)
+        . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+        $result = Remove-SourceDeliveryExpiredOperationLogs -TempRoot $temp -MinimumAgeHours 0
+        @($result.entries | ForEach-Object path | Sort-Object) | Should -Be @($old | Sort-Object)
+        $result.retained | Should -Be 2
+        foreach ($path in @($current) + $foreign) { Test-Path -LiteralPath $path | Should -BeTrue -Because $path }
+    }
+
     It 'keeps only this clone''s newest unexpired superseded gate stand and removes the rest with their siblings' {
         $container = Join-Path $TestDrive ('stands ' + [char]0x0441)
         $env:ITL_GATE_STANDS_ROOT = $container
@@ -233,6 +286,29 @@ Describe 'Source delivery post-success cleanup' {
         . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
         $result = Remove-SourceDeliveryStaleTestFixtures -TempRoot $container
         $result.removedFixtures | Should -Be 1; $result.removedWorktrees | Should -Be 2; Test-Path $root | Should -BeFalse; Test-Path $candidate | Should -BeFalse; Test-Path $parallel | Should -BeFalse; Test-Path $remote | Should -BeFalse; Test-Path $keep | Should -BeTrue
+    }
+
+    It 'removes a stale delivery test fixture with its registration and supervisor worktrees but keeps one with a foreign worktree' {
+        $fixturePrefix = 'itl delivery ' + [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw=')) + ' '; $container = Join-Path $TestDrive 'operation fixtures'
+        New-Item -ItemType Directory -Force -Path $container | Out-Null
+        $fixtures = foreach ($name in @('stale', 'foreign')) {
+            $root = Join-Path $container ($fixturePrefix + [guid]::NewGuid().ToString('N')); $remote = Join-Path $container ('itl-delivery-remote-' + [guid]::NewGuid().ToString('N') + '.git')
+            New-CleanupRepository -Root $root | Out-Null; Set-Content (Join-Path $root 'README.md') 'base'; Set-Content (Join-Path $root 'fake-gate.ps1') 'exit 0'
+            & git -C $root add --all | Out-Null; & git -C $root commit --quiet -m fixture-shape | Out-Null
+            & git init --quiet --bare $remote | Out-Null; & git -C $root remote add origin $remote | Out-Null
+            [pscustomobject]@{ name = $name; root = $root; remote = $remote }
+        }
+        $registerId = [guid]::NewGuid().ToString('N'); $register = Join-Path $container "itl-source-register-$registerId"
+        $supervisor = Join-Path $container ('itl-source-supervisor-' + [guid]::NewGuid().ToString('N'))
+        $foreignId = [guid]::NewGuid().ToString('N'); $foreign = Join-Path $container "itl-source-register-$foreignId"
+        & git -C $fixtures[0].root worktree add --quiet -b "itl/register-$registerId" $register
+        & git -C $fixtures[0].root worktree add --quiet --detach $supervisor
+        & git -C $fixtures[1].root worktree add --quiet -b "user/register-$foreignId" $foreign
+        . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+        $result = Remove-SourceDeliveryStaleTestFixtures -TempRoot $container
+        $result.removedFixtures | Should -Be 1; $result.removedWorktrees | Should -Be 2
+        foreach ($path in @($fixtures[0].root, $fixtures[0].remote, $register, $supervisor)) { Test-Path -LiteralPath $path | Should -BeFalse -Because $path }
+        foreach ($path in @($fixtures[1].root, $fixtures[1].remote, $foreign)) { Test-Path -LiteralPath $path | Should -BeTrue -Because $path }
     }
 
     It 'removes only closed exact release-seed archives' {
