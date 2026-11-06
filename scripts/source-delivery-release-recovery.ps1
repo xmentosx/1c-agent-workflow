@@ -96,6 +96,28 @@ function Get-DeliveryStaleBranchUpdates {
     }
 }
 
+function Get-DeliveryStandArtifactEnvironment {
+    # The gate's own read-only discovery (candidate lock, SHA-addressed shared
+    # cache, installed caches) selects the bytes; the installer re-verifies them
+    # against the stand's new pin. No download, build or recursive scan here.
+    param([string]$CandidateRoot)
+    $environment = @{}
+    $discovery = Join-Path $CandidateRoot 'scripts/source-e2e-artifact-discovery.ps1'
+    if (-not (Test-Path -LiteralPath $discovery -PathType Leaf)) { return $environment }
+    $search = @(Get-Variable Root -Scope Script -ValueOnly -ErrorAction SilentlyContinue | Where-Object { $_ })
+    $missing = [ref]''
+    $binding = & { param($module, $root, $searchRoot, $missingInput)
+        . $module
+        Find-SourceE2EArtifactBinding -RepositoryRoot $root -SearchRoot $searchRoot -MissingInput $missingInput
+    } $discovery $CandidateRoot $search $missing
+    if ($null -eq $binding) {
+        if ($missing.Value) { Write-Warning "DELIVERY_STAND_ARTIFACT_BINDING_INCOMPLETE: no exact local '$($missing.Value)'; the stand update resolves the pinned release assets itself." }
+        return $environment
+    }
+    foreach ($property in @($binding.paths.PSObject.Properties)) { $environment[$property.Name] = [string]$property.Value }
+    return $environment
+}
+
 function Invoke-DeliveryStandOwner {
     param([string]$CandidateRoot, [string]$Name, [string[]]$Arguments, [int]$BudgetSeconds, [Collections.IDictionary]$EnvironmentOverrides = $null)
     $logs = Join-Path $CandidateRoot 'build/test-results/delivery'
@@ -223,8 +245,13 @@ function Invoke-DeliveryStandPreparationOwners {
         [IO.File]::WriteAllText($scopePath, ([ordered]@{schemaVersion=1;projectRoot=$Preparation.projectRoot;sourceCommit=$Preparation.sourceCommit;roots=@($Preparation.roots)} | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
         # The candidate may pin a fork release that is published only after
         # Develop; the stand installs it from the exact checkout the plan resolved.
+        # Owned assets (Vanessa ZIP, client MCP CFE, on-demand exe) are likewise
+        # published only after Develop; the stand takes the exact locked bytes
+        # the gate binds, not a release URL that does not exist yet.
+        $environment = Get-DeliveryStandArtifactEnvironment -CandidateRoot $CandidateRoot
         $rules = Get-Variable AiRulesSource -ValueOnly -ErrorAction SilentlyContinue
-        $environment = if ($rules) { @{ ITL_AI_RULES_SOURCE_PATH = [IO.Path]::GetFullPath([string]$rules) } } else { $null }
+        if ($rules) { $environment['ITL_AI_RULES_SOURCE_PATH'] = [IO.Path]::GetFullPath([string]$rules) }
+        if (-not $environment.Count) { $environment = $null }
         $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name 'stand-workflow-update' -BudgetSeconds 3600 -EnvironmentOverrides $environment -Arguments @('-File',(Join-Path $CandidateRoot 'scripts/update-installed-workflow.ps1'),'-ProjectRoot',$Preparation.projectRoot,'-SourceRoot',$CandidateRoot,'-WorkflowUpdateBranchRootsFile',$scopePath)
         Write-DevelopPublicationAttempt -Attempt $Attempt
     }

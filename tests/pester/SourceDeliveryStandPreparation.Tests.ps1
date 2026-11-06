@@ -308,6 +308,48 @@ Start-Sleep -Seconds 300
             $env:ITL_AI_RULES_SOURCE_PATH=$previous
         }
     }
+    It 'installs unpublished owned assets on the stand from the exact bytes the gate binds' {
+        # Before Develop publishes them, the pinned release URLs return 404; the
+        # gate's discovery finds the locked bytes in the SHA-addressed shared cache.
+        $names=@('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')
+        $updater=Get-Content -LiteralPath (Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1') -Raw -Encoding UTF8
+        $updater=$updater.Replace("[Console]::WriteLine(`$ProjectRoot)","[IO.File]::WriteAllText((Join-Path `$ProjectRoot 'artifacts.json'),(([ordered]@{a=[string]`$env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE;c=[string]`$env:VANESSA_MCP_CLIENT_CFE_PATH;o=[string]`$env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE})|ConvertTo-Json),[Text.UTF8Encoding]::new(`$false))")
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'scripts/source-e2e-artifact-discovery.ps1') -Destination (Join-Path $script:standCandidate 'scripts')
+        & git -C $script:standCandidate init --quiet
+        $common=(& git -C $script:standCandidate rev-parse --path-format=absolute --git-common-dir).Trim()
+        $bytes=@{}; foreach($key in @('vanessa','client','ondemand')){ $bytes[$key]=[Text.Encoding]::UTF8.GetBytes("locked $key "+[guid]::NewGuid()) }
+        $sha=@{}; foreach($key in $bytes.Keys){ $s=[Security.Cryptography.SHA256]::Create(); try { $sha[$key]=([BitConverter]::ToString($s.ComputeHash($bytes[$key]))).Replace('-','').ToLowerInvariant() } finally { $s.Dispose() } }
+        $lock=[ordered]@{dependencies=[ordered]@{
+            vanessaAutomation=[ordered]@{sha256=$sha.vanessa;compatibilityVersion='1.2.043.42';downstreamRevision='itl-r10';assetName='Vanessa Автоматизация.zip'}
+            vanessaMcp=[ordered]@{clientMcp=[ordered]@{sha256=$sha.client;version='0.1.0';assetName='Клиент MCP.cfe'}}
+            itlOndemandMcp=[ordered]@{sha256=$sha.ondemand;version='0.2.0';assetName='itl ondemand.exe'}}}
+        [void][IO.Directory]::CreateDirectory((Join-Path $script:standCandidate 'templates'))
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'templates/dependency-lock.json'),($lock|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+        $expected=[ordered]@{
+            a=Join-Path $common ('itl/dependencies/vanessa-automation/1.2.043.42-itl-r10/'+$sha.vanessa+'-Vanessa Автоматизация.zip')
+            c=Join-Path $script:standCandidate 'build/third-party/client-mcp/Клиент MCP.cfe'
+            o=Join-Path $script:standCandidate 'tools/itl-ondemand-mcp/build/itl ondemand.exe'}
+        foreach($pair in @(@('a','vanessa'),@('c','client'),@('o','ondemand'))){
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $expected[$pair[0]]))
+            [IO.File]::WriteAllBytes($expected[$pair[0]],$bytes[$pair[1]])
+        }
+        $previous=@{}; foreach($name in $names){ $previous[$name]=[Environment]::GetEnvironmentVariable($name,'Process'); [Environment]::SetEnvironmentVariable($name,$null,'Process') }
+        $observed=Join-Path $script:standRoot 'artifacts.json'
+        try {
+            Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation ([pscustomobject]@{phase='candidate-built'})
+            $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+            $seen=[Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($observed)) | ConvertFrom-Json
+            foreach($key in $expected.Keys){ $seen.$key | Should -BeExactly ([IO.Path]::GetFullPath($expected[$key])) }
+            foreach($name in $names){ [Environment]::GetEnvironmentVariable($name,'Process') | Should -BeNullOrEmpty }
+            # Without the exact bytes the stand owner keeps its own pinned resolution.
+            Remove-Item -LiteralPath $expected.o
+            $warned=@(Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation ([pscustomobject]@{phase='candidate-built'}) 3>&1 | Where-Object { $_ -is [Management.Automation.WarningRecord] })
+            $seen=Get-Content -LiteralPath $observed -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach($key in $expected.Keys){ $seen.$key | Should -BeNullOrEmpty }
+            "$warned" | Should -Match 'DELIVERY_STAND_ARTIFACT_BINDING_INCOMPLETE.*ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE'
+        } finally { foreach($name in $names){ [Environment]::SetEnvironmentVariable($name,$previous[$name],'Process') } }
+    }
     It 'prepares through native owners before freezing, then resumes without replan and blocks unexpected drift' {
         $RequireRelease=$true;$frozenPlan=$null;$priorAttempt=$null;$Replan='';$remoteBefore='base'
         $worktree=[pscustomobject]@{path=$script:standCandidate};$attempt=[pscustomobject]@{phase='candidate-built'}

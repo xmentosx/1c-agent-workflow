@@ -210,6 +210,45 @@ Describe 'Source delivery post-success cleanup' {
         }
     }
 
+    It 'keeps an unregistered candidate while a pending stand update in its recorded scope names it as source, then removes it' {
+        # A failed stand-workflow-update precedes the plan, so its candidate has
+        # no ledger record; the next PublishDevelop pre-operation cleanup must not
+        # turn WORKFLOW_UPDATE_POST_COPY_INCOMPLETE into WORKFLOW_UPDATE_SOURCE_MISSING.
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('itl cleanup held repo ' + [guid]::NewGuid().ToString('N'))
+        $stand = Join-Path $TestDrive ('stand ' + [char]0x0441 + [char]0x0442 + ' ' + [guid]::NewGuid().ToString('N'))
+        $branchRoot = Join-Path $stand ('branch ' + [char]0x0416 + ' develop')
+        $ids = @{}; foreach ($name in @('held', 'other', 'plain')) { $ids[$name] = [guid]::NewGuid().ToString('N') }
+        $path = @{}; foreach ($name in $ids.Keys) { $path[$name] = Join-Path ([IO.Path]::GetTempPath()) "itl-source-publish-develop-$($ids[$name])" }
+        try {
+            New-CleanupRepository -Root $root
+            foreach ($name in $ids.Keys) { & git -C $root worktree add --quiet -b "itl/publish-develop-$($ids[$name])" $path[$name] }
+            foreach ($name in @('held', 'other')) {
+                $scopePath = Join-Path $path[$name] 'build/test-results/delivery/stand-update-roots.json'
+                [void][IO.Directory]::CreateDirectory((Split-Path -Parent $scopePath))
+                [IO.File]::WriteAllText($scopePath, ([ordered]@{schemaVersion=1;projectRoot=$stand;sourceCommit='c';roots=@($branchRoot)} | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+            }
+            $snapshot = Join-Path $branchRoot '.agent-1c/snapshots/workflow-update/itl-workflow-update-rollback-0001'
+            [void][IO.Directory]::CreateDirectory($snapshot)
+            [IO.File]::WriteAllText((Join-Path $snapshot 'transaction.json'), ([ordered]@{phase='post-copy-failed';sourceRoot=$path.held;sourceCommit='c'} | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+            $script:Root = $root
+            function Invoke-DeliveryGit { param([string[]]$Arguments, [switch]$AllowFailure); Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure }
+            . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+            $result = Remove-SourceDeliveryStaleCandidateWorktrees
+            @($result.entries | ForEach-Object path | Sort-Object) | Should -Be @(@($path.other, $path.plain) | Sort-Object)
+            Test-Path -LiteralPath $path.held | Should -BeTrue
+            # An unreadable receipt cannot prove that the candidate is released.
+            [IO.File]::WriteAllText((Join-Path $snapshot 'transaction.json'), '{', [Text.UTF8Encoding]::new($false))
+            (Remove-SourceDeliveryStaleCandidateWorktrees).removedWorktrees | Should -Be 0
+            # Once the update owner completes or abandons, ordinary cleanup applies.
+            Remove-Item -LiteralPath $snapshot -Recurse -Force
+            $result = Remove-SourceDeliveryStaleCandidateWorktrees
+            @($result.entries | ForEach-Object path) | Should -Be @($path.held)
+        } finally {
+            if (Test-Path -LiteralPath $root) { foreach ($candidate in $path.Values) { & git -C $root worktree remove --force $candidate 2>$null }; Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath @($path.Values) -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'removes only an exact generated release seed under the explicit seed root' {
         $container = Join-Path ([IO.Path]::GetTempPath()) ('itl seed root ' + [guid]::NewGuid().ToString('N')); $root = Join-Path $container 'main'; $id = '1234abcd'; $seed = Join-Path $container "itlsa-$id"; $keep = Join-Path $container 'itlsa-not-a-seed'
         try {
