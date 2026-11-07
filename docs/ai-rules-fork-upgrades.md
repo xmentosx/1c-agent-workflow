@@ -43,9 +43,33 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: local minor review fixes, local r53
+## Current candidate: review evidence and large scope, local r54
 
-The selected candidate is `itl-main-2f640143-r53`, exact commit
+The selected candidate is `itl-main-2f640143-r54`, exact commit
+`934668011ec7117463163c3da38a56340a157833`, continuing r53 with upstream
+unchanged at `2f640143756ecd01fed42100e412632aa9082385`. A separate review of a
+large branch (PM5 `1-branch4`: 76 BSL modules, about 2.7 MB of change text)
+could neither read its scope in one context nor send modules to the MCP
+validators, so almost every gate ended unverified, and the reviewer ignored a
+`/itl-check` the project had already recorded on the current code.
+
+`review-criteria.md → Scope` now relays a range choice the project asks for
+(ITL `get-review-scope` stage `review-scope.range-required`) and reruns with the
+user's choice. `→ Evidence` accepts a pass the project recorded and bound to the
+current content as Gate 1 evidence instead of the author's report; without it
+the review recommends that check in the development chat rather than starting
+it. On a large scope Gates 2–3 run by text on changed procedures chosen by risk
+and the rest is counted as «not checked automatically». The ITL appendix adds
+one line: ITL MCP hosts cannot validate by path (`syntaxcheck_file`, `files`),
+pass text. Root grows 13,742 -> 13,824 normalized bytes (+82, about 21 tokens at
+bytes/4); full-cycle 154,933 -> 155,696 (+763, about 191 tokens) with its
+ceiling 152 -> 153 KiB; subagent start 31,618 -> 31,700 stays within its
+unchanged ceiling. `compatibilityStatus` is `pending` until the publication
+owner qualifies the exact pin; the scoped-memory policy names the same commit.
+
+## Earlier candidate: local minor review fixes, local r53
+
+The earlier candidate is `itl-main-2f640143-r53`, exact commit
 `b09126bf08d6da188c3543539c114afcbd976fbd`, continuing r52 with upstream
 unchanged at `2f640143756ecd01fed42100e412632aa9082385`. After a full-cycle or
 OpenSpec apply review the parent fixed only `critical` / `major` findings and
