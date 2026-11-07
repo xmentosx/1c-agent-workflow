@@ -26,7 +26,16 @@ function Get-QualifiedHostOwnerRepairMounts {
     if (-not $targets.ContainsKey($id) -or $image -cnotmatch ('^'+[regex]::Escape($repositories[$id])+'@sha256:([a-f0-9]{64})$') -or [string]$spec.image -cne $image) { throw "Host owner repair belongs to another image. $continuation" }
     $digest = $image.Split(':')[-1]
     $root = Join-Path (Join-Path (Join-Path (Join-Path (Get-StateRoot -Config $Config) 'repairs') 'owner') $id) $digest
-    if ($id -eq 'code' -and $xsdFixture) { $root = Join-Path $root 'xsd-v2' }
+    $package = $null
+    if ($id -eq 'code' -and $xsdFixture) {
+        # Each shared package names its own immutable qualifications/<digest>/xsd-vN directory.
+        $package = Get-HostCodeRepairPackage
+        $parts = @([string](Get-ObjectValue -Object $package -Name 'qualification' -Default '') -split '/')
+        if ($parts.Count -ne 4 -or $parts[0] -cne 'qualifications' -or $parts[1] -cne $digest -or $parts[2] -cnotmatch '^xsd-v[0-9]+$' -or $parts[3] -cne 'proof.json') {
+            throw "Shared Code package must name its own image XSD qualification directory. $continuation"
+        }
+        $root = Join-Path $root $parts[2]
+    }
     $proofPath = Join-Path $root 'qualification.json'
     if (-not (Test-Path -LiteralPath $proofPath -PathType Leaf) -or (Get-FileHash -LiteralPath $proofPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$spec.proofSha256) { throw "Code owner qualification is missing or changed. $continuation" }
     $proof = Get-Content -LiteralPath $proofPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -56,6 +65,24 @@ function Get-QualifiedHostOwnerRepairMounts {
             @($names | Where-Object { $controls[$_] -cne 'invalid' }).Count -gt 0) {
             throw "Code owner original XSD regression did not pass. $continuation"
         }
+        $rightsFixture = [string](Get-ObjectValue -Object $spec -Name 'roleRightsFixtureSha256' -Default '')
+        if ($rightsFixture -or [string](Get-ObjectValue -Object $package -Name 'roleRightsFixtureSha256' -Default '')) {
+            $rights = Get-ObjectValue -Object $proof -Name 'roleRights' -Default @{}
+            $positives = Convert-ToHash -Object (Get-ObjectValue -Object $rights -Name 'positives' -Default @{})
+            $rightsControls = Convert-ToHash -Object (Get-ObjectValue -Object $rights -Name 'negativeControls' -Default @{})
+            $positiveNames = @('Роль/Rights','Role/Rights','ПраваРоли/Rights','RoleRights/Rights','Роль/descriptor')
+            $controlNames = @('descriptor-as-rights','unknown-root','unknown-top-child','unknown-deep-child','wrong-nesting')
+            if ($rightsFixture -cnotmatch '^[a-f0-9]{64}$' -or [string]$proof.roleRightsFixtureSha256 -cne $rightsFixture -or
+                [string]$package.roleRightsFixtureSha256 -cne $rightsFixture -or
+                (($positives.Keys | Sort-Object) -join ',') -cne (($positiveNames | Sort-Object) -join ',') -or
+                @($positiveNames | Where-Object { $positives[$_] -cne 'valid' }).Count -gt 0 -or
+                (($rightsControls.Keys | Sort-Object) -join ',') -cne (($controlNames | Sort-Object) -join ',') -or
+                @($controlNames | Where-Object { $rightsControls[$_] -cne 'invalid' }).Count -gt 0 -or
+                (Get-ObjectValue -Object $rights -Name 'malformedIsError' -Default $false) -ne $true -or
+                (Get-ObjectValue -Object $rights -Name 'xsdLaneOnlyInvalidated' -Default $false) -ne $true) {
+                throw "Code owner original role rights XSD regression did not pass. $continuation"
+            }
+        }
     }
     } else {
         $suites = @{fulltext=13;commonForms=14;combined=3}
@@ -68,7 +95,6 @@ function Get-QualifiedHostOwnerRepairMounts {
     $expected = Convert-ToHash -Object $spec.files
     $observed = Convert-ToHash -Object $proof.files
     if ($id -eq 'code' -and $xsdFixture) {
-        $package = Get-HostCodeRepairPackage
         $shared = Convert-ToHash -Object $package.files
         if ([string]$package.image -cne $image -or [string]$package.xsdFixtureSha256 -cne $xsdFixture -or
             (($shared.Keys | Sort-Object) -join ',') -cne (($expected.Keys | Sort-Object) -join ',') -or

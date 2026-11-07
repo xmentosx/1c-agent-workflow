@@ -5146,7 +5146,7 @@ services:
                 @($registeredPackage.targets.'dev-ermakov').Count|Should -Be 2
                 @($registeredPackage.targets.'dev-karimov-new').Count|Should -Be 2
                 $script:SharedPackageDrift=$false
-                function Get-HostCodeRepairPackage { return @{image=$(if($script:SharedPackageDrift){'changed'}else{$image});files=$hashes;xsdFixtureSha256=$spec.xsdFixtureSha256} }
+                function Get-HostCodeRepairPackage { return @{image=$(if($script:SharedPackageDrift){'changed'}else{$image});files=$hashes;xsdFixtureSha256=$spec.xsdFixtureSha256;qualification=('qualifications/'+('a'*64)+'/xsd-v2/proof.json')} }
                 $proof.xsdFixtureSha256=$spec.xsdFixtureSha256
                 $proof.xsd=@{positive=$true;parserLimitsPreserved=$true;xsdLaneOnlyInvalidated=$true;negativeControls=@{'unknown-root'='invalid';'unknown-deep-child'='invalid';'wrong-title-child'='invalid';'wrong-nesting'='invalid'}}
             }
@@ -5228,6 +5228,62 @@ services:
         }
     }
 
+    It "selects the shared package's own XSD directory and requires its declared role rights proof" -Tag HostOwnerRepair {
+        $configPath=Join-Path $TestDrive 'rights repair config.json'
+        $repairState=Join-Path $TestDrive 'права роли Code с пробелом'
+        @{schemaVersion=1;hostId='fixture';stateRoot=$repairState}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config=Read-HostConfig
+            $image='comol/1c_code_metadata_mcp@sha256:'+('a'*64)
+            $digestRoot=Join-Path $repairState ('repairs\owner\code\'+('a'*64))
+            $accepted=Join-Path $digestRoot 'xsd-v2';$root=Join-Path $digestRoot 'xsd-v3'
+            foreach($directory in @($accepted,$root)){$null=New-Item -ItemType Directory -Path $directory -Force}
+            $hashes=[ordered]@{}
+            foreach($n in @('driver','main','xsd_schema_generator')){
+                [IO.File]::WriteAllText((Join-Path $accepted ($n+'.py')),('# v2 '+$n),[Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText((Join-Path $root ($n+'.py')),$(if($n -eq 'xsd_schema_generator'){'# v3 rights'}else{'# v2 '+$n}),[Text.UTF8Encoding]::new($false))
+                $hashes[$n]=(Get-FileHash -LiteralPath (Join-Path $root ($n+'.py'))).Hash.ToLowerInvariant()
+            }
+            $acceptedSha=(Get-FileHash -LiteralPath (Join-Path $accepted 'xsd_schema_generator.py')).Hash
+            $proof=@{schemaVersion=1;accepted=$true;host='fixture';image=$image;isolated=$true;network='none';liveIndexMounted=$false;negativeControlReproduced=$true;fixtureSha256=('b'*64);files=$hashes;
+                regression=@(@{test='interrupted_incremental_resume';modules=2;new_function_found=$true;ancestor_unchanged=$true},@{test='selective_repair';preserves_vectors=$true;honors_omissions=$true});
+                xsdFixtureSha256=('c'*64);xsd=@{positive=$true;parserLimitsPreserved=$true;xsdLaneOnlyInvalidated=$true;negativeControls=@{'unknown-root'='invalid';'unknown-deep-child'='invalid';'wrong-title-child'='invalid';'wrong-nesting'='invalid'}};
+                roleRightsFixtureSha256=('d'*64);roleRights=@{malformedIsError=$true;xsdLaneOnlyInvalidated=$true;
+                    positives=@{'Роль/Rights'='valid';'Role/Rights'='valid';'ПраваРоли/Rights'='valid';'RoleRights/Rights'='valid';'Роль/descriptor'='valid'};
+                    negativeControls=@{'descriptor-as-rights'='invalid';'unknown-root'='invalid';'unknown-top-child'='invalid';'unknown-deep-child'='invalid';'wrong-nesting'='invalid'}}}
+            $spec=@{schemaVersion=2;image=$image;fixtureSha256=('b'*64);xsdFixtureSha256=('c'*64);roleRightsFixtureSha256=('d'*64);files=$hashes;proofSha256=''}
+            $script:RightsPackage=@{image=$image;files=$hashes;xsdFixtureSha256=('c'*64);roleRightsFixtureSha256=('d'*64);qualification=('qualifications/'+('a'*64)+'/xsd-v3/proof.json')}
+            function Get-HostCodeRepairPackage { return $script:RightsPackage }
+            $server=@{id='code';image=$image;ownerRepair=$spec}
+            function Save-CodeOwnerTestProof { [IO.File]::WriteAllText((Join-Path $root 'qualification.json'),($proof|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false));$spec.proofSha256=(Get-FileHash -LiteralPath (Join-Path $root 'qualification.json')).Hash.ToLowerInvariant() }
+            Save-CodeOwnerTestProof
+            $mounts=@(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server)
+            $mounts.Count|Should -Be 3
+            @($mounts|Where-Object {$_.host -notlike '*\xsd-v3\*'}).Count|Should -Be 0
+            # The accepted v2 runtime is a version transition, never rewritten in place.
+            $script:OwnerMounts=@($mounts|ForEach-Object {@{Type='bind';Source=$_.host.Replace('\xsd-v3\','\xsd-v2\');Destination=$_.container;RW=$false}})
+            function Invoke-DockerCommandCapture { return ($script:OwnerMounts|ConvertTo-Json -Compress) }
+            Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $true
+            (Get-FileHash -LiteralPath (Join-Path $accepted 'xsd_schema_generator.py')).Hash|Should -Be $acceptedSha
+            foreach($change in @('missing','positive','control','fixture','spec')){
+                $saved=$proof.roleRights|ConvertTo-Json -Depth 6|ConvertFrom-Json
+                if($change -eq 'missing'){$proof.Remove('roleRights')}
+                elseif($change -eq 'positive'){$proof.roleRights.positives['Роль/Rights']='invalid'}
+                elseif($change -eq 'control'){$proof.roleRights.negativeControls.Remove('wrong-nesting')}
+                elseif($change -eq 'fixture'){$proof.roleRightsFixtureSha256=('e'*64)}
+                else{$spec.Remove('roleRightsFixtureSha256')}
+                Save-CodeOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*role rights XSD regression*'
+                $proof.roleRights=Convert-ToHash -Object $saved;$proof.roleRights.positives=Convert-ToHash -Object $saved.positives
+                $proof.roleRights.negativeControls=Convert-ToHash -Object $saved.negativeControls
+                $proof.roleRightsFixtureSha256=('d'*64);$spec.roleRightsFixtureSha256=('d'*64);Save-CodeOwnerTestProof
+            }
+            @(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server).Count|Should -Be 3
+            $script:RightsPackage.qualification='qualifications/'+('b'*64)+'/xsd-v3/proof.json'
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*own image XSD qualification*'
+        }
+    }
     It "requires all thirty original native Graph tests and mounts both repairs through the existing resolver and cutover" -Tag HostOwnerRepair {
         $configPath=Join-Path $TestDrive 'graph repair config.json'
         $repairState=Join-Path $TestDrive 'ремонт Graph с пробелом'

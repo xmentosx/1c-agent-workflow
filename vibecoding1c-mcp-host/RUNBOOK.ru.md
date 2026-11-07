@@ -770,7 +770,10 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 операциями владельцев. Подробности — `releases/2026-10-25-code-xsd/README.md` поставки.
 
 Файлы schema-1 находятся в `<stateRoot>/repairs/owner/<code|graph>/<image-digest>`.
-Code schema-2 использует отдельный подкаталог `xsd-v2`, сохраняя прежние proof и файлы.
+Каждый общий пакет Code schema-2 хранит proof и файлы в собственном подкаталоге
+`xsd-vN`, указанном полем `qualification` его `code-package.json` (`xsd-v2`, затем
+`xsd-v3` со схемой прав роли и fixture `roleRightsFixtureSha256`); прежние каталоги
+не переписываются, а работающий Code остаётся связан со своим каталогом до cutover.
 Квалифицированная смена runtime-файлов при прежнем image digest является переходом
 версии для cutover; неизменный набор сохраняет прежнюю проверку поколения.
 Поддержку можно доставить отдельным версионным MCP-пакетом рядом с установленным
