@@ -44,6 +44,17 @@ When an interaction fails twice without new evidence, change the route (recordin
 
 `run_scenario` progress is conditional. Vanessa emits `step N/M` notifications, and the facade forwards them only when the calling MCP client supplied a `progressToken`; the client must also expose those notifications to the user. Without that metadata, no intermediate message is promised. The Vanessa backend uses one UI session, so a concurrent `get_vanessa_automation_state` can wait behind the active scenario and is not an independent liveness probe. Set the caller timeout from the expected scenario duration; silence alone is not a hang. `progressTokenProvided` identifies missing caller metadata. `progressNotificationsForwarded` is the count at outcome recording; asynchronous handlers can finish later. Correlate `progressEvidenceId` with `<instance>.progress.jsonl` for successful forwarding events, including late notifications; do not infer absent upstream progress solely from a zero completion snapshot.
 
+## Step Notes
+
+These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r11` backend.
+
+- `run_scenario` with `filePath` in modes `all`, `reloadAndRun` and `reloadAndRunFromLine` reloads the file from disk and returns `featureSha256` of the executed bytes; compare it with the file you just wrote. Without `filePath`, and in `selected` or `fromCurrentStep`, the previously loaded text with its selected scenario or step runs. `ITL_FEATURE_INVALID_XML_CHARACTER` names `file:line:column` of a control character, such as `\f` produced by an unescaped Windows path; `ITL_FEATURE_CHANGED_DURING_LOAD` means the file was still being written.
+- In ITL runs every built-in code step `(Расширение)`, including the `через буфер обмена` variants, runs through the file-code channel and fails with the original exception or compilation error. `ITL_CLIENT_CODE_CHANNEL_UNAVAILABLE` rejects a clipboard variant that could not report its result; use the plain step.
+- `manage_form_elements` `navigate_to_row` succeeds only when the current row stays on the criteria row after the form's activation handlers. `ITL_ROW_NAVIGATION_NOT_CONFIRMED` reports the actual row: the form moved the cursor, so change the route instead of repeating the call.
+- For an HTML document field, both `И в поле HTML документа ... я нажимаю гиперссылку '<текст>'` and `click_hyperlink` with `hyperlink_title` also reach anchors inside collapsed `<details>`; `ITL_HTML_HYPERLINK_NOT_FOUND` lists the anchors found as `text -> href`.
+- A window title gets ` *` while its form is modified. `И Я активизирую окно` matches the title as a pattern where `*` stands for any characters, so use `'Администрирование рабочего стола*'` for a form that may be modified.
+- `И я выбираю файл` presets the next file dialog with a file path. Before a directory-selection dialog, pass the directory with a trailing `\`; without it the product received the parent directory. Assert the resulting file location in a separate step.
+
 ## Failure Handling
 
 For connection/cleanup failures, use the existing facade owner in [local MCP recovery](../1c-workflow/references/mcp.md#availability-recovery-and-return-to-work) before fallback; do not request a manual reset. Recovery does not replay an unknown UI action. For `ITL_VANESSA_TESTCLIENT_NOT_CONNECTED`, call `itl_recover_connection` before the next UI call.

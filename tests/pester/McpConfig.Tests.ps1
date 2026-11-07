@@ -389,8 +389,8 @@
         foreach ($notice in @("LICENSE.upstream", "LICENSE.GPL3", "ITL-NOTICE.txt")) {
             (Get-FileHash -LiteralPath (Join-Path $clientComponentRoot $notice) -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $clientManifest.notices.$notice
         }
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r10.cfe"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "86abe091674d6742ad067e717b0efd1947b6741e44f91e85c37a5a617b1b5510"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r11.cfe"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "ade99a33bbc4c97739ed9b0cd9256257435524356f9d53ba4364711e1ea963b2"
         $dependencyLock.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"
 
         $compatibility = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") | ConvertFrom-Json

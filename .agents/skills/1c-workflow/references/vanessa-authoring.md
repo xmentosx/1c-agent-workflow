@@ -35,7 +35,7 @@ In BSL use `ПолучитьНавигационнуюСсылку(Объект.
 
 For arbitrary BSL, classify the execution context before authoring. The plain server step runs in the empty TestManager service infobase; product metadata managers and database access must use the TestClient-side `на сервере (Расширение)` step. Forms and client-only common modules also run in the TestClient/extension context. When both are required, compute and serialize the reference on the server, store it through a supported Vanessa variable step, and restore it in the client block. Do not use `СохранитьЗначение`/`ВосстановитьЗначение` to bridge VAExtension steps.
 
-ITL runs execute the plain `(Расширение)` code steps through the file-code channel: no TestClient form opens and a failure reports the original error. The code runs outside a form, so do not reference `ЭтаФорма`. Combine adjacent code of one context into one step. Use ROCTUP `execute_query` to explore or diagnose data; keep business assertions in the scenario, because an external query never replaces them.
+ITL runs execute the `(Расширение)` code steps, including the `через буфер обмена` variants, through the file-code channel: no TestClient form opens and a failure reports the original error. The code runs outside a form, so do not reference `ЭтаФорма`. Combine adjacent code of one context into one step. Use ROCTUP `execute_query` to explore or diagnose data; keep business assertions in the scenario, because an external query never replaces them.
 
 ## Diagnose One Run
 
