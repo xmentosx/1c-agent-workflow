@@ -1,15 +1,17 @@
 {
   "schemaVersion": 1,
   "distributionRepository": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
-  "distributionCommit": "cad14933910b67afaced7844ba6293fcf24a4635",
-  "distributionBase": "4626e6fc7b28054589e320894ce6aa617299a566",
+  "distributionCommit": "b9e66483e365397d10edf75a5a5d82900c21d8dc",
+  "distributionPackageCommit": "c11f5e0cff1fa891423fc0fcf13104df03e69416",
+  "distributionBranch": "codex/code-xsd-role-rights-20261107",
+  "distributionBase": "9c02907121b2d513ea9f63bc6798e8e069f95205",
   "package": "hosts/dev-karimov-new/code-package.json",
-  "packageId": "code-xsd-v2",
+  "packageId": "code-xsd-v3",
   "image": "comol/1c_code_metadata_mcp@sha256:303011dbcf8815542914fc61c5ba369c61dea4aeac2e8d4ee7e304f089a99536",
   "files": {
     "driver": "7000a217743a95cca07f7453c4adf60767607be69fd393ac90226603af4cf953",
     "main": "0b679a5679cd8a09e9156f8d560356c8d08526350a2d1880f1e94fdfbeafc962",
-    "xsd_schema_generator": "cedcecefd097c9d54a4eed1829643c4e4cd16e8d6e2e842dff77f2807c18e14b"
+    "xsd_schema_generator": "1afacf40d288198e3c6696cde78511ec27f2df9a571a1c53cb4f3d05abe4e091"
   },
   "targets": {
     "dev-ermakov": [
@@ -21,161 +23,55 @@
       "erppm5-lts-code"
     ]
   },
-  "nativeProofSha256": "f4f64a2e1fcc9443877152ee32d4751a0cd4cf5eeef373afb7880900e6559072",
+  "nativeProofSha256": "b116676d821647d1fb84f2eab7a501366f132e349c82b53a171bfbcc618d9cae",
+  "windowsProofSha256": "fe28e3f87fd95798584baad3617ac54eb6e54eb295068c27324cdab5c5b18b6f",
+  "release": "releases/2026-11-07-code-xsd-role-rights",
+  "defect": "PM5 report 2026-11-06 item 15: verify_xml rejected every Roles/<Obj>/Ext/Rights.xml (root Rights) because role.xsd was trained only from role descriptors.",
   "nativeQualification": {
     "isolated": true,
     "network": "none",
     "liveIndexMounted": false,
-    "originalResume": "failed: module 1/2",
-    "patchedResume": "passed: module 2/2, ancestor unchanged",
-    "selectiveRepair": "passed: vectors and omissions preserved",
-    "originalXsd": "failed: depth truncation",
-    "patchedXsd": "passed: positive and four negative controls",
-    "parserLimits": "passed",
-    "xsdLaneOnlyInvalidation": "passed",
-    "realForms": {
-      "unchangedInputs": true,
-      "copiedCorpusFiles": 1889,
-      "corpusIncludesPositiveForms": true,
-      "originalErrorCounts": [
-        135,
-        8,
-        21
-      ],
-      "patchedErrorCounts": [
-        0,
-        0,
-        0
-      ]
+    "originalRoleRights": "failed: ROLE_RIGHTS_UNROUTED",
+    "patchedRoleRights": "passed: 5 positives, 5 negative controls rejected, malformed input is an error",
+    "previousControls": "crash/resume and nested XSD controls unchanged and passed",
+    "xsdLaneOnlyInvalidation": "passed (PARSER_VERSION 3)"
+  },
+  "deliveryStatus": "Package and Linux/Windows proofs published in GitLab; PM5, PM4 and UNF installed, reindexed with force=false and accepted via public verify_xml; ERP pending a successful Windows nightly required by the Linux owner admission; workflow remains unpublished.",
+  "acceptanceLimit": "Generated corpus schema for role rights; full normative Designer rights semantics, cross-corpus inputs and other XML kinds are not claimed.",
+  "deployedAcceptance": {
+    "distributionEvidence": "releases/2026-11-07-code-xsd-role-rights/deployed-acceptance-20261107.json",
+    "evidenceSha256": "fd0e877de781760233c15aeb2e0b102c8e60aeb5da88b0014158705e0d362b7e",
+    "normalReindexForce": false,
+    "working1cDatabaseOperations": false,
+    "workflowPublished": false,
+    "previousContainersRetainedStopped": true,
+    "targets": {
+      "pm5corp": {
+        "accepted": true,
+        "generation": "20261106T221946Z-8907e816"
+      },
+      "pm4corp": {
+        "accepted": true,
+        "generation": "20261106T224259Z-d972befd"
+      },
+      "unfpm5": {
+        "accepted": true,
+        "generation": "20261106T220951Z-bd3507c0"
+      },
+      "erppm5-lts": {
+        "accepted": false,
+        "status": "pending: owner apply requires Windows nightly State=Ready and LastResult=0"
+      }
     }
-  },
-  "localChecks": {
-    "pythonHostOwner": {
-      "run": 90,
-      "failed": 0,
-      "skipped": 4
-    },
-    "sharedPackage": {
-      "run": 2,
-      "failed": 0
-    },
-    "pesterOwnerRepair": {
-      "passed": 3,
-      "failed": 0
-    },
-    "exactSourceRebaseAndChangedSourceRefusal": "passed"
-  },
-  "deliveryStatus": "Standalone MCP package and deployed proofs published in GitLab; all four Code installed, reindexed and accepted; workflow remains unpublished.",
-  "acceptanceLimit": "Generated nested structure and preserved native parser limits; full normative Designer enum/type coverage is not claimed. Per-host deployment and reindex acceptance are separate from package qualification.",
-  "currentBaselineQualification": {
-    "completedUtc": "2026-10-26T06:01:01.908323+00:00",
-    "nativeProofSha256": "b69def04e33171d1c97c4b204bc2d5710a87c74ada65c665840621c867d1ca1a",
-    "distributionEvidence": "hosts/dev-karimov-new/evidence/20261026-xsd-native-current.json",
-    "hostOwnerTests": {
-      "run": 270,
-      "failed": 0,
-      "skipped": 35
-    },
-    "allPreviousBundleAssetsRetained": 113,
-    "sameFourActiveCodeImagesAndRuntimeHashesConfirmed": true,
-    "existingContainersUnchanged": true,
-    "publication": false,
-    "installation": false,
-    "reindex": false,
-    "deployedAcceptance": false
   },
   "deliveryMode": "standalone MCP package in GitLab; no workflow publication",
   "windowsOwnerPackage": "hosts/dev-ermakov/owner-package.json",
-  "windowsLegacyProofPreserved": true,
   "workflowPublicationRequired": false,
-  "linuxLegacyOverlayPreparationRegression": "exact active legacy files staged before full qualification; changed active bytes rejected before installed package changes",
-  "runtimePackageSourceCommit": "ae6bee0734f0b473a13871ea813638acdbb0795f",
-  "deployedAcceptance": {
-    "completedUtc": "2026-10-26T10:07:13.606057+00:00",
-    "distributionEvidence": "releases/2026-10-25-code-xsd/deployed-acceptance-20261026.json",
-    "report": "releases/2026-10-25-code-xsd/deployed-report-20261026.md",
-    "allFourDeliveryAccepted": true,
-    "publication": true,
-    "installation": true,
-    "normalReindexForce": false,
-    "mainOnlyControlPassed": true,
-    "sameImageAndRuntimeSha256": true,
-    "workflowPublished": false,
-    "working1cDatabaseOperations": false,
-    "targets": {
-      "unfpm5": {
-        "generation": "20261026T071600Z-2d563768",
-        "sourceIdentities": {
-          "modules": 17411,
-          "objects": 95930,
-          "forms": 7164
-        },
-        "ownPositiveFormsPassed": 1,
-        "ownNegativeControlsRejected": 4,
-        "originalWf04ErrorCounts": [
-          3,
-          0,
-          0
-        ]
-      },
-      "erppm5-lts": {
-        "generation": "20261026T081739Z-7b8af6cd",
-        "sourceIdentities": {
-          "modules": 28466,
-          "objects": 170425,
-          "forms": 12163
-        },
-        "ownPositiveFormsPassed": 1,
-        "ownNegativeControlsRejected": 4,
-        "originalWf04ErrorCounts": [
-          5,
-          0,
-          0
-        ]
-      },
-      "pm5corp": {
-        "generation": "20261026T085825Z-18434817",
-        "sourceIdentities": {
-          "modules": 5025,
-          "objects": 20341,
-          "forms": 1892
-        },
-        "ownPositiveFormsPassed": 1,
-        "ownNegativeControlsRejected": 4,
-        "originalWf04ErrorCounts": [
-          0,
-          0,
-          0
-        ]
-      },
-      "pm4corp": {
-        "generation": "20261026T094741Z-d972befd",
-        "sourceIdentities": {
-          "modules": 3663,
-          "objects": 15722,
-          "forms": 1592
-        },
-        "ownPositiveFormsPassed": 1,
-        "ownNegativeControlsRejected": 4,
-        "originalWf04ErrorCounts": [
-          3,
-          0,
-          0
-        ]
-      }
-    },
-    "remainingCompatibility": "Original WF-04 Admin input from the PM5 branch corpus still produces 3/5/3 errors on UNF/ERP/PM4 inferred schemas. The unchanged original three inputs pass on PM5. Failed cross-corpus results remain failed; no training on these foreign inputs and no schema weakening.",
-    "proofArchives": [
-      {
-        "file": "xsd-linux-deployed-20261026.tar.gz",
-        "bytes": 23373255,
-        "sha256": "744c6e3fab8c047f48917d16c91e96c9591afc2981483eff807015c4dd00d618"
-      },
-      {
-        "file": "xsd-windows-deployed-20261026.zip",
-        "bytes": 2215010,
-        "sha256": "215d201ef4d68c2dbfe555bd8af325c0bee07179715a3933dcae4457d2e7d893"
-      }
-    ]
+  "previousPackage": {
+    "packageId": "code-xsd-v2",
+    "distributionCommit": "cad14933910b67afaced7844ba6293fcf24a4635",
+    "xsd_schema_generator": "cedcecefd097c9d54a4eed1829643c4e4cd16e8d6e2e842dff77f2807c18e14b",
+    "nativeProofSha256": "f4f64a2e1fcc9443877152ee32d4751a0cd4cf5eeef373afb7880900e6559072",
+    "deployedEvidence": "releases/2026-10-25-code-xsd/deployed-acceptance-20261026.json"
   }
 }
