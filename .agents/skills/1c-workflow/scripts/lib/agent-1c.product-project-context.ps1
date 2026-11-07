@@ -280,10 +280,14 @@ function New-ItlProductProjectPreview {
             $explicit=$name -in @($overrides[$key])
             $unownedCollision=$entries.Contains($name) -and $name -notin $owned -and $name -in @($request.endpoints|ForEach-Object {ConvertTo-ItlClientMcpKey $_.name $request.client})
             if($current -ceq $desired -and -not $explicit -and -not $unownedCollision){continue}
+            # The owner write receipt separates ITL's own writes from user edits.
+            # A managed writer outside this apply (facade or MCP refresh) can
+            # move an owned entry past the applied proof; that is not a local edit.
+            $itlWritten=$entries.Contains($name) -and $name -in $owned -and (Get-ItlCatalogField $baseline $name) -ceq (Get-StringSha256 $current)
             $status='managed-change'
             if($explicit){$status='local-override'}
-            elseif($old -and $current -cne $old){$status=if($desired -cne $old -and $current -cne $desired){'conflict'}else{'local-override'}}
-            elseif(-not $old -and $entries.Contains($name) -and ($name -notin $owned -or (Get-ItlCatalogField $baseline $name) -cne (Get-StringSha256 $current))){$status='local-override'}
+            elseif($old -and $current -cne $old -and -not $itlWritten){$status=if($desired -cne $old -and $current -cne $desired){'conflict'}else{'local-override'}}
+            elseif(-not $old -and $entries.Contains($name) -and -not $itlWritten){$status='local-override'}
             elseif(-not $entries.Contains($name)){$status='addition'}
             elseif(-not $projection.entries.Contains($name)){$status='retirement'}
             [pscustomobject]@{client=$request.client;owner=$request.owner;name=$name;status=$status;owned=($name -in $owned)}

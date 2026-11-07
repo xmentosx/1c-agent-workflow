@@ -415,6 +415,21 @@
         (Get-ItlMcpFileState $path)|Should -Be $before
         (Read-ItlProductProjectRecord applied).catalogRevision|Should -Be ('a'*40)
     }
+    It 'treats an owned entry rewritten by another ITL writer after the applied proof as a managed change' {
+        # The E2E stand case: facade entries moved 0.4.26 -> 0.4.27 by a direct
+        # managed writer (no catalog proof); the 0.4.28 update must not ask the user.
+        $old=@(@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='code';url='https://old.invalid'})})
+        $null=Invoke-ItlProductProjectClientApply $context $old
+        Write-ItlClientMcpEndpointSet @(@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='code';url='https://itl-written.invalid'})}) *> $null
+        (Read-ItlClientMcpEntries claude-code).code.url|Should -Be 'https://itl-written.invalid'
+        Mock Get-Vibecoding1cMcpClientConfigEndpointSet {return @{allEndpoints=@(@{id='fixture-source';name='code';url='https://new.invalid'})}}
+        $changed=ConvertTo-ItlCatalogCanonicalValue $context;$changed.catalogRevision=('b'*40);$changed.settingsHash='settings-b'
+        $preview=New-ItlProductProjectPreview $changed @('claude-code')
+        @($preview.changes|Select-Object -ExpandProperty status)|Should -Be @('managed-change')
+        $decision=Resolve-ItlProductProjectPreviewDecision $preview
+        $null=Invoke-ItlProductProjectClientApply $decision.context $decision.requests -SavePrivateSelection -PrivateSelection $decision.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState
+        (Read-ItlClientMcpEntries claude-code).code.url|Should -Be 'https://new.invalid'
+    }
     It 'persists keep-local and does not ask again on the next update' {
         $old=@(@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='code';url='https://old.invalid'})})
         $null=Invoke-ItlProductProjectClientApply $context $old
