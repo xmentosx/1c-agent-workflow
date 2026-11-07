@@ -16,6 +16,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+# Callers capture redirected stdout/stderr and decode it as UTF-8; localized
+# exception text (for example a download 404) must not leave in the OEM code page.
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
 
 if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
 $RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
