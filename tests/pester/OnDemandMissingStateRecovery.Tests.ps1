@@ -241,19 +241,27 @@ Describe 'Private TestClient close and runtime mutation owner' {
         $script:ProjectRoot=Join-Path $TestDrive ('Закрытие своего клиента '+[guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
         $env:ITL_EXECUTION_CONTEXT='original-owner';$env:ITL_EXECUTION_CONTEXT_KEY='original-key'
+        # The stop path proves both ports through the real listener table, so the fixture
+        # uses ports this host just released instead of the default Vanessa MCP port that
+        # a live project on the same machine may hold.
+        $listeners=@([Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0),[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0))
+        try {
+            foreach($listener in $listeners){$listener.Start()}
+            $script:managerPort=[int]$listeners[0].LocalEndpoint.Port;$script:clientPort=[int]$listeners[1].LocalEndpoint.Port
+        } finally { foreach($listener in $listeners){$listener.Stop()} }
         $script:nativeStops=[Collections.Generic.List[int]]::new()
         $script:childAlive=$false
         $script:record=[pscustomobject]@{
-            schemaVersion=4;family='vanessa-ui';instanceId=('a'*32);pid=101;port=9874;catalogSha256=('c'*64)
+            schemaVersion=4;family='vanessa-ui';instanceId=('a'*32);pid=101;port=$script:managerPort;catalogSha256=('c'*64)
             processStartTime='2026-10-14T01:00:00.0000000Z';executablePath='C:\Платформа теста\1cv8.exe'
-            ownershipMarkers=@('C:\База менеджера','port=9874');infoBaseKind='file';infoBasePath='C:\Целевая база'
+            ownershipMarkers=@('C:\База менеджера',"port=$script:managerPort");infoBaseKind='file';infoBasePath='C:\Целевая база'
             managerInfoBaseKind='file';managerInfoBasePath='C:\База менеджера';portFamily='vanessa';portKey='manager';portLeaseToken='manager-token'
-            testClientPid=102;testClientPort=48151;testClientProcessStartTime='2026-10-14T01:01:00.0000000Z'
-            testClientExecutablePath='C:\Платформа теста\1cv8c.exe';testClientOwnershipMarkers=@('C:\Целевая база','/TESTCLIENT','-TPort 48151')
+            testClientPid=102;testClientPort=$script:clientPort;testClientProcessStartTime='2026-10-14T01:01:00.0000000Z'
+            testClientExecutablePath='C:\Платформа теста\1cv8c.exe';testClientOwnershipMarkers=@('C:\Целевая база','/TESTCLIENT',"-TPort $script:clientPort")
             testClientPortFamily='vanessa-test';testClientPortKey='child';testClientPortLeaseToken='child-token';vanessaParamsPath=''
         }
         Invoke-WithItlOnDemandRuntimeMutation -Family vanessa-ui -InstanceIds @('a'*32) -OwnerFunction Write-ItlOnDemandRuntimeState -OwnerArguments @{RuntimeState=$script:record} | Out-Null
-        Mock Get-ItlOnDemandManagedPortLeaseMatches { param($Family,$Key,$LeaseToken) if($Key -eq 'manager'){[pscustomobject]@{port=9874;pid=101}}else{[pscustomobject]@{port=48151;pid=102}} }
+        Mock Get-ItlOnDemandManagedPortLeaseMatches { param($Family,$Key,$LeaseToken) if($Key -eq 'manager'){[pscustomobject]@{port=$script:managerPort;pid=101}}else{[pscustomobject]@{port=$script:clientPort;pid=102}} }
         Mock Get-Process { param($Id) if($Id -eq 101 -or ($Id -eq 102 -and $script:childAlive)){[pscustomobject]@{Id=$Id}} }
         Mock Get-ItlOnDemandOwnedTestClientProcesses { if($script:childAlive){[pscustomobject]@{process=[pscustomobject]@{Id=102}}} }
         Mock Test-TcpPortOpen { $false }
