@@ -1,6 +1,9 @@
 ﻿function Read-SourceE2ECompactSummary {
     param([object]$ProcessResult)
-    $lines = @(Get-Content -LiteralPath $ProcessResult.stdout -Encoding UTF8 -ErrorAction Stop | Where-Object { $_.Trim().StartsWith('{') })
+    # A compact run log (console.log) prefixes every record with the wrapper's
+    # HH:mm:ss.fff time; a captured stdout summary has no prefix.
+    $lines = @(Get-Content -LiteralPath $ProcessResult.stdout -Encoding UTF8 -ErrorAction Stop |
+        ForEach-Object { $_ -replace '^\d{2}:\d{2}:\d{2}\.\d{3} ', '' } | Where-Object { $_.Trim().StartsWith('{') })
     if ($lines.Count -eq 0) { throw "Compact action did not write its JSON summary: $($ProcessResult.stdout)" }
     return ($lines[-1] | ConvertFrom-Json)
 }
