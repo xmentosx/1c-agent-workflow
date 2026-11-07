@@ -220,7 +220,11 @@ Describe 'Gate stand builder' {
         [void][IO.Directory]::CreateDirectory((Split-Path -Parent $module))
         Copy-Item -LiteralPath (Join-Path (Join-Path $script:FixtureRoot $fixture.configurationPath) ([string]$fixture.release.modulePath).Substring(7)) -Destination $module
         [void][IO.Directory]::CreateDirectory((Join-Path $worktree 'tests'))
+        # The installed byte-preserving attribute and Windows autocrlf, as on a real stand:
+        # a hash of the absolute path without --path normalized CRLF and missed the blob.
+        [IO.File]::WriteAllText((Join-Path $worktree '.gitattributes'), "src/cf/** -text`n", [Text.UTF8Encoding]::new($false))
         & git -C $worktree init -q; & git -C $worktree config user.email t@t; & git -C $worktree config user.name t
+        & git -C $worktree config core.autocrlf true
         & git -C $worktree add -A; & git -C $worktree commit -qm base
         Add-GateStandReleaseFixture -Worktree $worktree -Fixture $fixture
         @(& git -C $worktree status --porcelain).Count | Should -Be 0

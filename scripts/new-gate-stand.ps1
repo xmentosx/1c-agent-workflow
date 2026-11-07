@@ -185,7 +185,9 @@ function Add-GateStandReleaseFixture {
     $feature = Join-Path $Worktree ([string]$Fixture.release.featurePath)
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $feature))
     Copy-Item -LiteralPath (Join-Path $fixtureRoot $Fixture.release.featureSourcePath) -Destination $feature -Force
-    $oid = (& git -C $Worktree hash-object -- $module).Trim()
+    # Without --path an absolute module path misses the managed 'src/cf/** -text'
+    # attribute, so core.autocrlf would hash CRLF-normalized bytes, not the blob Git stores.
+    $oid = (& git -C $Worktree hash-object ('--path=' + [string]$Fixture.release.modulePath) -- $module).Trim()
     $suites = [ordered]@{ schemaVersion = 1; suites = @([ordered]@{ id = 'itl-release-e2e'; purpose = 'acceptance'; featurePaths = @('tests/features/*.feature'); ownerPaths = @('src/cf/Configuration.xml') }) }
     $yaxunit = [ordered]@{ schemaVersion = 1; notApplicable = @([ordered]@{ path = [string]$Fixture.release.modulePath; sourceOid = $oid
         reason = 'This technical constant marks code loaded into the Release E2E target infobase. tests/features/workflow-release-e2e.feature checks it in a real server session; a unit test of the literal cannot establish that deployment contract.' }) }
