@@ -926,6 +926,31 @@ param([string]$Operation,[string]$ProjectRoot)
         }
     }
 
+    It "passes the parent's explicit client to every refresh-all branch process" {
+        # Release E2E run from another agent: children without -AgentTarget detected
+        # that agent from the environment and failed with ITL_CLIENT_NOT_ATTACHED.
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl refresh клиент " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $calls = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:Calls = [System.Collections.Generic.List[string]]::new()
+                function Start-Process { param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, $RedirectStandardOutput, $RedirectStandardError, [switch]$PassThru) $script:Calls.Add([string]$ArgumentList) | Out-Null; [pscustomobject]@{ Id = 1 } }
+                $target = [pscustomobject]@{ name = "одна ветка"; branch = "itldev/one"; worktreePath = $tempRoot }
+                foreach ($client in @(" kilocode ", "")) {
+                    $AgentTarget = $client
+                    Start-RefreshAllBranchProcess -Target $target -MasterCommit ("a" * 40) -OutputRoot $tempRoot | Out-Null
+                }
+                @($script:Calls)
+            }
+            $calls.Count | Should -Be 2
+            $calls[0] | Should -Match '-Action refresh-dev-branch-lite -ExpectedMasterCommit a{40} -AgentTarget kilocode$'
+            $calls[1] | Should -Not -Match 'AgentTarget'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "syncs master once limits refresh-all to two workers and aggregates isolated failures" {
         $entrypointText = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
         $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8

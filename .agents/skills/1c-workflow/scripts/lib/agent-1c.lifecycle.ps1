@@ -15150,10 +15150,18 @@ function Invoke-NewDevBranchLifecycleMerge {
         if ($sourceValidationFailure -or $mergeFailure.Exception.Message -match '^LIFECYCLE_MERGE_(PRESERVATION_REVIEW_REQUIRED|REVIEW_)') {
             throw $mergeFailure
         }
+        # Without unmerged paths the merge stopped on a validation or helper error;
+        # the stop keeps that error as its reason instead of an empty conflict list.
+        $conflictReason = "merge conflicts remain"
+        if ($conflictPaths.Count -eq 0) {
+            $conflictReason = "merge stopped before commit without unmerged paths: " +
+                (([string]$mergeFailure.Exception.Message) -replace "[`r`n]+", " " -replace "'", '"').Trim()
+        }
         Stop-DevBranchLifecycleMergeForConflicts `
             -Operation $Operation `
             -Stage $ConflictStage `
-            -ConflictPaths $conflictPaths
+            -ConflictPaths $conflictPaths `
+            -Reason $conflictReason
     }
 
     $stateAfterMerge = Read-DevBranchState -Name $DevBranchName
@@ -20533,6 +20541,11 @@ function Start-RefreshAllBranchProcess {
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runner, "--",
         "-Action", "refresh-dev-branch-lite", "-ExpectedMasterCommit", $MasterCommit
     )
+    # A child resolves the client from its own execution context otherwise; the
+    # parent's explicit client stays the identity of every branch it refreshes.
+    if (-not [string]::IsNullOrWhiteSpace([string]$AgentTarget)) {
+        $arguments += @("-AgentTarget", ([string]$AgentTarget).Trim())
+    }
     $process = Start-Process -FilePath "powershell" `
         -ArgumentList (Join-NativeCommandLineArguments -Arguments $arguments) `
         -WorkingDirectory ([string]$Target.worktreePath) `
