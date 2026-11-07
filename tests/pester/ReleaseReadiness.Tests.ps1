@@ -190,6 +190,22 @@ Describe "Deterministic Release readiness" {
         }
     }
 
+    It "surfaces issue text on redirected stderr as exact UTF-8 for a whitespace and Cyrillic root" {
+        # The gate captures this stderr into a log decoded as UTF-8; an OEM
+        # code page there turned the localized acquire failure into mojibake.
+        $fixture = New-ReadinessFixture -Root (Join-Path $TestDrive 'stand Тест\workflow')
+        Remove-Item -LiteralPath $fixture.assetPath -Force
+        $outputPath = Join-Path $TestDrive 'unicode-context.json'
+        Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath | Should -Not -Be 0
+        $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $missing = @($context.issues | Where-Object { $_.code -ceq 'RELEASE_VANESSA_ARCHIVE_MISSING' })
+        $missing.Count | Should -Be 1
+        $missing[0].message | Should -BeExactly "Qualified Vanessa Automation archive is missing in offline mode: $($fixture.assetPath)"
+        $expected = (@($context.issues | ForEach-Object { "$($_.code) [$($_.category)]: $($_.message) Recovery: $($_.recovery)" + [Environment]::NewLine }) -join '')
+        $stderr = [IO.File]::ReadAllText($outputPath + '.stderr.log', [Text.UTF8Encoding]::new($false, $true))
+        $stderr | Should -BeExactly $expected
+    }
+
     It "rejects an archive whose internal EPF differs from the immutable lock" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-epf-" + [guid]::NewGuid().ToString("N"))
         try {
