@@ -64,6 +64,8 @@ try {
     $configuration = New-PesterConfiguration
     $configuration.Run.Path = @(".\tests\pester")
     $configuration.Run.PassThru = $true
+    # Same policy as the gate's shard runner: no test uses TestRegistry.
+    if ($configuration.PSObject.Properties['TestRegistry']) { $configuration.TestRegistry.Enabled = $false }
     $configuration.Output.Verbosity = $(if ($CI) { "Detailed" } else { "Normal" })
 
     if ($CI -and -not $OutputFile) {
