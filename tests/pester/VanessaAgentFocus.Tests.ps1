@@ -395,7 +395,7 @@ Describe 'Vanessa 1.2.043.42-itl-r11 agent diagnostics' {
         $script:R11HtmlForm = 'lib/VAExtension/DataProcessors/VAExtension_НажатьГиперссылкуHTMLДокумента/Forms/Форма/Ext/Form'
         $script:R11Catalog = Join-Path $script:FocusRepo '.agents/skills/1c-workflow/assets/ondemand-mcp/catalogs/vanessa-ui-v0.6.5-va-1.2.043.42.json'
         $script:R11FeatureMethods = @('ITLПодготовитьЗагрузкуФичи', 'ITLФайлФичиНадоЗагрузитьЗаново', 'ITLФичаНеИзмениласьПриЗагрузке',
-            'ITLДобавитьХешФичиВРезультат', 'ITLХешИТекстФайлаФичи', 'ITLНедопустимыйСимволXMLВФиче',
+            'ITLДобавитьХешФичиВРезультат', 'ITLХешИТекстФайлаФичи', 'ITLSha256ДвоичныхДанных', 'ITLНедопустимыйСимволXMLВФиче',
             'ITLОшибкаИзмененияФичиПриЗагрузке', 'ОтклонитьКомандуMCPДоВыполнения') | ForEach-Object { ,@($script:R11Mcp, $_) }
         $script:R11McpPrefix = "Перем Ванесса;`nПерем СерверMCP;`nФункция МодульМсп_Сервер()`n    Возврат СерверMCP;`nКонецФункции"
 
@@ -503,6 +503,26 @@ Describe 'Vanessa 1.2.043.42-itl-r11 agent diagnostics' {
         [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($true))
         $probe = New-R11Probe -Prefix $script:R11McpPrefix -Methods $script:R11FeatureMethods -Body 'r11-feature-load.os'
         Invoke-R11Case -Source $probe -Arguments @('invalid-character', $path, $expected)
+    }
+
+    It 'creates ХешированиеДанных only in server methods that the thin-client TestManager can call' {
+        # Develop E2E: a client ХешированиеДанных kept the MCPVA form from compiling in the
+        # thin client, and every TESTMANAGER run stopped at the platform error dialog.
+        $sections = @($script:R11Patch -split '(?m)(?=^diff --git )' | Where-Object { $_ -match '^diff --git a/(\S+) ' })
+        $checked = 0
+        foreach ($section in $sections) {
+            $path = [regex]::Match($section, '^diff --git a/(\S+) ').Groups[1].Value
+            $text = Get-FocusNewSide $path $script:R11Patch
+            foreach ($use in [regex]::Matches($text, 'Новый\s+ХешированиеДанных\b')) {
+                $before = $text.Substring(0, $use.Index)
+                $directive = [regex]::Matches($before, '(?m)^&[^\n]+') | Select-Object -Last 1
+                $directive | Should -Not -BeNullOrEmpty -Because $path
+                $before.Substring($directive.Index) | Should -Not -Match '// HUNK' -Because $path
+                $directive.Value.Trim() | Should -Match '^&НаСервере' -Because $path
+                $checked++
+            }
+        }
+        $checked | Should -BeGreaterThan 0
     }
 
     It 'keeps the loader diagnostics for a missing feature file' {
