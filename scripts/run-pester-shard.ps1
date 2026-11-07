@@ -53,6 +53,11 @@ try {
     $configuration.TestResult.Enabled = $true
     $configuration.TestResult.OutputFormat = "JUnitXml"
     $configuration.TestResult.OutputPath = $JunitPath
+    # No repository test uses TestRegistry. Pester otherwise creates a key under
+    # HKCU:\Software\Pester for every file; a killed worker leaves it behind, and
+    # concurrent workers creating keys under that parent intermittently fail with
+    # "No more data is available".
+    if ($configuration.PSObject.Properties['TestRegistry']) { $configuration.TestRegistry.Enabled = $false }
     # Test files own their error policy. In particular, native tools such as Git
     # legitimately write progress to stderr, which PowerShell must not promote
     # to a terminating RemoteException merely because the shard host is strict.

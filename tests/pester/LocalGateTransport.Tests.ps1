@@ -129,6 +129,32 @@ Describe 'Unicode redirected output' {
         (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be "passed"
     }
 
+    It "runs a gate shard without a Pester TestRegistry key that a killed worker could orphan" {
+        $fixtureRoot = Join-Path $TestDrive "Путь с пробелом РеестрPester"
+        New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null
+        $testPath = Join-Path $fixtureRoot "NoTestRegistry.Tests.ps1"
+        $planPath = Join-Path $fixtureRoot "worker.plan.json"
+        $resultPath = Join-Path $fixtureRoot "worker.result.json"
+        [IO.File]::WriteAllText($testPath, @'
+Describe 'Pester registry isolation' {
+    It 'has no TestRegistry drive or container key' {
+        Test-Path 'TestRegistry:\' | Should -BeFalse
+    }
+}
+'@, [Text.UTF8Encoding]::new($true))
+        $plan = [ordered]@{ schemaVersion = 1; worker = 1; paths = @($testPath) }
+        [IO.File]::WriteAllText($planPath, (($plan | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+
+        $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot "scripts\run-pester-shard.ps1") -Arguments @(
+            "-PlanPath", $planPath,
+            "-JunitPath", (Join-Path $fixtureRoot "worker.xml"),
+            "-ResultPath", $resultPath
+        )
+
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be "passed"
+    }
+
     It "preserves exact UTF-8 when the shared gate child reports a real failed Pester shard" {
         $fixtureRoot = Join-Path $TestDrive 'Путь с пробелом ОшибкаШарда'
         $testRoot = Join-Path $fixtureRoot 'tests/pester'
