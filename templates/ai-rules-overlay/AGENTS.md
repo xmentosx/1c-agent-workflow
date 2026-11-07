@@ -34,6 +34,7 @@ replacing the upstream process, coding, MCP, memory, or OpenSpec rules.
   `check_1c_code`. `verification-policy.md` selects which gates run. A Code
   Checker syntax section never substitutes for standalone `syntaxcheck` /
   `syntaxcheck_file` evidence.
+- ITL MCP hosts cannot validate by path (`syntaxcheck_file`, `files`); pass text.
 - Keep project corrections in project memory. Shared `remember` is only for
   verified cross-project knowledge; `templatesearch` remains available for
   code templates. Do not turn on a new shared-memory provider implicitly.

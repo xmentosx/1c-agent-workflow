@@ -28,14 +28,14 @@
 
 ## 4. Правила (форк r54 после публикации r53)
 
-- [ ] 4.1 В controlled fork на ветке выпуска r54 поверх r53 дополнить `content/rules/review-criteria.md`:
+- [x] 4.1 В controlled fork на ветке выпуска r54 поверх r53 дополнить `content/rules/review-criteria.md`:
   - проверка, которую записал проект и которая привязана к текущему содержимому, — доказательство, а не отчёт автора;
   - при большом объёме гейты 2–3 выполняются по процедурам, выбранным по риску, с указанием непроверенного остатка;
   - выбор диапазона, предоставленный проектом, соблюдается.
 
   Проверка: `tools/validate-rules.ps1` форка проходит, тег r54 создан.
-- [ ] 4.2 Добавить в `templates/ai-rules-overlay/AGENTS.md` одну строку о недоступности проверки по пути на хостах ITL. Измерить прирост байт постоянного контекста и указать его в описании коммита. Проверка: проверка бюджета overlay проходит.
-- [ ] 4.3 Перенести пин ITL на r54: `sections.json`, `dependency-lock.json`, `templates/project.json`, `scoped-memory-policy.json`, `DependencyLocks.Tests.ps1`, `docs/ai-rules-fork-upgrades.md`. Проверка: `DependencyLocks.Tests.ps1` и Verify форка проходят.
+- [x] 4.2 Добавить в `templates/ai-rules-overlay/AGENTS.md` одну строку о недоступности проверки по пути на хостах ITL. Измерить прирост байт постоянного контекста и указать его в описании коммита. Проверка: проверка бюджета overlay проходит.
+- [x] 4.3 Перенести пин ITL на r54: `sections.json`, `dependency-lock.json`, `templates/project.json`, `scoped-memory-policy.json`, `DependencyLocks.Tests.ps1`, `docs/ai-rules-fork-upgrades.md`. Проверка: `DependencyLocks.Tests.ps1` и Verify форка проходят.
 
 ## 5. Приёмка
 
