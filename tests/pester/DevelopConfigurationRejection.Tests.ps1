@@ -492,6 +492,17 @@ Describe 'Verification inspection console payload' {
         $view.baseTree | Should -BeExactly ('a'*40)
         $view.tree | Should -BeExactly ('b'*40)
     }
+    It 'reads the planning payload from the timestamped compact run log' {
+        # run-itl-command prefixes each record with HH:mm:ss.fff and appends the
+        # stage timing table; the payload is still the last JSON record.
+        $records=@("Skipping remote vibecoding1c MCP server 'docs': endpoint was not found in registry.",'ITL stage: start',($script:inspectionPayload|ConvertTo-Json -Depth 8 -Compress),'ITL run timings (kind, duration, count, name):','  stage   00:00:01.274    1x  start','  total   00:00:09.029        run')
+        $text=(@($records|ForEach-Object {'05:47:06.035 '+$_}) -join "`r`n")+"`r`n"
+        [IO.File]::WriteAllText($script:inspectConsole,$text,[Text.UTF8Encoding]::new($false))
+        $view=Get-DevelopVerificationChangeInspection -Root $script:inspectRoot -Name inspect -HelperCommand (Get-Command InspectionMetadata)
+        $view.model | Should -BeExactly 'change'
+        $view.status | Should -BeExactly 'planning'
+        $view.tree | Should -BeExactly ('b'*40)
+    }
     It 'retains malformed payload, unsupported scope and invalid UTF-8 refusal: <Case>' -TestCases @(@{Case='malformed'},@{Case='scope'},@{Case='utf8'}) {
         param($Case)
         $text=$script:inspectionPayload|ConvertTo-Json -Depth 8 -Compress
