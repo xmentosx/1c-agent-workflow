@@ -54,7 +54,9 @@ infobase execution guard. It exports one configuration and calls `refresh.py`
 over SSH using a dedicated key and a pinned guest host key. The VM reads the
 Windows export directory through a read-only SMB 3.1.1 share. The exact export
 infobase guard remains held through refresh, so another authorized Designer
-export cannot change that input. Configurations run sequentially; failure
+export cannot change that input. The export runs in a kill-on-close Windows
+job, so the 8-hour export timeout ends PowerShell and every `1cv8.exe` it
+started before the guard is released; that configuration is recorded as failed. Configurations run sequentially; failure
 of one is recorded and does not prevent the next configuration from running.
 Use a password-backed Task Scheduler principal with access to the repository
 share for unattended exports. Enter that password locally during provisioning;

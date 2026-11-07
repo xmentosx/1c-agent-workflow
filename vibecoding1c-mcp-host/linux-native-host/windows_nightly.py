@@ -11,6 +11,14 @@ import sys
 import time
 
 
+EXPORT_TIMEOUT_SECONDS = 28800
+# The export job owns process lifetime only. Memory admission stays with the
+# host, so this policy neither limits nor samples the Designer process tree.
+EXPORT_PROCESS_LIMITS = {'maxWorkerMemoryMb': 1048576, 'maxProcessMemoryMb': 1048576,
+                         'maxJobMemoryMb': 1048576, 'maxGrowthMb': 1048576,
+                         'minAvailableMemoryMb': 1, 'maxCommittedPercent': 100}
+
+
 def save(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.' + str(os.getpid()) + '.tmp')
@@ -26,6 +34,21 @@ def run(arguments, **options):
                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0, **options)
 
 
+def run_owned_export(arguments, env, output, timeout):
+    """Run the export in a kill-on-close job: a timeout ends PowerShell and every 1cv8.exe it started."""
+    from itl_remote.common import OwnedProcess
+    sys.stdout.flush()
+    sys.stderr.flush()
+    with OwnedProcess(arguments, None, output, env, EXPORT_PROCESS_LIMITS) as owned:
+        try:
+            code = owned.process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Leaving the block closes the job before the export-base guard is released.
+            raise subprocess.TimeoutExpired(arguments, timeout) from None
+    if code:
+        raise subprocess.CalledProcessError(code, arguments)
+
+
 def ssh_options(config):
     return ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15',
             '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=6',
@@ -33,7 +56,7 @@ def ssh_options(config):
             '-i', config['identityFile']]
 
 
-def export_and_refresh(config, configuration, config_path, guard_type, canonical_resources, force=False):
+def export_and_refresh(config, configuration, config_path, guard_type, canonical_resources, force=False, *, output):
     config_id = configuration['configId']
     if not re.fullmatch('[a-z0-9][a-z0-9-]{0,63}', config_id):
         raise ValueError('Invalid configuration id')
@@ -50,9 +73,10 @@ def export_and_refresh(config, configuration, config_path, guard_type, canonical
         proof = guard.context()
         env['ITL_EXECUTION_CONTEXT'] = proof['encoded']
         env['ITL_EXECUTION_CONTEXT_KEY'] = base64.urlsafe_b64encode(proof['key']).decode('ascii')
-        run(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
-             str(Path(config['workflowPath']) / 'vibecoding1c-mcp-host/export-1c-config-dump.ps1'),
-             '-ConfigPath', str(config_path), '-ConfigId', config_id], env=env, timeout=28800)
+        run_owned_export(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
+                          str(Path(config['workflowPath']) / 'vibecoding1c-mcp-host/export-1c-config-dump.ps1'),
+                          '-ConfigPath', str(config_path), '-ConfigId', config_id],
+                         env, output, EXPORT_TIMEOUT_SECONDS)
         if not all((source / name).is_file() for name in ('Configuration.xml', 'ConfigDumpInfo.xml')):
             raise ValueError('Designer export did not complete')
         # Retain the exact export-base guard through the Linux refresh so a
@@ -110,7 +134,8 @@ def main():
         save(state_path, state)
         print('REFRESH_STARTED=' + config_id, flush=True)
         try:
-            status = export_and_refresh(config, configuration, config_path, ExecutionGuard, canonical_resources, args.force)
+            status = export_and_refresh(config, configuration, config_path, ExecutionGuard, canonical_resources,
+                                        args.force, output=log_path)
             state['configurations'].append(status)
             print('REFRESH_COMPLETED=' + json.dumps(status, ensure_ascii=False), flush=True)
         except Exception as error:
