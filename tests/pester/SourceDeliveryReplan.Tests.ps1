@@ -224,6 +224,33 @@ Describe 'Explicit develop plan replacement' {
             @(& git -C $fixture.root status --porcelain).Count | Should -Be 0
         } finally {$env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$prior; Remove-DeliveryFixture $fixture}
     }
+    It 'rebuilds the identical ai_rules compatibility promotion when an unchanged queue is replanned' {
+        $fixture=$null; $prior=$env:ITL_TEST_FAIL_COMPONENT_FINALIZER
+        try {
+            $fixture=New-FrozenFixture
+            $promoter=@('-CompatibilityPromoterScript',('"'+$fixture.promoter+'"'))
+            Set-DeliveryAiRulesLock -Fixture $fixture -CompatibilityStatus 'pending'
+            [void](Add-FrozenTask $fixture alpha)
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER='true'
+            (Invoke-FrozenDelivery $fixture PublishDevelop $promoter -AllowFailure).exitCode | Should -Not -Be 0
+            $original=Read-FrozenAttempt $fixture
+            [string]$original.promotionCommit | Should -BeExactly ([string]$original.candidate)
+            $checkpointPath=Join-Path $fixture.root '.git/itl/publication-attempts/develop.json'
+            $checkpoint=[IO.File]::ReadAllText($checkpointPath)
+            $fullRuns=@((Get-Content -LiteralPath $fixture.modeLog)|Where-Object {$_ -eq 'Full'}).Count
+            $fullRuns | Should -BeGreaterThan 0
+            # A later wall clock must not reach the promoted lock or its commit.
+            Start-Sleep -Seconds 2
+            $replanned=Invoke-FrozenDelivery $fixture PublishDevelop (@('-Replan',[string]$original.planId)+$promoter) -AllowFailure
+            $replanned.exitCode | Should -Not -Be 0
+            $replanned.stderr | Should -Match 'DELIVERY_REPLAN_INPUTS_UNCHANGED'
+            [IO.File]::ReadAllText($checkpointPath) | Should -BeExactly $checkpoint
+            @((Get-Content -LiteralPath $fixture.promoterLog)).Count | Should -Be 2
+            @((Get-Content -LiteralPath $fixture.modeLog)|Where-Object {$_ -eq 'Full'}).Count | Should -Be $fullRuns
+            (& git -C $fixture.root rev-parse ([string]$original.promotionRef)).Trim() | Should -BeExactly ([string]$original.promotionCommit)
+        } finally { $env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$prior; Remove-DeliveryFixture $fixture }
+    }
     It 'keeps an unchanged circuit and freezes a changed replacement across later registrations' {
         $fixture=$null; $prior=$env:ITL_TEST_FAIL_COMPONENT_FINALIZER
         try {

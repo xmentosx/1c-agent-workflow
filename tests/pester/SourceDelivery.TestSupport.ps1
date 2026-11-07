@@ -85,6 +85,7 @@ if ($Mode -eq 'Full') {
         kind = 'itl-workflow-full-qualification'; status = 'passed'; reusable = $true
         repository = [ordered]@{ commit = $head; tree = $tree; worktreeClean = $true }
         result = [ordered]@{ passed = 1; failed = 0; skipped = 0 }
+        finishedAt = [DateTime]::UtcNow.ToString('o')
     }
     Set-Content -LiteralPath (Join-Path $qualification 'full.json') -Encoding UTF8 -Value ($full | ConvertTo-Json -Depth 6)
 }
@@ -109,11 +110,11 @@ exit 0
 '@
         $fakePromoter = Join-Path $root "fake-compatibility-promoter.ps1"
         Set-Content -LiteralPath $fakePromoter -Encoding UTF8 -Value @'
-param([string]$RepositoryRoot, [string]$QualificationPath)
+param([string]$RepositoryRoot, [string]$QualificationPath, [string]$CheckedAt)
 $lockPath = Join-Path $RepositoryRoot 'templates\dependency-lock.json'
 $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $lock.dependencies.aiRules1c.compatibilityStatus = 'passed'
-$lock.dependencies.aiRules1c.compatibilityCheckedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+$lock.dependencies.aiRules1c.compatibilityCheckedAt = $(if ($CheckedAt) { $CheckedAt } else { [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') })
 [IO.File]::WriteAllText($lockPath, (($lock | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\compatibility-promoter.log') -Encoding UTF8 -Value $QualificationPath
 '@

@@ -229,15 +229,19 @@ function Get-DevelopCompatibilityQualificationPath {
 }
 
 function Save-DevelopCompatibilityQualification {
-    param([Parameter(Mandatory = $true)][string]$CandidateRoot, [Parameter(Mandatory = $true)][string]$Tree)
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot, [Parameter(Mandatory = $true)][string]$Tree, [string]$EnvironmentIdentity = "")
     $source = Join-Path $CandidateRoot "build\test-results\qualification\full.json"
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Full gate did not create reusable qualification file 'full.json'." }
     $target = Get-DevelopCompatibilityQualificationPath -Tree $Tree
+    $environmentPath = Join-Path (Split-Path -Parent $target) "environment.txt"
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
     $staging = "$target.$([guid]::NewGuid().ToString('N')).tmp"
     try {
+        # A stale environment binding must never outlive the record it describes.
+        Remove-Item -LiteralPath $environmentPath -Force -ErrorAction SilentlyContinue
         Copy-Item -LiteralPath $source -Destination $staging -Force
         Move-Item -LiteralPath $staging -Destination $target -Force
+        if ($EnvironmentIdentity) { [IO.File]::WriteAllText($environmentPath, $EnvironmentIdentity, [Text.UTF8Encoding]::new($false)) }
     } finally {
         Remove-Item -LiteralPath $staging -Force -ErrorAction SilentlyContinue
     }
@@ -245,9 +249,14 @@ function Save-DevelopCompatibilityQualification {
 }
 
 function Restore-DevelopCompatibilityQualification {
-    param([Parameter(Mandatory = $true)][string]$CandidateRoot, [Parameter(Mandatory = $true)][string]$Tree)
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot, [Parameter(Mandatory = $true)][string]$Tree, [string]$EnvironmentIdentity = "")
     $source = Get-DevelopCompatibilityQualificationPath -Tree $Tree
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { return $false }
+    if ($EnvironmentIdentity) {
+        $environmentPath = Join-Path (Split-Path -Parent $source) "environment.txt"
+        if (-not (Test-Path -LiteralPath $environmentPath -PathType Leaf)) { return $false }
+        if ([IO.File]::ReadAllText($environmentPath, [Text.UTF8Encoding]::new($false)) -cne $EnvironmentIdentity) { return $false }
+    }
     try {
         $qualification = Get-Content -LiteralPath $source -Raw -Encoding UTF8 | ConvertFrom-Json
         $head = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim()
@@ -259,6 +268,21 @@ function Restore-DevelopCompatibilityQualification {
     New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
     Copy-Item -LiteralPath $source -Destination (Join-Path $targetRoot "full.json") -Force
     return $true
+}
+
+function Get-DevelopCompatibilityCheckedAt {
+    # The promotion is a pure function of the queued candidate and its Full
+    # evidence: the lock timestamp and the commit dates come from that evidence,
+    # rounded up to the whole second the lock records, never from the clock.
+    param([Parameter(Mandatory = $true)][string]$QualificationPath)
+    $value = (Get-Content -LiteralPath $QualificationPath -Raw -Encoding UTF8 | ConvertFrom-Json).finishedAt
+    if ($value -is [DateTime]) { $finished = ([DateTime]$value).ToUniversalTime() }
+    elseif ($value -is [string] -and -not [string]::IsNullOrWhiteSpace($value)) {
+        $finished = [DateTimeOffset]::Parse($value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).UtcDateTime
+    } else { throw "Full qualification has no finishedAt; ai_rules compatibility cannot be promoted from it." }
+    $whole = $finished.AddTicks(-($finished.Ticks % [TimeSpan]::TicksPerSecond))
+    if ($whole -lt $finished) { $whole = $whole.AddSeconds(1) }
+    return $whole.ToString("yyyy-MM-ddTHH:mm:ssZ", [Globalization.CultureInfo]::InvariantCulture)
 }
 
 function Restore-DevelopCompatibilityPromotion {
@@ -300,20 +324,16 @@ function Invoke-DevelopCompatibilityPromotion {
         throw "ai_rules compatibility promoter is missing: $script:CompatibilityPromoterScript"
     }
 
-    $compatibilityQualificationRestored = $false
-    $recordedCompatibilityTree = if ($Attempt.PSObject.Properties.Name -contains "compatibilityQualifiedTree") { [string]$Attempt.compatibilityQualifiedTree } else { "" }
-    $recordedCompatibilityEnvironment = if ($Attempt.PSObject.Properties.Name -contains "compatibilityEnvironmentIdentity") { [string]$Attempt.compatibilityEnvironmentIdentity } else { "" }
-    if ($recordedCompatibilityTree -ceq $QueuedTree -and $recordedCompatibilityEnvironment -ceq (Get-DevelopPublicationEnvironmentIdentity)) {
-        $compatibilityQualificationRestored = Restore-DevelopCompatibilityQualification -CandidateRoot $CandidateRoot -Tree $QueuedTree
-    }
+    # The tree-keyed record bound to its environment owns reuse, so a replaced
+    # attempt neither repeats Full nor changes the promotion inputs.
+    $environmentIdentity = Get-DevelopPublicationEnvironmentIdentity
+    $compatibilityQualificationRestored = Restore-DevelopCompatibilityQualification -CandidateRoot $CandidateRoot -Tree $QueuedTree -EnvironmentIdentity $environmentIdentity
     if (-not $compatibilityQualificationRestored) {
         Assert-DevelopPublicationStageMayRun -Attempt $Attempt -Stage "compatibility-qualification"
         Assert-DevelopPublicationOperationBudget -StartedAt $OperationStartedAt -NextStage "ai_rules compatibility qualification"
         try {
             Invoke-SourceGate -Mode "Full" -WorkingRoot $CandidateRoot -TargetBaseRef $RemoteBefore
-            [void](Save-DevelopCompatibilityQualification -CandidateRoot $CandidateRoot -Tree $QueuedTree)
-            $Attempt | Add-Member -NotePropertyName compatibilityQualifiedTree -NotePropertyValue $QueuedTree -Force
-            $Attempt | Add-Member -NotePropertyName compatibilityEnvironmentIdentity -NotePropertyValue (Get-DevelopPublicationEnvironmentIdentity) -Force
+            [void](Save-DevelopCompatibilityQualification -CandidateRoot $CandidateRoot -Tree $QueuedTree -EnvironmentIdentity $environmentIdentity)
             Clear-DevelopPublicationStageFailure -Attempt $Attempt -Stage "compatibility-qualification"
             Write-DevelopPublicationAttempt -Attempt $Attempt
         } catch {
@@ -324,13 +344,24 @@ function Invoke-DevelopCompatibilityPromotion {
 
     Assert-DevelopPublicationStageMayRun -Attempt $Attempt -Stage "compatibility-promotion"
     try {
-        $promotionOutput = @(& $script:CompatibilityPromoterScript -RepositoryRoot $CandidateRoot -QualificationPath (Join-Path $CandidateRoot "build\test-results\qualification\full.json") 6>&1)
+        $qualificationPath = Join-Path $CandidateRoot "build\test-results\qualification\full.json"
+        $checkedAt = Get-DevelopCompatibilityCheckedAt -QualificationPath $qualificationPath
+        $promotionOutput = @(& $script:CompatibilityPromoterScript -RepositoryRoot $CandidateRoot -QualificationPath $qualificationPath -CheckedAt $checkedAt 6>&1)
         $status = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("status", "--porcelain", "--untracked-files=no")
         $unexpected = @($status.stdout -split "`r?`n" | Where-Object { $_ -and $_ -notmatch '^ M templates/dependency-lock\.json$' })
         if ($unexpected.Count -gt 0) { throw "ai_rules compatibility promotion changed unexpected tracked paths: $($unexpected -join ', ')" }
         [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("add", "--", "templates/dependency-lock.json"))
         $revision = [int]((Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.aiRules1c.downstreamRevision)
-        $commit = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("commit", "-m", "chore: promote ai rules r$revision compatibility") -AllowFailure
+        $previousAuthorDate = [Environment]::GetEnvironmentVariable("GIT_AUTHOR_DATE", "Process")
+        $previousCommitterDate = [Environment]::GetEnvironmentVariable("GIT_COMMITTER_DATE", "Process")
+        try {
+            $env:GIT_AUTHOR_DATE = $checkedAt
+            $env:GIT_COMMITTER_DATE = $checkedAt
+            $commit = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("commit", "-m", "chore: promote ai rules r$revision compatibility") -AllowFailure
+        } finally {
+            if ($null -eq $previousAuthorDate) { Remove-Item Env:GIT_AUTHOR_DATE -ErrorAction SilentlyContinue } else { $env:GIT_AUTHOR_DATE = $previousAuthorDate }
+            if ($null -eq $previousCommitterDate) { Remove-Item Env:GIT_COMMITTER_DATE -ErrorAction SilentlyContinue } else { $env:GIT_COMMITTER_DATE = $previousCommitterDate }
+        }
         if ($commit.exitCode -ne 0) { throw "Unable to commit the ai_rules compatibility promotion." }
         $promotionCommit = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $promotionTree = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
