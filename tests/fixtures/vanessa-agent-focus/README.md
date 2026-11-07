@@ -27,3 +27,25 @@ same code sent without the reset executes but leaves no reply.
 This is executable evidence, not proof of an installed TestClient, the monitor
 form UI or OS window focus. Native qualification of the paired build remains
 required.
+
+## r11 probes
+
+The `r11-*.os` probes run production methods of the `1.2.043.42-itl-r11` recipe
+for the PM5 defects of 06.11.2026:
+
+- `r11-clipboard-route.os`: the clipboard code steps in agent, manual and
+  channel-less launches, with the PM5 calibration exception and a compilation
+  error; `vanessa-agent.os` signals the upstream clipboard entry by raising.
+- `r11-feature-load.os` with `mcp-server.os`: run_scenario reload decision,
+  SHA-256 of the loaded bytes, a file changed during the load, XML-invalid
+  characters with their position and a missing file.
+- `r11-row-settle.os` with `row-table.os`: the navigated row is read once per
+  Vanessa sleep until it settles; the PM5 tree first shows the requested row and
+  then the row its activation handler returned to.
+- `r11-html-dom.os` with `dom-node.os`, `ui-field.os` and `ui-window.os`: the
+  DOM search of the paired VAExtension form and its caller. The only adapted
+  production text is the `ТестируемаяКнопкаФормы` type literal, which OneScript
+  does not define.
+
+They do not prove the TestClient DOM bridge, platform dialogs or window
+matching; the native build and the Release E2E stage remain required.

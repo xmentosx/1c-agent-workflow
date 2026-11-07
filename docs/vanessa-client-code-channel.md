@@ -99,6 +99,14 @@ consumer's exclusive claim and publishing a failed result, so it never runs
 later. Manual launches, internal library callers and a root without MAX_PATH
 room keep the form route. Executable evidence: `VanessaAgentFocus.Tests.ps1`.
 
+Revision `1.2.043.42-itl-r11` sends the three `через буфер обмена` variants
+through the same route with their own mode (client, server, privileged server).
+Upstream places their code on the clipboard, runs the TestClient command and
+continues without reading its outcome, so an exception or a compilation error
+passed the step (PM5, 06.11.2026). An agent launch without a usable channel
+rejects these variants with `ITL_CLIENT_CODE_CHANNEL_UNAVAILABLE`; manual
+launches keep the clipboard route.
+
 ## Connection identity and native evidence
 
 The registered r11 change at `75a36db` passed 578 Targeted tests. Its paired native
