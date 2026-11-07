@@ -526,6 +526,49 @@
         }
     }
 
+    It "names the helper error when a clean merge stops before commit without unmerged paths" {
+        # Release E2E: a helper error after a clean merge was reported only as
+        # "merge conflicts remain" with files='<none>', hiding its cause.
+        $fixture = New-LifecycleMergeSourceIntegrityFixture
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                $script:FailureCategory = ""
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Set-RunStage { param([string]$Stage, [string]$Detail) }
+                function Set-RunFailureContext { param([string]$Category, [string]$RequiredAction); $script:FailureCategory = $Category }
+                function Resolve-RefreshDependencyLockMergeConflict { throw "FIXTURE_CLIENT_NOT_ATTACHED: 'claude-code' is not attached.`r`nSecond line." }
+                $message = ""
+                try {
+                    Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch-lite" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{ message = $message; category = $script:FailureCategory; mergeInProgress = Test-GitMergeInProgress; conflicts = @($script:MergeState.pendingMergeConflictPaths) }
+            } $fixture
+
+            $result.message | Should -Match "^LIFECYCLE_MERGE_CONFLICT operation='refresh-dev-branch-lite' reason='merge stopped before commit without unmerged paths: FIXTURE_CLIENT_NOT_ATTACHED: `"claude-code`" is not attached\. Second line\.' files='<none>'"
+            $result.category | Should -Be "merge-conflict"
+            $result.mergeInProgress | Should -BeTrue
+            $result.conflicts | Should -BeNullOrEmpty
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "blocks a clean merge-created duplicate BSL method and resumes after agent repair" {
         $fixture = New-LifecycleMergeBslDuplicateFixture
         try {
