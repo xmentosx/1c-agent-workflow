@@ -559,8 +559,9 @@ Describe 'Source quality catalog contracts' {
         # VanessaVerificationDiagnostics.Tests.ps1: 8 cases, 6.2s in WinPS 5.1 and
         # 6.1s in pwsh 7.6.5 (2026-11-06); reserve 15s for this explicit addition.
         $diagnosticsSeconds = 15.0
-        # VanessaAgentFocus.Tests.ps1: 16 cases, 5.4s in WinPS 5.1 (2026-11-06); reserve 15s for this explicit addition.
-        $agentFocusSeconds = 15.0
+        # VanessaAgentFocus.Tests.ps1: 50 cases after the r11 recipe, 32.7-38.5s in WinPS 5.1 under
+        # full CPU load (2026-11-07); reserve 45s for this explicit addition.
+        $agentFocusSeconds = 45.0
         # WorkflowUpdateRunSharedInputs.Tests.ps1: 2 cases, 13.5s in WinPS 5.1 (2026-11-06); reserve 20s for this explicit addition.
         $runSharedInputsSeconds = 20.0
         [double]$runSharedInputsOwner.budgetSeconds | Should -BeGreaterOrEqual $runSharedInputsSeconds
