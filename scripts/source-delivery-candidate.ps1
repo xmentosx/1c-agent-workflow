@@ -898,6 +898,9 @@ function Publish-AccumulatedDevelop {
         $attempt | Add-Member -NotePropertyName planPath -NotePropertyValue $deliveryPlanPath -Force
         $attempt | Add-Member -NotePropertyName releaseCapabilities -NotePropertyValue @($deliveryPlan.releaseCapabilities) -Force
         $attempt | Add-Member -NotePropertyName fullReleaseRequested -NotePropertyValue $fullReleaseRequested -Force
+        $planApproval = Get-Variable -Name DeliveryPlanApproval -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        if ($planApproval) { $attempt | Add-Member -NotePropertyName planApproval -NotePropertyValue $planApproval -Force }
+        else { $attempt.PSObject.Properties.Remove('planApproval') }
         Write-DevelopPublicationAttempt -Attempt $attempt
         [void](Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path)
         $developEnvironmentIdentity = Get-DevelopPublicationEnvironmentIdentity
