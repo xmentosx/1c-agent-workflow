@@ -878,6 +878,7 @@ $exitCode = 1
 $runDirectory = ""
 $statusPath = ""
 $logPath = ""
+$argumentsErrorPath = ""
 $runnerFailureMessage = ""
 $runnerFailureNoProgressSeconds = 0
 
@@ -903,7 +904,8 @@ if ($windowed) {
     $logPath = Join-Path $runDirectory "console.log"
     [System.IO.File]::WriteAllText($logPath, "", $utf8)
     $helperPath = Join-Path $PSScriptRoot "agent-1c.ps1"
-    $monitoredArgs = @("-ProjectRoot", $projectRoot, "-RunStatusPath", $statusPath, "-RunLogPath", $logPath) + @($helperArgs)
+    $argumentsErrorPath = $statusPath + ".arguments-error"
+    $monitoredArgs =@("-ProjectRoot", $projectRoot, "-RunStatusPath", $statusPath, "-RunLogPath", $logPath) + @($helperArgs)
     $helperInvocation = "& " + (ConvertTo-PowerShellLiteral -Value $helperPath) + " " + ((@($monitoredArgs) | ForEach-Object { ConvertTo-PowerShellArgumentToken -Value ([string]$_) }) -join " ")
     $commandText = @"
 `$utf8 = New-Object System.Text.UTF8Encoding `$false
@@ -956,6 +958,11 @@ try {
 } catch {
     [Console]::Error.WriteLine(`$_.Exception.Message)
     Write-ItlCompactRunLogRecord `$_.Exception.Message ([DateTime]::Now)
+    # The helper rejected its own command line before it could publish status.
+    `$itlBinding = `$_.Exception -as [System.Management.Automation.ParameterBindingException]
+    if (`$null -ne `$itlBinding -and `$null -ne `$itlBinding.CommandInvocation -and [string]`$itlBinding.CommandInvocation.MyCommand.Path -ieq $(ConvertTo-PowerShellLiteral -Value $helperPath)) {
+        [IO.File]::WriteAllText($(ConvertTo-PowerShellLiteral -Value $argumentsErrorPath), `$itlBinding.Message, `$utf8)
+    }
     `$helperExitCode = 1
 } finally {
     try {
@@ -1161,10 +1168,17 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     $now = Get-Date
     $effectiveExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
     $previousStage = [string](Get-ObjectValue -Object $status -Name "stage" -Default "")
-    $message = if ($runnerFailureMessage) { $runnerFailureMessage } else { "ITL helper exited with code $exitCode before writing a terminal status. Log: $logPath" }
+    # A command line split by the caller's shell fails parameter binding before
+    # the helper can publish status; report it as an argument error, not an exit.
+    $argumentsError = ""
+    if (-not $runnerFailureMessage -and $argumentsErrorPath -and (Test-Path -LiteralPath $argumentsErrorPath -PathType Leaf)) {
+        $argumentsError = ([IO.File]::ReadAllText($argumentsErrorPath, $utf8)).Trim()
+    }
+    $argumentsRequiredAction = if ($argumentsError) { "Repeat the command with every value passed as one named argument (-Name value); quote a value that contains spaces as a single argument." } else { "" }
+    $message = if ($runnerFailureMessage) { $runnerFailureMessage } elseif ($argumentsError) { "ITL_ARGUMENTS_INVALID agent-1c.ps1 rejected its arguments before starting: $argumentsError $argumentsRequiredAction Log: $logPath" } else { "ITL helper exited with code $exitCode before writing a terminal status. Log: $logPath" }
     $operationTimedOut = [string]$runnerFailureMessage -like "RUNNER_OPERATION_TIMEOUT*"
-    $runnerStage = if ($operationTimedOut) { "runner.operation-timeout" } elseif ($runnerFailureMessage) { "runner.status-stale" } else { "runner.helper-exited" }
-    $runnerErrorCode = if ($operationTimedOut) { "LIFECYCLE_OPERATION_TIMEOUT" } elseif ($runnerFailureMessage) { "LIFECYCLE_OPERATION_STATUS_STALE" } else { "LIFECYCLE_OPERATION_HELPER_EXITED" }
+    $runnerStage = if ($operationTimedOut) { "runner.operation-timeout" } elseif ($runnerFailureMessage) { "runner.status-stale" } elseif ($argumentsError) { "runner.arguments-invalid" } else { "runner.helper-exited" }
+    $runnerErrorCode = if ($operationTimedOut) { "LIFECYCLE_OPERATION_TIMEOUT" } elseif ($runnerFailureMessage) { "LIFECYCLE_OPERATION_STATUS_STALE" } elseif ($argumentsError) { "LIFECYCLE_OPERATION_ARGUMENTS_INVALID" } else { "LIFECYCLE_OPERATION_HELPER_EXITED" }
     if (-not $windowed) {
         $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
         $lifecycleRecord = Get-RunnerOwnedLifecycleRecord -Path $lifecyclePath -HelperProcessId $helperProcess.Id -Action $action -ProjectRoot $projectRoot
@@ -1210,7 +1224,7 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     Set-ObjectValue -Object $status -Name "errorMessage" -Value $message
     Set-ObjectValue -Object $status -Name "errorCode" -Value $runnerErrorCode
     Set-ObjectValue -Object $status -Name "errorCategory" -Value "runner"
-    Set-ObjectValue -Object $status -Name "requiredAction" -Value ""
+    Set-ObjectValue -Object $status -Name "requiredAction" -Value $argumentsRequiredAction
     Set-ObjectValue -Object $status -Name "blockerRequiresUserDecision" -Value $false
     Set-ObjectValue -Object $status -Name "blockerRetryOriginalCommand" -Value $false
     Set-ObjectValue -Object $status -Name "stage" -Value $runnerStage

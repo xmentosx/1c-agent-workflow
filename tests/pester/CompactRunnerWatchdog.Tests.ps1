@@ -649,6 +649,63 @@ exit 7
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "reports a caller-split helper argument as an argument error instead of a helper exit" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl разбитый аргумент " + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            # The real entrypoint: binding fails before it loads any library.
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1") -Destination $scriptRoot
+            # A shell split the grant value; its second word must not bind positionally.
+            Push-Location -LiteralPath $tempRoot
+            try { $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "extend-verification-repair", "-RepairSessionId", "native-session", "-VerificationRepairMaxAttempts", "10", "-VerificationRepairGrantSource", "fixture:", "продлить") }
+            finally { Pop-Location }
+            $processResult.exitCode | Should -Not -Be 0
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.arguments-invalid"
+            $summary.error | Should -Match "ITL_ARGUMENTS_INVALID"
+            $summary.error | Should -Match "rejected its arguments before starting: .*продлить"
+            $summary.error | Should -Not -Match "CatalogAction"
+            $summary.nextAction | Should -Match "one named argument"
+
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_ARGUMENTS_INVALID"
+            $status.stage | Should -Be "runner.arguments-invalid"
+            $status.requiredAction | Should -Match "one named argument"
+            $status.errorMessage | Should -Match "продлить"
+            $summary.statusPath | Should -BeLike ($tempRoot + "*")
+            Test-Path -LiteralPath ($summary.statusPath + ".arguments-error") | Should -BeTrue
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "keeps a nested command binding failure inside the helper classified as a helper exit" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl вложенная привязка " + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+[CmdletBinding(PositionalBinding = $false)]
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+function Invoke-NestedFixture([string]$Name) { $Name }
+Invoke-NestedFixture -Unknown 'значение'
+'@
+            Push-Location -LiteralPath $tempRoot
+            try { $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch") }
+            finally { Pop-Location }
+            $processResult.exitCode | Should -Not -Be 0
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.stage | Should -Be "runner.helper-exited"
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_HELPER_EXITED"
+            $summary.statusPath | Should -BeLike ($tempRoot + "*")
+            Test-Path -LiteralPath ($summary.statusPath + ".arguments-error") | Should -BeFalse
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "cleans an exact lifecycle-owned Vanessa run after helper exit" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-vanessa-recovery-" + [guid]::NewGuid().ToString("N"))
         try {

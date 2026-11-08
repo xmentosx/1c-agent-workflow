@@ -577,7 +577,9 @@ function Write-LauncherRunStatus {
         [string]$Stage,
         [string]$StageDetail,
         [AllowNull()][object]$ExistingStatus = $null,
-        [int]$HelperProcessId = 0
+        [int]$HelperProcessId = 0,
+        [string]$ErrorCode = "",
+        [string]$RequiredAction = ""
     )
 
     $now = Get-Date
@@ -622,6 +624,11 @@ function Write-LauncherRunStatus {
         recoveryReason = $recoveryReason
         resumeStage = $resumeStage
     }
+    if ($ErrorCode) {
+        $payload.errorCode = $ErrorCode
+        $payload.errorCategory = "runner"
+        $payload.requiredAction = $RequiredAction
+    }
 
     [System.IO.File]::WriteAllText($statusPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $utf8)
 }
@@ -651,7 +658,9 @@ function Fail-Launcher {
         [string]$Stage,
         [string]$StageDetail,
         [AllowNull()][object]$ExistingStatus = $null,
-        [int]$HelperProcessId = 0
+        [int]$HelperProcessId = 0,
+        [string]$ErrorCode = "",
+        [string]$RequiredAction = ""
     )
 
     $cleanupMessage = Invoke-LauncherGitIndexLockCleanup
@@ -670,7 +679,9 @@ function Fail-Launcher {
         -Stage $Stage `
         -StageDetail $StageDetail `
         -ExistingStatus $ExistingStatus `
-        -HelperProcessId $HelperProcessId
+        -HelperProcessId $HelperProcessId `
+        -ErrorCode $ErrorCode `
+        -RequiredAction $RequiredAction
     [Console]::Error.WriteLine($fullMessage)
     exit $effectiveExitCode
 }
@@ -706,6 +717,7 @@ $runDir = Join-Path $runsRoot $runId
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 $statusPath = Join-Path $runDir "status.json"
 $logPath = Join-Path $runDir "console.log"
+$argumentsErrorPath = $statusPath + ".arguments-error"
 Initialize-GitIndexLockTracking
 
 $powershell = (Get-Command powershell -ErrorAction SilentlyContinue | Select-Object -First 1).Source
@@ -743,6 +755,11 @@ try {
     }
 } catch {
     [Console]::Error.WriteLine(`$_.Exception.Message)
+    # The helper rejected its own command line before it could publish status.
+    `$agent1cBinding = `$_.Exception -as [System.Management.Automation.ParameterBindingException]
+    if (`$null -ne `$agent1cBinding -and `$null -ne `$agent1cBinding.CommandInvocation -and [string]`$agent1cBinding.CommandInvocation.MyCommand.Path -ieq $(ConvertTo-PowerShellLiteral $helperFull)) {
+        [IO.File]::WriteAllText($(ConvertTo-PowerShellLiteral $argumentsErrorPath), `$agent1cBinding.Message, `$utf8)
+    }
     `$agent1cExitCode = 1
 }
 # Leave through the host: [Environment]::Exit on the pipeline thread races the
@@ -836,6 +853,22 @@ while ($true) {
             continue
         }
         $exitCode = ConvertTo-IntOrDefault -Value $process.ExitCode -Default 1
+        if (Test-Path -LiteralPath $argumentsErrorPath -PathType Leaf) {
+            # A command line split by the caller's shell fails parameter binding
+            # before the helper can publish status; report it as an argument error.
+            $argumentsError = ([IO.File]::ReadAllText($argumentsErrorPath, $utf8)).Trim()
+            $requiredAction = "Repeat the command with every value passed as one named argument (-Name value); quote a value that contains spaces as a single argument."
+            $message = "ITL_ARGUMENTS_INVALID agent-1c.ps1 rejected its arguments before starting: $argumentsError $requiredAction Log: $logPath"
+            Fail-Launcher `
+                -ExitCode $exitCode `
+                -Message $message `
+                -Stage "launcher.arguments-invalid" `
+                -StageDetail $message `
+                -ExistingStatus $status `
+                -HelperProcessId $process.Id `
+                -ErrorCode "LIFECYCLE_OPERATION_ARGUMENTS_INVALID" `
+                -RequiredAction $requiredAction
+        }
         $message = "External ITL helper exited with code $($process.ExitCode) before writing a terminal status. Log: $logPath"
         Fail-Launcher `
             -ExitCode $exitCode `
