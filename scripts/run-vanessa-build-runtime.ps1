@@ -62,6 +62,8 @@ try {
             (Join-Path $buildWorkRoot 'out'), (Join-Path $buildSourceRoot 'features/Libraries'),
             [IO.Path]::GetDirectoryName([string]$buildRequest.platformExe), $buildBases[2].path) `
         -Bases @($buildBases[1], $buildBases[2]) -Purpose 'vanessa-build-single'
+    $buildRuntimeResult.stages += Invoke-VanessaBuildThinClientCheck -Base $buildBases[2] -User $buildTemplate.user -WorkRoot $buildWorkRoot `
+        -EpfPath (Join-Path $buildWorkRoot ('out\Temp\DistribVanessaAutomationsingle\' + [string]$buildManifest.artifact.entryPoint))
     if ($buildManifest.PSObject.Properties['pairedExtension'] -and $buildManifest.pairedExtension.required) {
         $buildRuntimeResult.pairedExtension = Invoke-VanessaBuildPairedExtension -SourceRoot $buildSourceRoot -WorkRoot $buildWorkRoot `
             -InfoBasePath $buildBases[2].path -User $buildTemplate.user -Specification $buildManifest.pairedExtension
