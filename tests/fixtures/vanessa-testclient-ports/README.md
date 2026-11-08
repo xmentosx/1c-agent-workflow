@@ -18,3 +18,21 @@ both to the first port. B's unchanged connection assertion failed with
 `ITL_CLIENT_B_WRONG_DATABASE`. These fixtures do not themselves prove native
 candidate acceptance. Upstream code is BSD-3-Clause; see the candidate asset's
 `LICENSE.upstream`.
+
+## 1.2.043.42 listening sockets (`listeners-*`)
+
+`listeners-source.json` pins the verbatim 1.2.043.42 text of
+`ПроверитьПортНаЗанятость` (КлиентТестирования) and `ПолучитьМассивЗанятыхПортов`
+(ОбщегоНазначенияVA) at commit `a0ce2ee`, with three lines of surrounding
+context so the recipe hunks apply. The test applies the hunks of a recipe, runs
+every complete patched method in OneScript and simulates only `netstat -ano`
+and `ss -ltn` through `listeners-vanessa.os`.
+
+Upstream took the local port of every netstat row in any state, and on Linux
+every `ss -tuwan4` socket. With the r11 allocator this rejected the assigned
+port of a TestClient closed a moment earlier with `ITL_TESTCLIENT_NO_FREE_PORT`
+(PM5 branch 1-branch4); `baseline-time-wait` reproduces that with the r11 recipe.
+From r12 only a TCP row with the unspecified foreign address `0.0.0.0:0` or
+`[::]:0` (any system language) or an `ss -ltn` LISTEN row occupies a port:
+TIME_WAIT, ESTABLISHED, CLOSE_WAIT and UDP rows of the port stay free, while
+IPv4, IPv6 and localized LISTENING rows stay busy.
