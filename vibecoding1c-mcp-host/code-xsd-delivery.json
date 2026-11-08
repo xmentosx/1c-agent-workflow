@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "distributionRepository": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
-  "distributionCommit": "b9e66483e365397d10edf75a5a5d82900c21d8dc",
+  "distributionCommit": "99b81a897fd5b864c4a3becc8ff13b27efeac523",
   "distributionPackageCommit": "c11f5e0cff1fa891423fc0fcf13104df03e69416",
-  "distributionBranch": "codex/code-xsd-role-rights-20261107",
+  "distributionBranch": "codex/karimov-per-config-nightly-20261108",
   "distributionBase": "9c02907121b2d513ea9f63bc6798e8e069f95205",
   "package": "hosts/dev-karimov-new/code-package.json",
   "packageId": "code-xsd-v3",
@@ -36,11 +36,11 @@
     "previousControls": "crash/resume and nested XSD controls unchanged and passed",
     "xsdLaneOnlyInvalidation": "passed (PARSER_VERSION 3)"
   },
-  "deliveryStatus": "Package and Linux/Windows proofs published in GitLab; PM5, PM4 and UNF installed, reindexed with force=false and accepted via public verify_xml; ERP pending a successful Windows nightly required by the Linux owner admission; workflow remains unpublished.",
+  "deliveryStatus": "Package and Linux/Windows proofs published in GitLab; PM5, PM4 and UNF installed, reindexed with force=false and accepted via public verify_xml; ERP installed on 2026-11-08 after the Karimov owner switched to per-configuration nightly admission (89c91cf) and the VM disk was expanded online to 274 GiB (1a9d8a0), reindexed with force=false and accepted; workflow remains unpublished.",
   "acceptanceLimit": "Generated corpus schema for role rights; full normative Designer rights semantics, cross-corpus inputs and other XML kinds are not claimed.",
   "deployedAcceptance": {
     "distributionEvidence": "releases/2026-11-07-code-xsd-role-rights/deployed-acceptance-20261107.json",
-    "evidenceSha256": "fd0e877de781760233c15aeb2e0b102c8e60aeb5da88b0014158705e0d362b7e",
+    "evidenceSha256": "b2239318fcc6cbe1ebdf6283b89300a1cac73bd655ffe18e5fe0fd3236ffeeb2",
     "normalReindexForce": false,
     "working1cDatabaseOperations": false,
     "workflowPublished": false,
@@ -59,8 +59,9 @@
         "generation": "20261106T220951Z-bd3507c0"
       },
       "erppm5-lts": {
-        "accepted": false,
-        "status": "pending: owner apply requires Windows nightly State=Ready and LastResult=0"
+        "accepted": true,
+        "generation": "20261108T095314Z-3c1d46f5",
+        "karimovOwnerPackageCommit": "1a9d8a0397f2b79577938955653c3057998137b2"
       }
     }
   },
