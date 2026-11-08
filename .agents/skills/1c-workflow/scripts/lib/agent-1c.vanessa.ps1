@@ -4633,17 +4633,30 @@ function Update-VanessaRunLiveness {
     }
 }
 
+function Get-VanessaTestClientConnectTimeoutSeconds {
+    # TESTMANAGER that never launches a TestClient (for example a modal
+    # platform error while it opens the EPF) cannot pass; stop it early.
+    $value = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "VANESSA_TESTCLIENT_CONNECT_TIMEOUT_SECONDS" -Default 300) -Default 300
+    if ($value -lt 0) {
+        throw "Invalid VANESSA_TESTCLIENT_CONNECT_TIMEOUT_SECONDS '$value'. Use a number of seconds; 0 disables the TestClient start check."
+    }
+    return $value
+}
+
 function New-VanessaTestClientStartupMonitor {
     param(
         [string]$RunDirectory,
         [string[]]$ProfileNames = @(),
-        [ValidateRange(1, 120)][int]$ExitDetectionSeconds = 5
+        [ValidateRange(1, 120)][int]$ExitDetectionSeconds = 5,
+        [ValidateRange(0, 86400)][int]$ConnectTimeoutSeconds = 0
     )
 
     return [pscustomobject][ordered]@{
         runDirectory = Resolve-Agent1cFullPath -Path $RunDirectory
         profileNames = @($ProfileNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
         exitDetectionSeconds = $ExitDetectionSeconds
+        connectTimeoutSeconds = $ConnectTimeoutSeconds
+        testClientSeen = $false
         lastProbeAt = [DateTime]::MinValue
         candidates = @{}
         failure = $null
@@ -4655,7 +4668,8 @@ function Test-VanessaTestClientStartupMonitor {
         [Parameter(Mandatory = $true)][object]$Monitor,
         [Parameter(Mandatory = $true)][object]$State,
         [int[]]$TestPorts = @(),
-        [Parameter(Mandatory = $true)][string]$RunParamsPath
+        [Parameter(Mandatory = $true)][string]$RunParamsPath,
+        [int]$ElapsedSeconds = -1
     )
 
     if ($null -ne $Monitor.failure -or @($Monitor.profileNames).Count -eq 0) {
@@ -4680,7 +4694,37 @@ function Test-VanessaTestClientStartupMonitor {
             processId = 0
         }
     }
-    if ($Monitor.candidates.Count -eq 0) { return $false }
+    if ($Monitor.candidates.Count -eq 0) {
+        $connectTimeout = [int](Get-StateValue -State $Monitor -Name "connectTimeoutSeconds" -Default 0)
+        if ($connectTimeout -le 0 -or [bool]$Monitor.testClientSeen -or $ElapsedSeconds -lt $connectTimeout) { return $false }
+        # A TestClient launched without a profile /Out file still counts.
+        try {
+            $testClients = @(Get-OneCProcessInfo -RequireSuccess | Where-Object {
+                [string](Get-StateValue -State $_ -Name "commandLine" -Default "") -match '(?i)(?:^|\s)/TESTCLIENT(?:\s|$)' -and
+                (Test-OneCVanessaTestProcessBelongsToRun -ProcessInfo $_ -State $State -TestPorts $TestPorts -RunParamsPath $RunParamsPath)
+            })
+        } catch {
+            return $false
+        }
+        if ($testClients.Count -gt 0) { $Monitor.testClientSeen = $true; return $false }
+        $identity = Get-OneCInfoBaseIdentity `
+            -InfoBaseKind ([string](Get-StateValue -State $State -Name "infoBaseKind" -Default "file")) `
+            -InfoBasePath ([string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default ""))
+        $Monitor.failure = [pscustomobject][ordered]@{
+            code = "ITL_VANESSA_TESTCLIENT_NOT_STARTED"
+            profileName = (@($Monitor.profileNames) -join ',')
+            infoBaseKey = [string]$identity.key
+            ports = @($TestPorts | Where-Object { $_ -gt 0 } | Select-Object -Unique)
+            outputPath = ''
+            processObserved = $false
+            processId = 0
+            detectedAt = $now
+            waitedSeconds = $ElapsedSeconds
+            connectTimeoutSeconds = $connectTimeout
+        }
+        return $true
+    }
+    $Monitor.testClientSeen = $true
 
     try {
         $processes = @(Get-OneCProcessInfo -RequireSuccess | Where-Object {
@@ -5826,9 +5870,13 @@ function Run-DevBranchTests {
     $cleanupDurationMs = [int64]0
     $eventLogDurationMs = [int64]0
     $postProcessStopwatch = $null
+    $testClientConnectTimeout = if ([int]$testClientTopology.requiredTestClientSlots -gt 0) {
+        [Math]::Min((Get-VanessaTestClientConnectTimeoutSeconds), $timeoutSeconds)
+    } else { 0 }
     $testClientStartupMonitor = New-VanessaTestClientStartupMonitor `
         -RunDirectory $runDirectory `
-        -ProfileNames @($testClientTopology.profiles | ForEach-Object { [string]$_.name })
+        -ProfileNames @($testClientTopology.profiles | ForEach-Object { [string]$_.name }) `
+        -ConnectTimeoutSeconds $testClientConnectTimeout
     Write-Host "Vanessa test timeout: $timeoutSeconds seconds"
     $admissionTargets = @(Get-VanessaTestClientAdmissionTargets -Topology $testClientTopology -DefaultState $state)
     $runDatabaseResources = @(Get-VanessaTestClientDatabaseResources -Topology $testClientTopology -DefaultState $state)
@@ -5854,7 +5902,7 @@ function Run-DevBranchTests {
                 Update-VanessaRunLiveness -Monitor $runLivenessMonitor -ProbeContext $probeContext -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
                 $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
                 if ($probeStatus.status -in @("passed", "failed")) { return $true }
-                return (Test-VanessaTestClientStartupMonitor -Monitor $testClientStartupMonitor -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath)
+                return (Test-VanessaTestClientStartupMonitor -Monitor $testClientStartupMonitor -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath -ElapsedSeconds ([int]$probeContext.elapsedSeconds))
             } `
             -CompletionGraceSeconds 10 `
             -OnTimeout {
@@ -5863,6 +5911,10 @@ function Run-DevBranchTests {
             }
         if ($null -ne $testClientStartupMonitor.failure) {
             $startupFailure = $testClientStartupMonitor.failure
+            if ([string]$startupFailure.code -ceq 'ITL_VANESSA_TESTCLIENT_NOT_STARTED') {
+                Set-RunFailureContext -Category 'runner'
+                throw "ITL_VANESSA_TESTCLIENT_NOT_STARTED: profiles='$($startupFailure.profileName)' infoBaseKey='$($startupFailure.infoBaseKey)' ports='$(@($startupFailure.ports) -join ',')' waitedSeconds=$($startupFailure.waitedSeconds). TESTMANAGER launched no owned /TESTCLIENT process within VANESSA_TESTCLIENT_CONNECT_TIMEOUT_SECONDS=$($startupFailure.connectTimeoutSeconds); the remaining $timeoutSeconds-second test timeout was not awaited. A platform error dialog in TESTMANAGER (for example a Vanessa form that does not compile in the thin client) or a very slow infobase start causes this; read the 1C process diagnostics and event log of this run, fix the cause or raise the setting, then repeat the run."
+            }
             throw "$($startupFailure.code): profile='$($startupFailure.profileName)' infoBaseKey='$($startupFailure.infoBaseKey)' ports='$(@($startupFailure.ports) -join ',')' processObserved=$($startupFailure.processObserved) pid=$($startupFailure.processId) out='$($startupFailure.outputPath)' waitedSeconds=$($startupFailure.waitedSeconds). The TestClient /Out file was created, but no matching owned /TESTCLIENT process remained; the 300-second Vanessa connection timeout was not awaited."
         }
         $runnerStopwatch.Stop()
