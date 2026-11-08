@@ -2148,7 +2148,15 @@ function Invoke-ItlOnDemandBackendBroker {
         $result = $null
         if ($null -ne $invocation) {
             $registered = Read-ItlOnDemandRuntimeState -Family $Family -InstanceId $InstanceId
-            if ($null -eq $registered) {
+            # ExpectedPid<=0: the facade never received launch evidence for this
+            # instance (a recovery replacement candidate). Its launch evidence is
+            # this worktree's own registration: start registers before launching,
+            # so an absent record means nothing was started under this id.
+            $callerEvidence = $ExpectedPid -gt 0
+            if ($null -eq $registered -and -not $callerEvidence) {
+                [void](Remove-ItlOnDemandOrphanPortLeases -Family $Family -InstanceId $InstanceId)
+                $result=Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership
+            } elseif ($null -eq $registered) {
                 $retained=Get-ItlOnDemandRetainedLaunchState -Invocation $invocation -ExpectedBackend (Get-StateValue $invocation 'expectedBackend' $null) `
                     -Family $Family -InstanceId $InstanceId -ExpectedPid $ExpectedPid -ExpectedPort $ExpectedPort -CatalogSha256 $CatalogSha256
                 $result=Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership -RetainedRuntimeState $retained
@@ -2167,7 +2175,7 @@ function Invoke-ItlOnDemandBackendBroker {
                 }
             }
         }
-        if ($null -eq $result) { $result = Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership -ExpectedRuntimeState $(if ($null -ne $invocation) { $invocation.expectedBackend.nativeLaunchProof } else { $null }) }
+        if ($null -eq $result) { $result = Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership -ExpectedRuntimeState $(if ($null -ne $invocation -and $ExpectedPid -gt 0) { $invocation.expectedBackend.nativeLaunchProof } else { $null }) }
     }
     } finally {
         if ($null -ne $startHandle) { $startHandle.Dispose() }

@@ -901,6 +901,46 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "confirms stop of a <Registration> recovery candidate without the original launch proof" -ForEach @(
+        @{Registration='never-registered'},@{Registration='registered'}
+    ) {
+        param($Registration)
+        # Observed 2026-11-08: a failed recover left the candidate id in every
+        # later stop; demanding the original proof for it retained the guard forever.
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl candidate stop путь " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $outcome = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:calls = [Collections.Generic.List[string]]::new()
+                $script:candidateRegistration = $Registration
+                function Read-ItlOnDemandExecutionInvocation {
+                    [pscustomobject]@{plan=[pscustomobject]@{family='roctup'};expectedBackend=[pscustomobject]@{instanceId=('a'*32);pid=101;port=9874;nativeLaunchProof=[pscustomobject]@{instanceId=('a'*32);pid=101}}}
+                }
+                function Confirm-ItlOnDemandExecutionInvocation { $null }
+                function Read-ItlOnDemandRuntimeState {
+                    if ($script:candidateRegistration -eq 'registered') { [pscustomobject]@{instanceId=('b'*32);pid=103;port=9875} }
+                }
+                function Get-ItlOnDemandRetainedLaunchState { throw 'ITL_ONDEMAND_RECOVERY_LAUNCH_PROOF_REQUIRED: must not be demanded for a candidate' }
+                function Remove-ItlOnDemandOrphanPortLeases { param($Family,$InstanceId) $script:calls.Add("orphan-$InstanceId"); @() }
+                function Stop-ItlOnDemandBackendInstance {
+                    param($Family,$InstanceId,[switch]$StrictOwnership,$RetainedRuntimeState,$ExpectedRuntimeState)
+                    $script:calls.Add("stop-$InstanceId-expected=$($null -ne $ExpectedRuntimeState)-retained=$($null -ne $RetainedRuntimeState)")
+                    [pscustomobject]@{status='stopped';family=$Family;instanceId=$InstanceId}
+                }
+                $lines = @(Invoke-ItlOnDemandBackendBroker -Operation stop -Family roctup -InstanceId ('b'*32) -CatalogSha256 ('c'*64) -ExpectedPid -1 -ExpectedPort 0)
+                [pscustomobject]@{lines=$lines;calls=$script:calls.ToArray()}
+            }
+            $marker = [string](@($outcome.lines | Where-Object { [string]$_ -like 'ITL_ONDEMAND_RESULT=*' })[-1])
+            ($marker.Substring('ITL_ONDEMAND_RESULT='.Length) | ConvertFrom-Json).status | Should -Be 'stopped'
+            $expectedCalls = @(if ($Registration -eq 'never-registered') { 'orphan-' + ('b'*32) }) + @('stop-' + ('b'*32) + '-expected=False-retained=False')
+            @($outcome.calls) | Should -Be $expectedCalls
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "keys ports by family, project, worktree, branch, and client instance" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-keys-" + [guid]::NewGuid().ToString("N"))
         try {
