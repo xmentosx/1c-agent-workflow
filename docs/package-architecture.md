@@ -639,6 +639,40 @@ bounded and contain no connection secrets. Source regression uses both families
 with real isolated processes/listeners and the existing OS execution guard;
 session discovery and port reservations are private fixtures, not live 1C proof.
 
+Architecture checkpoint approved on 2026-11-08: recovery authority inside one
+worktree is bounded by that worktree's branch resources, not by an unbroken
+proof chain for one exact launch. Three PM5 branches stayed blocked for hours
+because a lost proof link retained a guard forever (a never-launched recovery
+candidate demanded the original launch proof; the waiting lifecycle could only
+ask the same facade). Branch resources are the development infobase, the
+branch-local Vanessa service infobase, auxiliary contour bases, and this
+worktree's port leases and `.agent-1c` runtime; seed/source and other shared
+bases are excluded. Holders are found by the guard `resource_key` of those bases
+because the guard root is machine-wide. A holder belongs to this worktree only
+by scope evidence: a live guard holder whose creation identity matches its
+record and whose resources are all branch resources, with this `projectRoot`
+(older records: a parent chain to this worktree's helper/facade); a facade with
+this `--project-root`; a backend/TestManager/TestClient registered here or
+started by this facade; a `1cv8` process on a branch base that carries this
+worktree's `/Out` or parameter-file marker or parent. Anything else is unproven
+and only named. Protected: other worktrees and shared resources; interactive 1C
+on a branch base (the only case that asks the user); a mutating Designer within
+its own stall/hard timeouts (an orphan beyond them is stopped and the base goes
+to existing snapshot restoration or refresh); automatic replay of a call with an
+unknown outcome. One lifecycle function owns holder release; it runs as the
+first phase of `repair-dev-branch-tooling`, from a waiting lifecycle only for a
+holder that published `cleanup-unconfirmed` or `idle`, and from a facade for its
+own instance. Active holders and records without holder state are waited for
+within the caller's budget and named in progress with a release continuation.
+The guard record gains diagnostic `projectRoot` and `holderState` fields; OS
+handles remain the only admission authority. No new coordinator, global lock,
+elevation, installed migration or always-on client rule is added. Delivery is
+staged: never-launched candidate stop, holder release, facade self-reset, then
+removal of the retained-proof chain and the 2026-10-22 mailbox after the branch8
+reproducer passes. Rollback restores retained ownership; the added record fields
+stay ignorable. Acceptance is the original blocked operation completing, and the
+next call through the same facade succeeding, without manual process work.
+
 Architecture checkpoint: the user authorized this continuation design and its
 simplification on 2026-09-26. The existing update/refresh owner retains all
 lifecycle, Git, database and rollback authority. One worktree-local patch receipt
