@@ -11,6 +11,8 @@ It "classifies failures without widening the selected route" {
         (Get-DeliveryFailureClass -Message 'QUALITY_OWNER_MISSING') | Should -Be 'test-contract'
         (Get-DeliveryFailureClass -Message 'invalid parameter invocation') | Should -Be 'invocation'
         (Get-DeliveryFailureClass -Message 'port 1545 is occupied') | Should -Be 'environment'
+        (Get-DeliveryFailureClass -Message "Targeted source gate failed with exit code 1.`npester-selection-shards stopped after remaining mode budget 3593 seconds.") | Should -Be 'environment'
+        (Get-DeliveryFailureClass -Message 'Pester admission waiting for host physical/commit memory; pending=12') | Should -Be 'environment'
         (Get-DeliveryFailureClass -Message 'DELIVERY_PLAN identity mismatch') | Should -Be 'supervisor'
         (Get-DeliveryFailureClass -Message 'behavior assertion failed') | Should -Be 'product'
     }

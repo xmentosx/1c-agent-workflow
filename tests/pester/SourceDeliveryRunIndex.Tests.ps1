@@ -98,6 +98,22 @@ Describe 'Delivery run hot index' {
         $last.failure.stage | Should -BeExactly 'develop-e2e-upgrade-prerun'
         @($last.failure.tests) | Should -Be @("Focus.reports $nonAscii")
         $last.rawPath | Should -BeExactly ([IO.Path]::GetFullPath($raw))
+        $record.failureClass | Should -BeExactly 'product'
+        $script:DeliveryLastRunFailure.identity | Should -BeExactly "gate:Develop|stage=develop-e2e-upgrade-prerun|codes=ITL_VANESSA_TIMEOUT|tests=tests/pester/VanessaAgentFocus.Tests.ps1::Focus.reports $nonAscii"
+    }
+
+    It 'classifies a gate stopped by its stage budget from the stage detail, not the generic gate message' {
+        [void](New-RunIndexStore)
+        $root = Join-Path $TestDrive 'budget gate'
+        $local = Join-Path $root 'build\test-results\local'
+        [void][IO.Directory]::CreateDirectory($local)
+        $started = [DateTime]::UtcNow
+        $summary = @{ startedAt = $started.ToString('o'); tests = $null; stages = @(@{ name = 'pester'; status = 'failed'; durationMs = 3600000; finishedAt = $started.ToString('o'); detail = 'pester-selection-shards stopped after remaining mode budget 3593 seconds.' }) }
+        [IO.File]::WriteAllText((Join-Path $local 'check-summary.json'), ($summary | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        $raw = Write-DeliveryRunRecord -Mode Targeted -Status failed -ErrorMessage 'Targeted source gate failed with exit code 1. See C:\missing\gate-targeted.stdout.log' -WorkingRoot $root -StartedAt $started -FinishedAt $started.AddSeconds(3) -ExitCode 1
+        (Get-Content -LiteralPath $raw -Raw -Encoding UTF8 | ConvertFrom-Json).failureClass | Should -BeExactly 'environment'
+        $script:DeliveryLastRunFailure.failureClass | Should -BeExactly 'environment'
+        $script:DeliveryLastRunFailure.identity | Should -BeExactly 'gate:Targeted|stage=pester|codes=|tests='
     }
 
     It 'preserves native scenario execution through the raw record and authenticated hot index' {

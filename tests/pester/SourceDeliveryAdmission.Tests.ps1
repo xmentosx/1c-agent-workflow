@@ -1,6 +1,45 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
+    It 'blocks only a repeated owner gate failure, not two different ones or machine-side budget stops' {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Register-DevelopPublicationStageFailure','Register-DevelopPublicationGateFailure','Assert-DevelopPublicationStageMayRun','Clear-DevelopPublicationStageFailure','Get-DeliveryTextSha256','Get-DeliveryFailureClass','Get-DeliveryGateFailureIdentity')) { Invoke-Expression $definition.Extent.Text }
+            $RetryBlockedStage=$false
+            function Write-DevelopPublicationAttempt { }
+            $gateMessage = 'Develop source gate failed with exit code 1. See C:\t\itl-source-publish-develop-{0}\gate-develop.stdout.log'
+            function Register-Gate { param($Attempt, $Class, $Failure)
+                $script:DeliveryLastRunFailure = [pscustomobject]@{ mode='Develop'; failureClass=$Class; identity=(Get-DeliveryGateFailureIdentity -Mode Develop -Failure $Failure) }
+                Register-DevelopPublicationGateFailure -Attempt $Attempt -Stage 'Develop' -Message ($gateMessage -f [guid]::NewGuid().ToString('N'))
+            }
+            $pesterA = [pscustomobject]@{ stage='pester'; codes=@(); tests=@([pscustomobject]@{ file='tests/pester/A.Tests.ps1'; name='a fails' }) }
+            $pesterB = [pscustomobject]@{ stage='pester'; codes=@(); tests=@([pscustomobject]@{ file='tests/pester/B.Tests.ps1'; name='b fails' }) }
+            $budget = [pscustomobject]@{ stage='pester'; codes=@(); tests=@() }
+
+            $attempt=[pscustomobject]@{ failures=@() }
+            Register-Gate -Attempt $attempt -Class product -Failure $pesterA
+            Register-Gate -Attempt $attempt -Class product -Failure $pesterB
+            @($attempt.failures).Count | Should -Be 2
+            Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage 'Develop'
+
+            $attempt=[pscustomobject]@{ failures=@() }
+            Register-Gate -Attempt $attempt -Class environment -Failure $budget
+            Register-Gate -Attempt $attempt -Class environment -Failure $budget
+            $attempt.failures[0].count | Should -Be 2
+            Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage 'Develop'
+
+            $attempt=[pscustomobject]@{ failures=@() }
+            Register-Gate -Attempt $attempt -Class product -Failure $pesterA
+            Register-Gate -Attempt $attempt -Class product -Failure $pesterA
+            { Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage 'Develop' } | Should -Throw '*same failure twice*'
+
+            $script:DeliveryLastRunFailure = $null
+            $attempt=[pscustomobject]@{ failures=@() }
+            Register-DevelopPublicationGateFailure -Attempt $attempt -Stage 'Develop' -Message ($gateMessage -f ('a' * 32))
+            Register-DevelopPublicationGateFailure -Attempt $attempt -Stage 'Develop' -Message ($gateMessage -f ('b' * 32))
+            { Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage 'Develop' } | Should -Throw '*same failure twice*'
+        }
+    }
+
     It 'blocks repeated candidate corruption despite changing observed SHAs and preserves owner recovery' {
         & {
             foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Assert-DevelopPublicationCandidateIntegrity','Register-DevelopPublicationStageFailure','Assert-DevelopPublicationStageMayRun','Clear-DevelopPublicationStageFailure','Get-DeliveryTextSha256')) { Invoke-Expression $definition.Extent.Text }

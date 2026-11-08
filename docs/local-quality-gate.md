@@ -1198,7 +1198,10 @@ release-qualified -> component-finalized -> remote-pushed`. Retry начинае
 первой незавершённой фазы; сбой finalizer/push не повторяет gate. Новая identity
 кандидата/gate создаёт новую цепочку. После 60 минут новый этап не стартует. Два
 одинаковых сбоя блокируют третий; повтор после диагностики требует
-`-RetryBlockedStage`. Scope `deliveryPostGate` включает только delivery control
+`-RetryBlockedStage`. Для Develop/Release одинаковость определяют упавшая стадия,
+коды ошибок и упавшие тесты из записи прогона, а класс — сообщение упавшей
+стадии. Сбои класса `environment` (бюджет стадии, ожидание памяти, занятый порт)
+третий запуск не блокируют. Scope `deliveryPostGate` включает только delivery control
 plane, покрытый собственными source-delivery regression-тестами. Qualification
 хранится по stage/input fingerprint, поэтому исправление control plane не
 сбрасывает независимые Develop/Release capability proofs; изменившийся runtime

@@ -454,30 +454,46 @@ function Register-DevelopPublicationStageFailure {
         [Parameter(Mandatory = $true)][object]$Attempt,
         [Parameter(Mandatory = $true)][string]$Stage,
         [Parameter(Mandatory = $true)][string]$Message,
-        [string]$FailureIdentity = ""
+        [string]$FailureIdentity = "",
+        [string]$FailureClass = ""
     )
     # Candidate worktree names are intentionally random on every retry. Remove
     # that run-local token so the same owning failure opens the circuit breaker.
     $normalizedMessage = $Message.Trim() -replace '(?i)itl-source-publish-develop-[a-f0-9]{32}', 'itl-source-publish-develop-<attempt>'
     if (-not [string]::IsNullOrWhiteSpace($FailureIdentity)) { $normalizedMessage = $FailureIdentity }
     $signature = Get-DeliveryTextSha256 -Text $normalizedMessage
+    $class = if ($FailureClass) { $FailureClass } else { Get-DeliveryFailureClass -Message $Message -Stage $Stage }
     $failures = @($Attempt.failures)
     $existing = $failures | Where-Object { [string]$_.stage -eq $Stage -and [string]$_.signature -eq $signature } | Select-Object -First 1
     if ($existing) {
         $existing.count = [int]$existing.count + 1
         $existing.lastFailedAt = [DateTime]::UtcNow.ToString("o")
         $existing.message = $Message
-        if (-not $existing.PSObject.Properties["failureClass"]) { $existing | Add-Member -NotePropertyName failureClass -NotePropertyValue (Get-DeliveryFailureClass -Message $Message -Stage $Stage) }
+        $existing | Add-Member -NotePropertyName failureClass -NotePropertyValue $class -Force
     } else {
-        $failures += [pscustomobject]@{ stage = $Stage; failureClass = (Get-DeliveryFailureClass -Message $Message -Stage $Stage); signature = $signature; count = 1; lastFailedAt = [DateTime]::UtcNow.ToString("o"); message = $Message }
+        $failures += [pscustomobject]@{ stage = $Stage; failureClass = $class; signature = $signature; count = 1; lastFailedAt = [DateTime]::UtcNow.ToString("o"); message = $Message }
     }
     $Attempt.failures = $failures
     Write-DevelopPublicationAttempt -Attempt $Attempt
 }
 
+function Register-DevelopPublicationGateFailure {
+    # Develop and Release gates fail with the same "exit code 1, see <log>"
+    # message; the run record of that gate supplies identity and class.
+    param([Parameter(Mandatory = $true)][object]$Attempt, [Parameter(Mandatory = $true)][string]$Stage, [Parameter(Mandatory = $true)][string]$Message)
+    $gate = Get-Variable -Name DeliveryLastRunFailure -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($gate -and [string]$gate.mode -eq $Stage) {
+        Register-DevelopPublicationStageFailure -Attempt $Attempt -Stage $Stage -Message $Message -FailureIdentity ([string]$gate.identity) -FailureClass ([string]$gate.failureClass)
+    } else {
+        Register-DevelopPublicationStageFailure -Attempt $Attempt -Stage $Stage -Message $Message
+    }
+}
+
 function Assert-DevelopPublicationStageMayRun {
     param([Parameter(Mandatory = $true)][object]$Attempt, [Parameter(Mandatory = $true)][string]$Stage)
-    $blocked = @($Attempt.failures | Where-Object { [string]$_.stage -eq $Stage -and [int]$_.count -ge 2 } | Sort-Object lastFailedAt -Descending | Select-Object -First 1)
+    # A machine-side failure (budget spent waiting for memory, busy port) says
+    # nothing about the candidate; only repeated owner failures block a retry.
+    $blocked = @($Attempt.failures | Where-Object { [string]$_.stage -eq $Stage -and [int]$_.count -ge 2 -and [string]$_.failureClass -ne 'environment' } | Sort-Object lastFailedAt -Descending | Select-Object -First 1)
     if ($blocked.Count -eq 0) { return }
     if ($RetryBlockedStage) {
         Clear-DevelopPublicationStageFailure -Attempt $Attempt -Stage $Stage
@@ -940,7 +956,7 @@ function Publish-AccumulatedDevelop {
             } catch {
                 $gateFailure = $_
                 [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop" -Failed)
-                Register-DevelopPublicationStageFailure -Attempt $attempt -Stage "Develop" -Message $gateFailure.Exception.Message
+                Register-DevelopPublicationGateFailure -Attempt $attempt -Stage "Develop" -Message $gateFailure.Exception.Message
                 throw $gateFailure
             }
         }
@@ -957,7 +973,7 @@ function Publish-AccumulatedDevelop {
             } catch {
                 $gateFailure = $_
                 [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Release" -Failed)
-                Register-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release" -Message $gateFailure.Exception.Message
+                Register-DevelopPublicationGateFailure -Attempt $attempt -Stage "Release" -Message $gateFailure.Exception.Message
                 throw $gateFailure
             }
         }

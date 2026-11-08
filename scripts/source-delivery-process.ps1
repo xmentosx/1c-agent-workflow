@@ -694,6 +694,7 @@ function Close-DeliveryProcessJob {
 
 function Invoke-SourceGate {
     param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "", [int]$HardBudgetSeconds = 0, [string[]]$ReleaseCapability = @(), [string[]]$PrerunReleaseCapability = @(), [datetime]$DeadlineUtc = [DateTime]::MaxValue, [switch]$PassThru)
+    $script:DeliveryLastRunFailure = $null
     if ([DateTime]::UtcNow -ge $DeadlineUtc) { throw "$Mode source gate has no remaining operation budget; continue the original operation from its preserved checkpoint." }
     $gate = if ($script:GateScript -eq (Join-Path $script:Root "scripts\check.ps1")) { Join-Path $WorkingRoot "scripts\check.ps1" } else { $script:GateScript }
     if (-not (Test-Path -LiteralPath $gate -PathType Leaf)) { throw "Source gate was not found: $gate" }
@@ -874,7 +875,7 @@ function Get-DeliveryFailureClass {
     if ($value -match '(?i)cleanup|housekeeping|remove stale|could not be removed') { return "cleanup" }
     if ($value -match '(?i)QUALITY_OWNER_MISSING|quality contract|test contract|assertion contract') { return "test-contract" }
     if ($value -match '(?i)parameter|argument|ValidateSet|requires an explicit|is valid only|invocation') { return "invocation" }
-    if ($value -match '(?i)timeout|timed out|no.progress|port.+(?:busy|occupied)|environment|unavailable|access.+denied') { return "environment" }
+    if ($value -match '(?i)timeout|timed out|no.progress|port.+(?:busy|occupied)|environment|unavailable|access.+denied|remaining (?:mode|operation) budget|waiting for host [a-z/]+ memory') { return "environment" }
     if ($value -match '(?i)DELIVERY_PLAN|supervisor|queue|checkpoint|operation.+lock|publication stage') { return "supervisor" }
     return "product"
 }
@@ -1223,6 +1224,18 @@ function Get-DeliveryFailureSummary {
     }
 }
 
+function Get-DeliveryGateFailureIdentity {
+    # Repeated-failure identity of a gate: its failed stage, error codes and
+    # failed tests. Empty when the gate left none of them; callers then fall
+    # back to the normalized message.
+    param([Parameter(Mandatory = $true)][string]$Mode, [AllowNull()][object]$Failure)
+    if (-not $Failure) { return '' }
+    $codes = @($Failure.codes | ForEach-Object { [string]$_ } | Where-Object { $_ } | Sort-Object -Unique)
+    $tests = @($Failure.tests | ForEach-Object { "$([string]$_.file)::$([string]$_.name)" } | Sort-Object -Unique)
+    if (-not [string]$Failure.stage -and $codes.Count -eq 0 -and $tests.Count -eq 0) { return '' }
+    return "gate:$Mode|stage=$([string]$Failure.stage)|codes=$($codes -join ',')|tests=$($tests -join ';')"
+}
+
 function Get-DeliveryCompactFailure {
     param([AllowNull()][object]$Failure)
     if (-not $Failure) { return $null }
@@ -1266,9 +1279,14 @@ function Write-DeliveryRunRecord {
     if ($summary -and $summary.PSObject.Properties['journeyScenarioExecution']) {
         $record['journeyScenarioExecution'] = $summary.journeyScenarioExecution
     }
+    $script:DeliveryLastRunFailure = $null
     if ($Status -ne 'passed') {
         try { $record['failure'] = Get-DeliveryFailureSummary -ErrorMessage $ErrorMessage -Summary $summary -WorkingRoot $WorkingRoot -StartedAt $StartedAt }
         catch { $record['failure'] = [pscustomobject][ordered]@{ stage = ''; detail = "failure summary unavailable: $($_.Exception.Message)"; codes = @(); testCount = 0; tests = @(); logs = @() } }
+        # The gate's own message is always "exit code 1, see <log>"; the failed
+        # stage detail carries the cause that decides the class.
+        $record['failureClass'] = Get-DeliveryFailureClass -Message ($ErrorMessage + "`n" + [string]$record['failure'].detail) -Stage $Mode
+        $script:DeliveryLastRunFailure = [pscustomobject]@{ mode = $Mode; failureClass = [string]$record['failureClass']; identity = (Get-DeliveryGateFailureIdentity -Mode $Mode -Failure $record['failure']) }
     }
     $name = "{0}-{1}-{2}.json" -f $StartedAt.ToString("yyyyMMdd-HHmmss-fff"), $Mode.ToLowerInvariant(), $record.id; $target = Join-Path $runRoot $name; $temp = "$target.tmp"
     $indexLock = $null
