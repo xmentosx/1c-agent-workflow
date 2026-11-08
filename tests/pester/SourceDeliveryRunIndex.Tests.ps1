@@ -53,6 +53,53 @@ Describe 'Delivery run hot index' {
         $script:CommonGit = ''
     }
 
+    It 'keeps the failed stage, codes, failed tests and log tails after the gate logs are gone' {
+        [void](New-RunIndexStore)
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/RgNC+0LHQsA=='))
+        $platformError = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0KLQuNC/INC90LUg0L7Qv9GA0LXQtNC10LvQtdC9ICjQpdC10YjQuNGA0L7QstCw0L3QuNC10JTQsNC90L3Ri9GFKQ=='))
+        $root = Join-Path $TestDrive "gate root $nonAscii"
+        $local = Join-Path $root 'build\test-results\local'
+        $delivery = Join-Path $root 'build\test-results\delivery'
+        [void][IO.Directory]::CreateDirectory($local); [void][IO.Directory]::CreateDirectory($delivery)
+        $started = [DateTime]::UtcNow
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        $stageOut = Join-Path $local 'develop-e2e-upgrade-prerun.stdout.log'
+        $stageErr = Join-Path $local 'develop-e2e-upgrade-prerun.stderr.log'
+        $gateOut = Join-Path $delivery 'gate-develop.stdout.log'
+        $gateErr = Join-Path $delivery 'gate-develop.stderr.log'
+        [IO.File]::WriteAllText($stageOut, ((1..200 | ForEach-Object { "noise $_" }) -join "`r`n") + "`r`n$platformError`r`n", $utf8)
+        [IO.File]::WriteAllText($stageErr, "ITL_VANESSA_TIMEOUT: TESTMANAGER $nonAscii did not finish`r`n", $utf8)
+        [IO.File]::WriteAllText($gateOut, "gate output`r`n", $utf8)
+        [IO.File]::WriteAllText($gateErr, "", $utf8)
+        $junit = '<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="x"><testcase name="passes" classname="ok"/><testcase name="Focus.reports ' + $nonAscii + '" classname="' + [Security.SecurityElement]::Escape((Join-Path $root 'tests\pester\VanessaAgentFocus.Tests.ps1')) + '"><failure message="Expected 0, but got 1.&#10;second line">at stack</failure></testcase></testsuite></testsuites>'
+        [IO.File]::WriteAllText((Join-Path $local 'pester.xml'), $junit, $utf8)
+        $stages = @(1..11 | ForEach-Object { @{ name = "slow-$_"; status = 'passed'; durationMs = 100000 + $_; finishedAt = $started.ToString('o') } })
+        $stages += @{ name = 'develop-e2e-upgrade-prerun'; status = 'failed'; durationMs = 5; finishedAt = $started.AddSeconds(1).ToString('o'); detail = "develop-e2e-upgrade-prerun failed with exit code 1. See $stageOut and $stageErr" }
+        $summary = @{ startedAt = $started.ToString('o'); tests = $null; stages = $stages }
+        [IO.File]::WriteAllText((Join-Path $local 'check-summary.json'), ($summary | ConvertTo-Json -Depth 6), $utf8)
+
+        $raw = Write-DeliveryRunRecord -Mode Develop -Status failed -ErrorMessage "Develop source gate failed with exit code 1. See $gateOut and $gateErr" -WorkingRoot $root -StartedAt $started -FinishedAt $started.AddSeconds(3) -ExitCode 1
+        Remove-Item -LiteralPath (Join-Path $root 'build') -Recurse -Force
+
+        $record = Get-Content -LiteralPath $raw -Raw -Encoding UTF8 | ConvertFrom-Json
+        $record.failure.stage | Should -BeExactly 'develop-e2e-upgrade-prerun'
+        @($record.failure.codes) | Should -Be @('ITL_VANESSA_TIMEOUT')
+        $record.failure.testCount | Should -Be 1
+        $record.failure.tests[0].name | Should -BeExactly "Focus.reports $nonAscii"
+        $record.failure.tests[0].file | Should -BeExactly 'tests/pester/VanessaAgentFocus.Tests.ps1'
+        $record.failure.tests[0].message | Should -BeExactly 'Expected 0, but got 1.'
+        @($record.failure.logs.path) | Should -Be @($stageOut, $stageErr, $gateOut)
+        $tail = [string]$record.failure.logs[0].tail
+        $tail | Should -Match ([regex]::Escape($platformError) + '$')
+        @($tail -split "`n").Count | Should -Be $script:DeliveryFailureLogTailLines
+        @($record.stages.name) | Should -Contain 'develop-e2e-upgrade-prerun'
+
+        $last = (Get-DeliveryRunHistory).lastRuns[0]
+        $last.failure.stage | Should -BeExactly 'develop-e2e-upgrade-prerun'
+        @($last.failure.tests) | Should -Be @("Focus.reports $nonAscii")
+        $last.rawPath | Should -BeExactly ([IO.Path]::GetFullPath($raw))
+    }
+
     It 'preserves native scenario execution through the raw record and authenticated hot index' {
         $runRoot=New-RunIndexStore
         $started=[DateTime]::UtcNow

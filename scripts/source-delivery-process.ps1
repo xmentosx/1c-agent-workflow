@@ -962,6 +962,9 @@ function ConvertTo-DeliveryRunHotIndexEntry {
     if ($Record.PSObject.Properties['journeyScenarioExecution']) {
         $entry | Add-Member -NotePropertyName journeyScenarioExecution -NotePropertyValue $Record.journeyScenarioExecution
     }
+    if ($Record.PSObject.Properties['failure'] -and $Record.failure) {
+        $entry | Add-Member -NotePropertyName failure -NotePropertyValue (Get-DeliveryCompactFailure -Failure $Record.failure)
+    }
     return $entry
 }
 
@@ -1132,6 +1135,105 @@ function Add-DeliveryRunToHotIndex {
     return Write-DeliveryRunHotIndex -Index $index
 }
 
+$script:DeliveryFailureLogTailLines = 60
+$script:DeliveryFailureLogTailBytes = 8192
+$script:DeliveryFailureMaxLogs = 4
+$script:DeliveryFailureMaxTests = 20
+
+function Get-DeliveryFailureLogPaths {
+    # Gate and stage errors name their logs as "See <path> and <path>"; paths
+    # may contain whitespace and non-ASCII characters.
+    param([AllowEmptyString()][string]$Text)
+    if (-not $Text) { return @() }
+    $pattern = '[A-Za-z]:\\(?:(?!\s+and\s+[A-Za-z]:\\)[^\r\n"])*?\.(?:log|txt)(?=$|[\s"''.,;)])'
+    return @([regex]::Matches($Text, $pattern) | ForEach-Object { $_.Value })
+}
+
+function Get-DeliveryFailureLogTail {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try {
+        $offset = [Math]::Max([int64]0, $stream.Length - $script:DeliveryFailureLogTailBytes)
+        [void]$stream.Seek($offset, [IO.SeekOrigin]::Begin)
+        $buffer = New-Object byte[] ([int]($stream.Length - $offset))
+        $read = 0
+        while ($read -lt $buffer.Length) {
+            $count = $stream.Read($buffer, $read, $buffer.Length - $read)
+            if ($count -le 0) { break }
+            $read += $count
+        }
+    } finally { $stream.Dispose() }
+    $lines = @(([Text.UTF8Encoding]::new($false, $false)).GetString($buffer, 0, $read) -split "\r?\n")
+    if ($offset -gt 0 -and $lines.Count -gt 1) { $lines = @($lines | Select-Object -Skip 1) }
+    while ($lines.Count -gt 0 -and [string]::IsNullOrWhiteSpace([string]$lines[-1])) { $lines = @($lines | Select-Object -SkipLast 1) }
+    return (@($lines | Select-Object -Last $script:DeliveryFailureLogTailLines) -join "`n")
+}
+
+function Get-DeliveryFailedJUnitTests {
+    param([Parameter(Mandatory = $true)][string]$Path, [string]$WorkingRoot = '')
+    $rootPrefix = if ($WorkingRoot) { [IO.Path]::GetFullPath($WorkingRoot).TrimEnd('\') + '\' } else { '' }
+    $document = New-Object Xml.XmlDocument
+    $document.XmlResolver = $null
+    $document.Load($Path)
+    $tests = @()
+    foreach ($case in @($document.SelectNodes('//testcase[failure or error]'))) {
+        $node = $case.SelectSingleNode('failure|error')
+        $message = [string]$node.GetAttribute('message')
+        if (-not $message) { $message = [string]$node.InnerText }
+        $message = (@($message -split "\r?\n" | Where-Object { $_.Trim() }) | Select-Object -First 1)
+        if ($message.Length -gt 300) { $message = $message.Substring(0, 300) }
+        $file = [string]$case.GetAttribute('classname')
+        if ($rootPrefix -and $file.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) { $file = $file.Substring($rootPrefix.Length).Replace('\', '/') }
+        $tests += [pscustomobject][ordered]@{ name = [string]$case.GetAttribute('name'); file = $file; message = [string]$message }
+    }
+    return @($tests)
+}
+
+function Get-DeliveryFailureSummary {
+    # Durable cause of a failed gate: stage, error codes, failed tests and
+    # bounded log tails, so diagnosis does not depend on retained %TEMP% logs.
+    param([AllowEmptyString()][string]$ErrorMessage, [AllowNull()][object]$Summary, [Parameter(Mandatory = $true)][string]$WorkingRoot, [Parameter(Mandatory = $true)][datetime]$StartedAt)
+    $failedStages = @(if ($Summary -and $Summary.PSObject.Properties['stages']) { @($Summary.stages | Where-Object { [string]$_.status -eq 'failed' } | Sort-Object { [string]$_.finishedAt }) })
+    $stage = if ($failedStages.Count) { $failedStages[0] } else { $null }
+    $detail = if ($stage) { [string]$stage.detail } else { '' }
+    $texts = @($failedStages | ForEach-Object { [string]$_.detail }) + @($ErrorMessage)
+    $logs = @()
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in @($texts | ForEach-Object { Get-DeliveryFailureLogPaths -Text $_ })) {
+        if ($logs.Count -ge $script:DeliveryFailureMaxLogs -or -not $seen.Add($path)) { continue }
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        try { $tail = Get-DeliveryFailureLogTail -Path $path } catch { $tail = "<unreadable: $($_.Exception.Message)>" }
+        if ($tail) { $logs += [pscustomobject][ordered]@{ path = $path; tail = $tail } }
+    }
+    $tests = @()
+    $junitPath = Join-Path $WorkingRoot 'build\test-results\local\pester.xml'
+    if ((Test-Path -LiteralPath $junitPath -PathType Leaf) -and (Get-Item -LiteralPath $junitPath).LastWriteTimeUtc -ge $StartedAt.ToUniversalTime().AddSeconds(-2)) {
+        try { $tests = @(Get-DeliveryFailedJUnitTests -Path $junitPath -WorkingRoot $WorkingRoot) } catch { $tests = @() }
+    }
+    $codeText = (@($texts) + @($logs | ForEach-Object { $_.tail })) -join "`n"
+    $codes = @([regex]::Matches($codeText, '\b([A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+):') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique -First 5)
+    if ($detail.Length -gt 2000) { $detail = $detail.Substring(0, 2000) }
+    return [pscustomobject][ordered]@{
+        stage = $(if ($stage) { [string]$stage.name } else { '' })
+        detail = $detail
+        codes = @($codes)
+        testCount = $tests.Count
+        tests = @($tests | Select-Object -First $script:DeliveryFailureMaxTests)
+        logs = @($logs)
+    }
+}
+
+function Get-DeliveryCompactFailure {
+    param([AllowNull()][object]$Failure)
+    if (-not $Failure) { return $null }
+    return [pscustomobject][ordered]@{
+        stage = [string]$Failure.stage
+        codes = @($Failure.codes)
+        testCount = [int]$Failure.testCount
+        tests = @($Failure.tests | Select-Object -First 5 | ForEach-Object { [string]$_.name })
+    }
+}
+
 function Write-DeliveryRunRecord {
     param([string]$Mode, [string]$Status, [string]$ErrorMessage, [string]$WorkingRoot, [datetime]$StartedAt, [datetime]$FinishedAt, [int]$ExitCode, [string[]]$ReleaseCapability = @())
     $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"; New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
@@ -1160,9 +1262,13 @@ function Write-DeliveryRunRecord {
             }
         } catch { $releaseE2E = $null }
     }
-    $record = [ordered]@{ schemaVersion = 3; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; failureClass = $(if($Status -eq "passed"){""}else{Get-DeliveryFailureClass -Message $ErrorMessage -Stage $Mode}); exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; releaseCapabilities = $(if ($summary -and $summary.PSObject.Properties["releaseCapabilities"]) { @($summary.releaseCapabilities) } else { @($ReleaseCapability) }); tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10) } else { @() }); releaseE2E = $releaseE2E }
+    $record = [ordered]@{ schemaVersion = 3; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; failureClass = $(if($Status -eq "passed"){""}else{Get-DeliveryFailureClass -Message $ErrorMessage -Stage $Mode}); exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; releaseCapabilities = $(if ($summary -and $summary.PSObject.Properties["releaseCapabilities"]) { @($summary.releaseCapabilities) } else { @($ReleaseCapability) }); tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { $slowest = @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10); @($slowest) + @($summary.stages | Where-Object { [string]$_.status -eq 'failed' -and $slowest -notcontains $_ }) } else { @() }); releaseE2E = $releaseE2E }
     if ($summary -and $summary.PSObject.Properties['journeyScenarioExecution']) {
         $record['journeyScenarioExecution'] = $summary.journeyScenarioExecution
+    }
+    if ($Status -ne 'passed') {
+        try { $record['failure'] = Get-DeliveryFailureSummary -ErrorMessage $ErrorMessage -Summary $summary -WorkingRoot $WorkingRoot -StartedAt $StartedAt }
+        catch { $record['failure'] = [pscustomobject][ordered]@{ stage = ''; detail = "failure summary unavailable: $($_.Exception.Message)"; codes = @(); testCount = 0; tests = @(); logs = @() } }
     }
     $name = "{0}-{1}-{2}.json" -f $StartedAt.ToString("yyyyMMdd-HHmmss-fff"), $Mode.ToLowerInvariant(), $record.id; $target = Join-Path $runRoot $name; $temp = "$target.tmp"
     $indexLock = $null
@@ -1203,7 +1309,7 @@ function Get-DeliveryRunHistory {
     $runs = @($index.entries)
     $lastRuns = if ($IncludeDetails) { @($runs | Select-Object -First $Limit) } else {
         @($runs | Select-Object -First $Limit | ForEach-Object {
-            [pscustomobject]@{ mode=$_.mode; status=$_.status; failureClass=$(if($_.PSObject.Properties["failureClass"]){$_.failureClass}else{""}); startedAt=$_.startedAt; finishedAt=$_.finishedAt; durationMs=$_.durationMs; commit=$_.commit; error=$_.error }
+            [pscustomobject]@{ mode=$_.mode; status=$_.status; failureClass=$(if($_.PSObject.Properties["failureClass"]){$_.failureClass}else{""}); startedAt=$_.startedAt; finishedAt=$_.finishedAt; durationMs=$_.durationMs; commit=$_.commit; error=$_.error; failure=$(if($_.PSObject.Properties["failure"]){$_.failure}else{$null}); rawPath=$_.rawPath }
         })
     }
     return [pscustomobject]@{ root=$runRoot; indexPath=[string]$state.path; indexStatus="ready"; count=[int64]$index.validRunCount; invalidCount=[int]$index.invalidRunCount; totalDurationMs=[int64]$index.totalDurationMs; byMode=@($index.byMode); lastRuns=$lastRuns; truncated=[bool]$index.truncated; nextAction="" }
