@@ -358,10 +358,20 @@ function Invoke-ItlMemoryRemember {
     $pendingPath=Join-Path (Join-Path (Join-Path (Get-ItlMemoryHome) 'pending') $Binding.identity.workspaceId) ((Get-ItlCatalogHash $NoteId)+'.json')
     $intentHash=Get-ItlMemoryIntentHash $intent
     $null=Update-ItlMemoryJson $pendingPath {param($old)
-        if($old -and $old.state -ne 'durable' -and (Get-ItlMemoryIntentHash $old.intent) -cne $intentHash){throw 'MEMORY_PENDING_CONFLICT: reconcile this pending note before replacing its preserved source.'}
-        $attempt=if($old -and $old.state -ne 'durable'){Get-ItlCatalogField $old 'attempt'}else{$null}
+        $unresolved=$old -and $old.state -ne 'durable'
+        $attempt=if($unresolved){Get-ItlCatalogField $old 'attempt'}else{$null}
+        $replaced=@()
+        if($unresolved -and $old.Contains('replacedIntents')){foreach($item in @($old['replacedIntents'])){if($item -is [Collections.IDictionary]){$replaced+=,$item}}}
+        if($unresolved -and (Get-ItlMemoryIntentHash $old.intent) -cne $intentHash){
+            # Only a sent attempt can have a backend effect. An unsent draft is
+            # completed under its ID; its replaced intents stay private for audit.
+            if($attempt){throw 'MEMORY_PENDING_CONFLICT: reconcile this sent pending note before replacing its preserved source.'}
+            $replaced+=,$old.intent;if($replaced.Count -gt 4){$replaced=@($replaced[($replaced.Count-4)..($replaced.Count-1)])}
+        }
         if($attempt -and ($old.intent.datasetName -cne $DatasetName -or $attempt.instanceId -cne $Binding.provider.instanceId -or $attempt.principalId -cne $Binding.identity.developerId)){throw 'MEMORY_DESTINATION_LOCKED: reconcile the original attempt before changing scope/provider; its source is preserved.'}
-        return [ordered]@{schemaVersion=1;noteId=$NoteId;workspaceId=$Binding.identity.workspaceId;projectId=$Binding.context.projectId;cycleId=$Binding.cycleId;intent=$intent;state='pending';attempt=$attempt}
+        $record=[ordered]@{schemaVersion=1;noteId=$NoteId;workspaceId=$Binding.identity.workspaceId;projectId=$Binding.context.projectId;cycleId=$Binding.cycleId;intent=$intent;state='pending';attempt=$attempt}
+        if($replaced.Count){$record['replacedIntents']=$replaced}
+        return $record
     }
     # The source survives even when destination/principal/readiness is rejected.
     Assert-ItlMemoryBindingCurrent $Binding
@@ -378,7 +388,7 @@ function Invoke-ItlMemoryRemember {
     if($dataset.scopeKind -eq 'product' -and $Status -ne 'verified'){throw 'MEMORY_PROJECT_CANDIDATE: keep an unverified product fact in a private task/project scope.'}
     Assert-ItlMemoryPrincipal $Binding $deadline
     $null=Update-ItlMemoryJson $pendingPath {param($old)
-        if($old.intent.datasetName -cne $DatasetName -or (Get-ItlMemoryIntentHash $old.intent) -cne $intentHash){throw 'MEMORY_PENDING_CONFLICT'}
+        if(-not $old -or $old.intent.datasetName -cne $DatasetName -or (Get-ItlMemoryIntentHash $old.intent) -cne $intentHash){throw 'MEMORY_PENDING_CONFLICT'}
         $oldAttempt=Get-ItlCatalogField $old 'attempt'
         if($oldAttempt -and $oldAttempt.datasetId -cne $dataset.datasetId){throw 'MEMORY_DESTINATION_LOCKED: preserve the original exact-ID attempt even if its label was remapped.'}
         $old['attempt']=@{instanceId=$Binding.provider.instanceId;principalId=$Binding.identity.developerId;datasetId=$dataset.datasetId}
@@ -566,7 +576,9 @@ function Get-ItlMemoryLocalContext {
             $label=[string]$record.intent.datasetName
             $task=@($Binding.provider.datasets|Where-Object {$_.label -ceq $label -and $_.scopeKind -eq 'taskCycle'}).Count -gt 0 -or $label -like 'itl_task_*'
             if($task -and $record.cycleId -cne $currentCycle -and -not ($History -and $NoteId)){continue}
-            $pending+=,[ordered]@{noteId=$record.noteId;state=$record.state;datasetName=$label;fact=$(if($NoteId){$record.intent.data}else{([string]$record.intent.data).Substring(0,[Math]::Min(180,([string]$record.intent.data).Length))});sourcePreserved=$true}
+            $row=[ordered]@{noteId=$record.noteId;state=$record.state;datasetName=$label;status=[string](Get-ItlCatalogField $record.intent 'status' '');sent=[bool](Get-ItlCatalogField $record 'attempt');fact=$(if($NoteId){$record.intent.data}else{([string]$record.intent.data).Substring(0,[Math]::Min(180,([string]$record.intent.data).Length))});sourcePreserved=$true}
+            if($NoteId){foreach($field in @('applicability','evidence','source','revision')){$row[$field]=Get-ItlCatalogField $record.intent $field}}
+            $pending+=,$row
             if($pending.Count -ge 8){break}
         }
     }
@@ -655,15 +667,41 @@ function Invoke-ItlMemoryStatus {
     return @{state='durable';searchState=$(if($searchable){'indexed-dataset; per-note retrieval not asserted'}else{'indexing-or-unverified'});dataId=$found.dataId;noteId=$found.note.noteId;note=$found.note;applicable=(Test-ItlMemoryNoteApplicable $Binding $found.note);history=[bool]$History}
 }
 
+function Remove-ItlMemoryUnsentDraft {
+    param([object]$Binding,[string]$NoteId)
+    # A draft without attempt never reached the backend. Discard it under its
+    # record guard, keeping a private audit copy beside the preserved sources.
+    $path=Join-Path (Join-Path (Join-Path (Get-ItlMemoryHome) 'pending') $Binding.identity.workspaceId) ((Get-ItlCatalogHash $NoteId)+'.json')
+    $outcome=@{discarded=$false}
+    if(Test-Path -LiteralPath $path){
+        $null=Update-ItlMemoryJson $path {param($old)
+            if(-not $old -or $old.state -eq 'durable' -or $old.noteId -cne $NoteId -or (Get-ItlCatalogField $old 'attempt')){return $old}
+            $audit=Join-Path (Join-Path (Join-Path (Get-ItlMemoryHome) 'source') $Binding.identity.workspaceId) ((Get-ItlCatalogHash $NoteId)+'.discarded.json')
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $audit))
+            $old['state']='discarded';$old['discardedAt']=[DateTime]::UtcNow.ToString('o')
+            Write-Utf8TextAtomic $audit (ConvertTo-Json -InputObject $old -Depth 60 -Compress)
+            $outcome.discarded=$true
+            return $null
+        } -RemoveWhenEmpty
+    }
+    return $outcome.discarded
+}
+
 function Invoke-ItlMemoryRetire {
     param([object]$Binding,[string]$DatasetName,[string]$NoteId,[string]$KnowledgeArea='',[string]$DataId='')
     Assert-ItlMemoryBindingCurrent $Binding
+    $discarded=[ordered]@{state='discarded-unsent';noteId=$NoteId;auditPreserved=$true}
+    if(-not $DatasetName){
+        if(Remove-ItlMemoryUnsentDraft $Binding $NoteId){return $discarded}
+        throw 'MEMORY_ARGUMENT_REQUIRED: name the dataset of a sent note; note_id alone discards only an own unsent draft.'
+    }
     $deadline=[DateTime]::UtcNow.AddSeconds(60);Assert-ItlMemoryPrincipal $Binding $deadline
     $scopes=@(Get-ItlMemoryScopes $Binding write $DatasetName $KnowledgeArea);$dataset=$scopes[0]
     $key=Get-ItlMemoryRecordKey $Binding $dataset.datasetId $NoteId;$path=Get-ItlMemoryPath receipt $key
     $record=Read-ItlMemoryJson $path
     $exactId=if($DataId){$DataId}elseif($record){Get-ItlCatalogField $record 'dataId' ''}else{''}
     $found=if($exactId){$n=Get-ItlMemoryOriginal $Binding $dataset $exactId $deadline;if($n){@{dataId=$exactId;note=$n}}}else{Find-ItlMemoryNativeNote $Binding $dataset $NoteId $deadline}
+    if(-not $found -and -not $record -and (Remove-ItlMemoryUnsentDraft $Binding $NoteId)){return $discarded}
     if(-not $found -or $found.note.noteId -cne $NoteId){throw 'MEMORY_RETIRE_UNVERIFIED: resolve the exact note first; never delete a whole dataset.'}
     $recordHash=Get-ItlCatalogHash $record
     $receipt=[ordered]@{schemaVersion=1;noteId=$NoteId;dataId=$found.dataId;datasetId=$dataset.datasetId;state='retirement-unconfirmed';source=$found.note}
@@ -677,5 +715,8 @@ function Invoke-ItlMemoryRetire {
     }catch{ $receipt.state='retirement-unconfirmed' }
     $null=Update-ItlMemoryJson $path {param($old)
         if($old.state -ne 'retirement-unconfirmed'){throw 'MEMORY_WRITE_IN_FLIGHT'};return $receipt
-    };return $receipt
+    }
+    # A retired note can never accept its unsent update; do not leave it pending.
+    if($receipt.state -eq 'retired'){$null=Remove-ItlMemoryUnsentDraft $Binding $NoteId}
+    return $receipt
 }
