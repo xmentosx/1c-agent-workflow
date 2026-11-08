@@ -105,7 +105,10 @@ and eight summaries; an exact known ID bypasses that listing cap.
 saves one self-contained fact. Choose the narrowest sufficient destination from
 local status. Missing destination/home/grant preserves the private pending source.
 Use a stable explicit note ID for correction and the recalled native `data_id`
-when this reader has no local receipt. Verified notes need identifiable evidence; product
+when this reader has no local receipt. Verified notes need identifiable evidence; a
+user-confirmed decision, correction or standing condition is verified by that
+confirmation. `recall` omits `candidate` notes; local status lists durable own
+`candidates` until the same note is verified with evidence or retired. Product
 facts require a confirmed area/home and independence from customer customization.
 There is no default global/task destination or automatic organizational promotion.
 

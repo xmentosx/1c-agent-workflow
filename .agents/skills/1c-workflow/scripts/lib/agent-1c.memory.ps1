@@ -401,7 +401,7 @@ function Invoke-ItlMemoryRemember {
         if($found.note.noteId -cne $NoteId){throw 'MEMORY_NOTE_ID_MISMATCH'}
         if($existing.state -in @('sending','unconfirmed','indexing') -and (Get-ItlMemoryIntentHash $found.note) -cne $existing.contentHash){return @{state='unconfirmed';noteId=$NoteId;dataId=$found.dataId;pending=$true;continuation='The old original is still current; it does not prove rejection of the in-flight update. Reconcile without replay.'}}
         if((Get-ItlMemoryIntentHash $found.note) -ceq $intentHash){
-            $receipt=[ordered]@{schemaVersion=1;state='durable';noteId=$NoteId;datasetId=$dataset.datasetId;dataId=$found.dataId;contentHash=$intentHash}
+            $receipt=[ordered]@{schemaVersion=1;state='durable';noteId=$NoteId;datasetId=$dataset.datasetId;dataId=$found.dataId;contentHash=$intentHash;status=$Status}
             $null=Update-ItlMemoryJson $receiptPath {param($old) if((Get-ItlCatalogHash $old) -cne $existingHash){throw 'MEMORY_WRITE_IN_FLIGHT'};return $receipt}
             Complete-ItlMemoryPending $Binding $NoteId $intentHash
             return $receipt
@@ -413,7 +413,7 @@ function Invoke-ItlMemoryRemember {
     $note=[ordered]@{format='itl-memory-v1';noteId=$NoteId;fact=$Data;scope=@{kind=$dataset.scopeKind;id=$dataset.scopeId};date=[DateTime]::UtcNow.ToString('o');status=$Status;origin=@{projectId=$Binding.context.projectId;workspaceId=$Binding.identity.workspaceId;cycleId=$Binding.cycleId;source=$Source;revision=$Revision};applicability=$Applicability;evidence=$Evidence}
     if($existing -and $existing.dataId -and $found){$note['updatedByOrigin']=$note.origin;$note['origin']=$found.note.origin;$note['supersedes']=$found.note.noteId}
     $text=ConvertTo-Json -InputObject $note -Depth 40 -Compress
-    $receipt=[ordered]@{schemaVersion=1;state='sending';attemptId=[guid]::NewGuid().ToString('N');noteId=$NoteId;datasetId=$dataset.datasetId;dataId=$(if($existing){Get-ItlCatalogField $existing 'dataId' ''}else{''});contentHash=$intentHash}
+    $receipt=[ordered]@{schemaVersion=1;state='sending';attemptId=[guid]::NewGuid().ToString('N');noteId=$NoteId;datasetId=$dataset.datasetId;dataId=$(if($existing){Get-ItlCatalogField $existing 'dataId' ''}else{''});contentHash=$intentHash;status=$Status}
     $null=Update-ItlMemoryJson $receiptPath {
         param($old)
         if((Get-ItlCatalogHash $old) -cne $existingHash){throw 'MEMORY_WRITE_IN_FLIGHT: use exact status reconciliation, not a concurrent remember.'}
@@ -589,19 +589,35 @@ function Get-ItlMemoryLocalContext {
     }
     $bindingState='current'
     try{Assert-ItlMemoryBindingCurrent $Binding}catch{$bindingState='stale-or-disabled';$destinations=@()}
-    $receipts=@();$receiptRoot=Join-Path (Get-ItlMemoryHome) 'receipt'
+    $receipts=@();$candidates=@();$receiptRoot=Join-Path (Get-ItlMemoryHome) 'receipt'
     if($bindingState -eq 'current' -and (Test-Path -LiteralPath $receiptRoot -PathType Container)){
-        $readIds=@(Get-ItlMemoryScopes $Binding read|ForEach-Object {$_.datasetId})
+        $readScopes=@(Get-ItlMemoryScopes $Binding read);$readIds=@($readScopes|ForEach-Object {$_.datasetId})
         foreach($file in @(Get-ChildItem -LiteralPath $receiptRoot -File -Filter '*.json'|Sort-Object LastWriteTimeUtc -Descending|Select-Object -First 24)){
             $record=Read-ItlMemoryJson $file.FullName
             if(-not $record -or $readIds -cnotcontains $record.datasetId -or ($NoteId -and $record.noteId -cne $NoteId)){continue}
             $expected=Get-ItlMemoryPath receipt (Get-ItlMemoryRecordKey $Binding $record.datasetId $record.noteId)
             if($expected -ine $file.FullName){continue}
-            $receipts+=@{noteId=$record.noteId;datasetId=$record.datasetId;dataId=(Get-ItlCatalogField $record 'dataId' '');state=$record.state;searchState=(Get-ItlCatalogField $record 'searchState' 'unverified');currentness='local receipt only'}
-            if($receipts.Count -ge 4){break}
+            # recall never returns candidates, so this owner is the only place
+            # a writer finds them again. Older receipts derive status from the
+            # exact private source of the same note.
+            $noteStatus=[string](Get-ItlCatalogField $record 'status' '');$source=$null
+            if(-not $noteStatus -or $noteStatus -ceq 'candidate'){
+                $source=Read-ItlMemoryJson (Join-Path (Join-Path (Join-Path (Get-ItlMemoryHome) 'source') $Binding.identity.workspaceId) ((Get-ItlCatalogHash $record.noteId)+'.json'))
+                if($source -and $source.noteId -cne $record.noteId){$source=$null}
+                if(-not $noteStatus -and $source){$noteStatus=[string](Get-ItlCatalogField $source.intent 'status' '')}
+            }
+            if($receipts.Count -lt 4){$receipts+=@{noteId=$record.noteId;datasetId=$record.datasetId;dataId=(Get-ItlCatalogField $record 'dataId' '');state=$record.state;status=$(if($noteStatus){$noteStatus}else{'unknown'});searchState=(Get-ItlCatalogField $record 'searchState' 'unverified');currentness='local receipt only'}}
+            if($noteStatus -ceq 'candidate' -and $record.state -eq 'durable' -and $candidates.Count -lt 4){
+                $fact=if($source){[string]$source.intent.data}else{''}
+                if($fact.Length -gt 400){$fact=$fact.Substring(0,400)+'...'}
+                $candidates+=@{noteId=$record.noteId;dataId=(Get-ItlCatalogField $record 'dataId' '');dataset=@($readScopes|Where-Object datasetId -CEQ $record.datasetId)[0].label;fact=$fact}
+            }
+            if($receipts.Count -ge 4 -and $candidates.Count -ge 4){break}
         }
     }
-    return [ordered]@{pending=$pending;receipts=$receipts;preservedSource=$preservedSource;continuation=$continuation;coverage='bounded-local; old task pending is history, not current';destinations=$destinations;currentCycleId=$currentCycle;bindingState=$bindingState}
+    $output=[ordered]@{pending=$pending;receipts=$receipts;candidates=$candidates;preservedSource=$preservedSource;continuation=$continuation;coverage='bounded-local; old task pending is history, not current';destinations=$destinations;currentCycleId=$currentCycle;bindingState=$bindingState}
+    if($candidates.Count){$output.candidateAction='recall omits candidates. At user confirmation, a fresh passed check or before the final report: remember the same note_id and data_id with status=verified and evidence, or retire_note a disproved one.'}
+    return $output
 }
 
 function Invoke-ItlMemoryStatus {

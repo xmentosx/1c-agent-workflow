@@ -150,6 +150,32 @@
         @($script:Calls|Where-Object method -EQ 'PATCH')[0].body | Should -Match 'Content-Disposition: form-data; name="data"; filename="memory.txt"'
         @($script:Calls|Where-Object path -EQ '/api/v1/remember').Count | Should -Be 1
     }
+    It 'lists own durable candidates until the same note is verified with evidence' {
+        # recall drops candidates; a 2026-11-08 pilot left a user decision as
+        # an unreachable candidate. Local status is the writer's way back.
+        $hypothesis=Invoke-ItlMemoryRemember $b 'Гипотеза о причине' 'itl_project_customer' 'hypothesis'
+        $hypothesis.state | Should -Be 'durable'
+        $legacy=Invoke-ItlMemoryRemember $b 'Старая квитанция' 'itl_project_customer' 'legacy-candidate'
+        $legacyPath=Get-ItlMemoryPath receipt (Get-ItlMemoryRecordKey $b (Get-ProjectDataset $b).datasetId 'legacy-candidate')
+        $null=Update-ItlMemoryJson $legacyPath {param($old) [ordered]@{schemaVersion=1;state=$old.state;noteId=$old.noteId;datasetId=$old.datasetId;dataId=$old.dataId;contentHash=$old.contentHash}}
+        $null=Invoke-ItlMemoryRemember $b 'Checked fact' 'itl_project_customer' 'checked' @{} @(@{source='user';reference='task confirmation'}) verified
+        $local=Invoke-ItlMemoryStatus $b -LocalOnly
+        @($local.candidates.noteId|Sort-Object) | Should -Be @('hypothesis','legacy-candidate')
+        $card=@($local.candidates|Where-Object noteId -EQ 'hypothesis')[0]
+        $card.fact | Should -BeExactly 'Гипотеза о причине'
+        $card.dataId | Should -Be $hypothesis.dataId
+        $card.dataset | Should -BeExactly 'itl_project_customer'
+        @($local.candidates|Where-Object noteId -EQ 'legacy-candidate')[0].fact | Should -BeExactly 'Старая квитанция'
+        $local.candidateAction | Should -Match 'status=verified and evidence'
+        @($local.receipts|Where-Object noteId -EQ 'checked')[0].status | Should -Be 'verified'
+        $verified=Invoke-ItlMemoryRemember $b 'Гипотеза о причине' 'itl_project_customer' 'hypothesis' @{} @(@{source='check';reference='passed /itl-check'}) verified -DataId $hypothesis.dataId
+        $verified.state | Should -Be 'durable'
+        $null=Invoke-ItlMemoryRetire $b 'itl_project_customer' 'legacy-candidate'
+        $local=Invoke-ItlMemoryStatus $b -LocalOnly
+        @($local.candidates).Count | Should -Be 0
+        $local.Contains('candidateAction') | Should -BeFalse
+        @($local.receipts|Where-Object noteId -EQ 'hypothesis')[0].status | Should -Be 'verified'
+    }
     It 'retains a changed unresolved pending instead of overwriting its source' {
         $script:BodyLoss=$true
         $null=Invoke-ItlMemoryRemember $b 'First' 'itl_project_customer' 'pending'
@@ -591,6 +617,7 @@ try {
         $lines=@($native.stdout.Trim() -split "`r?`n"|ForEach-Object {$_|ConvertFrom-Json})
         $lines.Count | Should -Be 3
         $lines[1].result.tools.Count | Should -Be 4
+        @($lines[1].result.tools|Where-Object name -EQ remember)[0].description | Should -Match 'recall returns only verified notes.*status=verified with evidence'
         ($lines[2].result.content[0].text|ConvertFrom-Json).pending[0].fact | Should -Be 'Путь с пробелом и кириллицей'
     }
 }
