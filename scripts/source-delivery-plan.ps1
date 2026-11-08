@@ -366,9 +366,30 @@ function Assert-DeliveryQualityPlanMayRun {
         } else { 'Inspect source-delivery Status and continue through the original master publication owner.' }
         throw "DELIVERY_RESUME_PLAN_MISMATCH: requested '$ResumePlan', current '$([string]$Plan.planId)'; $detail. Original immutable plan and proof were preserved. $continuation"
     }
-    if ([int]$Plan.executedBudgetSeconds -gt 3600 -and $ApproveLongPlan -ne [string]$Plan.planId) {
-        throw "LONG_PLAN_APPROVAL_REQUIRED: plan '$([string]$Plan.planId)' has a hard-limit budget of $([int]$Plan.executedBudgetSeconds)s, not an expected duration (see timeEstimate); pass -ApproveLongPlan '$([string]$Plan.planId)'."
+    $script:DeliveryPlanApproval = $null
+    $budget = [int]$Plan.executedBudgetSeconds
+    if ($budget -gt 3600 -and $ApproveLongPlan -ne [string]$Plan.planId) {
+        $standing = Get-DeliveryStandingPlanApprovalSeconds
+        if ($standing -lt $budget) {
+            $lower = if ($standing) { " The standing approval git config itl.delivery.approvedBudgetSeconds=$standing is lower." } else { '' }
+            throw "LONG_PLAN_APPROVAL_REQUIRED: plan '$([string]$Plan.planId)' has a hard-limit budget of $($budget)s, not an expected duration (see timeEstimate); pass -ApproveLongPlan '$([string]$Plan.planId)'.$lower"
+        }
+        $script:DeliveryPlanApproval = [pscustomobject][ordered]@{ kind='standing'; setting='itl.delivery.approvedBudgetSeconds'; limitSeconds=$standing; budgetSeconds=$budget }
+        [Console]::Error.WriteLine("Plan '$([string]$Plan.planId)' hard-limit budget $($budget)s is within the standing approval itl.delivery.approvedBudgetSeconds=$standing.")
     }
+}
+
+function Get-DeliveryStandingPlanApprovalSeconds {
+    # The user's own standing approval for long plans; agents never set it.
+    # Absent means every plan over sixty minutes needs -ApproveLongPlan.
+    $read = Invoke-DeliveryGit -Arguments @('config', '--get', 'itl.delivery.approvedBudgetSeconds') -AllowFailure
+    $value = ([string]$read.stdout).Trim()
+    if ($read.exitCode -ne 0 -or -not $value) { return 0 }
+    $seconds = 0
+    if (-not [int]::TryParse($value, [ref]$seconds) -or $seconds -le 0) {
+        throw "DELIVERY_PLAN_APPROVAL_LIMIT_INVALID: git config itl.delivery.approvedBudgetSeconds is '$value', not a positive number of seconds. Set a number of seconds (for example 21600) or remove it with git config --unset itl.delivery.approvedBudgetSeconds, then repeat the same command. Queue and checkpoint were preserved."
+    }
+    return $seconds
 }
 
 function Get-DeliveryPlanGateBudgetSeconds {
