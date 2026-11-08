@@ -82,6 +82,9 @@ $script:sourceE2EArtifactBindingPath = ''
 . (Join-Path $PSScriptRoot "develop-e2e-qualification.ps1")
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 $qualityCatalog = Get-QualityContractCatalog -RepositoryRoot $repoRoot
+# Make a configured pwsh visible to every gate child; the complete inventory
+# requires it at its Pester stage.
+[void](Resolve-WorkflowGatePwsh -RepositoryRoot $repoRoot)
 $effectivePesterWorkers = Resolve-PesterWorkerCount -Mode $effectiveMode -RequestedWorkerCount $PesterWorkers -Explicit $pesterWorkersExplicit -Catalog $qualityCatalog
 $budgetPrefix = $effectiveMode.Substring(0, 1).ToLowerInvariant() + $effectiveMode.Substring(1)
 $modeTargetBudgetSeconds = [int]$qualityCatalog.budgets.("${budgetPrefix}TargetSeconds")
@@ -1096,6 +1099,9 @@ try {
         Add-ReusedStage -Name "pester" -Reason $pesterReuseReason -Detail $qualificationFullPath
     } else {
         Invoke-GateStage -Name "pester" -Reason $(if ($effectiveMode -in @("Targeted", "Smoke")) { "$effectiveMode owner inventory" } else { "complete workflow inventory" }) -Body {
+            # A complete inventory must not skip Core-host cases; stop before
+            # the long run instead of after it.
+            if ($effectiveMode -notin @("Targeted", "Smoke")) { [void](Resolve-WorkflowGatePwsh -RepositoryRoot $repoRoot -Required) }
             if ($effectiveMode -in @("Targeted", "Smoke")) {
                 $selectionPath = Join-Path $outputRoot "test-selection.json"
                 if ($effectiveMode -eq "Targeted") {
