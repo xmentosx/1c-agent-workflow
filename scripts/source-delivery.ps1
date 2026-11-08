@@ -29,7 +29,9 @@ param(
     [string[]]$FrozenRepair = @(),
     [string]$ApproveLongPlan = "",
     [switch]$RetryBlockedStage,
-    [switch]$RequireRelease
+    [switch]$RequireRelease,
+    [string[]]$DeferEntry = @(),
+    [string]$DeferReason = ""
 )
 
 $deliveryInvocationWatch = [Diagnostics.Stopwatch]::StartNew()
@@ -171,6 +173,13 @@ try {
             try { $activeAttempt = Get-Content -LiteralPath $activeAttemptPath -Raw -Encoding UTF8 | ConvertFrom-Json }
             catch { throw "DELIVERY_CHECKPOINT_INVALID: '$activeAttemptPath': $($_.Exception.Message). The checkpoint and queue were preserved." }
         }
+        # A deferral changes queue membership, so a pinned plan is replaced
+        # exactly as an explicit -Replan of the active plan would replace it.
+        if (($DeferEntry.Count -or $DeferReason) -and -not $Replan -and -not $ResumePlan -and
+            $activeAttempt -and $activeAttempt.PSObject.Properties['planId'] -and [string]$activeAttempt.planId) {
+            $Replan = [string]$activeAttempt.planId
+            $PSBoundParameters['Replan'] = $Replan
+        }
         if ($Replan) {
             $ResumePlan = $Replan
             if ($ReplanQueueScope -eq 'Frozen') {
@@ -311,6 +320,10 @@ try {
         }
     }
     Assert-DeliveryBootstrapAgentTargetSupport -SupervisorAst $supervisorAst -SupervisorCommit $supervisorCommit -BoundParameters $arguments
+    if (($arguments.ContainsKey('DeferEntry') -or $arguments.ContainsKey('DeferReason')) -and
+        @($supervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'DeferEntry' }).Count -eq 0) {
+        throw "DELIVERY_DEFER_UNSUPPORTED: supervisor '$supervisorCommit' predates -DeferEntry. Nothing was deferred. Continue that plan with -RetryBlockedStage or -Replan after fixing the failing registration; plans created by a later published develop accept -DeferEntry."
+    }
     if ($ReplanQueueScope -eq 'Frozen') {
         $frozenParameters=@('ReplanQueueScope','ReplanCheckpointSha256')
         if($FrozenRepair.Count){$frozenParameters+='FrozenRepair'}

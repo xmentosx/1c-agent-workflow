@@ -103,4 +103,46 @@ Describe 'Failing registered range deferral' {
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue/beta/deferred).Count | Should -Be 0
         } finally { Remove-DeliveryFixture $fixture }
     }
+    It 'defers an agent-diagnosed range with its dependents and replaces the pinned plan in one command' {
+        $fixture=$null; $prior=$env:ITL_TEST_FAIL_COMPONENT_FINALIZER
+        try {
+            $fixture=New-FrozenFixture
+            $alpha=Add-FrozenTask $fixture alpha
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            & git -C $fixture.root switch --quiet -c beta $fixture.base
+            $beta=Add-FrozenTask $fixture beta
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','beta') | Out-Null
+            # gamma is stacked on beta: its range cannot reach develop without beta.
+            $gamma=Add-FrozenTask $fixture gamma
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','gamma') | Out-Null
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER='true'
+            (Invoke-FrozenDelivery $fixture PublishDevelop -AllowFailure).exitCode | Should -Not -Be 0
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$null
+            $oldPlan=[string](Read-FrozenAttempt $fixture).planId
+            $oldPlan | Should -Match '^[a-f0-9]{64}$'
+            $checkpointPath=Join-Path $fixture.root '.git/itl/publication-attempts/develop.json'
+            $checkpoint=[IO.File]::ReadAllText($checkpointPath)
+            $reason=@('-DeferReason','"Develop E2E upgrade fails on beta"')
+
+            $refused=Invoke-FrozenDelivery $fixture PublishDevelop (@('-DeferEntry','beta')+$reason) -AllowFailure
+            $refused.exitCode | Should -Not -Be 0
+            $unwrapped=$refused.stderr.Replace("`r",'').Replace("`n",'')
+            $unwrapped | Should -Match 'DELIVERY_DEFER_DEPENDENT_ENTRIES'
+            $unwrapped | Should -Match "-DeferEntry 'beta,gamma'"
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue/beta/deferred).Count | Should -Be 0
+            [IO.File]::ReadAllText($checkpointPath) | Should -BeExactly $checkpoint
+
+            $published=(Invoke-FrozenDelivery $fixture PublishDevelop (@('-DeferEntry','beta,gamma')+$reason)).stdout | ConvertFrom-Json
+            $published.planId | Should -Not -Be $oldPlan
+            & git -C $fixture.root merge-base --is-ancestor $alpha $published.commit; $LASTEXITCODE | Should -Be 0
+            foreach($head in @($beta,$gamma)){ & git -C $fixture.root merge-base --is-ancestor $head $published.commit; $LASTEXITCODE | Should -Not -Be 0 }
+            @($published.deferredEntries.id) | Should -Be @('beta','gamma')
+            $published.deferredEntries[0].reason | Should -BeExactly 'Develop E2E upgrade fails on beta'
+            $status=(Invoke-FrozenDelivery $fixture Status).stdout | ConvertFrom-Json
+            @($status.queue.id) | Should -Be @('beta','gamma')
+            @($status.deferredQueue.id) | Should -Be @('beta','gamma')
+            @($status.deferredQueue.head) | Should -Be @($beta,$gamma)
+            Test-Path -LiteralPath (Join-Path $fixture.root ".git/itl/publication-attempts/replaced/$oldPlan") | Should -BeTrue
+        } finally { $env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$prior; Remove-DeliveryFixture $fixture }
+    }
 }

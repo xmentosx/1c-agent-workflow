@@ -46,7 +46,9 @@ param(
     [switch]$CleanupCompactState,
     [switch]$BootstrapSupervisor,
     [switch]$RetryBlockedStage,
-    [switch]$RequireRelease
+    [switch]$RequireRelease,
+    [string[]]$DeferEntry = @(),
+    [string]$DeferReason = ""
 )
 
 Set-StrictMode -Version Latest
@@ -136,6 +138,7 @@ if ($Replan -and ($Action -ne 'PublishDevelop' -or $ResumePlan)) { throw '-Repla
 if (($ReplanQueueScope -ne 'Current' -or $ReplanCheckpointSha256) -and -not $Replan) { throw 'Frozen recovery parameters require -Replan.' }
 if($FrozenRepair.Count -and ($Action -ne 'PublishDevelop' -or -not $Replan -or $ReplanQueueScope -cne 'Frozen')){throw '-FrozenRepair requires PublishDevelop -Replan with -ReplanQueueScope Frozen.'}
 if ($ApproveLongPlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { throw "-ApproveLongPlan is valid only for a publication action." }
+if (($DeferEntry.Count -or $DeferReason) -and ($Action -ne 'PublishDevelop' -or $ResumePlan -or $ReplanQueueScope -ne 'Current')) { throw '-DeferEntry is valid only for PublishDevelop with the current queue, not with -ResumePlan or a Frozen Replan.' }
 if ($StatusDetail -ne "Summary" -and $Action -ne "Status") { throw "-StatusDetail is valid only with -Action Status." }
 if ($CleanupChannel -ne "Auto" -and $Action -ne "Cleanup") { throw "-CleanupChannel is valid only with -Action Cleanup." }
 
@@ -191,7 +194,17 @@ try {
             $cleanup
         }
         "DiagnoseFull" { Invoke-DeliveryDiagnosticFull -AiRulesSource $AiRulesSource -E2EProjectRoot $E2EProjectRoot }
-        "PublishDevelop" { if ($script:DeliveryCustomGateBoundary) { Publish-DevelopDeferringFailingEntries } else { Invoke-PublishDevelopWithCleanup } }
+        "PublishDevelop" {
+            # Requested deferrals are written under the operation lock, before
+            # the candidate is built; the publication then excludes them.
+            $requestedDeferrals = @(if ($DeferEntry.Count -or $DeferReason) { Add-RequestedQueueDeferrals -Ids $DeferEntry -Reason $DeferReason })
+            $published = if ($script:DeliveryCustomGateBoundary) { Publish-DevelopDeferringFailingEntries } else { Invoke-PublishDevelopWithCleanup }
+            if ($requestedDeferrals.Count -and $published) {
+                $automatic = if ($published.PSObject.Properties['deferredEntries']) { @($published.deferredEntries) } else { @() }
+                $published | Add-Member -NotePropertyName deferredEntries -NotePropertyValue (@($requestedDeferrals) + $automatic) -Force
+            }
+            $published
+        }
         "PromoteRelease" { Promote-AccumulatedDevelopToMaster -WithChannelCleanup:(-not $script:DeliveryCustomGateBoundary) }
         "ReleaseMaster" { if ($script:DeliveryCustomGateBoundary) { Release-DevelopToMaster } else { Invoke-ReleaseMasterWithCleanup } }
     }

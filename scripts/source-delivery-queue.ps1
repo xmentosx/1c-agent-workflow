@@ -226,6 +226,54 @@ function Add-QueueDeferral {
     return $result.exitCode -eq 0
 }
 
+function Add-RequestedQueueDeferrals {
+    # An agent that diagnosed a failure names the guilty registrations. Ranges
+    # that other unpublished registrations carry cannot leave the candidate
+    # alone, so the request is refused before any deferral is written.
+    param([Parameter(Mandatory = $true)][string[]]$Ids, [string]$Reason)
+    $requested = @($Ids | ForEach-Object { ([string]$_) -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+    if ($requested.Count -eq 0 -or -not ([string]$Reason).Trim()) {
+        throw "DELIVERY_DEFER_REASON_REQUIRED: -DeferEntry needs at least one queue id and a non-empty -DeferReason naming the diagnosed failure. Nothing was deferred."
+    }
+    [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
+    $published = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
+    $entries = @(Get-QueueEntries)
+    $deferrals = Get-QueueDeferrals
+    $selected = @()
+    foreach ($id in $requested) {
+        $entry = @($entries | Where-Object { [string]$_.id -ceq $id })
+        if ($entry.Count -ne 1) {
+            throw "DELIVERY_DEFER_ENTRY_UNKNOWN: '$id' is not a registered queue id. Registered: $(@($entries | ForEach-Object { "'$($_.id)'" }) -join ', '). Nothing was deferred."
+        }
+        if ((Invoke-DeliveryGit -Arguments @("merge-base", "--is-ancestor", [string]$entry[0].head, $published) -AllowFailure).exitCode -eq 0) {
+            throw "DELIVERY_DEFER_ENTRY_PUBLISHED: '$id' at $($entry[0].head) is already on origin/develop $published. Nothing was deferred."
+        }
+        $selected += $entry[0]
+    }
+    $dependents = @($entries | Where-Object {
+        $other = $_
+        if ([string]$other.id -cin $requested) { return $false }
+        if ($deferrals.ContainsKey([string]$other.id) -and [string]$deferrals[[string]$other.id].head -ceq [string]$other.head) { return $false }
+        @($selected | Where-Object { (Invoke-DeliveryGit -Arguments @("merge-base", "--is-ancestor", [string]$_.head, [string]$other.head) -AllowFailure).exitCode -eq 0 }).Count -gt 0
+    })
+    if ($dependents.Count -gt 0) {
+        $all = @($requested) + @($dependents | ForEach-Object { [string]$_.id }) -join ','
+        throw "DELIVERY_DEFER_DEPENDENT_ENTRIES: $(@($dependents | ForEach-Object { "'$($_.id)'" }) -join ', ') contain the range of $(@($selected | ForEach-Object { "'$($_.id)'" }) -join ', ') and cannot be published without it. Nothing was deferred. Defer them together with PublishDevelop -DeferEntry '$all' -DeferReason '<diagnosis>', or fix the failing registration and repeat its RegisterChange."
+    }
+    $result = @()
+    foreach ($entry in $selected) {
+        $id = [string]$entry.id
+        $existing = if ($deferrals.ContainsKey($id)) { $deferrals[$id] } else { $null }
+        if (-not ($existing -and [string]$existing.head -ceq [string]$entry.head)) {
+            if (-not (Add-QueueDeferral -Entry $entry -Stage 'requested' -Reason $Reason.Trim())) {
+                throw "DELIVERY_DEFER_ENTRY_MOVED: '$id' was re-registered or removed while it was being deferred. Inspect Status and repeat the same PublishDevelop -DeferEntry if it still fails."
+            }
+        }
+        $result += [pscustomobject][ordered]@{ id=$id; head=[string]$entry.head; reason=$Reason.Trim() }
+    }
+    return $result
+}
+
 function Clear-PublishedQueueEntries {
     param([string]$PublishedCommit, [AllowEmptyCollection()][object[]]$Entries)
     $frozen = if ($PSBoundParameters.ContainsKey('Entries')) { @($Entries) } else { @(Get-QueueEntries) }
