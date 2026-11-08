@@ -536,6 +536,8 @@
             function New-ReviewRefreshedLargeBranch {
                 param([string]$Name)
                 $fixture = New-ReviewRepository $Name
+                Write-ReviewFile $fixture.root 'src/cf/CommonModules/Ранний модуль/Ext/Module.bsl' 'early branch work'
+                $early = Save-ReviewCommit $fixture.root 'feat: ранняя правка'
                 Write-ReviewFile $fixture.root 'src/cf/CommonModules/Большой модуль/Ext/Module.bsl' (New-ReviewLargeText 'А')
                 $checkpoint = Save-ReviewCommit $fixture.root 'chore: checkpoint before branch refresh'
                 Invoke-ReviewGit $fixture.root checkout --quiet master | Out-Null
@@ -550,7 +552,7 @@
                 Write-ReviewFile $fixture.root 'docs/Заметка.md' 'note'
                 $service = Save-ReviewCommit $fixture.root 'chore: persist branch configuration synchronization cursor'
                 Write-ReviewFile $fixture.root 'src/cf/CommonModules/Общий модуль/Ext/Module.bsl' 'fix after refresh, uncommitted'
-                return [pscustomobject]@{ root = $fixture.root; initial = $fixture.initial; checkpoint = $checkpoint; master = $master; merge = $merge; fix = $fix; service = $service; state = $state }
+                return [pscustomobject]@{ root = $fixture.root; initial = $fixture.initial; early = $early; checkpoint = $checkpoint; master = $master; merge = $merge; fix = $fix; service = $service; state = $state }
             }
             function Complete-ReviewRefreshFixture {
                 # Needs the dot-sourced helper: the refresh proof owner records the base.
@@ -568,19 +570,28 @@
                 $choice.mode | Should -Be 'range-required'
                 $choice.size.sizeClass | Should -Be 'large'
                 $choice.size.bytes | Should -BeGreaterThan 307200
-                $choice.size.modules | Should -Be 2
+                $choice.size.modules | Should -Be 3
                 $choice.choice.uncommitted.size.modules | Should -Be 1
                 $choice.choice.uncommitted.size.sizeClass | Should -Be 'normal'
                 $picker = $choice.choice.picker
-                @($picker.items | ForEach-Object commit) | Should -Be @($fixture.fix, $fixture.merge)
+                # The work before the refresh stays selectable commit by commit.
+                @($picker.items | ForEach-Object commit) | Should -Be @($fixture.fix, $fixture.merge, $fixture.checkpoint, $fixture.early)
                 $picker.items[0].serviceBefore | Should -Be 1
                 $picker.items[0].objects | Should -Be @('ОбщийМодуль.Общий модуль')
                 $picker.items[0].size.modules | Should -Be 1
+                $picker.items[0].crossed | Should -BeFalse
                 $picker.items[1].anchor | Should -Be 'merge'
                 $picker.items[1].label | Should -Be 'обновление из master'
                 $picker.items[1].size.sizeClass | Should -Be 'normal'
+                $picker.items[1].crossed | Should -BeFalse
+                $picker.items[2].crossed | Should -BeTrue
+                $picker.items[2].label | Should -Be 'автосохранение работы перед обновлением из master'
+                $picker.items[2].size.modules | Should -Be 2
+                $picker.items[2].size.sizeClass | Should -Be 'large'
+                $picker.items[3].size.modules | Should -Be 3
                 $picker.complete | Should -BeTrue
-                $picker.allowed | Should -Not -Contain $fixture.checkpoint
+                $picker.allowed | Should -Contain $fixture.checkpoint
+                $picker.allowed | Should -Not -Contain $fixture.master
 
                 $uncommitted = Get-ReviewScope -ReviewPurpose review -ReviewRange uncommitted
                 $uncommitted.mode | Should -Be 'uncommitted'
@@ -601,7 +612,7 @@
             }
         }
 
-        It 'starts a range at a listed commit without master changes and refuses a commit before the refresh' {
+        It 'starts a range at any branch commit without master changes and refuses a commit outside the branch' {
             $fixture = New-ReviewRefreshedLargeBranch 'с коммита'
             & {
                 . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
@@ -614,10 +625,33 @@
                 $fromFix.baseCommit | Should -Be $fixture.merge
                 $fromFix.size.sizeClass | Should -Be 'normal'
                 Get-ReviewKind $fromFix 'subject' | Should -Not -Contain 'src/cf/CommonModules/Чужой модуль/Ext/Module.bsl'
-                $failure = $null
-                try { Get-ReviewScope -ReviewPurpose review -ReviewRange since -ReviewSince $fixture.checkpoint | Out-Null } catch { $failure = $_.Exception.Message }
-                $failure | Should -BeLike 'REVIEW_SCOPE_SINCE_NOT_ALLOWED:*'
-                $failure | Should -Match '-ReviewRange branch'
+                $fromFix.pathFiltered | Should -BeFalse
+
+                # Before the refresh merge: the branch's own paths since the
+                # commit, read from the branch base; master and earlier-only
+                # branch paths stay out.
+                $fromCheckpoint = Get-ReviewScope -ReviewPurpose review -ReviewRange since -ReviewSince $fixture.checkpoint.Substring(0, 12)
+                $fromCheckpoint.mode | Should -Be 'since'
+                $fromCheckpoint.baseCommit | Should -Be $fixture.master
+                $fromCheckpoint.pathFiltered | Should -BeTrue
+                $fromCheckpoint.size.modules | Should -Be 2
+                @(Get-ReviewKind $fromCheckpoint 'subject' | Sort-Object) | Should -Be @(
+                    'src/cf/CommonModules/Большой модуль/Ext/Module.bsl',
+                    'src/cf/CommonModules/Общий модуль/Ext/Module.bsl')
+                Get-ReviewKind $fromCheckpoint 'requirements' | Should -Be @('docs/Заметка.md')
+                @($fromCheckpoint.objects.groups.items | ForEach-Object name) | Should -Not -Contain 'ОбщийМодуль.Ранний модуль'
+                @($fromCheckpoint.entries | Where-Object path -eq 'src/cf/CommonModules/Общий модуль/Ext/Module.bsl').command |
+                    Should -Match ([regex]::Escape("diff --no-renames $($fixture.master) --"))
+                $fromEarly = Get-ReviewScope -ReviewPurpose review -ReviewRange since -ReviewSince $fixture.early
+                Get-ReviewKind $fromEarly 'subject' | Should -Contain 'src/cf/CommonModules/Ранний модуль/Ext/Module.bsl'
+                Get-ReviewKind $fromEarly 'subject' | Should -Not -Contain 'src/cf/CommonModules/Чужой модуль/Ext/Module.bsl'
+
+                foreach ($outside in @($fixture.master, $fixture.initial)) {
+                    $failure = $null
+                    try { Get-ReviewScope -ReviewPurpose review -ReviewRange since -ReviewSince $outside | Out-Null } catch { $failure = $_.Exception.Message }
+                    $failure | Should -BeLike 'REVIEW_SCOPE_SINCE_NOT_ALLOWED:*'
+                    $failure | Should -Match '-ReviewRange branch'
+                }
             }
         }
 
@@ -637,6 +671,13 @@
             $status.userReport | Should -Match ([regex]::Escape("-ReviewRange since -ReviewSince $($fixture.merge.Substring(0, 12))"))
             $status.userReport | Should -Match 'обновление из master'
             $status.userReport | Should -Match 'служебные коммиты ITL без изменений 1С: 1'
+            # One numbered option per commit, shown whole rather than as a few buttons.
+            $status.userReport | Should -Match 'одним нумерованным списком'
+            $status.userReport | Should -Match 'Не сводите варианты к кнопкам'
+            $status.userReport | Should -Match ([regex]::Escape("### 4. С коммита $($fixture.checkpoint.Substring(0, 12))"))
+            $status.userReport | Should -Match ([regex]::Escape("### 5. С коммита $($fixture.early.Substring(0, 12))"))
+            $status.userReport | Should -Match 'до обновления из master: в ревью файлы, которые ветка меняла'
+            $status.userReport | Should -Match '### 6\. Вся работа ветки'
             $status.userReport | Should -Match 'Вся работа ветки \(большой объём\)'
             $status.userReport | Should -Match 'Проверка /itl-check'
             $status.userReport | Should -Not -Match '## Предмет ревью: файлы'
