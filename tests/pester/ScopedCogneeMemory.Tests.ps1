@@ -182,6 +182,54 @@
         {Invoke-ItlMemoryRemember $b 'Second' 'itl_project_customer' 'pending'} | Should -Throw '*MEMORY_PENDING_CONFLICT*'
         {Invoke-ItlMemoryRemember $b 'First' 'itl_org_org' 'pending'} | Should -Throw '*MEMORY_DESTINATION_LOCKED*'
         (Invoke-ItlMemoryStatus $b -LocalOnly).pending[0].fact | Should -Be 'First'
+        (Invoke-ItlMemoryStatus $b -LocalOnly).pending[0].sent | Should -BeTrue
+        {Invoke-ItlMemoryRetire $b '' 'pending'} | Should -Throw '*MEMORY_ARGUMENT_REQUIRED*'
+    }
+    It 'completes or discards an unsent draft under its ID after a stale client rejection' {
+        # Pilot 2026-11-08: a stale facade kept a candidate draft that could be
+        # neither verified under its ID nor closed, so a second ID was needed.
+        $stale=Read-ItlMemoryJson (Get-ItlMemoryPath binding $b.projectRoot);$stale.bindingId='old-client'
+        $fact='Клиентский режим редактора плана — легаси'
+        {Invoke-ItlMemoryRemember $stale $fact '' 'draft'} | Should -Throw '*MEMORY_STALE_CONTEXT*'
+        $evidence=@(@{source='user';reference='task confirmation'})
+        {Invoke-ItlMemoryRemember $stale $fact 'itl_project_customer' 'draft' @{} $evidence verified} | Should -Throw '*MEMORY_STALE_CONTEXT*'
+        $script:Calls.Count | Should -Be 0
+        $draft=(Invoke-ItlMemoryStatus $b -NoteId draft -LocalOnly).pending[0]
+        $draft.sent | Should -BeFalse
+        $draft.status | Should -Be 'verified'
+        $draft.evidence[0].reference | Should -Be 'task confirmation'
+        $r=Invoke-ItlMemoryRemember $b $fact 'itl_project_customer' 'draft' @{} $evidence verified
+        $r.state | Should -Be 'durable'
+        ($script:Originals[$r.dataId]|ConvertFrom-Json).status | Should -Be 'verified'
+        @($script:Calls|Where-Object path -EQ '/api/v1/remember').Count | Should -Be 1
+        @((Invoke-ItlMemoryStatus $b -LocalOnly).pending).Count | Should -Be 0
+        $sourceRoot=Join-Path (Join-Path (Get-ItlMemoryHome) 'source') $b.identity.workspaceId
+        $saved=Read-ItlMemoryJson (Join-Path $sourceRoot ((Get-ItlCatalogHash 'draft')+'.json'))
+        $saved.intent.status | Should -Be 'verified'
+        $saved.replacedIntents[0].status | Should -Be 'candidate'
+        @($saved.replacedIntents).Count | Should -Be 1
+        $saved.replacedIntents[0].datasetName | Should -Be ''
+
+        {Invoke-ItlMemoryRemember $stale 'Заменённый черновик' '' 'replaced'} | Should -Throw '*MEMORY_STALE_CONTEXT*'
+        {Invoke-ItlMemoryRetire $stale '' 'replaced'} | Should -Throw '*MEMORY_STALE_CONTEXT*'
+        $calls=$script:Calls.Count
+        (Invoke-ItlMemoryRetire $b '' 'replaced').state | Should -Be 'discarded-unsent'
+        $script:Calls.Count | Should -Be $calls
+        @((Invoke-ItlMemoryStatus $b -LocalOnly).pending).Count | Should -Be 0
+        (Read-ItlMemoryJson (Join-Path $sourceRoot ((Get-ItlCatalogHash 'replaced')+'.discarded.json'))).intent.data | Should -Be 'Заменённый черновик'
+        {Invoke-ItlMemoryRetire $b '' 'replaced'} | Should -Throw '*MEMORY_ARGUMENT_REQUIRED*'
+        {Invoke-ItlMemoryRemember $stale 'Черновик с назначением' '' 'named'} | Should -Throw '*MEMORY_STALE_CONTEXT*'
+        (Invoke-ItlMemoryRetire $b 'itl_project_customer' 'named').state | Should -Be 'discarded-unsent'
+        @((Invoke-ItlMemoryStatus $b -LocalOnly).pending).Count | Should -Be 0
+    }
+    It 'lets only one of two competing unsent drafts reach the backend' {
+        $script:RaceBinding=$b;$script:Race=$true
+        Mock Assert-ItlMemoryBindingCurrent {
+            if($script:Race){$script:Race=$false;$null=Invoke-ItlMemoryRemember $script:RaceBinding 'Победитель' 'itl_project_customer' 'race' @{} @(@{source='user'}) verified}
+        }
+        {Invoke-ItlMemoryRemember $b 'Проигравший' 'itl_project_customer' 'race'} | Should -Throw '*MEMORY_PENDING_CONFLICT*'
+        @($script:Calls|Where-Object path -EQ '/api/v1/remember').Count | Should -Be 1
+        @($script:Originals.Values|ForEach-Object {($_|ConvertFrom-Json).fact}) | Should -Be @('Победитель')
     }
     It 'reserves one cycle across repeated reset/resume and invalidates an old client' {
         $state=@{memoryCycle=@{current=$b.cycleId;reserved='';workspaceId=$b.identity.workspaceId}}
@@ -617,7 +665,10 @@ try {
         $lines=@($native.stdout.Trim() -split "`r?`n"|ForEach-Object {$_|ConvertFrom-Json})
         $lines.Count | Should -Be 3
         $lines[1].result.tools.Count | Should -Be 4
-        @($lines[1].result.tools|Where-Object name -EQ remember)[0].description | Should -Match 'recall returns only verified notes.*status=verified with evidence'
+        @($lines[1].result.tools|Where-Object name -EQ remember)[0].description | Should -Match 'recall returns only verified notes.*status=verified with evidence.*unsent pending draft'
+        $retire=@($lines[1].result.tools|Where-Object name -EQ retire_note)[0]
+        @($retire.inputSchema.required) | Should -Be @('note_id')
+        $retire.description | Should -Match 'note_id alone discards an own unsent pending draft'
         ($lines[2].result.content[0].text|ConvertFrom-Json).pending[0].fact | Should -Be 'Путь с пробелом и кириллицей'
     }
 }

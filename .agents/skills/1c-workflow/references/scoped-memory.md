@@ -104,6 +104,9 @@ and eight summaries; an exact known ID bypasses that listing cap.
 `remember(data, dataset_name, note_id?, data_id?, status?, applicability?, evidence?, source?, revision?)`
 saves one self-contained fact. Choose the narrowest sufficient destination from
 local status. Missing destination/home/grant preserves the private pending source.
+An unsent draft (local `sent=false`) is completed under the same note ID with
+changed status, evidence or destination; replaced intents stay in its private
+record. A sent attempt keeps exact-ID reconciliation and its destination.
 Use a stable explicit note ID for correction and the recalled native `data_id`
 when this reader has no local receipt. Verified notes need identifiable evidence; a
 user-confirmed decision, correction or standing condition is verified by that
@@ -136,6 +139,8 @@ pipeline completion is not per-note retrieval proof. `history=true` with an exac
 old task label and note/data ID permits history for this workspace; union recall
 never includes old cycles. `retire_note` accepts the exact recalled `data_id` when
 there is no local receipt; it addresses one note only, never a dataset.
+`note_id` alone discards only an own unsent draft, keeping a private audit copy;
+retiring a note also discards its unsent update.
 Precise correction updates its original through the qualified native update API.
 
 Pending/source and receipts remain private outside reset. After durable receipt,
