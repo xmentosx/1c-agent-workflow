@@ -297,6 +297,34 @@ function Copy-WorkflowForkTransitionArtifact {
     }
 }
 
+function Resolve-WorkflowGatePwsh {
+    # Cases that compare the Desktop and Core hosts skip without pwsh.exe, and
+    # a complete static proof rejects any skipped case. Resolve pwsh before the
+    # long Pester stage: PATH first, then the clone's git config itl.pwshPath,
+    # whose directory is prepended to PATH for every gate child.
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot, [switch]$Required)
+    $found = @(Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($found.Count) { return [pscustomobject]@{ status = 'path'; path = [string]$found[0].Source } }
+    if (-not (Get-Command Invoke-RepositoryGit -ErrorAction SilentlyContinue)) {
+        . (Join-Path $PSScriptRoot "git-path-list.ps1")
+    }
+    $configured = ([string](Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('config', '--get', 'itl.pwshPath') -AllowFailure).stdout).Trim()
+    $problem = 'pwsh.exe is not on PATH and git config itl.pwshPath is not set'
+    if ($configured) {
+        if ((Test-Path -LiteralPath $configured -PathType Leaf) -and [IO.Path]::GetFileName($configured) -ieq 'pwsh.exe') {
+            $env:PATH = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($configured)) + [IO.Path]::PathSeparator + $env:PATH
+            return [pscustomobject]@{ status = 'configured'; path = [IO.Path]::GetFullPath($configured) }
+        }
+        $problem = "git config itl.pwshPath '$configured' is not an existing pwsh.exe"
+    }
+    if ($Required) {
+        $dependent = @(Get-ChildItem -LiteralPath (Join-Path $RepositoryRoot 'tests\pester') -Filter '*.Tests.ps1' -File -ErrorAction SilentlyContinue |
+            Where-Object { (Select-String -LiteralPath $_.FullName -Pattern 'Get-Command pwsh' -SimpleMatch -Quiet -Encoding UTF8) } | ForEach-Object { $_.Name } | Sort-Object)
+        throw "GATE_PWSH_REQUIRED: $problem; $($dependent.Count) test files would skip their Core-host cases and the complete static proof rejects skipped tests ($($dependent -join ', ')). Point the clone at an existing PowerShell 7 with: git config itl.pwshPath '<full path to pwsh.exe>', then repeat the same command. No system install is required."
+    }
+    return [pscustomobject]@{ status = 'missing'; path = '' }
+}
+
 function Test-WorkflowCurrentStaticProof {
     param([object]$Proof, [string]$Commit, [string]$Tree)
     try {

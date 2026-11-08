@@ -22,6 +22,7 @@
   "pesterExternalRuntimeTests": {
     "tests/pester/CompactRunnerFreshContinuation.Tests.ps1": ["powershell-core"],
     "tests/pester/CompactRunnerRouting.Tests.ps1": ["powershell-core"],
+    "tests/pester/DevelopStaticQualificationCache.Tests.ps1": ["powershell-core"],
     "tests/pester/PesterRuntimeProof.Tests.ps1": ["powershell-core"],
     "tests/pester/SourceDeliveryPlan.Tests.ps1": ["powershell-core"],
     "tests/pester/SourceProofJson.Tests.ps1": ["powershell-core"],
