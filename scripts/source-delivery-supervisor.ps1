@@ -144,9 +144,13 @@ if ($CleanupChannel -ne "Auto" -and $Action -ne "Cleanup") { throw "-CleanupChan
 
 $script:ActiveOperation = $null
 try {
+    $queuedBeforeLock = @(if ($Action -eq "PublishDevelop") { Get-QueueEntries })
     if ($Action -in @("Cleanup", "PublishDevelop", "PromoteRelease", "ReleaseMaster")) {
         [void](Enter-DeliveryOperation -Action $Action)
     }
+    $publishedWhileWaiting = if ($Action -eq "PublishDevelop" -and [int]$script:DeliveryOperationWaitedSeconds -gt 0) {
+        Get-DevelopQueuePublishedWhileWaiting -Entries $queuedBeforeLock -WaitedSeconds ([int]$script:DeliveryOperationWaitedSeconds)
+    } else { $null }
     # Every stand consumer qualifies on this clone's fixture stand; a legacy
     # stand passed by an older command is replaced with a warning.
     if ($Action -in @("Plan", "DiagnoseFull", "PublishDevelop", "PromoteRelease", "ReleaseMaster") -and -not $script:DeliveryCustomGateBoundary) {
@@ -195,15 +199,18 @@ try {
         }
         "DiagnoseFull" { Invoke-DeliveryDiagnosticFull -AiRulesSource $AiRulesSource -E2EProjectRoot $E2EProjectRoot }
         "PublishDevelop" {
-            # Requested deferrals are written under the operation lock, before
-            # the candidate is built; the publication then excludes them.
-            $requestedDeferrals = @(if ($DeferEntry.Count -or $DeferReason) { Add-RequestedQueueDeferrals -Ids $DeferEntry -Reason $DeferReason })
-            $published = if ($script:DeliveryCustomGateBoundary) { Publish-DevelopDeferringFailingEntries } else { Invoke-PublishDevelopWithCleanup }
-            if ($requestedDeferrals.Count -and $published) {
-                $automatic = if ($published.PSObject.Properties['deferredEntries']) { @($published.deferredEntries) } else { @() }
-                $published | Add-Member -NotePropertyName deferredEntries -NotePropertyValue (@($requestedDeferrals) + $automatic) -Force
+            if ($publishedWhileWaiting -and -not ($DeferEntry.Count -or $DeferReason)) { $publishedWhileWaiting }
+            else {
+                # Requested deferrals are written under the operation lock, before
+                # the candidate is built; the publication then excludes them.
+                $requestedDeferrals = @(if ($DeferEntry.Count -or $DeferReason) { Add-RequestedQueueDeferrals -Ids $DeferEntry -Reason $DeferReason })
+                $published = if ($script:DeliveryCustomGateBoundary) { Publish-DevelopDeferringFailingEntries } else { Invoke-PublishDevelopWithCleanup }
+                if ($requestedDeferrals.Count -and $published) {
+                    $automatic = if ($published.PSObject.Properties['deferredEntries']) { @($published.deferredEntries) } else { @() }
+                    $published | Add-Member -NotePropertyName deferredEntries -NotePropertyValue (@($requestedDeferrals) + $automatic) -Force
+                }
+                $published
             }
-            $published
         }
         "PromoteRelease" { Promote-AccumulatedDevelopToMaster -WithChannelCleanup:(-not $script:DeliveryCustomGateBoundary) }
         "ReleaseMaster" { if ($script:DeliveryCustomGateBoundary) { Release-DevelopToMaster } else { Invoke-ReleaseMasterWithCleanup } }
