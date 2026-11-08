@@ -919,6 +919,39 @@ Describe 'Delivery v3 immutable selective plan' {
         { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*DELIVERY_PLAN_APPROVAL_LIMIT_INVALID*six hours*'
     }
 
+    It 'selects the Release stages whose specific inputs the queued ranges change' {
+        $catalog = Get-QualityReleaseStageCatalog -RepositoryRoot $RepoRoot
+        # Shared runtime listed by most stages is Develop E2E's input, not a Release trigger.
+        @(Get-DeliveryChangedPathReleaseCapabilities -Catalog $catalog -ChangedPaths @(
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1', '.agents/skills/1c-workflow/scripts/agent-1c.ps1',
+            'scripts/stand-env-identity.ps1', 'README.md')) | Should -BeNullOrEmpty
+        @(Get-DeliveryChangedPathReleaseCapabilities -Catalog $catalog -ChangedPaths @('scripts/release-e2e/server-reset.ps1')) | Should -Be @('server-reset')
+        # 174e7796 (2026-10-25) changed the verification model; config-cadence broke and
+        # surfaced only on 2026-11-06 in another publication. Its own files select it now.
+        $files = @(& git -C $RepoRoot -c core.quotepath=false show --name-only --format= 174e7796 2>$null | Where-Object { $_ })
+        if ($files.Count -eq 0) { $files = @('.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1') }
+        @(Get-DeliveryChangedPathReleaseCapabilities -Catalog $catalog -ChangedPaths $files) | Should -Contain 'config-cadence'
+
+        $repo = New-PlanRepository; $script:Root = $repo.root
+        New-Item -ItemType Directory -Force -Path (Join-Path $repo.root 'scripts\release-e2e') | Out-Null
+        $stages = [ordered]@{ schemaVersion=1; enclosingOverheadSeconds=60; stages=@(
+            [ordered]@{ id='alpha'; version=1; budgetSeconds=60; dependsOn=@(); paths=@('runtime.ps1','alpha/**/*') },
+            [ordered]@{ id='beta'; version=1; budgetSeconds=60; dependsOn=@(); paths=@('runtime.ps1','beta.ps1') },
+            [ordered]@{ id='gamma'; version=1; budgetSeconds=60; dependsOn=@(); paths=@('runtime.ps1','gamma.ps1') }) }
+        [IO.File]::WriteAllText((Join-Path $repo.root 'scripts\release-e2e\stages.json'), ($stages | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        & git -C $repo.root add --all; & git -C $repo.root commit --quiet -m 'stages'
+        $base = (& git -C $repo.root rev-parse HEAD).Trim()
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
+        New-Item -ItemType Directory -Force -Path (Join-Path $repo.root "alpha\$nonAscii dir") | Out-Null
+        [IO.File]::WriteAllText((Join-Path $repo.root "alpha\$nonAscii dir\step one.ps1"), "'a'", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $repo.root 'runtime.ps1'), "'v3'", [Text.UTF8Encoding]::new($false))
+        & git -C $repo.root add --all; & git -C $repo.root commit --quiet -m 'queued'
+        $queued = (& git -C $repo.root rev-parse HEAD).Trim()
+        $component = [pscustomobject]@{ requiredReleaseCapabilities=@('gamma') }
+        @(Get-DeliveryPublicationReleaseCapabilities -CandidateRoot $repo.root -BaseCommit $base -QueuedCommit $queued -ComponentPlan $component) | Should -Be @('alpha','gamma')
+        @(Get-DeliveryPublicationReleaseCapabilities -CandidateRoot $repo.root -BaseCommit $base -QueuedCommit $base -ComponentPlan $null) | Should -BeNullOrEmpty
+    }
+
     It 'keeps the supervisor stage catalog identical to candidate Release capability definitions' {
         . (Join-Path $RepoRoot 'scripts\release-e2e\common.ps1')
         foreach ($module in @('seed-parallel.ps1','server-reset.ps1','config-cadence.ps1','config-roundtrip.ps1','extension-smoke.ps1','ondemand-mcp.ps1','result-cleanup.ps1')) {

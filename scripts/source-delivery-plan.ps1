@@ -231,6 +231,38 @@ function Resolve-DeliveryRequiredReleaseCapabilities {
     return @(Resolve-QualityReleaseCapabilities -Catalog $Catalog -RequireRelease:$RequireRelease -ReleaseCapability $ReleaseCapability)
 }
 
+function Get-DeliveryChangedPathReleaseCapabilities {
+    # A publication runs the Release stages whose own inputs it changes, so a
+    # broken check fails in the publication that breaks it. A changed file
+    # selects the stages listing it only while it is specific to them (matched
+    # by at most half of the stages): the shared runtime most stages list is
+    # exercised by Develop E2E and would make nearly every publication a full Release.
+    param([Parameter(Mandatory = $true)][object]$Catalog, [AllowEmptyCollection()][string[]]$ChangedPaths = @())
+    $stages = @($Catalog.stages)
+    $limit = [Math]::Floor($stages.Count / 2)
+    $selected = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in @($ChangedPaths | Where-Object { $_ })) {
+        $matching = @($stages | Where-Object { @(Select-QualityPaths -Paths @([string]$path) -Pattern @($_.paths | ForEach-Object { [string]$_ })).Count -gt 0 })
+        if ($matching.Count -eq 0 -or $matching.Count -gt $limit) { continue }
+        foreach ($stage in $matching) { [void]$selected.Add([string]$stage.id) }
+    }
+    return @($stages | Where-Object { $selected.Contains([string]$_.id) } | ForEach-Object { [string]$_.id })
+}
+
+function Get-DeliveryPublicationReleaseCapabilities {
+    # Owned-asset capabilities plus the stages whose specific inputs the queued
+    # ranges change against published develop. The publication's own
+    # compatibility promotion is not a queued change and selects nothing.
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot, [Parameter(Mandatory = $true)][string]$BaseCommit,
+        [Parameter(Mandatory = $true)][string]$QueuedCommit, [AllowNull()][object]$ComponentPlan)
+    $capabilities = @(if ($ComponentPlan -and $ComponentPlan.PSObject.Properties['requiredReleaseCapabilities']) { @($ComponentPlan.requiredReleaseCapabilities) })
+    if (Test-Path -LiteralPath (Join-Path $CandidateRoot 'scripts\release-e2e\stages.json') -PathType Leaf) {
+        $changed = @(Get-RepositoryGitPathList -RepositoryRoot $CandidateRoot -Arguments @('diff', '--name-only', '--no-renames', '-z', $BaseCommit, $QueuedCommit, '--'))
+        $capabilities += @(Get-DeliveryChangedPathReleaseCapabilities -Catalog (Get-DeliveryReleaseStageCatalog -CandidateRoot $CandidateRoot) -ChangedPaths $changed)
+    }
+    return @($capabilities | ForEach-Object { [string]$_ } | Where-Object { $_ } | Sort-Object -Unique)
+}
+
 function Get-DeliverySupervisorChannel {
     $channel = Get-Variable -Name DeliverySupervisorChannel -Scope Script -ErrorAction SilentlyContinue
     if ($channel -and [string]$channel.Value -in @("develop", "master")) { return [string]$channel.Value }
@@ -545,13 +577,14 @@ function New-AccumulatedDeliveryPlan {
         $componentPlan = Invoke-DeliveryCandidateComponentPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
         [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
-        $plan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease -ReleaseCapability @($componentPlan.requiredReleaseCapabilities) -AllowCustomGateFixture:$script:DeliveryCustomGateBoundary
+        $releaseCapabilities = @(Get-DeliveryPublicationReleaseCapabilities -CandidateRoot $worktree.path -BaseCommit $remoteBefore -QueuedCommit $candidate -ComponentPlan $componentPlan)
+        $plan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease -ReleaseCapability $releaseCapabilities -AllowCustomGateFixture:$script:DeliveryCustomGateBoundary
         $preparation = if ($PreviewOnly -and -not (Get-Command Get-DeliveryStandPreparation -CommandType Function -ErrorAction SilentlyContinue)) {
             # The advisory bridge retains the published owner's authority.
             # An old owner cannot forecast stand preparation; do not load new
             # lifecycle operations into it or present an executable plan.
             [pscustomobject]@{status='unavailable-from-published-owner';requiresStateChange=$null}
-        } else { Get-DeliveryStandPreparation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -RequireRelease:([bool]($RequireRelease -or @($componentPlan.requiredReleaseCapabilities).Count)) }
+        } else { Get-DeliveryStandPreparation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -RequireRelease:([bool]($RequireRelease -or $releaseCapabilities.Count)) }
         $pendingCompatibility = @($(if ($componentPlan.PSObject.Properties['components']) { $componentPlan.components }) | Where-Object { $_ -and $_.PSObject.Properties['name'] -and $_.name -ceq 'aiRules1c' -and $_.compatibilityPromotionRequired }).Count -gt 0
         Add-DeliveryPreparationEstimate -Plan $plan -Preparation $preparation -PendingCompatibility:$pendingCompatibility
         Set-DeliveryPlanQueue -Plan $plan -Entries $entries

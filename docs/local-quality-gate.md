@@ -1066,6 +1066,15 @@ Component preflight не хранит булево «нужен Release»: он 
 включает точный упорядоченный список в `planId`. Для отсутствующего
 `itl-ondemand-mcp` это только `ondemand-mcp`; для Vanessa — `extension-smoke`
 и его зависимость `config-cadence`. Явный `-RequireRelease` выбирает весь каталог.
+Кроме того, `Plan` и `PublishDevelop` выбирают стадии, чьи собственные входы
+меняют записи очереди относительно опубликованного develop: файл из
+`git diff` базы и queued candidate (без коммита повышения совместимости)
+выбирает стадии, в `paths` которых он входит, если он входит не больше чем в
+половину стадий `scripts/release-e2e/stages.json`. Общий runtime, который
+перечисляет большинство стадий (`agent-1c.ps1`, `agent-1c.core.ps1`,
+`stand-env-identity.ps1` и т. п.), проверяет Develop E2E, и сам по себе
+Release не выбирает. Так поломанная проверка падает в публикации, которая её
+меняет, а не в чужой.
 `verification-refresh` и `result-cleanup` всегда свежие, когда они выбраны.
 
 Delivery-бюджеты: planning — предупреждение после 120 секунд, жёсткий предел 300 секунд; Develop static — 70 минут; Develop
