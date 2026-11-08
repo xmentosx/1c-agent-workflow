@@ -784,9 +784,9 @@ function Publish-AccumulatedDevelop {
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         Assert-DevelopSourceControllerCompatibility -CandidateRoot $worktree.path
         $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
-        $componentReleaseCapabilities = @($componentPlan.requiredReleaseCapabilities | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+        $componentReleaseCapabilities = @(Get-DeliveryPublicationReleaseCapabilities -CandidateRoot $worktree.path -BaseCommit $remoteBefore -QueuedCommit $queuedCandidate -ComponentPlan $componentPlan)
         if ($componentReleaseCapabilities.Count -gt 0 -and -not $fullReleaseRequested) {
-            Write-Verbose "Owned component publication requires exact-candidate Release capabilities '$($componentReleaseCapabilities -join ',')'; PublishDevelop added only those capabilities to the plan."
+            Write-Verbose "Owned components and the queued changes require exact-candidate Release capabilities '$($componentReleaseCapabilities -join ',')'; PublishDevelop added only those capabilities to the plan."
         }
         $RequireRelease = [bool]($fullReleaseRequested -or $componentReleaseCapabilities.Count -gt 0)
         [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
@@ -814,7 +814,7 @@ function Publish-AccumulatedDevelop {
             $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
             $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
             $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
-            $componentReleaseCapabilities = @($componentPlan.requiredReleaseCapabilities | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+            $componentReleaseCapabilities = @(Get-DeliveryPublicationReleaseCapabilities -CandidateRoot $worktree.path -BaseCommit $remoteBefore -QueuedCommit $queuedCandidate -ComponentPlan $componentPlan)
             $RequireRelease = [bool]($fullReleaseRequested -or $componentReleaseCapabilities.Count -gt 0)
             [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
             $attempt.componentPlan = $componentPlan
