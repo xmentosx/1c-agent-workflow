@@ -163,6 +163,21 @@ Describe "Source develop queue and delivery" {
             $promotion.IndexOf('Write-DevelopPublicationAttempt -Attempt $Attempt') | Should -BeLessThan $promotion.IndexOf('Assert-DevelopPublicationStageMayRun -Attempt $Attempt -Stage "compatibility-promotion"')
         }
 
+    It "runs every publication phase in one operation, bounded only by the plan's stage budgets" {
+            # 2026-11-07: a 69-minute Develop stopped the run before Release and
+            # needed a manual relaunch of the same plan.
+            @(Get-DeliveryFunctionDefinitions -Names @('Assert-DevelopPublicationOperationBudget')).Count | Should -Be 0
+            $publisher = (Get-DeliveryFunctionDefinitions -Names @('Publish-AccumulatedDevelop')).Extent.Text
+            $promotion = (Get-DeliveryFunctionDefinitions -Names @('Invoke-DevelopCompatibilityPromotion')).Extent.Text
+            foreach ($text in @($publisher, $promotion)) { $text | Should -Not -Match '(?i)wall-clock|TotalMinutes' }
+            $develop = $publisher.IndexOf('Invoke-SourceGate -Mode "Develop"')
+            $release = $publisher.IndexOf('Invoke-SourceGate -Mode "Release"')
+            $develop | Should -BeGreaterThan 0
+            $release | Should -BeGreaterThan $develop
+            $publisher.Substring($develop, $release - $develop) | Should -Match '-HardBudgetSeconds \(Get-DeliveryPlanGateBudgetSeconds -Plan \$deliveryPlan -Mode "Develop"\)'
+            $publisher.Substring($release) | Should -Match '-HardBudgetSeconds \(Get-DeliveryPlanGateBudgetSeconds -Plan \$deliveryPlan -Mode "Release"\)'
+        }
+
     It "passes origin develop as the Develop base and restores its route reports before the gate" {
             $fixture = $null; try {
                 $fixture = New-DeliveryFixture

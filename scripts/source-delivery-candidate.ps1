@@ -311,8 +311,7 @@ function Invoke-DevelopCompatibilityPromotion {
         [Parameter(Mandatory = $true)][object]$Attempt,
         [Parameter(Mandatory = $true)][string]$QueuedCandidate,
         [Parameter(Mandatory = $true)][string]$QueuedTree,
-        [Parameter(Mandatory = $true)][string]$RemoteBefore,
-        [Parameter(Mandatory = $true)][DateTime]$OperationStartedAt
+        [Parameter(Mandatory = $true)][string]$RemoteBefore
     )
     $state = Get-DevelopCandidateInstallability -CandidateRoot $CandidateRoot
     if ([bool]$state.installable) { return $false }
@@ -330,7 +329,6 @@ function Invoke-DevelopCompatibilityPromotion {
     $compatibilityQualificationRestored = Restore-DevelopCompatibilityQualification -CandidateRoot $CandidateRoot -Tree $QueuedTree -EnvironmentIdentity $environmentIdentity
     if (-not $compatibilityQualificationRestored) {
         Assert-DevelopPublicationStageMayRun -Attempt $Attempt -Stage "compatibility-qualification"
-        Assert-DevelopPublicationOperationBudget -StartedAt $OperationStartedAt -NextStage "ai_rules compatibility qualification"
         try {
             Invoke-SourceGate -Mode "Full" -WorkingRoot $CandidateRoot -TargetBaseRef $RemoteBefore
             [void](Save-DevelopCompatibilityQualification -CandidateRoot $CandidateRoot -Tree $QueuedTree -EnvironmentIdentity $environmentIdentity)
@@ -500,14 +498,6 @@ function Assert-DevelopPublicationStageMayRun {
         return
     }
     throw "Publication stage '$Stage' produced the same failure twice for this exact candidate. Automatic retry is blocked. Fix or inspect the owner first; pass -RetryBlockedStage only for an explicit supervised retry. Last error: $([string]$blocked[0].message)"
-}
-
-function Assert-DevelopPublicationOperationBudget {
-    param([Parameter(Mandatory = $true)][datetime]$StartedAt, [Parameter(Mandatory = $true)][string]$NextStage)
-    $elapsed = ([DateTime]::UtcNow - $StartedAt).TotalMinutes
-    if ($elapsed -ge 60) {
-        throw "Publication operation reached the 60 minute wall-clock budget before '$NextStage'. The durable checkpoint is preserved; continue PublishDevelop to resume from that stage without repeating passed broad gates."
-    }
 }
 
 function New-DevelopPublicationAttempt {
@@ -820,7 +810,7 @@ function Publish-AccumulatedDevelop {
 
         $prePromotionInstallability = Get-DevelopCandidateInstallability -CandidateRoot $worktree.path
         if (-not $promotionRestored -and [string]$prePromotionInstallability.aiRulesStatus -eq "pending") {
-            [void](Invoke-DevelopCompatibilityPromotion -CandidateRoot $worktree.path -Attempt $attempt -QueuedCandidate $queuedCandidate -QueuedTree $queuedTree -RemoteBefore $remoteBefore -OperationStartedAt $operationStartedAt)
+            [void](Invoke-DevelopCompatibilityPromotion -CandidateRoot $worktree.path -Attempt $attempt -QueuedCandidate $queuedCandidate -QueuedTree $queuedTree -RemoteBefore $remoteBefore)
             $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
             $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
             $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
@@ -942,7 +932,6 @@ function Publish-AccumulatedDevelop {
         }
         if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 1) {
             Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "Develop"
-            Assert-DevelopPublicationOperationBudget -StartedAt $operationStartedAt -NextStage "Develop"
             try {
                 $prerunCapability = @(if ($RequireRelease) { $deliveryPlan.releaseCapabilities })
                 Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteBefore -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Develop") -PrerunReleaseCapability $prerunCapability
@@ -962,7 +951,6 @@ function Publish-AccumulatedDevelop {
         }
         if ($RequireRelease -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2) {
             Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "Release"
-            Assert-DevelopPublicationOperationBudget -StartedAt $operationStartedAt -NextStage "Release"
             try {
                 Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Release") -ReleaseCapability @($deliveryPlan.releaseCapabilities)
                 [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
