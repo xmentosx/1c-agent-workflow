@@ -1036,4 +1036,57 @@ Describe "Vanessa verification failure classification" {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It "stops a TESTMANAGER that launched no TestClient within the connect timeout instead of the whole test timeout" {
+        # 2026-11-07: a Vanessa form that did not compile in the thin client held
+        # a modal dialog in TESTMANAGER; no TestClient ever started, yet the run
+        # waited the full 1800-second test timeout. The path has whitespace and Cyrillic.
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl vanessa $nonAscii " + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $infoBasePath = Join-Path $tempRoot "ib"
+                New-Item -ItemType Directory -Force -Path $infoBasePath | Out-Null
+                $paramsPath = Join-Path $tempRoot "VAParams.json"
+                Set-Content -LiteralPath $paramsPath -Encoding UTF8 -Value '{}'
+                $state = [pscustomobject]@{ infoBaseKind = "file"; devBranchInfoBasePath = $infoBasePath; vanessaServiceInfoBasePath = (Join-Path $tempRoot "service") }
+                $script:fixtureProcesses = @([pscustomobject]@{ processId = 7001; commandLine = "1cv8c.exe ENTERPRISE /F `"$(Join-Path $tempRoot 'service')`" /TESTMANAGER" })
+                function Get-OneCProcessInfo { return @($script:fixtureProcesses) }
+                $probe = { param($monitor, $elapsed) Test-VanessaTestClientStartupMonitor -Monitor $monitor -State $state -TestPorts @(48067) -RunParamsPath $paramsPath -ElapsedSeconds $elapsed }
+
+                $quiet = New-VanessaTestClientStartupMonitor -RunDirectory $tempRoot -ProfileNames @("ProfileOne") -ConnectTimeoutSeconds 300
+                $beforeTimeout = & $probe $quiet 299
+                $quiet.lastProbeAt = [DateTime]::MinValue
+                $afterTimeout = & $probe $quiet 300
+
+                $started = New-VanessaTestClientStartupMonitor -RunDirectory $tempRoot -ProfileNames @("ProfileOne") -ConnectTimeoutSeconds 300
+                # An owned TestClient whose /Out name matches no manifest profile.
+                $script:fixtureProcesses += [pscustomobject]@{ processId = 7002; commandLine = "1cv8c.exe /TESTCLIENT /F `"$infoBasePath`" -TPort 48067 /Out `"$(Join-Path $tempRoot 'default_20261107120000.txt')`"" }
+                $connected = & $probe $started 600
+
+                $disabled = New-VanessaTestClientStartupMonitor -RunDirectory $tempRoot -ProfileNames @("ProfileOne") -ConnectTimeoutSeconds 0
+                $script:fixtureProcesses = @()
+                $unbounded = & $probe $disabled 1700
+                [pscustomobject]@{ beforeTimeout = $beforeTimeout; afterTimeout = $afterTimeout; failure = $quiet.failure
+                    connected = $connected; startedFailure = $started.failure; startedSeen = $started.testClientSeen; unbounded = $unbounded
+                    defaultTimeout = (Get-VanessaTestClientConnectTimeoutSeconds) }
+            }
+
+            $result.beforeTimeout | Should -BeFalse
+            $result.afterTimeout | Should -BeTrue
+            $result.failure.code | Should -Be "ITL_VANESSA_TESTCLIENT_NOT_STARTED"
+            $result.failure.waitedSeconds | Should -Be 300
+            $result.failure.connectTimeoutSeconds | Should -Be 300
+            $result.failure.profileName | Should -Be "ProfileOne"
+            $result.connected | Should -BeFalse
+            $result.startedFailure | Should -BeNullOrEmpty
+            $result.startedSeen | Should -BeTrue
+            $result.unbounded | Should -BeFalse
+            $result.defaultTimeout | Should -Be 300
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
