@@ -1432,23 +1432,60 @@ function Archive-StaleDeliveryOperation {
     Remove-Item -LiteralPath (Get-DeliveryOperationLockPath) -Recurse -Force
 }
 
+function Get-DeliveryOperationWaitSeconds {
+    # A second publisher queues behind a live one instead of failing; the
+    # holder is bounded by its own plan budgets. 0 restores the immediate stop.
+    $value = [Environment]::GetEnvironmentVariable('ITL_DELIVERY_OPERATION_WAIT_SECONDS', 'Process')
+    $seconds = 0
+    if ($value -and [int]::TryParse($value, [ref]$seconds) -and $seconds -ge 0) { return $seconds }
+    return 21600
+}
+
+function Get-DeliveryOperationBlocker {
+    # Returns why the shared lock is unavailable now, or '' after recovering a
+    # stale holder. Registrations never take this lock and are not delayed.
+    $lockPath = Get-DeliveryOperationLockPath
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Container)) { return '' }
+    $status = Get-DeliveryOperationStatus
+    if ($status -and ($status.ownerAlive -or $status.gateAlive)) {
+        return "Delivery operation '$($status.action)' is already active (owner PID $($status.ownerPid), gate PID $($status.gatePid), candidate '$($status.candidatePath)')."
+    }
+    $stale = Read-DeliveryOperation
+    if ($stale) { Archive-StaleDeliveryOperation -Operation $stale; return '' }
+    $lockAge = ([DateTime]::UtcNow - (Get-Item -LiteralPath $lockPath).LastWriteTimeUtc).TotalMinutes
+    if ($lockAge -lt 2) { return "Another delivery operation is acquiring the shared lock." }
+    Remove-Item -LiteralPath $lockPath -Recurse -Force
+    return ''
+}
+
 function Enter-DeliveryOperation {
     param([Parameter(Mandatory = $true)][string]$Action)
     $lockPath = Get-DeliveryOperationLockPath
-    if (Test-Path -LiteralPath $lockPath -PathType Container) {
-        $status = Get-DeliveryOperationStatus
-        if ($status -and ($status.ownerAlive -or $status.gateAlive)) {
-            throw "Delivery operation '$($status.action)' is already active (owner PID $($status.ownerPid), gate PID $($status.gatePid), candidate '$($status.candidatePath)'). Wait for it and inspect Status before retrying."
+    $limitSeconds = Get-DeliveryOperationWaitSeconds
+    $pollSeconds = [int](Get-Variable -Name DeliveryOperationWaitPollSeconds -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    if ($pollSeconds -le 0) { $pollSeconds = 15 }
+    $waitStarted = [DateTime]::UtcNow
+    $reported = ''
+    $reportedAt = [DateTime]::MinValue
+    $script:DeliveryOperationWaitedSeconds = 0
+    while ($true) {
+        $blocker = Get-DeliveryOperationBlocker
+        if (-not $blocker) {
+            try { New-Item -ItemType Directory -Path $lockPath -ErrorAction Stop | Out-Null; break }
+            catch { $blocker = "Another delivery operation acquired the shared lock." }
         }
-        $stale = Read-DeliveryOperation
-        if ($stale) { Archive-StaleDeliveryOperation -Operation $stale }
-        else {
-            $lockAge = ([DateTime]::UtcNow - (Get-Item -LiteralPath $lockPath).LastWriteTimeUtc).TotalMinutes
-            if ($lockAge -lt 2) { throw "Another delivery operation is acquiring the shared lock. Inspect source-delivery Status before retrying." }
-            Remove-Item -LiteralPath $lockPath -Recurse -Force
+        $waited = [int]([DateTime]::UtcNow - $waitStarted).TotalSeconds
+        if ($waited + $pollSeconds -gt $limitSeconds) {
+            throw "$blocker Waited $($waited)s of the $($limitSeconds)s operation wait (ITL_DELIVERY_OPERATION_WAIT_SECONDS). Inspect source-delivery Status before retrying."
         }
+        if ($blocker -cne $reported -or ([DateTime]::UtcNow - $reportedAt).TotalSeconds -ge 300) {
+            [Console]::Error.WriteLine("Waiting for the shared delivery lock ($($waited)s of $($limitSeconds)s): $blocker")
+            $reported = $blocker
+            $reportedAt = [DateTime]::UtcNow
+        }
+        Start-Sleep -Seconds $pollSeconds
     }
-    try { New-Item -ItemType Directory -Path $lockPath -ErrorAction Stop | Out-Null } catch { throw "Another delivery operation acquired the shared lock. Inspect source-delivery Status before retrying." }
+    $script:DeliveryOperationWaitedSeconds = [int]([DateTime]::UtcNow - $waitStarted).TotalSeconds
     $owner = Get-Process -Id $PID
     $operation = [pscustomobject]@{
         schemaVersion = 1; id = [guid]::NewGuid().ToString("N"); action = $Action; startedAt = [DateTime]::UtcNow.ToString("o")

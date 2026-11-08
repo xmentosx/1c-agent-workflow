@@ -274,6 +274,24 @@ function Add-RequestedQueueDeferrals {
     return $result
 }
 
+function Get-DevelopQueuePublishedWhileWaiting {
+    # A publisher that queued behind another finishes successfully when that
+    # run published every registration it was started for and none remains.
+    param([AllowEmptyCollection()][object[]]$Entries, [int]$WaitedSeconds)
+    if (@($Entries).Count -eq 0) { return $null }
+    [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
+    $published = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
+    foreach ($entry in @($Entries)) {
+        if ((Invoke-DeliveryGit -Arguments @("merge-base", "--is-ancestor", [string]$entry.head, $published) -AllowFailure).exitCode -ne 0) { return $null }
+    }
+    if (@(Get-PublishableQueueEntries -Entries @(Get-QueueEntries)).Count -gt 0) { return $null }
+    return [pscustomobject][ordered]@{
+        status='already-published'; branch='develop'; commit=$published; remoteHead=$published
+        developPublished=$true; masterReleased=$false; waitedSeconds=$WaitedSeconds
+        entries=@($Entries | ForEach-Object { [pscustomobject]@{ id=[string]$_.id; head=[string]$_.head } })
+    }
+}
+
 function Clear-PublishedQueueEntries {
     param([string]$PublishedCommit, [AllowEmptyCollection()][object[]]$Entries)
     $frozen = if ($PSBoundParameters.ContainsKey('Entries')) { @($Entries) } else { @(Get-QueueEntries) }
