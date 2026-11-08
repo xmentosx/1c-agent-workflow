@@ -31,6 +31,103 @@
         }
     }
 
+    It 'serializes the shared registry fetch and merge across independent processes' {
+        $root = Join-Path $TestDrive 'Общий реестр MCP'
+        $source = Join-Path $root 'source'
+        $registry = Join-Path $root 'registry'
+        $module = Join-Path (Split-Path -Parent $HelperPath) 'lib/agent-1c.vibecoding1c-mcp.ps1'
+        New-Item -ItemType Directory -Path $source -Force | Out-Null
+
+        function Invoke-FixtureGit {
+            param([string[]]$Arguments)
+            $output = & git @Arguments
+            if ($LASTEXITCODE -ne 0) { throw "Fixture Git failed: $Arguments" }
+            return $output
+        }
+
+        Invoke-FixtureGit @('-C', $source, 'init', '-b', 'main') | Out-Null
+        Set-Content -LiteralPath (Join-Path $source 'registry.json') -Value '{"publishedAt":"first"}'
+        Invoke-FixtureGit @('-C', $source, 'add', 'registry.json')
+        Invoke-FixtureGit @('-C', $source, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'first') | Out-Null
+        Invoke-FixtureGit @('clone', '-q', $source, $registry)
+        Set-Content -LiteralPath (Join-Path $source 'registry.json') -Value '{"publishedAt":"second"}'
+        Invoke-FixtureGit @('-C', $source, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-am', 'second') | Out-Null
+
+        $worker = {
+            param($Module, $CoordinationRoot, $Source, $Registry, $Role)
+            $ErrorActionPreference = 'Stop'
+            [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+            . (Join-Path (Split-Path -Parent $Module) 'agent-1c.core.ps1')
+            . $Module
+            function Get-Vibecoding1cMcpRegistryRoot { $Registry }
+            function Get-Vibecoding1cMcpRegistryRepo { $Source }
+            function Test-Vibecoding1cMcpRegistryPathOverride { $false }
+            function Invoke-GitAt {
+                param([string]$Root, [string[]]$Arguments)
+                if ($Arguments[0] -eq 'merge') {
+                    [IO.File]::WriteAllText((Join-Path $CoordinationRoot 'before-merge'), '')
+                    $until = [DateTime]::UtcNow.AddSeconds(20)
+                    while (-not [IO.File]::Exists((Join-Path $CoordinationRoot 'allow-merge'))) {
+                        if ([DateTime]::UtcNow -ge $until) { throw 'Timed out waiting for the fixture to allow merge.' }
+                        Start-Sleep -Milliseconds 25
+                    }
+                }
+                Get-GitOutputAt $Root $Arguments | Out-Null
+                if ($Arguments[0] -eq 'merge') {
+                    [IO.File]::WriteAllText((Join-Path $CoordinationRoot 'merge-complete'), '')
+                }
+            }
+            function Invoke-ItlCatalogGit {
+                param([string]$Root, [string[]]$Arguments, [DateTime]$DeadlineUtc, [switch]$AllowFailure)
+                if (-not [IO.File]::Exists((Join-Path $CoordinationRoot 'merge-complete'))) {
+                    throw 'The second worker entered Git before the first finished merging.'
+                }
+                return @{exitCode=0;stdout=(Get-GitOutputAt $Root $Arguments) -join "`n"}
+            }
+            if ($Role -eq 'first') {
+                Update-Vibecoding1cMcpRegistryCheckout | Out-Null
+            } else {
+                [IO.File]::WriteAllText((Join-Path $CoordinationRoot 'second-ready'), '')
+                Update-Vibecoding1cMcpRegistryCheckout -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(15)) | Out-Null
+            }
+            'completed'
+        }
+        function Wait-FixtureMarker {
+            param([string]$Name, [System.Management.Automation.Job]$Job)
+            $until = [DateTime]::UtcNow.AddSeconds(12)
+            while (-not [IO.File]::Exists((Join-Path $root $Name))) {
+                if ($Job.State -in @('Failed', 'Completed', 'Stopped')) {
+                    Receive-Job -Job $Job -Keep -ErrorAction Stop | Out-Null
+                    throw "Worker ended without marker: $Name ($($Job.State))"
+                }
+                if ([DateTime]::UtcNow -ge $until) { throw "Missing worker marker: $Name ($($Job.State))" }
+                Start-Sleep -Milliseconds 25
+            }
+        }
+
+        $jobs = @()
+        try {
+            $jobs += Start-Job -ScriptBlock $worker -ArgumentList $module, $root, $source, $registry, 'first'
+            Wait-FixtureMarker 'before-merge' $jobs[0]
+            $jobs += Start-Job -ScriptBlock $worker -ArgumentList $module, $root, $source, $registry, 'second'
+            Wait-FixtureMarker 'second-ready' $jobs[1]
+            # The second process has entered the operation while the first still owns Git.
+            $jobs[1] | Wait-Job -Timeout 1 | Out-Null
+            [IO.File]::WriteAllText((Join-Path $root 'allow-merge'), '')
+            foreach ($job in $jobs) {
+                Wait-Job -Job $job -Timeout 15 | Out-Null
+                Receive-Job -Job $job -ErrorAction Stop | Should -Be 'completed'
+                $job.State | Should -Be 'Completed'
+            }
+            (Invoke-FixtureGit @('-C', $registry, 'rev-parse', 'HEAD')) |
+                Should -Be (Invoke-FixtureGit @('-C', $source, 'rev-parse', 'HEAD'))
+            (Get-Content -Raw -LiteralPath (Join-Path $registry 'registry.json') | ConvertFrom-Json).publishedAt |
+                Should -Be 'second'
+        } finally {
+            $jobs | Remove-Job -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'never reroutes a saved unavailable host to the only healthy alternative during selection' {
         $root = Join-Path $TestDrive 'Сохранённый host с пробелом'
         New-Item -ItemType Directory -Force -Path $root | Out-Null

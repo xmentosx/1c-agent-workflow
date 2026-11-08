@@ -398,10 +398,42 @@ function Update-Vibecoding1cMcpRegistryCheckout {
         return $registryRoot
     }
 
-    $repo = Get-Vibecoding1cMcpRegistryRepo
+    $registryRoot = [IO.Path]::GetFullPath($registryRoot)
     $parent = Split-Path -Parent $registryRoot
-    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    [IO.Directory]::CreateDirectory($parent) | Out-Null
+    $lockDeadlineUtc = $DeadlineUtc
+    if ($lockDeadlineUtc -eq [DateTime]::MinValue) {
+        $lockDeadlineUtc = [DateTime]::UtcNow.AddSeconds(30)
+    }
 
+    # The checkout is shared across projects. Keep this file beside it so the
+    # same lock also protects the initial clone. Only the open handle owns it.
+    $lockPath = "$registryRoot.refresh.lock"
+    $registryLock = $null
+    try {
+        while ($null -eq $registryLock) {
+            $remaining = $lockDeadlineUtc - [DateTime]::UtcNow
+            if ($remaining.TotalMilliseconds -le 0) {
+                throw "MCP_REGISTRY_LOCK_TIMEOUT: registry update is busy ($registryRoot). Wait for the other update and repeat the same operation."
+            }
+            try {
+                $registryLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            } catch [IO.IOException] {
+                # Retry Windows sharing and lock violations. Surface other I/O errors.
+                if (($_.Exception.GetBaseException().HResult -band 0xffff) -notin @(32, 33)) { throw }
+                Start-Sleep -Milliseconds ([int][Math]::Min(100, $remaining.TotalMilliseconds))
+            }
+        }
+        return (Update-Vibecoding1cMcpRegistryCheckoutCore -RegistryRoot $registryRoot -Parent $parent -DeadlineUtc $DeadlineUtc)
+    } finally {
+        if ($null -ne $registryLock) { $registryLock.Dispose() }
+    }
+}
+
+function Update-Vibecoding1cMcpRegistryCheckoutCore {
+    param([string]$RegistryRoot, [string]$Parent, [DateTime]$DeadlineUtc)
+
+    $repo = Get-Vibecoding1cMcpRegistryRepo
     if($DeadlineUtc -ne [DateTime]::MinValue){
         # Bound catalog operations use the same checkout owner, one fetch and
         # one absolute metadata deadline. Never fall back to another pull.
