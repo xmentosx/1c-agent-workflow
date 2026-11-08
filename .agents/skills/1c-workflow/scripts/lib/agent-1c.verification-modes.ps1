@@ -267,7 +267,7 @@ function Start-ItlVerificationRepairSession {
     $recoveryId = [string](Get-StateValue $state "toolingRecoveryId" "")
     if (Test-Path -LiteralPath $path -PathType Leaf) {
         $previous = Read-Utf8Text -Path $path | ConvertFrom-Json
-        if ([string]$previous.status -eq 'active') {
+        if ([string]$previous.status -in @('active', 'workflow-blocked')) {
             if ([string]$previous.branch -cne (Get-CurrentBranch) -or
                 -not [string]::Equals((Get-FullPathNormalized ([string]$previous.projectRoot)),
                     (Get-FullPathNormalized $script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase)) {
@@ -279,6 +279,14 @@ function Start-ItlVerificationRepairSession {
                 [string](Get-StateValue $previous 'scenarioFeature' '') -cne $scenarioFeature -or
                 [string](Get-StateValue $previous 'scenarioTags' '') -cne $scenarioTags) {
                 throw "ITL_VERIFICATION_REPAIR_SCOPE_CHANGED: active session $($previous.sessionId) owns kind=$previousKind and its original scenario scope. Resume that exact session or report its blocker; do not reset the budget."
+            }
+            if ([string]$previous.status -eq 'workflow-blocked') {
+                # Workflow refusals never consumed the product budget, so the
+                # same session resumes with its attempts. The last blocked code
+                # is retained: an unchanged refusal stops again after one run.
+                $previous.status = 'active'
+                $previous.updatedAt = (Get-Date).ToString('o')
+                Write-Utf8TextAtomic -Path $path -Value (($previous | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
             }
             Write-Host "Repair session resumed: $($previous.sessionId)"
             Write-Host "Repair attempts: $($previous.attempts)/$maximumAttempts"
@@ -419,6 +427,10 @@ function Get-ItlMatchingVerificationRepairSession {
             Set-RunFailureContext -Category "runner" -RequiredAction "stop-repair-and-resume-original-task"
             throw "Repair session $($record.sessionId) already passed. Do not start another repair run; resume the original task and use an ordinary check for later verification."
         }
+        if ([string]$record.status -eq "workflow-blocked") {
+            Set-RunFailureContext -Category "runner" -RequiredAction "report-workflow-incident"
+            throw "ITL_VERIFICATION_REPAIR_WORKFLOW_BLOCKED: repair session $($record.sessionId) stopped after workflow refusal $(Get-StateValue $record 'lastWorkflowBlockedCode' '') repeated consecutively; product attempts $($record.attempts)/$($record.maximumAttempts) were preserved. Follow references/workflow-incidents.md, then resume this session with begin-verification-repair."
+        }
         Set-RunFailureContext -Category "runner" -RequiredAction "report-blocker"
         throw "Repair session $($record.sessionId) is terminal (status=$($record.status)). Return its blocker diagnostics; another full run is forbidden."
     }
@@ -477,6 +489,14 @@ function Use-ItlVerificationRepairAttempt {
         Set-RunFailureContext -Category "runner" -RequiredAction "report-blocker"
         throw "Repair session $($record.sessionId) exhausted its $maximumAttempts full verification runs. Return blocker diagnostics; another full run is forbidden."
     }
+    # A workflow-blocked outcome refunds this attempt; the ticket lets the
+    # failure owner restore the pre-attempt scenario-loop input identity.
+    $identityProperty = $record.PSObject.Properties['lastAttemptInputIdentity']
+    $ticket = [pscustomobject]@{
+        sessionId = [string]$record.sessionId
+        hadInputIdentity = $null -ne $identityProperty
+        inputIdentity = $(if ($null -ne $identityProperty) { [string]$identityProperty.Value } else { '' })
+    }
     if ([string](Get-StateValue $record 'kind' 'canonical-repair') -eq 'scenario-loop') {
         $state = Read-DevBranchState -Name $DevBranchName
         $featurePath = [string](Get-StateValue $record 'scenarioFeature' '')
@@ -511,6 +531,29 @@ function Use-ItlVerificationRepairAttempt {
     Write-Utf8TextAtomic -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
     Write-Host "Repair session: $($record.sessionId)"
     Write-Host "Repair attempt: $($record.attempts)/$maximumAttempts"
+    return $ticket
+}
+
+function Get-ItlVerificationRepairWorkflowBlockCode {
+    param(
+        [AllowEmptyString()][string]$Message,
+        [AllowEmptyString()][string]$Category = ''
+    )
+
+    # Only a workflow/runner refusal before a product verdict is refunded. A
+    # product, fixture, suite, update or event-log owner always counts.
+    if ($Category -and $Category -notin @('runner', 'session-capacity', 'execution-conflict')) { return '' }
+    if ([string]$Message -cmatch '(?<![A-Z0-9_])((?:ITL_TESTCLIENT|EXECUTION_GUARD|ITL_ONDEMAND)_[A-Z0-9_]+|ITL_ONEC_SESSION_LIMIT|ITL_VANESSA_LICENSE_LIMIT)(?![A-Z0-9_])') {
+        return [string]$Matches[1]
+    }
+    return ''
+}
+
+function Set-ItlVerificationRepairRecordValue {
+    param([object]$Record, [string]$Name, [AllowNull()][object]$Value)
+
+    if ($Record.PSObject.Properties[$Name]) { $Record.$Name = $Value }
+    else { $Record | Add-Member -NotePropertyName $Name -NotePropertyValue $Value }
 }
 
 function Complete-ItlVerificationRepairSession {
@@ -523,16 +566,68 @@ function Complete-ItlVerificationRepairSession {
 }
 
 function Complete-ItlVerificationRepairFailure {
+    param(
+        [AllowNull()][object]$Failure = $null,
+        [AllowNull()][object]$AttemptTicket = $null
+    )
+
     if ($VerificationTrigger -ne "repair") { return }
     $path = Get-ItlVerificationRepairStatePath
     $record = Get-ItlMatchingVerificationRepairSession
     $maximumAttempts = Get-ItlVerificationRepairRecordMaximumAttempts -Record $record
-    if ([int]$record.attempts -lt $maximumAttempts) { return }
+    $message = if ($Failure -is [System.Management.Automation.ErrorRecord]) { [string]$Failure.Exception.Message }
+        elseif ($Failure -is [Exception]) { [string]$Failure.Message } elseif ($null -ne $Failure) { [string]$Failure } else { '' }
+    $category = [string](Get-Variable -Name RunErrorCategory -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    $blockCode = if ($message) { Get-ItlVerificationRepairWorkflowBlockCode -Message $message -Category $category } else { '' }
+    $previousBlockCode = [string](Get-StateValue $record 'lastWorkflowBlockedCode' '')
 
-    $record.status = "exhausted"
-    $record.updatedAt = (Get-Date).ToString("o")
-    Write-Utf8TextAtomic -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
-    Set-RunFailureContext -RequiredAction "report-blocker"
+    if ($blockCode) {
+        # The refusal happened before a product verdict: refund the attempt
+        # instead of spending the user's product repair budget on workflow.
+        $record.attempts = [Math]::Max(0, [int]$record.attempts - 1)
+        $AttemptTicket = @(@($AttemptTicket) | Where-Object { $null -ne $_ -and $null -ne $_.PSObject.Properties['sessionId'] }) | Select-Object -Last 1
+        if ($null -ne $AttemptTicket -and [string]$AttemptTicket.sessionId -ceq [string]$record.sessionId) {
+            if ([bool]$AttemptTicket.hadInputIdentity) {
+                Set-ItlVerificationRepairRecordValue -Record $record -Name 'lastAttemptInputIdentity' -Value ([string]$AttemptTicket.inputIdentity)
+            } elseif ($record.PSObject.Properties['lastAttemptInputIdentity']) {
+                $record.PSObject.Properties.Remove('lastAttemptInputIdentity')
+            }
+        }
+        $now = (Get-Date).ToString('o')
+        $history = @(@(Get-StateValue $record 'workflowBlocked' @()) + @([pscustomobject][ordered]@{ code = $blockCode; at = $now; category = $category }))
+        if ($history.Count -gt 20) { $history = @($history | Select-Object -Last 20) }
+        Set-ItlVerificationRepairRecordValue -Record $record -Name 'workflowBlocked' -Value $history
+        Set-ItlVerificationRepairRecordValue -Record $record -Name 'workflowBlockedCount' -Value ([int](Get-StateValue $record 'workflowBlockedCount' 0) + 1)
+        Set-ItlVerificationRepairRecordValue -Record $record -Name 'lastWorkflowBlockedCode' -Value $blockCode
+        $repeated = $previousBlockCode -ceq $blockCode
+        if ($repeated) { $record.status = 'workflow-blocked' }
+        $record.updatedAt = $now
+        Write-Utf8TextAtomic -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+        if ($repeated) {
+            Set-RunFailureContext -Category 'runner' -RequiredAction 'report-workflow-incident'
+            Write-Host "Repair session $($record.sessionId) stopped: workflowBlocked code $blockCode repeated consecutively. Product attempts: $($record.attempts)/$maximumAttempts. Follow references/workflow-incidents.md."
+        } else {
+            Write-Host "Repair attempt not counted: workflowBlocked code=$blockCode. Product attempts: $($record.attempts)/$maximumAttempts. A consecutive repeat of the same code stops the session."
+        }
+        return
+    }
+
+    $changed = $false
+    if ($previousBlockCode) {
+        # A counted product attempt ends the consecutive workflow-block run.
+        $record.lastWorkflowBlockedCode = ''
+        $changed = $true
+    }
+    $exhausted = [int]$record.attempts -ge $maximumAttempts
+    if ($exhausted) {
+        $record.status = "exhausted"
+        $changed = $true
+    }
+    if ($changed) {
+        $record.updatedAt = (Get-Date).ToString("o")
+        Write-Utf8TextAtomic -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+    }
+    if ($exhausted) { Set-RunFailureContext -RequiredAction "report-blocker" }
 }
 
 function Get-ItlVanessaVerificationSelectionPlan {

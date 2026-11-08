@@ -572,6 +572,11 @@ function Get-WorkflowVerificationFailureContext {
     } elseif ($messageText -match '^ITL_(?:TOOLING_|DESIGNER_AGENT_|PROJECT_TESTS_)') {
         $category = 'runner'
         $requiredAction = 'repair-dev-branch-tooling'
+    } elseif ($messageText -cmatch '(?<![A-Z0-9_])ITL_TESTCLIENT_[A-Z0-9_]+') {
+        # Raised by the patched Vanessa allocator inside a scenario step, so the
+        # code is wrapped by VA frames. It is TestClient capacity, not product.
+        $category = 'runner'
+        $requiredAction = 'wait-for-testclient-capacity-and-repeat-original-command'
     } elseif ($messageText -match '^ITL_YAXUNIT_TIMEOUT\b') {
         # Project setting, not a product or test defect.
         $category = 'runner'

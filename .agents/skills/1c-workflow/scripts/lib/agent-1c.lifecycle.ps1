@@ -21443,6 +21443,7 @@ function Invoke-DevBranchCheck {
     $checkExportPath = if ((Get-DevBranchKind -State $state) -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
     $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Assert-ExportPathInsideProject -ExportPath $checkExportPath)
     $repairAttemptConsumed = $false
+    $repairAttemptTicket = $null
     $repairVerificationPassed = $false
     $scenarioLoopDiagnostic = $false
     $platformPreparation = $null
@@ -21481,7 +21482,7 @@ function Invoke-DevBranchCheck {
             throw 'ITL_VERIFICATION_SCENARIO_RUNNER_SKIPPED: Vanessa is unavailable under the effective execution mode. Correct the mode or use an authorized named invocation before consuming a repair attempt.'
         }
         if ($fullProofEligible -or $scenarioLoopDiagnostic) {
-            Use-ItlVerificationRepairAttempt
+            $repairAttemptTicket = Use-ItlVerificationRepairAttempt
             $repairAttemptConsumed = $true
         }
     }
@@ -21551,7 +21552,7 @@ function Invoke-DevBranchCheck {
             }
         }
         if ($repairAttemptConsumed -and -not $repairVerificationPassed) {
-            Complete-ItlVerificationRepairFailure
+            Complete-ItlVerificationRepairFailure -Failure $checkFailure -AttemptTicket $repairAttemptTicket
         }
         throw $checkFailure
     }

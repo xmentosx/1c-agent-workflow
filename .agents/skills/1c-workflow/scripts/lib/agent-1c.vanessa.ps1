@@ -5086,7 +5086,7 @@ function Get-VanessaVerificationFailureRoute {
     }
 
     if ($category -eq "runner") {
-        if ($classification.requiredAction -eq 'repair-dev-branch-tooling') {
+        if ($classification.requiredAction -in @('repair-dev-branch-tooling', 'wait-for-testclient-capacity-and-repeat-original-command')) {
             $requiredAction = [string]$classification.requiredAction
         } elseif ($failureCategory -eq "runner") {
             # New producer results carry the specific continuation; old runner records
