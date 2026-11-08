@@ -1192,7 +1192,8 @@ native process напрямую. Это позволяет объединить 
 `PublishDevelop` атомарно хранит цепочку `candidate-built -> develop-qualified ->
 release-qualified -> component-finalized -> remote-pushed`. Retry начинает с
 первой незавершённой фазы; сбой finalizer/push не повторяет gate. Новая identity
-кандидата/gate создаёт новую цепочку. После 60 минут новый этап не стартует. Два
+кандидата/gate создаёт новую цепочку. Один запуск проходит все фазы подряд;
+его ограничивают жёсткие бюджеты стадий плана, а не время самого запуска. Два
 одинаковых сбоя блокируют третий; повтор после диагностики требует
 `-RetryBlockedStage`. Scope `deliveryPostGate` включает только delivery control
 plane, покрытый собственными source-delivery regression-тестами. Qualification
