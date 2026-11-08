@@ -107,6 +107,36 @@ passed the step (PM5, 06.11.2026). An agent launch without a usable channel
 rejects these variants with `ITL_CLIENT_CODE_CHANNEL_UNAVAILABLE`; manual
 launches keep the clipboard route.
 
+## Listening-port detection (1.2.043.42-itl-r12)
+
+Upstream `ПолучитьМассивЗанятыхПортов` took the local port of every `netstat -ano`
+row in any state, and on Linux every `ss -tuwan4` socket. Closing a TestClient
+leaves TIME_WAIT rows on its own port, so the r11 allocator rejected an immediate
+reconnect of that profile with `ITL_TESTCLIENT_NO_FREE_PORT` (PM5 branch 1-branch4).
+Revision r12 treats a port as occupied only while a TCP socket listens on it: a
+netstat TCP row whose foreign address is `0.0.0.0:0` or `[::]:0`, which does not
+depend on the system language, or a LISTEN row of `ss -ltn`. Profile reservations
+and the exhaustion error are unchanged. Executable evidence:
+`VanessaTestClientPorts.Tests.ps1` (r11 reproducer and r12 socket-state cases).
+
+The native r12 build has patch SHA-256
+`f4a75a5546e428806942068021b1c9f66a572b1c9b7ca352484690f1168d6249`, EPF SHA-256
+`8cde1cf093a3057e31200faa818f0b7fcfa7a5aa6d5b08bf12cbb9db4f8e7915`, CFE SHA-256
+`891aea6a04fd867361b722072e731257a736adc62f4628e5203d0962c684f9b5` and ZIP
+SHA-256 `c98d97e2bb8cd20f10f66e282429721e28991ce716f121347bc544f322b920bd`; its
+thin-client check logged no errors. Bursts of about 140 Designer launches in
+`Compile.os` met transient "Не найдена лицензия" refusals with no other 1C
+process running; the build continued its work directory with
+`-ResumeWorkDirectory`, where Compile.os skips processors already built.
+
+One native scenario ran with profiles A and B on two file bases and the two-port
+range 48700-48701: connect A, connect B, close B, connect B again at once, then
+use A. Run `r12-2f8b7f86` passed with zero failures and errors: B reconnected two
+seconds after closing on port 48701 and its own base while TIME_WAIT rows of
+`[::1]:48701` remained. The same scenario on the r11 EPF (`r11-f53aeac3`) failed
+that reconnect with `ITL_TESTCLIENT_NO_FREE_PORT`. Both runs released all owned
+native processes and database admissions.
+
 ## Connection identity and native evidence
 
 The registered r11 change at `75a36db` passed 578 Targeted tests. Its paired native

@@ -38,6 +38,8 @@ third-party/vanessa-automation/1.2.043.42-itl-r10/ITL-NOTICE.txt text eol=lf
 third-party/vanessa-automation/1.2.043.42-itl-r10/LICENSE.upstream -text whitespace=cr-at-eol
 third-party/vanessa-automation/1.2.043.42-itl-r11/ITL-NOTICE.txt text eol=lf
 third-party/vanessa-automation/1.2.043.42-itl-r11/LICENSE.upstream -text whitespace=cr-at-eol
+third-party/vanessa-automation/1.2.043.42-itl-r12/ITL-NOTICE.txt text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r12/LICENSE.upstream -text whitespace=cr-at-eol
 tests/fixtures/vanessa-diagnostic-screenshot/*.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 tests/fixtures/vanessa-diagnostic-screenshot/provenance.json text eol=lf
 # Verbatim PM5 artifacts (2026-11-03) for the verification-diagnostics regressions.

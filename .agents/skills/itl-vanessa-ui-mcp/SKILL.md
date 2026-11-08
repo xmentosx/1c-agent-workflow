@@ -46,7 +46,7 @@ When an interaction fails twice without new evidence, change the route (recordin
 
 ## Step Notes
 
-These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r11` backend.
+These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r12` backend.
 
 - `run_scenario` with `filePath` in modes `all`, `reloadAndRun` and `reloadAndRunFromLine` reloads the file from disk and returns `featureSha256` of the executed bytes; compare it with the file you just wrote. Without `filePath`, and in `selected` or `fromCurrentStep`, the previously loaded text with its selected scenario or step runs. `ITL_FEATURE_INVALID_XML_CHARACTER` names `file:line:column` of a control character, such as `\f` produced by an unescaped Windows path; `ITL_FEATURE_CHANGED_DURING_LOAD` means the file was still being written.
 - In ITL runs every built-in code step `(Расширение)`, including the `через буфер обмена` variants, runs through the file-code channel and fails with the original exception or compilation error. `ITL_CLIENT_CODE_CHANNEL_UNAVAILABLE` rejects a clipboard variant that could not report its result; use the plain step.
@@ -54,6 +54,7 @@ These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r11` backend.
 - For an HTML document field, both `И в поле HTML документа ... я нажимаю гиперссылку '<текст>'` and `click_hyperlink` with `hyperlink_title` also reach anchors inside collapsed `<details>`; `ITL_HTML_HYPERLINK_NOT_FOUND` lists the anchors found as `text -> href`.
 - A window title gets ` *` while its form is modified. `И Я активизирую окно` matches the title as a pattern where `*` stands for any characters, so use `'Администрирование рабочего стола*'` for a form that may be modified.
 - `И я выбираю файл` presets the next file dialog with a file path. Before a directory-selection dialog, pass the directory with a trailing `\`; without it the product received the parent directory. Assert the resulting file location in a separate step.
+- A TestClient closed with `И я закрываю TestClient` reconnects on its assigned port at once; leftover TIME_WAIT or CLOSE_WAIT connections do not occupy it. `ITL_TESTCLIENT_NO_FREE_PORT` means a process still listens on every port of the profile range, such as a TestClient that was not closed; do not widen the range or drop a profile to pass.
 
 ## Failure Handling
 
