@@ -3209,6 +3209,46 @@ exit 7
         }
     }
 
+    It "writes an argument-error launcher status when a caller-split value reaches the real helper" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl лаунчер разбитый аргумент " + [guid]::NewGuid().ToString("N"))
+        $helperCopyPath = Join-Path $tempRoot "помощник ITL\agent-1c.ps1"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $helperCopyPath) | Out-Null
+            # The real entrypoint: binding fails before it loads any library.
+            Copy-Item -LiteralPath $HelperPath -Destination $helperCopyPath
+            $process = Start-Process -FilePath "powershell" -ArgumentList (@(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $LauncherPath,
+                "-ProjectRoot", $tempRoot,
+                "-HelperPath", $helperCopyPath,
+                "-PollIntervalMilliseconds", "50",
+                "-StatusStartTimeoutSeconds", "1",
+                "-MaxWaitSeconds", "60",
+                "--",
+                "-Action", "extend-verification-repair",
+                "-RepairSessionId", "native-session",
+                "-VerificationRepairGrantSource", "fixture:", "продлить"
+            ) | ForEach-Object { & $QuoteBootstrapNativeArgument -Value ([string]$_) }) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+
+            $process.ExitCode | Should -Not -Be 0
+            $runDir = Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $status = Get-Content -Encoding UTF8 -Raw (Join-Path $runDir.FullName "status.json") | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            $status.stage | Should -Be "launcher.arguments-invalid"
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_ARGUMENTS_INVALID"
+            $status.requiredAction | Should -Match "one named argument"
+            $status.errorMessage | Should -Match "ITL_ARGUMENTS_INVALID agent-1c.ps1 rejected its arguments before starting: .*продлить"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "times out launcher, writes failed status, and removes current-run Git index lock" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-launcher-timeout-" + [guid]::NewGuid().ToString("N"))
         $fakeHelperPath = Join-Path $tempRoot "fake-helper.ps1"
