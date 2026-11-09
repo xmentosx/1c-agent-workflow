@@ -44,7 +44,8 @@ or recreate the missing JSON, stop a guessed PID, or repeat an unknown modifying
 call. If the owner reports an active call, wait for that operation to complete or
 use its cancellation path. If ownership/cleanup stays unconfirmed, run `repair-dev-branch-tooling`:
 it releases this worktree's holders without a guessed PID. Then resume the
-original check. A fresh chat does not prove same-connection
+original check; the same facade resets its backend on its next call, so the MCP
+client needs no restart. A fresh chat does not prove same-connection
 recovery. Legacy records remain readable; downgrade requires quiescent, resolved
 work, and an older facade cannot inherit a live in-memory launch snapshot.
 

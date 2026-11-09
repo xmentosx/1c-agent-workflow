@@ -151,7 +151,13 @@ replacement identity and unfinished legacy removal claims cannot report clean
 completion. There is no database-wide or startup lock on idle manager cleanup.
 
 Interactive profiles use a persistent owner bound to their caller identity.
-A failed stop retains ownership for an explicit retry. Terminal facade shutdown
+A failed stop retains ownership for an explicit retry. The guard record carries
+the worktree root and `holderState`; a retained owner reports
+`cleanup-unconfirmed`, so `repair-dev-branch-tooling` or a waiting lifecycle of
+the same worktree may stop its guard host. The facade then retries the pending
+stop once under a fresh guard; if it stays unconfirmed, it drops that backend,
+releases the guard with the call and starts a new backend on the next call
+without a client restart or replay. Terminal facade shutdown
 confirms bounded owned cleanup, closes its MCP transport and records the failure
 result. A caller must not reuse another execution's signed context to bypass
 waiting. The local source build and matching dependency lock
