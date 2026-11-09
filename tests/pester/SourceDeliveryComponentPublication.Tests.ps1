@@ -104,7 +104,7 @@ Describe "Source develop queue and delivery" {
         foreach ($external in @('roctupMcpToolkit', 'vanessaMcp', 'agentBrowser', 'windowsMcp', 'piMcpExtension', 'opencodePlugin')) {
             $aggregate | Should -Not -Match ([regex]::Escape($external))
         }
-        $DeliverySourceText | Should -Match 'Owned component publication requires exact-candidate Release capabilities'
+        $DeliverySourceText | Should -Match 'Owned components and the queued changes require exact-candidate Release capabilities'
         $DeliverySourceText | Should -Match 'Resolve-DeliveryAiRulesSource'
         $DeliverySourceText | Should -Match 'worktree", "list", "--porcelain", "-z"'
         $DeliverySourceText | Should -Match 'Remove-DeliveryPreparedAiRulesWorktree'
