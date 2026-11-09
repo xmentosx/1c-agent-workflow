@@ -357,10 +357,22 @@ function Register-SourceChange {
     $worktree = $null
     $accepted = $false
     $attempt = 0
+    $lastGateSeconds = 0.0
     try {
         while ($true) {
-            if ((Get-SourceRegistrationUtcNow) -ge $deadline) {
+            $now = Get-SourceRegistrationUtcNow
+            if ($now -ge $deadline) {
                 throw "Registration exhausted its original $budgetSeconds second budget. Candidate, task and proof are preserved; repeat RegisterChange with the same QueueId '$id' from the unchanged source checkout."
+            }
+            # After a lost CAS, the measured previous composed check is the
+            # conservative cost of the next one: the shard cache can only
+            # shorten it. Do not start a recheck the original deadline would
+            # cut; a new call gets a new budget and keeps every saved proof.
+            $remainingSeconds = ($deadline - $now).TotalSeconds
+            if ($lastGateSeconds -gt 0 -and $remainingSeconds -lt $lastGateSeconds) {
+                throw ("SOURCE_REGISTRATION_RACE_BUDGET: the develop queue moved during Targeted attempt $attempt, so the composed candidate must be checked again. " +
+                    "The previous check took $([int][Math]::Ceiling($lastGateSeconds)) seconds, but only $([int][Math]::Floor($remainingSeconds)) of the original $budgetSeconds second registration budget remain; no recheck was started. " +
+                    "Candidate, task and proof are preserved and the shard cache keeps proven inputs; repeat RegisterChange with the same QueueId '$id' from the unchanged source checkout. The new call gets a new budget.")
             }
             $attempt++
             Assert-SourceRegistrationTransitionReady
@@ -404,7 +416,9 @@ function Register-SourceChange {
             [IO.File]::WriteAllText((Join-Path $checkpointRoot "checkpoint.json"), ($checkpoint | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
             # No shared operation lease is held during composition or checking.
             # The existing shard cache admits unchanged input proofs on a retry.
+            $gateStartedAt = Get-SourceRegistrationUtcNow
             $runRecordPath = Invoke-SourceGate -Mode "Targeted" -WorkingRoot $worktree.path -TargetBaseRef $startPoint -DeadlineUtc $deadline -PassThru
+            $lastGateSeconds = ((Get-SourceRegistrationUtcNow) - $gateStartedAt).TotalSeconds
             if ((Invoke-WorktreeGit -Root $worktree.path -Arguments @("status", "--porcelain", "--untracked-files=all")).stdout -or
                 (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim() -cne $candidate) {
                 throw "Targeted changed its candidate. Registration was not accepted; inspect the preserved worktree."

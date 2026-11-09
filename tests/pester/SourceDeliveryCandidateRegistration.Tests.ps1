@@ -35,13 +35,16 @@
 }
 
 Describe 'Shared source candidate registration' {
-    It 'bounds repeated CAS losses by one original deadline and leaves an agent-readable continuation' {
-        & {
+    BeforeAll {
+        # Every composed check loses CAS; each gate call advances the injected
+        # clock by its next duration (the last one repeats).
+        function Invoke-RegistrationDeadlineFixture {
+            param([int[]]$GateMilliseconds)
             foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names @('Register-SourceChange','Assert-SourceRegistrationTransitionReady'))) {
                 Invoke-Expression $definition.Extent.Text
             }
             $script:Root=$TestDrive; $script:Remote='origin'; $script:GateScript='injected-gate.ps1'
-            $script:budgetReads=0; $script:gateDeadlines=@(); $script:casAttempts=0
+            $script:budgetReads=0; $script:gateDeadlines=@(); $script:casAttempts=0; $script:gateDurations=@($GateMilliseconds)
             $script:registrationNow=[DateTime]::SpecifyKind([DateTime]'2026-01-01', [DateTimeKind]::Utc)
             $startedAt=$script:registrationNow
             function Get-SourceRegistrationUtcNow { return $script:registrationNow }
@@ -62,20 +65,94 @@ Describe 'Shared source candidate registration' {
                 $out=if ($Arguments[0] -eq 'rev-parse') { 'b'*40 } else { '' }
                 return [pscustomobject]@{ stdout=$out; exitCode=0 }
             }
-            function Invoke-SourceGate { param($Mode,$WorkingRoot,$TargetBaseRef,$DeadlineUtc); $script:gateDeadlines+=$DeadlineUtc; $script:registrationNow=$script:registrationNow.AddMilliseconds(100) }
+            function Invoke-SourceGate {
+                param($Mode,$WorkingRoot,$TargetBaseRef,$DeadlineUtc)
+                $script:gateDeadlines+=$DeadlineUtc
+                $index=[Math]::Min($script:gateDeadlines.Count, $script:gateDurations.Count)-1
+                $script:registrationNow=$script:registrationNow.AddMilliseconds($script:gateDurations[$index])
+            }
             function Save-SourceRegistrationEvidence { param($CandidateRoot,$Candidate,$RunRecordPath); return [pscustomobject]@{ path='fixture-evidence' } }
             function Try-AcceptSourceRegistration { param($Snapshot,$Id,$Base,$Head,$Candidate,$Tree,$Entries); $script:casAttempts++; return $false }
             function Remove-DeliveryWorktree { param($Worktree); throw 'A rejected candidate must survive' }
-            { Register-SourceChange -WarningAction SilentlyContinue } | Should -Throw '*repeat RegisterChange with the same QueueId*'
-            ($script:registrationNow-$startedAt).TotalMilliseconds | Should -Be 600
-            $script:budgetReads | Should -Be 1
-            $script:gateDeadlines.Count | Should -Be 6
-            @($script:gateDeadlines | Select-Object -Unique) | Should -HaveCount 1
-            $script:casAttempts | Should -Be 5
-            $checkpoint=Get-Content -LiteralPath (Join-Path $TestDrive 'build\source-registration\checkpoint.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-            $checkpoint.id | Should -Be 'bounded-race'
-            $checkpoint.taskHead | Should -Be ('b'*40)
-            $checkpoint.sourceRoot | Should -Be $TestDrive
+            $failure=$null
+            try { Register-SourceChange -WarningAction SilentlyContinue | Out-Null } catch { $failure=$_.Exception.Message }
+            return [pscustomobject]@{
+                failure=$failure; elapsedMs=($script:registrationNow-$startedAt).TotalMilliseconds; budgetReads=$script:budgetReads
+                gateDeadlines=@($script:gateDeadlines); casAttempts=$script:casAttempts
+            }
+        }
+    }
+
+    It 'bounds repeated CAS losses by one original deadline and leaves an agent-readable continuation' {
+        $result=Invoke-RegistrationDeadlineFixture -GateMilliseconds @(100)
+        # Five 100 ms checks lose CAS. The sixth would be cut by the 550 ms
+        # original deadline, so it is not started; the continuation is exact.
+        $result.failure | Should -BeLike "SOURCE_REGISTRATION_RACE_BUDGET:*repeat RegisterChange with the same QueueId 'bounded-race'*new budget*"
+        $result.elapsedMs | Should -Be 500
+        $result.budgetReads | Should -Be 1
+        $result.gateDeadlines.Count | Should -Be 5
+        @($result.gateDeadlines | Select-Object -Unique) | Should -HaveCount 1
+        $result.casAttempts | Should -Be 5
+        $checkpoint=Get-Content -LiteralPath (Join-Path $TestDrive 'build\source-registration\checkpoint.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $checkpoint.id | Should -Be 'bounded-race'
+        $checkpoint.taskHead | Should -Be ('b'*40)
+        $checkpoint.sourceRoot | Should -Be $TestDrive
+        $checkpoint.attempt | Should -Be 5
+    }
+
+    It 'does not start a recheck after a lost CAS when the measured check no longer fits the original deadline' {
+        # The observed incident: a slow passed check lost CAS and the recheck
+        # inherited only the remainder, then was cut as a gate timeout.
+        $result=Invoke-RegistrationDeadlineFixture -GateMilliseconds @(400)
+        $result.failure | Should -BeLike "SOURCE_REGISTRATION_RACE_BUDGET: the develop queue moved during Targeted attempt 1*no recheck was started*repeat RegisterChange with the same QueueId 'bounded-race'*"
+        $result.gateDeadlines.Count | Should -Be 1
+        $result.casAttempts | Should -Be 1
+        $result.elapsedMs | Should -Be 400
+    }
+
+    It 'never accepts a check that ends after the original deadline and keeps the exhausted continuation' {
+        $result=Invoke-RegistrationDeadlineFixture -GateMilliseconds @(600)
+        $result.failure | Should -BeLike "Registration exhausted its original * second budget.*repeat RegisterChange with the same QueueId 'bounded-race'*"
+        $result.failure | Should -Not -BeLike '*SOURCE_REGISTRATION_RACE_BUDGET*'
+        $result.gateDeadlines.Count | Should -Be 1
+        $result.casAttempts | Should -Be 0
+    }
+
+    It 'reports a gate cut by the caller deadline separately from its own hard budget' {
+        & {
+            foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names @('Invoke-SourceGate','Get-DeliveryFailureClass'))) {
+                Invoke-Expression $definition.Extent.Text
+            }
+            $script:Root=$TestDrive; $script:GateScript=Join-Path $TestDrive 'гейт с пробелами.ps1'
+            [IO.File]::WriteAllText($script:GateScript, 'exit 0', [Text.UTF8Encoding]::new($false))
+            $CoverageContract=@(); $AiRulesSource=''; $E2EProjectRoot=''
+            $script:records=@(); $script:stops=0; $script:gateBudget=3600
+            function Start-DeliveryProcess {
+                param($ArgumentList,$WorkingDirectory,$StandardOutputPath,$StandardErrorPath)
+                $fake=[pscustomobject]@{ Id=4242; StartTime=[DateTime]::Now; HasExited=$false; ExitCode=0 }
+                $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($Milliseconds) Start-Sleep -Milliseconds 20; return $false }
+                return [pscustomobject]@{ process=$fake; jobHandle=[IntPtr]::Zero }
+            }
+            function Update-DeliveryOperation { param($Values) }
+            function Get-SourceGateSupervisionBudgetSeconds { param($Mode,$WorkingRoot,$PlanBudgetSeconds,[switch]$InjectedGate); return $script:gateBudget }
+            function Stop-DeliveryProcessTree { param($Process); $script:stops++ }
+            function Close-DeliveryProcessJob { param($JobHandle,$Process,$PriorErrorMessage) }
+            function Write-DeliveryRunRecord { param($Mode,$Status,$ErrorMessage,$WorkingRoot,$StartedAt,$FinishedAt,$ExitCode,$ReleaseCapability); $script:records+=[pscustomobject]@{ status=$Status; error=$ErrorMessage }; return 'fixture-record' }
+
+            { Invoke-SourceGate -Mode Targeted -WorkingRoot $TestDrive -DeadlineUtc ([DateTime]::UtcNow.AddMilliseconds(300)) } |
+                Should -Throw '*SOURCE_GATE_OPERATION_DEADLINE: Targeted source gate was stopped after * seconds at its caller''s remaining operation budget; its own 3600 second budget was not exhausted*'
+            $script:records[-1].status | Should -Be 'failed'
+            $script:records[-1].error | Should -BeLike 'SOURCE_GATE_OPERATION_DEADLINE:*'
+            Get-DeliveryFailureClass -Message $script:records[-1].error | Should -Be 'environment'
+            $script:stops | Should -BeGreaterThan 0
+
+            # Without a binding caller deadline the gate's own budget keeps
+            # the original timeout contract.
+            $script:gateBudget=0.3
+            { Invoke-SourceGate -Mode Targeted -WorkingRoot $TestDrive -DeadlineUtc ([DateTime]::UtcNow.AddHours(1)) } |
+                Should -Throw 'Targeted source gate exceeded its hard/no-progress budget.*'
+            $script:records[-1].error | Should -Not -BeLike '*SOURCE_GATE_OPERATION_DEADLINE*'
+            Get-DeliveryFailureClass -Message $script:records[-1].error | Should -Be 'environment'
         }
     }
 
