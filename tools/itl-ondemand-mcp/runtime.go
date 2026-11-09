@@ -121,7 +121,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	ctx, finishDatabaseCall, err := r.beginDatabaseCall(ctx, req.Params.Meta)
 	if err != nil {
 		code := "EXECUTION_GUARD_ADMISSION_FAILED"
-		return toolError(code, err.Error(), map[string]any{"callOutcome": "not-started", "automaticRetryPerformed": false, "recoveryTool": ownerRecoveryTool}), nil
+		return toolError(code, err.Error(), map[string]any{"callOutcome": "not-started", "automaticRetryPerformed": false, "recoveryTool": ownerRecoveryTool, "repairAction": branchHolderRepairAction}), nil
 	}
 	defer func() {
 		terminal, message := "succeeded", ""
@@ -156,7 +156,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 				callResult.Content = append(callResult.Content, &mcp.TextContent{Text: err.Error()})
 				return
 			}
-			details := map[string]any{"action": ownerRecoveryTool, "automaticRetryPerformed": false, "callOutcome": "unknown", "continuation": connectionRecoveryContinuation}
+			details := map[string]any{"action": ownerRecoveryTool, "automaticRetryPerformed": false, "callOutcome": "unknown", "continuation": connectionRecoveryContinuation, "repairAction": branchHolderRepairAction}
 			failure := toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", err.Error(), details)
 			if callResult != nil {
 				details["callOutcome"], details["upstreamOutcome"] = "completed", "succeeded"
@@ -186,7 +186,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 				previous := r.instanceID
 				if r.active != 0 || r.cleanupUnconfirmed {
 					r.mu.Unlock()
-					return recoveryAction(toolName, previous, previous, false, "not-started", fmt.Errorf("ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT: an active or unconfirmed native call remains; complete owned cleanup before retrying the original operation; no call was replayed")), nil
+					return recoveryAction(toolName, previous, previous, false, "not-started", fmt.Errorf("ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT: an active or unconfirmed native call remains; complete owned cleanup before retrying the original operation; no call was replayed; %s", branchHolderRepairHint)), nil
 				}
 				if _, err := r.recoverLocked(ctx, r.session, previous, r.backend); err != nil {
 					current := r.instanceID
@@ -446,6 +446,7 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	if err := r.enterDatabasePreparationMode(ctx); err != nil {
 		return nil, err
 	}
+	r.publishHolderState(ctx, r.executionOwner, holderStateRecovering)
 	info, err := r.broker.Recover(ctx, previousBackend, replacementInstanceID)
 	if err != nil {
 		// No confirmed cleanup receipt was returned. Preserve the existing
@@ -453,6 +454,7 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 		r.cleanupUnconfirmed = true
 		return nil, err
 	}
+	r.publishHolderState(ctx, r.executionOwner, holderStateActiveNativeCall)
 	if r.session != nil {
 		_ = r.session.Close()
 		r.clearProgress(r.session)

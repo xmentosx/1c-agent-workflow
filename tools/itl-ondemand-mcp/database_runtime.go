@@ -92,7 +92,21 @@ func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta 
 	}
 	r.mu.Lock()
 	retainedOwner, retainedPlan, pending := r.executionOwner, r.executionPlan, r.cleanupUnconfirmed
+	externallyReleased := retainedOwner != nil && retainedOwner.exited()
+	if externallyReleased {
+		// This worktree's own release (repair-dev-branch-tooling or a waiting
+		// lifecycle) stopped the retained guard host and took over its native
+		// cleanup. Forget that owner; the pending stop is retried once under a
+		// fresh guard and never retains it beyond this call.
+		r.executionOwner, r.executionPlan = nil, nil
+		r.logger.Warn("retained execution guard was released externally; resetting facade ownership",
+			"executionId", retainedOwner.Proof.ID, "cleanupUnconfirmed", pending)
+	}
 	r.mu.Unlock()
+	if externallyReleased {
+		_ = retainedOwner.Close()
+		retainedOwner, retainedPlan = nil, nil
+	}
 	if pending && !ownedCleanup {
 		// Finish only our previous native execution before admitting a new tool.
 		// Keep the local gate across both phases; the old signed context is used
@@ -106,6 +120,9 @@ func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta 
 		}
 		r.mu.Lock()
 		stopErr := r.stopDatabaseBackendLocked(cleanupCtx, true)
+		if stopErr != nil && externallyReleased {
+			r.resetBackendAfterExternalReleaseLocked()
+		}
 		r.mu.Unlock()
 		terminal, message := "succeeded", ""
 		if stopErr != nil {
@@ -113,15 +130,19 @@ func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta 
 		}
 		if err := errors.Join(stopErr, finish(terminal, message)); err != nil {
 			unlock()
-			return ctx, nil, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: %w", err)
+			if externallyReleased {
+				return ctx, nil, fmt.Errorf("ITL_ONDEMAND_SELF_RESET_CLEANUP_UNCONFIRMED: the released owner's backend stop is still unconfirmed; this facade dropped it and starts a new backend on the next call; run %s first so it drains this worktree's runtime, then repeat the original call; no call was replayed: %w", branchHolderRepairAction, err)
+			}
+			return ctx, nil, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: %w; %s", err, branchHolderRepairHint)
 		}
 		retainedOwner, retainedPlan = nil, nil
 	}
 	if retainedOwner != nil {
 		if !ownedCleanup || !pending || retainedPlan == nil {
 			unlock()
-			return ctx, nil, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original execution still owns the infobase; call %s through this facade, preserve the unknown result, then retry only after owned cleanup is proven", ownerRecoveryTool)
+			return ctx, nil, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original execution still owns the infobase; call %s through this facade, preserve the unknown result, then retry only after owned cleanup is proven; %s", ownerRecoveryTool, branchHolderRepairHint)
 		}
+		r.publishHolderState(ctx, retainedOwner, holderStateRecovering)
 		ctx = withExecutionInvocation(ctx, retainedOwner.Proof, retainedPlan)
 		return ctx, r.finishDatabaseExecution(retainedOwner, unlock), nil
 	}
@@ -140,9 +161,13 @@ func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta 
 		unlock()
 		return ctx, nil, err
 	}
+	state := holderStateActiveNativeCall
+	if ownedCleanup && pending {
+		state = holderStateRecovering
+	}
 	request := executionGuardRequest{SchemaVersion: 1, Root: plan.GuardRoot, Bases: plan.Bases,
 		Operation: "ondemand-" + r.family + "-call", ExecutionID: executionID,
-		Timeout: plan.WaitTimeoutSeconds}
+		Timeout: plan.WaitTimeoutSeconds, ProjectRoot: plan.ProjectRoot, HolderState: state}
 	if parent != nil {
 		request.InheritedContext, request.InheritedContextKey = parent.Encoded, parent.Key
 	}
@@ -194,7 +219,10 @@ func (r *runtime) finishDatabaseExecution(owner *executionGuardOwner, unlock fun
 		pending := r.cleanupUnconfirmed
 		r.mu.Unlock()
 		if pending {
-			return fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original resource owner retained; call %s through this facade before another tool call; no uncertain call was replayed", ownerRecoveryTool)
+			// The retained owner tells this worktree's release that it does no
+			// work, so a waiting lifecycle or repair may stop it.
+			r.publishHolderState(context.Background(), owner, holderStateCleanupUnconfirmed)
+			return fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original resource owner retained; call %s through this facade before another tool call; no uncertain call was replayed; %s", ownerRecoveryTool, branchHolderRepairHint)
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -208,6 +236,42 @@ func (r *runtime) finishDatabaseExecution(owner *executionGuardOwner, unlock fun
 		}
 		r.mu.Unlock()
 		return err
+	}
+}
+
+const branchHolderRepairAction = "repair-dev-branch-tooling"
+
+const branchHolderRepairHint = "if owned cleanup stays unconfirmed, run " + branchHolderRepairAction +
+	": it releases this worktree's execution-guard holders, and this facade resets its backend on the next call"
+
+// Best effort: the phase is diagnostic. A host that cannot answer has exited,
+// which the next admission detects as an external release.
+func (r *runtime) publishHolderState(ctx context.Context, owner *executionGuardOwner, state string) {
+	if owner == nil {
+		return
+	}
+	stateCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := owner.SetHolderState(stateCtx, state); err != nil {
+		r.logger.Warn("execution guard holder state was not published", "executionId", owner.Proof.ID,
+			"holderState", state, "error", err)
+	}
+}
+
+// Called under r.mu after the released owner's stop failed again under a fresh
+// guard. The releaser owns the old backend's native cleanup now; this facade
+// starts over instead of retaining a guard beyond the current call.
+func (r *runtime) resetBackendAfterExternalReleaseLocked() {
+	if r.session != nil {
+		_ = r.session.Close()
+		r.clearProgress(r.session)
+		r.session = nil
+	}
+	r.backend = nil
+	r.cleanupUnconfirmed = false
+	if r.timer != nil {
+		r.timer.Stop()
+		r.timer = nil
 	}
 }
 

@@ -11,11 +11,11 @@
       "updatedAt": ""
     },
     "itlOndemandMcp": {
-      "version": "0.4.28",
-      "releaseTag": "itl-ondemand-mcp-v0.4.28",
+      "version": "0.4.29",
+      "releaseTag": "itl-ondemand-mcp-v0.4.29",
       "assetName": "itl-ondemand-mcp-windows-amd64.exe",
-      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.28/itl-ondemand-mcp-windows-amd64.exe",
-      "sha256": "780c18572d2cb2ac6a955dc1e005bfd0b1057672f57225d9e92500afa11db439",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.29/itl-ondemand-mcp-windows-amd64.exe",
+      "sha256": "1643e9d2c1ad2e111761110122f867b34d30967aef3119da953184504e690719",
       "os": "windows",
       "arch": "amd64",
       "source": "workflow release asset"

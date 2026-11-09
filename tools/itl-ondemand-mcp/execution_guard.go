@@ -37,7 +37,18 @@ type executionGuardRequest struct {
 	Timeout             float64              `json:"timeout"`
 	InheritedContext    string               `json:"inheritedContext,omitempty"`
 	InheritedContextKey string               `json:"inheritedContextKey,omitempty"`
+	ProjectRoot         string               `json:"projectRoot,omitempty"`
+	HolderState         string               `json:"holderState,omitempty"`
 }
+
+// Diagnostic holder phases published in the guard record. A worktree's own
+// release (repair-dev-branch-tooling, a waiting lifecycle) reads them; they
+// never grant or block admission themselves.
+const (
+	holderStateActiveNativeCall   = "active-native-call"
+	holderStateCleanupUnconfirmed = "cleanup-unconfirmed"
+	holderStateRecovering         = "recovering"
+)
 
 type executionGuardEvent struct {
 	Event               string   `json:"event"`
@@ -48,10 +59,12 @@ type executionGuardEvent struct {
 	WaitSeconds         float64  `json:"waitSeconds"`
 	ExecutionContext    string   `json:"executionContext"`
 	ExecutionContextKey string   `json:"executionContextKey"`
+	HolderState         string   `json:"holderState"`
 }
 
 type executionGuardOwner struct {
 	Proof     executionContextProof
+	inherited bool
 	command   *exec.Cmd
 	input     io.WriteCloser
 	events    chan executionGuardEvent
@@ -100,7 +113,7 @@ func acquireExecutionGuard(ctx context.Context, python, runtimeRoot string, requ
 		return nil, fmt.Errorf("EXECUTION_GUARD_HOST_START_FAILED: %w", err)
 	}
 	owner := &executionGuardOwner{command: cmd, input: input, events: make(chan executionGuardEvent, 1),
-		done: make(chan struct{}), abandoned: make(chan struct{})}
+		done: make(chan struct{}), abandoned: make(chan struct{}), inherited: request.InheritedContext != ""}
 	go owner.read(output)
 	if err := owner.send(request); err != nil {
 		_ = owner.Close()
@@ -202,6 +215,36 @@ func (owner *executionGuardOwner) next(ctx context.Context) (executionGuardEvent
 	case <-ctx.Done():
 		return executionGuardEvent{}, ctx.Err()
 	}
+}
+
+// exited reports that the guard host is gone, so its OS handle no longer
+// admits this owner: the host failed or this worktree's own release stopped it.
+func (owner *executionGuardOwner) exited() bool {
+	select {
+	case <-owner.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// SetHolderState publishes the owner's current phase in its diagnostic record.
+// A nested owner reuses its parent's record, whose phase the parent owns.
+func (owner *executionGuardOwner) SetHolderState(ctx context.Context, state string) error {
+	if owner.inherited {
+		return nil
+	}
+	if err := owner.send(map[string]any{"action": "state", "holderState": state}); err != nil {
+		return err
+	}
+	event, err := owner.next(ctx)
+	if err != nil {
+		return err
+	}
+	if event.Event != "state" || event.HolderState != state {
+		return errors.New("EXECUTION_GUARD_HOST_STATE_UNCONFIRMED")
+	}
+	return nil
 }
 
 func (owner *executionGuardOwner) Release(ctx context.Context, result, message string) error {
