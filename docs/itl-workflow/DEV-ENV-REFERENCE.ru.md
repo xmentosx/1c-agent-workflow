@@ -14,7 +14,7 @@
 
 Для защиты от `MAX_PATH=260` абсолютный путь начального корня проекта ограничен 35 символами, а путь нового worktree `<родитель>\<проект>-<ветка>` — 50 символами. Допустимая длина имени ветки вычисляется только как остаток от 50 после родительского пути, имени папки проекта, разделителя и дефиса; содержимое исходников не анализируется. Временные транзакции выгрузки конфигурации, расширения и установки Vanessa используют игнорируемую папку `.tx` внутри проекта.
 
-Workflow-managed Vanessa Automation, ROCTUP и Vanessa UI MCP binaries хранятся вне worktree в immutable-кэше `%LOCALAPPDATA%\ITL\artifacts\<family>\<version>\<sha256>`. `ITL_ARTIFACT_CACHE_ROOT` переопределяет его корень только для maintainer/test сценариев; обычному проекту этот параметр не нужен. `itl-update-workflow` заполняет кэш новых pin-версий, а `itl-refresh`, `itl-refresh-lite` и `itl-refresh-all` проверяют/дозаполняют его и переписывают helper-owned bindings ветки до загрузки 1С.
+Workflow-managed Vanessa Automation, ROCTUP, Vanessa UI MCP и YAxUnit binaries хранятся вне worktree в immutable-кэше `%LOCALAPPDATA%\ITL\artifacts\<family>\<version>\<sha256>`. `ITL_ARTIFACT_CACHE_ROOT` переопределяет его корень только для maintainer/test сценариев; обычному проекту этот параметр не нужен. `itl-update-workflow` заполняет кэш новых pin-версий, а `itl-refresh`, `itl-refresh-lite` и `itl-refresh-all` проверяют/дозаполняют его и переписывают helper-owned bindings ветки до загрузки 1С. Закреплённые GitHub release-ассеты сначала скачиваются через GitHub REST API (без ключей), а при отказе API — по URL из lock; решает SHA256 из lock.
 
 ## Платформа, исходная база и хранилище
 
@@ -105,7 +105,7 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` | Максимум полных прогонов в одной repair-сессии `/itl-verify-fix`; значение фиксируется при старте сессии | целое `1..100`, default `5` | user |
 | `ITL_VERIFICATION_MODEL` | Модель оценки: текущая правка или прежние накопленные обязательства; обновление однократно записывает default, явный последующий выбор сохраняется | `change`/`cumulative`, default `change` | user |
 | `VERIFICATION_POLICY` | Политика result/close | `warn`/`block`, default `warn` | user |
-| `GITHUB_TOKEN` | GitHub API token | строка или пусто; имеет приоритет | user/secret |
+| `GITHUB_TOKEN` | Необязательный GitHub API token: поднимает лимит API (60 → 5000 запросов в час), в том числе для загрузки ассетов | строка или пусто; имеет приоритет | user/secret |
 | `GH_TOKEN` | Fallback GitHub token | строка или пусто | user/secret |
 
 ## Worktree, порты и защита
