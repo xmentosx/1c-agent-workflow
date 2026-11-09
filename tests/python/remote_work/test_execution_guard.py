@@ -16,6 +16,7 @@ from itl_remote.execution_guard import (ExecutionGuard, canonical_base, canonica
                                         _OsHandle)
 from itl_remote.execution_guard import encode_execution_context
 from itl_remote.execution_guard_host import read_request
+from itl_remote.execution_guard_holders import inventory
 
 
 def _hold(root, resources, ready, release):
@@ -207,6 +208,78 @@ class ExecutionGuardTests(unittest.TestCase):
             if child.poll() is None:
                 child.kill()
                 child.wait(timeout=10)
+
+    def test_record_names_worktree_and_holder_phase_without_changing_admission(self):
+        project = str(Path(self.temp.name) / "Рабочая копия с пробелом")
+        with ExecutionGuard(self.root, self.a, "facade-call", timeout=2, project_root=project,
+                            holder_state="active-native-call") as guard:
+            record = json.loads(guard.state_path.read_text(encoding="utf-8"))
+            self.assertEqual(project, record["projectRoot"])
+            self.assertEqual("active-native-call", record["holderState"])
+            guard.set_holder_state("cleanup-unconfirmed")
+            record = json.loads(guard.state_path.read_text(encoding="utf-8"))
+            self.assertEqual("cleanup-unconfirmed", record["holderState"])
+            self.assertEqual("running", record["state"])
+            with self.assertRaisesRegex(WorkError, "HOLDER_STATE_INVALID"):
+                guard.set_holder_state("finished")
+        with self.assertRaisesRegex(WorkError, "HOLDER_STATE_INVALID"):
+            ExecutionGuard(self.root, self.a, "bad", holder_state="unknown")
+
+    def test_host_publishes_holder_phase_on_request(self):
+        project = str(Path(self.temp.name) / "Рабочая копия")
+        request = {"schemaVersion": 1, "root": str(self.root), "bases": [self.base_a],
+                   "operation": "ondemand-roctup-call", "executionId": "c" * 32, "timeout": 5,
+                   "projectRoot": project, "holderState": "active-native-call"}
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[3] /
+                                                       ".agents/skills/itl-remote-runner/scripts"))
+        host = subprocess.Popen([sys.executable, "-B", "-X", "utf8", "-u", "-m", "itl_remote.execution_guard_host"],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8",
+                                env=environment)
+        def exchange(value):
+            print(json.dumps(value, ensure_ascii=True), file=host.stdin, flush=True)
+            while True:
+                event = json.loads(host.stdout.readline())
+                if event.get("event") != "waiting":
+                    return event
+
+        try:
+            self.assertEqual("admitted", exchange(request)["event"])
+            event = exchange({"action": "state", "holderState": "cleanup-unconfirmed"})
+            self.assertEqual(("state", "cleanup-unconfirmed"), (event["event"], event["holderState"]))
+            self.assertIn("HOLDER_STATE_INVALID", exchange({"action": "state", "holderState": "done"})["error"])
+            listed = inventory(self.root, [self.base_a])["holders"]
+            self.assertEqual(1, len(listed))
+            self.assertTrue(listed[0]["alive"])
+            self.assertEqual((project, "cleanup-unconfirmed"), (listed[0]["projectRoot"], listed[0]["holderState"]))
+            self.assertEqual("released", exchange({"action": "release", "result": "succeeded"})["event"])
+        finally:
+            host.stdin.close()
+            host.wait(timeout=10)
+
+    def test_holder_inventory_selects_overlap_and_marks_dead_and_shared_holders(self):
+        state = self.root / "executions"
+        state.mkdir(parents=True)
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait(timeout=10)
+        identity = process_identity(os.getpid())
+        records = {
+            "live": {"resources": self.a + self.b, "pid": os.getpid(), "supervisor": identity, "state": "running"},
+            "dead": {"resources": self.a, "pid": dead.pid, "supervisor": {"pid": dead.pid, "creationId": "gone"},
+                     "state": "running"},
+            "finished": {"resources": self.a, "pid": os.getpid(), "supervisor": identity, "state": "succeeded"},
+            "unrelated": {"resources": self.b, "pid": os.getpid(), "supervisor": identity, "state": "running"},
+        }
+        for name, value in records.items():
+            value.update(protocol="execution-guards-v2", executionId=name, operation=name, holderState="idle")
+            (state / (name + ".json")).write_text(json.dumps(value), encoding="utf-8")
+        (state / "broken.json").write_text("not-json", encoding="utf-8")
+        listed = {item["executionId"]: item for item in inventory(self.root, [self.base_a], [self.base_b])["holders"]}
+        self.assertEqual({"live", "dead"}, set(listed))
+        self.assertTrue(listed["live"]["alive"])
+        self.assertTrue(listed["live"]["touchesShared"])
+        self.assertFalse(listed["dead"]["alive"])
+        self.assertFalse(listed["dead"]["touchesShared"])
+        self.assertEqual("idle", listed["dead"]["holderState"])
 
     def test_target_rejects_multi_host_server_configuration(self):
         target = {"workspace": self.temp.name,

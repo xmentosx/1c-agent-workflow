@@ -593,7 +593,10 @@ Describe "Tooling recovery receipt" {
         Mock Read-CurrentDevBranchStateForVanessaMcp { $script:receiptState }
         Mock Read-DevBranchState { $script:receiptState }
         Mock Assert-DevelopmentBranchWorktreeContext {}
-        Mock Stop-DevBranchRuntimeBeforeInfobaseMutation {}
+        $script:repairOrder = @()
+        Mock Get-ItlDevBranchMutationDatabasePlan { [pscustomobject]@{bases=@([pscustomobject]@{kind='file';path='C:\База ветки'})} }
+        Mock Invoke-ItlBranchHolderRelease { $script:repairOrder += "release:$Mode"; [pscustomobject]@{released=@();preserved=@();removedRecords=0} }
+        Mock Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:repairOrder += 'drain' }
         Mock Ensure-VanessaMcpInstalled { $script:receiptState }
         Mock Test-YAxUnitSuitePresent { $true }
         Mock Ensure-YAxUnitExtensions { $script:receiptState }
@@ -602,6 +605,12 @@ Describe "Tooling recovery receipt" {
             param($State,$Updates)
             foreach ($key in $Updates.Keys) { $script:receiptState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
         }
+    }
+
+    It "releases this worktree's own guard holders before planning the guarded drain" {
+        Repair-DevBranchTooling
+        $script:repairOrder | Should -Be @('release:repair', 'drain')
+        Should -Invoke Invoke-ItlBranchHolderRelease -Times 1 -Exactly -ParameterFilter { @($Bases).Count -eq 1 -and $Bases[0].path -eq 'C:\База ветки' }
     }
 
     It "preserves the actual mutation time and grants only one receipt for it" {

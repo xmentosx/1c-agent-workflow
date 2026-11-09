@@ -27,6 +27,10 @@ from .common import WorkError, process_identity, process_is_alive, stamp, write_
 
 PROTOCOL = "execution-guards-v2"
 TERMINAL_STATES = {"succeeded", "failed", "interrupted", "cancelled"}
+# Diagnostic holder phases. They never grant or deny admission; a branch
+# release may stop a same-worktree holder automatically only when the holder
+# itself reported that it performs no native work.
+HOLDER_STATES = {"active-native-call", "idle", "cleanup-unconfirmed", "recovering"}
 _LOCAL_HELD = set()
 _LOCAL_HELD_LOCK = threading.Lock()
 
@@ -276,7 +280,7 @@ class ExecutionGuard:
     def __init__(self, root, resources, operation, *, execution_id=None, timeout=3600,
                  cancelled=lambda: False, progress=lambda record: None, cancel_path=None,
                  phase_deadline=None, inherited_context=None, context_key=None,
-                 heartbeat_seconds=1.0):
+                 heartbeat_seconds=1.0, project_root=None, holder_state=None):
         self.root = Path(root).resolve()
         self.resources = sorted(set(resources))
         if not self.resources or any(not isinstance(item, str) or not item.startswith("base-")
@@ -299,6 +303,10 @@ class ExecutionGuard:
         self.inherited_context = inherited_context
         self.context_key = context_key
         self.heartbeat_seconds = max(0.1, float(heartbeat_seconds))
+        self.project_root = str(project_root).strip() if project_root else ""
+        if holder_state is not None and holder_state not in HOLDER_STATES:
+            raise WorkError("EXECUTION_GUARD_HOLDER_STATE_INVALID")
+        self.holder_state = holder_state
         self.handles = []
         self.wait_started = None
         self.record = None
@@ -328,11 +336,28 @@ class ExecutionGuard:
                                "resources": self.resources, "pid": os.getpid(),
                                "processStartTime": identity.get("creationId"),
                                "supervisor": identity, "startedAt": now}
+                if self.project_root:
+                    self.record["projectRoot"] = self.project_root
+                if self.holder_state:
+                    self.record["holderState"] = self.holder_state
             self.record.update(state=state, heartbeatAt=now, updatedAt=now,
                                phaseDeadline=self.phase_deadline, **extra)
             write_json(self.state_path, self.record)
             snapshot = dict(self.record)
         self.progress(snapshot)
+
+    def set_holder_state(self, holder_state):
+        """Publish the owner's diagnostic phase without changing admission."""
+        if holder_state not in HOLDER_STATES:
+            raise WorkError("EXECUTION_GUARD_HOLDER_STATE_INVALID")
+        if self.inherited_context:
+            return
+        if not self.handles or self.record is None or self.record.get("state") != "running":
+            raise WorkError("EXECUTION_CONTEXT_NOT_RUNNING")
+        self.holder_state = holder_state
+        with self._state_lock:
+            self.record["holderState"] = holder_state
+        self._publish("running")
 
     def _heartbeat(self):
         while not self._heartbeat_stop.wait(self.heartbeat_seconds):

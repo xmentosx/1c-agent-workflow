@@ -648,6 +648,12 @@ function Set-RunFailureContextFromMessage {
         Set-RunFailureContext -Category "infobase-readiness" -RequiredAction "update-auxiliary-contour"
         return
     }
+    if ($Message -match '^(?i:EXECUTION_GUARD_BRANCH_HOLDER_RETAINED)\b') {
+        # The holder is this worktree's own workflow; its single release owner
+        # is the tooling repair, never a manual kill or a fresh chat.
+        Set-RunFailureContext -Category 'execution-conflict' -RequiredAction 'repair-dev-branch-tooling'
+        return
+    }
     if ($Message -match '^(?i:EXECUTION_GUARD_(?:EXTERNAL_CONFLICT|WAIT_TIMEOUT))\b') {
         Set-RunFailureContext -Category 'execution-conflict' -RequiredAction 'wait-for-exact-base-activity-or-cancel-the-current-operation'
         return

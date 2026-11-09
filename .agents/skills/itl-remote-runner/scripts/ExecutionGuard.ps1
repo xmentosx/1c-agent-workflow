@@ -163,3 +163,55 @@ function Complete-ItlExecutionGuardHost {
         return $event
     } finally { Close-ItlExecutionGuardHost -Owner $Owner }
 }
+
+# Read-only holder inventory for one exact resource set. The result names
+# records and proves only whether their supervisor is still alive; callers own
+# classification and any stop.
+function Get-ItlExecutionGuardHolders {
+    param([Parameter(Mandatory = $true)][object]$Request, [string]$Python = '', [double]$TimeoutSeconds = 30)
+
+    if (-not (Get-Command Join-NativeCommandLineArguments -CommandType Function -ErrorAction SilentlyContinue)) {
+        throw 'EXECUTION_GUARD_SHARED_QUOTING_REQUIRED'
+    }
+    . (Join-Path $PSScriptRoot 'PythonRuntime.ps1')
+    $Python = Resolve-ItlPythonExecutable -Python $Python
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $Python
+    $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-B','-X','utf8','-m','itl_remote.execution_guard_holders')
+    $start.WorkingDirectory = Split-Path -Parent $Python
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+    $start.EnvironmentVariables['PYTHONPATH'] = $PSScriptRoot
+    $start.EnvironmentVariables['PYTHONUTF8'] = '1'
+    $start.EnvironmentVariables['PYTHONIOENCODING'] = 'utf-8'
+    $start.EnvironmentVariables['PYTHONDONTWRITEBYTECODE'] = '1'
+    $start.EnvironmentVariables['PYTHONNOUSERSITE'] = '1'
+    $start.EnvironmentVariables.Remove('PYTHONHOME')
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $payload = $Request | ConvertTo-Json -Depth 20 -Compress
+        $ascii = [Text.RegularExpressions.Regex]::Replace($payload, '[^\x00-\x7f]', { param($match) ('\u{0:x4}' -f [int][char]$match.Value) })
+        $process.StandardInput.WriteLine($ascii)
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit([int]($TimeoutSeconds * 1000))) {
+            try { $process.Kill() } catch { }
+            throw 'EXECUTION_GUARD_HOLDER_INVENTORY_TIMEOUT'
+        }
+        $process.WaitForExit()
+        $text = [string]$stdout.GetAwaiter().GetResult()
+        try { $result = $text | ConvertFrom-Json -ErrorAction Stop } catch { $result = $null }
+        if ($null -eq $result) {
+            throw ('EXECUTION_GUARD_HOLDER_INVENTORY_INVALID: ' + ([string]$stderr.GetAwaiter().GetResult()).Trim())
+        }
+        if ($result.PSObject.Properties['error']) { throw ([string]$result.error) }
+        if ($process.ExitCode -ne 0 -or -not $result.PSObject.Properties['holders']) { throw 'EXECUTION_GUARD_HOLDER_INVENTORY_INVALID' }
+        return $result
+    } finally { $process.Dispose() }
+}

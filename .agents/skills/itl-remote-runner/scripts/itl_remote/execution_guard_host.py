@@ -50,7 +50,9 @@ def serve():
                            execution_id=request["executionId"], timeout=float(request["timeout"]),
                            progress=progress, cancel_path=request.get("cancelPath"),
                            phase_deadline=request.get("phaseDeadline"),
-                           inherited_context=inherited, context_key=inherited_key)
+                           inherited_context=inherited, context_key=inherited_key,
+                           project_root=request.get("projectRoot"),
+                           holder_state=request.get("holderState"))
     entered = False
     terminal = False
     try:
@@ -73,6 +75,15 @@ def serve():
                 terminal = True
                 emit({"event": "released", "status": result, "executionId": guard.execution_id})
                 return 0
+            if action == "state":
+                try:
+                    guard.set_holder_state(command.get("holderState"))
+                except WorkError as error:
+                    emit({"event": "error", "status": "failed", "error": str(error)})
+                    continue
+                emit({"event": "state", "status": "running", "executionId": guard.execution_id,
+                      "holderState": guard.holder_state})
+                continue
             if action == "validate":
                 emit({"event": "validated", "status": "running", "executionId": guard.execution_id})
                 continue
