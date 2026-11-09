@@ -225,6 +225,47 @@
     }
 }
 
+Describe "YAxUnit shared artifact cache" {
+    It "serves a second project from the verified machine cache without a network request" {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $root = Join-Path $TestDrive ('Проекты YAxUnit ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        Set-Content -LiteralPath (Join-Path $root '.agent-1c\project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+        $savedCache = [Environment]::GetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', 'Process')
+        try {
+            [Environment]::SetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', (Join-Path $root 'Общий кэш артефактов'), 'Process')
+            $result = & {
+                . $context.HelperPath -ProjectRoot $root -Action help *> $null
+                $source = Join-Path $root 'Источник релиза\YAxUnit-25.12.cfe'
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $source) | Out-Null
+                [IO.File]::WriteAllBytes($source, [Text.Encoding]::UTF8.GetBytes('pinned yaxunit payload'))
+                $sha = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+                $script:YAxUnitFixtureEntry = [pscustomobject]@{ version = '25.12'; assetName = 'YAxUnit-25.12.cfe'; url = $source; sha256 = $sha }
+                function Get-YAxUnitPinnedEntry { $script:YAxUnitFixtureEntry }
+                function Invoke-WebRequest { throw 'network must not be used' }
+                function Invoke-RestMethod { throw 'network must not be used' }
+                $script:YAxUnitFixtureTarget = Join-Path $root 'Проект А\.agent-1c\tools\yaxunit\YAxUnit-25.12.cfe'
+                function Get-YAxUnitCfePath { $script:YAxUnitFixtureTarget }
+                $first = Install-YAxUnit *>&1 | Select-Object -Last 1
+                Remove-Item -LiteralPath $source -Force
+                $script:YAxUnitFixtureTarget = Join-Path $root 'Проект Б\.agent-1c\tools\yaxunit\YAxUnit-25.12.cfe'
+                $second = Install-YAxUnit *>&1 | Select-Object -Last 1
+                [pscustomobject]@{ first = [string]$first; second = [string]$second; sha = $sha
+                    cache = Get-ItlSharedArtifactPath -Family 'yaxunit' -Version '25.12' -Sha256 $sha -AssetName 'YAxUnit-25.12.cfe' }
+            }
+            $result.first | Should -Be (Join-Path $root 'Проект А\.agent-1c\tools\yaxunit\YAxUnit-25.12.cfe')
+            $result.second | Should -Be (Join-Path $root 'Проект Б\.agent-1c\tools\yaxunit\YAxUnit-25.12.cfe')
+            $result.cache | Should -BeLike (Join-Path $root 'Общий кэш артефактов\yaxunit\25.12\*')
+            foreach ($path in @($result.first, $result.second, $result.cache)) {
+                (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $result.sha
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', $savedCache, 'Process')
+        }
+    }
+}
+
 Describe "Pinned YAxUnit vendor diagnostic assessment" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')

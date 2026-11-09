@@ -268,13 +268,7 @@ function Install-ItlOnDemandMcp {
                 throw "itlOndemandMcp.url and sha256 are required in .agent-1c/dependency-lock.json for installed projects."
             }
             New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
-            $temporaryPath = "$targetPath.download"
-            try {
-                Invoke-WebRequest -Uri $url -UseBasicParsing -OutFile $temporaryPath
-                Move-Item -LiteralPath $temporaryPath -Destination $targetPath -Force
-            } finally {
-                Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
-            }
+            [void](Invoke-ItlImmutableFileAcquire -Source $url -DestinationPath $targetPath -ExpectedSha256 $sha256.ToLowerInvariant() -Label "ITL on-demand MCP executable")
         }
     }
     $actual = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
