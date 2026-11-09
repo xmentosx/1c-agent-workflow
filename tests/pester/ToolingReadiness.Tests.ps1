@@ -26,7 +26,8 @@ Describe 'Shared verification failure ownership' {
         @{Name='diagnostic body compilation'; Message='{ВнешняяОбработка.VanessaAutomationsingle.Форма.Тест_ВстроенныйЯзык.Форма(613)}: Ошибка компиляции при вычислении выражения или выполнении фрагмента кода: {<Неизвестный модуль>(1,1)}: Перем ИсходноеЗначение;'; Category='test-fixture'; RequiredAction='/itl-verify-fix'},
         @{Name='unsupported step'; Message='undefined step'; Category='unsupported-step'; RequiredAction='/itl-verify-fix'}
         @{Name='specific YAxUnit failure before generic missing suite'; Message='ITL_YAXUNIT_TESTS_FAILED: expected missing-suite'; Category='product-assertion'; RequiredAction='/itl-verify-fix'},
-        @{Name='explicit fixture before generic assertion'; Message='ITL_VANESSA_TEST_FIXTURE_UNRESOLVED_PROFILE: expected test context'; Category='test-fixture'; RequiredAction='/itl-verify-fix'}
+        @{Name='explicit fixture before generic assertion'; Message='ITL_VANESSA_TEST_FIXTURE_UNRESOLVED_PROFILE: expected test context'; Category='test-fixture'; RequiredAction='/itl-verify-fix'},
+        @{Name='TestClient port refusal wrapped by a Vanessa step'; Message='{ВнешняяОбработка.VanessaAutomation.Форма.Форма(42)}: ITL_TESTCLIENT_NO_FREE_PORT: profile=B expected range exhausted'; Category='runner'; RequiredAction='wait-for-testclient-capacity-and-repeat-original-command'}
     ) {
         param($Message,$Category,$RequiredAction)
         Set-RunFailureContextFromMessage -Message $Message -RequestedAction check-dev-branch
@@ -957,6 +958,125 @@ Describe 'repair session explicit extension' {
         Extend-ItlVerificationRepairSession
         [IO.File]::ReadAllBytes($script:extensionPath) | Should -Be $before
         { Get-ItlMatchingVerificationRepairSession } | Should -Throw '*terminal*'
+    }
+}
+
+Describe 'repair session workflowBlocked attempts' {
+    BeforeEach {
+        $script:ProjectRoot = Join-Path $TestDrive 'отказ workflow с пробелом'
+        New-Item -ItemType Directory -Path $script:ProjectRoot -Force | Out-Null
+        $script:blockedPath = Join-Path $script:ProjectRoot 'current.json'
+        $RepairSessionId = 'blocked-session'
+        $VerificationRepairKind = ''
+        $VerificationRepairMaxAttempts = 0
+        $VanessaFeaturePath = ''
+        $VanessaFilterTags = ''
+        $VerificationTrigger = 'repair'
+        $script:RunErrorCategory = ''
+        $script:RunRequiredAction = ''
+        $script:blockedRecord = [pscustomobject]@{
+            schemaVersion = 1; sessionId = 'blocked-session'; projectRoot = $script:ProjectRoot; branch = 'itldev/branch'
+            kind = 'canonical-repair'; scenarioFeature = ''; scenarioTags = ''; status = 'active'; attempts = 0; maximumAttempts = 2
+            startedAt = '2026-11-08T10:00:00Z'; updatedAt = '2026-11-08T10:00:00Z'
+        }
+        Write-Utf8Text -Path $script:blockedPath -Value ($script:blockedRecord | ConvertTo-Json -Depth 10)
+        Mock Get-ItlVerificationRepairStatePath { $script:blockedPath }
+        Mock Read-DevBranchState { [pscustomobject]@{ devBranch = 'itldev/branch'; worktreePath = $script:ProjectRoot } }
+        Mock Get-CurrentBranch { 'itldev/branch' }
+        Mock Assert-DevelopmentBranchWorktreeContext {}
+        Mock Set-RunUserReport {}
+        function Invoke-BlockedFixtureAttempt {
+            param([string]$Message, [string]$Category)
+            $ticket = Use-ItlVerificationRepairAttempt
+            $script:RunErrorCategory = $Category
+            $script:RunRequiredAction = ''
+            Complete-ItlVerificationRepairFailure -Failure ([System.Management.Automation.ErrorRecord]::new([Exception]::new($Message), 'fixture', 'NotSpecified', $null)) -AttemptTicket $ticket
+            Read-Utf8Text -Path $script:blockedPath | ConvertFrom-Json
+        }
+        $script:portRefusal = 'Vanessa verification did not pass: failed. First failure: {ВнешняяОбработка.VanessaAutomation.Форма.Форма(42)}: ITL_TESTCLIENT_NO_FREE_PORT: profile=B'
+    }
+
+    It 'refunds workflow refusals and still bounds product attempts by the limit' {
+        $afterPort = Invoke-BlockedFixtureAttempt -Message $script:portRefusal -Category 'runner'
+        $afterPort.attempts | Should -Be 0
+        $afterPort.status | Should -Be 'active'
+        $afterPort.workflowBlockedCount | Should -Be 1
+        @($afterPort.workflowBlocked)[0].code | Should -Be 'ITL_TESTCLIENT_NO_FREE_PORT'
+        $afterProduct = Invoke-BlockedFixtureAttempt -Message 'Vanessa verification did not pass: failed. Expected 120, actual 100' -Category 'product-assertion'
+        $afterProduct.attempts | Should -Be 1
+        $afterProduct.lastWorkflowBlockedCode | Should -Be ''
+        $afterGuard = Invoke-BlockedFixtureAttempt -Message "EXECUTION_GUARD_WAIT_TIMEOUT: operation='check-dev-branch'" -Category 'execution-conflict'
+        $afterGuard.attempts | Should -Be 1
+        $afterGuard.status | Should -Be 'active'
+        $afterOtherCode = Invoke-BlockedFixtureAttempt -Message $script:portRefusal -Category 'runner'
+        $afterOtherCode.attempts | Should -Be 1
+        $afterOtherCode.status | Should -Be 'active'
+        $afterOtherCode.workflowBlockedCount | Should -Be 3
+        $quoted = Invoke-BlockedFixtureAttempt -Message 'Expected ITL_TESTCLIENT_NO_FREE_PORT to stay hidden, actual message shown' -Category 'product-assertion'
+        $quoted.attempts | Should -Be 2
+        $quoted.status | Should -Be 'exhausted'
+        $script:RunRequiredAction | Should -Be 'report-blocker'
+        { Use-ItlVerificationRepairAttempt } | Should -Throw '*terminal (status=exhausted)*'
+    }
+
+    It 'stops on the same workflowBlocked code twice in a row and resumes the same budget' {
+        [void](Invoke-BlockedFixtureAttempt -Message 'Vanessa verification did not pass: failed. Expected 1, actual 2' -Category 'product-assertion')
+        $first = Invoke-BlockedFixtureAttempt -Message $script:portRefusal -Category 'runner'
+        $first.status | Should -Be 'active'
+        $stopped = Invoke-BlockedFixtureAttempt -Message $script:portRefusal -Category 'runner'
+        $stopped.status | Should -Be 'workflow-blocked'
+        $stopped.attempts | Should -Be 1
+        $stopped.lastWorkflowBlockedCode | Should -Be 'ITL_TESTCLIENT_NO_FREE_PORT'
+        $script:RunRequiredAction | Should -Be 'report-workflow-incident'
+        $script:RunRequiredAction = ''
+        { Use-ItlVerificationRepairAttempt } | Should -Throw '*ITL_VERIFICATION_REPAIR_WORKFLOW_BLOCKED*workflow-incidents.md*'
+        $script:RunRequiredAction | Should -Be 'report-workflow-incident'
+        $VerificationRepairMaxAttempts = 10
+        $VerificationRepairGrantSource = 'fixture: user grant'
+        { Extend-ItlVerificationRepairSession } | Should -Throw '*ITL_VERIFICATION_REPAIR_EXTENSION_TERMINAL*'
+        $VerificationRepairMaxAttempts = 0
+
+        Start-ItlVerificationRepairSession
+        $resumed = Read-Utf8Text -Path $script:blockedPath | ConvertFrom-Json
+        $resumed.sessionId | Should -Be 'blocked-session'
+        $resumed.status | Should -Be 'active'
+        $resumed.attempts | Should -Be 1
+        $again = Invoke-BlockedFixtureAttempt -Message $script:portRefusal -Category 'runner'
+        $again.status | Should -Be 'workflow-blocked'
+        $again.attempts | Should -Be 1
+        $again.workflowBlockedCount | Should -Be 3
+    }
+
+    It 'keeps a legacy record byte-exact for a counted non-final product failure' {
+        $ticket = Use-ItlVerificationRepairAttempt
+        $before = [IO.File]::ReadAllBytes($script:blockedPath)
+        $script:RunErrorCategory = 'product-assertion'
+        Complete-ItlVerificationRepairFailure -Failure 'Expected 1, actual 2' -AttemptTicket $ticket
+        [IO.File]::ReadAllBytes($script:blockedPath) | Should -Be $before
+        $legacy = Read-Utf8Text -Path $script:blockedPath | ConvertFrom-Json
+        $legacy.attempts | Should -Be 1
+        $legacy.PSObject.Properties['workflowBlocked'] | Should -BeNullOrEmpty
+        Complete-ItlVerificationRepairFailure
+        [IO.File]::ReadAllBytes($script:blockedPath) | Should -Be $before
+    }
+
+    It 'restores the scenario-loop input identity after a refunded refusal' {
+        $features = Join-Path $script:ProjectRoot 'tests/features'
+        New-Item -ItemType Directory -Force -Path $features | Out-Null
+        $feature = Join-Path $features 'Named.feature'
+        [IO.File]::WriteAllText($feature, 'Функционал: Пример', [Text.UTF8Encoding]::new($false))
+        $script:blockedRecord.kind = 'scenario-loop'
+        $script:blockedRecord.scenarioFeature = $feature
+        $script:blockedRecord.maximumAttempts = 3
+        Write-Utf8Text -Path $script:blockedPath -Value ($script:blockedRecord | ConvertTo-Json -Depth 10)
+        Mock Get-VerificationFingerprint { 'source-1' }
+        $refunded = Invoke-BlockedFixtureAttempt -Message 'ITL_ONDEMAND_PORT_LEASE_AMBIGUOUS: lease' -Category ''
+        $refunded.attempts | Should -Be 0
+        $refunded.PSObject.Properties['lastAttemptInputIdentity'] | Should -BeNullOrEmpty
+        $counted = Invoke-BlockedFixtureAttempt -Message 'Expected 1, actual 2' -Category 'product-assertion'
+        $counted.attempts | Should -Be 1
+        $counted.lastAttemptInputIdentity | Should -Not -BeNullOrEmpty
+        { Use-ItlVerificationRepairAttempt } | Should -Throw '*ITL_VERIFICATION_REPAIR_NO_CHANGE*'
     }
 }
 
