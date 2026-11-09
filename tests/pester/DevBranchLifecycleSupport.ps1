@@ -519,7 +519,7 @@ if (-not $paramsPath -or -not (Test-Path -LiteralPath $paramsPath -PathType Leaf
 try {
     $request = Get-Content -LiteralPath $paramsPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($request.runId -and $request.outputPath) {
-        @{ schemaVersion = 1; runId = $request.runId; status = 'passed'; updateResult = 'Успешно'; errorMessage = ''; errorDetails = '' } |
+        @{ schemaVersion = 2; runId = $request.runId; status = 'passed'; updateResult = 'Успешно'; errorMessage = ''; errorDetails = ''; titleStatus = $(if ($request.applicationTitle) { 'set' } else { 'not-requested' }); titleValue = [string]$request.applicationTitle; titleError = '' } |
             ConvertTo-Json -Compress | Set-Content -LiteralPath $request.outputPath -Encoding UTF8
     }
 } catch { exit 1 }

@@ -234,7 +234,7 @@ try {
                     $script:LastLogPath = "C:\logs\enterprise-auto-update.log"
                     $commandArgument = @($EnterpriseArgs | Where-Object { $_ -clike "/C*" } | Select-Object -First 1)[0]
                     $runParams = Get-Content -LiteralPath $commandArgument.Substring(2) -Raw -Encoding UTF8 | ConvertFrom-Json
-                    @{ schemaVersion = 1; runId = $runParams.runId; status = "passed"; updateResult = "Успешно"; errorMessage = ""; errorDetails = "" } |
+                    @{ schemaVersion = 2; runId = $runParams.runId; status = "passed"; updateResult = "Успешно"; errorMessage = ""; errorDetails = ""; titleStatus = "not-requested"; titleValue = ""; titleError = "" } |
                         ConvertTo-Json -Compress | Set-Content -LiteralPath $runParams.outputPath -Encoding UTF8
                     $script:EnterpriseCalls += [pscustomobject]@{
                         infoBasePath = $InfoBasePath
@@ -304,7 +304,7 @@ try {
 
             $script:EnterpriseCallCount = 0
             function Invoke-DevBranchEnterpriseAutoUpdate {
-                param([object]$State)
+                param([object]$State, [string]$ApplicationTitle)
                 $script:EnterpriseCallCount += 1
             }
 
@@ -342,7 +342,7 @@ try {
                     $commandArgument = @($EnterpriseArgs | Where-Object { $_ -clike "/C*" } | Select-Object -First 1)[0]
                     $runParams = Get-Content -LiteralPath $commandArgument.Substring(2) -Raw -Encoding UTF8 | ConvertFrom-Json
                     $script:LastLogPath = Join-Path $Root "auto-update.log"
-                    @{ schemaVersion = 1; runId = $runParams.runId; status = "failed"; updateResult = ""; errorMessage = "Тип не является подмножеством типа значений ПВХ"; errorDetails = "упо_ОбновлениеИнформационнойБазы.ПерейтиНаВерсию_5_0_3_55()" } |
+                    @{ schemaVersion = 2; runId = $runParams.runId; status = "failed"; updateResult = ""; errorMessage = "Тип не является подмножеством типа значений ПВХ"; errorDetails = "упо_ОбновлениеИнформационнойБазы.ПерейтиНаВерсию_5_0_3_55()"; titleStatus = "not-run"; titleValue = ""; titleError = "" } |
                         ConvertTo-Json -Compress | Set-Content -LiteralPath $runParams.outputPath -Encoding UTF8
                 }
                 $updates = @{}
@@ -377,7 +377,7 @@ try {
                     if ($script:ProofMode -eq "mismatched") {
                         $commandArgument = @($EnterpriseArgs | Where-Object { $_ -clike "/C*" } | Select-Object -First 1)[0]
                         $runParams = Get-Content -LiteralPath $commandArgument.Substring(2) -Raw -Encoding UTF8 | ConvertFrom-Json
-                        @{ schemaVersion = 1; runId = "different-run"; status = "passed"; updateResult = "Успешно" } |
+                        @{ schemaVersion = 2; runId = "different-run"; status = "passed"; updateResult = "Успешно"; titleStatus = "not-requested" } |
                             ConvertTo-Json -Compress | Set-Content -LiteralPath $runParams.outputPath -Encoding UTF8
                     }
                 }
@@ -392,6 +392,83 @@ try {
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "asks the auto-update EPF for the branch application title and keeps a title failure non-blocking" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-application-title-Путь с пробелом-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $toolRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update"
+            New-Item -ItemType Directory -Force -Path $toolRoot | Out-Null
+            $names = & { . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null; Get-DevBranchAutoUpdateMainEpfName; Get-DevBranchAutoUpdateDeferredHandlersEpfName }
+            foreach ($name in $names) { Set-Content -LiteralPath (Join-Path $toolRoot $name) -Value "epf" -Encoding UTF8 }
+            $result = & {
+                param($Root)
+                . $HelperPath -ProjectRoot $Root -Action help *> $null
+                function Get-SourceInfoBasePath { return "C:\bases\source" }
+                function Get-MainWorktreePath { return "C:\Проекты\PM5 КОРП" }
+                $script:TitleMode = "set"
+                $script:RequestedTitles = @()
+                function Invoke-Enterprise {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string]$User, [string]$Password, [string[]]$EnterpriseArgs, [switch]$RequireOwnedProcessRelease, [int]$TimeoutSeconds)
+                    $commandArgument = @($EnterpriseArgs | Where-Object { $_ -clike "/C*" } | Select-Object -First 1)[0]
+                    $runParams = Read-Utf8Text -Path $commandArgument.Substring(2) | ConvertFrom-Json
+                    $script:RequestedTitles += [string]$runParams.applicationTitle
+                    $script:LastLogPath = Join-Path $Root "auto-update.log"
+                    $titleValue = switch ($script:TitleMode) { "set" { $runParams.applicationTitle } "unchanged" { $runParams.applicationTitle } "wrong-value" { "PM5 [DEV чужая]" } default { "" } }
+                    $titleStatus = if ($script:TitleMode -eq "wrong-value") { "set" } else { $script:TitleMode }
+                    $titleError = if ($script:TitleMode -eq "failed") { "Нет прав`r`nна константу 'ЗаголовокСистемы'" } else { "" }
+                    Write-Utf8Text -Path $runParams.outputPath -Value (@{ schemaVersion = 2; runId = $runParams.runId; status = "passed"; updateResult = "НеТребуется"; errorMessage = ""; errorDetails = ""; titleStatus = $titleStatus; titleValue = $titleValue; titleError = $titleError } | ConvertTo-Json -Compress)
+                }
+                $state = [pscustomobject]@{ devBranchInfoBasePath = "C:\bases\branch"; infoBaseKind = "file"; devBranchName = "Ветка [4]" }
+                $outcomes = [ordered]@{}
+                foreach ($mode in @("set", "unchanged", "skipped", "failed", "wrong-value", "not-requested")) {
+                    $script:TitleMode = $mode
+                    $updates = @{}
+                    $warnings = @()
+                    $message = try {
+                        $warnings = @(Ensure-DevBranchEnterpriseNormalized -State $state -Reason branch-reset -Updates $updates 3>&1 6>$null | Where-Object { $_ -is [Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
+                        ""
+                    } catch { $_.Exception.Message }
+                    $outcomes[$mode] = [pscustomobject]@{ message = $message; updates = $updates; warnings = (@($warnings) -join "`n") }
+                }
+                [pscustomobject]@{ outcomes = $outcomes; requested = @($script:RequestedTitles) }
+            } $tempRoot
+            $expected = "PM5 КОРП [DEV Ветка 4]"
+            @($result.requested | Select-Object -Unique) | Should -Be @($expected)
+            foreach ($mode in @("set", "unchanged")) {
+                $result.outcomes[$mode].message | Should -BeNullOrEmpty
+                $result.outcomes[$mode].updates.enterpriseNormalizationStatus | Should -Be "passed"
+                $result.outcomes[$mode].updates.applicationTitleStatus | Should -Be $mode
+                $result.outcomes[$mode].updates.applicationTitle | Should -BeExactly $expected
+                $result.outcomes[$mode].warnings | Should -BeNullOrEmpty
+            }
+            $result.outcomes["skipped"].updates.enterpriseNormalizationStatus | Should -Be "passed"
+            $result.outcomes["skipped"].updates.applicationTitleStatus | Should -Be "skipped"
+            $result.outcomes["skipped"].warnings | Should -BeNullOrEmpty
+            $result.outcomes["failed"].message | Should -BeNullOrEmpty
+            $result.outcomes["failed"].updates.enterpriseNormalizationStatus | Should -Be "passed"
+            $result.outcomes["failed"].updates.applicationTitleStatus | Should -Be "failed"
+            $result.outcomes["failed"].updates.applicationTitleError | Should -BeExactly "Нет прав на константу ЗаголовокСистемы"
+            $result.outcomes["failed"].warnings | Should -Match "ITL_APPLICATION_TITLE_FAILED"
+            foreach ($mode in @("wrong-value", "not-requested")) {
+                $result.outcomes[$mode].message | Should -Match "ITL_ENTERPRISE_AUTO_UPDATE_PROOF_MISSING: application title outcome"
+                $result.outcomes[$mode].updates.enterpriseNormalizationStatus | Should -Be "failed"
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "marks a forked branch title as inherited from the copied database" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $snapshot = [pscustomobject]@{ targetBranchName = "branch5"; targetSafeName = "branch5"; targetGitBranch = "itldev/branch5"; targetWorktreePath = "C:\w\branch5"; sourceCommit = "abc"; forkId = "f1"; sourceGitBranch = "itldev/branch4"; sourceBranchName = "branch4"; artifactSha256 = ""; artifactKind = "file" }
+            foreach ($status in @("set", "skipped")) {
+                $source = [pscustomobject]@{ devBranchName = "branch4"; applicationTitle = "PM5 [DEV branch4]"; applicationTitleStatus = $status }
+                [string](New-ForkedDevBranchState -SourceState $source -Snapshot $snapshot -TargetInfoBasePath "C:\bases\branch5" -TargetHistoryRoot "C:\h" -MainProjectRoot "C:\p")["applicationTitleStatus"]
+            }
+        }
+        $result | Should -Be @("inherited", "skipped")
     }
 
     It "blocks implicit replay of a legacy passed state until the explicit base update" {
@@ -438,7 +515,7 @@ try {
                 function Get-SourceInfoBasePath { return "C:\bases\source" }
 
                 function Invoke-DevBranchEnterpriseAutoUpdate {
-                    param([object]$State)
+                    param([object]$State, [string]$ApplicationTitle)
                     throw "auto-update failed"
                 }
 
@@ -465,7 +542,7 @@ try {
             $script:Calls = 0
             function Get-SourceInfoBasePath { return "C:\bases\source" }
             function Invoke-DevBranchEnterpriseAutoUpdate {
-                param([object]$State)
+                param([object]$State, [string]$ApplicationTitle)
                 $script:Calls++
                 [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\enterprise.log"; resultPath = "C:\logs\enterprise.result.json"; updatedAt = "2026-07-13T12:00:00+03:00" }
             }
@@ -553,7 +630,7 @@ try {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             function Get-SourceInfoBasePath { return "C:\bases\source" }
             function Invoke-DevBranchEnterpriseAutoUpdate {
-                param([object]$State)
+                param([object]$State, [string]$ApplicationTitle)
                 [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\enterprise.log"; resultPath = "C:\logs\enterprise.result.json"; updatedAt = "2026-08-25T12:00:00+03:00" }
             }
             $updates = @{}
