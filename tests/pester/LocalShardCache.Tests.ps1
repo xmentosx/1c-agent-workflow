@@ -175,6 +175,71 @@ Get-PesterShardFileSha256 -Path `$Path
         $probe.stdout[-1] | Should -Be $expected
     }
 
+    It "seeds the SHA-addressed Vanessa cache from a deep queued pin and later resolves it without the worktree or network" {
+        $root = Join-Path $TestDrive 'очередь vanessa с пробелом'
+        $pinRoot = Join-Path $TestDrive 'сборка r12 с пробелом'
+        $previousArchive = [Environment]::GetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','Process')
+        try {
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE',$null,'Process')
+            New-Item -ItemType Directory -Force -Path (Join-Path $root 'tests/pester'),(Join-Path $root 'templates') | Out-Null
+            & git -C $root init --quiet; & git -C $root config user.name 'ITL Test'; & git -C $root config user.email 'itl-test@example.invalid'
+            [IO.File]::WriteAllText((Join-Path $root '.gitignore'),"build/`nout*/`n",[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'tests/pester/BootstrapUpdate.Tests.ps1'),"Describe 'fixture' { It 'passes' { `$true | Should -BeTrue } }",[Text.UTF8Encoding]::new($false))
+            $catalog = [ordered]@{schemaVersion=1;contracts=@([ordered]@{id='bootstrap';owner='fixture';gate='targeted';budgetSeconds=30;primaryTest='tests/pester/BootstrapUpdate.Tests.ps1';paths=@('fixture/*');tests=@('tests/pester/BootstrapUpdate.Tests.ps1')})}
+            [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'),($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+            & git -C $root add --all; & git -C $root commit --quiet -m base
+            $queueBase = (& git -C $root rev-parse HEAD).Trim()
+
+            $payload = [byte[]](80,75,3,4,1,2,3,4,5,6,7,8); $sha = [Security.Cryptography.SHA256]::Create()
+            try { $expected = ([BitConverter]::ToString($sha.ComputeHash($payload))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+            $assetName = 'vanessa-automation-single.1.2.043.42-itl-r99.zip'; $folder = '1.2.043.42-itl-r99'
+            # An empty URL makes any network fallback fail; only local exact SHA candidates can satisfy it.
+            $lock = [ordered]@{dependencies=[ordered]@{vanessaAutomation=[ordered]@{compatibilityVersion='1.2.043.42';downstreamRevision='itl-r99';assetName=$assetName;sha256=$expected;url=''}}}
+            [IO.File]::WriteAllText((Join-Path $root 'templates/dependency-lock.json'),($lock|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+            & git -C $root add --all; & git -C $root commit --quiet -m 'pin unpublished vanessa'
+            $pinHead = (& git -C $root rev-parse HEAD).Trim()
+            & git -C $root worktree add --quiet --detach $pinRoot $pinHead; $LASTEXITCODE | Should -Be 0
+            $pinBuild = Join-Path $pinRoot "build/third-party/vanessa-automation/$folder"
+            New-Item -ItemType Directory -Force -Path $pinBuild | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $pinBuild $assetName),$payload)
+            foreach ($index in 1..10) { & git -C $root commit --quiet --allow-empty -m "later queued change $index" }
+            @(& git -C $root rev-list --max-count=8 HEAD) | Should -Not -Contain $pinHead
+            & git -C $root update-ref refs/remotes/origin/develop $queueBase
+            # A same-named archive with foreign bytes must never be admitted or published.
+            $foreignBuild = Join-Path $root "build/third-party/vanessa-automation/$folder"
+            New-Item -ItemType Directory -Force -Path $foreignBuild | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $foreignBuild $assetName),[byte[]](9,9,9))
+
+            $selectionPath = Join-Path $root 'build/selection.json'
+            [IO.File]::WriteAllText($selectionPath,'{"tests":["tests/pester/BootstrapUpdate.Tests.ps1"]}',[Text.UTF8Encoding]::new($false))
+            $invoke = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
+            $first = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @('-RepositoryRoot',$root,'-OutputRoot',(Join-Path $root 'out1'),'-JunitPath',(Join-Path $root 'out1/pester.xml'),'-SelectionPath',$selectionPath,'-InputIdentityOnly')
+            $first.exitCode | Should -Be 0 -Because $first.combinedText
+            $shared = Join-Path $root ".git/itl/dependencies/vanessa-automation/$folder/$expected-$assetName"
+            Test-Path -LiteralPath $shared -PathType Leaf | Should -BeTrue
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($shared)) | Should -BeExactly ([Convert]::ToBase64String($payload))
+            @(Get-ChildItem -LiteralPath (Split-Path -Parent $shared) -Force | Where-Object Name -ne (Split-Path -Leaf $shared)) | Should -BeNullOrEmpty
+
+            # Later candidates: the pinning worktree is gone and published develop no
+            # longer bounds a window that reaches the pin, yet the cache satisfies it.
+            & git -C $root worktree remove --force $pinRoot; $LASTEXITCODE | Should -Be 0
+            & git -C $root update-ref -d refs/remotes/origin/develop
+            Remove-Item -LiteralPath (Join-Path $root 'build/third-party') -Recurse -Force
+            foreach ($index in 11..20) { & git -C $root commit --quiet --allow-empty -m "later queued change $index" }
+            $second = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @('-RepositoryRoot',$root,'-OutputRoot',(Join-Path $root 'out2'),'-JunitPath',(Join-Path $root 'out2/pester.xml'),'-SelectionPath',$selectionPath,'-InputIdentityOnly')
+            $second.exitCode | Should -Be 0 -Because $second.combinedText
+
+            # The SHA address stays fail-closed: corrupted cache bytes are rejected.
+            [IO.File]::WriteAllBytes($shared,[byte[]](1,2,3))
+            $corrupt = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @('-RepositoryRoot',$root,'-OutputRoot',(Join-Path $root 'out3'),'-JunitPath',(Join-Path $root 'out3/pester.xml'),'-SelectionPath',$selectionPath,'-InputIdentityOnly')
+            $corrupt.exitCode | Should -Not -Be 0
+            $corrupt.combinedText | Should -Match 'impossible SHA-address mismatch'
+        } finally {
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE',$previousArchive,'Process')
+            if (Test-Path -LiteralPath $pinRoot) { & git -C $root worktree remove --force $pinRoot 2>$null }
+        }
+    }
+
     It "reuses a focused dirty proof after the identical files are committed" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl focused путь " + [guid]::NewGuid().ToString("N")); $testRoot = Join-Path $root "tests\pester"; $fixtureRoot = Join-Path $root "fixture"
         try {
