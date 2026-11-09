@@ -736,18 +736,27 @@ function Invoke-SourceGate {
         $processJob = [IntPtr]$started.jobHandle
         Update-DeliveryOperation -Values @{ mode = $Mode; workingRoot = $WorkingRoot; gatePid = [int]$process.Id; gateProcessStartedAt = $process.StartTime.ToUniversalTime().ToString("o"); gateStatus = "running" }
         $authoritativeGate = Join-Path $WorkingRoot "scripts\check.ps1"
-        $hardSeconds = Get-SourceGateSupervisionBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -PlanBudgetSeconds $HardBudgetSeconds -InjectedGate:($gate -ne $authoritativeGate)
+        $gateBudgetSeconds = [double](Get-SourceGateSupervisionBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -PlanBudgetSeconds $HardBudgetSeconds -InjectedGate:($gate -ne $authoritativeGate))
+        $hardSeconds = $gateBudgetSeconds
+        $callerDeadlineBinds = $false
         if ($DeadlineUtc -ne [DateTime]::MaxValue) {
             $remainingSeconds = ($DeadlineUtc - [DateTime]::UtcNow).TotalSeconds
-            $hardSeconds = [Math]::Min([double]$hardSeconds, [Math]::Max(0.0, [double]$remainingSeconds))
+            $hardSeconds = [Math]::Min($gateBudgetSeconds, [Math]::Max(0.0, [double]$remainingSeconds))
+            $callerDeadlineBinds = $hardSeconds -lt $gateBudgetSeconds
         }
         $watch = [Diagnostics.Stopwatch]::StartNew(); $lastLength = -1L; $lastProgress = [DateTime]::UtcNow
         while (-not $process.WaitForExit(5000)) {
             $length = 0L
             foreach ($path in @($stdout, $stderr)) { if (Test-Path $path) { $length += (Get-Item $path).Length } }
             if ($length -ne $lastLength) { $lastLength = $length; $lastProgress = [DateTime]::UtcNow }
-            if ($watch.Elapsed.TotalSeconds -ge $hardSeconds -or ([DateTime]::UtcNow - $lastProgress).TotalMinutes -ge 15) {
+            $noProgress = ([DateTime]::UtcNow - $lastProgress).TotalMinutes -ge 15
+            if ($watch.Elapsed.TotalSeconds -ge $hardSeconds -or $noProgress) {
                 Stop-DeliveryProcessTree -Process $process
+                # A caller deadline shorter than the gate's own budget is the
+                # caller's limit, not evidence that this gate stalled or failed.
+                if ($callerDeadlineBinds -and -not $noProgress) {
+                    throw "SOURCE_GATE_OPERATION_DEADLINE: $Mode source gate was stopped after $([int][Math]::Floor($watch.Elapsed.TotalSeconds)) seconds at its caller's remaining operation budget; its own $([int]$gateBudgetSeconds) second budget was not exhausted and no gate failure was observed. Continue the original operation from its preserved checkpoint. See $stdout and $stderr"
+                }
                 throw "$Mode source gate exceeded its hard/no-progress budget. See $stdout and $stderr"
             }
         }
