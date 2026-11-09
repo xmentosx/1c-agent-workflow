@@ -207,7 +207,8 @@ Describe 'Source quality catalog contracts' {
         @($queueOnly.tests) | Should -Be @("tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1")
         $componentOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-component.ps1")
         @($componentOnly.contracts.id) | Should -Be @("source-delivery-component")
-        @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
+        # SourceDeliveryProcess executes the shared native-argument quoting helper owned here.
+        @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcess.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
         $postGatePaths = @(
             "scripts/source-delivery.ps1",
             "scripts/source-delivery-supervisor.ps1",
@@ -296,9 +297,9 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/SourceDeliveryRefCleanup.Tests.ps1", "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryRemoteMovement.Tests.ps1", "tests/pester/SourceDeliveryReplan.Tests.ps1", "tests/pester/SourceDeliveryResourceLedger.Tests.ps1",
             "tests/pester/SourceQualityCatalog.Tests.ps1"
         )
-        $expectedTests = @($expectedTests + @('tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1','tests/pester/DevelopForkConsumerInventory.Tests.ps1') | Sort-Object)
+        $expectedTests = @($expectedTests + @('tests/pester/SourceDeliveryProofOwnership.Tests.ps1','tests/pester/SourceDeliveryProcess.Tests.ps1','tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1','tests/pester/DevelopForkConsumerInventory.Tests.ps1') | Sort-Object)
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-fork-consumer-inventory", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-evidence-retention", "source-delivery-fixtures", "source-delivery-incremental-inputs", "source-delivery-plan-checker", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-fork-consumer-inventory", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-entrypoint-closure", "source-delivery-evidence-retention", "source-delivery-fixtures", "source-delivery-incremental-inputs", "source-delivery-plan-checker", "source-delivery-proof-ownership", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
 
         $observedSeconds = [ordered]@{
@@ -393,6 +394,8 @@ Describe 'Source quality catalog contracts' {
         $currentParallel = @($observedSeconds.GetEnumerator() | Where-Object Key -notin @('ReleaseGate.Tests.ps1','SourceDeliveryQueue.Tests.ps1','SourceDeliveryPlan.Tests.ps1') | ForEach-Object { [double]$_.Value })
         $currentParallel += @('SourceDeliveryQueue.Tests.ps1','SourceDeliveryAuthority.Tests.ps1','SourceDeliveryOperationRecovery.Tests.ps1','SourceDeliveryPlan.Tests.ps1','SourceDeliveryIncremental.Tests.ps1','FullInputProof.Tests.ps1','SourceDeliveryCandidateRegistration.Tests.ps1','SourceDeliveryFrozenPublication.Tests.ps1','SourceDeliveryFrozenPlan.Tests.ps1','SourceDeliveryLegacyPlan.Tests.ps1','SourceDeliveryPublicationCleanup.Tests.ps1','SourceDeliveryCandidateIntegrity.Tests.ps1','SourceDeliveryFinalizerIntegrity.Tests.ps1','SourceDeliveryControllerRollback.Tests.ps1','SourceDeliveryEvidenceRepair.Tests.ps1','SourceDeliveryHistoricalTransition.Tests.ps1','SourceDeliveryReleaseEvidenceRepair.Tests.ps1','SourceDeliveryRemoteMovement.Tests.ps1','SourceDeliveryReplan.Tests.ps1','RepositoryGitTransport.Tests.ps1') | ForEach-Object { [double]$trackedTimings.files.$_ }
         $currentParallel += @(($catalog.contracts|Where-Object id -eq 'source-delivery-incremental-inputs').tests|Where-Object {$_ -ne 'tests/pester/SourceDeliveryIncremental.Tests.ps1'}|ForEach-Object {[double]$trackedTimings.files.(Split-Path $_ -Leaf)})
+        # Static source-ownership regression: 18.3s in WinPS 5.1 (2026-11-09); reserve 30s.
+        $currentParallel += 30.0
         $currentFour = & $estimate $currentParallel $serial 4 ($overhead + [double]$trackedTimings.files.'SourceDeliveryAdmission.Tests.ps1')
         ([double]$catalog.budgets.targetedHardSeconds - $currentFour) | Should -BeGreaterThan 200
     }
@@ -453,6 +456,8 @@ Describe 'Source quality catalog contracts' {
         # The update-workflow run-scope regression (master plus two branch copies sharing
         # once-per-pin inputs) is one explicit lifecycle.ps1/vanessa.ps1 addition with its own owner.
         $runSharedInputsConsumer = 'tests/pester/WorkflowUpdateRunSharedInputs.Tests.ps1'
+        # The delivery source-ownership regression is one explicit catalog consumer with its own owner.
+        $proofOwnershipConsumer = 'tests/pester/SourceDeliveryProofOwnership.Tests.ps1'
         # Keep the historical 57/80 cohort. The third registry consumer proves
         # native input independently of setup; account for its own owner/budget
         # rather than changing the historical counts or dropping its selection.
@@ -564,11 +569,14 @@ Describe 'Source quality catalog contracts' {
         $agentFocusSeconds = 45.0
         # WorkflowUpdateRunSharedInputs.Tests.ps1: 2 cases, 13.5s in WinPS 5.1 (2026-11-06); reserve 20s for this explicit addition.
         $runSharedInputsSeconds = 20.0
+        # SourceDeliveryProofOwnership.Tests.ps1: 2 cases, 18.3s in WinPS 5.1 (2026-11-09); reserve 30s for this explicit addition.
+        $proofOwnershipSeconds = 30.0
+        [double](@($catalog.contracts | Where-Object id -eq 'source-delivery-proof-ownership')[0]).budgetSeconds | Should -BeGreaterOrEqual $proofOwnershipSeconds
         [double]$runSharedInputsOwner.budgetSeconds | Should -BeGreaterOrEqual $runSharedInputsSeconds
         [double]$diagnosticsOwner.budgetSeconds | Should -BeGreaterOrEqual $diagnosticsSeconds
         [double](@($catalog.contracts | Where-Object id -eq 'vanessa-agent-focus')[0]).budgetSeconds | Should -BeGreaterOrEqual $agentFocusSeconds
         [double]$changeModelOwner.budgetSeconds | Should -BeGreaterOrEqual $changeModelSeconds
-        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds + $snapshotSeconds + $changeModelSeconds + $reviewScopeSeconds + $diagnosticsSeconds + $agentFocusSeconds + $runSharedInputsSeconds
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds + $snapshotSeconds + $changeModelSeconds + $reviewScopeSeconds + $diagnosticsSeconds + $agentFocusSeconds + $runSharedInputsSeconds + $proofOwnershipSeconds
         $estimatedCriticalPath | Should -BeGreaterThan 1200
         ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
         # Catalog-only changes now select static catalog proof. An explicitly
@@ -584,13 +592,15 @@ Describe 'Source quality catalog contracts' {
         # remain unchanged, and the exact added selection is checked below. The
         # fork binding asserts over catalog entries, so it is a catalog consumer.
         $catalogInvariantConsumer = 'tests/pester/DevelopForkConsumerInventory.Tests.ps1'
-        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $routingConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $catalogInvariantConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer -and $_ -ne $agentFocusConsumer -and $_ -ne $runSharedInputsConsumer}).Count | Should -Be 84
-        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count + 1 + 1 + 1 + 1 + 1)
+        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $routingConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $catalogInvariantConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer -and $_ -ne $agentFocusConsumer -and $_ -ne $runSharedInputsConsumer -and $_ -ne $proofOwnershipConsumer}).Count | Should -Be 84
+        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count + 1 + 1 + 1 + 1 + 1 + 1)
+        @($currentSelection.tests) | Should -Contain $proofOwnershipConsumer
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests -and $_ -notin $splitIncrementalConsumers }) | Should -Be @(
             $catalogInvariantConsumer,
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/SourceDeliveryIncremental.Tests.ps1",
+            $proofOwnershipConsumer,
             "tests/pester/SourceQualityCatalog.Tests.ps1")
         @($splitIncrementalConsumers|Where-Object {$_ -notin @($currentSelection.tests)}).Count | Should -Be 0
         # Historical catalog-wide scheduler weights/four lanes, retained for comparison:
@@ -601,7 +611,7 @@ Describe 'Source quality catalog contracts' {
         # capacity model; no removed cohort, timeout change or cache assumption.
         $autonomyObservedSeconds = 33.218
         [double]$trackedTimings.files.'LifecycleGitContinuation.Tests.ps1' | Should -Be ([Math]::Ceiling($autonomyObservedSeconds))
-        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve + $autonomyObservedSeconds + $snapshotSeconds + $changeModelSeconds + $diagnosticsSeconds + $agentFocusSeconds + $runSharedInputsSeconds
+        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve + $autonomyObservedSeconds + $snapshotSeconds + $changeModelSeconds + $diagnosticsSeconds + $agentFocusSeconds + $runSharedInputsSeconds + $proofOwnershipSeconds
         $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
         ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
         [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)
@@ -1008,7 +1018,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
         $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
         $selected=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('tests/quality-contracts.json')
         @($selected.unknownPaths) | Should -BeNullOrEmpty
-        @($selected.tests) | Should -Be @('tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1','tests/pester/DevelopForkConsumerInventory.Tests.ps1','tests/pester/HostTestSelection.Tests.ps1','tests/pester/SourceDeliveryIncremental.Tests.ps1','tests/pester/SourceQualityCatalog.Tests.ps1')
+        @($selected.tests) | Should -Be @('tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1','tests/pester/DevelopForkConsumerInventory.Tests.ps1','tests/pester/HostTestSelection.Tests.ps1','tests/pester/SourceDeliveryIncremental.Tests.ps1','tests/pester/SourceDeliveryProofOwnership.Tests.ps1','tests/pester/SourceQualityCatalog.Tests.ps1')
     }
 
     It 'invalidates every existing qualification consumer when the catalog bytes change' {

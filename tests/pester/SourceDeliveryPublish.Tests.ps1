@@ -163,6 +163,20 @@ Describe "Source develop queue and delivery" {
             $promotion.IndexOf('Write-DevelopPublicationAttempt -Attempt $Attempt') | Should -BeLessThan $promotion.IndexOf('Assert-DevelopPublicationStageMayRun -Attempt $Attempt -Stage "compatibility-promotion"')
         }
 
+    It "records develop publication phases and reuses only the prior develop qualification" {
+            # Moved from the entrypoint Admission suite: these markers are owned
+            # by source-delivery-candidate.ps1, which selects this suite.
+            Get-DeliverySourceText -All | Should -Not -Match 'Restore-DeliveryContinuationQualification'
+            $text = Get-DeliverySourceText -Name 'source-delivery-candidate.ps1'
+            $text | Should -Match 'publication-attempts\\develop\.json'
+            $text | Should -Match 'develop-qualified'
+            $text | Should -Match 'component-finalized'
+            $text | Should -Match 'same failure twice'
+            $text | Should -Match 'Restore-PriorDevelopPublicationQualification'
+            $text | Should -Match 'Invoke-SourceGate -Mode "Develop" -WorkingRoot \$worktree\.path -TargetBaseRef \$remoteDevelop'
+            $text | Should -Match 'Promote-AccumulatedDevelopToMaster'
+        }
+
     It "runs every publication phase in one operation, bounded only by the plan's stage budgets" {
             # 2026-11-07: a 69-minute Develop stopped the run before Release and
             # needed a manual relaunch of the same plan.

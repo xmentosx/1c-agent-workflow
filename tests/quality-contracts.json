@@ -1649,7 +1649,27 @@
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
       "paths": ["tests/pester/SourceDelivery.TestSupport.ps1"],
-      "tests": ["tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1", "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryReplan.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryRemoteMovement.Tests.ps1", "tests/pester/RepositoryGitTransport.Tests.ps1"]
+      "tests": ["tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1", "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryReplan.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryRemoteMovement.Tests.ps1", "tests/pester/RepositoryGitTransport.Tests.ps1", "tests/pester/SourceDeliveryProcess.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-entrypoint-closure",
+      "owner": "custom-gate delivery entrypoint fixtures and the module closure their child process loads",
+      "gate": "targeted",
+      "budgetSeconds": 1200,
+      "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
+      "paths": ["tests/pester/SourceDelivery.TestSupport.ps1"],
+      "reuseInputPaths": ["scripts/source-delivery.ps1", "scripts/source-delivery-supervisor.ps1", "scripts/source-delivery-queue.ps1", "scripts/source-delivery-process.ps1", "scripts/source-delivery-release-recovery.ps1", "scripts/source-delivery-component.ps1", "scripts/source-delivery-plan.ps1", "scripts/source-delivery-resources.ps1", "scripts/source-delivery-ref-cleanup.ps1", "scripts/source-delivery-evidence.ps1", "scripts/source-delivery-candidate.ps1", "scripts/source-delivery-integrity.ps1", "scripts/source-delivery-cleanup.ps1", "scripts/client-mcp-build.ps1", "scripts/source-proof-json.ps1", "scripts/git-path-list.ps1", "scripts/release-qualification.ps1", "scripts/invoke-pester-runtime.ps1", "scripts/quality-contracts.ps1", "scripts/stand-env-identity.ps1", "scripts/release-artifact-paths.ps1", "scripts/develop-e2e-cleanup.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
+      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1", "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryReplan.Tests.ps1", "tests/pester/SourceDeliveryRemoteMovement.Tests.ps1", "tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-proof-ownership",
+      "owner": "delivery test source consumption bound to Pester proof identity",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/SourceDeliveryProofOwnership.Tests.ps1",
+      "paths": ["tests/quality-contracts.json", "tests/pester/SourceDelivery.TestSupport.ps1"],
+      "reuseInputPaths": ["tests/pester/*.ps1", "scripts/invoke-pester-shards.ps1", "scripts/source-delivery.ps1", "scripts/source-delivery-supervisor.ps1", "scripts/source-delivery-queue.ps1", "scripts/source-delivery-process.ps1", "scripts/source-delivery-release-recovery.ps1", "scripts/source-delivery-component.ps1", "scripts/source-delivery-plan.ps1", "scripts/source-delivery-resources.ps1", "scripts/source-delivery-ref-cleanup.ps1", "scripts/source-delivery-evidence.ps1", "scripts/source-delivery-candidate.ps1", "scripts/source-delivery-integrity.ps1", "scripts/source-delivery-cleanup.ps1", "scripts/client-mcp-build.ps1", "scripts/source-proof-json.ps1", "scripts/git-path-list.ps1", "scripts/release-qualification.ps1", "scripts/invoke-pester-runtime.ps1", "scripts/quality-contracts.ps1", "scripts/stand-env-identity.ps1", "scripts/release-artifact-paths.ps1", "scripts/develop-e2e-cleanup.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
+      "tests": ["tests/pester/SourceDeliveryProofOwnership.Tests.ps1"]
     },
     {
       "id": "source-delivery-process",
@@ -1745,7 +1765,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryComponentPublication.Tests.ps1",
       "paths": ["scripts/source-delivery-component.ps1"],
-      "tests": ["tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/ImmutableDownloadRetry.Tests.ps1"]
+      "tests": ["tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryProcess.Tests.ps1"]
     },
     {
       "id": "release-stand-recovery",
@@ -2121,7 +2141,7 @@
       "budgetSeconds": 240,
       "primaryTest": "tests/pester/ToolingReadiness.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1", ".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-itl-command.ps1", ".agents/skills/1c-workflow/references/verification-result.md", ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-verify-fix.md.template"],
-      "reuseInputPaths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", "scripts/source-delivery-process.ps1", "tests/pester/TestSupport.ps1", "tests/pester/SourceDelivery.TestSupport.ps1"],
+      "reuseInputPaths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", "scripts/source-delivery-process.ps1", "scripts/source-delivery-component.ps1", "tests/pester/TestSupport.ps1", "tests/pester/SourceDelivery.TestSupport.ps1"],
       "tests": ["tests/pester/ToolingReadiness.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1"]
     },
     {
