@@ -3139,7 +3139,8 @@ function Invoke-DevBranchEnterpriseAutoUpdate {
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
         [ValidateSet("update-dev-branch-base", "update-auxiliary-contour")]
-        [string]$RecoveryAction = "update-dev-branch-base"
+        [string]$RecoveryAction = "update-dev-branch-base",
+        [string]$ApplicationTitle = ""
     )
 
     $epfPath = Ensure-DevBranchAutoUpdateEpfs
@@ -3149,7 +3150,9 @@ function Invoke-DevBranchEnterpriseAutoUpdate {
     New-Item -ItemType Directory -Force -Path $proofRoot | Out-Null
     $paramsPath = Join-Path $proofRoot "$runId.params.json"
     $resultPath = Join-Path $proofRoot "$runId.result.json"
-    Write-Utf8TextAtomic -Path $paramsPath -Value ((@{ runId = $runId; outputPath = $resultPath } | ConvertTo-Json -Compress) + [Environment]::NewLine)
+    $runParams = [ordered]@{ runId = $runId; outputPath = $resultPath }
+    if ($ApplicationTitle) { $runParams["applicationTitle"] = $ApplicationTitle }
+    Write-Utf8TextAtomic -Path $paramsPath -Value (($runParams | ConvertTo-Json -Compress) + [Environment]::NewLine)
     $script:LastEnterpriseAutoUpdateResultPath = $resultPath
     Write-Host "Running development branch Enterprise auto-update: $epfPath"
     Write-Host "Development branch Enterprise auto-update timeout: $timeoutSeconds seconds"
@@ -3173,7 +3176,7 @@ function Invoke-DevBranchEnterpriseAutoUpdate {
             throw "result file was not created"
         }
         $proof = Read-Utf8Text -Path $resultPath | ConvertFrom-Json -ErrorAction Stop
-        if ([int](Get-StateValue -State $proof -Name "schemaVersion" -Default 0) -ne 1 -or
+        if ([int](Get-StateValue -State $proof -Name "schemaVersion" -Default 0) -ne 2 -or
             [string](Get-StateValue -State $proof -Name "runId" -Default "") -cne $runId) {
             throw "result schema or run ID does not match this launch"
         }
@@ -3181,6 +3184,12 @@ function Invoke-DevBranchEnterpriseAutoUpdate {
         $updateResult = [string](Get-StateValue -State $proof -Name "updateResult" -Default "")
         if ($status -notin @("passed", "failed") -or ($status -eq "passed" -and $updateResult -notin @("Успешно", "НеТребуется"))) {
             throw "result status or update outcome is invalid"
+        }
+        $titleStatus = [string](Get-StateValue -State $proof -Name "titleStatus" -Default "")
+        $expectedTitleStatuses = if ($status -ne "passed") { @("not-run") } elseif ($ApplicationTitle) { @("set", "unchanged", "skipped", "failed") } else { @("not-requested") }
+        if ($titleStatus -cnotin $expectedTitleStatuses -or
+            ($titleStatus -in @("set", "unchanged") -and [string](Get-StateValue -State $proof -Name "titleValue" -Default "") -cne $ApplicationTitle)) {
+            throw "application title outcome does not match the requested title"
         }
     } catch {
         $nativeDetail = if ($nativeError) { " nativeError='$nativeError'" } else { "" }
@@ -3196,12 +3205,29 @@ function Invoke-DevBranchEnterpriseAutoUpdate {
         throw "ITL_ENTERPRISE_AUTO_UPDATE_NATIVE_FAILED: $nativeError result='$resultPath' log='$script:LastLogPath' requiredAction=inspect-auto-update-result."
     }
 
+    $titleError = ([string](Get-StateValue -State $proof -Name "titleError" -Default "") -replace '[\r\n]+', ' ').Replace("'", "")
+    if ($titleError.Length -gt 500) { $titleError = $titleError.Substring(0, 500) }
     return [pscustomobject]@{
         epfPath = $epfPath
         logPath = $script:LastLogPath
         resultPath = $resultPath
         updatedAt = (Get-Date).ToString("o")
+        applicationTitle = $ApplicationTitle
+        applicationTitleStatus = [string]$proof.titleStatus
+        applicationTitleError = $titleError
     }
+}
+
+function Get-DevBranchApplicationTitle {
+    param([object]$State)
+
+    $branchName = [string](Get-StateValue -State $State -Name "devBranchName" -Default "")
+    if (-not $branchName) {
+        return ""
+    }
+    # The launcher owns the project display name; reuse it so both 1C entry points agree.
+    $projectRoot = try { Get-MainWorktreePath } catch { $script:ProjectRoot }
+    return "$(Get-LauncherProjectName -ProjectRootForName $projectRoot) [DEV $(ConvertTo-LauncherLabel -Value $branchName)]"
 }
 
 function Test-DevBranchEnterpriseNormalizationProved {
@@ -3295,11 +3321,20 @@ function Ensure-DevBranchEnterpriseNormalized {
     }
 
     try {
-        $autoUpdateResult = Invoke-DevBranchEnterpriseAutoUpdate -State $State
+        $autoUpdateResult = Invoke-DevBranchEnterpriseAutoUpdate -State $State -ApplicationTitle (Get-DevBranchApplicationTitle -State $State)
         if (-not [string](Get-StateValue -State $autoUpdateResult -Name "resultPath" -Default "")) {
             throw "ITL_ENTERPRISE_AUTO_UPDATE_PROOF_MISSING: Enterprise normalization returned no run result path."
         }
+        $titleStatus = [string](Get-StateValue -State $autoUpdateResult -Name "applicationTitleStatus" -Default "")
+        $titleError = [string](Get-StateValue -State $autoUpdateResult -Name "applicationTitleError" -Default "")
+        # The branch title is cosmetic: a failed write is reported and retried by the next normalization, never a barrier.
+        if ($titleStatus -eq "failed") {
+            Write-Warning "ITL_APPLICATION_TITLE_FAILED: error='$titleError' result='$($autoUpdateResult.resultPath)'. The branch stays usable; the next Enterprise normalization (configuration load or branch reset) retries the title."
+        }
         $passed = @{
+            applicationTitle = [string](Get-StateValue -State $autoUpdateResult -Name "applicationTitle" -Default "")
+            applicationTitleStatus = $titleStatus
+            applicationTitleError = $titleError
             enterpriseNormalizationStatus = "passed"
             enterpriseNormalizationProofVersion = 1
             enterpriseNormalizationReason = $Reason
@@ -11524,6 +11559,15 @@ function Write-DevBranchInitializationStatusLines {
     if ($normalizationResultPath) {
         Write-Host "${Indent}Last Enterprise auto-update result: $normalizationResultPath"
     }
+    $titleStatus = [string](Get-StateValue -State $State -Name "applicationTitleStatus" -Default "")
+    if ($titleStatus) {
+        $titleDetail = switch ($titleStatus) {
+            "skipped" { " (configuration has no ЗаголовокСистемы constant)" }
+            "failed" { " error='$(Get-StateValue -State $State -Name 'applicationTitleError' -Default '')'" }
+            default { "" }
+        }
+        Write-Host "${Indent}Application title: $titleStatus '$(Get-StateValue -State $State -Name 'applicationTitle' -Default '')'$titleDetail"
+    }
     $configLoadStatus = Get-StateValue -State $State -Name "configLoadStatus" -Default ""
     if ($configLoadStatus) {
         Write-Host "${Indent}Last config load: $configLoadStatus / $(Get-StateValue -State $State -Name 'lastConfigLoadMode' -Default '<unknown>')"
@@ -12305,6 +12349,18 @@ function Write-DevBranchRunUserReport {
             $publicationStatus = Get-StateValue -State $State -Name "publicationStatus" -Default ""
             Add-RunUserReportLine -Lines $lines -Label "Публикация" -Value (ConvertTo-RunUserReportStateDisplay -Value $publicationStatus -Kind PublicationStatus)
         }
+    }
+    $applicationTitle = [string](Get-StateValue -State $State -Name "applicationTitle" -Default "")
+    $applicationTitleDisplay = switch ([string](Get-StateValue -State $State -Name "applicationTitleStatus" -Default "")) {
+        "set" { "$applicationTitle (установлен)" }
+        "unchanged" { "$applicationTitle (уже установлен)" }
+        "skipped" { "пропущен: в конфигурации нет константы ЗаголовокСистемы" }
+        "failed" { "не установлен, ветка работоспособна; повтор при следующей Enterprise-нормализации: $(Get-StateValue -State $State -Name 'applicationTitleError' -Default '')" }
+        "inherited" { "$applicationTitle (унаследован от исходной ветки; обновится при следующей Enterprise-нормализации)" }
+        default { "" }
+    }
+    if ($applicationTitleDisplay) {
+        Add-RunUserReportLine -Lines $lines -Label "Заголовок приложения" -Value $applicationTitleDisplay
     }
     $publicationError = [string](Get-StateValue -State $State -Name "publicationError" -Default "")
     if ((Get-DevBranchKind -State $State) -eq "extension") {
@@ -16637,6 +16693,10 @@ function New-ForkedDevBranchState {
         foreach ($key in @($targetValues.Keys)) {
             if ([string]$key -match '^vanessaServiceInfoBase') { $state[$key] = $targetValues[$key] }
         }
+    }
+    # The copied database still carries the source branch title; fork runs no Enterprise to rewrite it.
+    if ([string]$state["applicationTitleStatus"] -in @("set", "unchanged")) {
+        $state["applicationTitleStatus"] = "inherited"
     }
     $state["toolingInfoBaseGeneration"] = [guid]::NewGuid().ToString("N")
     $state["vanessaMcpSafeModeProof"] = $null
