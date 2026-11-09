@@ -509,12 +509,16 @@ function Get-YAxUnitCfePath {
 function Install-YAxUnit {
     $entry = Get-YAxUnitPinnedEntry
     $targetPath = Get-YAxUnitCfePath
+    $expected = ([string]$entry.sha256).ToLowerInvariant()
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
-    [void](Invoke-ItlImmutableFileAcquire `
-        -Source (ConvertFrom-FileUri -Value ([string]$entry.url)) `
-        -DestinationPath $targetPath `
-        -ExpectedSha256 ([string]$entry.sha256).ToLowerInvariant() `
-        -Label "YAxUnit CFE")
+    if ((Get-ItlImmutableFileSha256 -Path $targetPath) -cne $expected) {
+        # The machine cache serves every project; the project path stays the bound location.
+        $cachePath = Get-ItlSharedArtifactPath -Family "yaxunit" -Version ([string]$entry.version) -Sha256 $expected -AssetName ([string]$entry.assetName)
+        if ((Get-ItlImmutableFileSha256 -Path $cachePath) -cne $expected) {
+            [void](Invoke-ItlImmutableFileAcquire -Source (ConvertFrom-FileUri -Value ([string]$entry.url)) -DestinationPath $cachePath -ExpectedSha256 $expected -Label "YAxUnit CFE")
+        }
+        [void](Invoke-ItlImmutableFileAcquire -Source $cachePath -DestinationPath $targetPath -ExpectedSha256 $expected -Label "YAxUnit CFE")
+    }
     Write-Host "YAxUnit $($entry.version) is ready: $targetPath"
     return $targetPath
 }

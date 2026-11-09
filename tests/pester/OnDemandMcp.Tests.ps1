@@ -624,6 +624,51 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "downloads the pinned facade through the shared bounded immutable owner" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-shared-download " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agents\skills") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow") -Recurse -Force
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination (Join-Path $tempRoot "templates") -Recurse -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+            $installedHelper = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+
+            $result = & {
+                . $installedHelper -ProjectRoot $tempRoot -Action help *> $null
+                $installRoot = Join-Path $tempRoot "Локальные данные\ondemand"
+                function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
+                $payload = [byte[]](3, 1, 4, 1, 5)
+                $sha256 = ([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create().ComputeHash($payload)))).Replace('-', '').ToLowerInvariant()
+                function Get-WorkflowDependencyEntry {
+                    param([string]$Name)
+                    return [pscustomobject]@{ version = "0.4.29"; assetName = "itl-ondemand-mcp-windows-amd64.exe"; url = "https://example.invalid/itl-ondemand-mcp.exe"; sha256 = $sha256 }
+                }
+                $script:OnDemandRequests = 0
+                $script:OnDemandPayload = $payload
+                function Start-Sleep {}
+                function Invoke-WebRequest {
+                    param($Uri, $OutFile, $TimeoutSec, [switch]$UseBasicParsing)
+                    $script:OnDemandRequests++
+                    if ($script:OnDemandRequests -eq 1) { $failure = [Exception]::new("service unavailable"); $failure.Data["StatusCode"] = 503; throw $failure }
+                    [IO.File]::WriteAllBytes($OutFile, $script:OnDemandPayload)
+                }
+                $installed = Install-ItlOnDemandMcp -ForceDownload 3>$null
+
+                $script:OnDemandPayload = [byte[]](9, 9)
+                $mismatch = $null
+                try { Install-ItlOnDemandMcp -ForceDownload 3>$null } catch { $mismatch = $_.Exception.Message }
+                [pscustomobject]@{ installed = $installed; requests = $script:OnDemandRequests; mismatch = $mismatch; payload = $payload }
+            }
+
+            $result.requests | Should -Be 3
+            [IO.File]::ReadAllBytes([string]$result.installed.path) | Should -Be $result.payload
+            $result.mismatch | Should -Match "SHA256 mismatch"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "does not replace a verified cached facade with a stale source-repository build" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-stale-source-" + [guid]::NewGuid().ToString("N"))
         try {
