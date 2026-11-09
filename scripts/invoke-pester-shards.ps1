@@ -329,6 +329,19 @@ function Initialize-VanessaSourceBuildArchiveForPester {
         foreach ($head in @(& git -C $RepositoryRoot rev-list --max-count=8 HEAD 2>$null)) {
             if ([string]$head -match '^[a-f0-9]{40}$') { [void]$recentHeads.Add([string]$head) }
         }
+        # A registration candidate stacks every unpublished queue entry above
+        # published develop, so a pinning commit can sit deeper than the fixed
+        # window. Widen it to the whole unpublished range, bounded by the queue
+        # base rather than by a commit count; exact SHA admission is unchanged.
+        $queueBaseRefs = @($(if ($BaseRef) { $BaseRef }), 'refs/remotes/origin/develop') | Where-Object { $_ }
+        foreach ($queueBaseRef in $queueBaseRefs) {
+            $queueBase = [string](& git -C $RepositoryRoot rev-parse --verify --quiet "$queueBaseRef^{commit}" 2>$null)
+            if ($LASTEXITCODE -ne 0 -or $queueBase -notmatch '^[a-f0-9]{40}$') { continue }
+            foreach ($head in @(& git -C $RepositoryRoot rev-list --max-count=256 HEAD "^$queueBase" 2>$null)) {
+                if ([string]$head -match '^[a-f0-9]{40}$') { [void]$recentHeads.Add([string]$head) }
+            }
+            break
+        }
         $worktreeLines = @(& git -C $RepositoryRoot worktree list --porcelain 2>$null)
         $worktreeExitCode = $LASTEXITCODE
     } finally {
@@ -366,6 +379,16 @@ function Initialize-VanessaSourceBuildArchiveForPester {
         $sharedHash = Get-PesterShardFileSha256 -Path $sharedArchive
         if ($sharedHash -ne $expected) {
             throw "Shared Vanessa source-build cache entry has an impossible SHA-address mismatch: expected=$expected actual=$sharedHash path=$sharedArchive"
+        }
+        $validCandidates.Add([IO.Path]::GetFullPath($sharedArchive)) | Out-Null
+    } elseif (-not $ReadOnly -and $validCandidates.Count -gt 0) {
+        # Seed the SHA-addressed cache from the exact local build so later
+        # candidates resolve it independently of queue depth or worktree
+        # lifetime. The acquire helper stages a copy, re-verifies its SHA and
+        # publishes atomically; a mismatch fails closed instead of downloading.
+        $published = Invoke-ItlImmutableFileAcquire -Source ([string]$validCandidates[0]) -DestinationPath $sharedArchive -ExpectedSha256 $expected -Label "Pester Vanessa source-build shared cache" -MaxAttempts 1
+        if ([string]$published.sha256 -cne $expected -or (Get-PesterShardFileSha256 -Path $sharedArchive) -cne $expected) {
+            throw "Shared Vanessa source-build cache publication did not preserve the locked SHA256: $sharedArchive"
         }
         $validCandidates.Add([IO.Path]::GetFullPath($sharedArchive)) | Out-Null
     }
