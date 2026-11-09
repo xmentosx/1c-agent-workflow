@@ -935,6 +935,235 @@ function Format-OneCExecutionGuardTarget {
     return 'server:<connection details omitted>'
 }
 
+# Branch holder release. Guard records remain diagnostic; the OS handle is the
+# only admission authority and dies with its supervisor. This is the single
+# owner that may stop a same-worktree supervisor so a stuck holder never needs a
+# guessed PID, a manual kill or a fresh chat.
+function Get-ItlCommandLineProjectRoot {
+    param([AllowEmptyString()][string]$CommandLine)
+
+    $match = [regex]::Match([string]$CommandLine, '(?i)(?:^|\s)(?:--project-root|-ProjectRoot)(?:\s+|=|:)(?:"(?<value>[^"]+)"|(?<value>[^\s"]+))')
+    if (-not $match.Success) { return '' }
+    try { return [IO.Path]::GetFullPath($match.Groups['value'].Value).TrimEnd('\', '/') } catch { return '' }
+}
+
+function Test-ItlSameProjectRoot {
+    param([AllowEmptyString()][string]$First, [AllowEmptyString()][string]$Second)
+
+    if ([string]::IsNullOrWhiteSpace($First) -or [string]::IsNullOrWhiteSpace($Second)) { return $false }
+    try {
+        $left = [IO.Path]::GetFullPath($First).TrimEnd('\', '/')
+        $right = [IO.Path]::GetFullPath($Second).TrimEnd('\', '/')
+    } catch { return $false }
+    return [string]::Equals($left, $right, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-ItlBranchHolderProcessInventory {
+    return @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object {
+        [pscustomobject]@{ProcessId=[int]$_.ProcessId;ParentProcessId=[int]$_.ParentProcessId;Name=[string]$_.Name
+            CommandLine=[string]$_.CommandLine;CreationDate=$_.CreationDate}
+    })
+}
+
+function Get-ItlExecutionGuardHolderClass {
+    param(
+        [Parameter(Mandatory = $true)][object]$Holder,
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [AllowEmptyCollection()][object[]]$Processes = @(),
+        [int]$CurrentProcessId = $PID
+    )
+
+    $result = [ordered]@{class='unproven';reason='';ownerRoot='';stopRoot=0;stopProcesses=@()}
+    if (-not [bool]$Holder.alive) {
+        $result.class = 'stale'; $result.reason = 'supervisor exited; its OS handle is already free'
+        return [pscustomobject]$result
+    }
+    if ([string]$Holder.state -notin @('running', 'cancelling')) {
+        $result.class = 'queued'; $result.reason = 'waiting for the same resources; it holds no handle'
+        return [pscustomobject]$result
+    }
+    $byId = @{}
+    foreach ($process in @($Processes)) { $byId[[int]$process.ProcessId] = $process }
+    $holderProcess = $byId[[int]$Holder.pid]
+    $ownerRoot = [string]$Holder.projectRoot
+    if (-not $ownerRoot) {
+        # Records written before projectRoot existed: the facade or helper that
+        # started this supervisor names its worktree on its own command line.
+        $cursor = $holderProcess
+        for ($depth = 0; $null -ne $cursor -and $depth -lt 8 -and -not $ownerRoot; $depth++) {
+            $ownerRoot = Get-ItlCommandLineProjectRoot -CommandLine ([string]$cursor.CommandLine)
+            $cursor = $byId[[int]$cursor.ParentProcessId]
+        }
+    }
+    $result.ownerRoot = $ownerRoot
+    if (-not $ownerRoot) { $result.reason = 'no worktree evidence on the record or its parent processes'; return [pscustomobject]$result }
+    if (-not (Test-ItlSameProjectRoot -First $ownerRoot -Second $ProjectRoot)) {
+        $result.class = 'other-worktree'; $result.reason = "owned by '$ownerRoot'"
+        return [pscustomobject]$result
+    }
+    if ([bool]$Holder.touchesShared) {
+        $result.class = 'shared-resource'; $result.reason = 'also holds a resource shared with other worktrees'
+        return [pscustomobject]$result
+    }
+    if ($null -eq $holderProcess) { $result.reason = 'supervisor process is not visible to this user'; return [pscustomobject]$result }
+    $stopRoot = $holderProcess
+    $parent = $byId[[int]$holderProcess.ParentProcessId]
+    # A lifecycle helper keeps its guard for the whole operation; stopping only
+    # its supervisor would leave its native children running after admission.
+    if ($null -ne $parent -and [string]$parent.CommandLine -match '(?i)agent-1c\.ps1' -and $parent.CreationDate -le $holderProcess.CreationDate) {
+        $stopRoot = $parent
+    }
+    $owned = @($stopRoot)
+    $seen = @{}; $seen[[int]$stopRoot.ProcessId] = $true
+    $level = @([int]$stopRoot.ProcessId)
+    while ($level.Count -gt 0) {
+        $children = @($Processes | Where-Object {
+            [int]$_.ParentProcessId -in $level -and -not $seen.ContainsKey([int]$_.ProcessId) -and $_.CreationDate -ge $stopRoot.CreationDate
+        })
+        foreach ($child in $children) { $seen[[int]$child.ProcessId] = $true }
+        $owned += $children
+        $level = @($children | ForEach-Object { [int]$_.ProcessId })
+    }
+    $protected = @{}
+    $cursor = $byId[$CurrentProcessId]
+    $protected[$CurrentProcessId] = $true
+    for ($depth = 0; $null -ne $cursor -and $depth -lt 16; $depth++) { $protected[[int]$cursor.ProcessId] = $true; $cursor = $byId[[int]$cursor.ParentProcessId] }
+    if (@($owned | Where-Object { $protected.ContainsKey([int]$_.ProcessId) }).Count -gt 0) {
+        $result.class = 'self'; $result.reason = 'held by this command or its caller'
+        return [pscustomobject]$result
+    }
+    $designer = @($owned | Where-Object {
+        [string]$_.Name -match '^1cv8(?:\.exe)?$' -and [string]$_.CommandLine -match '(?i)\bDESIGNER\b' -and
+        [string]$_.CommandLine -match '(?i)/(?:LoadConfigFromFiles|LoadCfg|UpdateDBCfg|UpdateCfg|RestoreIB|ConfigurationRepositoryUpdateCfg|ManageCfgSupport|DeleteCfg)\b'
+    })
+    if ($designer.Count -gt 0) {
+        # Interrupting a mutating Designer can damage the branch database. Its
+        # helper already bounds it by the Designer stall and hard timeouts.
+        $result.class = 'mutating-designer'
+        $result.reason = "Designer PID $($designer[0].ProcessId) is changing the database within its own timeouts"
+        return [pscustomobject]$result
+    }
+    $result.class = 'this-worktree'
+    $result.stopRoot = [int]$stopRoot.ProcessId
+    $result.stopProcesses = @($owned)
+    return [pscustomobject]$result
+}
+
+function Format-ItlExecutionGuardHolder {
+    param([Parameter(Mandatory = $true)][object]$Holder)
+
+    $age = ''
+    $started = [DateTimeOffset]::MinValue
+    if ([DateTimeOffset]::TryParse([string]$Holder.startedAt, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$started)) {
+        $age = "; ageSeconds=$([int][Math]::Max(0, ([DateTimeOffset]::UtcNow - $started).TotalSeconds))"
+    }
+    $state = if ([string]$Holder.holderState) { [string]$Holder.holderState } else { 'unreported' }
+    $reason = if ([string]$Holder.reason) { "; reason='$($Holder.reason)'" } else { '' }
+    return "pid=$($Holder.pid); operation='$($Holder.operation)'; executionId=$($Holder.executionId); holderState=$state$age; class=$($Holder.class)$reason"
+}
+
+function Get-ItlBranchSharedGuardBases {
+    $shared = @()
+    try { $shared += [pscustomobject]@{kind=[string](Get-InfoBaseKind);path=[string](Get-SourceInfoBasePath)} } catch { }
+    return @($shared | Where-Object { $_.kind -in @('file', 'server') -and -not [string]::IsNullOrWhiteSpace([string]$_.path) } | ForEach-Object {
+        [pscustomobject]@{kind=$_.kind;path=$(if ($_.kind -eq 'file') { Resolve-Agent1cFullPath -Path $_.path } else { ([string]$_.path).Trim() })}
+    })
+}
+
+function Get-ItlBranchHolderReport {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Bases,
+        [string]$ProjectRoot = '',
+        [AllowNull()][object[]]$SharedBases = $null
+    )
+
+    if (-not $ProjectRoot) { $ProjectRoot = [string]$script:ProjectRoot }
+    $settings = Get-OneCExecutionGuardSettings
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/ExecutionGuard.ps1')
+    $guardBases = @($Bases | ForEach-Object {
+        $kind = [string](Get-StateValue -State $_ -Name 'kind' -Default '')
+        $path = [string](Get-StateValue -State $_ -Name 'path' -Default '')
+        if ($kind -notin @('file', 'server') -or [string]::IsNullOrWhiteSpace($path)) { throw 'EXECUTION_GUARD_RESOURCE_INVALID' }
+        [pscustomobject]@{kind=$kind;path=$(if ($kind -eq 'file') { Resolve-Agent1cFullPath -Path $path } else { $path.Trim() })}
+    })
+    if ($null -eq $SharedBases) { $SharedBases = @(Get-ItlBranchSharedGuardBases) }
+    $request = [ordered]@{schemaVersion=1;root=$settings.root;bases=@($guardBases);sharedBases=@($SharedBases)}
+    $inventory = Get-ItlExecutionGuardHolders -Python $settings.python -Request $request
+    $holders = @($inventory.holders)
+    $processes = @()
+    if (@($holders | Where-Object { [bool]$_.alive }).Count -gt 0) { $processes = @(Get-ItlBranchHolderProcessInventory) }
+    return @($holders | ForEach-Object {
+        $class = Get-ItlExecutionGuardHolderClass -Holder $_ -ProjectRoot $ProjectRoot -Processes $processes
+        $value = [ordered]@{}
+        foreach ($property in $_.PSObject.Properties) { $value[$property.Name] = $property.Value }
+        foreach ($property in $class.PSObject.Properties) { $value[$property.Name] = $property.Value }
+        [pscustomobject]$value
+    })
+}
+
+function Stop-ItlBranchHolderProcesses {
+    param([Parameter(Mandatory = $true)][object]$Holder)
+
+    $errors = @()
+    foreach ($item in @($Holder.stopProcesses | Sort-Object CreationDate -Descending)) {
+        try { $opened = Get-Process -Id ([int]$item.ProcessId) -ErrorAction Stop }
+        catch { continue }
+        try {
+            # A reused PID is not the inventoried holder process.
+            if ($null -ne $item.CreationDate -and [Math]::Abs(($opened.StartTime - $item.CreationDate).TotalSeconds) -gt 1) { continue }
+            Stop-Process -Id ([int]$item.ProcessId) -Force -ErrorAction Stop
+        } catch {
+            if ($_.FullyQualifiedErrorId -notlike 'NoProcessFoundForGivenId,*') { $errors += "PID $($item.ProcessId): $($_.Exception.Message)" }
+        } finally { $opened.Dispose() }
+    }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($watch.Elapsed.TotalSeconds -lt 15) {
+        $alive = @($Holder.stopProcesses | Where-Object { $null -ne (Get-Process -Id ([int]$_.ProcessId) -ErrorAction SilentlyContinue) })
+        if ($alive.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 100
+    }
+    if ($null -ne (Get-Process -Id ([int]$Holder.pid) -ErrorAction SilentlyContinue)) { $errors += "supervisor PID $($Holder.pid) is still running" }
+    return @($errors)
+}
+
+# Modes: repair stops every proven same-worktree holder because the agent asked
+# for recovery; waiting stops only a holder that itself reported no native work.
+function Invoke-ItlBranchHolderRelease {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Bases,
+        [ValidateSet('repair', 'waiting')][string]$Mode = 'repair',
+        [string]$ProjectRoot = '',
+        [AllowNull()][object[]]$SharedBases = $null
+    )
+
+    $released = @(); $preserved = @(); $removed = 0
+    $settings = Get-OneCExecutionGuardSettings
+    $executions = (Resolve-Agent1cFullPath -Path (Join-Path $settings.root 'executions')).TrimEnd('\') + '\'
+    foreach ($holder in @(Get-ItlBranchHolderReport -Bases $Bases -ProjectRoot $ProjectRoot -SharedBases $SharedBases)) {
+        $path = Resolve-Agent1cFullPath -Path ([string]$holder.path)
+        $ownedRecord = $path.StartsWith($executions, [StringComparison]::OrdinalIgnoreCase)
+        if ($holder.class -eq 'stale') {
+            if ($ownedRecord) {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                if (-not (Test-Path -LiteralPath $path)) { $removed++ }
+            }
+            continue
+        }
+        $automatic = [string]$holder.holderState -in @('cleanup-unconfirmed', 'idle')
+        if ($holder.class -ne 'this-worktree' -or ($Mode -eq 'waiting' -and -not $automatic)) { $preserved += $holder; continue }
+        $errors = @(Stop-ItlBranchHolderProcesses -Holder $holder)
+        if ($errors.Count -gt 0) {
+            $holder | Add-Member -NotePropertyName reason -NotePropertyValue ('stop failed: ' + ($errors -join '; ')) -Force
+            $preserved += $holder
+            continue
+        }
+        if ($ownedRecord) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+        $released += $holder
+        Write-Host "ITL_BRANCH_HOLDER_RELEASED: $(Format-ItlExecutionGuardHolder -Holder $holder)"
+    }
+    return [pscustomobject]@{mode=$Mode;released=@($released);preserved=@($preserved);removedRecords=$removed}
+}
+
 function Invoke-WithOneCExecutionGuard {
     param(
         [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][object[]]$Admissions,
@@ -962,11 +1191,36 @@ function Invoke-WithOneCExecutionGuard {
         schemaVersion=1;root=$guardSettings.root;bases=@($bases);operation=$Purpose
         executionId=[guid]::NewGuid().ToString('N');timeout=$effectiveGuardTimeout
         cancelPath=$CancelPath;phaseDeadline=$(if ($DeadlineMonotonicNs -gt 0) { [string]$DeadlineMonotonicNs } else { $null })
+        holderState='active-native-call'
+    }
+    $projectRootVariable = Get-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $projectRootVariable -and -not [string]::IsNullOrWhiteSpace([string]$projectRootVariable.Value)) {
+        $request['projectRoot'] = Resolve-Agent1cFullPath -Path ([string]$projectRootVariable.Value)
     }
     if ($previousExecutionContext) {
         if (-not $previousExecutionContextKey) { throw 'EXECUTION_CONTEXT_KEY_REQUIRED' }
         $request['inheritedContext'] = $previousExecutionContext
         $request['inheritedContextKey'] = $previousExecutionContextKey
+    }
+    # Contention progress names every holder and releases only a same-worktree
+    # holder that reported cleanup-unconfirmed or idle. Active holders are waited
+    # for; the agent-visible continuation is repair-dev-branch-tooling.
+    $itlHolderWatch = @{next=[DateTime]::UtcNow;retained=@();detail='';publish=$false}
+    $itlHolderProgress = {
+        param($guardEvent)
+        if ([double]$guardEvent.waitSeconds -lt 0.05 -or [DateTime]::UtcNow -lt $itlHolderWatch.next) { return }
+        $itlHolderWatch.next = [DateTime]::UtcNow.AddSeconds(5)
+        try {
+            $holderRelease = Invoke-ItlBranchHolderRelease -Bases $bases -Mode waiting
+            $named = @($holderRelease.preserved | Where-Object { [string]$_.executionId -cne [string]$request['executionId'] } | ForEach-Object { Format-ItlExecutionGuardHolder -Holder $_ })
+            $itlHolderWatch.retained = @($holderRelease.preserved | Where-Object { $_.class -eq 'this-worktree' })
+            $holderText = if ($named.Count -gt 0) { 'holders: ' + ($named -join ' | ') } elseif (@($holderRelease.released).Count -gt 0) { 'idle same-worktree holder released' } else { 'holders: none recorded' }
+        } catch { $holderText = "holder inspection failed: $($_.Exception.Message)" }
+        Write-Host "EXECUTION_GUARD_WAIT waitSeconds=$([Math]::Round([double]$guardEvent.waitSeconds, 1)); $holderText"
+        if ($itlHolderWatch.publish) {
+            $script:RunStageDetail = $itlHolderWatch.detail + ' ' + $holderText
+            Write-RunStatus -Status running
+        }
     }
     try {
         $runStatusVariable = Get-Variable -Name RunStatusPath -Scope Script -ErrorAction SilentlyContinue
@@ -980,13 +1234,27 @@ function Invoke-WithOneCExecutionGuard {
             $script:RunLiveness = 'waiting-for-base'
             $script:RunTimeoutRemainingSeconds = [int][Math]::Ceiling($effectiveGuardTimeout)
             Write-RunStatus -Status running
+            $itlHolderWatch.detail = $script:RunStageDetail
+            $itlHolderWatch.publish = $true
         }
-        if ($publishAdmissionStatus) {
-            $guardOwner = Invoke-WithRunStatusHeartbeat {
-                Start-ItlExecutionGuardHost -Python $guardSettings.python -Request $request
+        try {
+            if ($publishAdmissionStatus) {
+                $guardOwner = Invoke-WithRunStatusHeartbeat {
+                    Start-ItlExecutionGuardHost -Python $guardSettings.python -Request $request -OnProgress $itlHolderProgress
+                }
+            } else {
+                $guardOwner = Start-ItlExecutionGuardHost -Python $guardSettings.python -Request $request -OnProgress $itlHolderProgress
             }
-        } else {
-            $guardOwner = Start-ItlExecutionGuardHost -Python $guardSettings.python -Request $request
+        } catch {
+            $retained = @($itlHolderWatch.retained)
+            $actionVariable = Get-Variable -Name Action -Scope Script -ErrorAction SilentlyContinue
+            $repairing = $null -ne $actionVariable -and [string]$actionVariable.Value -eq 'repair-dev-branch-tooling'
+            if ($_.Exception.Message -match '^EXECUTION_GUARD_WAIT_TIMEOUT\b' -and $retained.Count -gt 0 -and -not $repairing) {
+                throw ("EXECUTION_GUARD_BRANCH_HOLDER_RETAINED: this worktree's own operation kept the exact base for the whole wait; " +
+                    "run repair-dev-branch-tooling, then repeat the original command. Holders: " +
+                    (@($retained | ForEach-Object { Format-ItlExecutionGuardHolder -Holder $_ }) -join ' | '))
+            }
+            throw
         }
         if ($publishAdmissionStatus) {
             $script:RunStageDetail = $previousRunDetail

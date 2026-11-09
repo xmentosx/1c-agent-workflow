@@ -4,6 +4,12 @@ Use `repair-dev-branch-tooling` through the compact runner for a ready developme
 branch whose Vanessa or YAxUnit prerequisites are absent, inactive or stale.
 It stops only branch-owned runtime, uses lifecycle locks and a call-scoped exact-base execution guard,
 and restores pinned extensions without resetting the database or changing tests.
+Its first phase, before admission, stops this worktree's own guard holders and names
+each one it preserves: another worktree, a holder of a shared base, an unproven owner,
+or a mutating Designer that its own timeouts bound. Interactive 1C sessions remain
+foreign. A wait that only this worktree's active holder blocks ends with
+`EXECUTION_GUARD_BRANCH_HOLDER_RETAINED` and routes here; a holder that reported
+`cleanup-unconfirmed` or `idle` is released by the waiting command itself.
 Do not call internal installation functions or edit state, locks or repair counts.
 
 Repair plans the target database, recorded runtime cleanup databases and exact
@@ -36,10 +42,9 @@ original `manage_test_client(connect)` through that same facade; a proven recove
 forwards it once and a following safe call confirms the replacement. Do not edit
 or recreate the missing JSON, stop a guessed PID, or repeat an unknown modifying
 call. If the owner reports an active call, wait for that operation to complete or
-use its cancellation path. If ownership/cleanup is unconfirmed, retain the same
-facade and its evidence for lifecycle-owner investigation; run
-`repair-dev-branch-tooling` only after exact owned cleanup has been established.
-Then resume the original check. A fresh chat does not prove same-connection
+use its cancellation path. If ownership/cleanup stays unconfirmed, run `repair-dev-branch-tooling`:
+it releases this worktree's holders without a guessed PID. Then resume the
+original check. A fresh chat does not prove same-connection
 recovery. Legacy records remain readable; downgrade requires quiescent, resolved
 work, and an older facade cannot inherit a live in-memory launch snapshot.
 
