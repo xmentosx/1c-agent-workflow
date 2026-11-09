@@ -146,15 +146,9 @@ It "parses the orchestrator and exposes the bounded delivery actions" {
         @($errors) | Should -BeNullOrEmpty
         $action = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "Action" } | Select-Object -First 1
         @($action.Attributes | Where-Object TypeName -match ValidateSet | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("RegisterChange", "Status", "Plan", "Cleanup", "DiagnoseFull", "PublishDevelop", "PromoteRelease", "ReleaseMaster")
-        $text = $DeliverySourceText
-        $text | Should -Not -Match 'Restore-DeliveryContinuationQualification'
-        $text | Should -Match 'publication-attempts\\develop\.json'
-        $text | Should -Match 'develop-qualified'
-        $text | Should -Match 'component-finalized'
-        $text | Should -Match 'same failure twice'
-        $text | Should -Match 'Restore-PriorDevelopPublicationQualification'
-        $text | Should -Match 'Invoke-SourceGate -Mode "Develop" -WorkingRoot \$worktree\.path -TargetBaseRef \$remoteDevelop'
-        $text | Should -Match 'Promote-AccumulatedDevelopToMaster'
+        # Publication-state markers belong to the candidate owner's
+        # SourceDeliveryPublish suite; the entrypoint keeps its own routing.
+        $text = Get-DeliverySourceText -Name 'source-delivery.ps1'
         $text | Should -Match 'source-delivery-supervisor\.ps1'
         $text | Should -Match 'refs/remotes/\$Remote/master'
     }

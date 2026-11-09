@@ -93,6 +93,9 @@ Describe "Source develop queue and delivery" {
     }
 
     It "finalizes every owned release surface and excludes external pinned dependencies" {
+        # Only the finalizer module and the candidate publisher that gates it;
+        # both are proof inputs of this suite through the entrypoint closure.
+        $DeliverySourceText = Get-DeliverySourceText -Name 'source-delivery-component.ps1', 'source-delivery-candidate.ps1'
         foreach ($name in @(
             'Invoke-AiRulesComponentPublicationFinalize',
             'Invoke-VanessaComponentPublicationFinalize',

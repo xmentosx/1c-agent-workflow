@@ -7,7 +7,22 @@
         $path = Join-Path $RepoRoot ("scripts\" + $name)
         if (Test-Path -LiteralPath $path -PathType Leaf) { $DeliverySourcePaths += $path }
     }
-    $DeliverySourceText = @($DeliverySourcePaths | ForEach-Object { Get-Content -LiteralPath $_ -Raw -Encoding UTF8 }) -join [Environment]::NewLine
+    # A text assertion names the exact module it reads; -All is reserved for
+    # whole-implementation negatives. SourceDeliveryProofOwnership proves each
+    # named file is a Pester proof input of the consuming test.
+    function Get-DeliverySourceText {
+        param([string[]]$Name, [switch]$All)
+        if ($All -eq [bool]$Name) { throw 'Get-DeliverySourceText requires exactly one of -Name or -All.' }
+        $selected = if ($All) { @($DeliverySourcePaths) } else {
+            @($Name | ForEach-Object {
+                $leaf = $_
+                $match = @($DeliverySourcePaths | Where-Object { (Split-Path -Leaf $_) -ceq $leaf })
+                if ($match.Count -ne 1) { throw "Unknown delivery source '$leaf'." }
+                $match[0]
+            })
+        }
+        return (@($selected | ForEach-Object { Get-Content -LiteralPath $_ -Raw -Encoding UTF8 }) -join [Environment]::NewLine)
+    }
 
     function Get-DeliveryFunctionDefinitions {
         param([string[]]$Names)
