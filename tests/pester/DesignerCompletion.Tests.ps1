@@ -2933,3 +2933,81 @@ function Get-DesignerOwnedProcessInventory {
         $result.partialExists | Should -BeTrue
     }
 }
+
+Describe '1C Designer license refusal' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $LicenseHelperPath = $context.HelperPath
+        $LicenseRefusal = 'Не найдена лицензия. Не обнаружен ключ защиты программы или полученная программная лицензия!'
+
+        # Runs the real Invoke-Designer; only the native launch writes the /Out log
+        # of each attempt and reports its exit code.
+        function Invoke-LicenseDesigner([string]$Case, [string[]]$Logs, [bool]$Released = $true) {
+            $root = Join-Path $TestDrive ('Отказ лицензии с пробелом ' + $Case)
+            $base = Join-Path $root 'База с пробелом'
+            $platform = Join-Path $root '1cv8.exe'
+            New-Item -ItemType Directory -Force -Path $base | Out-Null
+            New-Item -ItemType File -Force -Path $platform, (Join-Path $base '1Cv8.1CD') | Out-Null
+            & {
+                . $LicenseHelperPath -ProjectRoot $root -Action help *> $null
+                $script:Config = [pscustomobject]@{ platformPath=$platform; logsPath='logs'; designerMaxWorkingSetMb=0; designerOperationTimeoutSeconds=30; designerDumpStabilitySeconds=0 }
+                $script:LicenseAttempts = 0
+                $script:LicenseLogPaths = @()
+                function Get-DesignerLicenseRetryPolicy { [pscustomobject]@{ maxRetries = 2; delaySeconds = 0 } }
+                function Confirm-OneCNativeOperationRelease { }
+                function Test-DesignerInvocationReleased { param($ProbeState) $ProbeState.processesReleaseConfirmed = $Released; return $Released }
+                function Invoke-NativeProcessAndWaitResult {
+                    param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0, [scriptblock]$OnTimeout = $null,
+                        [scriptblock]$CompletionProbe = $null, [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
+                        [int]$FailurePostExitProbeSeconds = 0, [switch]$RequirePostExitProbeOnFailure, [int]$MaxWorkingSetMb = 0)
+                    $logPath = [string]$Arguments[[Array]::IndexOf($Arguments, '/Out') + 1]
+                    $text = $Logs[[Math]::Min($script:LicenseAttempts, $Logs.Count - 1)]
+                    $script:LicenseAttempts++
+                    $script:LicenseLogPaths += $logPath
+                    [IO.File]::WriteAllText($logPath, $text, [Text.UTF8Encoding]::new($true))
+                    $exitCode = if ($text -eq 'Проверка завершена.') { 0 } else { 1 }
+                    & $CompletionProbe ([pscustomobject]@{ processId = 9460; launcherExited = $true; launcherExitCode = $exitCode }) | Out-Null
+                    [pscustomobject]@{ processId = 9460; exitCode = $exitCode; timedOut = $false; memoryLimitExceeded = $false; memoryMonitorFailed = $false
+                        memoryMonitorError = ''; peakWorkingSetMb = 0; workingSetLimitMb = 0; terminationConfirmed = $true; terminationError = ''
+                        completedByProbe = $true; postExitProbeTimedOut = $false; completionProbeFailed = $false; launcherExited = $true; launcherExitCode = $exitCode }
+                }
+                $returned = ''
+                $message = try {
+                    $returned = Invoke-Designer -InfoBasePath $base -InfoBaseKind file -DesignerArgs @('/CheckModules', '-ThinClient') 6>$null
+                    ''
+                } catch { $_.Exception.Message }
+                [pscustomobject]@{ message = $message; attempts = $script:LicenseAttempts; returned = [string]$returned; logs = @($script:LicenseLogPaths) }
+            }
+        }
+    }
+
+    It 'repeats the same command after a <language> license refusal' -TestCases @(
+        @{ language = 'Russian'; text = 'Не найдена лицензия. Не обнаружен ключ защиты программы или полученная программная лицензия!' },
+        @{ language = 'English'; text = 'License not found. Software protection key or obtained software license not found!' }
+    ) {
+        param($language, $text)
+        $result = Invoke-LicenseDesigner -Case $language -Logs @($text, 'Проверка завершена.')
+        $result.message | Should -BeNullOrEmpty
+        $result.attempts | Should -Be 2
+        $result.returned | Should -Be $result.logs[1]
+    }
+
+    It 'stops after the retry bound with the original native failure' {
+        $result = Invoke-LicenseDesigner -Case 'bound' -Logs @($LicenseRefusal)
+        $result.attempts | Should -Be 3
+        $result.message | Should -Match '^1C Designer failed with exit code 1\.'
+        $result.message | Should -Match ([regex]::Escape($result.logs[2]))
+    }
+
+    It 'does not repeat <case>' -TestCases @(
+        @{ case = 'another native error'; log = 'Ошибка блокировки информационной базы для конфигурирования.'; released = $true },
+        @{ case = 'a refusal mixed with other output'; log = "Не найдена лицензия.`r`nОшибка блокировки информационной базы для конфигурирования."; released = $true },
+        @{ case = 'an unreleased refused invocation'; log = 'Не найдена лицензия. Не обнаружен ключ защиты программы или полученная программная лицензия!'; released = $false }
+    ) {
+        param($case, $log, $released)
+        $result = Invoke-LicenseDesigner -Case $case -Logs @($log, 'Проверка завершена.') -Released $released
+        $result.attempts | Should -Be 1
+        $result.message | Should -Not -BeNullOrEmpty
+    }
+}

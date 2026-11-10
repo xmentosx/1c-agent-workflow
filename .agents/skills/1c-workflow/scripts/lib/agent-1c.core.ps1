@@ -8014,6 +8014,32 @@ function Get-DesignerBatchCheckVerdict {
     }
 }
 
+function Get-DesignerLicenseRetryPolicy {
+    # Bounded: at most two minutes of pauses for one Designer command.
+    return [pscustomobject]@{ maxRetries = 8; delaySeconds = 15 }
+}
+
+function Test-DesignerLicenseRefusal {
+    # 1C refuses a license before it opens the infobase: the failed invocation
+    # released its processes and its /Out log holds only the platform message.
+    # Bursts of Designer launches meet such refusals with no other 1C running.
+    param([AllowNull()][object]$ErrorRecord)
+    $exception = if ($ErrorRecord -is [Management.Automation.ErrorRecord]) { $ErrorRecord.Exception } else { $ErrorRecord }
+    if ($null -eq $exception -or $null -eq $exception.Data -or -not $exception.Data.Contains('ItlDesignerBatchResult')) { return $false }
+    $batch = $exception.Data['ItlDesignerBatchResult']
+    if ([int]$batch.exitCode -eq 0 -or -not [bool]$batch.ownedProcessesReleased) { return $false }
+    $logPath = [string]$batch.logPath
+    if (-not $logPath -or -not (Test-Path -LiteralPath $logPath -PathType Leaf -ErrorAction SilentlyContinue)) { return $false }
+    try { $text = [IO.File]::ReadAllText($logPath, [Text.UTF8Encoding]::new($false)) } catch { return $false }
+    $lines = @(($text.TrimStart([char]0xFEFF) -split '\r?\n') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($lines.Count -eq 0) { return $false }
+    $russian = -join ([char[]](1053, 1077, 32, 1085, 1072, 1081, 1076, 1077, 1085, 1072, 32, 1083, 1080, 1094, 1077, 1085, 1079, 1080, 1103))
+    foreach ($line in $lines) {
+        if (-not ($line.StartsWith($russian, [StringComparison]::Ordinal) -or $line.StartsWith('License not found', [StringComparison]::OrdinalIgnoreCase))) { return $false }
+    }
+    return $true
+}
+
 function Invoke-Designer {
     param(
         [string]$InfoBasePath,
@@ -8021,6 +8047,32 @@ function Invoke-Designer {
         [string[]]$DesignerArgs,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
+        [AllowNull()][object]$NativeEffectContract = $null,
+        [object]$RestorationDuty = $null
+    )
+
+    # Only a license refusal repeats the same command: it never reached the
+    # infobase. Every other failure, and the last refusal, propagate unchanged.
+    $policy = Get-DesignerLicenseRetryPolicy
+    for ($retry = 0; ; $retry++) {
+        try {
+            return Invoke-DesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $DesignerArgs `
+                -User $User -Password $Password -NativeEffectContract $NativeEffectContract -RestorationDuty $RestorationDuty
+        } catch {
+            if ($retry -ge [int]$policy.maxRetries -or -not (Test-DesignerLicenseRefusal -ErrorRecord $_)) { throw }
+            Write-Host "1C refused its license before the Designer opened the infobase; the same command repeats in $($policy.delaySeconds) s (retry $($retry + 1) of $($policy.maxRetries)). Log: $($_.Exception.Data['ItlDesignerBatchResult'].logPath)"
+            Start-Sleep -Seconds ([int]$policy.delaySeconds)
+        }
+    }
+}
+
+function Invoke-DesignerAttempt {
+    param(
+        [string]$InfoBasePath,
+        [string]$InfoBaseKind,
+        [string[]]$DesignerArgs,
+        [string]$User,
+        [string]$Password,
         [AllowNull()][object]$NativeEffectContract = $null,
         [object]$RestorationDuty = $null
     )

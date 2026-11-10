@@ -16,13 +16,13 @@ Describe "Non-interactive 1C startup dialogs" {
         @($errors) | Should -HaveCount 0
         $functions = @($coreAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
 
-        foreach ($name in @("Invoke-Designer", "Invoke-Enterprise")) {
+        foreach ($name in @("Invoke-DesignerAttempt", "Invoke-Enterprise")) {
             $functionText = [string](($functions | Where-Object Name -eq $name).Extent.Text)
             $functionText | Should -Match ([regex]::Escape('"/DisableStartupMessages"'))
             $functionText | Should -Match ([regex]::Escape('"/DisableStartupDialogs"'))
         }
 
-        $designer = [string](($functions | Where-Object Name -eq "Invoke-Designer").Extent.Text)
+        $designer = [string](($functions | Where-Object Name -eq "Invoke-DesignerAttempt").Extent.Text)
         $designer | Should -Match '(?s)\$InfoBaseKind -eq "file".*?\$updateDbIndex -ge 0.*?\$args \+= @\("/AllowExecuteScheduledJobs", "-Off"\)'
 
         $backgroundEnterprise = [string](($functions | Where-Object Name -eq "Start-EnterpriseBackground").Extent.Text)
