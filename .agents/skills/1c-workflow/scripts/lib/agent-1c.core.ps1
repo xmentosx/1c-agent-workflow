@@ -762,8 +762,12 @@ function Test-Agent1cActionRequiresLifecycleLock {
     # Review scope only reads branch state and Git; a review in another chat on
     # the same worktree must not wait for the author's check or publication.
     $branchScopeReadActions = @("get-review-scope")
+    # Window helpers are disposable per group under their own helper.lock; status,
+    # stop and restart must reach a hung helper while a run holds the lifecycle lock.
+    $windowHelperActions = @("window-helper-status", "window-helper-stop", "window-helper-restart")
     if ($readOnlyActions -contains $RequestedAction) { return $false }
     if ($branchScopeReadActions -contains $RequestedAction) { return $false }
+    if ($windowHelperActions -contains $RequestedAction) { return $false }
     if ($facadeExecutionActions -contains $RequestedAction) { return $false }
     # These writes are admitted by the selected store's scoped file leases;
     # a project lifecycle lock would serialize unrelated external changes.
@@ -4174,8 +4178,11 @@ function ConvertTo-DependencyLockComparableValue {
         return [pscustomobject]$normalized
     }
     if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
-        $items = @($Value | ForEach-Object { ConvertTo-DependencyLockComparableValue -Value $_ })
-        return ,$items
+        # A foreach statement keeps string items unwrapped; ForEach-Object wraps them in
+        # PSObject, which Windows PowerShell serializes as {"Length":N}.
+        $items = New-Object System.Collections.Generic.List[object]
+        foreach ($item in $Value) { $items.Add((ConvertTo-DependencyLockComparableValue -Value $item)) }
+        return ,$items.ToArray()
     }
     return $Value
 }
@@ -4246,7 +4253,10 @@ function Merge-WorkflowManagedDependencyLockValue {
         $before = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $Current) -Depth 100 -Compress
         $after = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $Template) -Depth 100 -Compress
         $changed = $before -cne $after
-        return [pscustomobject]@{ value = $(if ($changed) { $Template } else { $Current }); changed = [bool]$changed }
+        # Assign without a subexpression: $(...) would unroll a one-item array into its item.
+        $value = $Current
+        if ($changed) { $value = $Template }
+        return [pscustomobject]@{ value = $value; changed = [bool]$changed }
     }
 
     $currentIsMap = $Current -is [System.Collections.IDictionary] -or $Current -is [pscustomobject]
@@ -8552,12 +8562,14 @@ function Start-EnterpriseBackground {
         [string]$SessionCancelPath = '',
         [long]$SessionDeadlineMonotonicNs = 0,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
-        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
+        [switch]$HiddenTestClient
     )
 
     if ($UseTestManager -and $UseTestClient) {
         throw "A background 1C process cannot be both TESTMANAGER and TESTCLIENT."
     }
+    $windowMode = Get-OneCWindowMode
     if ($UseTestClient -and $TestClientPort -le 0) {
         throw "TestClientPort must be positive when UseTestClient is set."
     }
@@ -8586,16 +8598,22 @@ function Start-EnterpriseBackground {
     if (-not $UseTestClient) {
         $args += "/DisableStartupDialogs"
     }
+    if ($windowMode -eq 'hidden') {
+        $args += "/DisableSplash"
+    }
     $args += @("/Out", $logPath) + $EnterpriseArgs
 
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
-    # TestClient is the UI under test: VanessaExt finds it and lists or captures windows only while
-    # its main window is visible, and 1C ignores minimized/no-activate start states. Keep it shown;
+    # A visible TestClient is the UI under test: VanessaExt finds it and lists or captures
+    # windows only while its main window is visible. A hidden TestClient is served by a
+    # ready window helper group, which shows it only for a capture or a user-approved lease.
     # TESTMANAGER and other background sessions stay hidden.
+    $visible = $UseTestClient -and -not ($HiddenTestClient -and $windowMode -eq 'hidden')
+    $userWindow = if ($windowMode -eq 'hidden') { Get-OneCLaunchUserWindow } else { [int64]0 }
     $process = Start-OneCProcessBackground `
-        -Visible:$UseTestClient `
+        -Visible:$visible `
         -FilePath $platformPath `
         -Arguments $args `
         -InfoBaseKind $InfoBaseKind `
@@ -8610,6 +8628,9 @@ function Start-EnterpriseBackground {
         process = $process
         logPath = $logPath
         executablePath = $platformPath
+        windowMode = $windowMode
+        visible = [bool]$visible
+        focusGuard = $(if ($userWindow -ne 0 -and $null -ne $process) { New-OneCLaunchFocusGuard -UserWindow $userWindow -ProcessId ([int]$process.Id) } else { $null })
     }
 }
 
@@ -8722,8 +8743,13 @@ function Invoke-Enterprise {
     } elseif ($VanessaTestPort -gt 0) {
         $effectiveTestClientPort = $VanessaTestPort
     }
+    $launchFocusGuard = $null
     if ($effectiveTestClientPort -gt 0) {
         $args += "/TESTMANAGER"
+        if ((Get-OneCWindowMode) -eq 'hidden') {
+            $args += "/DisableSplash"
+            $launchFocusGuard = New-OneCLaunchFocusGuard -UserWindow (Get-OneCLaunchUserWindow)
+        }
     }
     $args += @("/Out", $logPath) + $EnterpriseArgs
 
@@ -8758,6 +8784,17 @@ function Invoke-Enterprise {
             $applicationStable = $applicationCompleted -and ($null -eq $requestedEnterpriseCompletionProbe -or
                 ([DateTime]::UtcNow - [DateTime]$enterpriseApplicationEvidence.since).TotalSeconds -ge $enterpriseApplicationEvidence.graceSeconds)
             return ($released -and $applicationStable)
+        }
+    }
+    if ($null -ne $launchFocusGuard -and $null -ne $effectiveCompletionProbe) {
+        # The hidden TestManager can take the foreground while it starts. The existing
+        # monitor loop (about 250 ms) gives it back during the first 60 seconds.
+        $focusedCompletionProbe = $effectiveCompletionProbe
+        $effectiveCompletionProbe = {
+            param($probeContext)
+            Invoke-OneCLaunchFocusReturn -Guard $launchFocusGuard -ProcessId ([int]$probeContext.processId) | Out-Null
+            try { return (& $focusedCompletionProbe $probeContext) }
+            finally { Invoke-OneCLaunchFocusReturn -Guard $launchFocusGuard -ProcessId ([int]$probeContext.processId) | Out-Null }
         }
     }
     $postExitProbeSeconds = if ($null -ne $effectiveCompletionProbe) { Get-CompletionPostExitTimeoutSeconds } else { 0 }

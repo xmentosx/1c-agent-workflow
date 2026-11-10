@@ -3860,7 +3860,8 @@ function Add-VanessaAgentLaunchParams {
     # on-demand MCP producers call it; a manual Vanessa launch never carries it.
     param(
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Params,
-        [Parameter(Mandatory = $true)][string]$ClientCodeChannelRoot
+        [Parameter(Mandatory = $true)][string]$ClientCodeChannelRoot,
+        [AllowNull()][object]$WindowGroup = $null
     )
 
     $agent = [ordered]@{ ITLAgentLaunch = $true }
@@ -3870,9 +3871,15 @@ function Add-VanessaAgentLaunchParams {
     $suffixLength = 1 + 40 + 1 + 6 + 1 + 12 + 36 + 9
     # The 1C file API is limited to MAX_PATH. A root that cannot hold the channel
     # keeps the agent launch and leaves the plain code steps on their form path.
-    if (($root.Length + $suffixLength) -le 259) {
+    if (Test-ItlAgentChannelRootFits -Root $root -SuffixLength $suffixLength) {
         New-Item -ItemType Directory -Force -Path $root | Out-Null
         $agent["ITLClientCodeChannelRoot"] = $root
+    }
+    # Only a ready helper group hides the TestClient; the group owner already applied
+    # the window mode, the Vanessa capability and the same MAX_PATH check.
+    if ($null -ne $WindowGroup -and [bool]$WindowGroup.ready) {
+        $agent["ITLWindowChannelRoot"] = [string]$WindowGroup.directory
+        $agent["ITLUiLeaseCountdownSeconds"] = Get-OneCUiLeaseCountdownSeconds
     }
     $Params["dopparams"] = $agent
     return $agent
@@ -4308,7 +4315,8 @@ function New-VanessaParamsFile {
         [object]$TestClientTopology = $null,
         [int[]]$TestPorts = @(),
         [string]$FilterTags = $VanessaFilterTags,
-        [string[]]$SelectedFeatureFiles = @()
+        [string[]]$SelectedFeatureFiles = @(),
+        [AllowNull()][object]$WindowGroup = $null
     )
 
     $resolvedFeaturePath = New-VanessaExecutionFeaturePath `
@@ -4439,7 +4447,7 @@ function New-VanessaParamsFile {
     $params["useaddinforscreencapture"] = $true
     $params["QuitIfSilentInstallationAddinFails"] = $true
     # Channel records stay with this run's evidence.
-    Add-VanessaAgentLaunchParams -Params $params -ClientCodeChannelRoot (Join-Path $RunDirectory "cc") | Out-Null
+    Add-VanessaAgentLaunchParams -Params $params -ClientCodeChannelRoot (Join-Path $RunDirectory "cc") -WindowGroup $WindowGroup | Out-Null
 
     $normalizedFilterTags = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
     if ($normalizedFilterTags.Count -gt 0) {
@@ -5823,6 +5831,12 @@ function Run-DevBranchTests {
             Write-Host "[WARN] Vanessa event-log preview cursor was not captured: $($_.Exception.Message). The preview scans from the run cursor copy."
         }
     }
+    # The helper group exists before TestManager so that its TestClients start hidden;
+    # TestManager becomes the group root on the first monitor probe.
+    $windowGroup = if ([int]$testClientTopology.requiredTestClientSlots -gt 0) {
+        Start-ItlWindowHelperGroup -Directory (Join-Path $runDirectory 'wh') -Owner runner
+    } else { $null }
+    $windowGroupRoot = [pscustomobject]@{ adopted = $false }
     $paramsPath = New-VanessaParamsFile `
         -FeaturePath $featuresPath `
         -RunDirectory $runDirectory `
@@ -5833,7 +5847,8 @@ function Run-DevBranchTests {
         -TestClientTopology $testClientTopology `
         -TestPorts $testPorts `
         -FilterTags $VanessaFilterTags `
-        -SelectedFeatureFiles $applicationFeatureFiles
+        -SelectedFeatureFiles $applicationFeatureFiles `
+        -WindowGroup $windowGroup
     Publish-Agent1cVanessaRunEvidence `
         -State $runtimeState `
         -TestPorts $testPorts `
@@ -5899,6 +5914,10 @@ function Run-DevBranchTests {
             -TimeoutSeconds $timeoutSeconds `
             -CompletionProbe {
                 param($probeContext)
+                if (-not $windowGroupRoot.adopted -and [int]$probeContext.processId -gt 0 -and $null -ne $windowGroup -and $windowGroup.ready) {
+                    $windowGroupRoot.adopted = $true
+                    Add-ItlWindowHelperRoot -Group $windowGroup -ProcessId ([int]$probeContext.processId) | Out-Null
+                }
                 Update-VanessaRunLiveness -Monitor $runLivenessMonitor -ProbeContext $probeContext -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
                 $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
                 if ($probeStatus.status -in @("passed", "failed")) { return $true }
@@ -5926,6 +5945,7 @@ function Run-DevBranchTests {
         Complete-VanessaRunEventLogWindow -CursorPath $runEventLogCursorPath -FinishedAt $runFinishedAt
         $logPath = $script:LastLogPath
         Write-OneCVanessaProcessDiagnostics -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify failed; active 1C process diagnostics"
+        Write-ItlWindowHelperFailureDiagnostics -Group $windowGroup
         $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         Stop-OwnHungVanessaTestClients -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
         $cleanupStopwatch.Stop(); $cleanupDurationMs = $cleanupStopwatch.ElapsedMilliseconds
@@ -6116,6 +6136,7 @@ function Run-DevBranchTests {
         lastVanessaCleanupDurationMs = $cleanupDurationMs
         lastVanessaEventLogDurationMs = $eventLogDurationMs
         lastVanessaPostProcessDurationMs = [int64]$postProcessStopwatch.ElapsedMilliseconds
+        lastVanessaUiControl = $(if ($null -ne $windowGroup) { Get-ItlWindowHelperLeaseSummary -Group $windowGroup } else { $null })
     }
     foreach ($key in $eventLogDebtUpdates.Keys) { $updates[$key] = $eventLogDebtUpdates[$key] }
     foreach ($key in $eventLogBoundaryUpdates.Keys) { $updates[$key] = $eventLogBoundaryUpdates[$key] }
@@ -6146,7 +6167,11 @@ function Run-DevBranchTests {
     if ($eventLogVerification.reportPath) {
         Write-Host "Event log new errors: $($eventLogVerification.reportPath)"
     }
+    if ($null -ne $updates['lastVanessaUiControl']) {
+        Write-Host (Format-ItlWindowHelperLeaseSummary -Summary $updates['lastVanessaUiControl'])
+    }
     if ($verification.status -ne "passed") {
+        Write-ItlWindowHelperFailureDiagnostics -Group $windowGroup
         Set-RunStage -Stage "vanessa.failed" -Detail $verification.reason
         $failureRoute = Get-VanessaVerificationFailureRoute `
             -Verification $verification `
@@ -8978,15 +9003,18 @@ function Ensure-VanessaMcpInstalled {
 function Wait-VanessaMcpPort {
     param(
         [int]$Port,
-        [int]$TimeoutSeconds = 30
+        [int]$TimeoutSeconds = 30,
+        [AllowNull()][object]$FocusGuard = $null
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        if (Test-TcpPortOpen -Port $Port -TimeoutMilliseconds 500) {
+        Invoke-OneCLaunchFocusReturn -Guard $FocusGuard | Out-Null
+        if (Test-TcpPortOpen -Port $Port -TimeoutMilliseconds 250) {
+            Invoke-OneCLaunchFocusReturn -Guard $FocusGuard | Out-Null
             return $true
         }
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds $(if ($null -ne $FocusGuard) { 200 } else { 500 })
     }
 
     return $false

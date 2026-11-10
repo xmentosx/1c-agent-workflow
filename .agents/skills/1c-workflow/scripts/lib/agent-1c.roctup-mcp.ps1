@@ -468,15 +468,20 @@ function Save-RoctupMcpRuntimeSettingsToDotEnv {
 function Wait-RoctupMcpPort {
     param(
         [int]$Port,
-        [int]$TimeoutSeconds = 30
+        [int]$TimeoutSeconds = 30,
+        [AllowNull()][object]$FocusGuard = $null
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        if (Test-TcpPortOpen -Port $Port -TimeoutMilliseconds 500) {
+        Invoke-OneCLaunchFocusReturn -Guard $FocusGuard | Out-Null
+        if (Test-TcpPortOpen -Port $Port -TimeoutMilliseconds 250) {
+            Invoke-OneCLaunchFocusReturn -Guard $FocusGuard | Out-Null
             return $true
         }
-        Start-Sleep -Milliseconds 500
+        # A hidden ROCTUP window may take the foreground while it starts; the guard
+        # is checked at least every 500 ms during its first 60 seconds.
+        Start-Sleep -Milliseconds $(if ($null -ne $FocusGuard) { 200 } else { 500 })
     }
 
     return $false
@@ -581,7 +586,7 @@ function Start-RoctupMcpForState {
     Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $state) -Status "running" -ProcessId $result.process.Id -LeaseToken $portLeaseToken
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
-    if (-not (Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30)) {
+    if (-not (Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null))) {
         $message = "ROCTUP MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
         Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $state) -Status "failed" -ProcessId $result.process.Id -LeaseToken $portLeaseToken
         Update-DevBranchState -State $state -Updates @{

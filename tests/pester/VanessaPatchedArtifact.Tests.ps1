@@ -471,10 +471,10 @@ Describe 'Current-window expression failure attribution in controlled Vanessa r6
     }
 
     It 'pins the tested recipe and paired extension in the delivery lock' {
-        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r12'
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r13'
         $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $lock = Get-Content -LiteralPath (Join-Path $repoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $lock.dependencies.vanessaAutomation.downstreamRevision | Should -Be 'itl-r12'
+        $lock.dependencies.vanessaAutomation.downstreamRevision | Should -Be 'itl-r13'
         $lock.dependencies.vanessaAutomation.patchSha256 | Should -Be $manifest.patch.sha256
         $lock.dependencies.vanessaAutomation.manifestSha256 | Should -Be (Get-FileHash -LiteralPath (Join-Path $assetRoot 'manifest.json')).Hash.ToLowerInvariant()
         $lock.dependencies.vanessaAutomation.assetName | Should -Be $manifest.artifact.fileName

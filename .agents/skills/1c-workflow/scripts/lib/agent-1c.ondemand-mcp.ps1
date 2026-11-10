@@ -367,6 +367,12 @@ function Get-ItlOnDemandRuntimeRoot {
     return (Join-Path $script:ProjectRoot ".agent-1c\mcp\ondemand")
 }
 
+function Get-ItlOnDemandVanessaWindowGroupRoot {
+    # The helper group of one vanessa-ui session; the short name leaves MAX_PATH room.
+    param([string]$InstanceId)
+    return (Join-Path (Join-Path $script:ProjectRoot ".agent-1c\mcp\vwh") $InstanceId)
+}
+
 function Get-ItlOnDemandVanessaClientCodeRoot {
     # Kept outside the runtime root: its JSON files are channel records, not runtime
     # records. The short name leaves MAX_PATH room for the channel's own layout.
@@ -412,7 +418,7 @@ function Get-ItlOnDemandVanessaTestClientPortKey {
 }
 
 function New-ItlOnDemandVanessaParamsFile {
-    param([object]$State, [string]$InstanceId, [int]$TestClientPort, [string]$VanessaVersion, [string]$User = (Get-EnvValue -Name "IB_USER"), [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"))
+    param([object]$State, [string]$InstanceId, [int]$TestClientPort, [string]$VanessaVersion, [string]$User = (Get-EnvValue -Name "IB_USER"), [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"), [AllowNull()][object]$WindowGroup = $null)
 
     $directory = Split-Path -Parent (Get-ItlOnDemandRuntimePath -Family "vanessa-ui" -InstanceId $InstanceId)
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
@@ -449,7 +455,7 @@ function New-ItlOnDemandVanessaParamsFile {
         dosleepusingping = $false
     }
     $params[(ConvertFrom-Utf8Base64 "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP")] = $testClients
-    Add-VanessaAgentLaunchParams -Params $params -ClientCodeChannelRoot (Get-ItlOnDemandVanessaClientCodeRoot -InstanceId $InstanceId) | Out-Null
+    Add-VanessaAgentLaunchParams -Params $params -ClientCodeChannelRoot (Get-ItlOnDemandVanessaClientCodeRoot -InstanceId $InstanceId) -WindowGroup $WindowGroup | Out-Null
     Write-Utf8Text -Path $path -Value (($params | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
     return $path
 }
@@ -1519,6 +1525,11 @@ function Ensure-ItlOnDemandVanessaTestClientCore {
         $performanceArgs = @('/DEBUG', '-http', '/DEBUGGERURL', $performanceContext.debuggerUrl)
     }
     $sessionWait = Get-OneCSessionWaitParameters
+    # Only a backend whose Vanessa received the window channel can serve a hidden
+    # client; the group must be ready before the client starts.
+    $windowGroupDirectory = [string](Get-ConfigValueFromObject -Object $runtimeState -Path "windowGroupDirectory" -Default "")
+    $windowGroup = if ($windowGroupDirectory) { Start-ItlWindowHelperGroup -Directory $windowGroupDirectory -Owner vanessa-ui } else { $null }
+    $hiddenTestClient = $null -ne $windowGroup -and [bool]$windowGroup.ready
     try {
         $testClientResult = Start-EnterpriseBackground `
             -InfoBasePath $state.devBranchInfoBasePath `
@@ -1526,9 +1537,11 @@ function Ensure-ItlOnDemandVanessaTestClientCore {
             -User $targetUser `
             -Password $targetPassword `
             -UseTestClient `
+            -HiddenTestClient:$hiddenTestClient `
             -TestClientPort $testClientPort `
             @sessionWait `
             -EnterpriseArgs $performanceArgs
+        if ($hiddenTestClient) { Add-ItlWindowHelperRoot -Group $windowGroup -ProcessId ([int]$testClientResult.process.Id) | Out-Null }
         $process = Get-Process -Id $testClientResult.process.Id -ErrorAction Stop
         $platformPath = Resolve-Agent1cFullPath -Path $testClientResult.executablePath
         $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values @{
@@ -1542,6 +1555,8 @@ function Ensure-ItlOnDemandVanessaTestClientCore {
             testClientReused = $false
             previousTestClientPid = $previousPid
             previousTestClientState = $previousState
+            testClientWindowMode = $(if ($hiddenTestClient) { "hidden" } else { "visible" })
+            windowHelperWarning = $(if ($null -ne $windowGroup) { [string]$windowGroup.warning } else { "" })
         }
         if ($null -ne $performanceContext) {
             $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values @{
@@ -1917,7 +1932,10 @@ function Start-ItlOnDemandBackendInstanceCore {
             $testClientPortLease = Resolve-ItlManagedPortLease -Family $testClientPortFamily -Key $testClientPortKey -Start $testRange.start -End $testRange.end -State $state -Subject "Vanessa on-demand TestClient port" -LeaseToken $testClientPortLeaseToken
             $testClientPort = [int]$testClientPortLease.port
             $testClientPortLeaseToken = [string]$testClientPortLease.leaseToken
-            $vanessaParamsPath = New-ItlOnDemandVanessaParamsFile -State $state -InstanceId $InstanceId -TestClientPort $testClientPort -VanessaVersion ([string]$vanessa.version) -User $targetUser -Password $targetPassword
+            # The session's helper group decides once whether this backend's TestClients
+            # start hidden; the TestClient launch re-ensures the same group.
+            $windowGroup = Start-ItlWindowHelperGroup -Directory (Get-ItlOnDemandVanessaWindowGroupRoot -InstanceId $InstanceId) -Owner vanessa-ui
+            $vanessaParamsPath = New-ItlOnDemandVanessaParamsFile -State $state -InstanceId $InstanceId -TestClientPort $testClientPort -VanessaVersion ([string]$vanessa.version) -User $targetUser -Password $targetPassword -WindowGroup $windowGroup
             $url = Get-VanessaMcpUrl -Port $port
             $command = "runMcp;mcpPort=$port;VAParams=$vanessaParamsPath;QuietInstallVanessaExt;DisableFirstRunHelper;UseEditor=true;usevanessaeditor=true"
             $clientVersion = [string](Get-StateValue -State $serviceState -Name "vanessaMcpClientMcpVersion" -Default "")
@@ -1951,6 +1969,9 @@ function Start-ItlOnDemandBackendInstanceCore {
             testClientState = $(if ($Family -eq "vanessa-ui") { "not-started" } else { "" })
             testClientPid = 0; testClientProcessStartTime = ""; testClientExecutablePath = ""
             testClientOwnershipMarkers = @(); testClientLogPath = ""; vanessaParamsPath = $vanessaParamsPath
+            windowGroupDirectory = $(if ($Family -eq "vanessa-ui" -and $null -ne $windowGroup -and $windowGroup.ready) { [string]$windowGroup.directory } else { "" })
+            windowMode = $(if ($Family -eq "vanessa-ui" -and $null -ne $windowGroup) { [string]$windowGroup.mode } else { "" })
+            windowHelperWarning = $(if ($Family -eq "vanessa-ui" -and $null -ne $windowGroup) { [string]$windowGroup.warning } else { "" })
             logPath = ""; startingAt = (Get-Date).ToUniversalTime().ToString("o"); startedAt = ""
         }
         $startupStage = 'runtime-state'
@@ -1990,7 +2011,7 @@ function Start-ItlOnDemandBackendInstanceCore {
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
         Set-ItlOnDemandManagedPortLeaseStatus -Family $portFamily -Key $key -LeaseToken $portLeaseToken -Status "process-started" -ProcessId $result.process.Id
         $startupStage = 'port-readiness'
-        $ready = $(if ($Family -eq "roctup") { Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 } else { Wait-VanessaMcpPort -Port $port -TimeoutSeconds 120 })
+        $ready = $(if ($Family -eq "roctup") { Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) } else { Wait-VanessaMcpPort -Port $port -TimeoutSeconds 120 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) })
         if (-not $ready) { throw "$Family on-demand MCP did not open port $port. Log: $($result.logPath)" }
         $startupStage = 'port-owner'
         $portOwnership = Get-ItlOnDemandPortOwnership -Port $port -ProcessId $result.process.Id -RetryUntil (New-ItlPortOwnershipDeadline)

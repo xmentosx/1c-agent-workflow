@@ -1,4 +1,4 @@
-Describe "ROCTUP managed port lifecycle" {
+﻿Describe "ROCTUP managed port lifecycle" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -18,6 +18,29 @@ Describe "ROCTUP managed port lifecycle" {
                 }
             }
             throw "No free TCP port found for ROCTUP lifecycle test."
+        }
+    }
+
+    It "checks the launch focus at most every 500 ms while ROCTUP opens its port" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-roctup-focus " + [guid]::NewGuid().ToString("N") + " окно")
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $observed = [pscustomobject]@{ probes = 0; guards = 0; sleeps = [Collections.Generic.List[int]]::new() }
+                function Test-TcpPortOpen { param([int]$Port, [int]$TimeoutMilliseconds) $observed.probes++; $observed.probes -ge 4 }
+                function Start-Sleep { param([int]$Milliseconds) $observed.sleeps.Add($Milliseconds) }
+                function Invoke-OneCLaunchFocusReturn { param([object]$Guard, [int]$ProcessId) $observed.guards++; 'user' }
+                $ready = Wait-RoctupMcpPort -Port 1 -TimeoutSeconds 30 -FocusGuard ([pscustomobject]@{ userWindow = 1 })
+                [pscustomobject]@{ ready = $ready; sleeps = @($observed.sleeps); guards = $observed.guards }
+            }
+            $result.ready | Should -BeTrue
+            @($result.sleeps) | Should -HaveCount 3
+            @($result.sleeps | Where-Object { $_ -gt 500 }) | Should -HaveCount 0
+            $result.guards | Should -Be 5
+        } finally {
+            Set-Location -LiteralPath $RepoRoot
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

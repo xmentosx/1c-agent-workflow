@@ -24,6 +24,9 @@ Workflow-managed Vanessa Automation, ROCTUP, Vanessa UI MCP и YAxUnit binaries 
 | `PLATFORM_ARGS` | Дополнительные аргументы запуска платформы для upstream-инструментов метаданных | пусто; строка аргументов | user |
 | `IBCMD_ARGS` | Дополнительные аргументы `ibcmd` для upstream-инструментов метаданных | пусто; строка аргументов | user |
 | `ONEC_MAX_CONCURRENT_SESSIONS` | Максимум одновременно запущенных процессов 1С на одну точную информационную базу; учитываются также внешние процессы, а TestManager заранее резервирует заявленные TestClient | целое `0..1024`, default `3`; `0` отключает ограничение | user |
+| `ONEC_WINDOW_MODE` | Окна агентских процессов 1С: `hidden` держит TestClient, TestManager и ROCTUP скрытыми и забирает клавиатуру и мышь только для ввода ОС после согласия; `visible` возвращает видимые окна без помощника; действует со следующего запуска клиента | `hidden`/`visible`, default `hidden` | user |
+| `ONEC_UI_LEASE_COUNTDOWN_SECONDS` | Обратный отсчёт окна согласия перед первой арендой управления в сценарии или вызове vanessa-ui; `0` — без окна, только для безлюдных стендов | `0..600`, default `10` | user |
+| `ONEC_UI_LEASE_PAUSE_LIMIT_SECONDS` | Предел паузы согласия и ожидания паузы ввода пользователя; не дольше тайм-аута шага или вызова | `1..86400`, default `600` | user |
 | `DESIGNER_MAX_WORKING_SET_MB` | Лимит памяти автоматического Designer | default `10240`; `0` отключает guard | user |
 | `DESIGNER_OPERATION_TIMEOUT_SECONDS` | Максимальное ожидание подтвержденного завершения автоматической операции Designer | default `3600`; `1..86400` | user |
 | `ITL_RUNNER_OPERATION_TIMEOUT_SECONDS` | Общий предельный срок monitored lifecycle action; не заменяет проверку живости или результат helper | default `3600`; `1..86400` | user |

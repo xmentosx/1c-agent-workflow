@@ -236,7 +236,12 @@
         $actions=@(($ast.ParamBlock.Parameters|Where-Object {$_.Name.VariablePath.UserPath -eq 'Action'}).Attributes|Where-Object {$_.TypeName.Name -eq 'ValidateSet'}|ForEach-Object {$_.PositionalArguments.Value})
         $brokers=@(($ast.ParamBlock.Parameters|Where-Object {$_.Name.VariablePath.UserPath -eq 'InternalOnDemandOperation'}).Attributes|Where-Object {$_.TypeName.Name -eq 'ValidateSet'}|ForEach-Object {$_.PositionalArguments.Value}|Where-Object {$_})
         # The empty "not a broker" value is excluded from this operation set.
-        $actions.Count|Should -Be 99;$brokers.Count|Should -Be 9
+        $actions.Count|Should -Be 102;$brokers.Count|Should -Be 9
+        foreach($action in @('window-helper-status','window-helper-stop','window-helper-restart')){
+            $actions|Should -Contain $action
+            (Test-Agent1cActionRequiresLifecycleLock $action)|Should -BeFalse
+            (Get-ItlProductProjectStartupDisposition $action)|Should -Be diagnostic
+        }
         foreach($action in @('begin-verification-change','complete-verification-change')){
             $actions|Should -Contain $action
             (Get-ItlProductProjectStartupDisposition $action)|Should -Be project-operation

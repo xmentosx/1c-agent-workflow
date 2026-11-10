@@ -46,7 +46,7 @@ When an interaction fails twice without new evidence, change the route (recordin
 
 ## Step Notes
 
-These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r12` backend.
+These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r13` backend.
 
 - `run_scenario` with `filePath` in modes `all`, `reloadAndRun` and `reloadAndRunFromLine` reloads the file from disk and returns `featureSha256` of the executed bytes; compare it with the file you just wrote. Without `filePath`, and in `selected` or `fromCurrentStep`, the previously loaded text with its selected scenario or step runs. `ITL_FEATURE_INVALID_XML_CHARACTER` names `file:line:column` of a control character, such as `\f` produced by an unescaped Windows path; `ITL_FEATURE_CHANGED_DURING_LOAD` means the file was still being written.
 - In ITL runs every built-in code step `(Расширение)`, including the `через буфер обмена` variants, runs through the file-code channel and fails with the original exception or compilation error. `ITL_CLIENT_CODE_CHANNEL_UNAVAILABLE` rejects a clipboard variant that could not report its result; use the plain step.

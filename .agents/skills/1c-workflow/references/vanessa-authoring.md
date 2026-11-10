@@ -20,6 +20,8 @@ When runtime interaction is genuinely unknown, recording is an optional discover
 
 `run_scenario` mode `reloadAndRunFromLine` is a diagnostic shortcut only when `lineNumber` is the actual line of a runnable step. It can bypass setup, so rerun the complete focused scenario before interpreting behavior and still use `/itl-check` for verification.
 
+OS keyboard, mouse and drag steps through VanessaExt take the user's keyboard and mouse for their duration (with a consent prompt in the default hidden window mode); prefer test-protocol steps and use OS input only where the protocol cannot reach the control.
+
 ## Libraries And References
 
 `Libraries/ITL/Core` and exactly one of `Libraries/ITL/PM4|PM5` are workflow-managed. `Libraries/Product` is project-owned. Current reference URLs are in `assets/vanessa-reference-suites.json` and always use latest `master`, not pinned commits. PM4 is executable only for PM4; in PM5 it can suggest business cases and Gherkin structure, but steps, data, selectors, forms, and assertions require PM5/runtime validation.

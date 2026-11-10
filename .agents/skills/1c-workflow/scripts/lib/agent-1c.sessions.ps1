@@ -177,6 +177,127 @@ function Get-OneCMaxConcurrentSessions {
     return $parsed
 }
 
+function Get-OneCIntegerSetting {
+    param([string]$Name, [int]$Default, [int]$Minimum, [int]$Maximum, [string]$Guidance)
+    $rawValue = Get-EnvValue -Name $Name -Default $Default
+    $text = ([string]$rawValue).Trim()
+    $parsed = 0
+    if ($text -notmatch '^\d+$' -or -not [int]::TryParse($text, [ref]$parsed) -or $parsed -lt $Minimum -or $parsed -gt $Maximum) {
+        throw "$Name must be an integer between $Minimum and $Maximum. Actual: '$rawValue'. $Guidance"
+    }
+    return $parsed
+}
+
+# Single owner of the agent 1C window mode. It is read at every client launch, so a
+# change applies to the next launch; a running client keeps the mode it started with.
+function Get-OneCWindowMode {
+    $rawValue = [string](Get-EnvValue -Name 'ONEC_WINDOW_MODE' -Default 'hidden')
+    $value = $rawValue.Trim().ToLowerInvariant()
+    if ($value -eq '') { return 'hidden' }
+    if ($value -cnotin @('hidden', 'visible')) {
+        throw "ONEC_WINDOW_MODE must be 'hidden' or 'visible'. Actual: '$rawValue'. Use visible to run agent 1C windows on screen as before."
+    }
+    return $value
+}
+
+function Get-OneCUiLeaseCountdownSeconds {
+    return (Get-OneCIntegerSetting -Name 'ONEC_UI_LEASE_COUNTDOWN_SECONDS' -Default 10 -Minimum 0 -Maximum 600 -Guidance 'Use 0 only on unattended stands: it starts the lease without the consent window.')
+}
+
+function Get-OneCUiLeasePauseLimitSeconds {
+    return (Get-OneCIntegerSetting -Name 'ONEC_UI_LEASE_PAUSE_LIMIT_SECONDS' -Default 600 -Minimum 1 -Maximum 86400 -Guidance 'It bounds a paused consent and the wait for a pause in user input.')
+}
+
+function Initialize-OneCForegroundType {
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or ('ItlWorkflow.Foreground' -as [type])) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+namespace ItlWorkflow {
+    public static class Foreground {
+        [StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx, dy; public uint data, flags, time; public IntPtr extra; }
+        [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public MOUSEINPUT mi; }
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
+        [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hwnd);
+        [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
+        [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+        [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+        [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll")] static extern uint SendInput(uint count, INPUT[] inputs, int size);
+        public static uint ProcessOf(IntPtr hwnd) { uint pid; GetWindowThreadProcessId(hwnd, out pid); return pid; }
+        static bool Settled(IntPtr h) { for (int i = 0; i < 3; i++) { if (GetForegroundWindow() == h) return true; Thread.Sleep(10); } return GetForegroundWindow() == h; }
+        // The same plain, nudge and attach chain as the window helper.
+        public static string Bring(IntPtr h) {
+            if (h == IntPtr.Zero || !IsWindow(h) || !IsWindowVisible(h)) return "no-user-window";
+            for (int attempt = 0; attempt < 3; attempt++) {
+                SetForegroundWindow(h); if (Settled(h)) return "plain";
+                INPUT input = new INPUT(); input.mi.flags = 1;
+                SendInput(1, new INPUT[] { input }, Marshal.SizeOf(typeof(INPUT)));
+                SetForegroundWindow(h); if (Settled(h)) return "nudge";
+                uint ignored; IntPtr fg = GetForegroundWindow();
+                uint fgThread = fg == IntPtr.Zero ? 0 : GetWindowThreadProcessId(fg, out ignored);
+                uint me = GetCurrentThreadId();
+                bool attached = fgThread != 0 && fgThread != me && AttachThreadInput(me, fgThread, true);
+                BringWindowToTop(h); SetForegroundWindow(h);
+                if (attached) AttachThreadInput(me, fgThread, false);
+                if (Settled(h)) return "attach";
+            }
+            return "fail";
+        }
+    }
+}
+'@
+}
+
+# The launch path records the user's window before Start-Process: a hidden 1C main
+# window can take the foreground while it starts.
+function Get-OneCLaunchUserWindow {
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return [int64]0 }
+    try {
+        Initialize-OneCForegroundType
+        return [int64][ItlWorkflow.Foreground]::GetForegroundWindow()
+    } catch {
+        return [int64]0
+    }
+}
+
+function New-OneCLaunchFocusGuard {
+    param([int64]$UserWindow, [int]$ProcessId = 0)
+    return [pscustomobject]@{
+        userWindow = $UserWindow
+        processId = $ProcessId
+        untilUtc = [DateTime]::UtcNow.AddSeconds(60)
+        returns = 0
+        lastResult = ''
+    }
+}
+
+# Stateless check for TestManager and ROCTUP during their first 60 seconds: when the
+# launched process owns the foreground, give it back to the recorded user window.
+# Existing wait loops call it at least every 500 ms; later dialogs keep the focus as
+# an error signal.
+function Invoke-OneCLaunchFocusReturn {
+    param([AllowNull()][object]$Guard, [int]$ProcessId = 0)
+    if ($null -eq $Guard -or [int64]$Guard.userWindow -eq 0) { return 'no-user-window' }
+    if ([DateTime]::UtcNow -gt [DateTime]$Guard.untilUtc) { return 'expired' }
+    if ($ProcessId -gt 0) { $Guard.processId = $ProcessId }
+    if ([int]$Guard.processId -le 0) { return 'no-process' }
+    try {
+        Initialize-OneCForegroundType
+        $foreground = [ItlWorkflow.Foreground]::GetForegroundWindow()
+        if ([int]([ItlWorkflow.Foreground]::ProcessOf($foreground)) -ne [int]$Guard.processId) { return 'user' }
+        $result = [ItlWorkflow.Foreground]::Bring([IntPtr][int64]$Guard.userWindow)
+        $Guard.returns = [int]$Guard.returns + 1
+        $Guard.lastResult = $result
+        return $result
+    } catch {
+        return 'failed'
+    }
+}
+
 function Ensure-OneCSessionLimitDotEnv {
     $path = Join-Path $script:ProjectRoot ".dev.env"
     if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
