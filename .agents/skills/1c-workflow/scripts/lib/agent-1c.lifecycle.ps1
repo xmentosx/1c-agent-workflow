@@ -2037,7 +2037,7 @@ function Invoke-DesignerGate6CheckLadder {
                 $baselineArtifactsUnchanged =
                     (Get-FileHash -LiteralPath $LegacyBaseline.check.logPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $LegacyBaseline.logSha256 -and
                     (Get-FileHash -LiteralPath $LegacyBaseline.check.resultPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $LegacyBaseline.resultSha256 -and
-                    (Get-FileHash -LiteralPath $LegacyBaseline.snapshot.path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $LegacyBaseline.snapshot.sha256
+                    (Test-CheckedLoadRollbackPointUnchanged -Point $LegacyBaseline.snapshot)
             } catch { $baselineArtifactsUnchanged = $false }
             $codesMatch = $before.exitCode -eq $verdict.exitCode -and $before.resultCode -eq $verdict.resultCode -and
                 $verdict.exitCode -in @(0,101) -and $verdict.resultCode -in @(0,101)
@@ -2046,7 +2046,7 @@ function Invoke-DesignerGate6CheckLadder {
                 [string]$LegacyBaseline.context.sourceFingerprint -ceq $SourceFingerprint -and
                 $LegacyBaseline.context.infoBaseKind -ceq $InfoBaseKind -and
                 (Test-ItlOnDemandInfoBaseMatch -First $LegacyBaseline.context.infoBasePath -Second $InfoBasePath) -and
-                $LegacyBaseline.snapshot.sha256 -ceq $EditableLoad.snapshot.sha256
+                (Test-CheckedLoadLegacyBindingMatch -Point $LegacyBaseline.snapshot -EditableLoad $EditableLoad)
             $assessment = Compare-ItlPlatformStructuralDiagnostics `
                 -Before $LegacyBaseline.parsedDiagnostics `
                 -After (Get-ItlPlatformStructuralDiagnostics -LogPath $logPath) -BindingMatched $bindingMatched `
@@ -2130,7 +2130,7 @@ function Invoke-DesignerGate6CheckLadder {
         artifactDiagnosticBaseline = $ArtifactDiagnosticBaseline
         steps = @($evidence.ToArray())
         legacyBaseline = $(if ($null -ne $LegacyBaseline) { [pscustomobject]@{binding=$LegacyBaseline.context.binding;
-            snapshotSha256=$LegacyBaseline.snapshot.sha256;platformPath=$LegacyBaseline.platformPath;
+            snapshotSha256=$LegacyBaseline.snapshot.sha256;rollbackPoint=$EditableLoad.rollbackPoint;platformPath=$LegacyBaseline.platformPath;
             logPath=$LegacyBaseline.check.logPath;logSha256=$LegacyBaseline.logSha256;
             resultPath=$LegacyBaseline.check.resultPath;resultSha256=$LegacyBaseline.resultSha256;
             exitCode=$LegacyBaseline.check.verdict.exitCode;dumpResult=$LegacyBaseline.check.verdict.resultCode} } else { $null })
@@ -2404,7 +2404,9 @@ function Restore-ConfigLoadPreviousDesignerProof {
     $treeField = Get-DesignerTreeObjectIdFieldName -ContentKind $ContentKind
     $loadedAtField = Get-DesignerLoadedAtFieldName -ContentKind $ContentKind
     $previousFingerprint = [string](Get-StateValue -State $PreviousState -Name $fingerprintField -Default '')
-    if (-not $restoration.cursorRestored -or $restoration.infoBaseKind -cne $InfoBaseKind -or
+    # A started database apply invalidates the previous tree proof (D2).
+    if (-not $restoration.cursorRestored -or (Get-StateValue -State $restoration -Name 'applyStarted' -Default $true) -ne $false -or
+        $restoration.infoBaseKind -cne $InfoBaseKind -or
         $restoration.projectRoot -ine [IO.Path]::GetFullPath($script:ProjectRoot) -or
         -not (Test-ItlOnDemandInfoBaseMatch -First $restoration.infoBasePath -Second $InfoBasePath) -or
         [string](Get-StateValue -State $PreviousState -Name 'infoBaseKind' -Default '') -cne $InfoBaseKind -or
@@ -2412,7 +2414,7 @@ function Restore-ConfigLoadPreviousDesignerProof {
         $previousStatus -notin @('passed','fallback-succeeded') -or -not $previousFingerprint -or -not $path) { return }
     $current = Read-DevBranchStateFile -Path $path
     # Preserve other current state fields; only the same owner's invalidated
-    # proof may be recovered after exact DT and cursor restoration.
+    # proof may be recovered after a confirmed rollback and cursor restoration.
     if ([string](Get-StateValue -State $current -Name $fingerprintField -Default '') -or
         [string](Get-StateValue -State $current -Name $treeField -Default '') -cne [string](Get-StateValue -State $PreviousState -Name $treeField -Default '') -or
         [string](Get-StateValue -State $current -Name $loadedAtField -Default '') -cne [string](Get-StateValue -State $PreviousState -Name $loadedAtField -Default '') -or
@@ -2466,8 +2468,11 @@ function Invoke-PlatformGate6NativeCheck {
 
 function New-DesignerGate6Snapshot {
     param([string]$InfoBasePath, [string]$InfoBaseKind, [string]$User, [string]$Password,
-        [AllowNull()][object]$EnclosingSnapshot = $null)
+        [AllowNull()][object]$EnclosingSnapshot = $null, [string]$ExtensionName = '',
+        [ValidateSet('','present','absent')][string]$ExtensionPresence = '',
+        [AllowNull()][object]$AppliedProof = $null)
 
+    # Rollback-point factory (enclosing, db-configuration, absent-extension).
     # The enclosing owner passes its snapshot explicitly because ordinary
     # lifecycle dispatch does not require a diagnostic native-operation journal.
     $borrowed = $EnclosingSnapshot
@@ -2507,22 +2512,102 @@ function New-DesignerGate6Snapshot {
             try { Assert-OneCDatabaseRestoreRequest -Duty $duty -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -DesignerArgs @('/RestoreIB',$path) }
             catch { throw "GATE6_SNAPSHOT_CHANGED: enclosing restoration duty no longer matches its exact snapshot and target; no editable load was performed. $($_.Exception.Message)" }
         }
-        return [pscustomobject]@{ path=$path; sha256=$sha256; owned=$false; duty=$duty; completed=$false }
+        return [pscustomobject]@{ kind='enclosing'; path=$path; sha256=$sha256; owned=$false; duty=$duty; completed=$false
+            extensionName=$ExtensionName; attemptId=[guid]::NewGuid().ToString('N'); baseIdentity=$sha256; mechanism='enclosing-snapshot'
+            appliedProof=$AppliedProof; unfinishedPreviousRolledBack=$false }
     }
-    $root = Assert-ExportPathInsideProject -ExportPath '.agent-1c/snapshots'
-    New-Item -ItemType Directory -Force -Path $root | Out-Null
-    $path = New-TimestampedFilePath -Directory $root -Prefix 'gate6-' -Extension '.dt'
-    try {
-        Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password -DesignerArgs @('/DumpIB', $path) | Out-Null
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -le 0) {
-            throw "The platform did not produce a non-empty rollback snapshot: $path"
-        }
-    } catch {
-        throw "GATE6_SNAPSHOT_FAILED: no editable load was performed; platform evidence remains unverified. Correct the reported target/snapshot problem and repeat the original operation. $($_.Exception.Message)"
+    # Without an enclosing snapshot the rollback point is the database
+    # configuration of the same object; no DT is created (D1, D4).
+    $kind = 'db-configuration'
+    if ($ExtensionName) {
+        $recorded = $null -ne $AppliedProof -and ($AppliedProof.previousFingerprint -or $AppliedProof.previousTree)
+        $present = if ($recorded) { $true }
+            elseif ($ExtensionPresence -ceq 'present') { $true }
+            elseif ($ExtensionPresence -ceq 'absent') { $false }
+            else {
+                try { Test-DevBranchExtensionExists -State ([pscustomobject]@{ infoBaseKind=$InfoBaseKind; devBranchInfoBasePath=$InfoBasePath }) -Name $ExtensionName -User $User -Password $Password }
+                catch { throw "GATE6_ROLLBACK_POINT_FAILED: presence of extension '$ExtensionName' in the database configuration is unproven; no editable load was performed. Correct the reported target problem and repeat the original operation. $($_.Exception.Message)" }
+            }
+        if (-not $present) { $kind = 'absent-extension' }
     }
-    $state = [pscustomobject]@{ infoBaseKind=$InfoBaseKind; devBranchInfoBasePath=$InfoBasePath }
-    $duty = Register-OneCDatabaseRestorationDuty -State $state -SnapshotPath $path -Policy on-failure
-    return [pscustomobject]@{ path=$path; sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant(); owned=$true; duty=$duty; completed=$false }
+    $base = [ordered]@{ infoBaseKind=$InfoBaseKind; infoBasePath=([string]$InfoBasePath).Trim().ToLowerInvariant()
+        contentKind=$(if ($ExtensionName) { 'extension' } else { 'configuration' }); extensionName=$ExtensionName }
+    if ($kind -ceq 'absent-extension') { $base.applied = 'absent' }
+    else {
+        $base.appliedFingerprint = $(if ($null -ne $AppliedProof) { [string]$AppliedProof.previousFingerprint } else { '' })
+        $base.appliedTree = $(if ($null -ne $AppliedProof) { [string]$AppliedProof.previousTree } else { '' })
+    }
+    return [pscustomobject]@{ kind=$kind; path=$null; sha256=$null; owned=$true; duty=$null; completed=$false
+        extensionName=$ExtensionName; attemptId=[guid]::NewGuid().ToString('N')
+        baseIdentity=(Get-StringSha256 (ConvertTo-Json -InputObject $base -Compress))
+        mechanism=$(if ($kind -ceq 'absent-extension') { 'delete-cfg' } else { 'rollback-cfg' })
+        appliedProof=$AppliedProof; unfinishedPreviousRolledBack=$false }
+}
+
+function Get-CheckedLoadRollbackPointRecord {
+    param([object]$Point)
+    # Persisted projection: no state paths or in-memory proof context.
+    return [pscustomobject]@{ kind=$Point.kind; extensionName=$Point.extensionName; attemptId=$Point.attemptId
+        baseIdentity=$Point.baseIdentity; mechanism=$Point.mechanism; unfinishedPreviousRolledBack=[bool]$Point.unfinishedPreviousRolledBack }
+}
+
+function Test-CheckedLoadRollbackPointUnchanged {
+    param([object]$Point)
+    if ($null -eq $Point) { return $false }
+    if ([string](Get-StateValue -State $Point -Name 'path' -Default '')) {
+        return (Get-FileHash -LiteralPath $Point.path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $Point.sha256
+    }
+    $proof = $Point.appliedProof
+    if ($null -eq $proof -or -not $proof.statePath) { return $true }
+    $current = Read-DevBranchStateFile -Path $proof.statePath
+    return [string](Get-StateValue -State $current -Name $proof.treeField -Default '') -ceq [string]$proof.previousTree
+}
+
+function Test-CheckedLoadLegacyBindingMatch {
+    param([object]$Point,[object]$EditableLoad)
+    # The before check and the after check belong to one attempt and one base
+    # content: the exact DT for an enclosing snapshot, otherwise the applied
+    # proof the rollback returns to (D5).
+    if ($null -eq $Point -or $null -eq $EditableLoad) { return $false }
+    if ([string](Get-StateValue -State $Point -Name 'path' -Default '')) {
+        $editableSnapshot = Get-StateValue -State $EditableLoad -Name 'snapshot' -Default $null
+        return [string]$Point.sha256 -and $null -ne $editableSnapshot -and [string]$Point.sha256 -ceq [string]$editableSnapshot.sha256
+    }
+    $record = Get-StateValue -State $EditableLoad -Name 'rollbackPoint' -Default $null
+    return $null -ne $record -and [string]$Point.attemptId -and [string]$Point.baseIdentity -and
+        [string]$Point.attemptId -ceq [string]$record.attemptId -and [string]$Point.baseIdentity -ceq [string]$record.baseIdentity
+}
+
+function Clear-CheckedLoadAppliedTree {
+    param([AllowNull()][object]$AppliedProof)
+    # Only partially loaded objects own a tree proof (D2, D3a).
+    if ($null -eq $AppliedProof -or -not $AppliedProof.statePath) { return }
+    $current = Read-DevBranchStateFile -Path $AppliedProof.statePath
+    Update-DevBranchState -State $current -Updates @{ $AppliedProof.treeField = '' }
+}
+
+function Invoke-CheckedLoadNativeRollback {
+    param([object]$Point,[string]$InfoBasePath,[string]$InfoBaseKind,[string]$User,[string]$Password)
+    $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
+    New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
+    $resultPath = New-TimestampedFilePath -Directory $logsPath -Prefix '1c-gate6-rollback-' -Extension '.result'
+    $arguments = if ($Point.kind -ceq 'absent-extension') { @('/DeleteCfg','-Extension',$Point.extensionName) }
+        elseif ($Point.extensionName) { @('/RollbackCfg','-Extension',$Point.extensionName) }
+        else { @('/RollbackCfg') }
+    Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+        -DesignerArgs (@($arguments) + @('/DumpResult',$resultPath)) | Out-Null
+    $code = if (Test-Path -LiteralPath $resultPath -PathType Leaf) { (Read-Utf8Text -Path $resultPath).Trim() } else { '' }
+    if ($code -cne '0') {
+        throw "$($arguments[0]) returned native result '$code' instead of 0. Result: $resultPath; log: $($script:LastLogPath)"
+    }
+    return [string]$script:LastLogPath
+}
+
+function New-CheckedLoadRollbackFailure {
+    param([string]$Original,[object]$Point,[string]$Stage,[string]$LoadLogPath,[string]$CheckLogPath,[string]$RollbackDetail)
+    Clear-CheckedLoadAppliedTree -AppliedProof $Point.appliedProof
+    $command = if ($Point.kind -ceq 'absent-extension') { '/DeleteCfg -Extension' } elseif ($Point.extensionName) { '/RollbackCfg -Extension' } else { '/RollbackCfg' }
+    return [InvalidOperationException]::new("GATE6_ROLLBACK_RECOVERY_FAILED: $Original $command did not confirm the $Stage rollback of '$(if ($Point.extensionName) { $Point.extensionName } else { 'configuration' })'. Load log: '$LoadLogPath'; check log: '$CheckLogPath'. Rollback: $RollbackDetail The applied tree proof was cleared, so repeating the original operation runs one strict full load that replaces the editable object from sources. If that full load also fails because the branch infobase is damaged, recreate it through reset-dev-branch.")
 }
 
 function Invoke-ConfigLoadDesignerAttempt {
@@ -2542,7 +2627,11 @@ function Invoke-ConfigLoadDesignerAttempt {
         [string]$User = (Get-EnvValue -Name 'IB_USER'),
         [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD'),
         [object]$NativeEffectContract,
-        [AllowNull()][object]$EnclosingSnapshot = $null
+        [AllowNull()][object]$EnclosingSnapshot = $null,
+        # Presence of the extension from the owner's fresh runtime probe (D4).
+        [ValidateSet('','present','absent')][string]$ExtensionPresence = '',
+        # Applied-proof context of a partially loaded object (D0, D2, D3).
+        [AllowNull()][object]$AppliedProof = $null
     )
 
     if ($ValidationPurpose -ceq 'project-tests') {
@@ -2582,9 +2671,26 @@ function Invoke-ConfigLoadDesignerAttempt {
     if (@($DesignerArgs | Where-Object { $_ -ceq '/UpdateDBCfg' }).Count -ne 1) {
         throw 'GATE6_LOAD_APPLY_SHAPE_INVALID: checked load must contain exactly one /UpdateDBCfg boundary.'
     }
-    $snapshot = New-DesignerGate6Snapshot -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password -EnclosingSnapshot $EnclosingSnapshot
+    $snapshot = New-DesignerGate6Snapshot -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+        -EnclosingSnapshot $EnclosingSnapshot -ExtensionName $ExtensionName -ExtensionPresence $ExtensionPresence -AppliedProof $AppliedProof
+    if ($snapshot.kind -cne 'enclosing' -and $null -ne $AppliedProof -and $AppliedProof.unfinished) {
+        # D3: an earlier load of this object stopped before apply. Restore the
+        # editable object to the database configuration before any check.
+        try {
+            [void](Invoke-CheckedLoadNativeRollback -Point $snapshot -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password)
+        } catch {
+            throw (New-CheckedLoadRollbackFailure -Original 'The previous load of this object did not finish; no editable load was performed.' `
+                -Point $snapshot -Stage 'unfinished-load' -LoadLogPath '' -CheckLogPath '' -RollbackDetail $_.Exception.Message)
+        }
+        $AppliedProof.unfinished = $false
+        $snapshot.unfinishedPreviousRolledBack = $true
+        Write-Host "GATE6_UNFINISHED_LOAD_ROLLED_BACK: the editable $(if ($ExtensionName) { "extension '$ExtensionName'" } else { 'configuration' }) was returned to the database configuration before this load; unapplied Designer edits were discarded."
+    }
     $applySucceeded = $false
     $applyStarted = $false
+    $applyCompleted = $false
+    $loadLogPath = ''
+    $checkLogPath = ''
     try {
     if ($null -ne $StaticCoverageContext) {
         Assert-PlatformGate6StaticCoverageCurrent -Context $StaticCoverageContext -SourceFingerprint $SourceFingerprint `
@@ -2610,7 +2716,7 @@ function Invoke-ConfigLoadDesignerAttempt {
     if ($null -ne $ArtifactDiagnosticBaseline) {
         $actualSha = (Get-FileHash -LiteralPath $loadArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actualSha -cne $artifactSha256) {
-            throw "GATE6_SOURCE_CHANGED: pinned YAxUnit CFE changed before editable load. Preserve the snapshot and repeat the original operation with the unchanged official artifact."
+            throw "GATE6_SOURCE_CHANGED: pinned YAxUnit CFE changed before editable load. Repeat the original operation with the unchanged official artifact."
         }
     }
     Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
@@ -2621,18 +2727,19 @@ function Invoke-ConfigLoadDesignerAttempt {
         $expectedSha = $Matches[1]
         $actualSha = (Get-FileHash -LiteralPath $loadArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actualSha -cne $expectedSha) {
-            throw "GATE6_SOURCE_CHANGED: CFE changed during editable load. Expected $expectedSha, actual $actualSha. Preserve the snapshot and repeat the original operation with one stable artifact."
+            throw "GATE6_SOURCE_CHANGED: CFE changed during editable load. Expected $expectedSha, actual $actualSha. Repeat the original operation with one stable artifact."
         }
     } elseif ($SourceFingerprint -match '^v2\|git-tree-sha256\|[a-f0-9]{64}$' -and $loadArgs[0] -ceq '/LoadConfigFromFiles') {
         $loadedSource = Get-ConfigSourceFingerprint -ExportPath $loadArgs[1]
         if ([string]$loadedSource.fingerprint -cne $SourceFingerprint) {
-            throw "GATE6_SOURCE_CHANGED: source tree changed during editable load. Preserve the snapshot and repeat the original operation with one stable source tree."
+            throw "GATE6_SOURCE_CHANGED: source tree changed during editable load. Repeat the original operation with one stable source tree."
         }
     }
     $editableLoad = [pscustomobject]@{
         arguments = @($loadArgs)
         sourceFingerprint = $SourceFingerprint
-        snapshot = [pscustomobject]@{ path=$snapshot.path; sha256=$snapshot.sha256; ownedByCheckedLoad=$snapshot.owned }
+        snapshot = $(if ($snapshot.kind -ceq 'enclosing') { [pscustomobject]@{ path=$snapshot.path; sha256=$snapshot.sha256; ownedByCheckedLoad=$false } } else { $null })
+        rollbackPoint = Get-CheckedLoadRollbackPointRecord -Point $snapshot
         logPath = $loadLogPath
         logSha256 = $(if ($loadLogPath -and (Test-Path -LiteralPath $loadLogPath -PathType Leaf)) {
             (Get-FileHash -LiteralPath $loadLogPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -2648,62 +2755,61 @@ function Invoke-ConfigLoadDesignerAttempt {
             -CheckProfile $CheckProfile `
             -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -EditableLoad $editableLoad -LegacyBaseline $legacyBaseline -ValidationPurpose $ValidationPurpose `
             -ArtifactDiagnosticBaseline $ArtifactDiagnosticBaseline -User $User -Password $Password
+    $checkLogPath = [string]$script:LastLogPath
     if ($null -ne $ArtifactDiagnosticBaseline -and
         (Get-FileHash -LiteralPath $loadArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant() -cne $artifactSha256) {
-        throw 'GATE6_SOURCE_CHANGED: pinned YAxUnit CFE changed during Gate 6 checks. Preserve the snapshot and repeat the original operation with the unchanged official artifact.'
+        throw 'GATE6_SOURCE_CHANGED: pinned YAxUnit CFE changed during Gate 6 checks. Repeat the original operation with the unchanged official artifact.'
     }
     # Mandatory checks precede this first apply. Project-test environment
     # diagnostics retain their native failure and do not grant clean proof.
     $applyArgs = if ($ExtensionName) { @('/UpdateDBCfg', '-Dynamic-', '-WarningsAsErrors', '-Extension', $ExtensionName) } else { @('/UpdateDBCfg') }
     $contentKind = if ($ExtensionName) { 'extension' } else { 'configuration' }
+    # D2: a started apply can change the database configuration, so the old
+    # applied tree no longer proves a partial retry.
+    Clear-CheckedLoadAppliedTree -AppliedProof $AppliedProof
     $applyStarted = $true
     Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
         -NativeEffectContract ([pscustomobject]@{ schemaVersion=1; kind='update-db-cfg'; project=[IO.Path]::GetFullPath($script:ProjectRoot)
             sourceFingerprint=$SourceFingerprint; contentKind=$contentKind; extensionName=$ExtensionName; gate6=$evidence; staticCoverage=$StaticCoverageContext }) `
         -DesignerArgs $applyArgs | Out-Null
-    if ($null -ne $AfterApply) { & $AfterApply | Out-Null }
-    $applySucceeded = $true
-    if ($snapshot.owned) {
-        Complete-OneCDatabaseRestorationDuty -Duty $snapshot.duty -Resolution committed
-        $snapshot.completed = $true
+    $applyCompleted = $true
+    $applyLogPath = [string]$script:LastLogPath
+    if ($null -ne $AfterApply) {
+        try { & $AfterApply | Out-Null }
+        catch {
+            # D1b: the database already holds the candidate; a native rollback
+            # cannot return the previous version. The owner's proof stays invalid.
+            $postApply = [InvalidOperationException]::new("GATE6_POST_APPLY_FAILED: $($_.Exception.Message) The database apply completed (log: '$applyLogPath'), so no rollback was performed. The candidate passed all mandatory Gate 6 checks before apply but is not recorded as verified; repeat the original operation to reload it fully and repeat the post-apply check.", $_.Exception)
+            throw $postApply
+        }
     }
+    $applySucceeded = $true
     return $evidence
     } catch {
-        # A lost completion acknowledgement after a successful apply must not
-        # replay rollback. A borrowed snapshot belongs to the enclosing owner.
-        if ($applySucceeded -or -not $snapshot.owned) { throw }
+        # A borrowed snapshot belongs to the enclosing owner. After a completed
+        # apply the database configuration equals the candidate (D1b).
+        if ($applySucceeded -or $applyCompleted -or $snapshot.kind -ceq 'enclosing') { throw }
         $originalFailure = $_
         $failureLogPath = $script:LastLogPath
-        $readLease = $null
         try {
-            $readLease = [IO.File]::Open($snapshot.path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-            if ((Get-FileHash -LiteralPath $snapshot.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $snapshot.sha256) {
-                throw 'ONEC_RESTORATION_SNAPSHOT_CHANGED'
-            }
-            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
-                -RestorationDuty $snapshot.duty -DesignerArgs @('/RestoreIB', $snapshot.path) | Out-Null
-            Complete-OneCDatabaseRestorationDuty -Duty $snapshot.duty -Resolution restored
-            $snapshot.completed = $true
-            # Only this confirmed owned restoration can recover the previous
-            # loaded-source proof. It never marks the failed candidate passed.
+            $rollbackLogPath = Invoke-CheckedLoadNativeRollback -Point $snapshot -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password
+            # Only this confirmed rollback can recover the previous loaded-source
+            # proof, and only before apply. It never marks the candidate passed.
             $originalFailure.Exception.Data['ItlConfigLoadSnapshotRestored'] = [pscustomobject]@{
                 projectRoot=[IO.Path]::GetFullPath($script:ProjectRoot); infoBaseKind=$InfoBaseKind; infoBasePath=$InfoBasePath
-                snapshotPath=$snapshot.path; snapshotSha256=$snapshot.sha256; cursorRestored=$false
-                applyStarted=$applyStarted; sourceFingerprint=$SourceFingerprint; restorationLogPath=[string]$script:LastLogPath
+                mechanism=$snapshot.mechanism; rollbackPoint=(Get-CheckedLoadRollbackPointRecord -Point $snapshot)
+                snapshotPath=$null; snapshotSha256=$null; cursorRestored=$false
+                applyStarted=$applyStarted; sourceFingerprint=$SourceFingerprint; restorationLogPath=$rollbackLogPath
                 nativeOperationsReleased=$true
             }
         } catch {
-            throw "GATE6_SNAPSHOT_RECOVERY_FAILED: $($originalFailure.Exception.Message) Rollback is unconfirmed; preserve snapshot '$($snapshot.path)' (SHA256 $($snapshot.sha256)) and diagnostics '$failureLogPath'. Restore this exact target through the existing snapshot recovery owner before repeating the original operation. Recovery: $($_.Exception.Message)"
+            $stage = if ($applyStarted) { 'apply-failure' } else { 'check-failure' }
+            throw (New-CheckedLoadRollbackFailure -Original $originalFailure.Exception.Message -Point $snapshot -Stage $stage `
+                -LoadLogPath $loadLogPath -CheckLogPath $(if ($checkLogPath) { $checkLogPath } else { [string]$failureLogPath }) -RollbackDetail $_.Exception.Message)
         } finally {
-            if ($null -ne $readLease) { $readLease.Dispose() }
             $script:LastLogPath = $failureLogPath
         }
         throw $originalFailure
-    } finally {
-        if ($snapshot.owned -and $snapshot.completed) {
-            try { Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshot.path }
-            catch { Write-Warning "Checked load completed but snapshot cleanup failed; snapshot retained at '$($snapshot.path)': $($_.Exception.Message)" }
-        }
     }
 }
 
@@ -2725,7 +2831,7 @@ function Write-ConfigLoadRejectionEvidence {
     $directory = Split-Path -Parent $paths[1]
     $path = New-TimestampedFilePath -Directory $directory -Prefix '1c-gate6-rejection' -Extension '.json'
     $journal = Get-Variable -Name OneCNativeOperationJournal -Scope Script -ErrorAction SilentlyContinue
-    # A successful owned RestoreIB returns only after its native release. The
+    # A confirmed native rollback returns only after its native release. The
     # diagnostic journal is optional in ordinary lifecycle dispatch; when
     # present it must independently confirm every recorded operation/duty.
     $nativeReleased = $restored.nativeOperationsReleased -eq $true
@@ -2734,7 +2840,10 @@ function Write-ConfigLoadRejectionEvidence {
     }
     $receipt = [ordered]@{schemaVersion=1;kind='itl-gate6-rejection';projectRoot=$restored.projectRoot;
         infoBaseKind=$restored.infoBaseKind;infoBasePath=$restored.infoBasePath;sourceFingerprint=$restored.sourceFingerprint;
-        snapshotSha256=$restored.snapshotSha256;snapshotRestored=$true;cursorRestored=$true;applyStarted=$false;
+        rollbackPoint=(Get-StateValue -State $restored -Name 'rollbackPoint' -Default $null);
+        mechanism=[string](Get-StateValue -State $restored -Name 'mechanism' -Default 'restore-ib');rollbackConfirmed=$true;
+        snapshotSha256=(Get-StateValue -State $restored -Name 'snapshotSha256' -Default $null);
+        snapshotRestored=[bool](Get-StateValue -State $restored -Name 'snapshotSha256' -Default $null);cursorRestored=$true;applyStarted=$false;
         nativeOperationsReleased=[bool]$nativeReleased;failure=$Failure.Exception.Message;artifacts=$artifacts;
         diagnostics=$findingEvidence;legacyContextAssessment=$LegacyContextAssessment}
     [IO.File]::WriteAllText($path, ($receipt | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
@@ -2750,6 +2859,7 @@ function Invoke-GuardedCfeExtensionApply {
         [Parameter(Mandatory = $true)][string]$ExtensionName,
         [ValidateSet('development','production')][string]$CheckProfile = 'production',
         [AllowNull()][object]$ArtifactDiagnosticBaseline = $null,
+        [ValidateSet('','present','absent')][string]$ExtensionPresence = '',
         [string]$User = (Get-EnvValue -Name 'IB_USER'),
         [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD')
     )
@@ -2760,7 +2870,7 @@ function Invoke-GuardedCfeExtensionApply {
     $evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
         -CheckProfile $CheckProfile `
         -User $User -Password $Password -ExtensionName $ExtensionName -SourceFingerprint ("sha256:" + $sha) `
-        -ArtifactDiagnosticBaseline $ArtifactDiagnosticBaseline `
+        -ArtifactDiagnosticBaseline $ArtifactDiagnosticBaseline -ExtensionPresence $ExtensionPresence `
         -DesignerArgs @('/LoadCfg', $CfePath, '-Extension', $ExtensionName, '/UpdateDBCfg')
     return [pscustomobject]@{ logPath = [string]$script:LastLogPath; gate6Evidence = $evidence }
 }
@@ -2803,7 +2913,8 @@ function Invoke-ConfigLoadWithFallback {
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
         [ValidateSet("Auto", "Partial", "Full")]
         [string]$Mode = "Auto",
-        [switch]$ResetConfigDumpInfo
+        [switch]$ResetConfigDumpInfo,
+        [AllowNull()][object]$AppliedProof = $null
     )
 
     if ($ContentKind -eq 'extension' -and [string]::IsNullOrWhiteSpace($ExtensionName)) {
@@ -2830,7 +2941,7 @@ function Invoke-ConfigLoadWithFallback {
             try {
                 $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile $CheckProfile -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
-                    -ExtensionName $ExtensionName -RequireGate6:($RequireGate6 -or $ContentKind -eq 'configuration') -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint `
+                    -ExtensionName $ExtensionName -RequireGate6:($RequireGate6 -or $ContentKind -eq 'configuration') -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint -AppliedProof $AppliedProof `
                     -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
                         sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
                         exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='full'}) `
@@ -2859,7 +2970,7 @@ function Invoke-ConfigLoadWithFallback {
         $partialNativeSucceeded = $false
         try {
             $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile $CheckProfile -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
-                -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -StaticCoverageContext $StaticCoverageContext -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint `
+                -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -StaticCoverageContext $StaticCoverageContext -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint -AppliedProof $AppliedProof `
                 -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
                     sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
                     exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='partial'}) `
@@ -2920,7 +3031,7 @@ function Invoke-ConfigLoadWithFallback {
                 Set-RunStage -Stage "config-load.$configLoadStatus" -Detail "$memoryGuardCode stopped the partial $contentLabel load; full fallback is suppressed."
                 Write-Warning "$memoryGuardCode stopped Designer. Full-load fallback is suppressed to avoid submitting the same source files to another process."
                 if ($RequireGate6 -or $ExtensionName) {
-                    Write-Warning "The checked load restored its infobase snapshot. Inspect the input XML/source files and repeat the original operation. Log: $partialLogPath"
+                    Write-Warning "The checked load rolled the editable object back to the database configuration. Inspect the input XML/source files and repeat the original operation. Log: $partialLogPath"
                 } else {
                     Write-Warning "Inspect the input XML/source files. Because no infobase snapshot is available, recreate the branch infobase if its state is uncertain. Log: $partialLogPath"
                 }
@@ -2931,7 +3042,7 @@ function Invoke-ConfigLoadWithFallback {
             }
 
             if ($RequireGate6 -or $ExtensionName -or $null -ne $StaticCoverageContext) {
-                Write-Warning "Partial config load failed after Designer received -listFile; its infobase snapshot was restored. Running one checked full-load fallback in the same branch infobase."
+                Write-Warning "Partial config load failed after Designer received -listFile; the editable object was rolled back to the database configuration. Running one checked full-load fallback in the same branch infobase."
             } else {
                 Write-Warning "Partial config load failed after Designer received -listFile. Running one full-load fallback in the same branch infobase. No infobase snapshot is available."
             }
@@ -2948,7 +3059,7 @@ function Invoke-ConfigLoadWithFallback {
             try {
                 $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile $CheckProfile -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
-                    -ExtensionName $ExtensionName -RequireGate6:($RequireGate6 -or $ContentKind -eq 'configuration') -LegacyContext $fullFallbackLegacyContext -SourceFingerprint $SourceFingerprint `
+                    -ExtensionName $ExtensionName -RequireGate6:($RequireGate6 -or $ContentKind -eq 'configuration') -LegacyContext $fullFallbackLegacyContext -SourceFingerprint $SourceFingerprint -AppliedProof $AppliedProof `
                     -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
                         sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
                         exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='full-fallback'}) `
@@ -4159,6 +4270,15 @@ function Load-ConfigFromFiles {
     Set-RunStage -Stage "config-load.designer" -Detail "Loading $ContentKind source through Designer in $Mode mode."
     $statePath = if ($State) { [string](Get-StateValue -State $State -Name "statePath" -Default "") } else { "" }
     $canPersistLoadProof = $statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)
+    # D0/D3: the applied-proof context of this partially loaded object is read
+    # before this load clears its fingerprint. An empty fingerprint with a
+    # recorded tree means an earlier load stopped before its apply.
+    $previousTreeObjectId = [string](Get-StateValue -State $State -Name $treeObjectIdField -Default "")
+    $appliedProof = if ($canPersistLoadProof) {
+        [pscustomobject]@{ statePath=$statePath; contentKind=$ContentKind; fingerprintField=$fingerprintField
+            treeField=$treeObjectIdField; previousFingerprint=$previousFingerprint; previousTree=$previousTreeObjectId
+            unfinished=(-not $previousFingerprint -and [bool]$previousTreeObjectId) }
+    } else { $null }
     $loadState = $State
     if ($canPersistLoadProof) {
         $loadStateHash = ConvertTo-Agent1cHashtable -Object $State
@@ -4190,7 +4310,8 @@ function Load-ConfigFromFiles {
         -StaticCoverageContext $staticCoverageContext `
         -LegacyContext $legacyContext `
         -Mode $Mode `
-        -ResetConfigDumpInfo:($restoreInvalidated -or $Mode -eq "Full")
+        -ResetConfigDumpInfo:($restoreInvalidated -or $Mode -eq "Full") `
+        -AppliedProof $appliedProof
     } catch {
         $loadFailure = $_
         try {
@@ -17810,13 +17931,16 @@ function Invoke-ExtensionLifecycleTool {
 function Test-DevBranchExtensionExists {
     param(
         [object]$State,
-        [string]$Name
+        [string]$Name,
+        [string]$User = (Get-EnvValue -Name "IB_USER"),
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
 
     try {
         Invoke-Designer `
             -InfoBasePath $State.devBranchInfoBasePath `
             -InfoBaseKind $State.infoBaseKind `
+            -User $User -Password $Password `
             -DesignerArgs @("/DumpDBCfgList", "-Extension", $Name) | Out-Null
         return $true
     } catch {

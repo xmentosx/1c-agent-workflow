@@ -33,15 +33,18 @@
                 [pscustomobject]@{logPath=$log;resultPath=$ResultPath;verdict=(Get-DesignerBatchCheckVerdict -ExitCode $code -ResultPath $ResultPath -LogPath $log)}
             }
             function New-DesignerGate6Snapshot {
-                param($InfoBasePath,$InfoBaseKind,$User,$Password,$EnclosingSnapshot)
-                $script:calls.Add('snapshot')
-                $path=Join-Path $root 'snapshot.dt';[IO.File]::WriteAllText($path,'snapshot')
-                [pscustomobject]@{path=$path;sha256=(Get-FileHash $path).Hash.ToLowerInvariant();owned=$true;completed=$false;duty='fixture'}
+                param($InfoBasePath,$InfoBaseKind,$User,$Password,$EnclosingSnapshot,$ExtensionName,$ExtensionPresence,$AppliedProof)
+                $script:calls.Add('rollback-point')
+                [pscustomobject]@{kind='db-configuration';path=$null;sha256=$null;owned=$true;completed=$false;duty=$null
+                    extensionName=$ExtensionName;attemptId='fixture-attempt';baseIdentity=('a'*64);mechanism='rollback-cfg'
+                    appliedProof=$null;unfinishedPreviousRolledBack=$false}
             }
             function Invoke-Designer {
                 param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
                 $script:calls.Add($DesignerArgs[0])
                 $script:LastLogPath=Join-Path $root 'load.log';[IO.File]::WriteAllText($script:LastLogPath,'Loaded')
+                $index=[Array]::IndexOf($DesignerArgs,'/DumpResult')
+                if($index -ge 0){[IO.File]::WriteAllText($DesignerArgs[$index+1],'0')}
             }
             function Complete-OneCDatabaseRestorationDuty { param($Duty,$Resolution) }
             function Remove-CompletedInfobaseSnapshot { param($SnapshotPath) }
@@ -204,18 +207,18 @@ Describe 'Development versus explicit production preparation' {
         $r.calls | Should -Be @('/CheckModules','/CheckConfig')
     }
     It 'keeps snapshot load compilation and apply without a hidden before-CheckConfig' {
-        (Invoke-PlatformPurposeFixture development-load).calls | Should -Be @('snapshot','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        (Invoke-PlatformPurposeFixture development-load).calls | Should -Be @('rollback-point','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
     }
     It 'rolls back failed compilation without applying' {
         $r=Invoke-PlatformPurposeFixture modules-fail
         $r.failure | Should -Match 'GATE6_CHECK_FAILED'
-        $r.calls | Should -Contain '/RestoreIB'
+        $r.calls | Should -Contain '/RollbackCfg'
         $r.calls | Should -Not -Contain '/UpdateDBCfg'
     }
     It 'rolls back failed applicability without applying' {
         $r=Invoke-PlatformPurposeFixture applicability-fail
         $r.failure | Should -Match 'GATE6_CHECK_FAILED'
-        $r.calls | Should -Contain '/RestoreIB'
+        $r.calls | Should -Contain '/RollbackCfg'
         $r.calls | Should -Not -Contain '/UpdateDBCfg'
     }
     It 'does not launch native checks for an intermediate export' {

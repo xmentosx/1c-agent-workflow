@@ -128,8 +128,14 @@ from proof freshness; a passed sufficient result can be reused after its named
 invocation ends while persistent execution stays off. File-only installation
 does not run the new proof automatically.
 
-For a checked source or CFE load, the ITL owner creates a native DT rollback
-snapshot before changing the editable configuration. When the enclosing
+For a checked source or CFE load, the rollback point is the database
+configuration of the same object: the ITL owner creates no DT and runs no
+configuration comparison. An extension absent from the database configuration
+is removed with `/DeleteCfg -Extension` instead; one already present, including
+a branch-seed extension, is never removed. Presence comes from the recorded
+applied proof, the owner's fresh runtime probe or `/DumpDBCfgList -Extension`;
+an unknown answer stops before editable mutation with
+`GATE6_ROLLBACK_POINT_FAILED`. When the enclosing
 extension-init or Release operation already owns a pending snapshot for this
 exact target, the checked load uses it without changing its completion policy.
 For every editable source load, the ITL owner runs Designer `/CheckModules`
@@ -144,24 +150,41 @@ preparation and existing Release qualification; load size, execution path,
 verification depth and OpenSpec do not select them.
 See [platform validation evidence](platform-validation-evidence.md) for saved-input
 MCP proof identity, which remains independent of the platform cadence.
-`GATE6_CHECK_FAILED` stops database apply and restores the owned DT snapshot;
+`GATE6_CHECK_FAILED` stops database apply and returns the editable object to
+the database configuration (`/RollbackCfg [-Extension]` or `/DeleteCfg
+-Extension`), confirmed by zero exit and `/DumpResult=0`;
 correct the named source finding and repeat the original ITL operation.
 A failed applicability check does not trigger the partial-load full fallback;
 the owner also restores the byte-exact `ConfigDumpInfo.xml` cursor.
-`GATE6_SNAPSHOT_FAILED` leaves platform evidence unverified before editable
-mutation. If rollback fails, `GATE6_SNAPSHOT_RECOVERY_FAILED` retains the exact
-snapshot, its SHA and both diagnostics; recover that target through the existing
-snapshot owner before repeating the original operation. A completed apply is
-not replayed as rollback after a lost completion acknowledgement.
+A confirmed rollback before apply restores the previous loaded proof, so the
+retry stays partial. A started `/UpdateDBCfg` first clears the applied-tree
+proof; if it fails, the editable object is rolled back and the retry is one full
+load. A failure after a completed apply (project-test readiness) returns
+`GATE6_POST_APPLY_FAILED` without rollback: the candidate passed every mandatory
+check but stays unverified, and repeating the original operation reloads it
+fully. If an earlier load of the same source object stopped before apply (empty
+fingerprint with a recorded tree), the next checked load rolls it back before
+any check and prints `GATE6_UNFINISHED_LOAD_ROLLED_BACK`; unapplied Designer
+edits are discarded. This runs only under the branch's exclusive lifecycle lock.
+If any rollback is unconfirmed, `GATE6_ROLLBACK_RECOVERY_FAILED` names the load,
+check and rollback logs and clears the applied tree: repeat the original
+operation, which runs one strict full load without legacy finding acceptance and
+never repeats the same rollback; recreate a damaged branch infobase through
+`reset-dev-branch`. Retained `gate6-*.dt` files from older runs are neither used
+nor removed by checked loads.
 The proof is recorded under
 `lastGate6Evidence` with source, editable-load arguments/log hash, target,
-modes, snapshot identity and check artifact hashes.
+modes, rollback point (`kind`, `attemptId`, `baseIdentity`, mechanism) or
+enclosing snapshot identity, and check artifact hashes. Older DT-bound evidence
+remains readable.
 Every completed ladder also writes an ignored `1c-gate6-evidence-*.json` receipt
 beside its result and log files, including tooling installs that do not update
 the source-load state. Compilation and extension applicability remain strict under the generic policy; the narrowly scoped internal engine exception below is separate from main-CF legacy assessment.
 Managed main-CF structural findings may continue only when the load owner
 proves complete unchanged before/after findings outside the change and its
-impact scope, with matching source, target, snapshot and native check inputs.
+impact scope, with matching source, target, native check inputs and the same
+load attempt: its rollback point `attemptId` and `baseIdentity` (derived from
+the applied proof before the load), or the enclosing snapshot SHA.
 This records `accepted-with-preexisting-findings`, the original nonzero native
 result and `nativePassed=false`; it is not a clean platform pass. New, increased,
 inside-scope, unclassified or unbound findings stop apply with the existing
@@ -292,7 +315,7 @@ production preparation. Continue development/intermediate export or resolve the
 findings and repeat the same explicit preparation; never restore arbitrary old
 snapshots, create a whitelist, edit state, or repair unrelated product code merely
 to invent a baseline. A read-only preparation failure does not roll back a previous
-development apply. Checked-load failures retain their existing snapshot recovery.
+development apply. Checked-load failures retain their checked-load rollback.
 
 ## Verification Policy
 

@@ -131,7 +131,8 @@ A successful `reset-dev-branch` recreates the branch: it writes no archive and
 removes this worktree's previous-task runtime untouched since the reset started
 (the groups above regardless of count or age, also `vanessa`/`yaxunit` reports
 and receipt-retained files, plus `build/event-log`, `.agent-1c/branch-dumps`,
-`.agent-1c/fork-history`, top-level `.agent-1c/snapshots/*.dt*`, `logs/` and
+`.agent-1c/fork-history`, top-level `.agent-1c/snapshots/*.dt*` (checked loads
+no longer create `gate6-*.dt`; such files are legacy of older runs), `logs/` and
 this branch's legacy main `.agent-1c/branch-archives/<branch>`). It keeps live
 runs, workflow update/incident snapshots, `handoffs/`, `build/result` and
 current workflow evidence, and reports removed counts/bytes and leftovers.

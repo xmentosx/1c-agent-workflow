@@ -90,7 +90,7 @@
                     snapshotShaAtRestore=$(if($operation -eq '/RestoreIB'){(Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $DesignerArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant()}else{''})
                 })
                 if ($operation -eq '/DumpIB') { [IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]](1,2,3)) }
-                if (($Drift -eq 'snapshot' -and $operation -eq '/DumpIB') -or
+                if (($Drift -eq 'presence' -and $operation -eq '/DumpDBCfgList') -or
                     ($Drift -eq 'load' -and $operation -eq '/LoadCfg') -or
                     ($Drift -eq 'check' -and $operation -eq '/CheckConfig')) {
                     [IO.File]::WriteAllBytes($script:fixtureCfe,[byte[]](6,5,4))
@@ -176,9 +176,9 @@ Describe 'Partial root-list load diagnostics' {
         [object]::ReferenceEquals($actual.error.Exception,$actual.nativeFailure) | Should -BeTrue
         $actual.error.Exception.Message | Should -Match 'Catalogs/Вне списка.xml'
         @($actual.warnings | Where-Object { $_ -like 'PARTIAL_CONFIG_ROOT_SCOPE:*' }) | Should -HaveCount 1
-        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB')
-        $actual.calls[1].args | Should -Contain '-partial'
-        $actual.calls[1].args | Should -Contain '-listFile'
+        @($actual.calls.operation) | Should -Be @('/LoadConfigFromFiles','/RollbackCfg')
+        $actual.calls[0].args | Should -Contain '-partial'
+        $actual.calls[0].args | Should -Contain '-listFile'
         $actual.finalCursor | Should -Be $actual.originalCursor
         $actual.listText | Should -Be ($Entry+"`r`nCatalogs/Выбранный.xml`r`n")
     }
@@ -188,10 +188,10 @@ Describe 'Partial root-list load diagnostics' {
         $actual.error | Should -BeNullOrEmpty
         $actual.result.loadModeUsed | Should -Be 'full-fallback'
         @($actual.warnings | Where-Object { $_ -like 'PARTIAL_CONFIG_ROOT_SCOPE:*' }) | Should -HaveCount 1
-        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB','/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
-        $actual.calls[1].args | Should -Contain '-listFile'
-        $actual.calls[4].args | Should -Not -Contain '-listFile'
-        $actual.calls[4].cursor | Should -Be $actual.originalCursor
+        @($actual.calls.operation) | Should -Be @('/LoadConfigFromFiles','/RollbackCfg','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        $actual.calls[0].args | Should -Contain '-listFile'
+        $actual.calls[2].args | Should -Not -Contain '-listFile'
+        $actual.calls[2].cursor | Should -Be $actual.originalCursor
     }
 
     It 'keeps successful <Mode> loading silent and checked' -ForEach @(@{Mode='Partial'},@{Mode='Full'}) {
@@ -199,15 +199,15 @@ Describe 'Partial root-list load diagnostics' {
         $actual.error | Should -BeNullOrEmpty
         $actual.result.loadModeUsed | Should -Be $Mode.ToLowerInvariant()
         $actual.warnings | Should -HaveCount 0
-        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
-        ($actual.calls[1].args -contains '-listFile') | Should -Be ($Mode -eq 'Partial')
+        @($actual.calls.operation) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        ($actual.calls[0].args -contains '-listFile') | Should -Be ($Mode -eq 'Partial')
     }
 
     It 'preserves a check rejection without full fallback after the editable load succeeded' {
         $actual = Invoke-RootScopeLoadFixture -Root (Join-Path $TestDrive 'Отказ проверки модулей') -LoadMode Auto -NativeFailureMode modules
         $actual.error.Exception.Message | Should -Match 'GATE6_CHECK_FAILED.*modules.*Не найден метод'
         @($actual.warnings | Where-Object { $_ -like 'PARTIAL_CONFIG_ROOT_SCOPE:*' }) | Should -HaveCount 1
-        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/RestoreIB')
+        @($actual.calls.operation) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/RollbackCfg')
         $actual.finalCursor | Should -Be $actual.originalCursor
     }
 
@@ -217,14 +217,14 @@ Describe 'Partial root-list load diagnostics' {
         $actual = Invoke-RootScopeLoadFixture -Root (Join-Path $TestDrive ([guid]::NewGuid().ToString('N')+' Без корня')) -Entry $Entry
         [object]::ReferenceEquals($actual.error.Exception,$actual.nativeFailure) | Should -BeTrue
         $actual.warnings | Should -HaveCount 0
-        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB')
+        @($actual.calls.operation) | Should -Be @('/LoadConfigFromFiles','/RollbackCfg')
         $actual.finalCursor | Should -Be $actual.originalCursor
     }
 
     It 'cannot replace the native failure or interrupt restoration if advisory output throws' {
         $actual = Invoke-RootScopeLoadFixture -Root (Join-Path $TestDrive 'Сбой вывода диагностики') -WarningFailure
         [object]::ReferenceEquals($actual.error.Exception,$actual.nativeFailure) | Should -BeTrue
-        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB')
+        @($actual.calls.operation) | Should -Be @('/LoadConfigFromFiles','/RollbackCfg')
         $actual.finalCursor | Should -Be $actual.originalCursor
     }
 }
@@ -298,7 +298,7 @@ Describe 'Designer Gate 6 batch verdict' {
         }
         if ($Fail) {
             $actual.failure | Should -Match 'GATE6_CHECK_FAILED.*applicability'
-            $actual.calls.operation | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckCanApplyConfigurationExtensions','/RestoreIB')
+            $actual.calls.operation | Should -Be @('/DumpDBCfgList','/LoadConfigFromFiles','/CheckModules','/CheckCanApplyConfigurationExtensions','/RollbackCfg')
         } elseif ($LoadMode -eq 'Direct') {
             $actual.failure | Should -BeNullOrEmpty
             $actual.calls.operation | Should -Be @('/LoadConfigFromFiles')
@@ -384,7 +384,8 @@ Describe 'Designer Gate 6 batch verdict' {
         if ($allowed) {
             $actual.failure | Should -BeNullOrEmpty
             $actual.operations | Should -Contain '/UpdateDBCfg'
-            $actual.operations | Should -Not -Contain '/RestoreIB'
+            $actual.operations | Should -Not -Contain '/RollbackCfg'
+            $actual.operations | Should -Not -Contain '/DumpIB'
             $actual.receipt.schemaVersion | Should -Be 2
             $configuration = @($actual.receipt.steps | Where-Object step -eq 'configuration')[0]
             $configuration.exitCode | Should -Be 101
@@ -395,11 +396,11 @@ Describe 'Designer Gate 6 batch verdict' {
         } else {
             $actual.failure | Should -Match 'GATE6_CHECK_FAILED'
             $actual.operations | Should -Not -Contain '/UpdateDBCfg'
-            $actual.operations | Should -Contain '/RestoreIB'
+            $actual.operations | Should -Contain '/RollbackCfg'
         }
     }
 
-    It 'leaves an unavailable platform target unverified before any editable mutation' {
+    It 'stops an unavailable platform target without apply and continues through a full load' {
         $root = Join-Path $TestDrive ('Недоступная база 1С ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $root | Out-Null
         $actual = & {
@@ -417,11 +418,12 @@ Describe 'Designer Gate 6 batch verdict' {
             } catch { $_.Exception.Message }
             [pscustomobject]@{ error=$errorText; calls=@($script:calls.ToArray()) }
         }
-        $actual.error | Should -Match 'GATE6_SNAPSHOT_FAILED.*unverified.*repeat the original operation'
-        $actual.calls | Should -HaveCount 1
-        @($actual.calls[0]) | Should -Contain '/DumpIB'
-        @($actual.calls[0]) | Should -Not -Contain '/LoadConfigFromFiles'
-        @($actual.calls[0]) | Should -Not -Contain '/UpdateDBCfg'
+        $actual.error | Should -Match 'GATE6_ROLLBACK_RECOVERY_FAILED: 1cv8\.exe was not found.*strict full load.*reset-dev-branch'
+        $actual.calls | Should -HaveCount 2
+        @($actual.calls[0])[0] | Should -Be '/LoadConfigFromFiles'
+        @($actual.calls[1])[0] | Should -Be '/RollbackCfg'
+        @($actual.calls | ForEach-Object { $_[0] }) | Should -Not -Contain '/UpdateDBCfg'
+        @($actual.calls | ForEach-Object { $_[0] }) | Should -Not -Contain '/DumpIB'
     }
 
     It 'keeps the enclosing exact-target snapshot and its recovery duty under the original owner' {
@@ -524,7 +526,7 @@ Describe 'Designer Gate 6 batch verdict' {
         $actual.afterHash | Should -Be $actual.beforeHash
     }
 
-    It 'retains an exact snapshot and both diagnostics when the native rollback fails' {
+    It 'returns the rollback continuation and both diagnostics when the native rollback fails' {
         $root = Join-Path $TestDrive ('Отказ восстановления 1С ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $root | Out-Null
         $actual = & {
@@ -536,7 +538,7 @@ Describe 'Designer Gate 6 batch verdict' {
                 param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
                 $script:calls.Add(@($DesignerArgs))
                 if ($DesignerArgs[0] -eq '/DumpIB') { [IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]](1,2,3)) }
-                if ($DesignerArgs[0] -eq '/RestoreIB') { throw 'native restore failure' }
+                if ($DesignerArgs[0] -eq '/RollbackCfg') { throw 'native rollback failure' }
                 $script:LastLogPath = Join-Path $script:ProjectRoot ("failed-$($script:calls.Count).log")
                 $log = if ($DesignerArgs[0] -eq '/CheckModules') { 'Не найден метод исходной конфигурации.' } else { 'Ошибок: 0; предупреждений: 0' }
                 [IO.File]::WriteAllText($script:LastLogPath,$log,[Text.UTF8Encoding]::new($false))
@@ -548,15 +550,15 @@ Describe 'Designer Gate 6 batch verdict' {
                     -DesignerArgs @('/LoadConfigFromFiles',$root,'/UpdateDBCfg') -User '' -Password '' | Out-Null
                 ''
             } catch { $_.Exception.Message }
-            $duty = $script:OneCNativeOperationJournal.restorations[0].payload
+            $duties = @($script:OneCNativeOperationJournal.restorations)
             $script:OneCNativeOperationJournal = $null
-            [pscustomobject]@{ failure=$failure; calls=@($script:calls.ToArray()); duty=$duty; snapshotExists=(Test-Path -LiteralPath $duty.snapshotPath); failureLog=$script:LastLogPath }
+            [pscustomobject]@{ failure=$failure; calls=@($script:calls.ToArray()); duties=$duties; failureLog=$script:LastLogPath
+                snapshots=@(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c') -Filter 'gate6-*.dt' -Recurse -ErrorAction SilentlyContinue) }
         }
-        $actual.failure | Should -Match 'GATE6_SNAPSHOT_RECOVERY_FAILED.*GATE6_CHECK_FAILED.*native restore failure'
-        $actual.calls | Should -HaveCount 4
-        @($actual.calls | ForEach-Object { $_[0] }) | Should -Not -Contain '/UpdateDBCfg'
-        $actual.duty.status | Should -Be 'pending'
-        $actual.snapshotExists | Should -BeTrue
+        $actual.failure | Should -Match 'GATE6_ROLLBACK_RECOVERY_FAILED: GATE6_CHECK_FAILED.*/RollbackCfg did not confirm.*check log:.*failed-2\.log.*native rollback failure.*reset-dev-branch'
+        @($actual.calls | ForEach-Object { $_[0] }) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/RollbackCfg')
+        $actual.duties | Should -HaveCount 0
+        $actual.snapshots | Should -HaveCount 0
         Get-Content -LiteralPath $actual.failureLog -Raw -Encoding UTF8 | Should -Match 'Не найден метод'
     }
 
@@ -594,13 +596,15 @@ Describe 'Designer Gate 6 batch verdict' {
         }
         $actual.failure | Should -Match 'GATE6_SOURCE_CHANGED'
         $actual.failedCalls | Should -HaveCount 3
-        @($actual.failedCalls | ForEach-Object { $_[0] }) | Should -Be @('/DumpIB','/LoadCfg','/RestoreIB')
+        @($actual.failedCalls | ForEach-Object { $_[0] }) | Should -Be @('/DumpDBCfgList','/LoadCfg','/RollbackCfg')
+        @($actual.failedCalls[2]) | Should -Contain 'Canary'
         $actual.passed.gate6Evidence.sourceFingerprint | Should -Be ('sha256:'+$expectedSha)
+        $actual.passed.gate6Evidence.editableLoad.rollbackPoint.kind | Should -Be 'db-configuration'
         $actual.passedCalls | Should -HaveCount 6
         @($actual.passedCalls[5]) | Should -Contain '/UpdateDBCfg'
     }
 
-    It 'does not roll back a successful apply after losing its snapshot completion acknowledgement' {
+    It 'creates no DT and no restoration duty for an ordinary checked load' {
         $root = Join-Path $TestDrive ('Подтверждение применения 1С ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $root | Out-Null
         $actual = & {
@@ -608,11 +612,6 @@ Describe 'Designer Gate 6 batch verdict' {
             $script:OneCNativeOperationJournal = New-OneCNativeOperationJournal
             $script:calls = [Collections.Generic.List[object]]::new()
             function Get-PlatformPath { 'fixture-1cv8.exe' }
-            function Complete-OneCDatabaseRestorationDuty {
-                param($Duty,$Resolution)
-                $Duty.payload.status = $Resolution
-                throw 'completion acknowledgement lost'
-            }
             function Invoke-Designer {
                 param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
                 $script:calls.Add(@($DesignerArgs))
@@ -627,15 +626,15 @@ Describe 'Designer Gate 6 batch verdict' {
                     -DesignerArgs @('/LoadConfigFromFiles',$root,'/UpdateDBCfg') -User '' -Password '' | Out-Null
                 ''
             } catch { $_.Exception.Message }
-            $duty = $script:OneCNativeOperationJournal.restorations[0].payload
+            $duties = @($script:OneCNativeOperationJournal.restorations)
             $script:OneCNativeOperationJournal = $null
-            [pscustomobject]@{ failure=$failure; calls=@($script:calls.ToArray()); duty=$duty; snapshotExists=(Test-Path -LiteralPath $duty.snapshotPath) }
+            [pscustomobject]@{ failure=$failure; calls=@($script:calls.ToArray()); duties=$duties
+                snapshots=@(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c') -Filter 'gate6-*.dt' -Recurse -ErrorAction SilentlyContinue) }
         }
-        $actual.failure | Should -Match 'completion acknowledgement lost'
-        $actual.calls | Should -HaveCount 5
-        @($actual.calls | ForEach-Object { $_[0] }) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
-        $actual.duty.status | Should -Be 'committed'
-        $actual.snapshotExists | Should -BeTrue
+        $actual.failure | Should -BeNullOrEmpty
+        @($actual.calls | ForEach-Object { $_[0] }) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        $actual.duties | Should -HaveCount 0
+        $actual.snapshots | Should -HaveCount 0
     }
 
     It 'retains native compilation for metadata modules binary and unknown source loads' {
@@ -688,16 +687,20 @@ Describe 'Designer Gate 6 batch verdict' {
         $actual.missingIdentity | Should -Match 'GATE6_SOURCE_IDENTITY_REQUIRED'
         $actual.callsWithoutIdentity | Should -Be 0
         $actual.failure | Should -Match 'GATE6_CHECK_FAILED.*modules.*Не найден метод'
-        $actual.failed | Should -HaveCount 4
-        @($actual.failed[0]) | Should -Contain '/DumpIB'
-        @($actual.failed[1]) | Should -Not -Contain '/UpdateDBCfg'
-        @($actual.failed[2]) | Should -Contain '/CheckModules'
-        @($actual.failed[3]) | Should -Contain '/RestoreIB'
+        $actual.failed | Should -HaveCount 3
+        @($actual.failed[0]) | Should -Contain '/LoadConfigFromFiles'
+        @($actual.failed[0]) | Should -Not -Contain '/UpdateDBCfg'
+        @($actual.failed[1]) | Should -Contain '/CheckModules'
+        @($actual.failed[2])[0] | Should -Be '/RollbackCfg'
+        @($actual.failed[2]) | Should -Not -Contain '-Extension'
         $actual.passed.steps | Should -HaveCount 2
         $actual.passed.editableLoad.sourceFingerprint | Should -Be 'main-source'
         $actual.passed.editableLoad.logSha256 | Should -Match '^[a-f0-9]{64}$'
-        $actual.checked | Should -HaveCount 5
-        @($actual.checked[4]) | Should -Contain '/UpdateDBCfg'
+        $actual.passed.editableLoad.snapshot | Should -BeNullOrEmpty
+        $actual.passed.editableLoad.rollbackPoint.kind | Should -Be 'db-configuration'
+        $actual.passed.editableLoad.rollbackPoint.baseIdentity | Should -Match '^[a-f0-9]{64}$'
+        $actual.checked | Should -HaveCount 4
+        @($actual.checked[3]) | Should -Contain '/UpdateDBCfg'
         $actual.direct | Should -HaveCount 1
         @($actual.direct[0]) | Should -Contain '/UpdateDBCfg'
     }
@@ -741,13 +744,13 @@ Describe 'Designer Gate 6 batch verdict' {
             [pscustomobject]@{ failure=$failure; failedCalls=$failedCalls; cursorAfterFailure=$cursorAfterFailure; passed=$passed; passedCalls=@($script:calls.ToArray()) }
         }
         $actual.failure | Should -Match 'GATE6_CHECK_FAILED.*modules'
-        $actual.failedCalls | Should -HaveCount 4
-        @($actual.failedCalls[0]) | Should -Contain '/DumpIB'
-        @($actual.failedCalls[3]) | Should -Contain '/RestoreIB'
+        $actual.failedCalls | Should -HaveCount 3
+        @($actual.failedCalls[0]) | Should -Contain '/LoadConfigFromFiles'
+        @($actual.failedCalls[2])[0] | Should -Be '/RollbackCfg'
         $actual.cursorAfterFailure | Should -Be $original
         $actual.passed.configLoadStatus | Should -Be 'passed'
-        $actual.passedCalls | Should -HaveCount 5
-        @($actual.passedCalls[4]) | Should -Contain '/UpdateDBCfg'
+        $actual.passedCalls | Should -HaveCount 4
+        @($actual.passedCalls[3]) | Should -Contain '/UpdateDBCfg'
     }
 
     It 'routes a tooling CFE through the common checks and binds its source SHA before apply' {
@@ -777,10 +780,12 @@ Describe 'Designer Gate 6 batch verdict' {
         Test-Path -LiteralPath $actual.result.gate6Evidence.evidencePath -PathType Leaf | Should -BeTrue
         (Get-Content -LiteralPath $actual.result.gate6Evidence.evidencePath -Raw -Encoding UTF8 | ConvertFrom-Json).steps.Count | Should -Be 3
         $actual.calls | Should -HaveCount 6
-        @($actual.calls[0]) | Should -Contain '/DumpIB'
+        # Without owner-supplied presence the tooling CFE proves it through the existing list owner.
+        @($actual.calls[0]) | Should -Be @('/DumpDBCfgList','-Extension','YAXUNIT')
         @($actual.calls[1]) | Should -Not -Contain '/UpdateDBCfg'
         @($actual.calls[3]) | Should -Contain '/CheckCanApplyConfigurationExtensions'
         @($actual.calls[5]) | Should -Contain '/UpdateDBCfg'
+        @($actual.calls | ForEach-Object { $_[0] }) | Should -Not -Contain '/DumpIB'
     }
 
     It 'rejects zero native codes with category or unknown text independent of payload keywords (<Text>)' -ForEach @(
@@ -909,11 +914,10 @@ Describe 'Designer Gate 6 batch verdict' {
         $root = Join-Path $TestDrive ('Официальный vendor WARN ' + [guid]::NewGuid().ToString('N'))
         $actual = Invoke-PinnedYAxDesignerFixture -Root $root
         $actual.failure | Should -BeNullOrEmpty
-        $actual.calls.operation | Should -Be @('/DumpIB','/LoadCfg','/CheckModules','/CheckCanApplyConfigurationExtensions','/CheckConfig','/UpdateDBCfg')
+        $actual.calls.operation | Should -Be @('/DumpDBCfgList','/LoadCfg','/CheckModules','/CheckCanApplyConfigurationExtensions','/CheckConfig','/UpdateDBCfg')
         $actual.calls[-1].arguments | Should -Be @('/UpdateDBCfg','-Dynamic-','-WarningsAsErrors','-Extension','YAXUNIT')
         $actual.calls[-1].contract.kind | Should -Be 'update-db-cfg'
-        $actual.duties | Should -HaveCount 1
-        $actual.duties[0].status | Should -Be 'committed'
+        $actual.duties | Should -HaveCount 0
         $actual.evidence.schemaVersion | Should -Be 2
         $actual.evidence.steps[0].nativePassed | Should -BeTrue
         $actual.evidence.steps[1].nativePassed | Should -BeFalse
@@ -945,7 +949,7 @@ Describe 'Designer Gate 6 batch verdict' {
         $receipt.steps[2].assessment.cleanPassed | Should -BeFalse
     }
 
-    It 'restores the original snapshot without applying when vendor checks fail (<Problem>)' -TestCases @(
+    It 'rolls the extension back without applying when vendor checks fail (<Problem>)' -TestCases @(
         @{Problem='modules'; Step='modules'; Count=4}
         @{Problem='app-extra'; Step='applicability'; Count=5}
         @{Problem='app-code'; Step='applicability'; Count=5}
@@ -957,15 +961,14 @@ Describe 'Designer Gate 6 batch verdict' {
         $actual.failure | Should -Match ("GATE6_CHECK_FAILED: step="+$Step)
         $actual.calls | Should -HaveCount $Count
         $actual.calls.operation | Should -Not -Contain '/UpdateDBCfg'
-        $actual.calls[-1].operation | Should -Be '/RestoreIB'
-        $actual.calls[-1].arguments[1] | Should -BeExactly $actual.calls[0].arguments[1]
-        $actual.calls[-1].snapshotShaAtRestore | Should -BeExactly $actual.calls[-1].duty.payload.snapshotSha256
-        $actual.duties[0].status | Should -Be 'restored'
+        $actual.calls[-1].operation | Should -Be '/RollbackCfg'
+        $actual.calls[-1].arguments[0..2] | Should -Be @('/RollbackCfg','-Extension','YAXUNIT')
+        $actual.duties | Should -HaveCount 0
         if ($Problem -ne 'modules') { $actual.assessments[-1].status | Should -Be 'rejected' }
     }
 
     It 'refuses changed CFE bytes at every vendor admission boundary (<Drift>)' -TestCases @(
-        @{Drift='snapshot'; Count=2}
+        @{Drift='presence'; Count=2}
         @{Drift='load'; Count=3}
         @{Drift='check'; Count=6}
     ) {
@@ -974,8 +977,8 @@ Describe 'Designer Gate 6 batch verdict' {
         $actual.failure | Should -Match 'GATE6_SOURCE_CHANGED'
         $actual.calls | Should -HaveCount $Count
         $actual.calls.operation | Should -Not -Contain '/UpdateDBCfg'
-        $actual.calls[-1].operation | Should -Be '/RestoreIB'
-        $actual.duties[0].status | Should -Be 'restored'
+        $actual.calls[-1].operation | Should -Be '/RollbackCfg'
+        $actual.duties | Should -HaveCount 0
     }
 
     It 'rejects vendor context outside its immutable dependency load before any native operation (<Scope>)' -TestCases @(
@@ -997,13 +1000,13 @@ Describe 'Designer Gate 6 batch verdict' {
     It 'keeps the ordinary clean native path for the same pinned artifact' {
         $actual = Invoke-PinnedYAxDesignerFixture -Root (Join-Path $TestDrive ('Чистый pinned CFE ' + [guid]::NewGuid().ToString('N'))) -Problem clean
         $actual.failure | Should -BeNullOrEmpty
-        $actual.calls.operation | Should -Be @('/DumpIB','/LoadCfg','/CheckModules','/CheckCanApplyConfigurationExtensions','/CheckConfig','/UpdateDBCfg')
+        $actual.calls.operation | Should -Be @('/DumpDBCfgList','/LoadCfg','/CheckModules','/CheckCanApplyConfigurationExtensions','/CheckConfig','/UpdateDBCfg')
         $actual.assessments | Should -HaveCount 0
         foreach ($step in $actual.evidence.steps) {
             $step.nativePassed | Should -BeTrue
             $step.assessment | Should -BeNullOrEmpty
         }
-        $actual.duties[0].status | Should -Be 'committed'
+        $actual.duties | Should -HaveCount 0
     }
     It 'checks a loaded extension before the first database apply and stops on a missing intercepted method' {
         $root = Join-Path $TestDrive ('Расширение 1С ' + [guid]::NewGuid().ToString('N'))
@@ -1048,11 +1051,11 @@ Describe 'Designer Gate 6 batch verdict' {
         $result.missingName | Should -Match 'GATE6_EXTENSION_NAME_REQUIRED'
         $result.failure | Should -Match 'GATE6_CHECK_FAILED.*applicability.*Не найден метод'
         $result.failedCalls | Should -HaveCount 5
-        @($result.failedCalls[0]) | Should -Contain '/DumpIB'
+        @($result.failedCalls[0]) | Should -Be @('/DumpDBCfgList','-Extension','Расширение')
         @($result.failedCalls[1]) | Should -Not -Contain '/UpdateDBCfg'
         @($result.failedCalls[2]) | Should -Contain '/CheckModules'
         @($result.failedCalls[3]) | Should -Contain '/CheckCanApplyConfigurationExtensions'
-        @($result.failedCalls[4]) | Should -Contain '/RestoreIB'
+        @($result.failedCalls[4])[0..2] | Should -Be @('/RollbackCfg','-Extension','Расширение')
         $result.passed.steps | Should -HaveCount 3
         $result.passed.sourceFingerprint | Should -Be 'exact-source'
         $result.passedCalls | Should -HaveCount 6
@@ -1111,12 +1114,13 @@ Describe 'Designer Gate 6 batch verdict' {
         $result.firstError | Should -Match 'GATE6_CHECK_FAILED.*applicability'
         $result.firstRestores | Should -Be 1
         $result.firstCalls | Should -HaveCount 5
-        @($result.firstCalls[0]) | Should -Contain '/DumpIB'
+        @($result.firstCalls[0])[0] | Should -Be '/DumpDBCfgList'
         @($result.firstCalls[1]) | Should -Contain '-partial'
-        @($result.firstCalls[4]) | Should -Contain '/RestoreIB'
+        @($result.firstCalls[4])[0..2] | Should -Be @('/RollbackCfg','-Extension','Расширение')
         $result.applyError | Should -Match 'simulated database apply failure'
         $result.applyCalls | Should -HaveCount 7
-        @($result.applyCalls[6]) | Should -Contain '/RestoreIB'
+        @($result.applyCalls[5]) | Should -Contain '/UpdateDBCfg'
+        @($result.applyCalls[6])[0..2] | Should -Be @('/RollbackCfg','-Extension','Расширение')
         $result.second.configLoadStatus | Should -Be 'passed'
         $result.second.gate6Evidence.sourceFingerprint | Should -Be 'repaired-source'
         $result.secondCalls | Should -HaveCount 6
@@ -1179,7 +1183,7 @@ Describe 'Project-test installation uses its own execution prerequisites' {
             $failure='';$evidence=$null
             try {
                 $evidence=Invoke-ConfigLoadDesignerAttempt -InfoBasePath (Join-Path $root 'База 1С') -InfoBaseKind file `
-                    -ExtensionName $name -SourceFingerprint ('v2|git-tree-sha256|'+('a'*64)) -ValidationPurpose project-tests `
+                    -ExtensionName $name -SourceFingerprint ('v2|git-tree-sha256|'+('a'*64)) -ValidationPurpose project-tests -ExtensionPresence present `
                     -DesignerArgs @('/LoadConfigFromFiles',$path,'-Extension',$name,'-Format','Hierarchical','/UpdateDBCfg') `
                     -AfterApply { $script:runtimeReads++; if($Problem -eq 'runtime'){throw 'runtime not ready'} }
             } catch {$failure=$_.Exception.Message}
@@ -1188,7 +1192,13 @@ Describe 'Project-test installation uses its own execution prerequisites' {
         if($Expected){
             $actual.failure | Should -Match $Expected
             if($Problem -in @('wrong-name','wrong-source')){$actual.calls | Should -HaveCount 0}
-            else{@($actual.calls | Where-Object operation -eq '/RestoreIB') | Should -HaveCount 1}
+            elseif($Problem -eq 'runtime'){
+                # D1b: the database already holds the candidate; no rollback is claimed.
+                $actual.failure | Should -Match '^GATE6_POST_APPLY_FAILED: runtime not ready.*no rollback was performed.*reload it fully'
+                @($actual.calls | Where-Object operation -eq '/RollbackCfg') | Should -HaveCount 0
+            }
+            else{@($actual.calls | Where-Object operation -eq '/RollbackCfg') | Should -HaveCount 1}
+            @($actual.calls | Where-Object operation -in @('/DumpIB','/RestoreIB','/DumpDBCfgList')) | Should -HaveCount 0
             if($Problem -notin @('apply','runtime')){@($actual.calls | Where-Object operation -eq '/UpdateDBCfg') | Should -HaveCount 0}
         }else{
             $actual.failure | Should -Be ''
@@ -1198,7 +1208,7 @@ Describe 'Project-test installation uses its own execution prerequisites' {
             @($actual.evidence.steps | Where-Object step -eq 'applicability')[0].nativePassed | Should -BeTrue
             @($actual.calls | Where-Object operation -in @('/CheckModules','/CheckConfig') | Where-Object { $_.args -contains '-AllExtensions' }) | Should -HaveCount 2
             @($actual.calls | Where-Object operation -eq '/UpdateDBCfg') | Should -HaveCount 1
-            @($actual.calls | Where-Object operation -eq '/RestoreIB') | Should -HaveCount 0
+            @($actual.calls | Where-Object operation -in @('/RestoreIB','/RollbackCfg','/DumpIB','/DumpDBCfgList')) | Should -HaveCount 0
             $actual.runtimeReads | Should -Be 1
         }
     }
@@ -1257,5 +1267,146 @@ Describe 'Project-test installation uses its own execution prerequisites' {
         $actual.groups.configuration | Should -Be 1
         @($actual.groups.outsideRepository | ForEach-Object { "$($_.name)=$($_.count)" }) | Should -Be @('_54200=5','Расширение3=6')
         $actual.groups.unattributed | Should -Be 1
+    }
+}
+
+Describe 'Checked-load rollback point without a DT' {
+    BeforeAll {
+        function Invoke-RollbackPointFixture {
+            param([string]$Root,[string]$Presence='',[string]$ListOutcome='present',[string]$FailStep='applicability',
+                [string]$RollbackOutcome='0',[AllowNull()][object]$AppliedProof=$null,[string]$FixtureExtension='Новое расширение')
+            New-Item -ItemType Directory -Force -Path $Root | Out-Null
+            & {
+                . $helperPath -ProjectRoot $Root -Action help *> $null
+                $script:calls = [Collections.Generic.List[object]]::new()
+                function Get-PlatformPath { 'fixture-1cv8.exe' }
+                function Invoke-Designer {
+                    param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
+                    $script:calls.Add(@($DesignerArgs))
+                    $script:LastLogPath = Join-Path $script:ProjectRoot ("point-$($script:calls.Count).log")
+                    $log = 'Ошибок: 0; предупреждений: 0'
+                    if ($DesignerArgs[0] -eq '/DumpDBCfgList') {
+                        switch ($ListOutcome) {
+                            # Captured 2026-11-10 from 8.3.27.2074 (exit 1, /DumpResult 1) on a PM5 branch copy.
+                            'absent-ru' { $log = "Операция не может быть выполнена, так как расширение конфигурации с указанным именем не найдено: $($DesignerArgs[2])" }
+                            # The English platform text was not observed on this machine; the owner pattern covers it.
+                            'absent-en' { $log = "Extension `"$($DesignerArgs[2])`" not found" }
+                            'unknown' { $log = 'Ошибка доступа к информационной базе' }
+                        }
+                        [IO.File]::WriteAllText($script:LastLogPath,$log,[Text.UTF8Encoding]::new($false))
+                        if ($ListOutcome -ne 'present') { throw "1C Designer failed with exit code 1. Log: $($script:LastLogPath)" }
+                        return
+                    }
+                    $stepFailed = ($FailStep -eq 'applicability' -and $DesignerArgs[0] -eq '/CheckCanApplyConfigurationExtensions')
+                    if ($stepFailed) { $log = 'Не найден метод исходной конфигурации.' }
+                    [IO.File]::WriteAllText($script:LastLogPath,$log,[Text.UTF8Encoding]::new($false))
+                    $index = [Array]::IndexOf($DesignerArgs,'/DumpResult')
+                    if ($index -ge 0) {
+                        $code = if ($DesignerArgs[0] -in @('/RollbackCfg','/DeleteCfg')) { $RollbackOutcome } else { '0' }
+                        [IO.File]::WriteAllText($DesignerArgs[$index+1],$code,[Text.UTF8Encoding]::new($false))
+                    }
+                }
+                # The helper's own -ExtensionName parameter is reset by dot-sourcing; keep the fixture name apart.
+                $parameters = @{ InfoBasePath='C:\База 1С'; InfoBaseKind='file'; User=''; Password=''
+                    ExtensionName=$FixtureExtension; SourceFingerprint='extension-source'
+                    DesignerArgs=@('/LoadConfigFromFiles',$Root,'-Extension',$FixtureExtension,'/UpdateDBCfg') }
+                if ($Presence) { $parameters.ExtensionPresence = $Presence }
+                if ($null -ne $AppliedProof) { $parameters.AppliedProof = $AppliedProof }
+                $failure = $null
+                $evidence = $null
+                try { $evidence = Invoke-ConfigLoadDesignerAttempt @parameters } catch { $failure = $_ }
+                $state = if ($null -ne $AppliedProof -and $AppliedProof.statePath) { Read-DevBranchStateFile -Path $AppliedProof.statePath } else { $null }
+                [pscustomobject]@{ failure=$failure; evidence=$evidence; calls=@($script:calls.ToArray()); state=$state
+                    snapshots=@(Get-ChildItem -LiteralPath (Join-Path $Root '.agent-1c') -Filter 'gate6-*.dt' -Recurse -ErrorAction SilentlyContinue) }
+            }
+        }
+    }
+
+    It 'removes a new extension that was absent from the database configuration (<Outcome>)' -ForEach @(
+        @{Outcome='absent-ru'},@{Outcome='absent-en'}
+    ) {
+        $actual = Invoke-RollbackPointFixture -Root (Join-Path $TestDrive ('Новое расширение '+[guid]::NewGuid().ToString('N'))) -ListOutcome $Outcome
+        $actual.failure.Exception.Message | Should -Match 'GATE6_CHECK_FAILED.*applicability'
+        @($actual.calls | ForEach-Object { $_[0] }) | Should -Be @('/DumpDBCfgList','/LoadConfigFromFiles','/CheckModules','/CheckCanApplyConfigurationExtensions','/DeleteCfg')
+        @($actual.calls[-1])[0..2] | Should -Be @('/DeleteCfg','-Extension','Новое расширение')
+        $actual.failure.Exception.Data['ItlConfigLoadSnapshotRestored'].mechanism | Should -BeExactly 'delete-cfg'
+        $actual.failure.Exception.Data['ItlConfigLoadSnapshotRestored'].rollbackPoint.kind | Should -BeExactly 'absent-extension'
+        $actual.snapshots | Should -HaveCount 0
+    }
+
+    It 'uses owner-supplied presence without a list probe (<Presence>)' -ForEach @(
+        @{Presence='present'; Command='/RollbackCfg'},@{Presence='absent'; Command='/DeleteCfg'}
+    ) {
+        $actual = Invoke-RollbackPointFixture -Root (Join-Path $TestDrive ('Присутствие владельца '+[guid]::NewGuid().ToString('N'))) -Presence $Presence -ListOutcome unknown
+        @($actual.calls | ForEach-Object { $_[0] }) | Should -Not -Contain '/DumpDBCfgList'
+        @($actual.calls[-1])[0] | Should -Be $Command
+    }
+
+    It 'treats a recorded applied proof as presence even when the owner says nothing' {
+        $proof = [pscustomobject]@{ statePath=''; contentKind='extension'; fingerprintField='lastExtensionDesignerFingerprint'
+            treeField='lastExtensionDesignerTreeObjectId'; previousFingerprint='extension-a'; previousTree=('a'*40); unfinished=$false }
+        $actual = Invoke-RollbackPointFixture -Root (Join-Path $TestDrive ('Расширение с доказательством '+[guid]::NewGuid().ToString('N'))) -ListOutcome unknown -AppliedProof $proof
+        @($actual.calls | ForEach-Object { $_[0] }) | Should -Not -Contain '/DumpDBCfgList'
+        @($actual.calls[-1])[0..2] | Should -Be @('/RollbackCfg','-Extension','Новое расширение')
+    }
+
+    It 'refuses an unknown presence answer before any editable mutation' {
+        $actual = Invoke-RollbackPointFixture -Root (Join-Path $TestDrive ('Неизвестное присутствие '+[guid]::NewGuid().ToString('N'))) -ListOutcome unknown
+        $actual.failure.Exception.Message | Should -Match '^GATE6_ROLLBACK_POINT_FAILED: presence of extension .Новое расширение. in the database configuration is unproven; no editable load was performed'
+        @($actual.calls | ForEach-Object { $_[0] }) | Should -Be @('/DumpDBCfgList')
+    }
+
+    It 'treats a non-zero native rollback result as an unconfirmed rollback and clears the tree proof' {
+        $root = Join-Path $TestDrive ('Код отката '+[guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $statePath = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            Save-DevBranchState -SafeDevBranchName 'rollback-code' -State @{ safeDevBranchName='rollback-code'; devBranchName='rollback-code'
+                lastExtensionDesignerFingerprint=''; lastExtensionDesignerTreeObjectId=('b'*40); configLoadStatus='pending' }
+        }
+        $proof = [pscustomobject]@{ statePath=$statePath; contentKind='extension'; fingerprintField='lastExtensionDesignerFingerprint'
+            treeField='lastExtensionDesignerTreeObjectId'; previousFingerprint=''; previousTree=('b'*40); unfinished=$false }
+        $actual = Invoke-RollbackPointFixture -Root $root -AppliedProof $proof -RollbackOutcome '1'
+        $actual.failure.Exception.Message | Should -Match "^GATE6_ROLLBACK_RECOVERY_FAILED: GATE6_CHECK_FAILED.*/RollbackCfg -Extension did not confirm.*native result '1'.*strict full load"
+        $actual.state.lastExtensionDesignerTreeObjectId | Should -BeNullOrEmpty
+        @($actual.calls | ForEach-Object { $_[0] }) | Should -Not -Contain '/UpdateDBCfg'
+    }
+
+    It 'clears the applied tree before the database apply of a partially loaded object' {
+        $root = Join-Path $TestDrive ('Применение '+[guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $statePath = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            Save-DevBranchState -SafeDevBranchName 'apply-tree' -State @{ safeDevBranchName='apply-tree'; devBranchName='apply-tree'
+                lastExtensionDesignerFingerprint=''; lastExtensionDesignerTreeObjectId=('c'*40); configLoadStatus='pending' }
+        }
+        $proof = [pscustomobject]@{ statePath=$statePath; contentKind='extension'; fingerprintField='lastExtensionDesignerFingerprint'
+            treeField='lastExtensionDesignerTreeObjectId'; previousFingerprint='extension-a'; previousTree=('c'*40); unfinished=$false }
+        $actual = Invoke-RollbackPointFixture -Root $root -AppliedProof $proof -FailStep ''
+        $actual.failure | Should -BeNullOrEmpty
+        @($actual.calls[-1])[0] | Should -Be '/UpdateDBCfg'
+        # Load-ConfigFromFiles writes the new tree after success; until then no stale tree proves a partial retry.
+        $actual.state.lastExtensionDesignerTreeObjectId | Should -BeNullOrEmpty
+        $actual.evidence.editableLoad.rollbackPoint.kind | Should -BeExactly 'db-configuration'
+    }
+
+    It 'binds the before check to the attempt and the applied base content' {
+        $actual = & {
+            . $helperPath -ProjectRoot $TestDrive -Action help *> $null
+            $point = [pscustomobject]@{ kind='db-configuration'; path=$null; attemptId='attempt-1'; baseIdentity=('e'*64); appliedProof=$null }
+            $load = [pscustomobject]@{ rollbackPoint=[pscustomobject]@{ attemptId='attempt-1'; baseIdentity=('e'*64) } }
+            $otherAttempt = [pscustomobject]@{ rollbackPoint=[pscustomobject]@{ attemptId='attempt-2'; baseIdentity=('e'*64) } }
+            $otherBase = [pscustomobject]@{ rollbackPoint=[pscustomobject]@{ attemptId='attempt-1'; baseIdentity=('f'*64) } }
+            [pscustomobject]@{
+                same = Test-CheckedLoadLegacyBindingMatch -Point $point -EditableLoad $load
+                otherAttempt = Test-CheckedLoadLegacyBindingMatch -Point $point -EditableLoad $otherAttempt
+                otherBase = Test-CheckedLoadLegacyBindingMatch -Point $point -EditableLoad $otherBase
+                missing = Test-CheckedLoadLegacyBindingMatch -Point $point -EditableLoad ([pscustomobject]@{ snapshot=$null })
+            }
+        }
+        $actual.same | Should -BeTrue
+        $actual.otherAttempt | Should -BeFalse
+        $actual.otherBase | Should -BeFalse
+        $actual.missing | Should -BeFalse
     }
 }

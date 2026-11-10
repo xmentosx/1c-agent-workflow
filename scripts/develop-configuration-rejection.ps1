@@ -50,12 +50,19 @@ function Assert-DevelopConfigurationRejection {
         }
         $failure = [string]$terminal.errorMessage
     }
+    # A rejected load proves its rollback either by a restored enclosing/older
+    # DT or by a confirmed native rollback to the database configuration.
+    $field = { param($Object,$Name) if ($null -ne $Object -and $Object.PSObject.Properties[$Name]) { $Object.PSObject.Properties[$Name].Value } else { $null } }
+    $rollbackPoint = & $field $receipt 'rollbackPoint'
+    $rollbackProved = ((& $field $receipt 'snapshotRestored') -eq $true -and [string](& $field $receipt 'snapshotSha256') -match '^[a-f0-9]{64}$') -or
+        ((& $field $receipt 'rollbackConfirmed') -eq $true -and [string](& $field $receipt 'mechanism') -in @('rollback-cfg','delete-cfg') -and
+            [string](& $field $rollbackPoint 'baseIdentity') -match '^[a-f0-9]{64}$' -and
+            [string](& $field $rollbackPoint 'mechanism') -ceq [string](& $field $receipt 'mechanism'))
     if ([int]$receipt.schemaVersion -ne 1 -or [string]$receipt.kind -cne 'itl-gate6-rejection' -or
         [string]$receipt.projectRoot -ine [IO.Path]::GetFullPath($Root) -or
         [string]$receipt.failure -cne $failure -or
-        $receipt.applyStarted -ne $false -or $receipt.snapshotRestored -ne $true -or $receipt.cursorRestored -ne $true -or
+        $receipt.applyStarted -ne $false -or -not $rollbackProved -or $receipt.cursorRestored -ne $true -or
         $receipt.nativeOperationsReleased -ne $true -or
-        [string]$receipt.snapshotSha256 -notmatch '^[a-f0-9]{64}$' -or
         [string]$receipt.sourceFingerprint -notmatch '^v2\|git-tree-sha256\|[a-f0-9]{64}$') {
         throw 'DEVELOP_NEGATIVE_ROLLBACK_UNPROVEN: the finding alone is insufficient.'
     }

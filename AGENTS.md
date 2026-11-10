@@ -55,7 +55,7 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 - Do not tag or publish an `itl-ondemand-mcp` component build from Targeted proof. Its exact source commit and executable SHA must pass the real `ondemand-mcp` Release E2E stage for both backend families; fixture evidence and unrelated prior runs are not release qualification.
 - Do not ask which gate to run unless the user overrides this model. Failure, conflict, remote movement, timeout, or no-progress preserves the queue/checkpoint and forbids publication. The same stage failure twice requires diagnosis before an explicit `-RetryBlockedStage`.
 - Repair a failed frozen publication through `scripts/source-repair.ps1`, not per-attempt registration.
-- Do not weaken the Vanessa completion gate, fresh passed `/itl-check`, snapshot rollback, or artifact SHA checks.
+- Do not weaken the Vanessa completion gate, fresh passed `/itl-check`, checked-load rollback, or artifact SHA checks.
 - Tests must leave tracked state unchanged. A passing gate with a dirty worktree is not a release qualification.
 
 ## Routing

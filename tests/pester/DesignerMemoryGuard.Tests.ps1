@@ -404,7 +404,7 @@ while ($true) {
         $result.calls | Should -Be 2
         $result.load.loadModeUsed | Should -Be "full-fallback"
         $result.load.configLoadStatus | Should -Be "fallback-succeeded"
-        @($result.actions | ForEach-Object { $_[0] }) | Should -Be @('/LoadConfigFromFiles', '/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/CheckConfig', '/UpdateDBCfg')
+        @($result.actions | ForEach-Object { $_[0] }) | Should -Be @('/LoadConfigFromFiles', '/LoadConfigFromFiles', '/CheckModules', '/CheckConfig', '/UpdateDBCfg')
         $result.actions[0] | Should -Contain '-partial'
         $result.actions[2] | Should -Not -Contain '-partial'
         $result.actions[3] | Should -Contain '-ThinClient'

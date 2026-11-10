@@ -784,6 +784,7 @@ function Ensure-YAxUnitExtensions {
     if (-not $engineMatches) {
         Invoke-GuardedCfeExtensionApply -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
             -CfePath $cfePath -ExtensionName $extensionName `
+            -ExtensionPresence $(if ($null -ne $engine -and $engine.present) { 'present' } else { 'absent' }) `
             -ArtifactDiagnosticBaseline (Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $entry -ExtensionName $extensionName) | Out-Null
         Install-ItlOnDemandMcp | Out-Null
         [void](Set-VanessaMcpExtensionUnsafeMode -State $State -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath `
@@ -794,6 +795,7 @@ function Ensure-YAxUnitExtensions {
         Write-ProjectTestsInterceptorWarnings -Path $testsPath
         Invoke-ConfigLoadDesignerAttempt -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
             -ExtensionName $testsExtensionName -SourceFingerprint $source.fingerprint -ValidationPurpose 'project-tests' `
+            -ExtensionPresence $(if ($null -ne $tests -and $tests.present) { 'present' } else { 'absent' }) `
             -AfterApply {
                 $fresh = @(Get-ToolingRuntimeExtensions -State $State -Names @($testsExtensionName))
                 $installed = @($fresh | Where-Object { $_.name -ceq $testsExtensionName }) | Select-Object -First 1

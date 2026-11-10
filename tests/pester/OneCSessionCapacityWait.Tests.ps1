@@ -237,6 +237,11 @@ Start-Sleep -Seconds 120
         $class.stopRoot | Should -Be 20
         @($class.stopProcesses.ProcessId | Sort-Object) | Should -Be @(20,21,22)
         (Get-ItlExecutionGuardHolderClass -Holder $helperHolder -ProjectRoot $root -Processes @($helper,$host2,$client,$designer) -CurrentProcessId 999).class | Should -Be 'mutating-designer'
+        # Checked-load rollback commands mutate the editable object as well.
+        foreach ($command in @('/RollbackCfg', '/RollbackCfg -Extension Тесты', '/DeleteCfg -Extension Тесты')) {
+            $rollbackDesigner = [pscustomobject]@{ProcessId=24;ParentProcessId=20;Name='1cv8.exe';CommandLine="1cv8.exe DESIGNER /F base $command";CreationDate=$created.AddSeconds(2)}
+            (Get-ItlExecutionGuardHolderClass -Holder $helperHolder -ProjectRoot $root -Processes @($helper,$host2,$client,$rollbackDesigner) -CurrentProcessId 999).class | Should -Be 'mutating-designer'
+        }
         (Get-ItlExecutionGuardHolderClass -Holder $helperHolder -ProjectRoot $root -Processes @($helper,$host2,$client) -CurrentProcessId 22).class | Should -Be 'self'
         $dead = [pscustomobject](@{pid=11} + $live); $dead.alive = $false
         (Get-ItlExecutionGuardHolderClass -Holder $dead -ProjectRoot $root -Processes @() -CurrentProcessId 999).class | Should -Be 'stale'

@@ -115,7 +115,7 @@
         $result.extensionApply|Should -Contain '-WarningsAsErrors'
         $result.extensionApply|Should -Contain '-Extension'
         $result.error|Should -Match 'GATE6_CHECK_FAILED.*modules.*Предупреждение'
-        $result.warningCommands|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/RestoreIB')
+        $result.warningCommands|Should -Be @('/LoadConfigFromFiles','/CheckModules','/RollbackCfg')
         $result.warningCommands|Should -Not -Contain '/UpdateDBCfg'
     }
 
@@ -1043,7 +1043,7 @@ try {
         $result.args | Should -Not -Contain "/UpdateDBCfg"
         $result.listFile | Should -Be "C:\logs\changed-files.txt"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($result.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
@@ -1092,7 +1092,7 @@ try {
         $result.args | Should -Contain "-updateConfigDumpInfo"
         $result.args | Should -Not -Contain "/UpdateDBCfg"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($result.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
@@ -1139,7 +1139,7 @@ try {
         $result.load.loadModeUsed | Should -Be "full"
         $result.load.loadReason | Should -Be "partial-inventory-missing-files-full-load"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($result.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
@@ -1230,7 +1230,7 @@ try {
         $result.drainPath | Should -Be "C:\base"
         $result.drainReason | Should -Be "configuration source load"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($result.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
         @($result.native[0].observedSequence)|Should -Be @('drain')
@@ -1313,7 +1313,7 @@ try {
         $result.load.partialLogPath | Should -Be "C:\logs\partial.log"
         $result.load.fullFallbackLogPath | Should -Be "C:\logs\full.log"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB','/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/LoadConfigFromFiles','/RollbackCfg','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($result.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
@@ -1362,7 +1362,7 @@ try {
         $result.message | Should -Match "Do not run refresh-dev-branch or sync-master as recovery"
         $result.message | Should -Not -Match "recreate its copy"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB','/DumpIB','/LoadConfigFromFiles','/RestoreIB')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/LoadConfigFromFiles','/RollbackCfg','/LoadConfigFromFiles','/RollbackCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
     }
 
@@ -1406,7 +1406,7 @@ try {
         $full.calls[0] | Should -Not -Contain "-partial"
         $full.calls[0] | Should -Contain "-updateConfigDumpInfo"
         $full.load.loadModeUsed | Should -Be "full"
-        @($full.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/UpdateDBCfg')
+        @($full.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/CheckModules', '/UpdateDBCfg')
         $full.load.gate6Evidence.sourceFingerprint | Should -Be $full.sourceFingerprint
         @($full.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $false)
         $full.load.gate6Evidence.steps[-1].status | Should -Be 'not-required-development'
@@ -1447,7 +1447,7 @@ try {
             $result.existedAtStart | Should -BeFalse
             $result.cursor | Should -Be "fresh-cursor"
             $result.load.loadModeUsed | Should -Be "full"
-            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/UpdateDBCfg')
+            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/CheckModules', '/UpdateDBCfg')
             $result.load.gate6Evidence.sourceFingerprint | Should -Be $result.sourceFingerprint
             @($result.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $false)
             $result.load.gate6Evidence.steps[-1].status | Should -Be 'not-required-development'
@@ -1494,7 +1494,7 @@ try {
             $result.existedAtStart | Should -BeFalse
             $result.cursor | Should -Be "stale-cursor"
             $result.message | Should -Match "simulated full-load failure"
-            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/DumpIB', '/LoadConfigFromFiles', '/RestoreIB')
+            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/RollbackCfg')
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -1550,7 +1550,7 @@ try {
             $result.load.loadModeUsed | Should -Be "full-fallback"
             $result.fallbackInputCursor | Should -Be "original-cursor"
             $result.finalCursor | Should -Be "full-cursor"
-            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/UpdateDBCfg')
+            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/LoadConfigFromFiles', '/CheckModules', '/UpdateDBCfg')
             $result.load.gate6Evidence.sourceFingerprint | Should -Be $result.sourceFingerprint
             @($result.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $false)
             $result.load.gate6Evidence.steps[-1].status | Should -Be 'not-required-development'
@@ -1608,7 +1608,7 @@ try {
             $result.calls | Should -Be 2
             $result.message | Should -Match "both failed"
             $result.finalCursor | Should -Be "original-cursor"
-            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/DumpIB', '/LoadConfigFromFiles', '/RestoreIB')
+            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/LoadConfigFromFiles', '/RollbackCfg')
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -1658,7 +1658,7 @@ try {
         $full.listFile | Should -Be ""
         $full.mode | Should -Be "full"
 
-        @($full.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($full.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($full.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($full.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
@@ -1709,7 +1709,7 @@ try {
         $prep.drains | Should -Be 0
         $prep.message | Should -Match "list preparation failed"
 
-        @($noOpCalls.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($noOpCalls.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($noOpCalls.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($noOpCalls.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
