@@ -4092,12 +4092,16 @@ try {
         $lifecycleText | Should -Match '(?s)if \(\$currentStatus -eq "enterprise-normalization-pending"\).*?return.*?if \(\$copyPerformed\)'
     }
 
-    It "preserves paired application proof only for an immutable Release snapshot restore" {
+    It "preserves paired application proof only for an immutable Release snapshot restore (paired=<Paired>)" -ForEach @(
+        @{ Paired = $true },
+        @{ Paired = $false }
+    ) {
         $snapshotPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-release-restore-" + [guid]::NewGuid().ToString("N") + ".dt")
+        $paired = $Paired
         try {
             [IO.File]::WriteAllBytes($snapshotPath, [byte[]](1, 2, 3))
             $updates = & {
-                . $HelperPath -ProjectRoot $RepoRoot -Action help -ReleaseSnapshotPath $snapshotPath -PreserveReleaseSnapshotApplicationProof *> $null
+                . $HelperPath -ProjectRoot $RepoRoot -Action help -ReleaseSnapshotPath $snapshotPath -PreserveReleaseSnapshotApplicationProof:$paired *> $null
                 $script:CapturedRestoreUpdates = $null
                 $state = [pscustomobject]@{
                     devBranchName = "release"
@@ -4117,13 +4121,16 @@ try {
                     enterpriseNormalizedAt = "2026-08-19T00:02:00Z"
                     enterpriseNormalizationReason = "config-load"
                     enterpriseNormalizationError = ""
+                    toolingInfoBaseGeneration = "paired-generation"
                 }
                 function Read-DevBranchState { $state }
                 function Assert-DevelopmentBranchWorktreeContext {}
                 function Assert-DevBranchKind {}
                 function Require-Value {}
                 function Assert-ExportPathInsideProject { $snapshotPath }
-                function Restore-DevBranchInfobaseFromSnapshot {}
+                # Like the owner: persist and adopt a new generation before replacing bytes.
+                function Restore-DevBranchInfobaseFromSnapshot { param([object]$State)
+                    $State | Add-Member -NotePropertyName toolingInfoBaseGeneration -NotePropertyValue "restore-generation" -Force }
                 function Update-DevBranchState { param([object]$State, [hashtable]$Updates); $script:CapturedRestoreUpdates = $Updates }
                 function Sync-DevBranchContextToDotEnv {}
 
@@ -4131,12 +4138,21 @@ try {
                 $script:CapturedRestoreUpdates
             }
 
+            $updates.vanessaMcpSafeModeProof | Should -BeNullOrEmpty
+            if (-not $paired) {
+                $updates.lastConfigDesignerFingerprint | Should -Be ""
+                $updates.enterpriseNormalizationStatus | Should -Be "pending"
+                $updates.ContainsKey("toolingInfoBaseGeneration") | Should -BeFalse
+                return
+            }
             $updates.lastConfigDesignerFingerprint | Should -Be "config-proof"
             $updates.lastConfigDesignerTreeObjectId | Should -Be ("a" * 40)
             $updates.lastExtensionDesignerFingerprint | Should -Be "extension-proof"
             $updates.configLoadStatus | Should -Be "passed"
             $updates.enterpriseNormalizationStatus | Should -Be "passed"
-            $updates.vanessaMcpSafeModeProof | Should -BeNullOrEmpty
+            # The verification change target is bound to this generation; the restored
+            # paired bytes must keep it so a passed check stays fresh.
+            $updates.toolingInfoBaseGeneration | Should -Be "paired-generation"
             $updates.designerInvoked | Should -BeFalse
             $updates.enterpriseInvoked | Should -BeFalse
         } finally {

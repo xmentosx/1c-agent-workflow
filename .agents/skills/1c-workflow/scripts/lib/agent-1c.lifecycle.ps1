@@ -21651,6 +21651,8 @@ function Restore-ReleaseE2EInfobaseSnapshot {
     Require-Value "ReleaseSnapshotPath" $ReleaseSnapshotPath | Out-Null
     $snapshotPath = Assert-ExportPathInsideProject -ExportPath $ReleaseSnapshotPath
     if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "Release E2E snapshot is missing: $snapshotPath" }
+    # The restore advances the generation before replacing bytes; read the paired one first.
+    $pairedToolingGeneration = [string](Get-StateValue -State $state -Name "toolingInfoBaseGeneration" -Default "")
     Restore-DevBranchInfobaseFromSnapshot -State $state -SnapshotPath $snapshotPath -Reason "Release E2E checkpoint restore"
     $restoreUpdates = @{
         lastConfigDesignerFingerprint = ""
@@ -21688,6 +21690,10 @@ function Restore-ReleaseE2EInfobaseSnapshot {
         )) {
             $restoreUpdates[$field] = Get-StateValue -State $state -Name $field -Default ""
         }
+        # The snapshot and state were saved as one pair, so the restored bytes are the
+        # database that generation named. A new generation would move the verification
+        # change target although nothing changed. Installation proofs stay invalidated.
+        if ($pairedToolingGeneration) { $restoreUpdates["toolingInfoBaseGeneration"] = $pairedToolingGeneration }
     }
     Update-DevBranchState -State $state -Updates $restoreUpdates
     Sync-DevBranchContextToDotEnv -State (Read-DevBranchState -Name $DevBranchName) -AllowIncompleteExtension
