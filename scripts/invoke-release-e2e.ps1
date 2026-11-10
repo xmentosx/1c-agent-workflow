@@ -373,6 +373,7 @@ function Initialize-E2EVerificationChangePlan {
     # a registered plan for the full unaccepted delta. The Release fixture plans its
     # own acceptance suite for exactly that delta through the installed owner, as
     # the Develop journey does; it never takes over or narrows another task.
+    $script:e2eVerificationChangePlanned = $false
     $inspection = Invoke-E2EHelper -Action 'begin-verification-change' -TimeoutSeconds 300 -AllowFailure -SkipVerificationChangePlan
     $view = Read-E2EHelperJsonResult -Path $inspection.stdoutPath
     if ([int]$inspection.exitCode -ne 0) {
@@ -415,6 +416,7 @@ function Initialize-E2EVerificationChangePlan {
     $planPath = Join-Path $directory 'plan.json'
     [IO.File]::WriteAllText($planPath, ($plan | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
     [void](Invoke-E2EHelper -Action 'begin-verification-change' -TimeoutSeconds 300 -AdditionalArguments @('-VerificationEvidencePath', $planPath) -SkipVerificationChangePlan)
+    $script:e2eVerificationChangePlanned = $true
 }
 
 function Invoke-E2EHelper {
@@ -2870,6 +2872,13 @@ try {
             $refreshState = (Get-E2EState).value
             if ([string]$refreshState.lastVerificationStatus -ne "passed" -or -not [string]$refreshState.lastVerifiedAt) {
                 throw "Release verification refresh did not produce a passed verification."
+            }
+            # Under the change model a passed check leaves the task partial until its
+            # change is completed, and result/export accept only fresh passed
+            # verification. Complete the fixture task through its owner, as the
+            # Develop journey does after its check, before saving the checkpoint.
+            if ($script:e2eVerificationChangePlanned) {
+                Invoke-E2EHelper -Action "complete-verification-change" -TimeoutSeconds 300 | Out-Null
             }
             # Result/export deliberately restores post-config state. Promote the
             # freshly verified state and infobase into that checkpoint first so
