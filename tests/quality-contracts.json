@@ -39,6 +39,7 @@
     "tests/pester/VanessaClientCode.Tests.ps1": ["onescript","windows","git"],
     "tests/pester/VanessaAgentFocus.Tests.ps1": ["onescript","windows","git"],
     "tests/pester/VanessaTestClientPorts.Tests.ps1": ["onescript","windows","git"],
+    "tests/pester/VanessaBuildRuntime.Tests.ps1": ["onescript","windows"],
     "tests/pester/HostNativeTransport.Tests.ps1": ["python-native","windows"],
     "tests/pester/HostLinux.Tests.ps1": ["python-linux","windows"],
     "tests/pester/HostCodeChecker.Tests.ps1": ["python-codechecker","windows"],

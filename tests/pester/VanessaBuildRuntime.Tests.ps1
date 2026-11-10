@@ -436,3 +436,115 @@ Describe 'Build service-template and cleanup contract' {
         $builder | Should -Match 'if \(\$KeepWork -or -not \$nativeCleanupConfirmed\)'
     }
 }
+
+Describe 'Compile.os transient license refusal' {
+    BeforeAll {
+        . (Join-Path $script:BuildRuntimeRepo '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        $script:LicenseEngine = (Get-Command oscript -ErrorAction Stop).Source
+        # Compile.os-shaped flow: the call site and its /Out file are verbatim upstream.
+        $script:LicenseFlow = @'
+Перем УправлениеКонфигуратором;
+Перем Лог;
+ПодключитьСценарий(АргументыКоманднойСтроки[0], "ДвойникКонфигуратора");
+УправлениеКонфигуратором = Новый ДвойникКонфигуратора;
+УправлениеКонфигуратором.Ответы = СтрРазделить(АргументыКоманднойСтроки[2], ",");
+Лог = УправлениеКонфигуратором;
+КаталогБазы = ПолучитьИмяВременногоФайла();
+ПараметрыЗапуска = Новый Массив;
+ИмяФайлаOut = АргументыКоманднойСтроки[1];
+ПараметрыЗапуска.Добавить("/Out """ + ИмяФайлаOut + """");
+Попытка
+	УправлениеКонфигуратором.ВыполнитьКоманду(ПараметрыЗапуска);
+Исключение
+	Сообщить("LOAD_FAILED after " + УправлениеКонфигуратором.Вызовы + ": " + ОписаниеОшибки());
+	ЗавершитьРаботу(3);
+КонецПопытки;
+Сообщить("LOADED after " + УправлениеКонфигуратором.Вызовы);
+'@
+        # Designer double: each launch writes its /Out text and fails like v8runner on a nonzero exit.
+        $script:LicenseDesigner = @'
+Перем Ответы Экспорт;
+Перем Вызовы Экспорт;
+Процедура ПутьКПлатформе1С(Путь) Экспорт
+КонецПроцедуры
+Процедура ВыполнитьКоманду(Параметры) Экспорт
+	Вызовы = Вызовы + 1;
+	Ответ = Ответы[Мин(Вызовы, Ответы.Количество()) - 1];
+	Путь = СтрЗаменить(Сред(Параметры[0], 6), """", "");
+	Текст = "";
+	Если Ответ = "license" Тогда
+		Текст = "Не найдена лицензия. Не обнаружен ключ защиты программы или полученная программная лицензия!";
+	ИначеЕсли Ответ = "error" Тогда
+		Текст = "Ошибка разбора файла обработки";
+	КонецЕсли;
+	Запись = Новый ЗаписьТекста(Путь, КодировкаТекста.UTF8);
+	Запись.Записать(Текст);
+	Запись.Закрыть();
+	Если Ответ <> "ok" Тогда
+		ВызватьИсключение "Получен ненулевой код возврата 1";
+	КонецЕсли;
+КонецПроцедуры
+Процедура Предупреждение(Текст) Экспорт
+	Сообщить("WARN " + Текст);
+КонецПроцедуры
+Процедура ПриСозданииОбъекта()
+	Вызовы = 0;
+КонецПроцедуры
+'@
+        function Invoke-LicenseFlow([string]$Answers) {
+            $root = Join-Path $TestDrive ('Лицензия с пробелом ' + [guid]::NewGuid().ToString('N'))
+            $source = Join-Path $root 'Исходники/Compile.os'
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $source))
+            [IO.File]::WriteAllText($source, $script:LicenseFlow, [Text.UTF8Encoding]::new($true))
+            $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+            $destination = Join-Path $root 'Исполнение/Compile.os'
+            New-VanessaBuildExecutionCopy -SourcePath $source -DestinationPath $destination -ExpectedSha256 $hash | Out-Null
+            $execution = [IO.File]::ReadAllText($destination, [Text.Encoding]::UTF8)
+            $execution | Should -Match ([regex]::Escape('ITLПаузаЛицензииМс = 15000; ITLПовторовЛицензии = 20;'))
+            # The probe keeps the production retry bound and only drops the pause.
+            [IO.File]::WriteAllText($destination, $execution.Replace('ITLПаузаЛицензииМс = 15000;', 'ITLПаузаЛицензииМс = 0;'), [Text.UTF8Encoding]::new($true))
+            $designer = Join-Path $root 'Двойник конфигуратора.os'
+            [IO.File]::WriteAllText($designer, $script:LicenseDesigner, [Text.UTF8Encoding]::new($true))
+            $start = [Diagnostics.ProcessStartInfo]::new()
+            $start.FileName = $script:LicenseEngine
+            $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-encoding=utf-8', $destination, $designer, (Join-Path $root 'вывод конфигуратора.txt'), $Answers)
+            $start.UseShellExecute = $false; $start.CreateNoWindow = $true
+            $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
+            $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false); $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+            $process = [Diagnostics.Process]::Start($start)
+            try {
+                $stdout = $process.StandardOutput.ReadToEndAsync(); $stderr = $process.StandardError.ReadToEndAsync()
+                if (-not $process.WaitForExit(30000)) { $process.Kill(); $process.WaitForExit(); throw 'License retry probe timed out.' }
+                [pscustomobject]@{ exitCode = $process.ExitCode; output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult() }
+            } finally { $process.Dispose() }
+        }
+    }
+
+    It 'repeats the same load only after a license refusal' {
+        $result = Invoke-LicenseFlow 'license,license,ok'
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match 'LOADED after 3'
+        @([regex]::Matches($result.output, 'WARN ITL: 1C license refused')).Count | Should -Be 2
+    }
+
+    It 'loads once without a refusal' {
+        $result = Invoke-LicenseFlow 'ok'
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match 'LOADED after 1'
+        $result.output | Should -Not -Match 'WARN'
+    }
+
+    It 'fails another Designer error at once with the original exception' {
+        $result = Invoke-LicenseFlow 'error,ok'
+        $result.exitCode | Should -Be 3 -Because $result.output
+        $result.output | Should -Match 'LOAD_FAILED after 1: .*Получен ненулевой код возврата 1'
+        $result.output | Should -Not -Match 'WARN'
+    }
+
+    It 'stops after the retry bound with the original exception' {
+        $result = Invoke-LicenseFlow 'license'
+        $result.exitCode | Should -Be 3 -Because $result.output
+        $result.output | Should -Match 'LOAD_FAILED after 21: .*Получен ненулевой код возврата 1'
+        @([regex]::Matches($result.output, 'WARN ITL: 1C license refused')).Count | Should -Be 20
+    }
+}

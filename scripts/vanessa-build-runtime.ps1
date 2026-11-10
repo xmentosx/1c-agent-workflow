@@ -23,6 +23,27 @@
             $cacheCheck += [Environment]::NewLine + 'Если Найти(Стр, "' + $librarySteps[0] + '") = 0 Тогда ВызватьИсключение "' + $librarySteps[1] + '"; КонецЕсли;'
         }
         $changes += ,@($cacheRead, $cacheCheck)
+    } else {
+        # Compile.os starts one Designer per processor in a fast burst. After about
+        # 140 such launches the platform can refuse its license for a while even with
+        # no other 1C process running; slower launches are not refused. Only that
+        # refusal repeats the same idempotent load after a bounded pause.
+        $changes += ,@('УправлениеКонфигуратором.ВыполнитьКоманду(ПараметрыЗапуска);', ((@(
+            'ITLПаузаЛицензииМс = 15000; ITLПовторовЛицензии = 20; ITLПовторЛицензии = 0;'
+            'Пока Истина Цикл'
+            'Попытка'
+            'УправлениеКонфигуратором.ВыполнитьКоманду(ПараметрыЗапуска);'
+            'Прервать;'
+            'Исключение'
+            'ITLТекстOut = "";'
+            'Если Новый Файл(ИмяФайлаOut).Существует() Тогда ITLЧтениеOut = Новый ЧтениеТекста(ИмяФайлаOut, "UTF-8"); ITLТекстOut = ITLЧтениеOut.Прочитать(); ITLЧтениеOut.Закрыть(); КонецЕсли;'
+            'ITLПовторЛицензии = ITLПовторЛицензии + 1;'
+            'Если ITLПовторЛицензии > ITLПовторовЛицензии Или Найти(ITLТекстOut, "Не найдена лицензия") = 0 Тогда ВызватьИсключение; КонецЕсли;'
+            'Лог.Предупреждение("ITL: 1C license refused; the same load repeats in " + Строка(ITLПаузаЛицензииМс / 1000) + " s, retry " + Строка(ITLПовторЛицензии) + " of " + Строка(ITLПовторовЛицензии));'
+            'Приостановить(ITLПаузаЛицензииМс);'
+            'КонецПопытки;'
+            'КонецЦикла;'
+        )) -join [Environment]::NewLine))
     }
     foreach ($change in $changes) {
         if ([regex]::Matches($text, [regex]::Escape($change[0])).Count -ne 1) {

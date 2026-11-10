@@ -126,8 +126,13 @@ The native r12 build has patch SHA-256
 SHA-256 `c98d97e2bb8cd20f10f66e282429721e28991ce716f121347bc544f322b920bd`; its
 thin-client check logged no errors. Bursts of about 140 Designer launches in
 `Compile.os` met transient "Не найдена лицензия" refusals with no other 1C
-process running; the build continued its work directory with
-`-ResumeWorkDirectory`, where Compile.os skips processors already built.
+process running; slower guarded launches were not refused. That build
+continued its work directory with `-ResumeWorkDirectory`. The Compile.os
+execution adapter now repeats only a load whose `/Out` reports this refusal,
+after 15 seconds and at most 20 times per processor; any other Designer failure,
+or the last refusal, keeps the original exception (`VanessaBuildRuntime.Tests.ps1`).
+A later plain r12 rebuild met four such refusals; each load repeated after the
+pause and the build passed all 210 processors and its thin-client check.
 
 One native scenario ran with profiles A and B on two file bases and the two-port
 range 48700-48701: connect A, connect B, close B, connect B again at once, then
