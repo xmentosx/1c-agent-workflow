@@ -37,6 +37,13 @@
                     $script:LifecycleGate6Snapshots[$DesignerArgs[1]]=(Get-FileHash -LiteralPath $DesignerArgs[1]).Hash
                     return $true
                 }
+                {$_ -in @('/RollbackCfg','/DeleteCfg')} {
+                    # Checked-load rollback to the database configuration (no DT).
+                    $index=[Array]::IndexOf($DesignerArgs,'/DumpResult')
+                    if($index -ge 0){[IO.File]::WriteAllText($DesignerArgs[$index+1],'0',[Text.UTF8Encoding]::new($false))}
+                    return $true
+                }
+                '/DumpDBCfgList' { return $true }
                 '/RestoreIB' {
                     if(-not $script:LifecycleGate6Snapshots.ContainsKey($DesignerArgs[1]) -or
                         (Get-FileHash -LiteralPath $DesignerArgs[1]).Hash -cne $script:LifecycleGate6Snapshots[$DesignerArgs[1]]){throw 'Fixture rollback DT is missing or changed'}

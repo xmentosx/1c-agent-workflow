@@ -25,7 +25,7 @@ function Get-SourceE2ECopyReportBinding {
         if($negative -and $negative.Value -and [string]$negative.Value.status -ceq 'passed'){
             $proof=$negative.Value.proof
             if([string]$proof.projectRoot -ieq (Join-Path $Parent 'branch') -and
-                $proof.snapshotRestored -eq $true -and $proof.cursorRestored -eq $true -and $proof.nativeOperationsReleased -eq $true){
+                (@($proof.PSObject.Properties | Where-Object { $_.Name -in @('snapshotRestored','rollbackConfirmed') -and $_.Value -eq $true }).Count -gt 0) -and $proof.cursorRestored -eq $true -and $proof.nativeOperationsReleased -eq $true){
                 return @{kind='passed-negative';path=$path;sha256=[string]$manifest.identity.reportSha256;capsule=$null}
             }
         }

@@ -1034,7 +1034,7 @@ function Get-ItlExecutionGuardHolderClass {
     }
     $designer = @($owned | Where-Object {
         [string]$_.Name -match '^1cv8(?:\.exe)?$' -and [string]$_.CommandLine -match '(?i)\bDESIGNER\b' -and
-        [string]$_.CommandLine -match '(?i)/(?:LoadConfigFromFiles|LoadCfg|UpdateDBCfg|UpdateCfg|RestoreIB|ConfigurationRepositoryUpdateCfg|ManageCfgSupport|DeleteCfg)\b'
+        [string]$_.CommandLine -match '(?i)/(?:LoadConfigFromFiles|LoadCfg|UpdateDBCfg|UpdateCfg|RestoreIB|ConfigurationRepositoryUpdateCfg|ManageCfgSupport|DeleteCfg|RollbackCfg)\b'
     })
     if ($designer.Count -gt 0) {
         # Interrupting a mutating Designer can damage the branch database. Its

@@ -9,6 +9,7 @@ BeforeAll {
         @{path='scripts/check.ps1';names=@('Get-DevelopE2EIdentitySha256')},
         @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1';names=@('Write-ConfigLoadRejectionEvidence')},
         @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1';names=@('Normalize-Agent1cFullPathText','Resolve-Agent1cFullPath','Set-RunResultArtifacts','Read-DesignerBatchStrictUtf8Text')},
+        @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1';names=@('Get-StateValue')},
         @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1';names=@('Test-OneCNativeOperationJournalReleased')}
     )) {
         $tokens=$null; $errors=$null
@@ -35,6 +36,7 @@ BeforeAll {
         [IO.File]::WriteAllText($Path,($Value | ConvertTo-Json -Depth 12 -Compress),[Text.UTF8Encoding]::new($false))
     }
     function New-RejectionFixture {
+        param([switch]$NativeRollback)
         $root=Join-Path $TestDrive ('Git ' + (-join [char[]](0x041F,0x0440,0x043E,0x0435,0x043A,0x0442)) + ' ' + [guid]::NewGuid().ToString('N'))
         $source=Join-Path $root 'src/cf/CommonModules/Reproducer/Ext/Module.bsl'
         [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($source)) | Out-Null
@@ -47,10 +49,20 @@ BeforeAll {
         $diagnostic='Reproducer: incorrect reference MissingProperty'
         $message="GATE6_CHECK_FAILED: step=configuration; process exit=101; /DumpResult=101; result=$result; log=$log; diagnostics=$diagnostic. Do not apply the database configuration; correct or adjudicate the source findings and repeat the original operation."
         $failure=[Management.Automation.ErrorRecord]::new([Exception]::new($message),'fixture',[Management.Automation.ErrorCategory]::InvalidData,$null)
-        $failure.Exception.Data['ItlConfigLoadSnapshotRestored']=[pscustomobject]@{
-            projectRoot=$root;infoBaseKind='file';infoBasePath=(Join-Path $root 'base');snapshotSha256=('a'*64);
-            cursorRestored=$true;applyStarted=$false;sourceFingerprint=('v2|git-tree-sha256|'+'b'*64);restorationLogPath=$restore
-            nativeOperationsReleased=$true
+        $failure.Exception.Data['ItlConfigLoadSnapshotRestored']=if ($NativeRollback) {
+            # Current owner: a confirmed native rollback to the database configuration, no DT.
+            [pscustomobject]@{
+                projectRoot=$root;infoBaseKind='file';infoBasePath=(Join-Path $root 'base');mechanism='rollback-cfg'
+                rollbackPoint=[pscustomobject]@{kind='db-configuration';extensionName='';attemptId=('d'*32);baseIdentity=('c'*64);mechanism='rollback-cfg';unfinishedPreviousRolledBack=$false}
+                snapshotPath=$null;snapshotSha256=$null;cursorRestored=$true;applyStarted=$false
+                sourceFingerprint=('v2|git-tree-sha256|'+'b'*64);restorationLogPath=$restore;nativeOperationsReleased=$true
+            }
+        } else {
+            [pscustomobject]@{
+                projectRoot=$root;infoBaseKind='file';infoBasePath=(Join-Path $root 'base');snapshotSha256=('a'*64);
+                cursorRestored=$true;applyStarted=$false;sourceFingerprint=('v2|git-tree-sha256|'+'b'*64);restorationLogPath=$restore
+                nativeOperationsReleased=$true
+            }
         }
         $console=Join-Path $root 'console.log'
         $hostLines=@(Write-ConfigLoadRejectionEvidence -Failure $failure 6>&1 | ForEach-Object { [string]$_ })
@@ -254,6 +266,27 @@ Describe 'Configuration finding is a negative workflow acceptance, never a posit
         $fixture=New-RejectionFixture
         $receipt=Get-Content -LiteralPath $fixture.Receipt -Raw -Encoding UTF8 | ConvertFrom-Json
         $receipt.$field=$value; Write-RejectionJson $fixture.Receipt $receipt
+        { Assert-FixtureRejection $fixture } | Should -Throw '*ROLLBACK_UNPROVEN*'
+    }
+    It 'accepts a confirmed native rollback receipt without a DT' {
+        $fixture=New-RejectionFixture -NativeRollback
+        $receipt=Get-Content -LiteralPath $fixture.Receipt -Raw -Encoding UTF8 | ConvertFrom-Json
+        $receipt.snapshotRestored | Should -BeFalse
+        $receipt.rollbackConfirmed | Should -BeTrue
+        $receipt.mechanism | Should -BeExactly 'rollback-cfg'
+        (Assert-FixtureRejection $fixture).status | Should -BeExactly 'passed'
+    }
+    It 'rejects a native rollback receipt without its confirmed rollback point (<field>)' -ForEach @(
+        @{field='rollbackConfirmed';value=$false},@{field='mechanism';value='restore-ib'},@{field='baseIdentity';value='not-a-hash'},@{field='pointMechanism';value='delete-cfg'}
+    ) {
+        $fixture=New-RejectionFixture -NativeRollback
+        $receipt=Get-Content -LiteralPath $fixture.Receipt -Raw -Encoding UTF8 | ConvertFrom-Json
+        switch ($field) {
+            'baseIdentity' { $receipt.rollbackPoint.baseIdentity=$value }
+            'pointMechanism' { $receipt.rollbackPoint.mechanism=$value }
+            default { $receipt.$field=$value }
+        }
+        Write-RejectionJson $fixture.Receipt $receipt
         { Assert-FixtureRejection $fixture } | Should -Throw '*ROLLBACK_UNPROVEN*'
     }
     It 'rejects changed native evidence and dirty tracked state' {

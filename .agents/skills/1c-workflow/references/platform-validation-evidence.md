@@ -39,8 +39,8 @@ platform ladder. Do not rewrite checker output to make it eligible.
 
 The same load owner separately assesses existing structural findings when
 full platform checking is required. Its operation-local before-check comes
-from the proven previously loaded corpus, with the existing DT snapshot and
-the same target/platform/modes. It captures and rechecks original log/result
+from the proven previously loaded corpus, bound to the same load attempt and
+applied base as its rollback point, and the same target/platform/modes. It captures and rechecks original log/result
 hashes. Only exact unchanged findings in proven unaffected object sources may
 permit apply; unknown dependency impact keeps the strict path. There is no
 global whitelist or manual baseline override. The receipt preserves both

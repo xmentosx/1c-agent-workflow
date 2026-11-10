@@ -92,6 +92,8 @@ Describe 'Checked load continuation with development and production cadence' {
         $f | Add-Member -NotePropertyName previous -NotePropertyValue (Get-ConfigSourceFingerprint -ExportPath 'src/cf')
         [IO.Directory]::CreateDirectory($f.infoBase) | Out-Null
         [IO.File]::WriteAllBytes($f.database,[byte[]](1,2,3,4))
+        # The database configuration that /RollbackCfg returns the editable object to.
+        $f | Add-Member -NotePropertyName dbConfiguration -NotePropertyValue ([byte[]](1,2,3,4))
         $before=@{safeDevBranchName='continuation';devBranchName='continuation';infoBaseKind='file';devBranchInfoBasePath=$f.infoBase;
             worktreePath=$f.root;configLoadStatus='passed';lastConfigDesignerFingerprint=$f.previous.fingerprint;
             lastConfigDesignerTreeObjectId=$f.previous.treeObjectId;lastConfigDesignerLoadedAt='2026-10-04T00:00:00Z';
@@ -137,10 +139,13 @@ Describe 'Checked load continuation with development and production cadence' {
                     $code=if($f.fault -eq 'zero-code findings'){0}else{101}
                     $log='ОбщийМодуль.Прежний.Модуль Возможно ошибочный метод: "ПрежнийМетод"'
                 }
-                '/UpdateDBCfg' {$f.applied=$true}
-                '/RestoreIB' {
-                    if($f.fault -eq 'restore uncertain'){throw 'fixture exact restore failed'}
-                    [IO.File]::Copy($DesignerArgs[1],$f.database,$true)
+                '/UpdateDBCfg' {
+                    if($f.fault -eq 'apply failure'){$code=1;$log='Ошибка реструктуризации базы данных.'}
+                    else{$f.applied=$true;$f.dbConfiguration=[IO.File]::ReadAllBytes($f.database)}
+                }
+                '/RollbackCfg' {
+                    if($f.fault -in @('restore uncertain','rollback refused')){throw 'fixture native rollback failed'}
+                    [IO.File]::WriteAllBytes($f.database,$f.dbConfiguration)
                 }
             }
             [IO.File]::WriteAllText($script:LastLogPath,$log,[Text.UTF8Encoding]::new($false))
@@ -153,7 +158,7 @@ Describe 'Checked load continuation with development and production cadence' {
                 throw $failure
             }
             # Preserve the observed legacy combined-load behavior in RED.
-            if(@($DesignerArgs|Where-Object{$_ -ceq '/UpdateDBCfg'}).Count -eq 1){$f.applied=$true}
+            if(@($DesignerArgs|Where-Object{$_ -ceq '/UpdateDBCfg'}).Count -eq 1){$f.applied=$true;$f.dbConfiguration=[IO.File]::ReadAllBytes($f.database)}
         }
     }
 
@@ -190,7 +195,7 @@ Describe 'Checked load continuation with development and production cadence' {
         $failure | Should -Not -BeNullOrEmpty
         $failure.Exception.Message | Should -Match 'GATE6_CHECK_FAILED.*structural=1 \(1 unique\), compiler=0, unknown=0.*fullFindings='
         $failure.Exception.Message.Length | Should -BeLessThan 2500
-        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/RestoreIB')
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/CheckConfig','/RollbackCfg')
         $f.applied | Should -BeFalse
         [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
         [IO.File]::ReadAllBytes((Join-Path $f.sourceRoot 'ConfigDumpInfo.xml')) | Should -Be $f.cursorBytes
@@ -198,7 +203,11 @@ Describe 'Checked load continuation with development and production cadence' {
         $receiptPaths=@(Get-ChildItem -LiteralPath (Join-Path $f.root 'logs/1c') -Filter '1c-gate6-rejection*.json')
         $receiptPaths | Should -HaveCount 1
         $receipt=Get-Content -LiteralPath $receiptPaths[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-        $receipt.snapshotRestored | Should -BeTrue
+        $receipt.rollbackConfirmed | Should -BeTrue
+        $receipt.mechanism | Should -BeExactly 'rollback-cfg'
+        $receipt.rollbackPoint.kind | Should -BeExactly 'db-configuration'
+        $receipt.rollbackPoint.baseIdentity | Should -Match '^[a-f0-9]{64}$'
+        $receipt.snapshotRestored | Should -BeFalse
         $receipt.cursorRestored | Should -BeTrue
         $receipt.applyStarted | Should -BeFalse
         $receipt.legacyContextAssessment.eligible | Should -BeFalse
@@ -233,7 +242,7 @@ Describe 'Checked load continuation with development and production cadence' {
         Save-ContinuationCoverage $f
         $script:VerificationEvidencePath=$f.evidence
         $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' -Mode Full
-        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})[0].arguments | Should -Not -Contain '-partial'
         $result.loadModeUsed | Should -BeExactly 'full'
         $f.applied | Should -BeTrue
@@ -249,7 +258,7 @@ Describe 'Checked load continuation with development and production cadence' {
         $script:VerificationEvidencePath=$f.evidence
         $f.fault='partial native failure'
         $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
-        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB','/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/RollbackCfg','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         $loads=@($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})
         $loads.Count | Should -Be 2
         $loads[0].arguments | Should -Contain '-partial'
@@ -276,7 +285,7 @@ Describe 'Checked load continuation with development and production cadence' {
         {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw '*CheckModules*'
         @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Contain '/CheckModules'
         @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/UpdateDBCfg'
-        @($f.calls|Where-Object{$_.arguments[0] -eq '/RestoreIB'}).Count | Should -Be 2
+        @($f.calls|Where-Object{$_.arguments[0] -eq '/RollbackCfg'}).Count | Should -Be 2
         $f.applied | Should -BeFalse
         [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
         [IO.File]::ReadAllBytes((Join-Path $f.sourceRoot 'ConfigDumpInfo.xml')) | Should -Be $f.cursorBytes
@@ -309,7 +318,7 @@ Describe 'Checked load continuation with development and production cadence' {
         $script:VerificationEvidencePath=$f.evidence
         $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
         $operations=@($f.calls|ForEach-Object{$_.arguments[0]})
-        $operations | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        $operations | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})[0].arguments | Should -Not -Contain '/UpdateDBCfg'
         $f.applied | Should -BeTrue
         $result.loaded | Should -BeTrue
@@ -328,7 +337,7 @@ Describe 'Checked load continuation with development and production cadence' {
         $f.fault=$Fault
         {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw
         $f.applied | Should -BeFalse
-        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Contain '/RestoreIB'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Contain '/RollbackCfg'
         @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/UpdateDBCfg'
         [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
         [IO.File]::ReadAllBytes((Join-Path $f.sourceRoot 'ConfigDumpInfo.xml')) | Should -Be $f.cursorBytes
@@ -349,7 +358,7 @@ Describe 'Checked load continuation with development and production cadence' {
         $state | Add-Member -NotePropertyName branchSeedSourceKey -NotePropertyValue 'original-seed'
         $state | Add-Member -NotePropertyName branchSeedSyncId -NotePropertyValue 'original-sync'
         $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State $state -ExportPath 'src/cf' -Mode Full
-        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/CheckConfig','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/CheckConfig','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
         $result.gate6Evidence.steps[-1].assessment.status | Should -BeExactly 'accepted-with-preexisting-findings'
         $result.gate6Evidence.steps[-1].nativePassed | Should -BeFalse
         $f.applied | Should -BeTrue
@@ -364,7 +373,7 @@ Describe 'Checked load continuation with development and production cadence' {
         $f.fault=$Fault
         $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
         $f.applied | Should -BeTrue
-        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         $result.gate6Evidence.steps[-1].status | Should -BeExactly 'not-required-development'
     }
 
@@ -411,7 +420,12 @@ Describe 'Checked load continuation with development and production cadence' {
         $f.applied | Should -BeFalse
         if($Fault -eq 'borrowed failure'){
             @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/RestoreIB'
+            @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/RollbackCfg'
             $duty.payload.status | Should -BeExactly 'pending'
+        }
+        if($Fault -eq 'restore uncertain'){
+            # D3a: the unconfirmed rollback clears the tree proof, so the retry is one strict full load.
+            $state.lastConfigDesignerTreeObjectId | Should -BeNullOrEmpty
         }
         if($Fault -eq 'owner drift'){
             $state.devBranchInfoBasePath | Should -BeExactly (Join-Path $f.root 'Другая база')
@@ -419,16 +433,78 @@ Describe 'Checked load continuation with development and production cadence' {
         }
     }
 
-    It 'does not restore old loaded proof or replay rollback when database apply loses its completion acknowledgement' {
+    It 'does not restore old loaded proof after a started database apply and retries through one full load' {
         $f=$script:continuationFixture
-        Save-ContinuationCoverage $f
-        $script:VerificationEvidencePath=$f.evidence
-        Mock Complete-OneCDatabaseRestorationDuty {throw 'fixture committed acknowledgement lost'} -ParameterFilter {$Resolution -eq 'committed'}
-        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw '*acknowledgement lost*'
-        $f.applied | Should -BeTrue
-        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/RestoreIB'
+        $f.fault='apply failure'
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw 'Original native /UpdateDBCfg failed*'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg','/RollbackCfg')
+        $f.applied | Should -BeFalse
+        [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
         $state=Read-DevBranchStateFile $f.statePath
         $state.lastConfigDesignerFingerprint | Should -BeNullOrEmpty
+        $state.lastConfigDesignerTreeObjectId | Should -BeNullOrEmpty
         $state.configLoadStatus | Should -BeExactly 'pending'
+        $f.fault='';$f.calls.Clear()
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        $result.loadReason | Should -BeExactly 'designer-tree-proof-missing-full-load'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        $f.calls[0].arguments | Should -Not -Contain '-partial'
+        $f.applied | Should -BeTrue
+        (Read-DevBranchStateFile $f.statePath).lastConfigDesignerTreeObjectId | Should -BeExactly $f.current.treeObjectId
+    }
+
+    It 'rolls back an unfinished previous load before any check and keeps the retry partial' {
+        $f=$script:continuationFixture
+        # A killed run left a candidate in the editable object: the fingerprint is
+        # empty while the applied tree is still recorded.
+        Update-DevBranchState -State (Read-DevBranchStateFile $f.statePath) -Updates @{lastConfigDesignerFingerprint='';configLoadStatus='pending';lastGate6Evidence=$null}
+        [IO.File]::WriteAllBytes($f.database,[byte[]](6,6,6))
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' 6>$null
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/RollbackCfg','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        $f.calls[0].arguments[0..1] | Should -Be @('/RollbackCfg','/DumpResult')
+        $f.calls[1].arguments | Should -Contain '-partial'
+        $result.loadModeUsed | Should -BeExactly 'partial'
+        $result.gate6Evidence.editableLoad.rollbackPoint.unfinishedPreviousRolledBack | Should -BeTrue
+        $f.applied | Should -BeTrue
+    }
+
+    It 'keeps an ordinary load after a finished one free of an extra rollback' {
+        $f=$script:continuationFixture
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/RollbackCfg'
+        $result.gate6Evidence.editableLoad.rollbackPoint.unfinishedPreviousRolledBack | Should -BeFalse
+    }
+
+    It 'stops before loading when the unfinished-load rollback fails and continues through one strict full load' {
+        $f=$script:continuationFixture
+        Update-DevBranchState -State (Read-DevBranchStateFile $f.statePath) -Updates @{lastConfigDesignerFingerprint='';configLoadStatus='pending';lastGate6Evidence=$null}
+        $f.fault='rollback refused'
+        $failure=try{Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf';$null}catch{$_}
+        $failure.Exception.Message | Should -Match '^GATE6_ROLLBACK_RECOVERY_FAILED: The previous load of this object did not finish; no editable load was performed\..*fixture native rollback failed.*strict full load.*reset-dev-branch'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/RollbackCfg')
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.lastConfigDesignerFingerprint | Should -BeNullOrEmpty
+        $state.lastConfigDesignerTreeObjectId | Should -BeNullOrEmpty
+        # A persistent rollback failure must not repeat: the retry replaces the object from sources.
+        $f.calls.Clear()
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        $f.calls[0].arguments | Should -Not -Contain '-partial'
+        $result.loadReason | Should -BeExactly 'designer-tree-proof-missing-full-load'
+        $f.applied | Should -BeTrue
+    }
+
+    It 'rejects legacy finding acceptance after a failed rollback because the retry has no proven tree' {
+        $f=$script:continuationFixture
+        $script:ResultPurpose='production'
+        $state=Read-DevBranchStateFile $f.statePath
+        Update-DevBranchState -State $state -Updates @{loadReason='branch-copy-seed';branchSeedConfigurationFingerprint=$f.previous.fingerprint;branchSeedSourceKey='original-seed';branchSeedSyncId='original-sync';lastConfigDesignerFingerprint='';configLoadStatus='pending'}
+        $f.fault='rollback refused'
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw '*GATE6_ROLLBACK_RECOVERY_FAILED*'
+        $f.fault='';$f.calls.Clear()
+        $failure=try{Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' 6>$null;$null}catch{$_}
+        $failure.Exception.Message | Should -Match 'GATE6_CHECK_FAILED: step=configuration'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/UpdateDBCfg'
+        @($f.calls|ForEach-Object{$_.arguments[0]})[0] | Should -Be '/LoadConfigFromFiles'
     }
 }
