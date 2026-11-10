@@ -483,7 +483,7 @@ Describe "Per-infobase 1C session admission" {
         $lifecycleAst = [System.Management.Automation.Language.Parser]::ParseInput($lifecycle, [ref]$null, [ref]$null)
         $lifecycleFunctions = $lifecycleAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
 
-        ($functions | Where-Object Name -eq "Invoke-Designer").Extent.Text | Should -Match "Invoke-WithOneCSessionAdmissionContext"
+        ($functions | Where-Object Name -eq "Invoke-DesignerAttempt").Extent.Text | Should -Match "Invoke-WithOneCSessionAdmissionContext"
         ($functions | Where-Object Name -eq "Invoke-DesignerInteractive").Extent.Text | Should -Match "Invoke-WithOneCSessionAdmissionContext"
         ($functions | Where-Object Name -eq "Invoke-Enterprise").Extent.Text | Should -Match "ExpectedSessionCount"
         $backgroundFunction = ($functions | Where-Object Name -eq "Start-EnterpriseBackground").Extent.Text

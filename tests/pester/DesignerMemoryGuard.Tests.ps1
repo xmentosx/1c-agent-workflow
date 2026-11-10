@@ -257,7 +257,9 @@ while ($true) {
         $errors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($CorePath, [ref]$tokens, [ref]$errors)
         $functions = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
-        ($functions | Where-Object Name -eq "Invoke-Designer").Extent.Text | Should -Match 'MaxWorkingSetMb'
+        # Invoke-Designer repeats a license-refused attempt; each automated attempt carries the limit.
+        ($functions | Where-Object Name -eq "Invoke-Designer").Extent.Text | Should -Match 'Invoke-DesignerAttempt '
+        ($functions | Where-Object Name -eq "Invoke-DesignerAttempt").Extent.Text | Should -Match 'MaxWorkingSetMb'
         ($functions | Where-Object Name -eq "Invoke-DesignerInteractive").Extent.Text | Should -Not -Match 'MaxWorkingSetMb'
         ($functions | Where-Object Name -eq "Invoke-Enterprise").Extent.Text | Should -Not -Match 'MaxWorkingSetMb'
     }
