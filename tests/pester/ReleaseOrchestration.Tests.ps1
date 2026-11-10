@@ -172,6 +172,15 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             Set-Content -LiteralPath (Join-Path $ProjectRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<ConfigDumpInfo>cursor-$releaseCheckCount</ConfigDumpInfo>"
         }
         if ($isStopOnErrorProbe) { [Environment]::Exit(1) }
+        $registered | Add-Member -NotePropertyName checkedTree -NotePropertyValue $currentTree -Force
+        Set-Content -LiteralPath $changePlanPath -Encoding UTF8 -Value ($registered | ConvertTo-Json -Depth 8)
+    }
+    "complete-verification-change" {
+        # A passed check leaves the task partial until its change is completed.
+        $registered = if (Test-Path -LiteralPath $changePlanPath) { Get-Content -LiteralPath $changePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+        if ($null -eq $registered -or [string]$registered.checkedTree -cne $currentTree) { throw "VERIFICATION_CHANGE_PENDING: satisfy the missing current check" }
+        $registered | Add-Member -NotePropertyName acceptedTree -NotePropertyValue $currentTree -Force
+        Set-Content -LiteralPath $changePlanPath -Encoding UTF8 -Value ($registered | ConvertTo-Json -Depth 8)
     }
     "release-e2e-snapshot" {
         $snapshotPath = Join-Path $ProjectRoot $ReleaseSnapshotPath
@@ -232,7 +241,9 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
     }
     "status" {
         if ($VanessaFeaturePath) { throw "release E2E status must preserve the fresh full verification scope" }
-        Write-Host "Verification fresh passed: True"
+        $registered = if (Test-Path -LiteralPath $changePlanPath) { Get-Content -LiteralPath $changePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+        $accepted = $null -ne $registered -and [string]$registered.acceptedTree -ceq $currentTree
+        Write-Host "Verification fresh passed: $(if ($accepted) { 'True' } else { 'False' })"
     }
     "export-dev-branch-result" {
         if ($VanessaFeaturePath) { throw "release E2E export must preserve the fresh full verification scope" }
@@ -420,6 +431,8 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             # Every check runs under a plan registered for its own tree and delta.
             @($actions | Where-Object { $_ -like "plan:*" }).Count | Should -Be 4
             @($actions | Where-Object { $_ -eq "begin-verification-change" }).Count | Should -Be 8
+            # Result/export consume task acceptance: the refreshed check is completed once.
+            @($actions | Where-Object { $_ -eq "complete-verification-change" }).Count | Should -Be 1
             $actions | Should -Not -Contain "release-e2e-approve-vanessa-fixture"
             @($actions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
