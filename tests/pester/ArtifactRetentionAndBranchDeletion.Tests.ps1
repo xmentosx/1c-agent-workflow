@@ -77,6 +77,41 @@ Describe 'ITL artifact retention' {
         { Get-ItlArtifactProtectedPaths -ProjectRoot $root } | Should -Throw '*ITL_ARTIFACT_ONE_OFF_RECEIPT_UNREADABLE*'
     }
 
+    It 'releases receipts started before a completed reset of this worktree only' {
+        # Regression: an older reset left the previous task's receipts current,
+        # so one referenced report kept a whole agent-artifacts folder forever.
+        $root = Join-Path $TestDrive 'Сброшенная ветка с пробелом'
+        $other = Join-Path $TestDrive 'Другая ветка с пробелом'
+        $selection = Join-Path $root '.agent-1c/verification-selection'
+        New-Item -ItemType Directory -Force -Path (Join-Path $selection 'one-off'), (Join-Path $root '.agent-1c/dev-branches'), (Join-Path $other '.agent-1c/dev-branches') | Out-Null
+        $resetAt = [datetimeoffset]::new(2026, 11, 10, 15, 35, 0, [timespan]::FromHours(3))
+        $write = { param($Path, $Value) [IO.File]::WriteAllText($Path, ($Value | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false)) }
+        $receipt = { param($Folder, $Started) [ordered]@{ status = 'passed'; startedAt = $Started; evidencePath = "build/agent-artifacts/$Folder/evidence.json"; artifacts = @(@{ path = "build/agent-artifacts/$Folder/many/a.png" }, @{ path = "build/agent-artifacts/$Folder/many/b.png" }) } }
+        & $write (Join-Path $selection 'one-off/old.json') (& $receipt 'старая задача' $resetAt.AddDays(-5).UtcDateTime.ToString('o'))
+        & $write (Join-Path $selection 'one-off/new.json') (& $receipt 'новая задача' $resetAt.AddHours(1).UtcDateTime.ToString('o'))
+        & $write (Join-Path $selection 'one-off/legacy.json') ([ordered]@{ status = 'passed'; evidencePath = 'build/agent-artifacts/без времени/e.json'; artifacts = @() })
+        & $write (Join-Path $selection 'proof.json') ([ordered]@{ schemaVersion = 1; verifiedAt = $resetAt.AddDays(-4).ToString('o'); suiteEvidence = @(@{ id = 's'; artifacts = @(@{ path = 'build/test-results/vanessa/run-old/junit.xml' }) }) })
+        $own = Join-Path $root '.agent-1c/dev-branches/ветка.json'
+        $foreign = Join-Path $other '.agent-1c/dev-branches/другая.json'
+        & $write $foreign ([ordered]@{ resetStatus = 'complete'; resetStartedAt = $resetAt.AddDays(3).ToString('o') })
+        $script:retentionStates = @($foreign)
+        Mock Get-DevBranchStateFiles { @($script:retentionStates | ForEach-Object { Get-Item -LiteralPath $_ }) }
+        $isProtected = { param($Relative) Test-ItlArtifactProtected -Path (Join-Path $root $Relative) -ProtectedPaths (Get-ItlArtifactProtectedPaths -ProjectRoot $root) }
+
+        # Another worktree's reset and an unfinished own reset release nothing.
+        & $isProtected 'build/agent-artifacts/старая задача' | Should -BeTrue
+        & $write $own ([ordered]@{ resetStatus = 'resetting'; resetStartedAt = $resetAt.ToString('o') })
+        $script:retentionStates = @($foreign, $own)
+        & $isProtected 'build/agent-artifacts/старая задача' | Should -BeTrue
+        & $isProtected 'build/test-results/vanessa/run-old' | Should -BeTrue
+
+        & $write $own ([ordered]@{ resetStatus = 'complete'; resetStartedAt = $resetAt.ToString('o') })
+        & $isProtected 'build/agent-artifacts/старая задача' | Should -BeFalse
+        & $isProtected 'build/test-results/vanessa/run-old' | Should -BeFalse
+        & $isProtected 'build/agent-artifacts/новая задача' | Should -BeTrue
+        & $isProtected 'build/agent-artifacts/без времени' | Should -BeTrue
+    }
+
     It 'protects active run paths when script run context is present' {
         $root = Join-Path $TestDrive 'Активный запуск с пробелами'
         New-Item -ItemType Directory -Path $root -Force | Out-Null
@@ -367,6 +402,19 @@ Describe 'ITL artifact retention' {
         $report.removedBytes | Should -BeGreaterThan 0
         @($report.leftovers | Where-Object { $_ -like "$busy*" }).Count | Should -Be 1
         @($report.leftovers | Where-Object { $_ -like "$($script:proof)*referenced by workflow evidence*" }).Count | Should -Be 1
+    }
+
+    It 'retires the previous task verification records before reset cleanup reads them' {
+        # Regression: the change plan was archived after cleanup, so its run folder survived the reset.
+        $definition = (Get-Command Reset-DevBranch -CommandType Function).ScriptBlock.Ast
+        $calls = @($definition.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() })
+        $cleanup = [array]::IndexOf($calls, 'Invoke-ItlBranchResetLeftoverCleanup')
+        $cleanup | Should -BeGreaterThan 0
+        foreach ($name in @('Archive-VerificationChangeForReset', 'Archive-VerificationSelectionEvidenceForReset')) {
+            $index = [array]::IndexOf($calls, $name)
+            $index | Should -BeGreaterOrEqual 0 -Because $name
+            $index | Should -BeLessThan $cleanup -Because $name
+        }
     }
 }
 

@@ -550,6 +550,31 @@ Describe 'Current change proof and whole task acceptance' {
             (Get-FileHash -LiteralPath (Join-Path (Get-VerificationSelectionStateRoot) ('changes/reset-'+('1'*40)+'.json'))).Hash | Should -BeExactly $oldHash
         }
     }
+    It 'retires the previous task suite and one-off receipts before reset cleanup' {
+        $root=Join-Path $TestDrive 'Сброс доказательств'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            $selection=Get-VerificationSelectionStateRoot
+            New-Item -ItemType Directory -Force -Path (Join-Path $selection 'one-off/history') | Out-Null
+            $sources=[ordered]@{'proof.json'='{"schemaVersion":1,"suiteEvidence":[]}';'one-off/ui check.json'='{"status":"passed"}';'one-off/history/ui check-old.json'='{"status":"pending"}'}
+            foreach ($name in $sources.Keys) { [IO.File]::WriteAllText((Join-Path $selection $name),$sources[$name],[Text.UTF8Encoding]::new($true)) }
+            $hashes=@{}; foreach ($name in $sources.Keys) { $hashes[$name]=(Get-FileHash -LiteralPath (Join-Path $selection $name)).Hash }
+            $state=[pscustomobject]@{resetPhase='git-reset-complete';resetNewHead=('2'*40)}
+            { Archive-VerificationSelectionEvidenceForReset -State $state } | Should -Throw '*VERIFICATION_EVIDENCE_RESET_OWNER_REQUIRED*'
+            foreach ($name in $sources.Keys) { Test-Path -LiteralPath (Join-Path $selection $name) | Should -BeTrue -Because $name }
+            $state.resetPhase='runtime-initializing'
+            # An interrupted earlier attempt left a partial copy; the repeat replaces it.
+            $archive=Join-Path $selection ('changes/reset-'+('2'*40))
+            New-Item -ItemType Directory -Force -Path $archive | Out-Null
+            [IO.File]::WriteAllText((Join-Path $archive 'proof.json'),'{',[Text.UTF8Encoding]::new($false))
+            Archive-VerificationSelectionEvidenceForReset -State $state
+            foreach ($name in $sources.Keys) {
+                Test-Path -LiteralPath (Join-Path $selection $name) | Should -BeFalse -Because $name
+                (Get-FileHash -LiteralPath (Join-Path $archive $name)).Hash | Should -BeExactly $hashes[$name] -Because $name
+            }
+            Read-VerificationSelectionProof | Should -BeNullOrEmpty
+            Archive-VerificationSelectionEvidenceForReset -State ([pscustomobject]@{})
+        }
+    }
     It 'cannot manufacture old acceptance or erase pending checks with a new task name' {
         $root=Join-Path $TestDrive 'Не терять приёмку'; New-ChangeFixture $root
         Enter-ChangeFixture $root {

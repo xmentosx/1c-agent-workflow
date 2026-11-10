@@ -890,6 +890,47 @@ function Read-VerificationSelectionProof {
     try { return (Read-Utf8Text -Path $path | ConvertFrom-Json) } catch { return $null }
 }
 
+function Archive-VerificationSelectionEvidenceForReset {
+    # Reset replaces the tooling generation, so no suite or one-off receipt of
+    # the previous task can pass again. Archive them before leftover cleanup so
+    # they stop retaining that task's reports. Each move is copy, verify, remove:
+    # an interrupted reset repeats it from the remaining sources.
+    param([Parameter(Mandatory = $true)][object]$State)
+    $root = Get-VerificationSelectionStateRoot
+    $oneOff = Join-Path $root 'one-off'
+    $moves = [Collections.Generic.List[object]]::new()
+    $proof = Join-Path $root 'proof.json'
+    if (Test-Path -LiteralPath $proof -PathType Leaf) { $moves.Add([pscustomobject]@{ source = $proof; name = 'proof.json' }) }
+    if (Test-Path -LiteralPath $oneOff -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $oneOff -File -Filter '*.json' -ErrorAction Stop)) {
+            $moves.Add([pscustomobject]@{ source = $file.FullName; name = "one-off/$($file.Name)" })
+        }
+    }
+    $history = Join-Path $oneOff 'history'
+    $hasHistory = Test-Path -LiteralPath $history -PathType Container
+    if ($moves.Count -eq 0 -and -not $hasHistory) { return }
+    $newHead = [string](Get-StateValue $State 'resetNewHead' '')
+    if ([string](Get-StateValue $State 'resetPhase' '') -cne 'runtime-initializing' -or $newHead -cnotmatch '^[0-9a-f]{40}$') {
+        throw 'VERIFICATION_EVIDENCE_RESET_OWNER_REQUIRED: resume the original reset owner; preserve current verification evidence.'
+    }
+    $archive = Join-Path $root "changes/reset-$newHead"
+    foreach ($move in $moves) {
+        $target = Join-Path $archive $move.name
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        [IO.File]::Copy([string]$move.source, $target, $true)
+        if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $move.source -Algorithm SHA256).Hash) {
+            throw 'VERIFICATION_EVIDENCE_RESET_ARCHIVE_CHANGED: preserve current verification evidence and resume reset.'
+        }
+        Remove-Item -LiteralPath $move.source -Force
+    }
+    if ($hasHistory) {
+        $target = Join-Path $archive 'one-off/history'
+        if (Test-Path -LiteralPath $target) { throw 'VERIFICATION_EVIDENCE_RESET_ARCHIVE_CHANGED: preserve one-off history and resume reset.' }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        [IO.Directory]::Move($history, $target)
+    }
+}
+
 function Get-VerificationSelectionChangedPaths {
     param(
         [string]$BaseTree,

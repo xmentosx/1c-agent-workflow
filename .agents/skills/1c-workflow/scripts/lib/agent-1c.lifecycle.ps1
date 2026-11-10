@@ -20465,12 +20465,15 @@ function Reset-DevBranch {
             Sync-DevBranchContextToDotEnv -State $state
             $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
             Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
+            # Retire the previous task's verification records first: while they
+            # stay current they retain that task's plans and reports as evidence.
+            Archive-VerificationChangeForReset -State $state
+            Archive-VerificationSelectionEvidenceForReset -State $state
             Set-RunStage -Stage "reset.leftovers" -Detail "Removing the previous task's runtime leftovers from this branch."
             $leftovers = Invoke-ItlBranchResetLeftoverCleanup -ProjectRoot $script:ProjectRoot -MainRoot (Get-MainWorktreePath) `
                 -SafeBranchName ([string]$state.safeDevBranchName) -StartedAt ([datetime](Get-StateValue -State $state -Name 'resetStartedAt' -Default ([datetime]::UtcNow.ToString('o'))))
             $completion = @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o"); resetLeftoverCleanup = $leftovers }
             $completion['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $state -Operation 'reset-dev-branch' -BaseCommit $masterCommit -CompletedHead ([string]$state.resetNewHead) -CompletedAt $completion.resetCompletedAt
-            Archive-VerificationChangeForReset -State $state
             Add-PendingDevBranchMergeClearUpdates -Updates $completion
             $memoryComplete=Get-ItlMemoryCycleUpdates $state complete
             foreach($field in $memoryComplete.Keys){$completion[$field]=$memoryComplete[$field]}

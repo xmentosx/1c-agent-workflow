@@ -68,6 +68,15 @@ function Test-ItlArtifactPathWithoutReparse {
     return $true
 }
 
+function ConvertTo-ItlArtifactUtcTime {
+    param([AllowNull()][object]$Value)
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    $parsed = [datetime]::MinValue
+    if ($Value -and [datetime]::TryParse([string]$Value, [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsed)) { return $parsed.ToUniversalTime() }
+    return $null
+}
+
 function Get-ItlArtifactProtectedPaths {
     param([string]$ProjectRoot = $script:ProjectRoot)
     $paths = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
@@ -76,10 +85,21 @@ function Get-ItlArtifactProtectedPaths {
         $candidate = if ($null -ne $variable) { $variable.Value } else { $null }
         if ($candidate -and [IO.Path]::IsPathRooted([string]$candidate)) { [void]$paths.Add([IO.Path]::GetFullPath([string]$candidate)) }
     }
+    # A completed reset in this worktree replaced the tooling generation: suite
+    # and one-off receipts started before it can never pass again. Resets now
+    # archive them; this keeps receipts left by an older reset from retaining
+    # the previous task's reports.
+    $ownStateRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot '.agent-1c\dev-branches')).TrimEnd('\', '/')
+    $resetCutoff = $null
     $stateFiles = @(Get-DevBranchStateFiles)
     foreach ($file in $stateFiles) {
             try {
                 $state = Read-Utf8Text -Path $file.FullName | ConvertFrom-Json
+                if ([string]::Equals([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($file.FullName)).TrimEnd('\', '/'), $ownStateRoot, [StringComparison]::OrdinalIgnoreCase) -and
+                    [string](Get-StateValue -State $state -Name 'resetStatus' -Default '') -eq 'complete') {
+                    $started = ConvertTo-ItlArtifactUtcTime (Get-StateValue -State $state -Name 'resetStartedAt' -Default $null)
+                    if ($null -ne $started -and ($null -eq $resetCutoff -or $started -gt $resetCutoff)) { $resetCutoff = $started }
+                }
                 foreach ($name in @('lastResultPath', 'lastResultManifestPath', 'finalResultPath', 'finalResultManifestPath', 'lastUnverifiedResultPath', 'lastVanessaStatusPath', 'lastVanessaReportPath', 'lastVanessaLogPath', 'lastYAxUnitReportPath', 'lastYAxUnitLogPath')) {
                     $value = [string](Get-StateValue -State $state -Name $name -Default '')
                     if ($value -and [IO.Path]::IsPathRooted($value)) { [void]$paths.Add([IO.Path]::GetFullPath($value)) }
@@ -119,6 +139,8 @@ function Get-ItlArtifactProtectedPaths {
             try {
                 $receipt = Read-Utf8Text -Path $file.FullName | ConvertFrom-Json -ErrorAction Stop
                 if ([string]$receipt.status -ne 'passed') { continue }
+                $started = ConvertTo-ItlArtifactUtcTime (Get-StateValue -State $receipt -Name 'startedAt' -Default $null)
+                if ($null -ne $resetCutoff -and $null -ne $started -and $started -lt $resetCutoff) { continue }
                 foreach ($relative in @([string]$receipt.evidencePath) + @($receipt.artifacts | ForEach-Object { [string]$_.path })) {
                     if (-not $relative -or [IO.Path]::IsPathRooted($relative) -or $relative -match '(^|[\\/])\.\.([\\/]|$)') {
                         throw "unsafe one-off evidence path '$relative'"
@@ -137,6 +159,8 @@ function Get-ItlArtifactProtectedPaths {
         try {
             $proof = Read-Utf8Text -Path $selectionPath | ConvertFrom-Json -ErrorAction Stop
             $receipts = if ($null -ne $proof.PSObject.Properties['suiteEvidence']) { @($proof.suiteEvidence) } else { @() }
+            $verified = ConvertTo-ItlArtifactUtcTime (Get-StateValue -State $proof -Name 'verifiedAt' -Default $null)
+            if ($null -ne $resetCutoff -and $null -ne $verified -and $verified -lt $resetCutoff) { $receipts = @() }
             foreach ($receipt in $receipts) {
                 foreach ($artifact in @($receipt.artifacts)) {
                     $full = [IO.Path]::GetFullPath((Join-Path $ProjectRoot ([string]$artifact.path)))

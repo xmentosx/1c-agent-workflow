@@ -136,6 +136,13 @@ no longer create `gate6-*.dt`; such files are legacy of older runs), `logs/` and
 this branch's legacy main `.agent-1c/branch-archives/<branch>`). It keeps live
 runs, workflow update/incident snapshots, `handoffs/`, `build/result` and
 current workflow evidence, and reports removed counts/bytes and leftovers.
+Before that cleanup it retires the previous task's verification records
+(`current-change.json`, `proof.json`, `one-off/` receipts and history) into
+`.agent-1c/verification-selection/changes/reset-<new HEAD>*`; the reset's new
+tooling generation already makes them unusable, and archived records retain no
+files. After a completed reset, cleanup also ignores suite and one-off receipts
+started before that reset, so receipts left by an older reset release their
+reports to the normal count and age rules.
 
 When a branch command finishes a check and adopts its successful replacement,
 the producer can send this completion through that same command (paths below
