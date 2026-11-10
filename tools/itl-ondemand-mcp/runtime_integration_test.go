@@ -1826,7 +1826,7 @@ func TestFailedMarkRunningKeepsCleanupErrorEvidenceAndRecoversTheOriginalCall(t 
 	portEvidence := "Port evidence: decision=unknown expectedPid=24208 status=unknown source=none address=127.0.0.1:6003 rows(state/pid/remote)=[0/24208/0] connection=timeout attempts=12 elapsedMs=3010"
 	broker := &fakeBroker{info: &backendInfo{InstanceID: instanceID, URL: backend.URL, PID: 24208, Port: 6003, Status: "readiness"},
 		markErr:      fmt.Errorf("backend broker mark-running failed: exit status 1: ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: port 6003 is not proven to be owned by backend PID 24208; the instance is marked start-unconfirmed for owned recovery. %s", portEvidence),
-		stopFailures: 1}
+		stopFailures: 3}
 	rt, session := newFacadeSession(t, tools, broker, time.Minute, nil)
 	writeRuntimeMarker(t, rt, instanceID)
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"value": "original"}})
@@ -1840,11 +1840,15 @@ func TestFailedMarkRunningKeepsCleanupErrorEvidenceAndRecoversTheOriginalCall(t 
 			t.Fatalf("start failure text lost %q: %s", wanted, text)
 		}
 	}
-	if !rt.cleanupUnconfirmed || rt.backend != nil {
-		t.Fatalf("failed cleanup must retain the resource owner: cleanupUnconfirmed=%v backend=%v", rt.cleanupUnconfirmed, rt.backend)
+	if rt.cleanupUnconfirmed || rt.backend != nil {
+		t.Fatalf("failed cleanup must drop the backend without retaining ownership: cleanupUnconfirmed=%v backend=%v", rt.cleanupUnconfirmed, rt.backend)
 	}
 	entries := readEvidenceEntries(t, rt, instanceID)
-	last := entries[len(entries)-1]
+	// The dropped backend's unconfirmed cleanup is recorded after the start.
+	if final := entries[len(entries)-1]; final["outcome"] != "cleanup-failed" {
+		t.Fatalf("unconfirmed cleanup was not recorded: %#v", final)
+	}
+	last := entries[len(entries)-2]
 	if last["lifecycleStep"] != "start" || last["phase"] != "mark-running" || last["resultCode"] != "ITL_ONDEMAND_START_FAILED" || last["outcome"] != "failed" {
 		t.Fatalf("unexpected lifecycle evidence: %#v", last)
 	}
@@ -1864,7 +1868,9 @@ func TestFailedMarkRunningKeepsCleanupErrorEvidenceAndRecoversTheOriginalCall(t 
 	if err != nil || result.IsError {
 		t.Fatalf("original call did not succeed after recovery: %v %s", err, resultText(result))
 	}
-	if _, stops := broker.counts(); stops != 2 || broker.markCount() != 2 {
+	// Three bounded stop attempts for the failed start; the dropped backend is
+	// not stopped again by recovery.
+	if _, stops := broker.counts(); stops != 3 || broker.markCount() != 2 {
 		t.Fatalf("unexpected lifecycle: stops=%d marks=%d", stops, broker.markCount())
 	}
 }

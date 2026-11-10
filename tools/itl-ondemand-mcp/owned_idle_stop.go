@@ -47,7 +47,7 @@ type ownedIdleInvocation struct {
 func (b *powershellBroker) PrivateRuntime() bool { return b.privateRuntime }
 
 func (b *powershellBroker) StopOwnedIdle(ctx context.Context, expected *backendInfo) error {
-	if !b.privateRuntime || expected == nil || b.recoveryCandidate != "" {
+	if !b.privateRuntime || expected == nil {
 		return errIdleChildActive
 	}
 	ctx = context.WithValue(ctx, ownedIdleInvocationKey{}, &ownedIdleInvocation{
@@ -59,8 +59,8 @@ func (b *powershellBroker) StopOwnedIdle(ctx context.Context, expected *backendI
 		if strings.Contains(err.Error(), "ITL_ONDEMAND_IDLE_CHILD_ACTIVE:") ||
 			strings.Contains(err.Error(), "ITL_ONDEMAND_STOP_UNCONFIRMED:") {
 			// A lifecycle drain may have already removed the registration and
-			// leases. This is not a cleanup receipt: continue through the existing
-			// signed stop, which proves retained process/port/lease cleanup.
+			// leases. This is not a cleanup receipt: continue through the
+			// guarded stop, which stops this facade's own launched processes.
 			return errIdleChildActive
 		}
 		return err
@@ -129,7 +129,10 @@ func (r *runtime) tryOwnedIdleStopLocked(ctx context.Context) (bool, error) {
 		if errors.Is(err, errIdleChildActive) {
 			return false, nil
 		}
-		r.cleanupUnconfirmed = true
+		// No guard is held here and none is retained for later: forget the
+		// backend. Its registration stays for the lifecycle drain or
+		// repair-dev-branch-tooling, and the next call starts a new backend.
+		r.resetBackendLocked()
 		return true, err
 	}
 	r.backend = nil

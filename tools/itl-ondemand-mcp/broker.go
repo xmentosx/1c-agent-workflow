@@ -78,7 +78,7 @@ func executionBrokerEnvironment(ctx context.Context) ([]string, error) {
 	result := []string{}
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		if !strings.EqualFold(key, "ITL_ONDEMAND_CONNECTION_REPAIR") && !strings.EqualFold(key, "ITL_EXECUTION_INVOCATION") && !strings.EqualFold(key, "ITL_EXECUTION_CONTEXT") &&
+		if !strings.EqualFold(key, "ITL_EXECUTION_INVOCATION") && !strings.EqualFold(key, "ITL_EXECUTION_CONTEXT") &&
 			!strings.EqualFold(key, "ITL_EXECUTION_CONTEXT_KEY") {
 			result = append(result, value)
 		}
@@ -97,13 +97,6 @@ func executionBrokerEnvironment(ctx context.Context) ([]string, error) {
 	} else if raw != "" {
 		result = append(result, "ITL_EXECUTION_INVOCATION="+raw)
 	}
-	if value, ok := ctx.Value(connectionRepairKey{}).(*connectionRepairRequest); ok {
-		raw, err := json.Marshal(value)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, "ITL_ONDEMAND_CONNECTION_REPAIR="+string(raw))
-	}
 	return result, nil
 }
 
@@ -115,41 +108,17 @@ type backendBroker interface {
 	Stop(context.Context) error
 }
 
-type obsoleteConnectionRepairBroker interface {
-	RepairObsoleteConnections(context.Context, *facadeExecutionPlan, []string) error
-}
-
-type connectionRepairKey struct{}
-type connectionRepairRequest struct {
-	Plan             *facadeExecutionPlan `json:"plan"`
-	Resources        []string             `json:"resources"`
-	CallerPID        int                  `json:"callerPid"`
-	CallerExecutable string               `json:"callerExecutable"`
-	HelperPath       string               `json:"helperPath"`
-}
-
-func (b *powershellBroker) RepairObsoleteConnections(ctx context.Context, plan *facadeExecutionPlan, resources []string) error {
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	ctx = context.WithValue(ctx, connectionRepairKey{}, &connectionRepairRequest{plan, resources, os.Getpid(), executable, b.HelperPath})
-	_, err = b.invoke(ctx, "repair-connections", nil)
-	return err
-}
-
 type powershellBroker struct {
-	privateRuntime    bool
-	PowerShell        string
-	HelperPath        string
-	ProjectRoot       string
-	Family            string
-	InstanceID        string
-	CatalogHash       string
-	Timeout           time.Duration
-	lastBackend       *backendInfo
-	cleanupConfirmed  bool
-	recoveryCandidate string
+	privateRuntime   bool
+	PowerShell       string
+	HelperPath       string
+	ProjectRoot      string
+	Family           string
+	InstanceID       string
+	CatalogHash      string
+	Timeout          time.Duration
+	lastBackend      *backendInfo
+	cleanupConfirmed bool
 }
 
 func (b *powershellBroker) Ensure(ctx context.Context) (*backendInfo, error) {
@@ -207,7 +176,10 @@ func (b *powershellBroker) Recover(ctx context.Context, previous *backendInfo, r
 		return nil, fmt.Errorf("backend recovery requires the registered instance PID and port")
 	}
 	b.cleanupConfirmed = false
-	b.recoveryCandidate = replacementInstanceID
+	// The facade's own launch snapshot of the original instance lets the helper
+	// stop exactly the processes this facade started when their registration
+	// is gone. A failed replacement start is cleaned up by the helper itself;
+	// the facade never tracks a second candidate instance.
 	if invocation, coordinated := ctx.Value(executionInvocationKey{}).(*executionInvocation); coordinated {
 		copy := *invocation
 		copy.ExpectedBackend = previous
@@ -225,7 +197,6 @@ func (b *powershellBroker) Recover(ctx context.Context, previous *backendInfo, r
 		return nil, err
 	}
 	b.InstanceID = replacementInstanceID
-	b.recoveryCandidate = ""
 	b.lastBackend = info
 	return info, nil
 }
@@ -252,39 +223,26 @@ func (b *powershellBroker) Stop(ctx context.Context) error {
 	if b.cleanupConfirmed {
 		return nil
 	}
-	ids := []string{b.InstanceID}
-	if b.recoveryCandidate != "" && b.recoveryCandidate != b.InstanceID {
-		ids = append(ids, b.recoveryCandidate)
-	}
-	var failures []error
-	for _, id := range ids {
-		extra := []string{}
-		stopCtx := ctx
-		if invocation, coordinated := ctx.Value(executionInvocationKey{}).(*executionInvocation); coordinated {
-			pid, port := -1, 0
-			if b.lastBackend != nil && b.lastBackend.InstanceID == id {
-				pid, port = b.lastBackend.PID, b.lastBackend.Port
-				copy := *invocation
-				copy.ExpectedBackend = b.lastBackend
-				stopCtx = context.WithValue(ctx, executionInvocationKey{}, &copy)
-			}
-			extra = append(extra, "-InternalOnDemandExpectedPid", fmt.Sprint(pid), "-InternalOnDemandExpectedPort", fmt.Sprint(port))
+	extra := []string{}
+	stopCtx := ctx
+	if invocation, coordinated := ctx.Value(executionInvocationKey{}).(*executionInvocation); coordinated {
+		pid, port := -1, 0
+		if b.lastBackend != nil && b.lastBackend.InstanceID == b.InstanceID {
+			pid, port = b.lastBackend.PID, b.lastBackend.Port
+			copy := *invocation
+			copy.ExpectedBackend = b.lastBackend
+			stopCtx = context.WithValue(ctx, executionInvocationKey{}, &copy)
 		}
-		target := *b
-		target.InstanceID = id
-		info, err := target.invoke(stopCtx, "stop", extra)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		if info.Status != "stopped" {
-			failures = append(failures, fmt.Errorf("ITL_ONDEMAND_STOP_UNCONFIRMED"))
-		}
+		extra = append(extra, "-InternalOnDemandExpectedPid", fmt.Sprint(pid), "-InternalOnDemandExpectedPort", fmt.Sprint(port))
 	}
-	if len(failures) != 0 {
-		return errors.Join(failures...)
+	info, err := b.invoke(stopCtx, "stop", extra)
+	if err != nil {
+		return err
 	}
-	b.cleanupConfirmed, b.lastBackend, b.recoveryCandidate = true, nil, ""
+	if info.Status != "stopped" {
+		return fmt.Errorf("ITL_ONDEMAND_STOP_UNCONFIRMED")
+	}
+	b.cleanupConfirmed, b.lastBackend = true, nil
 	return nil
 }
 

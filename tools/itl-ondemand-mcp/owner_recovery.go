@@ -28,12 +28,14 @@ func (r *runtime) recoverConnection(ctx context.Context, meta mcp.Meta, argument
 	// callNamed already owns the bounded request phase, including any shorter
 	// caller deadline. Cleanup/admission/cold readiness consume that one budget;
 	// recovery must neither truncate it to one minute nor restart it.
-	if err := r.stopWithMeta(ctx, meta); err != nil {
+	// An unconfirmed stop no longer blocks recovery: that execution already
+	// dropped the old backend and released the infobase, so a new backend is
+	// started below and the leftover is reported, never retained.
+	stopErr := r.stopWithMeta(ctx, meta)
+	if stopErr != nil {
 		r.mu.Lock()
-		r.writeLifecycleEvidenceLocked(ownerRecoveryTool, "stop", "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", err)
-		id := r.instanceID
+		r.writeLifecycleEvidenceLocked(ownerRecoveryTool, "stop", "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", stopErr)
 		r.mu.Unlock()
-		return recoveryAction(ownerRecoveryTool, id, id, false, "not-started", err)
 	}
 	ctx, finish, err := r.beginDatabaseCall(ctx, meta)
 	if err != nil {
@@ -62,7 +64,10 @@ func (r *runtime) recoverConnection(ctx context.Context, meta mcp.Meta, argument
 		return recoveryAction(ownerRecoveryTool, id, id, false, "not-started", err)
 	}
 	payload := map[string]any{"code": "ITL_OK", "family": r.family, "instanceId": id,
-		"backendRecovered": true, "cleanupConfirmed": true, "previousCallReplayed": false}
+		"backendRecovered": true, "cleanupConfirmed": stopErr == nil, "previousCallReplayed": false}
+	if stopErr != nil {
+		payload["previousBackendCleanup"] = "unconfirmed; run " + branchHolderRepairAction + " if leftover 1C processes of this worktree still block the base"
+	}
 	encoded, _ := json.Marshal(payload)
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}}, StructuredContent: payload}
 }

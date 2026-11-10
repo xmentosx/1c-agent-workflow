@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -77,62 +76,40 @@ func TestMissingStateRecoversOriginalManageTestClientInTheSameExternalConnection
 	}
 }
 
-func TestMissingStatePreservesTheSessionAndDoesNotStartOrReplayWithoutQuiescence(t *testing.T) {
-	for _, condition := range []string{"active-call", "unknown-native-result", "unproven-launch"} {
-		t.Run(condition, func(t *testing.T) {
-			tools := integrationTools()
-			_, backend := newBackend(t, tools, false)
-			fake := &fakeBroker{info: &backendInfo{InstanceID: "0123456789abcdef0123456789abcdef", URL: backend.URL, PID: 101, Port: 41001, NativeLaunchProof: json.RawMessage(`{"schemaVersion":4}`)}}
-			rt, session := newFacadeSession(t, tools, fake, time.Minute, nil)
-			_, planner := newExecutionRuntimeFixture(t)
-			planner.plan.ProjectRoot = rt.projectRoot
-			broker := &missingStateBroker{fakeBroker: fake, planner: planner}
-			rt.broker = broker
-			writeRuntimeMarker(t, rt, rt.instanceID)
-			if result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"value": "before"}}); err != nil || result.IsError {
-				t.Fatalf("initial call: %v %v", result, err)
-			}
-			originalSession, originalID := rt.session, rt.instanceID
-			if err := os.Remove(filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", rt.family, originalID+".json")); err != nil {
-				t.Fatal(err)
-			}
-			switch condition {
-			case "active-call":
-				rt.active = 1
-			case "unknown-native-result":
-				_, finish, err := rt.beginDatabaseCall(context.Background(), nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				rt.cleanupUnconfirmed = true
-				// Recovery may now retry exact owned cleanup before a new tool.
-				// An unconfirmed stop must still retain the original execution.
-				fake.stopFailures = 1
-				if err := finish("failed", "previous native outcome unconfirmed"); err == nil {
-					t.Fatal("the unfinished original owner was released")
-				}
-			case "unproven-launch":
-				broker.recoveryError = fmt.Errorf("ITL_ONDEMAND_RECOVERY_LAUNCH_PROOF_REQUIRED")
-			}
-			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "second", Arguments: map[string]any{}})
-			wanted := "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED"
-			if condition == "unknown-native-result" {
-				wanted = "EXECUTION_GUARD_ADMISSION_FAILED"
-			}
-			if err != nil || !result.IsError || !strings.Contains(resultText(result), wanted) {
-				t.Fatalf("missing continuation: %v %v", result, err)
-			}
-			if fake.recoveryCount() != 0 || rt.session != originalSession || rt.instanceID != originalID {
-				t.Fatal("unproven recovery replaced the original session")
-			}
-			details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
-			if details["automaticRetryPerformed"] != false {
-				t.Fatal("unknown mutation was replayed")
-			}
-			if details["callOutcome"] != "not-started" {
-				t.Fatal("a pre-dispatch refusal misrepresented the original call as having an unknown result")
-			}
-			rt.active = 0
-		})
+// 2026-11-08 branch8: the registration was gone and recovery could not prove
+// the old backend's cleanup, so every later call returned the same refusal for
+// hours. The missing registration is now an owner's completed stop; an
+// unconfirmed stop of what this facade launched only drops the old backend,
+// and the original call proceeds on a fresh one without replaying anything.
+func TestMissingStateStartsFreshWhenRecoveryCannotConfirmTheOldBackend(t *testing.T) {
+	tools := integrationTools()
+	_, backend := newBackend(t, tools, false)
+	fake := &fakeBroker{info: &backendInfo{InstanceID: "0123456789abcdef0123456789abcdef", URL: backend.URL, PID: 101, Port: 41001, NativeLaunchProof: json.RawMessage(`{"schemaVersion":4}`)}}
+	rt, session := newFacadeSession(t, tools, fake, time.Minute, nil)
+	_, planner := newExecutionRuntimeFixture(t)
+	planner.plan.ProjectRoot = rt.projectRoot
+	broker := &missingStateBroker{fakeBroker: fake, planner: planner}
+	rt.broker = broker
+	writeRuntimeMarker(t, rt, rt.instanceID)
+	if result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"value": "before"}}); err != nil || result.IsError {
+		t.Fatalf("initial call: %v %v", result, err)
 	}
+	originalSession, originalID := rt.session, rt.instanceID
+	if err := os.Remove(filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", rt.family, originalID+".json")); err != nil {
+		t.Fatal(err)
+	}
+	broker.recoveryError = fmt.Errorf("ITL_ONDEMAND_STOP_FAILED: owned backend PID 101 is still running")
+	ensuresBefore, _ := fake.counts()
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"value": "after"}})
+	if err != nil || result == nil || result.IsError {
+		t.Fatalf("the original call did not continue on a fresh backend: %v %v", result, err)
+	}
+	ensuresAfter, _ := fake.counts()
+	if fake.recoveryCount() != 0 || ensuresAfter != ensuresBefore+1 || rt.session == originalSession {
+		t.Fatalf("missing state did not start a fresh backend: recoveries=%d ensures=%d", fake.recoveryCount(), ensuresAfter-ensuresBefore)
+	}
+	if rt.cleanupUnconfirmed || rt.executionOwner != nil {
+		t.Fatal("the dropped backend left retained ownership")
+	}
+	assertBaseAdmitsAnotherWriter(t, planner, "9")
 }

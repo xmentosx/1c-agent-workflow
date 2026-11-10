@@ -7,7 +7,7 @@
     $actualPortOwnership=(Get-Command Get-ItlOnDemandPortOwnership).ScriptBlock
 }
 
-Describe 'Cross-family retained cleanup on isolated native processes' {
+Describe 'Cross-family missing-registration cleanup on isolated native processes' {
     BeforeEach {
         $script:nativeSavedRoot=$script:ProjectRoot
         $script:ProjectRoot=Join-Path $TestDrive ('Изолированный стенд '+[guid]::NewGuid().ToString('N'))
@@ -51,7 +51,7 @@ with socket.socket() as listener:
         }
         $script:ProjectRoot=$script:nativeSavedRoot
     }
-    It 'releases only the retained <Family> runtime and keeps the other family usable' -ForEach @(@{Family='roctup'},@{Family='vanessa-ui'}) {
+    It 'stops only the launched <Family> runtime and keeps the other family usable' -ForEach @(@{Family='roctup'},@{Family='vanessa-ui'}) {
         param($Family)
         $own=New-NativeCleanupFixture own
         $other=New-NativeCleanupFixture peer
@@ -75,7 +75,7 @@ with socket.socket() as listener:
         Mock Get-OneCInfoBaseSessionProcesses { $script:nativeSessions }
         $admissions=@([pscustomobject]@{infoBaseKind='file';infoBasePath=$basePath})
         $stopped=Invoke-WithOneCExecutionGuard -Admissions $admissions -Purpose "ondemand-$Family-call" -ScriptBlock {
-            Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId ('a'*32) -RetainedRuntimeState $record
+            Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId ('a'*32) -LaunchProof $record
         }
         $stopped.status | Should -Be stopped
         $own.process.WaitForExit(5000) | Should -BeTrue
@@ -92,7 +92,7 @@ with socket.socket() as listener:
     }
 }
 
-Describe 'Lifecycle stop followed by same-port native peer and retained recovery' {
+Describe 'Lifecycle stop followed by same-port native peer and missing-state recovery' {
     BeforeEach {
         $script:reusedSavedRoot=$script:ProjectRoot
         $script:ProjectRoot=Join-Path $TestDrive ('Повторное использование портов '+[guid]::NewGuid().ToString('N'))
@@ -353,18 +353,18 @@ Describe 'Private TestClient close and runtime mutation owner' {
     }
 }
 
-Describe 'Retained on-demand launch evidence recovery' {
+Describe 'Missing-registration recovery stops only what the facade launched' {
+    # 2026-11-08 PM5 branch8/branch4: a lifecycle drain had already retired the
+    # registration, and recovery demanded an unbroken proof chain (leases, ports,
+    # peer sessions) before starting a replacement, so the guard stayed blocked for
+    # hours. The facade's own launch snapshot now only selects what it may stop.
     BeforeEach {
         $script:savedRoot=$script:ProjectRoot
-        $script:savedContext=$env:ITL_EXECUTION_CONTEXT
-        $script:savedKey=$env:ITL_EXECUTION_CONTEXT_KEY
         $script:ProjectRoot=Join-Path $TestDrive ('Проект с пробелом '+[guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
-        $env:ITL_EXECUTION_CONTEXT='live-owner'
-        $env:ITL_EXECUTION_CONTEXT_KEY='live-key'
         $script:sequence=[Collections.Generic.List[string]]::new()
-        $script:runtimePath=Join-Path $script:ProjectRoot 'missing.json'
         $script:started=[datetime]'2026-10-14T01:00:00Z'
+        $script:alive=@{101=$true;102=$true}
         $script:launch=[pscustomobject]@{
             schemaVersion=4;family='vanessa-ui';instanceId=('a'*32);pid=101;port=9874;catalogSha256=('c'*64)
             processStartTime=$script:started.ToString('o');executablePath='C:\Платформа теста\1cv8.exe'
@@ -378,337 +378,68 @@ Describe 'Retained on-demand launch evidence recovery' {
         $script:expected=[pscustomobject]@{instanceId=('a'*32);pid=101;port=9874;processStartTime=$script:launch.processStartTime;nativeLaunchProof=$script:launch}
         $script:invocation=[pscustomobject]@{plan=[pscustomobject]@{family='vanessa-ui';projectRoot=$script:ProjectRoot;targetBase=[pscustomobject]@{kind='file';path='C:\Целевая база'}}}
         Mock Read-ItlOnDemandRuntimeState { $null }
-        Mock Get-ItlOnDemandRuntimePath { $script:runtimePath }
         Mock Write-ItlOnDemandRuntimeState { throw 'must not reconstruct missing registration' }
-        Mock Invoke-WithOneCExecutionGuard {
-            param($Admissions,$Purpose,$ScriptBlock)
-            $Purpose | Should -Be 'ondemand-vanessa-ui-recover'
-            @($Admissions).Count | Should -Be 2
-            $script:sequence.Add('guard')
-            & $ScriptBlock
-        }
         Mock Get-ItlOnDemandManagedPortLeaseMatches {
             param($Family,$Key,$LeaseToken)
             if ($Key -eq 'backend-key' -and $LeaseToken -eq 'original-backend-token') { [pscustomobject]@{port=9874;pid=101} }
             elseif ($Key -eq 'client-key' -and $LeaseToken -eq 'original-client-token') { [pscustomobject]@{port=48151;pid=102} }
         }
-        Mock Get-Process { param($Id) [pscustomobject]@{Id=$Id;StartTime=$script:started;HasExited=$false} }
-        Mock Get-ItlOnDemandProcessOwnershipProof { param($RuntimeState,$ExactStart) [pscustomobject]@{owned=$true} }
-        Mock Get-ItlOnDemandOwnedTestClientProcesses { param($RuntimeState,$ExactStart,$RegisteredOnly) @([pscustomobject]@{process=[pscustomobject]@{Id=102;StartTime=$script:started}}) }
-        Mock Get-OneCInfoBaseSessionProcesses { @([pscustomobject]@{pid=101},[pscustomobject]@{pid=102}) }
-        Mock Stop-Process { param($Id) $script:sequence.Add("stop-$Id") }
-        Mock Wait-ItlOnDemandProcessExit { $true }
-        Mock Test-TcpPortOpen { $false }
-        Mock Test-ItlOnDemandPortOwnedByProcess { $false }
-        Mock Get-ItlOnDemandPortOwnership { [pscustomobject]@{decision='absent';status='absent';owners=@();diagnostic='decision=absent fixture'} }
+        Mock Get-Process { param($Id) $id=[int](@($Id)[0]); if ($script:alive[$id]) { [pscustomobject]@{Id=$id;StartTime=$script:started;Handle=1} } }
+        Mock Get-CimInstance { [pscustomobject]@{ExecutablePath='C:\Платформа теста\1cv8.exe'} }
+        Mock Stop-NativeProcessForSafety { param($Process) $script:sequence.Add("stop-$($Process.Id)"); $script:alive[[int]$Process.Id]=$false; [pscustomobject]@{confirmed=$true;error=''} }
+        Mock Wait-ItlOnDemandProcessExit { param($ProcessId) -not $script:alive[[int]$ProcessId] }
         Mock Release-ItlOnDemandManagedPortLease { param($Family,$Key,$LeaseToken) $script:sequence.Add("release-$LeaseToken") }
+        Mock Remove-VanessaAgentClientCodeChannel { $true }
+        Mock Get-OneCInfoBaseSessionProcesses { throw 'missing-state recovery must not classify other sessions' }
         Mock Start-ItlOnDemandBackendInstance {
             param($Family,$InstanceId)
             $script:sequence.Add('start')
             [pscustomobject]@{family=$Family;instanceId=$InstanceId;pid=103;port=9875;status='readiness'}
         }
+        function Invoke-MissingStateRecovery {
+            Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected
+        }
     }
-    AfterEach {
-        $script:ProjectRoot=$script:savedRoot
-        $env:ITL_EXECUTION_CONTEXT=$script:savedContext
-        $env:ITL_EXECUTION_CONTEXT_KEY=$script:savedKey
-    }
+    AfterEach { $script:ProjectRoot=$script:savedRoot }
 
-    It 'stops only original proven owners and releases their exact leases before starting a new instance' {
-        $result=Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected
-        $result.instanceId | Should -Be ('b'*32)
-        $script:sequence.ToArray() | Should -Be @('guard','stop-102','stop-101','release-original-backend-token','release-original-client-token','start')
+    It 'stops the launched TestClient and backend, releases their exact leases, then starts a new instance' {
+        (Invoke-MissingStateRecovery).instanceId | Should -Be ('b'*32)
+        $script:sequence.ToArray() | Should -Be @('stop-102','stop-101','release-original-backend-token','release-original-client-token','start')
         Should -Invoke Write-ItlOnDemandRuntimeState -Times 0 -Exactly
-        Test-Path $script:runtimePath | Should -BeFalse
     }
 
-    It 'keeps every process and lease for invalid <Defect> proof' -ForEach @(
-        @{Defect='absent'},@{Defect='wrong-instance'},@{Defect='wrong-target'},@{Defect='missing-exe'},@{Defect='replaced-lease'},@{Defect='wrong-lease-pid'},@{Defect='missing-parent'}
-    ) {
-        param($Defect)
-        switch ($Defect) {
-            absent { $script:expected.nativeLaunchProof=$null }
-            wrong-instance { $script:launch.instanceId=('f'*32) }
-            wrong-target { $script:launch.infoBasePath='C:\Чужая база' }
-            missing-exe { $script:launch.executablePath='' }
-            replaced-lease { Mock Get-ItlOnDemandManagedPortLeaseMatches { @() } }
-            wrong-lease-pid { Mock Get-ItlOnDemandManagedPortLeaseMatches { [pscustomobject]@{port=9874;pid=999} } }
-            missing-parent { $env:ITL_EXECUTION_CONTEXT='' }
-        }
-        { Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected } | Should -Throw '*ITL_ONDEMAND_RECOVERY_*'
-        Should -Invoke Stop-Process -Times 0 -Exactly
-        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
-        Should -Invoke Start-ItlOnDemandBackendInstance -Times 0 -Exactly
+    It 'leaves a reused PID untouched and still starts the replacement' {
+        Mock Get-Process { param($Id) [pscustomobject]@{Id=[int](@($Id)[0]);StartTime=$script:started.AddMilliseconds(1);Handle=1} }
+        (Invoke-MissingStateRecovery).instanceId | Should -Be ('b'*32)
+        Should -Invoke Stop-NativeProcessForSafety -Times 0 -Exactly
+        $script:sequence[-1] | Should -Be 'start'
     }
 
-    It 'recovers a healthy old listener only after exact port ownership and owned cleanup' {
-        Mock Test-TcpPortOpen {
-            param($Port)
-            if ($Port -eq 9874) { return -not $script:sequence.Contains('stop-101') }
-            if ($Port -eq 48151) { return -not $script:sequence.Contains('stop-102') }
-            return $false
-        }
-        Mock Get-ItlOnDemandPortOwnership {
-            param($Port,$ProcessId,$RetryUntil,[switch]$TestClient)
-            $owned=($Port -eq 9874 -and $ProcessId -eq 101 -and -not $TestClient) -or ($Port -eq 48151 -and $ProcessId -eq 102 -and $TestClient)
-            [pscustomobject]@{decision=$(if($owned){'owned'}else{'foreign'});status='proven';owners=@($ProcessId);diagnostic='fixture'}
-        }
-        $result=Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected
-        $result.instanceId | Should -Be ('b'*32)
-        Should -Invoke Get-ItlOnDemandPortOwnership -Times 2 -Exactly
-        Should -Invoke Get-ItlOnDemandPortOwnership -Times 2 -Exactly -ParameterFilter { $null -ne $RetryUntil }
-        $script:sequence[-1] | Should -Be start
-    }
-
-    It 'preserves every process and lease when the <Port> listener is foreign' -ForEach @(@{Port=9874},@{Port=48151}) {
-        param($Port)
-        $script:foreignPort=$Port
-        Mock Test-TcpPortOpen { param($Port) $Port -eq $script:foreignPort }
-        Mock Get-ItlOnDemandPortOwnership {
-            param($Port)
-            if($Port -eq $script:foreignPort){return [pscustomobject]@{decision='foreign';status='proven';owners=@(999);diagnostic='decision=foreign fixture'}}
-            [pscustomobject]@{decision='absent';status='absent';owners=@();diagnostic='decision=absent fixture'}
-        }
-        { Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected } | Should -Throw '*ITL_ONDEMAND_RECOVERY_PORT_OWNER_CHANGED*'
-        Should -Invoke Stop-Process -Times 0 -Exactly
-        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
-        Should -Invoke Start-ItlOnDemandBackendInstance -Times 0 -Exactly
-    }
-
-    It 'does not stop an unidentified exact-base session or unregistered TestClient' -ForEach @(@{ForeignSession=$true},@{ForeignSession=$false}) {
-        param($ForeignSession)
-        if ($ForeignSession) { Mock Get-OneCInfoBaseSessionProcesses { @([pscustomobject]@{pid=999}) } }
-        else {
-            $script:launch.testClientPid=0
-            Mock Get-ItlOnDemandOwnedTestClientProcesses { @() }
-            Mock Test-TcpPortOpen { $true }
-            Mock Test-ItlOnDemandPortOwnedByProcess { param($Port,$ProcessId) $Port -eq 9874 -and $ProcessId -eq 101 }
-            Mock Get-ItlOnDemandPortOwnership { param($Port,$ProcessId) [pscustomobject]@{decision=$(if($Port -eq 9874 -and $ProcessId -eq 101){'owned'}else{'foreign'});status='proven';owners=@(101);diagnostic='fixture'} }
-        }
-        { Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected } | Should -Throw '*ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT*'
-        Should -Invoke Stop-Process -Times 0 -Exactly
-        Should -Invoke Start-ItlOnDemandBackendInstance -Times 0 -Exactly
-    }
-
-    It 'rejects a one-millisecond PID reuse before any cleanup' {
-        Mock Get-Process { param($Id) [pscustomobject]@{Id=$Id;StartTime=$script:started.AddMilliseconds(1);HasExited=$false} }
-        Mock Get-CimInstance { [pscustomobject]@{ExecutablePath=$script:launch.executablePath;CommandLine='C:\База менеджера port=9874'} }
-        Mock Get-ItlOnDemandProcessOwnershipProof { param($RuntimeState,$ExactStart) & $actualOwnershipProof -RuntimeState $RuntimeState -ExactStart:$ExactStart }
-        { Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected } | Should -Throw '*ITL_ONDEMAND_OWNERSHIP_MISMATCH*'
-        Should -Invoke Stop-Process -Times 0 -Exactly
-        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
-    }
-
-    It 'preserves a registration that reappears rather than replacing it with retained JSON' {
-        [IO.File]::WriteAllText($script:runtimePath,'reappeared record')
-        { Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected } | Should -Throw '*ITL_ONDEMAND_RECOVERY_STATE_REAPPEARED*'
-        [IO.File]::ReadAllText($script:runtimePath) | Should -Be 'reappeared record'
-        Should -Invoke Stop-Process -Times 0 -Exactly
-        Should -Invoke Start-ItlOnDemandBackendInstance -Times 0 -Exactly
-    }
-
-    It 'retains leases and refuses restart when owned process termination remains unconfirmed' {
-        Mock Wait-ItlOnDemandProcessExit { $false }
-        { Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected } | Should -Throw '*ITL_ONDEMAND_STOP_FAILED*'
-        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
-        Should -Invoke Start-ItlOnDemandBackendInstance -Times 0 -Exactly
-    }
-
-    It 'confirms an already completed owned cleanup without recreating its missing record or leases' {
+    It 'never blocks on a replaced lease or another owner of the old ports' {
         Mock Get-ItlOnDemandManagedPortLeaseMatches { @() }
-        Mock Get-Process { $null }
-        Mock Get-ItlOnDemandOwnedTestClientProcesses { @() }
-        Mock Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{owned=$false} }
-        Mock Get-OneCInfoBaseSessionProcesses { @() }
-        $result=Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected
-        $result.instanceId | Should -Be ('b'*32)
-        Should -Invoke Stop-Process -Times 0 -Exactly
-        Should -Invoke Write-ItlOnDemandRuntimeState -Times 0 -Exactly
-        Should -Invoke Start-ItlOnDemandBackendInstance -Times 1 -Exactly
-    }
-
-    It 'requires exact same-port peer proof through recovery and stop (<Defect>)' -ForEach @(
-        @{Defect='none'},@{Defect='original-live'},@{Defect='original-lease'},
-        @{Defect='peer-pid-reused'},@{Defect='peer-executable'},@{Defect='peer-markers'},
-        @{Defect='peer-lease-missing'},@{Defect='peer-lease-pid'},@{Defect='foreign-listener'},
-        @{Defect='unregistered'},@{Defect='ambiguous'},@{Defect='unknown-session'},
-        @{Defect='peer-changed'},@{Defect='registration-before-stop'}
-    ) {
-        param($Defect)
-        $script:retiredDefect=$Defect
-        $script:originalReads=0
-        $script:retiredPeer=$script:launch|ConvertTo-Json -Depth 8|ConvertFrom-Json
-        $script:retiredPeer.instanceId=('d'*32);$script:retiredPeer.pid=201;$script:retiredPeer.testClientPid=202
-        $script:retiredPeer.portKey='peer-manager';$script:retiredPeer.portLeaseToken='peer-manager-token'
-        $script:retiredPeer.testClientPortKey='peer-child';$script:retiredPeer.testClientPortLeaseToken='peer-child-token'
-        $script:retiredPeer|Add-Member status running
-        Mock Get-ItlOnDemandRuntimeInstances {
-            if($script:retiredDefect -eq 'unregistered'){return @()}
-            if($script:retiredDefect -eq 'ambiguous'){return @($script:retiredPeer,$script:retiredPeer)}
-            $script:retiredPeer
-        }
-        Mock Read-ItlOnDemandRuntimeState {
-            param($Family,$InstanceId)
-            if($InstanceId -ceq ('a'*32)) {
-                $script:originalReads++
-                # Initial read, retained proof and its final reread pass; Stop
-                # must independently notice the original registration returning.
-                if($script:retiredDefect -eq 'registration-before-stop' -and $script:originalReads -ge 4){return $script:launch}
-                return $null
-            }
-            $current=$script:retiredPeer|ConvertTo-Json -Depth 8|ConvertFrom-Json
-            if($script:retiredDefect -eq 'peer-changed'){$current.processStartTime=$script:started.AddSeconds(1).ToString('o')}
-            $current
-        }
-        Mock Get-Process {
-            param($Id)
-            $processId=[int](@($Id)[0])
-            if($processId -in @(101,102)) {
-                if($script:retiredDefect -eq 'original-live' -and $processId -eq 101){return [pscustomobject]@{Id=101;StartTime=$script:started}}
-                return $null
-            }
-            $start=$script:started
-            if($script:retiredDefect -eq 'peer-pid-reused'){$start=$start.AddMilliseconds(1)}
-            [pscustomobject]@{Id=$processId;StartTime=$start;HasExited=$false}
-        }
-        Mock Get-CimInstance {
-            $exe=$script:retiredPeer.executablePath
-            if($script:retiredDefect -eq 'peer-executable'){$exe='C:\Чужая платформа\1cv8.exe'}
-            $markers=($script:retiredPeer.ownershipMarkers+$script:retiredPeer.testClientOwnershipMarkers)-join ' '
-            if($script:retiredDefect -eq 'peer-markers'){$markers='unrelated command'}
-            [pscustomobject]@{ExecutablePath=$exe;CommandLine=$markers}
-        }
-        Mock Get-ItlOnDemandProcessOwnershipProof {param($RuntimeState,$ExactStart) & $actualOwnershipProof -RuntimeState $RuntimeState -ExactStart:$ExactStart}
-        Mock Get-ItlOnDemandOwnedTestClientProcesses {param($RuntimeState,$ExactStart,$RegisteredOnly) & $actualChildProof -RuntimeState $RuntimeState -ExactStart:$ExactStart -RegisteredOnly:$RegisteredOnly}
-        Mock Get-ItlOnDemandManagedPortLeaseMatches {
-            param($Family,$Key,$LeaseToken)
-            if($Key -in @('backend-key','client-key')) {
-                if($script:retiredDefect -eq 'original-lease' -and $Key -eq 'backend-key'){return [pscustomobject]@{port=9874;pid=101}}
-                return @()
-            }
-            if($script:retiredDefect -eq 'peer-lease-missing'){return @()}
-            $leasePid=$(if($Key -eq 'peer-manager'){201}else{202})
-            $port=$(if($Key -eq 'peer-manager'){9874}else{48151})
-            if($script:retiredDefect -eq 'peer-lease-pid'){$leasePid=999}
-            [pscustomobject]@{port=$port;pid=$leasePid}
-        }
-        Mock Test-TcpPortOpen { $true }
-        Mock Test-ItlOnDemandPortOwnedByProcess {
-            param($Port,$ProcessId)
-            if($script:retiredDefect -eq 'foreign-listener'){return $false}
-            ($Port -eq 9874 -and $ProcessId -eq 201) -or ($Port -eq 48151 -and $ProcessId -eq 202)
-        }
-        Mock Get-OneCInfoBaseSessionProcesses {
-            param($InfoBaseKind,$InfoBasePath)
-            if($script:retiredDefect -eq 'unknown-session'){return [pscustomobject]@{pid=999}}
-            if($InfoBasePath -eq 'C:\База менеджера'){return [pscustomobject]@{pid=201}}
-            [pscustomobject]@{pid=202}
-        }
-        $recover={ Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected }
-        if($Defect -eq 'none') {
-            (& $recover).instanceId|Should -Be ('b'*32)
-            $script:sequence.ToArray()|Should -Be @('guard','start')
-            Should -Invoke Start-ItlOnDemandBackendInstance -Times 1 -Exactly
-        } else {
-            $recover|Should -Throw '*ITL_ONDEMAND_*'
-            Should -Invoke Start-ItlOnDemandBackendInstance -Times 0 -Exactly
-            if($Defect -eq 'registration-before-stop'){$script:originalReads|Should -BeGreaterOrEqual 4}
-        }
-        Should -Invoke Stop-Process -Times 0 -Exactly
+        (Invoke-MissingStateRecovery).instanceId | Should -Be ('b'*32)
+        $script:sequence.ToArray() | Should -Be @('stop-102','stop-101','start')
         Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
-        Should -Invoke Write-ItlOnDemandRuntimeState -Times 0 -Exactly
     }
 
-    It 'finishes retained <Family> cleanup beside a proven live peer, preserving it (<Defect>)' -ForEach @(
-        @{Family='vanessa-ui';Defect='none'},@{Family='roctup';Defect='none'},
-        @{Family='vanessa-ui';Defect='reused-pid'},@{Family='roctup';Defect='reused-pid'},
-        @{Family='vanessa-ui';Defect='replaced-lease'},@{Family='roctup';Defect='replaced-lease'},
-        @{Family='vanessa-ui';Defect='changed-registration'},@{Family='roctup';Defect='changed-registration'},
-        @{Family='vanessa-ui';Defect='foreign-executable'},@{Family='roctup';Defect='foreign-executable'},
-        @{Family='vanessa-ui';Defect='unregistered'},@{Family='roctup';Defect='unregistered'},
-        @{Family='vanessa-ui';Defect='ambiguous'},@{Family='roctup';Defect='ambiguous'},
-        @{Family='vanessa-ui';Defect='foreign-listener'},@{Family='roctup';Defect='foreign-listener'},
-        @{Family='vanessa-ui';Defect='wrong-base'},@{Family='roctup';Defect='wrong-base'}
-    ) {
-        param($Family,$Defect)
-        $script:launch.family=$Family
-        if($Family -eq 'roctup'){$script:launch.testClientPid=0;$script:launch.testClientPort=0}
-        $script:peerFamily=$(if($Family -eq 'roctup'){'vanessa-ui'}else{'roctup'})
-        $script:peer=$script:launch|ConvertTo-Json -Depth 8|ConvertFrom-Json
-        $script:peer.family=$peerFamily;$script:peer.instanceId=('d'*32)
-        $script:peer | Add-Member status running
-        $script:peer.pid=201;$script:peer.port=9876
-        $script:peer.managerInfoBasePath=$(if($peerFamily -eq 'roctup'){'C:\Целевая база'}else{'C:\Менеджер соседа'})
-        $script:peer.ownershipMarkers=@($peer.managerInfoBasePath,'port=9876')
-        $script:peer.portKey='peer-backend';$script:peer.portLeaseToken='peer-backend-token'
-        $script:peer.testClientPid=202;$script:peer.testClientPort=48152
-        $script:peer.testClientPortKey='peer-child';$script:peer.testClientPortLeaseToken='peer-child-token'
-        $script:peer.testClientOwnershipMarkers=@('C:\Целевая база','/TESTCLIENT','-TPort 48152')
-        $script:peerSession=$(if($peerFamily -eq 'roctup'){201}else{202})
-        $script:peerDefect=$Defect
-        if($Defect -eq 'wrong-base'){$script:peer.managerInfoBasePath='C:\Другая база';$script:peer.infoBasePath='C:\Другая база'}
-        Mock Get-ItlOnDemandRuntimeInstances {
-            if($script:peerDefect -eq 'unregistered'){return @()}
-            if($script:peerDefect -eq 'ambiguous'){return @($script:peer,$script:peer)}
-            $script:peer
+    It 'starts fresh without a launch snapshot of this exact instance (<Snapshot>)' -ForEach @(@{Snapshot='absent'},@{Snapshot='other-instance'},@{Snapshot='other-pid'}) {
+        param($Snapshot)
+        switch ($Snapshot) {
+            absent { $script:expected.nativeLaunchProof=$null }
+            other-instance { $script:launch.instanceId=('f'*32) }
+            other-pid { $script:launch.pid=999 }
         }
-        Mock Read-ItlOnDemandRuntimeState {
-            param($Family,$InstanceId)
-            if($InstanceId -cne ('d'*32)){return $null}
-            $current=$script:peer|ConvertTo-Json -Depth 8|ConvertFrom-Json
-            if($script:peerDefect -eq 'changed-registration'){$current.processStartTime=$script:started.AddSeconds(1).ToString('o')}
-            $current
-        }
-        Mock Get-Process {
-            param($Id)
-            $start=$script:started
-            if($Id -eq $script:peerSession -and $script:peerDefect -eq 'reused-pid'){$start=$start.AddMilliseconds(1)}
-            [pscustomobject]@{Id=[int](@($Id)[0]);StartTime=$start;HasExited=$false}
-        }
-        Mock Get-CimInstance {
-            param($ClassName,$Filter)
-            $exe=$script:peer.executablePath
-            if($script:peerDefect -eq 'foreign-executable'){$exe='C:\Чужая платформа\1cv8.exe'}
-            [pscustomobject]@{ExecutablePath=$exe;CommandLine=($script:peer.ownershipMarkers -join ' ')+' '+($script:peer.testClientOwnershipMarkers -join ' ')}
-        }
-        Mock Get-ItlOnDemandProcessOwnershipProof {
-            param($RuntimeState,$ExactStart)
-            if($RuntimeState.pid -eq 201){return (& $actualOwnershipProof -RuntimeState $RuntimeState -ExactStart:$ExactStart)}
-            [pscustomobject]@{owned=$true}
-        }
-        Mock Get-ItlOnDemandOwnedTestClientProcesses {
-            param($RuntimeState,$ExactStart,$RegisteredOnly)
-            if($RuntimeState.pid -eq 201){return (& $actualChildProof -RuntimeState $RuntimeState -ExactStart:$ExactStart -RegisteredOnly:$RegisteredOnly)}
-            if($RuntimeState.family -eq 'vanessa-ui'){[pscustomobject]@{process=[pscustomobject]@{Id=102}}}
-        }
-        Mock Test-ItlOnDemandPortOwnedByProcess { param($Port,$ProcessId) if($script:peerDefect -eq 'foreign-listener'){return $false}; ($Port -eq 9876 -and $ProcessId -eq 201) -or ($Port -eq 48152 -and $ProcessId -eq 202) }
-        Mock Get-ItlOnDemandManagedPortLeaseMatches {
-            param($Family,$Key,$LeaseToken)
-            if($script:peerDefect -eq 'replaced-lease' -and $Key -like 'peer-*'){return @()}
-            if($Key -eq 'peer-backend' -and $LeaseToken -eq 'peer-backend-token'){return [pscustomobject]@{port=9876;pid=201}}
-            if($Key -eq 'peer-child' -and $LeaseToken -eq 'peer-child-token'){return [pscustomobject]@{port=48152;pid=202}}
-        }
-        Mock Get-OneCInfoBaseSessionProcesses {
-            param($InfoBaseKind,$InfoBasePath)
-            [pscustomobject]@{pid=101}
-            if($script:launch.family -eq 'vanessa-ui'){[pscustomobject]@{pid=102}}
-            if($InfoBasePath -eq 'C:\Целевая база'){[pscustomobject]@{pid=$script:peerSession}}
-        }
-        $operation={ Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId ('a'*32) -RetainedRuntimeState $script:launch }
-        if($Defect -eq 'none') {
-            (Get-ItlOnDemandProcessOwnershipProof -RuntimeState $script:peer -ExactStart).owned | Should -BeTrue
-            if($peerFamily -eq 'vanessa-ui'){@(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $script:peer -ExactStart -RegisteredOnly).Count | Should -Be 1}
-            Assert-ItlOnDemandCleanupIdentity -Actual (Read-ItlOnDemandRuntimeState -Family $peerFamily -InstanceId ('d'*32)) -Expected $script:peer
-            (& $operation).status | Should -Be stopped
-            $script:sequence.ToArray() | Should -Contain 'stop-101'
-            $script:sequence.ToArray() | Should -Contain 'release-original-backend-token'
-        } else {
-            $operation | Should -Throw '*ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT*'
-            Should -Invoke Stop-Process -Times 0 -Exactly
-            Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
-        }
-        Should -Invoke Stop-Process -Times 0 -Exactly -ParameterFilter { $Id -in @(201,202) }
-        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly -ParameterFilter { $Key -like 'peer-*' }
+        (Invoke-MissingStateRecovery).instanceId | Should -Be ('b'*32)
+        Should -Invoke Stop-NativeProcessForSafety -Times 0 -Exactly
+        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
+        $script:sequence.ToArray() | Should -Be @('start')
+    }
+
+    It 'refuses the replacement while its own launched process keeps running' {
+        Mock Wait-ItlOnDemandProcessExit { $false }
+        { Invoke-MissingStateRecovery } | Should -Throw '*ITL_ONDEMAND_STOP_FAILED*'
+        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
+        Should -Invoke Start-ItlOnDemandBackendInstance -Times 0 -Exactly
     }
 }
 
@@ -835,24 +566,5 @@ Describe 'On-demand port ownership recovery contract' {
         $reused=Start-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -CatalogSha256 ('c'*64)
         $reused.status | Should -Be 'readiness'
         $reused.pid | Should -Be 24208
-    }
-
-    It 'skips an unknown peer listener after one observation without retry delay' {
-        Mock Get-ItlOnDemandPortOwnership { param($Port,$ProcessId,$RetryUntil,[switch]$TestClient) & $actualPortOwnership -Port $Port -ProcessId $ProcessId -RetryUntil $RetryUntil -TestClient:$TestClient }
-        Mock Get-ItlTcpListenerOwnership {
-            param($Port,$Address,$RetryUntil,$ConnectTimeoutMilliseconds,$FallbackSource)
-            $script:ownershipCalls.Add([pscustomobject]@{port=$Port;retry=$RetryUntil})
-            [pscustomobject]@{status='unknown';owners=@();source='none';attempts=1;elapsedMs=0;diagnostic='status=unknown'}
-        }
-        Mock Start-Sleep {}
-        $peer=$script:record|ConvertTo-Json -Depth 8|ConvertFrom-Json
-        $peer.instanceId=('d'*32);$peer.pid=24209;$peer.port=6005;$peer.status='running'
-        Mock Get-ItlOnDemandRuntimeInstances { $peer }
-        $stopping=[pscustomobject]@{family='vanessa-ui';instanceId=('a'*32)}
-        Test-ItlOnDemandPeerSessionOwnership -ProcessId 24209 -Base ([pscustomobject]@{kind='file';path='C:\Целевая база'}) -StoppingRuntime $stopping | Should -BeFalse
-        $script:ownershipCalls.Count | Should -Be 1
-        $script:ownershipCalls[0].port | Should -Be 6005
-        $script:ownershipCalls[0].retry | Should -BeNullOrEmpty
-        Should -Invoke Start-Sleep -Times 0 -Exactly
     }
 }

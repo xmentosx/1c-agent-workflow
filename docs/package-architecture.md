@@ -672,6 +672,13 @@ removal of the retained-proof chain and the 2026-10-22 mailbox after the branch8
 reproducer passes. Rollback restores retained ownership; the added record fields
 stay ignorable. Acceptance is the original blocked operation completing, and the
 next call through the same facade succeeding, without manual process work.
+The reproducer passed on PM5 branch8 on 2026-11-10 (facade 0.4.29): after the
+lifecycle drain owner stopped the backend, the same live facade started a
+replacement and every following call and branch update succeeded. Facade 0.4.30
+then removed the retained-proof chain, the recovery candidate, the mailbox and
+the `repair-connections` adapter (superseding the 2026-10-22 mailbox design): a
+guard never outlives its call, and missing-registration recovery stops only the
+facade's own launched processes by PID, start time and EXE.
 
 Architecture checkpoint: the user authorized this continuation design and its
 simplification on 2026-09-26. The existing update/refresh owner retains all

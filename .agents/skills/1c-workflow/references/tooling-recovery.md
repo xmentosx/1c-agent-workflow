@@ -34,20 +34,18 @@ Unchanged, proven runtime skips loading; changed test sources load only tests;
 a changed engine pin loads only the engine. A replaced database invalidates both.
 The configured test extension name must match `Configuration.xml` before loading.
 
-On-demand MCP can recover a disappeared runtime record in the same external
-connection only when the owning facade retains its original launch evidence.
-The existing guard and cleanup owner prove quiescence, exact process and target
-identity, related TestClient and immutable leases before replacement. Retry the
-original `manage_test_client(connect)` through that same facade; a proven recovery
-forwards it once and a following safe call confirms the replacement. Do not edit
-or recreate the missing JSON, stop a guessed PID, or repeat an unknown modifying
-call. If the owner reports an active call, wait for that operation to complete or
-use its cancellation path. If ownership/cleanup stays unconfirmed, run `repair-dev-branch-tooling`:
-it releases this worktree's holders without a guessed PID. Then resume the
-original check; the same facade resets its backend on its next call, so the MCP
-client needs no restart. A fresh chat does not prove same-connection
-recovery. Legacy records remain readable; downgrade requires quiescent, resolved
-work, and an older facade cannot inherit a live in-memory launch snapshot.
+On-demand MCP recovers a disappeared runtime record in the same external
+connection: the facade stops only what it launched itself (exact PID, start time
+and EXE) and starts a replacement, never waiting on other processes, ports or
+leases. Retry the original `manage_test_client(connect)` through that same
+facade; a following safe call confirms the replacement. A facade never keeps
+the infobase between calls: an unconfirmed stop ends its call, drops that
+backend and the next call starts a new one. Do not edit or recreate the missing
+JSON, stop a guessed PID, or repeat an unknown modifying call. If an active call
+holds the base, wait for it or use its cancellation path. If leftover processes
+or holders of this worktree still block the base, run `repair-dev-branch-tooling`:
+it releases them without a guessed PID. Then resume the original check; the MCP
+client needs no restart. Legacy records remain readable.
 
 An exhausted verification session stops new attempts; an explicitly authorized
 extension preserves that same session through the owner operation described in

@@ -112,21 +112,17 @@ Distinguish normal stopped on-demand backends from a failed facade/tool call;
 catalog resolution alone does not start 1C. Use the family's existing recovery
 below. For an exposed Vanessa or ROCTUP facade with a connection/cleanup failure,
 call `call_tool(name="itl_recover_connection", arguments={})` without asking for
-a manual reset. Its existing owner confirms cleanup, including its retained
-guard, and verifies a usable connection within the same bounded request phase
-as a normal cold call (ten minutes by default, respecting shorter caller limits).
-Failed startup reports its phase, elapsed/remaining budget and helper exit or
-cancellation reason. Proven registered peers of either family remain alive;
-unknown exact-base sessions still require their owner's continuation. Before a new
-normal call the facade also reconciles its pending cleanup automatically. A new
-chat waiting for the same resources requests cleanup from the original facade
-through its project-local connection mailbox; the original signed owner performs
-the stop. Active calls are allowed to finish. An obsolete facade without this
-control is retired by the helper only after exact project/helper, executable,
-process creation, supervisor and complete resource-set identity checks, with
-owned native cleanup before guard release. This is version-independent and
-needs neither a full Codex restart nor manual PID termination. When the client's
-old tools cannot expose this route, start one new chat on the updated config.
+a manual reset. It stops the old backend and verifies a usable connection within
+the same bounded request phase as a normal cold call (ten minutes by default,
+respecting shorter caller limits); an unconfirmed old stop is reported, not
+blocking. Failed startup reports its phase, elapsed/remaining budget and helper
+exit or cancellation reason. A facade never holds the infobase between calls: an
+unconfirmed stop ends its call, drops that backend and the next call starts a new
+one, so another chat only waits for active calls. Other processes are never
+stopped by the facade. If leftover 1C processes or holders of this worktree
+still block the base, run `repair-dev-branch-tooling`; no manual PID termination
+or full client restart is needed. When the client's old tools cannot expose this
+route, start one new chat on the updated config.
 
 Recovery preserves the preceding operation's outcome. After success, the agent
 checks its observable effects: reuse a completed result, retry an action proven

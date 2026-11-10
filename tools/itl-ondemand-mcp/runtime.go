@@ -183,16 +183,16 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		statePath := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family, r.instanceID+".json")
 		if _, statErr := os.Stat(statePath); os.IsNotExist(statErr) {
 			if r.executionOwner != nil {
+				// Only a confirmed stop removes a registration, so its absence
+				// between calls means the backend was retired (normally by a
+				// lifecycle drain). Stop whatever this facade itself launched and
+				// start a replacement; if that stop stays unconfirmed, drop the
+				// backend and start fresh anyway. Nothing was dispatched yet.
 				previous := r.instanceID
-				if r.active != 0 || r.cleanupUnconfirmed {
-					r.mu.Unlock()
-					return recoveryAction(toolName, previous, previous, false, "not-started", fmt.Errorf("ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT: an active or unconfirmed native call remains; complete owned cleanup before retrying the original operation; no call was replayed; %s", branchHolderRepairHint)), nil
-				}
 				if _, err := r.recoverLocked(ctx, r.session, previous, r.backend); err != nil {
-					current := r.instanceID
 					r.writeLifecycleEvidenceLocked(toolName, "recovery", "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", err)
-					r.mu.Unlock()
-					return recoveryAction(toolName, previous, current, false, "not-started", err), nil
+					r.logger.Warn("missing-state recovery did not confirm the old backend stop; starting a new backend", "instanceId", previous, "error", err)
+					r.resetBackendLocked()
 				}
 			} else {
 				_ = r.session.Close()
@@ -449,8 +449,8 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	r.publishHolderState(ctx, r.executionOwner, holderStateRecovering)
 	info, err := r.broker.Recover(ctx, previousBackend, replacementInstanceID)
 	if err != nil {
-		// No confirmed cleanup receipt was returned. Preserve the existing
-		// resource owner until its explicit stop proves old/candidate cleanup.
+		// No confirmed cleanup receipt was returned. The end of this execution
+		// drops the backend and releases the guard; nothing is retained.
 		r.cleanupUnconfirmed = true
 		return nil, err
 	}
@@ -985,7 +985,7 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 		return err
 	}
 	r.mu.Unlock()
-	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, nil, false, unlock)
+	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, nil, unlock)
 	if err != nil {
 		return err
 	}
@@ -1036,7 +1036,7 @@ func (r *runtime) stopWithLocalGate(ctx context.Context, meta mcp.Meta, unlock f
 		return err
 	}
 	r.mu.Unlock()
-	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, meta, true, unlock)
+	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, meta, unlock)
 	if err != nil {
 		return err
 	}
@@ -1047,8 +1047,7 @@ func (r *runtime) stopWithLocalGate(ctx context.Context, meta mcp.Meta, unlock f
 	}
 	if err := r.stopDatabaseBackendLocked(ctx, true); err != nil {
 		r.mu.Unlock()
-		_ = finish("failed", err.Error())
-		return err
+		return errors.Join(err, finish("failed", err.Error()))
 	}
 	r.mu.Unlock()
 	return finish("succeeded", "")
@@ -1506,27 +1505,16 @@ func (r *runtime) close(ctx context.Context) error {
 	return r.stopOwnedRuntime(ctx)
 }
 
-// A persistent profile owner must be able to retry an explicitly requested stop
-// after native cleanup failed. Keep its private lease and HTTP session until
-// that retry succeeds; only terminal close abandons those local connections.
+// Terminal stop. The owned stop already retries transient failures; an
+// unconfirmed stop leaves the registration for the lifecycle drain or repair.
 func (r *runtime) stopOwnedRuntime(ctx context.Context) error {
 	r.mu.Lock()
 	r.closed = true
 	r.mu.Unlock()
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if err := r.stop(ctx); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("cleanup owned backend: %w", lastErr)
-		case <-time.After(250 * time.Millisecond):
-		}
+	if err := r.stop(ctx); err != nil {
+		return fmt.Errorf("cleanup owned backend: %w", err)
 	}
-	return fmt.Errorf("cleanup owned backend after 3 attempts: %w", lastErr)
+	return nil
 }
 
 func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo, progressTokenProvided bool, progressNotificationsForwarded uint64, progressID ...string) {

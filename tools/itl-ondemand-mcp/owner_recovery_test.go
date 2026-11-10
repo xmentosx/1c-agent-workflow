@@ -184,7 +184,7 @@ func TestOwnerRecoveryReadinessFailureRetainsPhaseAndCleansBeforeSafeContinuatio
 	}
 }
 
-func TestOwnerRecoveryDrainsIdleDebtBeforeDispatchForBothFamilies(t *testing.T) {
+func TestOwnerIdleStopFailureDropsTheBackendAndTheNextCallStartsFreshForBothFamilies(t *testing.T) {
 	for _, family := range []string{"roctup", "vanessa-ui"} {
 		t.Run(family, func(t *testing.T) {
 			reads := 0
@@ -198,16 +198,18 @@ func TestOwnerRecoveryDrainsIdleDebtBeforeDispatchForBothFamilies(t *testing.T) 
 			broker.idleError = errors.New("native idle cleanup unconfirmed")
 			rt.idleDeadline = time.Now().Add(-time.Second)
 			if err := rt.stopIdle(context.Background(), rt.generation); err == nil {
-				t.Fatal("fixture did not reproduce idle cleanup debt")
+				t.Fatal("fixture did not reproduce an unconfirmed idle stop")
 			}
-			if !rt.cleanupUnconfirmed || rt.executionOwner != nil {
-				t.Fatal("fixture did not retain debt without a database owner")
+			if rt.cleanupUnconfirmed || rt.executionOwner != nil || rt.backend != nil {
+				t.Fatal("an unconfirmed idle stop left cleanup debt for the next call")
 			}
+			ensuresBefore, _ := broker.counts()
 			if result := recoveryGatewayCall(t, session, recoveryReadName(family)); result.IsError || resultText(result) != "safe search result" {
-				t.Fatalf("original safe call did not resume: %v", result)
+				t.Fatalf("original safe call did not continue: %v", result)
 			}
-			if reads != 2 || len(broker.stopOwners) != 1 || rt.cleanupUnconfirmed || rt.executionOwner != nil {
-				t.Fatalf("debt leaked into new execution or read replayed: reads=%d stops=%v", reads, broker.stopOwners)
+			ensuresAfter, _ := broker.counts()
+			if reads != 2 || len(broker.stopOwners) != 0 || ensuresAfter != ensuresBefore+1 || rt.cleanupUnconfirmed || rt.executionOwner != nil {
+				t.Fatalf("next call did not start fresh or a read was replayed: reads=%d stops=%v ensures=%d", reads, broker.stopOwners, ensuresAfter-ensuresBefore)
 			}
 		})
 	}
@@ -248,7 +250,10 @@ func TestOwnerRecoveryLifecycleDrainBeforeIdleThenOriginalSearch(t *testing.T) {
 	}
 }
 
-func TestOwnerRecoveryGatewayResumesRetainedOwnerWithoutReplayingMutation(t *testing.T) {
+// A mutation with an unknown outcome whose owned stop stays unconfirmed: the
+// execution releases the base and drops the backend, reports the unknown
+// outcome, and neither the next call nor recovery replays the mutation.
+func TestOwnerRecoveryAfterUnconfirmedMutationCleanupNeverReplaysIt(t *testing.T) {
 	for _, family := range []string{"roctup", "vanessa-ui"} {
 		t.Run(family, func(t *testing.T) {
 			mutations := 0
@@ -259,25 +264,31 @@ func TestOwnerRecoveryGatewayResumesRetainedOwnerWithoutReplayingMutation(t *tes
 				}
 				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "read"}}}, nil
 			})
-			broker.stopFailures = 1
+			broker.stopFailures = 3
 			result := recoveryGatewayCall(t, session, recoveryMutationName(family))
-			if !result.IsError || rt.executionOwner == nil || !rt.cleanupUnconfirmed || mutations != 1 {
-				t.Fatalf("unknown mutation was not retained: %v", result)
+			if !result.IsError || mutations != 1 || !strings.Contains(resultText(result), "CLEANUP_UNCONFIRMED") {
+				t.Fatalf("unknown mutation cleanup was not reported: %v", result)
 			}
-			owner := rt.executionOwner.Proof.ID
-			broker.stopFailures = 1
-			failed := recoveryGatewayCall(t, session, ownerRecoveryTool)
-			if !failed.IsError || rt.executionOwner == nil || rt.executionOwner.Proof.ID != owner || mutations != 1 {
-				t.Fatal("failed recovery released ownership or replayed mutation")
+			details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
+			if details["automaticRetryPerformed"] != false || details["cleanupUnconfirmed"] != true {
+				t.Fatalf("unknown outcome lost its no-replay evidence: %#v", details)
 			}
-			result = recoveryGatewayCall(t, session, ownerRecoveryTool)
-			if result.IsError || rt.executionOwner != nil || rt.cleanupUnconfirmed || rt.session == nil || mutations != 1 {
-				t.Fatalf("agent-owned recovery did not restore connection: %v", result)
+			if rt.executionOwner != nil || rt.cleanupUnconfirmed || rt.backend != nil {
+				t.Fatal("the unconfirmed cleanup retained the guard or the backend")
 			}
+			owner := broker.stopOwners[0]
 			for _, id := range broker.stopOwners {
 				if id != owner {
 					t.Fatalf("cleanup reacquired or expanded original owner: %s != %s", id, owner)
 				}
+			}
+			stopsBefore := len(broker.stopOwners)
+			result = recoveryGatewayCall(t, session, ownerRecoveryTool)
+			if result.IsError || rt.executionOwner != nil || rt.cleanupUnconfirmed || rt.session == nil || mutations != 1 {
+				t.Fatalf("agent-owned recovery did not restore connection: %v", result)
+			}
+			if len(broker.stopOwners) != stopsBefore {
+				t.Fatal("recovery retried the dropped backend's cleanup")
 			}
 			if result := recoveryGatewayCall(t, session, recoveryReadName(family)); result.IsError {
 				t.Fatal(resultText(result))
@@ -300,7 +311,7 @@ func TestOwnerRecoveryPreservesSuccessAndFinalizationEvidence(t *testing.T) {
 		rt.mu.Unlock()
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "retained successful result"}}, StructuredContent: map[string]any{"answer": 42}}, nil
 	})
-	broker.stopFailures = 1
+	broker.stopFailures = 3
 	result := recoveryGatewayCall(t, session, recoveryReadName("roctup"))
 	if !result.IsError || !strings.Contains(resultText(result), "retained successful result") {
 		t.Fatal("cleanup erased upstream result")
@@ -377,22 +388,13 @@ func TestOwnerRecoveryDoesNotAcquireOrReleaseForeignGuard(t *testing.T) {
 	}
 }
 
-func TestOwnerRecoveryCancellationPreservesOriginalExecution(t *testing.T) {
+func TestOwnerRecoveryCancellationDispatchesNoNativeWork(t *testing.T) {
 	rt, _, broker := newOwnerRecoveryFixture(t, "roctup", func(string) (*mcp.CallToolResult, error) { return nil, nil })
-	_, finish, err := rt.beginDatabaseCall(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt.cleanupUnconfirmed = true
-	if err := finish("failed", "unknown original outcome"); err == nil {
-		t.Fatal("fixture released original execution")
-	}
-	owner := rt.executionOwner
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	result := rt.recoverConnection(ctx, nil, map[string]any{})
-	if !result.IsError || rt.executionOwner != owner || !rt.cleanupUnconfirmed {
-		t.Fatal("cancelled recovery lost original owner")
+	if !result.IsError || rt.executionOwner != nil || rt.cleanupUnconfirmed {
+		t.Fatal("cancelled recovery acquired or retained an owner")
 	}
 	if ensures, stops := broker.counts(); ensures != 0 || stops != 0 {
 		t.Fatal("cancelled recovery dispatched native work")

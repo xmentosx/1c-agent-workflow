@@ -66,85 +66,27 @@ func (r *runtime) lockDatabaseCalls(ctx context.Context) (func(), error) {
 	}
 }
 
-// One MCP tool call is one database execution. Backend lifetime is independent:
-// an idle warmed backend never retains this guard between calls. Unconfirmed
-// native cleanup remains part of the original execution until owned stop.
+// One MCP tool call is one database execution, and the guard lives exactly as
+// long as that execution. Backend lifetime is independent: an idle warmed
+// backend never retains this guard between calls, and neither does a backend
+// whose owned stop stayed unconfirmed (see finishDatabaseExecution).
 func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context.Context, func(string, string) error, error) {
-	return r.beginDatabaseExecution(ctx, meta, false)
-}
-
-// Only the existing owned-stop path may continue an execution whose native
-// cleanup is unconfirmed. A new tool call never inherits that pending owner.
-func (r *runtime) beginDatabaseExecution(ctx context.Context, meta mcp.Meta, ownedCleanup bool) (context.Context, func(string, string) error, error) {
 	unlock, err := r.lockDatabaseCalls(ctx)
 	if err != nil {
 		return ctx, nil, err
 	}
-	return r.beginDatabaseExecutionWithLocalGate(ctx, meta, ownedCleanup, unlock)
+	return r.beginDatabaseExecutionWithLocalGate(ctx, meta, unlock)
 }
 
 // The caller already owns the local gate. Native stop may first establish that
 // a private runtime is idle without waiting for unrelated database execution.
-func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta mcp.Meta, ownedCleanup bool, unlock func()) (context.Context, func(string, string) error, error) {
+func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta mcp.Meta, unlock func()) (context.Context, func(string, string) error, error) {
 	planner, coordinated := r.broker.(executionPlanningBroker)
 	if !coordinated {
-		return ctx, func(string, string) error { unlock(); return nil }, nil
-	}
-	r.mu.Lock()
-	retainedOwner, retainedPlan, pending := r.executionOwner, r.executionPlan, r.cleanupUnconfirmed
-	externallyReleased := retainedOwner != nil && retainedOwner.exited()
-	if externallyReleased {
-		// This worktree's own release (repair-dev-branch-tooling or a waiting
-		// lifecycle) stopped the retained guard host and took over its native
-		// cleanup. Forget that owner; the pending stop is retried once under a
-		// fresh guard and never retains it beyond this call.
-		r.executionOwner, r.executionPlan = nil, nil
-		r.logger.Warn("retained execution guard was released externally; resetting facade ownership",
-			"executionId", retainedOwner.Proof.ID, "cleanupUnconfirmed", pending)
-	}
-	r.mu.Unlock()
-	if externallyReleased {
-		_ = retainedOwner.Close()
-		retainedOwner, retainedPlan = nil, nil
-	}
-	if pending && !ownedCleanup {
-		// Finish only our previous native execution before admitting a new tool.
-		// Keep the local gate across both phases; the old signed context is used
-		// for cleanup only and never for dispatching the next operation.
-		cleanupCtx, cancel := context.WithTimeout(ctx, time.Minute)
-		defer cancel()
-		cleanupCtx, finish, err := r.beginDatabaseExecutionWithLocalGate(cleanupCtx, meta, true, func() {})
-		if err != nil {
-			unlock()
-			return ctx, nil, err
-		}
-		r.mu.Lock()
-		stopErr := r.stopDatabaseBackendLocked(cleanupCtx, true)
-		if stopErr != nil && externallyReleased {
-			r.resetBackendAfterExternalReleaseLocked()
-		}
-		r.mu.Unlock()
-		terminal, message := "succeeded", ""
-		if stopErr != nil {
-			terminal, message = "failed", stopErr.Error()
-		}
-		if err := errors.Join(stopErr, finish(terminal, message)); err != nil {
-			unlock()
-			if externallyReleased {
-				return ctx, nil, fmt.Errorf("ITL_ONDEMAND_SELF_RESET_CLEANUP_UNCONFIRMED: the released owner's backend stop is still unconfirmed; this facade dropped it and starts a new backend on the next call; run %s first so it drains this worktree's runtime, then repeat the original call; no call was replayed: %w", branchHolderRepairAction, err)
-			}
-			return ctx, nil, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: %w; %s", err, branchHolderRepairHint)
-		}
-		retainedOwner, retainedPlan = nil, nil
-	}
-	if retainedOwner != nil {
-		if !ownedCleanup || !pending || retainedPlan == nil {
-			unlock()
-			return ctx, nil, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original execution still owns the infobase; call %s through this facade, preserve the unknown result, then retry only after owned cleanup is proven; %s", ownerRecoveryTool, branchHolderRepairHint)
-		}
-		r.publishHolderState(ctx, retainedOwner, holderStateRecovering)
-		ctx = withExecutionInvocation(ctx, retainedOwner.Proof, retainedPlan)
-		return ctx, r.finishDatabaseExecution(retainedOwner, unlock), nil
+		return ctx, func(string, string) error {
+			defer unlock()
+			return r.dropUnconfirmedBackend()
+		}, nil
 	}
 	plan, err := planner.ExecutionPlan(ctx)
 	if err != nil {
@@ -161,31 +103,17 @@ func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta 
 		unlock()
 		return ctx, nil, err
 	}
-	state := holderStateActiveNativeCall
-	if ownedCleanup && pending {
-		state = holderStateRecovering
-	}
 	request := executionGuardRequest{SchemaVersion: 1, Root: plan.GuardRoot, Bases: plan.Bases,
 		Operation: "ondemand-" + r.family + "-call", ExecutionID: executionID,
-		Timeout: plan.WaitTimeoutSeconds, ProjectRoot: plan.ProjectRoot, HolderState: state}
+		Timeout: plan.WaitTimeoutSeconds, ProjectRoot: plan.ProjectRoot, HolderState: holderStateActiveNativeCall}
 	if parent != nil {
 		request.InheritedContext, request.InheritedContextKey = parent.Encoded, parent.Key
 	}
-	var lastPeerRecovery time.Time
+	// Another holder of the same base is an active call (no facade retains a
+	// guard between calls) or a lifecycle; it is waited for within the budget.
 	owner, err := acquireExecutionGuard(ctx, plan.Python, planner.ExecutionRuntimeRoot(), request, func(event executionGuardEvent) {
 		r.logger.Info("waiting for database execution", "status", event.Status,
 			"resources", event.Resources, "waitSeconds", event.WaitSeconds)
-		// The supervisor announces waiting=0 before even trying free OS
-		// handles. Only actual contention may invoke connection recovery.
-		if parent == nil && event.WaitSeconds >= 0.05 && time.Since(lastPeerRecovery) >= 5*time.Second {
-			lastPeerRecovery = time.Now()
-			_ = r.recoverPeerConnections(ctx, event.Resources)
-			if repairer, ok := r.broker.(obsoleteConnectionRepairBroker); ok {
-				if err := repairer.RepairObsoleteConnections(ctx, plan, event.Resources); err != nil {
-					r.logger.Warn("obsolete connection cleanup", "error", err)
-				}
-			}
-		}
 	})
 	if err != nil {
 		unlock()
@@ -212,40 +140,52 @@ func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta 
 	return ctx, r.finishDatabaseExecution(owner, unlock), nil
 }
 
+// The guard is always released at the end of its execution. If the owned stop
+// of this execution's backend stayed unconfirmed, the facade forgets that
+// backend instead of retaining the guard for a later owner-only cleanup: its
+// registration stays for the lifecycle drain or repair-dev-branch-tooling, and
+// the next call starts a new instance. A call with an unknown outcome is never
+// replayed.
 func (r *runtime) finishDatabaseExecution(owner *executionGuardOwner, unlock func()) func(string, string) error {
 	return func(result, message string) error {
 		defer unlock()
-		r.mu.Lock()
-		pending := r.cleanupUnconfirmed
-		r.mu.Unlock()
-		if pending {
-			// The retained owner tells this worktree's release that it does no
-			// work, so a waiting lifecycle or repair may stop it.
-			r.publishHolderState(context.Background(), owner, holderStateCleanupUnconfirmed)
-			return fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original resource owner retained; call %s through this facade before another tool call; no uncertain call was replayed; %s", ownerRecoveryTool, branchHolderRepairHint)
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		if result == "" {
-			result = "succeeded"
-		}
-		err := owner.Release(cleanupCtx, result, message)
+		pendingErr := r.dropUnconfirmedBackend()
 		r.mu.Lock()
 		if r.executionOwner == owner {
 			r.executionOwner, r.executionPlan = nil, nil
 		}
 		r.mu.Unlock()
-		return err
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if result == "" {
+			result = "succeeded"
+		}
+		if pendingErr != nil && result == "succeeded" {
+			result, message = "failed", "EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED"
+		}
+		return errors.Join(pendingErr, owner.Release(cleanupCtx, result, message))
 	}
+}
+
+// Ends an execution whose owned backend stop stayed unconfirmed: the backend
+// is dropped (see resetBackendLocked) and the caller reports the unknown
+// cleanup with its continuation. Returns nil when cleanup was confirmed.
+func (r *runtime) dropUnconfirmedBackend() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.cleanupUnconfirmed {
+		return nil
+	}
+	r.resetBackendLocked()
+	return fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: the owned backend stop was not confirmed; this facade released the infobase, dropped that backend and starts a new one on the next call; no uncertain call was replayed; %s", branchHolderRepairHint)
 }
 
 const branchHolderRepairAction = "repair-dev-branch-tooling"
 
-const branchHolderRepairHint = "if owned cleanup stays unconfirmed, run " + branchHolderRepairAction +
-	": it releases this worktree's execution-guard holders, and this facade resets its backend on the next call"
+const branchHolderRepairHint = "if leftover 1C processes of this worktree still block the base, run " + branchHolderRepairAction +
+	": it releases this worktree's holders and drains its runtime"
 
-// Best effort: the phase is diagnostic. A host that cannot answer has exited,
-// which the next admission detects as an external release.
+// Best effort: the phase is diagnostic for waiting holders' progress.
 func (r *runtime) publishHolderState(ctx context.Context, owner *executionGuardOwner, state string) {
 	if owner == nil {
 		return
@@ -258,10 +198,14 @@ func (r *runtime) publishHolderState(ctx context.Context, owner *executionGuardO
 	}
 }
 
-// Called under r.mu after the released owner's stop failed again under a fresh
-// guard. The releaser owns the old backend's native cleanup now; this facade
-// starts over instead of retaining a guard beyond the current call.
-func (r *runtime) resetBackendAfterExternalReleaseLocked() {
+// Forget the current backend without stopping it: called under r.mu when its
+// owned stop stayed unconfirmed. The next call starts under a new instance ID,
+// so the old registration is left to the lifecycle drain or repair instead of
+// blocking the new start.
+func (r *runtime) resetBackendLocked() {
+	if r.sessionTransport != nil {
+		r.sessionTransport.retired.Store(true)
+	}
 	if r.session != nil {
 		_ = r.session.Close()
 		r.clearProgress(r.session)
@@ -273,6 +217,20 @@ func (r *runtime) resetBackendAfterExternalReleaseLocked() {
 		r.timer.Stop()
 		r.timer = nil
 	}
+	if rotating, ok := r.broker.(instanceRotatingBroker); ok {
+		if id, err := randomID(); err == nil {
+			rotating.RotateInstance(id)
+			r.instanceID = id
+		}
+	}
+}
+
+type instanceRotatingBroker interface {
+	RotateInstance(string)
+}
+
+func (b *powershellBroker) RotateInstance(instanceID string) {
+	b.InstanceID, b.lastBackend, b.cleanupConfirmed = instanceID, nil, false
 }
 
 func sameExecutionPlan(first, second *facadeExecutionPlan) bool {
@@ -343,12 +301,28 @@ func (r *runtime) restoreDatabaseRuntimeMode(context.Context) error   { return n
 // outer call, never to backend idle cleanup.
 func (r *runtime) stopDatabaseBackendLocked(ctx context.Context, _ bool) error {
 	// Retire the old HTTP session before native cleanup can release/reuse its
-	// port. A failed stop still retains the backend and its original guard.
+	// port. A failed stop marks cleanup unconfirmed only until the end of this
+	// execution, which then drops the backend and releases the guard.
 	if r.sessionTransport != nil {
 		r.sessionTransport.retired.Store(true)
 	}
 	if r.backend != nil || r.cleanupUnconfirmed {
-		if err := r.broker.Stop(ctx); err != nil {
+		var err error
+		// Transient exit/port waits get a short bounded retry before the
+		// backend is given up; the execution deadline still applies.
+		for attempt := 0; attempt < 3; attempt++ {
+			if err = r.broker.Stop(ctx); err == nil {
+				break
+			}
+			if attempt < 2 {
+				select {
+				case <-ctx.Done():
+					attempt = 3
+				case <-time.After(250 * time.Millisecond):
+				}
+			}
+		}
+		if err != nil {
 			r.cleanupUnconfirmed = true
 			return err
 		}

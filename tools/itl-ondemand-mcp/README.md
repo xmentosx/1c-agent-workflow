@@ -8,19 +8,18 @@ For Vanessa, the broker leases separate MCP-manager and TestClient ports, create
 
 Every forwarded call appends schema-v3 evidence under `.agent-1c/mcp/ondemand/<family>/`. Evidence stores outcome/result code, catalog and instance identity, argument SHA, and—when applicable—the project-relative feature path, feature SHA, and scenario line. Failed calls also store a sanitized short result message and backend log path. Vanessa runtime/editor exception text is returned as `ITL_VANESSA_TOOL_RESULT_FAILED` even when the upstream MCP response incorrectly reports `IsError=false`; raw arguments, secrets, configuration content, successful result content, and scenario content are never persisted.
 
-If its runtime JSON disappears between completed calls, the same facade may
-recover its backend without replacing the external MCP connection. The broker
-returns an original launch snapshot in memory; it is carried only inside the
-existing execution invocation. Recovery first checks quiescence and the exact
-PID/start/EXE/base/manager/port/TestClient/lease proofs under the inherited guard.
-The existing cleanup owner stops only those processes, proves exit and closed
-ports, releases their immutable leases, then starts a new instance. Missing or
-conflicting proof, an unconfirmed native call, a foreign exact-base session or a
-reappeared registration returns an owner continuation without restart. Missing
-JSON is never reconstructed as evidence. A modifying call with unknown outcome
-is never automatically replayed. Existing registered-state recovery keeps its
-own contract; legacy callers without the retained snapshot cannot use this new
-missing-state authority.
+If its runtime JSON disappears between completed calls, the same facade
+recovers its backend without replacing the external MCP connection. Only a
+confirmed stop removes a registration, so its absence means an owner (normally
+a lifecycle drain) already retired the instance. The broker's launch snapshot,
+kept in facade memory and carried only inside the call's execution invocation,
+selects at most what this facade started: a manager or TestClient whose PID,
+exact start time and EXE still match is stopped, its exact leases are released,
+and a new instance starts. A reused PID, another owner of the old ports, a
+replaced lease or an unidentified exact-base session is left untouched and never
+blocks the replacement. If even that stop stays unconfirmed, the facade drops
+the old backend and starts fresh within the same call. Missing JSON is never
+reconstructed. A modifying call with unknown outcome is never replayed.
 
 Every MCP tool request owns one phase deadline, including the existing default
 ten-minute phase when metadata is absent. Nested broker calls inherit its
@@ -39,23 +38,23 @@ A Vanessa `ACTION_FAILED` that names a disconnected TestClient returns
 `ITL_VANESSA_TESTCLIENT_NOT_CONNECTED` with `action: itl_recover_connection`;
 the facade does not recover or replay it automatically.
 
-If native cleanup is unconfirmed, the original execution keeps its guard. Before
-dispatching a new call, the facade retries its existing owned stop under that
-same signed execution; only confirmed cleanup permits a new execution. Cleanup
-debt from an idle stop is likewise reconciled before backend startup. An idle
-stop encountering a registration already removed by lifecycle continues through
-the existing guarded retained-launch cleanup, rather than treating removal as
-either a cleanup receipt or a permanent failure.
-Retained cleanup distinguishes unknown exact-base sessions from registered
-warm peers of either family. A peer is preserved only after exact process/start,
-executable/markers, database, listener, current registration and lease checks.
-Unknown, replaced or ambiguous ownership still retains the original guard.
+The guard never outlives its call. An owned stop is retried briefly within the
+call; if it stays unconfirmed, the execution still ends: the facade releases
+the guard, forgets that backend (its registration stays for the lifecycle drain
+or `repair-dev-branch-tooling`), reports `EXECUTION_GUARD_CLEANUP_UNCONFIRMED`
+with the call's outcome, and starts the next call under a new instance ID. An
+unconfirmed idle stop drops the backend the same way. An idle stop encountering
+a registration already removed by lifecycle continues through the guarded stop
+of its own launch snapshot. (Facades up to 0.4.29 instead retained the guard
+until the same facade proved cleanup; that blocked PM5 branches for hours on
+2026-11-08.)
 
 For both families the agent can call `call_tool` with
 `name="itl_recover_connection", arguments={}`. This facade-owned operation is
 discoverable through `resolve_tool` without starting 1C and is also exposed on
-the full surface. It uses the existing stop owner, including a retained execution,
-then initializes and verifies a usable backend under a fresh call guard. Its
+the full surface. It uses the existing stop owner, then initializes and verifies
+a usable backend under a fresh call guard; an unconfirmed stop of the old backend
+is reported (`cleanupConfirmed: false`) instead of blocking the new one. Its
 cleanup, admission and cold readiness share the existing request-phase budget
 (ten minutes by default or the caller's remaining phase); it never restarts that
 budget or extends a shorter caller deadline. Startup phases report elapsed and
@@ -66,37 +65,18 @@ operation is replayed. An unknown modifying outcome remains unknown even when
 the connection is recovered; inspect its effect before deciding to issue it again.
 The gateway remains two tools; its call description adds only the recovery route.
 
-Connection cleanup can cross chat lifetimes without restarting the Desktop app.
-Each facade exposes a project-local, generation/creation-identity-bound mailbox
-under its family's `connections/` directory. A same-resource waiter asks the old
-runtime to finish retained cleanup using its original signed execution; a busy
-runtime is left alone. Requests and responses are prefixed so neither current
-nor older runtime-registration scanners interpret them as backend instances.
-The mailbox holds no database keys and is not admission authority. Its failure
-warns and leaves same-connection recovery available.
-The mailbox polls its own request directory five times per second while the
-facade lives; it starts no native process and adds no client schema/context.
-
-The private `repair-connections` broker operation is an admission-recovery
-adapter for obsolete facades lacking a live mailbox. It checks the configured
-caller, exact project/helper/family, versioned executable, opened process
-creation identity, guard supervisor and complete resource set. It waits for
-private preparation children, stops only proven exact-base workflow backends
-while the old supervisor remains alive, then closes the obsolete facade and
-supervisor through the shared process-cleanup helper. No guards or leases are
-manually deleted; normal OS admission continues. Diagnostic receipts preserve
-an interrupted call's unknown outcome and never replay it. The agent resolves
-that outcome through observable effects and resumes; it asks the user only for
-a remaining concrete consequential choice. This adapter has no hard-coded
-version and never starts another App Server, global manager or elevated process.
+Facades do not talk to each other. Because no facade holds a guard between
+calls, a waiter of another chat only waits for an active call to finish; a
+leftover holder or 1C process of this worktree from an older facade is released
+by `repair-dev-branch-tooling`. The cross-chat mailbox and the obsolete-facade
+`repair-connections` adapter were removed in 0.4.30; their leftover files under
+`connections/` and `connection-recovery/` are ignored by runtime inventory.
 
 Primary errors retain their dispatch outcome. When upstream succeeds but cleanup
 fails, the response remains an error and includes the successful content and
 structured upstream result. Existing evidence records retain the execution ID
 and append sanitized `cleanup-failed` events for call finalization and idle
 cleanup; successful payloads are returned to the client, never persisted there.
-An already completed stop can be confirmed from the original launch proof only
-when all original processes and ports are gone and no replacement lease exists.
 
 Successfully forwarded progress notifications append separate events to
 `<instance>.progress.jsonl`, correlated by `progressEvidenceId`. The completion
@@ -151,13 +131,9 @@ replacement identity and unfinished legacy removal claims cannot report clean
 completion. There is no database-wide or startup lock on idle manager cleanup.
 
 Interactive profiles use a persistent owner bound to their caller identity.
-A failed stop retains ownership for an explicit retry. The guard record carries
-the worktree root and `holderState`; a retained owner reports
-`cleanup-unconfirmed`, so `repair-dev-branch-tooling` or a waiting lifecycle of
-the same worktree may stop its guard host. The facade then retries the pending
-stop once under a fresh guard; if it stays unconfirmed, it drops that backend,
-releases the guard with the call and starts a new backend on the next call
-without a client restart or replay. Terminal facade shutdown
+A failed stop retains ownership for an explicit retry. The facade's guard record
+carries the worktree root and `holderState` (`active-native-call`, `recovering`)
+so waiting commands can name it. Terminal facade shutdown
 confirms bounded owned cleanup, closes its MCP transport and records the failure
 result. A caller must not reuse another execution's signed context to bypass
 waiting. The local source build and matching dependency lock

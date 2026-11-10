@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.4.29"
+const version = "0.4.30"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -120,12 +120,6 @@ func run(args []string) error {
 			})
 		}
 	}
-	controlStop, err := rt.startConnectionControl(context.Background())
-	if err != nil {
-		logger.Warn("connection cleanup control unavailable; same-connection recovery remains available", "error", err)
-		controlStop = func() {}
-	}
-	defer controlStop()
 	err = server.Run(context.Background(), &mcp.StdioTransport{})
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), *cleanupTimeout)
 	defer cancel()
