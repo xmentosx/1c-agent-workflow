@@ -236,9 +236,7 @@
         $actions=@(($ast.ParamBlock.Parameters|Where-Object {$_.Name.VariablePath.UserPath -eq 'Action'}).Attributes|Where-Object {$_.TypeName.Name -eq 'ValidateSet'}|ForEach-Object {$_.PositionalArguments.Value})
         $brokers=@(($ast.ParamBlock.Parameters|Where-Object {$_.Name.VariablePath.UserPath -eq 'InternalOnDemandOperation'}).Attributes|Where-Object {$_.TypeName.Name -eq 'ValidateSet'}|ForEach-Object {$_.PositionalArguments.Value}|Where-Object {$_})
         # The empty "not a broker" value is excluded from this operation set.
-        # Both sets come from the entrypoint itself; the loops below classify every
-        # member, so no copied total is kept. Guard only against a vacuous parse.
-        $actions.Count|Should -BeGreaterThan 0;$brokers.Count|Should -BeGreaterThan 0
+        $actions.Count|Should -Be 103;$brokers.Count|Should -Be 8
         # A parallel update-workflow branch helper is part of the update transaction:
         # no startup catalog write, and it takes its branch lease itself.
         $actions|Should -Contain 'update-workflow-branch'
