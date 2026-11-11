@@ -21877,6 +21877,17 @@ function Show-WorkflowStatus {
     }
 }
 
+function Write-DevBranchMemoryUsageNote {
+    # Informational line of the scoped-memory call journal, printed only while
+    # memory is enabled for this copy. It never changes or blocks the check.
+    try {
+        if (-not (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container)) { return }
+        . Import-ItlMemory
+        $line = Get-ItlMemoryUsageLine -ProjectRoot $script:ProjectRoot
+        if ($line) { Write-Host $line }
+    } catch { }
+}
+
 function Invoke-DevBranchCheck {
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
@@ -21986,6 +21997,7 @@ function Invoke-DevBranchCheck {
         }
     }
     Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
+    Write-DevBranchMemoryUsageNote
     } catch {
         $checkFailure = $_
         if ($null -ne $platformPreparation) {

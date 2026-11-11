@@ -35,9 +35,6 @@ replacing the upstream process, coding, MCP, memory, or OpenSpec rules.
   Checker syntax section never substitutes for standalone `syntaxcheck` /
   `syntaxcheck_file` evidence.
 - ITL MCP hosts cannot validate by path (`syntaxcheck_file`, `files`); pass text.
-- Keep project corrections in project memory. Shared `remember` is only for
-  verified cross-project knowledge; `templatesearch` remains available for
-  code templates. Do not turn on a new shared-memory provider implicitly.
 
 ## Completion and repeated obstacles
 
@@ -49,3 +46,31 @@ a `CONFUSION` fork, a confirmation-gated action or input only the user has.
 When the same obstacle survives two attempts without new evidence, change the
 route (another tool or entry point, the code path instead of the UI) or report
 the blocker with its raw errors; rewording an attempt is not a new route.
+
+## Scoped project memory
+
+Applies only when the `memory_status` tool is available; `project-memory`
+holds the details on demand.
+
+- Call `memory_status` once at session start and after a `contextChanged`
+  notice: continuation, pending, standing rules and a title index.
+- `recall` the topic before designing a 1C change, in an unfamiliar area and
+  whenever context is missing.
+- `remember` in the same turn after a user correction, a rejected approach, a
+  non-obvious finding or a standing condition. A user statement is `verified`,
+  an "always/never" rule `standing`, with evidence
+  `{source:"user", reference:"chat <date>"}`; never `candidate`.
+- A note that contradicts checked code, documentation or the user is updated
+  in place (`note_id` + `data_id`) or removed with `retire_note` in the same
+  turn, never duplicated under a new ID.
+- Choose the narrowest destination `memory_status` lists. Organization: only
+  knowledge true across projects and products (platform, BSP, tooling, company
+  conventions), never client, project or configuration data; `standing` there
+  only at the user's explicit word; retire another project's organization note
+  only after the user confirms. `host`: environment facts only.
+- End a 1C task report with `Memory: recall N, saved N, updated N, retired N`,
+  naming any `standing` note.
+- Project corrections stay in project memory. Shared `1c-templates-mcp`
+  `remember` is only for verified cross-project knowledge; `templatesearch`
+  remains available for code templates. Do not turn on a new shared-memory
+  provider implicitly.

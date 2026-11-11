@@ -43,9 +43,40 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: review evidence and large scope, local r54
+## Current candidate: scoped-memory core in the root appendix, local r55
 
-The selected candidate is `itl-main-2f640143-r54`, exact commit
+The selected candidate is `itl-main-2f640143-r55`, exact commit
+`ebbbb25ce2260de0b4fd5a04cecb0a06d57f07a1`, continuing r54 with upstream
+unchanged at `2f640143756ecd01fed42100e412632aa9082385`. In 25 PM5 sessions of
+2026-10-28 to 2026-11-11 agents read `project-memory` 24 times and used scoped
+memory in 4: the mandatory steps sat inside an 11 KB on-demand provider policy
+(`openspec/changes/improve-scoped-memory-adoption`).
+
+The ITL appendix now carries a conditional `## Scoped project memory` core that
+applies only when the `memory_status` tool is exposed: when to call
+`memory_status`, `recall`, `remember` and `retire_note`, the organization and
+`host` criteria and the `Memory:` line with counters. It absorbs the former
+three-line memory bullet with its trigger, action, exception and prohibition
+intact; the upstream `## Project memory` section is unchanged and the root stays
+exact upstream plus appendix. `project-memory.md` keeps the upstream text; its
+ITL clause names seven destinations, the `memory_status` index that replaces the
+separate standing query, the standing limits and the refusal continuation, and
+keeps generic provider routing for projects outside managed ITL ones.
+
+Root grows 13,824 -> 15,179 normalized bytes (+1,355, about 339 tokens at
+bytes/4), so its ceiling moves 14 -> 15 KiB. The same growth reaches both load
+sets that include the root: full-cycle 155,696 -> 157,421 (+1,725 with
+`project-memory.md` 10,995 -> 11,365; ceiling 153 -> 154 KiB) and subagent start
+31,700 -> 33,055 (ceiling 31 -> 33 KiB). The fork suite passed 186/186 and
+`tools/validate-rules.ps1` reports the three measured sets; schema-3 Verify
+covers 304 decisions. `compatibilityStatus` is `pending` until the publication
+owner qualifies the exact pin; the scoped-memory policy names the same commit
+and the new clause hash. Only Codex is in the adoption pilot; Cursor, Claude
+and Kilo receive the same root and are not separately accepted.
+
+## Earlier candidate: review evidence and large scope, local r54
+
+The candidate was `itl-main-2f640143-r54`, exact commit
 `934668011ec7117463163c3da38a56340a157833`, continuing r53 with upstream
 unchanged at `2f640143756ecd01fed42100e412632aa9082385`. A separate review of a
 large branch (PM5 `1-branch4`: 76 BSL modules, about 2.7 MB of change text)

@@ -24,7 +24,7 @@ function Assert-ItlMemoryProvider {
         $id=[guid]::Empty
         $admission=Get-ItlCatalogField $entry 'admitted'
         if(-not [guid]::TryParse([string](Get-ItlCatalogField $entry 'datasetId'),[ref]$id) -or -not (Get-ItlCatalogField $entry 'ownerId') -or
-           (Get-ItlCatalogField $entry 'scopeKind') -notin @('taskCycle','workspace','workplace','product','project','organization') -or
+           (Get-ItlCatalogField $entry 'scopeKind') -notin @('taskCycle','workspace','workplace','host','product','project','organization') -or
            -not (Get-ItlCatalogField $entry 'scopeId') -or -not (Get-ItlCatalogField $entry 'label') -or
            $admission -isnot [bool] -or (@($entry.permissions).Count -eq 0 -and $admission) -or @($entry.permissions|Where-Object {$_ -cnotin @('read','write')}).Count){throw 'MEMORY_DATASET_UNVERIFIED'}
         if($ids.ContainsKey($entry.datasetId) -or $labels.ContainsKey($entry.label)){throw 'MEMORY_MAPPING_AMBIGUOUS: exact IDs and labels must each map to one scope.'}
@@ -71,34 +71,96 @@ function Get-ItlMemoryProjection {
     return @{knowledgeAreas=$rules;composition=$composition;snapshot=@{relations=@{relations=$relations}}}
 }
 
+function Test-ItlMemoryIdentityComplete {
+    param([object]$Identity)
+    $keys=@(Get-ItlCatalogKeys $Identity)
+    return ($keys -ccontains 'localProjectId' -and $keys -ccontains 'hostId')
+}
+
 function Sync-ItlMemoryContext {
     param([object]$Context,[object]$Snapshot=$null)
     $path=Get-ItlMemoryPath binding $script:ProjectRoot
     $old=Read-ItlMemoryJson $path
     if(-not $old -or $old.mode -ne 'enabled'){return}
-    $state=Read-ItlMemoryJson $old.cycleStatePath
+    $state=Read-ItlMemoryJson $old.cycleStatePath -Kind 'branch-state'
     $cycle=Get-ItlCatalogField $state 'memoryCycle'
     if(-not $cycle -or $cycle.reserved -or (Get-ItlCatalogField $state 'resetStatus') -eq 'resetting'){return}
     if(-not $Context){$applied=Read-ItlMemoryAppliedContext $old.appliedPath;if($applied){$Context=$applied.context}}
     if(-not $Context){return}
     $hash=Get-ItlCatalogHash $Context
-    if($hash -ceq $old.registryContextHash -and $cycle.current -ceq $old.cycleId){return}
+    # A binding of the previous workflow has no local-project/host identity.
+    # Its owner extends it in place before the unchanged-context exit below;
+    # the format version stays 1 so a rolled-back helper still reads it.
+    $extend=-not (Test-ItlMemoryIdentityComplete $old.identity)
+    $hostId=[string](Get-ItlCatalogField $old.identity 'hostId' '')
+    if(-not $hostId){$hostId=Get-ItlMemoryHostId}
+    $fillHost=-not $extend -and $hostId -and -not (Get-ItlCatalogField $old.identity 'hostId' '')
+    if($hash -ceq $old.registryContextHash -and $cycle.current -ceq $old.cycleId -and -not $extend -and -not $fillHost){return}
+    $localProjectId=[string](Get-ItlCatalogField $old.identity 'localProjectId' '')
+    if(-not $localProjectId){
+        $mainRoot=[string](Get-ItlCatalogField $state 'mainWorktreePath' '')
+        $localProjectId=if($mainRoot){Get-ItlMemoryRootId $mainRoot}else{[string]$old.identity.workspaceId}
+    }
     $projection=$old.memoryProjection
     if($Context.knowledgeHash -cne $old.context.knowledgeHash){$projection=Get-ItlMemoryProjection $Context $Snapshot}
+    # A new bindingId is issued only for a new task cycle, another project or
+    # product, and once for the identity extension: that one refusal makes a
+    # server process of the previous workflow reload. Everything else (rules,
+    # policy proof, settings, knowledge areas) is updated in place and picked
+    # up by the running server, which rereads this record before each call.
+    $rotate=$extend -or $cycle.current -cne $old.cycleId -or $Context.projectId -cne $old.context.projectId -or $Context.productId -cne $old.context.productId
     $null=Update-ItlMemoryJson $path {
         param($current)
         if(-not $current -or $current.mode -ne 'enabled' -or $current.bindingId -cne $old.bindingId){throw 'MEMORY_BINDING_CONFLICT: retain the other owner update and repeat setup.'}
         $current['context']=$Context;$current['registryContextHash']=$hash;$current['memoryProjection']=$projection
-        $current['cycleId']=$cycle.current;$current['bindingId']=[guid]::NewGuid().ToString('N')
+        $current['cycleId']=$cycle.current
+        $current.identity['localProjectId']=$localProjectId;$current.identity['hostId']=$hostId
+        if($rotate){$current['bindingId']=[guid]::NewGuid().ToString('N')}
         return $current
     }
+}
+
+function Resolve-ItlMemoryLiveBinding {
+    param([object]$Held,[object]$Live)
+    # The memory server rereads its one private binding before each call. The
+    # same bindingId is an in-place owner update. Another bindingId of the same
+    # working copy is followed, and the caller is told; a cycle or project
+    # change additionally holds the first write until memory_status.
+    if(-not $Live){throw 'MEMORY_STALE_CONTEXT: the binding record is gone; run the explicit memory setup and reload the client.'}
+    if((Get-ItlCatalogField $Live 'schemaVersion') -ne 1 -or (Get-ItlCatalogField $Live 'capability') -cne 'scoped-cognee-memory-v1'){
+        throw 'MEMORY_BINDING_UNSUPPORTED: reload the client; this memory server predates the installed binding format.'
+    }
+    if($Live.bindingId -ceq $Held.bindingId){return @{binding=$Live;contextChanged=$null;holdWrites=$false}}
+    if([string]$Live.projectRoot -ine [string]$Held.projectRoot -or $Live.identity.workspaceId -cne $Held.identity.workspaceId){
+        throw 'MEMORY_STALE_CONTEXT: this client holds the binding of another working copy; reload it.'
+    }
+    if($Live.mode -ne 'enabled'){throw 'MEMORY_DISABLED: use the explicit memory setup; ordinary workflow remains available.'}
+    $state=Read-ItlMemoryJson $Live.cycleStatePath -Kind 'branch-state'
+    $cycle=Get-ItlCatalogField $state 'memoryCycle'
+    if(-not $cycle -or (Get-ItlCatalogField $cycle 'reserved') -or (Get-ItlCatalogField $state 'resetStatus') -eq 'resetting'){
+        throw 'MEMORY_STALE_CONTEXT: a branch reset is in progress; repeat the call after the lifecycle operation completes.'
+    }
+    $cycleChanged=$Live.cycleId -cne $Held.cycleId;$projectChanged=$Live.context.projectId -cne $Held.context.projectId
+    $reason=if($cycleChanged){'cycle'}elseif($projectChanged){'project'}elseif($Live.context.productId -cne $Held.context.productId){'product'}else{'binding'}
+    $hold=$cycleChanged -or $projectChanged
+    $changed=[ordered]@{reason=$reason;previousCycleId=[string]$Held.cycleId;cycleId=[string]$Live.cycleId;projectId=[string]$Live.context.projectId}
+    $changed['continuation']=if($hold){'This session now reads the new context. The first write is refused until memory_status: call it, then repeat remember only if the fact belongs to the new context.'}else{'This session now uses the updated binding; no action is needed.'}
+    return @{binding=$Live;contextChanged=$changed;holdWrites=$hold}
 }
 
 function Get-ItlMemoryClientEndpoint {
     param([string]$Client)
     $binding=Read-ItlMemoryJson (Get-ItlMemoryPath binding $script:ProjectRoot)
-    if(-not $binding -or $binding.mode -ne 'enabled' -or -not (Get-ItlCatalogField $binding.policyProofs $Client)){return $null}
-    try{$null=Get-ItlMemoryPolicyProof $binding.policyProofs[$Client].path $script:ProjectRoot $Client}catch{return $null}
+    if($binding -and $binding.mode -eq 'enabled' -and -not (Test-ItlMemoryIdentityComplete $binding.identity)){
+        # Every owner rewrite of the client configuration, update-workflow
+        # included, extends a binding of the previous workflow once.
+        try{Sync-ItlMemoryContext -Context $null;$binding=Read-ItlMemoryJson (Get-ItlMemoryPath binding $script:ProjectRoot)}catch{}
+    }
+    # A binding without an acknowledged policy for this client contributes no
+    # endpoint; a missing key is that case, not a failure under strict mode.
+    $proof=Get-ItlCatalogField (Get-ItlCatalogField $binding 'policyProofs') $Client
+    if(-not $binding -or $binding.mode -ne 'enabled' -or -not $proof){return $null}
+    try{$null=Get-ItlMemoryPolicyProof (Get-ItlCatalogField $proof 'path' '') $script:ProjectRoot $Client}catch{return $null}
     return [ordered]@{name='itl-scoped-cognee';transport='stdio';command='powershell.exe';args=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $script:Agent1cScriptRoot 'cognee-memory-mcp.ps1'),'-BindingPath',(Get-ItlMemoryPath binding $script:ProjectRoot),'-Client',$Client);env=@{};startupTimeoutSeconds=20;toolTimeoutSeconds=65;owner='itl'}
 }
 
@@ -140,6 +202,11 @@ function Invoke-ItlMemorySetup {
                 if($paths.Count -ne 1){throw 'MEMORY_POLICY_UNQUALIFIED'}
                 $PolicyPath=Join-Path $script:ProjectRoot $paths[0]
             }
+            if($old -and $old.mode -eq 'enabled' -and -not (Test-ItlMemoryIdentityComplete $old.identity)){
+                # Extend a binding of the previous workflow before the
+                # unchanged-configuration exit below.
+                Sync-ItlMemoryContext -Context $null;$old=Read-ItlMemoryJson $bindingPath
+            }
             if($old -and $old.mode -eq 'enabled' -and $old.registryContextHash -ceq $applied.contextHash -and (Get-ItlCatalogField $old 'settingsHash') -ceq (Get-ItlCatalogHash $inputProvider) -and (Get-ItlCatalogField $old.policyProofs $Client)){
                 $null=Get-ItlMemoryPolicyProof $PolicyPath $script:ProjectRoot $Client
                 return @{mode='configured';preference='on';nativeReadiness='unverified until actual client calls'}
@@ -163,7 +230,9 @@ function Invoke-ItlMemorySetup {
         if((Get-ItlMemoryToolPolicy (Get-ItlCatalogField $binding 'provider')) -eq 'off'){return @{mode='disabled';preference='off';memoryEnabled=$false;datasetsPreserved=$true}}
         if(-not $binding){return @{mode='unconfigured';preference='on';memoryEnabled=$false;continuation='Associate a project and configure the common qualified connection through setup; status performs no enrollment.'}}
         if($binding.mode -eq 'disabled'){return @{mode='disabled';preference='off';memoryEnabled=$false;datasetsPreserved=$true}}
-        return @{mode=$binding.mode;context=(Get-ItlMemoryLocalContext $binding);readiness='native/tool-catalog unverified until actual scoped calls; configuration is not live acceptance'}
+        # The call journal is read-only here; a damaged journal never hides status.
+        $usage=try{Get-ItlMemoryUsageSummary $binding}catch{@{unavailable=($_.Exception.Message -split ':')[0]}}
+        return @{mode=$binding.mode;context=(Get-ItlMemoryLocalContext $binding);usage=$usage;readiness='native/tool-catalog unverified until actual scoped calls; configuration is not live acceptance'}
     }
     if($Mode -eq 'disable'){
         $null=Update-ItlMemoryJson $bindingPath {param($old)
@@ -202,7 +271,8 @@ function Invoke-ItlMemorySetup {
     $projection=Get-ItlMemoryProjection $context $snapshot
     $branch=Read-DevBranchState -Name $DevBranchName
     Assert-CurrentProjectRootMatchesDevBranchState $branch 'memory-enable'
-    $identity=Get-ItlMemoryWorkspace $script:ProjectRoot $provider.principalId
+    # The lifecycle branch record already names the main copy of a branch copy.
+    $identity=Get-ItlMemoryWorkspace $script:ProjectRoot $provider.principalId -MainRoot ([string](Get-ItlCatalogField $branch 'mainWorktreePath' ''))
     $updates=Get-ItlMemoryCycleUpdates $branch initial $identity.workspaceId
     if((Get-ItlCatalogField $branch 'resetStatus') -eq 'resetting'){throw 'MEMORY_CYCLE_UNAVAILABLE: finish the existing reset before enabling its task scope.'}
     # Existing lifecycle writer owns initial allocation without reset/init/1C.
@@ -212,16 +282,23 @@ function Invoke-ItlMemorySetup {
     if($old -and $old.provider.instanceId -ceq $provider.instanceId -and $old.identity.developerId -ceq $provider.principalId){
         # Retain confirmed lazy private IDs across disable/enable. Shared mapping
         # remains the explicit operator input, not inferred from old labels.
-        $private=@($old.provider.datasets|Where-Object scopeKind -In @('taskCycle','workspace','workplace'))
-        $providedPrivate=@($provider.datasets|Where-Object scopeKind -In @('taskCycle','workspace','workplace'))
+        $privateKinds=@('taskCycle','workspace','workplace','host')
+        $private=@($old.provider.datasets|Where-Object scopeKind -In $privateKinds)
+        $providedPrivate=@($provider.datasets|Where-Object scopeKind -In $privateKinds)
         $privateLabels=@($private|ForEach-Object {$_.label})
         $private=@(foreach($entry in $private){$explicit=@($providedPrivate|Where-Object label -CEQ $entry.label);if($explicit.Count){$explicit}else{$entry}})+@($providedPrivate|Where-Object {$privateLabels -cnotcontains $_.label})
-        $provider.datasets=@($provider.datasets|Where-Object scopeKind -NotIn @('taskCycle','workspace','workplace'))+$private
+        $provider.datasets=@($provider.datasets|Where-Object scopeKind -NotIn $privateKinds)+$private
         $reservations=Get-ItlCatalogField $old 'datasetReservations' ([ordered]@{})
     }
     Assert-ItlMemoryProvider $provider $script:ProjectRoot
     $proofs=if($old){ConvertTo-ItlCatalogCanonicalValue (Get-ItlCatalogField $old 'policyProofs' ([ordered]@{}))}else{[ordered]@{}};$proofs[$Client]=$policy
-    $binding=[ordered]@{schemaVersion=1;capability='scoped-cognee-memory-v1';mode='enabled';bindingId=[guid]::NewGuid().ToString('N');projectRoot=$script:ProjectRoot;identity=$identity;cycleId=$branch.memoryCycle.current;cycleStatePath=$branch.statePath;appliedPath=(Get-ItlProductProjectPath applied);registryContextHash=$applied.contextHash;context=$context;memoryProjection=$projection;provider=$provider;settingsHash=(Get-ItlCatalogHash $commonProvider);policyProofs=$proofs;datasetReservations=$reservations}
+    # Repeating enable for the same copy, cycle, project and product keeps the
+    # bindingId: a running server follows the in-place update. A disabled or
+    # not yet extended binding gets a new one.
+    $sameBinding=$old -and $old.mode -eq 'enabled' -and (Test-ItlMemoryIdentityComplete $old.identity) -and $old.identity.workspaceId -ceq $identity.workspaceId -and
+        $old.cycleId -ceq $branch.memoryCycle.current -and $old.context.projectId -ceq $context.projectId -and $old.context.productId -ceq $context.productId
+    $bindingId=if($sameBinding){[string]$old.bindingId}else{[guid]::NewGuid().ToString('N')}
+    $binding=[ordered]@{schemaVersion=1;capability='scoped-cognee-memory-v1';mode='enabled';bindingId=$bindingId;projectRoot=$script:ProjectRoot;identity=$identity;cycleId=$branch.memoryCycle.current;cycleStatePath=$branch.statePath;appliedPath=(Get-ItlProductProjectPath applied);registryContextHash=$applied.contextHash;context=$context;memoryProjection=$projection;provider=$provider;settingsHash=(Get-ItlCatalogHash $commonProvider);policyProofs=$proofs;datasetReservations=$reservations}
     Assert-ItlMemoryPrincipal $binding ([DateTime]::UtcNow.AddSeconds(20))
     if([IO.Path]::GetFullPath($SettingsPath) -ine [IO.Path]::GetFullPath($commonSettings)){
         $null=Update-ItlMemoryJson $commonSettings {param($current) return $commonProvider}
