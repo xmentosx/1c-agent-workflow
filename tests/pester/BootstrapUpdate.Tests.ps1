@@ -914,7 +914,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousMcpRegistryRepo = $env:VIBECODING1C_MCP_REGISTRY_REPO
         $artifactCacheRoot = Join-Path $tempRoot "artifact cache"
         $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
-            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.42-itl-r13\vanessa-automation-single.1.2.043.42-itl-r13.zip"
+            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.42-itl-r14\vanessa-automation-single.1.2.043.42-itl-r14.zip"
         } else {
             [System.IO.Path]::GetFullPath($previousVanessaSourceBuild)
         }
@@ -2677,6 +2677,27 @@ exit 0
         }
     }
 
+    It "opens the external launcher window for users and keeps every test launch hidden" {
+        # Recorded 2026-11-11: each test launch of the launcher showed a Windows Terminal
+        # window during Targeted, because its external window is Normal for the user.
+        $LauncherText | Should -Match '(?m)^\$WindowStyle = "Normal"'
+        $LauncherText | Should -Match ([regex]::Escape('if ($env:ITL_AGENT_WINDOW_STYLE -in @("Normal", "Minimized", "Hidden")) { $WindowStyle = $env:ITL_AGENT_WINDOW_STYLE }'))
+        # The gate hides the launcher windows that Develop and Release stands open.
+        [IO.File]::ReadAllText((Join-Path $RepoRoot 'scripts\check.ps1')) | Should -Match '(?m)^\$env:ITL_AGENT_WINDOW_STYLE = "Hidden"'
+        $LauncherText | Should -Match '-WindowStyle \$WindowStyle `'
+        $LauncherText | Should -Match '"Normal", "Minimized", "Hidden"'
+        $launches = foreach ($file in Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'tests\pester') -Filter '*.ps1') {
+            $text = [IO.File]::ReadAllText($file.FullName)
+            foreach ($match in [regex]::Matches($text, '-File"?,? \$LauncherPath(?<rest>[^\r\n]{0,40})')) {
+                [pscustomobject]@{ file = $file.Name; rest = $match.Groups['rest'].Value }
+            }
+        }
+        @($launches).Count | Should -BeGreaterThan 0
+        foreach ($launch in $launches) {
+            $launch.rest | Should -Match '^,? "?-WindowStyle"?,? "?Hidden"?' -Because "$($launch.file) launches the external window launcher"
+        }
+    }
+
     It "passes terminal cancelled status through the monitored launcher without recovery" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-launcher-cancel-" + [guid]::NewGuid().ToString("N"))
         $fakeHelperPath = Join-Path $tempRoot "fake-cancel-helper.ps1"
@@ -2714,7 +2735,7 @@ exit 2
 '@
 
             $process = Start-Process -FilePath "powershell" -ArgumentList (@(
-                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath,
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath, "-WindowStyle", "Hidden",
                 "-ProjectRoot", $tempRoot, "-HelperPath", $fakeHelperPath,
                 "-PollIntervalMilliseconds", "50", "-MaxWaitSeconds", "10", "--",
                 "-Action", "init-project", "-InitMode", "wizard"
@@ -3183,7 +3204,7 @@ exit 7
             $process = Start-Process -FilePath "powershell" -ArgumentList (@(
                 "-NoProfile",
                 "-ExecutionPolicy", "Bypass",
-                "-File", $LauncherPath,
+                "-File", $LauncherPath, "-WindowStyle", "Hidden",
                 "-ProjectRoot", $tempRoot,
                 "-HelperPath", $fakeHelperPath,
                 "-PollIntervalMilliseconds", "50",
@@ -3222,7 +3243,7 @@ exit 7
             $process = Start-Process -FilePath "powershell" -ArgumentList (@(
                 "-NoProfile",
                 "-ExecutionPolicy", "Bypass",
-                "-File", $LauncherPath,
+                "-File", $LauncherPath, "-WindowStyle", "Hidden",
                 "-ProjectRoot", $tempRoot,
                 "-HelperPath", $helperCopyPath,
                 "-PollIntervalMilliseconds", "50",
@@ -3273,7 +3294,7 @@ Start-Sleep -Seconds 20
             $process = Start-Process -FilePath "powershell" -ArgumentList (@(
                 "-NoProfile",
                 "-ExecutionPolicy", "Bypass",
-                "-File", $LauncherPath,
+                "-File", $LauncherPath, "-WindowStyle", "Hidden",
                 "-ProjectRoot", $tempRoot,
                 "-HelperPath", $fakeHelperPath,
                 "-PollIntervalMilliseconds", "50",
@@ -3341,7 +3362,7 @@ Start-Sleep -Seconds 20
             [System.IO.File]::WriteAllText($oldStatusPath, (($oldStatus | ConvertTo-Json) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding $false))
 
             $process = Start-Process -FilePath "powershell" -ArgumentList (@(
-                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath,
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath, "-WindowStyle", "Hidden",
                 "-ProjectRoot", $tempRoot, "-HelperPath", $fakeHelperPath,
                 "-PollIntervalMilliseconds", "50", "-MaxWaitSeconds", "10", "--",
                 "-Action", "init-project", "-InitMode", "wizard"
@@ -3415,7 +3436,7 @@ Start-Sleep -Seconds 20
             }
             Set-Content -LiteralPath $oldStatusPath -Encoding UTF8 -Value ($oldStatus | ConvertTo-Json)
 
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $LauncherPath -ProjectRoot $tempRoot -HelperPath $fakeHelperPath -PollIntervalMilliseconds 50 -MaxWaitSeconds 10 -- -Action init-project -InitMode wizard *> $null
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $LauncherPath -WindowStyle Hidden -ProjectRoot $tempRoot -HelperPath $fakeHelperPath -PollIntervalMilliseconds 50 -MaxWaitSeconds 10 -- -Action init-project -InitMode wizard *> $null
             $LASTEXITCODE | Should -Be 0
             (Test-Path -LiteralPath $lockPath -PathType Leaf) | Should -Be $true
             $oldFinal = Get-Content -Encoding UTF8 -Raw $oldStatusPath | ConvertFrom-Json
@@ -3458,7 +3479,7 @@ Start-Sleep -Seconds 20
             Set-Content -LiteralPath $oldStatusPath -Encoding UTF8 -Value ($oldStatus | ConvertTo-Json)
 
             $process = Start-Process -FilePath "powershell" -ArgumentList (@(
-                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath,
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath, "-WindowStyle", "Hidden",
                 "-ProjectRoot", $tempRoot, "-MaxWaitSeconds", "10", "--",
                 "-Action", "init-project", "-InitMode", "wizard"
             ) | ForEach-Object { & $QuoteBootstrapNativeArgument -Value ([string]$_) }) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
