@@ -1579,6 +1579,15 @@
       "tests": ["tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryAdmission.Tests.ps1"]
     },
     {
+      "id": "test-function-closure-import",
+      "owner": "fixture loading of production functions by call closure and its fixture consumers",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/FunctionClosureImport.Tests.ps1",
+      "paths": ["tests/pester/FunctionClosureImport.Tests.ps1", "tests/pester/FunctionClosure.TestSupport.ps1"],
+      "tests": ["tests/pester/FunctionClosureImport.Tests.ps1", "tests/pester/SourceDeliveryStandPreparation.Tests.ps1"]
+    },
+    {
       "id": "source-delivery-stand-preparation",
       "owner": "publisher composition with existing lifecycle and capsule owners",
       "gate": "targeted",
