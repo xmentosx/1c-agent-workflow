@@ -874,11 +874,14 @@ function Publish-AccumulatedDevelop {
             $replacementAccepted = $true
         }
         Assert-DeliveryQualityPlanMayRun -Plan $deliveryPlan
-        # The resumed plan is unchanged, but it froze queue heads. When an entry was
-        # re-registered since, rerunning its gates only repeats a fixed failure: stop
-        # before any gate and name the replan. Changed inputs were reported above;
-        # a Frozen-scope replacement leaves later registrations to the next publication.
+        # The resumed plan is unchanged, but it froze queue heads. Without any
+        # qualified phase, resuming only reruns the gate that failed; when an entry
+        # was re-registered since, that repeats an already fixed failure: stop before
+        # any gate and name the replan. A plan with qualified phases continues them
+        # and leaves later registrations to the next publication. Changed inputs were
+        # reported above; a Frozen-scope replacement keeps its own contract.
         if ($Action -eq 'PublishDevelop' -and -not $Replan -and $frozenAttempt -and $frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -and
+            (Get-DevelopPublicationPhaseRank -Phase ([string]$frozenAttempt.phase)) -eq 0 -and
             -not ($frozenAttempt.PSObject.Properties['replanQueueScope'] -and [string]$frozenAttempt.replanQueueScope -ceq 'Frozen')) {
             $acceptedHeads = @{}
             foreach ($accepted in @($acceptedEntries)) { $acceptedHeads[[string]$accepted.id] = [string]$accepted.head }
