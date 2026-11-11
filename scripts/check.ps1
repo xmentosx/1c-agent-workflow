@@ -164,6 +164,60 @@ function Add-StageResult {
     }) | Out-Null
 }
 
+# Diagnostic only: after a Pester failure, rerun the failed files once, serially
+# and alone, to tell a nondeterministic failure from a reproducible one. The gate
+# still fails either way; no proof, cache entry or registration comes from it.
+function Invoke-PesterIsolatedRerun {
+    $reportPath = Join-Path $outputRoot "pester-isolated-rerun.json"
+    $report = [ordered]@{ schemaVersion = 1; status = "skipped"; reason = ""; files = @() }
+    try {
+        $root = $repoRoot.TrimEnd('\') + '\'
+        $failed = @()
+        if (Test-Path -LiteralPath $junitPath -PathType Leaf) {
+            $document = New-Object Xml.XmlDocument; $document.XmlResolver = $null; $document.Load($junitPath)
+            $failed = @(@(foreach ($case in @($document.SelectNodes('//testcase[failure or error]'))) {
+                $file = [string]$case.GetAttribute('classname')
+                if (-not $file) { $file = [string]$case.ParentNode.GetAttribute('name') }
+                if ($file -and [IO.Path]::IsPathRooted($file)) { $file = [IO.Path]::GetFullPath($file) }
+                if ($file.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $file.Substring($root.Length).Replace('\', '/') }
+            }) | Where-Object { $_ -like 'tests/pester/*.Tests.ps1' } | Sort-Object -Unique)
+        }
+        if ($failed.Count -eq 0) { $report.reason = "no failed Pester file was reported" }
+        elseif ($failed.Count -gt 5) { $report.reason = "$($failed.Count) failed files suggest a systematic failure" }
+        else {
+            $timings = (Get-Content -LiteralPath (Join-Path $repoRoot "scripts\pester-timings.json") -Raw -Encoding UTF8 | ConvertFrom-Json).files
+            $estimate = 60
+            foreach ($file in $failed) { $leaf = Split-Path -Leaf $file; $estimate += $(if ($timings.PSObject.Properties[$leaf]) { [int][Math]::Ceiling(2 * [double]$timings.$leaf) } else { 120 }) }
+            $remaining = $modeHardBudgetSeconds - [int][Math]::Ceiling($overallStopwatch.Elapsed.TotalSeconds)
+            if ($remaining -lt $estimate) { $report.reason = "remaining budget ${remaining}s is below the ${estimate}s estimate" }
+            else {
+                $rerunRoot = Join-Path $outputRoot "pester-isolated-rerun"
+                New-Item -ItemType Directory -Force -Path $rerunRoot | Out-Null
+                $report.files = @(foreach ($file in $failed) {
+                    $name = [IO.Path]::GetFileNameWithoutExtension($file)
+                    $planPath = Join-Path $rerunRoot "$name.plan.json"; $resultPath = Join-Path $rerunRoot "$name.result.json"
+                    [IO.File]::WriteAllText($planPath, (([ordered]@{ schemaVersion = 1; worker = 0; paths = @($file) } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+                    $outcome = "failed"
+                    try {
+                        Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot "scripts\run-pester-shard.ps1") -Arguments @("-PlanPath", $planPath, "-JunitPath", (Join-Path $rerunRoot "$name.xml"), "-ResultPath", $resultPath) -TimeoutSeconds $estimate -NoProgressSeconds $estimate -LogName "pester-isolated-$name"
+                        if ((Test-Path -LiteralPath $resultPath -PathType Leaf) -and [string](Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status -eq "passed") { $outcome = "passed" }
+                    } catch { $outcome = "failed" }
+                    [pscustomobject][ordered]@{ path = $file; isolatedRerun = $outcome }
+                })
+                $report.status = if (@($report.files | Where-Object { $_.isolatedRerun -eq "passed" }).Count) { "passed-in-isolation" } else { "reproduced" }
+            }
+        }
+    } catch { $report.status = "skipped"; $report.reason = "isolated rerun was not possible: $($_.Exception.Message)" }
+    [IO.File]::WriteAllText($reportPath, (($report | ConvertTo-Json -Depth 5) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    $passed = @($report.files | Where-Object { $_.isolatedRerun -eq "passed" } | ForEach-Object { $_.path })
+    $reproduced = @($report.files | Where-Object { $_.isolatedRerun -ne "passed" } | ForEach-Object { $_.path })
+    if ($report.status -eq "skipped") { return " Isolated rerun skipped: $($report.reason)." }
+    $text = ""
+    if ($passed.Count) { $text += " Isolated rerun: $($passed -join ', ') passed alone (nondeterministic; diagnose the unstable test, not the product)." }
+    if ($reproduced.Count) { $text += " Isolated rerun: $($reproduced -join ', ') failed again." }
+    return $text
+}
+
 function Invoke-GateStage {
     param(
         [string]$Name,
@@ -1112,6 +1166,7 @@ try {
         Add-ReusedStage -Name "pester" -Reason $pesterReuseReason -Detail $qualificationFullPath
     } else {
         Invoke-GateStage -Name "pester" -Reason $(if ($effectiveMode -in @("Targeted", "Smoke")) { "$effectiveMode owner inventory" } else { "complete workflow inventory" }) -Body {
+          try {
             # A complete inventory must not skip Core-host cases; stop before
             # the long run instead of after it.
             if ($effectiveMode -notin @("Targeted", "Smoke")) { [void](Resolve-WorkflowGatePwsh -RepositoryRoot $repoRoot -Required) }
@@ -1160,6 +1215,10 @@ try {
                 $script:pesterResult = [pscustomobject]@{ Result = $(if ([string]$shardSummary.status -eq "passed") { "Passed" } else { "Failed" }); PassedCount = [int]$shardSummary.passed; FailedCount = [int]$shardSummary.failed; SkippedCount = [int]$shardSummary.skipped }
             }
             if ([string]$script:pesterResult.Result -ne "Passed") { throw "Pester did not pass: result=$($script:pesterResult.Result), failed=$($script:pesterResult.FailedCount)." }
+          } catch {
+            # The shard runner exits non-zero on failed tests; diagnose either way.
+            throw "$($_.Exception.Message)$(Invoke-PesterIsolatedRerun)"
+          }
         } | Out-Null
         if ($pesterShardSummary) {
             Set-StageMetrics -Name "pester" -Metrics ([ordered]@{

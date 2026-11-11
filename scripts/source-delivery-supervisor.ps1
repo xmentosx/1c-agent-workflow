@@ -182,6 +182,7 @@ try {
                 cleanupDebt = (Get-DeliveryResourceLedgerSummary)
                 disposition = (Get-DeliveryDispositionReport)
                 recoveryArchives = $(if ($StatusDetail -eq 'Full') { Get-DeliveryRecoveryInventory -IncludeEntries } else { $null })
+                unstableTests = $(if ($StatusDetail -eq 'Full') { @(Get-DeliveryUnstableTests -Entries @((Get-DeliveryRunHistory -Limit $script:DeliveryRunHotIndexCapacity -IncludeDetails).lastRuns)) } else { $null })
                 runHistory = $history
             }
         }

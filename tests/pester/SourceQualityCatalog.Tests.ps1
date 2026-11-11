@@ -2,6 +2,37 @@
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
+    # Targeted capacity of a real selection, estimated with the scheduler's own
+    # model (preflight, LPT lanes, serial tail) and tracked weights; untimed files
+    # use the median tracked weight. Replaces exact cohort pins (OpenSpec
+    # reduce-false-gate-failures D3): legitimate consumers pass, growth fails.
+    function Assert-TargetedSelectionCapacity {
+        param([string[]]$Tests)
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $timings = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/pester-timings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $shardTokens = $null; $shardErrors = $null
+        $shardAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'), [ref]$shardTokens, [ref]$shardErrors)
+        @($shardErrors) | Should -BeNullOrEmpty
+        . ([scriptblock]::Create(($shardAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-PesterWorkloadEstimate' }, $true)).Extent.Text))
+        $schedulerNames = @{}
+        foreach ($variable in @('serialTestNames', 'preflightTestNames')) {
+            $assignment = $shardAst.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq ('$' + $variable) }, $true)
+            $schedulerNames[$variable] = @($assignment.Right.FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value })
+            $schedulerNames[$variable].Count | Should -BeGreaterThan 0
+        }
+        $trackedWeights = @($timings.files.PSObject.Properties | ForEach-Object { [double]$_.Value } | Sort-Object)
+        $untimedWeight = $trackedWeights[[int][Math]::Floor($trackedWeights.Count / 2)]
+        $files = @($Tests | ForEach-Object {
+            $leaf = Split-Path $_ -Leaf
+            [pscustomobject]@{ path = $_; execution = 'execute'; serial = $schedulerNames.serialTestNames -contains $leaf; preflight = $schedulerNames.preflightTestNames -contains $leaf
+                estimatedSeconds = $(if ($timings.files.PSObject.Properties[$leaf]) { [double]$timings.files.$leaf } else { $untimedWeight }) }
+        })
+        # Four lanes, as in the historical comparisons, under host memory admission.
+        $estimate = Get-PesterWorkloadEstimate -Files $files -WorkerCount ([Math]::Min(4, [int]$catalog.pesterWorkers.targetedImplicitDefault))
+        $largest = @($files | Sort-Object estimatedSeconds -Descending | Select-Object -First 5 | ForEach-Object { "$(Split-Path $_.path -Leaf)=$($_.estimatedSeconds)s" }) -join ', '
+        ([double]$catalog.budgets.targetedHardSeconds - $estimate) | Should -BeGreaterThan 120 -Because "estimated $estimate s for $($files.Count) files against $($catalog.budgets.targetedHardSeconds) s; largest: $largest"
+    }
 }
 
 Describe 'Duplicated registries are reconciled when the catalog loads' {
@@ -332,8 +363,10 @@ Describe 'Source quality catalog contracts' {
         )
         $expectedTests = @($expectedTests + @('tests/pester/SourceDeliveryProofOwnership.Tests.ps1','tests/pester/SourceDeliveryProcess.Tests.ps1','tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1','tests/pester/DevelopForkConsumerInventory.Tests.ps1') | Sort-Object)
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-fork-consumer-inventory", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-entrypoint-closure", "source-delivery-evidence-retention", "source-delivery-fixtures", "source-delivery-incremental-inputs", "source-delivery-plan-checker", "source-delivery-proof-ownership", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
-        @($selection.tests) | Should -Be $expectedTests
+        foreach ($contract in @("develop-e2e-qualification-tests", "develop-fork-consumer-inventory", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-entrypoint-closure", "source-delivery-evidence-retention", "source-delivery-fixtures", "source-delivery-incremental-inputs", "source-delivery-plan-checker", "source-delivery-proof-ownership", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")) { @($selection.contracts.id) | Should -Contain $contract }
+        # Every reviewed E owner stays selected; growth is bounded by the derived capacity.
+        foreach ($test in $expectedTests) { @($selection.tests) | Should -Contain $test }
+        Assert-TargetedSelectionCapacity @($selection.tests)
 
         $observedSeconds = [ordered]@{
             "AiRulesCompatibilityPromotion.Tests.ps1" = 2.387; "DevelopE2EQualification.Tests.ps1" = 32.264
@@ -500,33 +533,9 @@ Describe 'Source quality catalog contracts' {
         # (0bc3ff21, 1200 s limit). Exact cohort counts were a proxy that failed on every
         # legitimate new consumer; estimate the real selection with the scheduler's own
         # model and tracked weights instead. Untimed files use the median tracked weight.
-        $shardTokens = $null; $shardErrors = $null
-        $shardAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'), [ref]$shardTokens, [ref]$shardErrors)
-        @($shardErrors) | Should -BeNullOrEmpty
-        . ([scriptblock]::Create(($shardAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-PesterWorkloadEstimate' }, $true)).Extent.Text))
-        $schedulerNames = @{}
-        foreach ($variable in @('serialTestNames', 'preflightTestNames')) {
-            $assignment = $shardAst.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq ('$' + $variable) }, $true)
-            $schedulerNames[$variable] = @($assignment.Right.FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value })
-            $schedulerNames[$variable].Count | Should -BeGreaterThan 0
-        }
-        $trackedWeights = @($trackedTimings.files.PSObject.Properties | ForEach-Object { [double]$_.Value } | Sort-Object)
-        $untimedWeight = $trackedWeights[[int][Math]::Floor($trackedWeights.Count / 2)]
-        $assertTargetedCapacity = {
-            param([string[]]$Tests)
-            $files = @($Tests | ForEach-Object {
-                $leaf = Split-Path $_ -Leaf
-                [pscustomobject]@{ path = $_; execution = 'execute'; serial = $schedulerNames.serialTestNames -contains $leaf; preflight = $schedulerNames.preflightTestNames -contains $leaf
-                    estimatedSeconds = $(if ($trackedTimings.files.PSObject.Properties[$leaf]) { [double]$trackedTimings.files.$leaf } else { $untimedWeight }) }
-            })
-            # Four lanes, as in the historical comparison, under host memory admission.
-            $estimate = Get-PesterWorkloadEstimate -Files $files -WorkerCount ([Math]::Min(4, [int]$catalog.pesterWorkers.targetedImplicitDefault))
-            $largest = @($files | Sort-Object estimatedSeconds -Descending | Select-Object -First 5 | ForEach-Object { "$(Split-Path $_.path -Leaf)=$($_.estimatedSeconds)s" }) -join ', '
-            ([double]$catalog.budgets.targetedHardSeconds - $estimate) | Should -BeGreaterThan 120 -Because "estimated $estimate s for $($files.Count) files against $($catalog.budgets.targetedHardSeconds) s; largest: $largest"
-        }
-        & $assertTargetedCapacity @($selection.tests)
+        Assert-TargetedSelectionCapacity @($selection.tests)
         # Growth beyond the hard budget still fails and names the largest contributors.
-        { & $assertTargetedCapacity (@($selection.tests) + @(1..200 | ForEach-Object { "tests/pester/SyntheticCohortGrowth$_.Tests.ps1" })) } | Should -Throw '*estimated*largest:*'
+        { Assert-TargetedSelectionCapacity (@($selection.tests) + @(1..200 | ForEach-Object { "tests/pester/SyntheticCohortGrowth$_.Tests.ps1" })) } | Should -Throw '*estimated*largest:*'
         @($selection.tests) | Should -Contain $parallelRolloutConsumer
         @($selection.tests) | Should -Contain $diagnosticsConsumer
         @($selection.tests) | Should -Contain $agentFocusConsumer
@@ -664,7 +673,7 @@ Describe 'Source quality catalog contracts' {
         foreach ($consumer in @($catalogInvariantConsumer, "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1", $proofOwnershipConsumer, "tests/pester/SourceQualityCatalog.Tests.ps1")) {
             @($currentSelection.tests) | Should -Contain $consumer
         }
-        & $assertTargetedCapacity @($currentSelection.tests)
+        Assert-TargetedSelectionCapacity @($currentSelection.tests)
         @($splitIncrementalConsumers|Where-Object {$_ -notin @($currentSelection.tests)}).Count | Should -Be 0
         # Historical catalog-wide scheduler weights/four lanes, retained for comparison:
         # parallel 936.459, old complete ReleaseGate 198.938. No cache reuse is assumed.

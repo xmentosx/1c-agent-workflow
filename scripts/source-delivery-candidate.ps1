@@ -497,7 +497,10 @@ function Assert-DevelopPublicationStageMayRun {
         Clear-DevelopPublicationStageFailure -Attempt $Attempt -Stage $Stage
         return
     }
-    throw "Publication stage '$Stage' produced the same failure twice for this exact candidate. Automatic retry is blocked. Fix or inspect the owner first; pass -RetryBlockedStage only for an explicit supervised retry. Last error: $([string]$blocked[0].message)"
+    # The circuit breaker is unchanged for nondeterministic failures; the
+    # diagnosis it asks for is the unstable test or its environment instead.
+    $diagnosis = if ([string]$blocked[0].failureClass -ceq 'nondeterministic') { ' The last failure passed alone in an isolated rerun: diagnose and fix the unstable test or its environment, not the product, before the supervised retry.' } else { '' }
+    throw "Publication stage '$Stage' produced the same failure twice for this exact candidate. Automatic retry is blocked. Fix or inspect the owner first; pass -RetryBlockedStage only for an explicit supervised retry.$diagnosis Last error: $([string]$blocked[0].message)"
 }
 
 function New-DevelopPublicationAttempt {
@@ -647,6 +650,7 @@ function Publish-AccumulatedDevelop {
     [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
     $remoteBefore = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
     $entries = @(Get-QueueEntries)
+    $acceptedEntries = @($entries)
     $interrupted = Complete-InterruptedDevelopPublication -RemoteBefore $remoteBefore -Entries $entries
     if ($interrupted) { return $interrupted }
     $frozenAttempt = Read-DevelopPublicationAttempt
@@ -870,6 +874,25 @@ function Publish-AccumulatedDevelop {
             $replacementAccepted = $true
         }
         Assert-DeliveryQualityPlanMayRun -Plan $deliveryPlan
+        # The resumed plan is unchanged, but it froze queue heads. Without any
+        # qualified phase, resuming only reruns the gate that failed; when an entry
+        # was re-registered since, that repeats an already fixed failure: stop before
+        # any gate and name the replan. A plan with qualified phases continues them
+        # and leaves later registrations to the next publication. Changed inputs were
+        # reported above; a Frozen-scope replacement keeps its own contract.
+        if ($Action -eq 'PublishDevelop' -and -not $Replan -and $frozenAttempt -and $frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -and
+            (Get-DevelopPublicationPhaseRank -Phase ([string]$frozenAttempt.phase)) -eq 0 -and
+            -not ($frozenAttempt.PSObject.Properties['replanQueueScope'] -and [string]$frozenAttempt.replanQueueScope -ceq 'Frozen')) {
+            $acceptedHeads = @{}
+            foreach ($accepted in @($acceptedEntries)) { $acceptedHeads[[string]$accepted.id] = [string]$accepted.head }
+            $advanced = @(foreach ($frozen in @($frozenAttempt.queue)) {
+                $id = [string]$frozen.id
+                if ($acceptedHeads.ContainsKey($id) -and $acceptedHeads[$id] -cne [string]$frozen.head) { "'$id' frozen $([string]$frozen.head) accepted $($acceptedHeads[$id])" }
+            })
+            if ($advanced.Count) {
+                throw "DELIVERY_QUEUE_ADVANCED: plan '$([string]$frozenAttempt.planId)' froze older heads than the accepted queue: $($advanced -join '; '). The original checkpoint and proof were preserved; no gate ran. Publish the accepted heads with the same PublishDevelop options and -Replan '$([string]$frozenAttempt.planId)'."
+            }
+        }
         if ($invalidEvidence.Count -gt 0) {
             if (-not $Replan) {
                 if (-not $priorAttempt -or -not $priorAttempt.PSObject.Properties['planId'] -or -not [string]$priorAttempt.planId) {

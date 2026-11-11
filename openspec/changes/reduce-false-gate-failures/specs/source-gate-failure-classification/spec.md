@@ -49,7 +49,9 @@ Before running any gate stage, publication SHALL compare each queue entry frozen
 active plan with the currently accepted head of the same queue id. When an accepted head
 differs from the frozen head, publication MUST NOT re-run the frozen candidate. It MUST stop
 immediately, preserving the checkpoint and proof, and name the replan continuation for
-that plan, in the same way as a moved remote base.
+that plan, in the same way as a moved remote base. This applies while the plan has no qualified
+phase; a plan that already qualified a phase continues it and leaves later registrations to the next
+publication, and a Frozen-scope replacement keeps its own contract.
 
 #### Scenario: Fix re-registered after a failed Develop gate
 - **WHEN** a frozen plan failed on a test, the entry's fix was re-registered with a newer accepted head, and a plain publication is started
