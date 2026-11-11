@@ -63,7 +63,7 @@ func TestReleaseCatalogSchemasResolveAndIndex(t *testing.T) {
 		file   string
 		count  int
 	}{
-		{family: "roctup", file: "roctup-v1.7.1.json", count: 13},
+		{family: "roctup", file: "roctup-v1.10.0.json", count: 13},
 		{family: "vanessa-ui", file: "vanessa-ui-v0.6.5-va-1.2.043.42.json", count: 38},
 	} {
 		t.Run(test.family, func(t *testing.T) {

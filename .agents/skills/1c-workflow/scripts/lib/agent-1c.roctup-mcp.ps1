@@ -130,6 +130,23 @@ function Get-RoctupMcpUrl {
     return "http://127.0.0.1:$Port/mcp"
 }
 
+function Test-ItlInteractiveDesktopSession {
+    # A service, scheduled task or remote non-interactive logon has no user
+    # desktop (session 0 or UserInteractive=false): nobody can answer a dialog.
+    try { return [Environment]::UserInteractive -and [Diagnostics.Process]::GetCurrentProcess().SessionId -ne 0 } catch { return $false }
+}
+
+function Get-RoctupMcpStartupCommand {
+    param([int]$Port)
+    # ROCTUP asks the user in its own visible dialog before code with a
+    # dangerous keyword (Записать, Удалить, ...) runs; nothing is allowed
+    # automatically. Every key is explicit because an omitted one falls back to
+    # the processing's saved settings. Without a desktop the backend rejects
+    # such code at once instead of waiting for the call budget.
+    $confirm = $(if (Test-ItlInteractiveDesktopSession) { 'true' } else { 'false' })
+    return "startup;mode=embedded;port=$Port;danger_confirm=$confirm;danger_auto_write=false;danger_auto_priv=false"
+}
+
 function Get-RoctupMcpHealthUrl {
     param([int]$Port)
     return "http://127.0.0.1:$Port/health"
@@ -565,7 +582,7 @@ function Start-RoctupMcpForState {
     }
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
 
-    $command = "startup;mode=embedded;port=$port"
+    $command = Get-RoctupMcpStartupCommand -Port $port
     $result = Start-EnterpriseBackground `
         -InfoBasePath $state.devBranchInfoBasePath `
         -InfoBaseKind $state.infoBaseKind `

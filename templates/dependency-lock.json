@@ -149,12 +149,12 @@
       }
     },
     "roctupMcpToolkit": {
-      "version": "v1.7.1",
+      "version": "v1.10.0",
       "assetName": "MCP_Toolkit.epf",
-      "url": "https://github.com/ROCTUP/1c-mcp-toolkit/releases/download/v1.7.1/MCP_Toolkit.epf",
-      "sha256": "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675",
+      "url": "https://github.com/ROCTUP/1c-mcp-toolkit/releases/download/v1.10.0/MCP_Toolkit.epf",
+      "sha256": "03fd32f3d5bd556c98f30ee789f69ebdfbce8327205eb060af94d6752cd2ca18",
       "source": "template baseline",
-      "updatedAt": "2026-06-14T15:19:23Z"
+      "updatedAt": "2026-11-11T09:30:00Z"
     }
   }
 }

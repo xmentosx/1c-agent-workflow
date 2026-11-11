@@ -27,6 +27,7 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 ## Safety
 
 - Do not pass `execute_code` to `call_tool` unless the user explicitly requests that exact operation. The facade performs `close_1c_session` and `restart_1c_session` itself through its owned stop/start; use them without separate confirmation to release or renew the current managed dev-branch session. Ignore any launcher command in upstream tool text: the next call starts a backend automatically.
+- To change data in the current managed dev-branch infobase at the user's request, pass the code to `execute_code`; never disguise dangerous keywords. ROCTUP shows its own confirmation dialog with the code in a 1C window: tell the user to confirm there. `Операция отклонена пользователем` is the user's refusal: report it and do not repeat without a new request. `Операция запрещена` means no desktop could show the dialog: give the user the code to run manually. Verify an interrupted call's outcome with a query before any repeat.
 - Do not pass a 1C password through ROCTUP startup parameters.
 - Recover facade connection/cleanup failures through its existing owner as described in [local MCP recovery](../1c-workflow/references/mcp.md#availability-recovery-and-return-to-work); do not stop at a static fallback or request a manual reset.
 - Treat ROCTUP and Vanessa artifacts as runtime tooling; they must not be exported as product CF/CFE artifacts.

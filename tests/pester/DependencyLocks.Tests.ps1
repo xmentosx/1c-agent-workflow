@@ -191,7 +191,7 @@
         $lockTemplate.dependencies.opencodePlugin.compatibilityStatus | Should -Be "passed"
         $lockTemplate.dependencies.opencodePlugin.compatibilityCheckedAt | Should -Not -BeNullOrEmpty
         $lockTemplate.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
-        $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
+        $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "03fd32f3d5bd556c98f30ee789f69ebdfbce8327205eb060af94d6752cd2ca18"
         $lockTemplate.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.31"
         $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "29f741db8a379384cd8270398761ec96e7e8e548071a0c180d4ffc6ddd8443b6"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r13.cfe"
@@ -529,7 +529,7 @@ Describe 'Workflow dependency selection' -Tag WorkflowDependencySelection {
             {Sync-WorkflowManagedDependencyLockEntries}|Should -Throw '*DEPENDENCY_SELECTION_REQUIRED*'
             [pscustomobject]@{unrelated=$unrelated;report=(Test-Path -LiteralPath $report);before=$before;after=(Get-FileHash -LiteralPath $lockPath).Hash}
         }
-        $result.unrelated.version|Should -Be v1.7.1
+        $result.unrelated.version|Should -Be v1.10.0
         $result.report|Should -BeTrue
         $result.after|Should -BeExactly $result.before
     }
@@ -623,7 +623,7 @@ Describe 'Workflow dependency selection' -Tag WorkflowDependencySelection {
         $template = Get-Content (Join-Path $selectionRepo 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $compatibility = Get-Content (Join-Path $selectionRepo '.agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $definition = ConvertTo-Agent1cHashtable $compatibility.families.roctup
-        $catalog = Get-Content (Join-Path $selectionRepo '.agents/skills/1c-workflow/assets/ondemand-mcp/catalogs/roctup-v1.7.1.json') -Raw -Encoding UTF8
+        $catalog = Get-Content (Join-Path $selectionRepo '.agents/skills/1c-workflow/assets/ondemand-mcp/catalogs/roctup-v1.10.0.json') -Raw -Encoding UTF8
         $catalog += "`n"
         $sha = [Security.Cryptography.SHA256]::Create()
         try { $definition.catalogSha256=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($catalog.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant() }

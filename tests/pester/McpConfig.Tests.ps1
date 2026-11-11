@@ -328,6 +328,26 @@
         $result | Should -BeFalse
     }
 
+    It "starts ROCTUP with explicit write-confirmation keys that ask only where a desktop can answer" {
+        $root = Join-Path $TestDrive 'ROCTUP запуск с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+        $commands = & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Test-ItlInteractiveDesktopSession { $true }
+            $interactive = Get-RoctupMcpStartupCommand -Port 6003
+            function Test-ItlInteractiveDesktopSession { $false }
+            [pscustomobject]@{ interactive = $interactive; service = (Get-RoctupMcpStartupCommand -Port 6003) }
+        }
+        # Omitted danger_* keys fall back to the processing's saved settings, so
+        # every key is explicit; nothing is auto-allowed.
+        $commands.interactive | Should -BeExactly 'startup;mode=embedded;port=6003;danger_confirm=true;danger_auto_write=false;danger_auto_priv=false'
+        $commands.service | Should -BeExactly 'startup;mode=embedded;port=6003;danger_confirm=false;danger_auto_write=false;danger_auto_priv=false'
+        $ondemandText = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1') -Raw -Encoding UTF8
+        $ondemandText | Should -Match ([regex]::Escape('("/C" + (Get-RoctupMcpStartupCommand -Port $port))'))
+        $ondemandText | Should -Not -Match 'startup;mode=embedded'
+    }
+
     It "wires the ROCTUP on-demand facade, compatibility catalog, and token guardrails" {
         $entrypoint = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1")
         foreach ($action in @("install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status")) {
@@ -358,10 +378,10 @@
         }
 
         $dependencyLock = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
-        $dependencyLock.dependencies.roctupMcpToolkit.version | Should -Be "v1.7.1"
+        $dependencyLock.dependencies.roctupMcpToolkit.version | Should -Be "v1.10.0"
         $dependencyLock.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
-        $dependencyLock.dependencies.roctupMcpToolkit.url | Should -Match "/releases/download/v1.7.1/MCP_Toolkit.epf$"
-        $dependencyLock.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
+        $dependencyLock.dependencies.roctupMcpToolkit.url | Should -Match "/releases/download/v1.10.0/MCP_Toolkit.epf$"
+        $dependencyLock.dependencies.roctupMcpToolkit.sha256 | Should -Be "03fd32f3d5bd556c98f30ee789f69ebdfbce8327205eb060af94d6752cd2ca18"
         $dependencyLock.dependencies.itlOndemandMcp.assetName | Should -Be "itl-ondemand-mcp-windows-amd64.exe"
         $dependencyLock.dependencies.itlOndemandMcp.sha256 | Should -Match '^[a-f0-9]{64}$'
         $clientComponentRoot = Join-Path $RepoRoot "third-party\client-mcp\v0.6.5-itl-r1"
@@ -395,7 +415,7 @@
 
         $compatibility = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") | ConvertFrom-Json
         $compatibility.families.roctup.serverName | Should -Be "itl-roctup-data"
-        $roctupCatalog = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\roctup-v1.7.1.json") | ConvertFrom-Json
+        $roctupCatalog = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\roctup-v1.10.0.json") | ConvertFrom-Json
         @($roctupCatalog.tools).Count | Should -Be 13
 
         $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-roctup-1c-data\SKILL.md")

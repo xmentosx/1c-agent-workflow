@@ -163,7 +163,7 @@ Describe "ITL on-demand MCP facade" {
         $databaseRuntimeSource | Should -Match 'acquireExecutionGuard'
         $gatewaySource | Should -Match 'ArgumentsJSON\s+\*string\s+`json:"argumentsJson,omitempty"`'
         $gatewaySource | Should -Match '"additionalProperties":\s*true'
-        $manifest.families.roctup.backendVersions.roctup | Should -Be "v1.7.1"
+        $manifest.families.roctup.backendVersions.roctup | Should -Be "v1.10.0"
         $manifest.families.'vanessa-ui'.backendVersions.clientMcp | Should -Be "v0.6.5"
         $manifest.families.'vanessa-ui'.backendVersions.vaExtension | Should -Be "1.2.043.42"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaAutomation | Should -Be "1.2.043.42"
@@ -265,7 +265,7 @@ Describe "ITL on-demand MCP facade" {
     }
 
     It "keeps catalog identity stable across Windows and Unix line endings" {
-        $sourcePath = Join-Path $AssetRoot "catalogs\roctup-v1.7.1.json"
+        $sourcePath = Join-Path $AssetRoot "catalogs\roctup-v1.10.0.json"
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-line-endings-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null

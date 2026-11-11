@@ -6,14 +6,14 @@
     "roctup": {
       "serverName": "itl-roctup-data",
       "backendVersions": {
-        "roctup": "v1.7.1"
+        "roctup": "v1.10.0"
       },
       "lockKeys": [
         "roctupMcpToolkit"
       ],
       "qualification": "live-tools-list",
-      "catalog": "catalogs/roctup-v1.7.1.json",
-      "catalogSha256": "c61009dafbd8d781f44482419a72036155acc5a60f5a65c2d10df6e046cb8011"
+      "catalog": "catalogs/roctup-v1.10.0.json",
+      "catalogSha256": "5a4a6b04444a817db1e763214e369685a4e1f9befb107478a2f9d6776bfc5d77"
     },
     "vanessa-ui": {
       "serverName": "itl-vanessa-ui",

@@ -1914,7 +1914,7 @@ function Start-ItlOnDemandBackendInstanceCore {
                 -User $targetUser `
                 -Password $targetPassword `
                 @sessionWait `
-                -EnterpriseArgs @("/Execute", $artifact.path, "/Cstartup;mode=embedded;port=$port")
+                -EnterpriseArgs @("/Execute", $artifact.path, ("/C" + (Get-RoctupMcpStartupCommand -Port $port)))
         } else {
             $result = Start-EnterpriseBackground `
                 -InfoBasePath $serviceInfoBase.path `
