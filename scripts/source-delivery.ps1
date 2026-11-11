@@ -194,22 +194,6 @@ try {
             }
         }
         elseif (-not $ResumePlan -and $activeAttempt -and $activeAttempt.PSObject.Properties['planId'] -and [string]$activeAttempt.planId) {
-            # An implicit resume reruns the frozen heads under the plan's recorded
-            # supervisor. When an entry was re-registered since, that only repeats
-            # an already fixed failure: stop before any gate and name the replan.
-            $acceptedHeads = @{}
-            $queueRefs = @(& git -C $candidateRoot for-each-ref '--format=%(refname) %(objectname)' 'refs/itl/develop-queue/')
-            if ($LASTEXITCODE -ne 0) { throw 'DELIVERY_QUEUE_UNREADABLE: the accepted queue refs could not be listed; the checkpoint was preserved.' }
-            foreach ($line in $queueRefs) {
-                if ([string]$line -match '^refs/itl/develop-queue/(.+)/head ([0-9a-f]{40})$') { $acceptedHeads[$Matches[1]] = $Matches[2] }
-            }
-            $advanced = @(foreach ($frozen in @($activeAttempt.queue)) {
-                $id = [string]$frozen.id
-                if ($acceptedHeads.ContainsKey($id) -and $acceptedHeads[$id] -cne [string]$frozen.head) { "'$id' frozen $([string]$frozen.head) accepted $($acceptedHeads[$id])" }
-            })
-            if ($Action -eq 'PublishDevelop' -and $advanced.Count) {
-                throw "DELIVERY_QUEUE_ADVANCED: plan '$([string]$activeAttempt.planId)' froze older heads than the accepted queue: $($advanced -join '; '). The original checkpoint and proof were preserved; no gate ran. Publish the accepted heads with the same PublishDevelop options and -Replan '$([string]$activeAttempt.planId)'."
-            }
             $activePlanPath = Join-Path $commonGitPath "itl/plans/v1/$([string]$activeAttempt.planId).json"
             $activePlan = Get-Content -LiteralPath $activePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json
             # Unpublished custom-gate fixtures retain their bootstrap boundary.

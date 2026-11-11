@@ -650,6 +650,7 @@ function Publish-AccumulatedDevelop {
     [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
     $remoteBefore = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
     $entries = @(Get-QueueEntries)
+    $acceptedEntries = @($entries)
     $interrupted = Complete-InterruptedDevelopPublication -RemoteBefore $remoteBefore -Entries $entries
     if ($interrupted) { return $interrupted }
     $frozenAttempt = Read-DevelopPublicationAttempt
@@ -873,6 +874,22 @@ function Publish-AccumulatedDevelop {
             $replacementAccepted = $true
         }
         Assert-DeliveryQualityPlanMayRun -Plan $deliveryPlan
+        # The resumed plan is unchanged, but it froze queue heads. When an entry was
+        # re-registered since, rerunning its gates only repeats a fixed failure: stop
+        # before any gate and name the replan. Changed inputs were reported above;
+        # a Frozen-scope replacement leaves later registrations to the next publication.
+        if ($Action -eq 'PublishDevelop' -and -not $Replan -and $frozenAttempt -and $frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -and
+            -not ($frozenAttempt.PSObject.Properties['replanQueueScope'] -and [string]$frozenAttempt.replanQueueScope -ceq 'Frozen')) {
+            $acceptedHeads = @{}
+            foreach ($accepted in @($acceptedEntries)) { $acceptedHeads[[string]$accepted.id] = [string]$accepted.head }
+            $advanced = @(foreach ($frozen in @($frozenAttempt.queue)) {
+                $id = [string]$frozen.id
+                if ($acceptedHeads.ContainsKey($id) -and $acceptedHeads[$id] -cne [string]$frozen.head) { "'$id' frozen $([string]$frozen.head) accepted $($acceptedHeads[$id])" }
+            })
+            if ($advanced.Count) {
+                throw "DELIVERY_QUEUE_ADVANCED: plan '$([string]$frozenAttempt.planId)' froze older heads than the accepted queue: $($advanced -join '; '). The original checkpoint and proof were preserved; no gate ran. Publish the accepted heads with the same PublishDevelop options and -Replan '$([string]$frozenAttempt.planId)'."
+            }
+        }
         if ($invalidEvidence.Count -gt 0) {
             if (-not $Replan) {
                 if (-not $priorAttempt -or -not $priorAttempt.PSObject.Properties['planId'] -or -not [string]$priorAttempt.planId) {
