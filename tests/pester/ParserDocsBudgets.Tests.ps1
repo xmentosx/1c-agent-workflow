@@ -548,7 +548,7 @@
             'verified, non-confidential facts safe and useful across unrelated projects',
             # An agent cannot evaluate "explicitly qualified"; pilots fell back
             # to local-only memory with a current binding (2026-11-06).
-            'Scoped `scoped-cognee-memory-v1` is qualified when `itl-scoped-cognee` `memory_status(local_only=true)` returns `bindingState=current`',
+            'Scoped `scoped-cognee-memory-v1` is qualified when `itl-scoped-cognee` `memory_status` returns `bindingState=current`',
             'search `ALL_TOOLS` for `itl_scoped_cognee`',
             'follow `project-memory.md` recall/save gates',
             'ITL private continuation/pending',

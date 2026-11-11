@@ -152,17 +152,17 @@
         $lockTemplate.mode | Should -Be "workflow"
         $project = $projectTemplate | ConvertFrom-Json
         $project.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $project.aiRules.ref | Should -Be "itl-main-2f640143-r54"
+        $project.aiRules.ref | Should -Be "itl-main-2f640143-r55"
         @($project.aiRules.tools).Count | Should -Be 0
         $lockTemplate.dependencies.aiRules1c.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-2f640143-r54"
+        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-2f640143-r55"
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "934668011ec7117463163c3da38a56340a157833"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "ebbbb25ce2260de0b4fd5a04cecb0a06d57f07a1"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
         $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "2f640143756ecd01fed42100e412632aa9082385"
-        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 54
+        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 55
         $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -BeIn @("pending", "passed")
         if ($lockTemplate.dependencies.aiRules1c.compatibilityStatus -eq "pending") {
             $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ""

@@ -3,7 +3,7 @@
 This is the G4 source contract. Native/installed qualification is G5; configuration
 alone is not acceptance. Use a matching controlled-fork candidate and ITL host.
 The ordinary r47 pin does not enable this route. No Cognee patch, Python runtime,
-OpenViking installation, automatic migration or six-store replication is needed.
+OpenViking installation, automatic migration or per-scope replication is needed.
 The existing dependency lock and `.ai-rules.json` must identify the exact qualified
 candidate and own the selected installed `project-memory` file without an override.
 The approved clause hash is checked as well; an ad hoc copied marker is insufficient.
@@ -73,8 +73,25 @@ the affected capability first; copying the label/hash does not qualify a server.
 Only native ordinary-principal calls prove current rights. The adapter consumes
 native exact-ID REST; it does not modify a server or provision an administrator.
 
-Private task/workspace/workplace datasets are lazy under the verified principal.
-An uncertain creation is reconciled by exact name+native owner; no blind create.
+Seven scopes: task cycle, workspace, workplace, host, product, project,
+organization. `workspace` is the local project: the main copy together with all
+of its branch copies, keyed by the main copy that lifecycle records for a branch
+(`localProjectId`). Two main copies of one registry project stay different
+workspaces. `workspaceId` keeps meaning the branch copy and still keys pending,
+continuation and the lifecycle cycle; notes of a former per-copy workspace
+dataset are not migrated and stay readable by exact ID with `history=true`.
+`host` is one dataset per machine, shared by every project and Windows user that
+works under the same technical Cognee account, for environment facts only
+(platform, cluster, licences, tools). Its key is the Windows `MachineGuid` plus
+the host name, read without elevation; without that value only this scope is
+unavailable. `workplace` stays one Windows user on one machine.
+
+Private task/workspace/workplace/host datasets are lazy under the verified
+principal. Before creating one the adapter looks it up by exact name and native
+owner and adopts it; after creating it confirms a single match, otherwise the
+write is refused and nothing more is created. A reader adopts an existing
+workspace/host dataset and never creates one. An uncertain creation is
+reconciled the same way; no blind create.
 An operator prepares shared product/project/organization IDs using the same
 ordinary technical connection and appends verified mappings to settings. The
 first release has no employee/group/outsider permission matrix. Keep the existing
@@ -96,14 +113,53 @@ homes: product writes remain unavailable until explicitly confirmed in registry.
 
 ## Agent operations
 
+`memory_status()` at session start returns the local part below and, within one
+15-second deadline, the server part: `standing` notes of the admitted scopes in
+full (`noteId`, `dataId`, dataset, fact) and `index`, per level the titles of the
+other notes, verified unless marked `[candidate]`, plus `more` for what is not
+shown. It replaces a separate standing query; topical `recall` stays required.
+The index comes from one listing per dataset (one page, up to 1000 documents,
+two requests in flight). Originals are read only for standing notes, which are
+confirmed and fully checked by their original, and for at most six names of the
+previous format; index rows carry no IDs and only the knowledge area of a
+product row is checked. Order: project, workspace, organization, product, host,
+workplace, task; inside a level verified before candidate, newest change first.
+Maxima (standing/index rows): task -/10, workspace 2/10, workplace 3/10, host
+3/10, project 5/30, product 3/20 per level, organization 5/30. The whole answer
+is bounded at 2000 tokens by the recall counter; what does not fit is counted in
+`more`. `serverCoverage` is `bounded`, `partial` (named datasets or originals
+not read in time) or `unavailable`: then the local part is still returned and a
+missing index is not absence of knowledge. No cache between operations.
+
 `memory_status(local_only=true)` reads compact continuation and pending summaries
 without a backend; `note_id` reads the exact pending source. It never scans 1C
 state, transcripts or arbitrary logs. The local scan is capped at 24 recent records
-and eight summaries; an exact known ID bypasses that listing cap.
+and eight summaries; an exact known ID bypasses that listing cap. `destinations`
+has one row per dataset; a product row lists its writable `knowledgeAreas`.
 
-`remember(data, dataset_name, note_id?, data_id?, status?, applicability?, evidence?, source?, revision?)`
+`remember(data, dataset_name, note_id?, data_id?, status?, title?, applicability?, evidence?, source?, revision?)`
 saves one self-contained fact. Choose the narrowest sufficient destination from
-local status. Missing destination/home/grant preserves the private pending source.
+status. Missing destination/home/grant preserves the private pending source; the
+refusal names its `note_id` and both ways on: repeat `remember` with that ID and
+a `dataset_name`, or `retire_note(note_id)`. The default note ID is derived from
+the branch copy, project and fact, not from the destination, so repeating the
+same fact with a chosen dataset completes the same pending record.
+`status` is `candidate`, `verified` or `standing`. `standing` is a confirmed
+working rule stated by the user: it needs evidence like `verified`, at most 400
+characters, never the task scope, and at most the level maximum above (checked
+by the target dataset's listing); a refusal keeps the pending source and says to
+shorten it, save it as `verified` or move another note to `verified`. It is
+stored as `status: verified` plus `standing: true`, so a copy on the previous
+workflow reads an ordinary verified note; `verified` and `standing` are switched
+by updating the same note. A user statement uses evidence
+`{source:"user", reference:"chat <date>"}`. Optional `title` (80 characters)
+names the note in the index, else its first sentence does.
+Each note is one uploaded file, on creation and on update. Its document name is
+`<status>~<knowledge area>~<title>~<id8>.txt`: derived from the original, unique
+per note, without path separators, at most 200 UTF-8 bytes, replaced on every
+update. A `409` for a taken name is reconciled by exact note ID, not replayed. A
+name of another format (a note last written by a copy on the previous workflow)
+is not an error: its row is read from the original.
 An unsent draft (local `sent=false`) is completed under the same note ID with
 changed status, evidence or destination; replaced intents stay in its private
 record. A sent attempt keeps exact-ID reconciliation and its destination.
@@ -140,7 +196,8 @@ old task label and note/data ID permits history for this workspace; union recall
 never includes old cycles. `retire_note` accepts the exact recalled `data_id` when
 there is no local receipt; it addresses one note only, never a dataset.
 `note_id` alone discards only an own unsent draft, keeping a private audit copy;
-retiring a note also discards its unsent update.
+retiring a note also discards its unsent update. A draft that was already sent
+is reconciled by exact `memory_status(dataset_name, note_id)` first.
 Precise correction updates its original through the qualified native update API.
 
 Pending/source and receipts remain private outside reset. After durable receipt,
@@ -159,9 +216,40 @@ of continuation, not a conversation. Strict root memory eligibility is unchanged
 
 Lifecycle owns current/reserved cycle IDs in its existing branch record. Reset
 reserves once before replacement and activates only at successful completion;
-resume retains the reserve. Stale clients cannot write into the next cycle.
-Private workspace/workplace and shared scopes survive. Reload after context/cycle
-changes. Disabled memory never resets/reinitializes an infobase.
+resume retains the reserve. Private workspace/workplace/host and shared scopes
+survive. Disabled memory never resets/reinitializes an infobase.
+
+The binding gets a new `bindingId` only for a new task cycle (branch reset),
+another project or product, on disable, and once when a binding of the previous
+workflow is extended with `localProjectId`/`hostId`. Workflow, MCP, rule, policy
+acknowledgement, connection setting and knowledge-area updates change it in
+place. The extension keeps format version 1: the previous helper reads it after
+a rollback, and its still-running server gets `MEMORY_STALE_CONTEXT` once and is
+reloaded. Until extended, only workspace and host are unavailable.
+The memory server rereads the binding before every call. An in-place update is
+followed silently. Another `bindingId` of the same copy is followed too and the
+answer carries `contextChanged` (`reason` cycle, project, product or binding,
+previous and new cycle). After a cycle or project change the first `remember`,
+`retire_note` or checkpoint is refused with `MEMORY_CONTEXT_CHANGED` (a refused
+`remember` still keeps its pending source) until `memory_status`; reads continue
+at once. This knowingly lets an old chat write into the new cycle after one
+`memory_status`. Another copy, disabled memory and a reset in progress are still
+refused; an unknown binding format answers "reload the client".
+
+A private record that another operation holds or replaces is read up to three
+times, then `MEMORY_RECORD_BUSY`: repeat the same operation.
+`MEMORY_RECORD_INVALID` means damaged JSON and names the record kind (`binding`,
+`branch-state`, `pending`, `receipt`, `continuation`, ...);
+`MEMORY_RECORD_TOO_LARGE` is its own code. An owner refusal reaches the agent
+with its continuation text; an unexpected cause stays in the client log.
+
+Every call adds one entry to a private journal of the branch copy
+(`memory/usage/<hash>.json`, last 200): tool, time, server-process session,
+cycle, `ok` or the error code with the record kind, counts of cards and of
+saved, updated and retired notes; never a query or a fact. A journal failure
+changes no call. `vibecoding1c-mcp-status -MemoryAction status` returns its
+summary for the current cycle as `usage`; a passed `/itl-check` prints one
+informational line while memory is enabled and is never blocked by it.
 
 The existing pre-copy package compatibility guard refuses an older helper while
 memory is enabled. Disable with the current helper, reload, then repeat the exact
@@ -183,7 +271,7 @@ ones; disable/enable preserves IDs and honours that explicit denial.
 
 Known dataset/data ID uses exact memory_status. Choose CHUNKS for meaning or
 qualified CHUNKS_LEXICAL for exact terms/errors, never both automatically.
-Standing/task/reformulation policy remains in the fork. One recall uses allowed
+Task/reformulation policy remains in the fork; standing rules come from `memory_status`. One recall uses allowed
 datasets, dedupes 24 candidates, reads at most two originals concurrently in
 their original order and returns at most 8 cards/1600 tokens under one 20-second
 deadline. A speculative in-flight original at early stop is counted and cleaned

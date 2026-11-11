@@ -289,6 +289,45 @@ Describe "controlled ai_rules_1c release overlay" {
         $projectUserRulesText | Should -Not -Match 'classify each code/metadata edit as quick-fix or OpenSpec'
     }
 
+    It "keeps the conditional scoped-memory core in the always-loaded root appendix" {
+        $agentsText = (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8).Replace("`r`n", "`n")
+        $core = [regex]::Match($agentsText, '(?s)## Scoped project memory\n.*?(?=\n## |\z)')
+        $core.Success | Should -BeTrue
+        # It binds nothing in a project where the memory server is not registered.
+        $core.Value | Should -Match 'Applies only when the `memory_status` tool is available'
+        $core.Value | Should -Match 'Call `memory_status` once at session start and after a `contextChanged`'
+        $core.Value | Should -Match '`recall` the topic before designing a 1C change, in an unfamiliar area and\s+whenever context is missing'
+        $core.Value | Should -Match '`remember` in the same turn after a user correction, a rejected approach, a\s+non-obvious finding or a standing condition'
+        $core.Value | Should -Match ([regex]::Escape('{source:"user", reference:"chat <date>"}'))
+        $core.Value | Should -Match 'never `candidate`'
+        $core.Value | Should -Match 'updated\s+in place \(`note_id` \+ `data_id`\) or removed with `retire_note` in the same\s+turn, never duplicated under a new ID'
+        $core.Value | Should -Match 'never client, project or configuration data'
+        $core.Value | Should -Match "``standing`` there\s+only at the user's explicit word"
+        $core.Value | Should -Match "retire another project's organization note\s+only after the user confirms"
+        $core.Value | Should -Match '`host`: environment facts only'
+        $core.Value | Should -Match 'Memory: recall N, saved N, updated N, retired N'
+        # The memory line this core absorbed keeps its trigger, action,
+        # exception and prohibition.
+        $core.Value | Should -Match 'Project corrections stay in project memory'
+        $core.Value | Should -Match 'Shared `1c-templates-mcp`\s+`remember` is only for verified cross-project knowledge'
+        $core.Value | Should -Match '`templatesearch`\s+remains available for code templates'
+        $core.Value | Should -Match 'Do not turn on a new shared-memory\s+provider implicitly'
+        # Provider routing, recovery, budgets and the note format stay on demand.
+        $core.Value | Should -Match '`project-memory`\s+holds the details on demand'
+        $core.Value | Should -Not -Match 'OpenViking|CHUNKS|dataset ID|pending source'
+        # Always-on cost: the core is 1,578 normalized UTF-8 bytes and replaces the
+        # three-line memory bullet, so the appendix grows 3,363 -> 4,718 (+1,355,
+        # about 339 tokens at bytes/4) and the fork root 13,824 -> 15,179 under
+        # its 15 KiB ceiling. PM5 agents read the on-demand rule in 24 of 25
+        # sessions and used scoped memory in 4; the call triggers must be loaded.
+        [Text.Encoding]::UTF8.GetByteCount($core.Value.TrimEnd("`n")) | Should -BeLessOrEqual 1600
+        [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 4750
+        $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
+        # One qualification call for both rules: the session-start status.
+        $userRules | Should -Match ([regex]::Escape('`itl-scoped-cognee` `memory_status` returns `bindingState=current`'))
+        $userRules | Should -Not -Match ([regex]::Escape('memory_status(local_only=true)'))
+    }
+
     It "blocks a workflow lock whose exact fork bytes do not match the overlay result ledger" {
         $cyrillicSuffix = -join @([char]0x041a, [char]0x0438, [char]0x0440, [char]0x0438, [char]0x043b, [char]0x043b, [char]0x0438, [char]0x0446, [char]0x0430)
         $cyrillicFile = -join @([char]0x041f, [char]0x0440, [char]0x0430, [char]0x0432, [char]0x0438, [char]0x043b, [char]0x0430, ' ', [char]0x0441, ' ', [char]0x043f, [char]0x0440, [char]0x043e, [char]0x0431, [char]0x0435, [char]0x043b, [char]0x043e, [char]0x043c)
