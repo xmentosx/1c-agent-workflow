@@ -1002,6 +1002,13 @@ function Stop-ItlOnDemandBackendInstanceCore {
         if ($managerProcess -is [Diagnostics.Process]) { $null=$managerProcess.Handle }
         $testClientPid = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "testClientPid" -Default 0) -Default 0
         $testClientProcess = $(if ($testClientPid -gt 0) { Get-Process -Id $testClientPid -ErrorAction SilentlyContinue } else { $null })
+        if ($ownedChildren.Count -eq 0 -and $testClientPid -le 0) {
+            # A TestClient the manager started before its PID was recorded carries
+            # /TESTCLIENT, this instance's leased -TPort and infobase, and started
+            # after this manager: it is this instance's runtime, not a foreign one.
+            $ownedChildren = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $runtimeState)
+        }
+        $clientOwnerPid = $(if ($ownedChildren.Count -eq 1) { [int]$ownedChildren[0].process.Id } else { $testClientPid })
         $managerOwnership = Get-ItlOnDemandProcessOwnershipProof -RuntimeState $runtimeState -ExactStart
         $ownedManager = [bool]$managerOwnership.owned
         # A registered process that has exited (or whose PID now names another
@@ -1046,10 +1053,10 @@ function Stop-ItlOnDemandBackendInstanceCore {
         if ($null -ne $ExpectedRuntimeState -and -not $testClientGone) {
             $ownedClientPort = [int]$runtimeState.testClientPort
             if ($ownedClientPort -gt 0) {
-                $clientPortOwnership = Get-ItlOnDemandPortOwnership -Port $ownedClientPort -ProcessId $testClientPid -RetryUntil $portDeadline -TestClient
+                $clientPortOwnership = Get-ItlOnDemandPortOwnership -Port $ownedClientPort -ProcessId $clientOwnerPid -RetryUntil $portDeadline -TestClient
                 if ($clientPortOwnership.decision -eq 'unknown') {
                     $marker = $(if ($claimedPath -and $ownedManager) { Set-ItlOnDemandStartUnconfirmed -RuntimeState $runtimeState } else { '' })
-                    throw (New-ItlOnDemandStopPortOwnerUnverifiedMessage -Listener TestClient -Port $ownedClientPort -ProcessId $testClientPid -Ownership $clientPortOwnership -Marker $marker)
+                    throw (New-ItlOnDemandStopPortOwnerUnverifiedMessage -Listener TestClient -Port $ownedClientPort -ProcessId $clientOwnerPid -Ownership $clientPortOwnership -Marker $marker)
                 }
                 if ($clientPortOwnership.decision -ne 'absent' -and ($ownedChildren.Count -ne 1 -or $clientPortOwnership.decision -ne 'owned')) { throw "ITL_ONDEMAND_STOP_PORT_OWNER_CHANGED: preserve the foreign TestClient listener. Port evidence: $($clientPortOwnership.diagnostic)" }
             }
