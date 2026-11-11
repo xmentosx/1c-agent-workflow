@@ -239,6 +239,11 @@
         # Both sets come from the entrypoint itself; the loops below classify every
         # member, so no copied total is kept. Guard only against a vacuous parse.
         $actions.Count|Should -BeGreaterThan 0;$brokers.Count|Should -BeGreaterThan 0
+        # A parallel update-workflow branch helper is part of the update transaction:
+        # no startup catalog write, and it takes its branch lease itself.
+        $actions|Should -Contain 'update-workflow-branch'
+        (Get-ItlProductProjectStartupDisposition 'update-workflow-branch')|Should -Be inherited-update
+        (Test-Agent1cActionRequiresLifecycleLock 'update-workflow-branch')|Should -BeFalse
         foreach($action in @('window-helper-status','window-helper-stop','window-helper-restart')){
             $actions|Should -Contain $action
             (Test-Agent1cActionRequiresLifecycleLock $action)|Should -BeFalse

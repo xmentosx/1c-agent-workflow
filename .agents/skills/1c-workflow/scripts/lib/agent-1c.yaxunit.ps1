@@ -978,6 +978,78 @@ function Get-YAxUnitTimeoutMessage {
     return "ITL_YAXUNIT_TIMEOUT: YAxUnit stopped at YAXUNIT_TEST_TIMEOUT_SECONDS=$TimeoutSeconds ($source) after $([int][Math]::Round($ElapsedSeconds)) s; completed tests: $completed. For a larger suite set YAXUNIT_TEST_TIMEOUT_SECONDS in the project .dev.env above the full run duration, then repeat the original command. Report: $ReportPath. $NativeMessage"
 }
 
+function Get-YAxUnitTestDurations {
+    param([string]$Path)
+    $document = New-Object System.Xml.XmlDocument
+    $document.Load($Path)
+    $durations = @{}
+    foreach ($case in @($document.SelectNodes("//*[local-name()='testcase']"))) {
+        $seconds = 0.0
+        if ([double]::TryParse($case.GetAttribute('time'), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$seconds)) {
+            $durations[$case.GetAttribute('classname') + '|' + $case.GetAttribute('context')] = $seconds
+        }
+    }
+    return $durations
+}
+
+function Get-YAxUnitSlowdownWarning {
+    param(
+        [string]$ReportPath,
+        [string]$BaselineReportPath,
+        [double]$Factor = 2.0,
+        [double]$MinSeconds = 0.5,
+        [int]$MinTests = 5
+    )
+    # Accumulated test data slows the same tests down run after run. Compare
+    # tests present in both reports that take measurable time; the median ratio
+    # ignores a few individually slow cases.
+    if (-not $BaselineReportPath) { return '' }
+    $current = Get-YAxUnitTestDurations -Path $ReportPath
+    $baseline = Get-YAxUnitTestDurations -Path $BaselineReportPath
+    $ratios = [Collections.Generic.List[double]]::new()
+    $currentTotal = 0.0
+    $baselineTotal = 0.0
+    foreach ($key in $current.Keys) {
+        if (-not $baseline.ContainsKey($key)) { continue }
+        $before = [double]$baseline[$key]
+        $after = [double]$current[$key]
+        if ($before -le 0 -or [Math]::Max($before, $after) -lt $MinSeconds) { continue }
+        $ratios.Add($after / $before)
+        $currentTotal += $after
+        $baselineTotal += $before
+    }
+    if ($ratios.Count -lt $MinTests) { return '' }
+    $sorted = @($ratios | Sort-Object)
+    $middle = [int][Math]::Floor($sorted.Count / 2)
+    $median = $(if ($sorted.Count % 2) { $sorted[$middle] } else { ($sorted[$middle - 1] + $sorted[$middle]) / 2 })
+    if ($median -lt $Factor) { return '' }
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $times = "$([Math]::Round($currentTotal).ToString($culture)) s vs $([Math]::Round($baselineTotal).ToString($culture)) s"
+    return "[WARN] YAxUnit slowdown: $($ratios.Count) tests present in both runs are $($median.ToString('0.0', $culture))x slower (median), $times, than in $BaselineReportPath. The branch infobase may hold test data that tests did not remove (references/yaxunit-tests.md, Test seam). Verification status is unchanged."
+}
+
+function Write-YAxUnitSlowdownWarning {
+    param([string]$RunDirectory, [string]$ReportPath)
+    # Diagnostic only: it never changes the result and never fails the run.
+    try {
+        $root = Split-Path -Parent $RunDirectory
+        $name = Split-Path -Leaf $RunDirectory
+        $baseline = ''
+        # Run directories are named by start time; take the latest earlier run
+        # whose JUnit report passed.
+        foreach ($directory in @(Get-ChildItem -LiteralPath $root -Directory -Filter 'run-*' -ErrorAction SilentlyContinue |
+                Where-Object { [string]::CompareOrdinal($_.Name, $name) -lt 0 } | Sort-Object Name -Descending | Select-Object -First 20)) {
+            $candidate = Join-Path $directory.FullName 'junit.xml'
+            if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+            try { if ((Get-YAxUnitJunitSummary -Path $candidate).passed) { $baseline = $candidate; break } } catch { continue }
+        }
+        $warning = Get-YAxUnitSlowdownWarning -ReportPath $ReportPath -BaselineReportPath $baseline
+        if ($warning) { Write-Host $warning }
+    } catch {
+        Write-Verbose "YAxUnit slowdown comparison skipped: $($_.Exception.Message)"
+    }
+}
+
 function Invoke-YAxUnitVerification {
     param([Parameter(Mandatory = $true)][object]$State)
 
@@ -1047,6 +1119,7 @@ function Invoke-YAxUnitVerification {
 
         Set-RunStage -Stage "yaxunit.postprocess" -Detail "Reading YAxUnit verification evidence."
         $summary = Get-YAxUnitJunitSummary -Path $reportPath
+        Write-YAxUnitSlowdownWarning -RunDirectory $runDirectory -ReportPath $reportPath
         if (-not $summary.passed) {
             throw "ITL_YAXUNIT_TESTS_FAILED: tests=$($summary.tests), failures=$($summary.failures), errors=$($summary.errors). Report: $reportPath"
         }
