@@ -109,6 +109,7 @@ vibecoding1c-mcp-write-client-config
 sync-client-mcp
 context-benchmark
 update-workflow
+update-workflow-branch
 update-ai-rules
 doctor
 itl-litemode
