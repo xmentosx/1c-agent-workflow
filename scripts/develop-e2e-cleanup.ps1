@@ -298,8 +298,9 @@ function Remove-DevelopE2EFreshProject {
         if (-not $branchResolved.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $branchResolved) -notlike $expectedBranchLeaf) { throw "Refusing to remove unexpected fresh journey branch path: $branchResolved" }
         # Git can unregister a worktree before discovering a locked database.
         # Refuse before launcher/Git mutations, and respect the journey owner's
-        # native Git lock across the gaps between lifecycle commands.
-        if (Test-Path -LiteralPath $resolved -PathType Container) {
+        # native Git lock across the gaps between lifecycle commands. A journey
+        # interrupted before `git init` has no repository and so no registry or lock.
+        if (Test-Path -LiteralPath (Join-Path $resolved '.git')) {
             $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $resolved | Where-Object { [string]::Equals([string]$_.path, $branchResolved, [StringComparison]::OrdinalIgnoreCase) })
             if (@($registered | Where-Object { $_.locked }).Count -gt 0) { throw "FRESH_JOURNEY_IN_USE: Git worktree is locked: $branchResolved" }
         }

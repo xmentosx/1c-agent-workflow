@@ -76,6 +76,20 @@ Describe 'Source delivery post-success cleanup' {
         Unlock-DevelopE2EFreshWorktree -Lease $lease # Owning close/cleanup may already have removed the project.
     }
 
+    It 'removes a fresh project interrupted before Git initialization without querying a missing repository' {
+        . (Join-Path $RepoRoot 'scripts/develop-e2e-cleanup.ps1')
+        $root = Join-Path $TestDrive ('p ' + [string]::new([char[]]@(0x041f,0x0440,0x043e,0x0435,0x043a,0x0442)))
+        $main = Join-Path $root 'd-6209d141'
+        New-Item -ItemType Directory -Force -Path (Join-Path $main '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $main 'AGENT-INSTALL.md'), 'bootstrap copy before git init')
+        $launcher = Join-Path $root 'ibases.v8i'
+        [IO.File]::WriteAllText($launcher, '[preserve launcher bytes]')
+        $result = Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $root -LauncherListPath $launcher
+        $result.removedProjects | Should -Be 1
+        Test-Path -LiteralPath $main | Should -BeFalse
+        [IO.File]::ReadAllText($launcher) | Should -BeExactly '[preserve launcher bytes]'
+    }
+
     It 'holds fresh protection from branch creation through the complete original journey and releases it in the terminal path' {
         $text = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/invoke-develop-e2e.ps1') -Raw -Encoding UTF8
         $text.IndexOf('Lock-DevelopE2EFreshWorktree -ProjectRoot $freshRoot') | Should -BeGreaterThan $text.IndexOf('Name "create-dev-branch"')
