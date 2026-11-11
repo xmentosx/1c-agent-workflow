@@ -143,6 +143,75 @@ Describe 'Source delivery post-success cleanup' {
         }
     }
 
+    It 'keeps the supervisor copy of a publication waiting for the delivery lock past the idle window and releases it when the owner exits' {
+        # Reproduces 2026-11-10: a PublishDevelop waited ~98 minutes for the
+        # lock and runs its pinned supervisor in-process, so no command line
+        # names the copy; the owner's post-success cleanup deleted it and the
+        # waiter failed on scripts\new-gate-stand.ps1 after the lock was free.
+        $container = Join-Path ([IO.Path]::GetTempPath()) ('itl cleanup supervisor lease ' + [char]0x041F + ' ' + [guid]::NewGuid().ToString('N'))
+        $temp = Join-Path $container ('temp root ' + [char]0x0416); $root = Join-Path $container ('main repo ' + [char]0x0416)
+        $waiting = Join-Path $temp ('itl-source-supervisor-' + [guid]::NewGuid().ToString('N'))
+        $reused = Join-Path $temp ('itl-source-supervisor-' + [guid]::NewGuid().ToString('N'))
+        $waiter = $null
+        try {
+            [void][IO.Directory]::CreateDirectory($temp)
+            New-CleanupRepository -Root $root
+            New-Item -ItemType Directory -Force -Path (Join-Path $root 'scripts') | Out-Null
+            Set-Content -LiteralPath (Join-Path $root 'scripts\new-gate-stand.ps1') -Encoding ASCII -Value 'exit 0'
+            & git -C $root add --all; & git -C $root commit --quiet -m supervisor-shape
+            foreach ($copy in @($waiting, $reused)) { & git -C $root worktree add --quiet --detach $copy }
+            $script:Root = $root
+            function Invoke-DeliveryGit { param([string[]]$Arguments, [switch]$AllowFailure); Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure }
+            . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+            $waiter = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 300') -WindowStyle Hidden -PassThru
+            Write-SourceDeliverySupervisorLease -SupervisorRoot $waiting -ProcessId $waiter.Id | Should -BeTrue
+            Write-SourceDeliverySupervisorLease -SupervisorRoot $reused -ProcessId $waiter.Id | Should -BeTrue
+            # The reused copy's recorded owner started earlier: its PID now names another process.
+            $reusedLease = Get-SourceDeliverySupervisorLeasePath -SupervisorRoot $reused
+            $lease = Get-Content -LiteralPath $reusedLease -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lease.ownerProcessStartedAt = $waiter.StartTime.ToUniversalTime().AddHours(-3).ToString('o')
+            [IO.File]::WriteAllText($reusedLease, ($lease | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+            (Get-Content -LiteralPath (Get-SourceDeliverySupervisorLeasePath -SupervisorRoot $waiting) -Raw -Encoding UTF8 | ConvertFrom-Json).supervisorRoot | Should -Be $waiting
+            Test-SourceDeliveryPathInUse -Path $waiting | Should -BeFalse
+            foreach ($copy in @($waiting, $reused)) { (Get-Item -LiteralPath $copy).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-98) }
+
+            $result = Remove-SourceDeliveryStaleOperationWorktrees -TempRoot $temp -MinimumAgeHours 168
+
+            @($result.entries | ForEach-Object path) | Should -Be @($reused)
+            $result.retained | Should -Be 1
+            Test-Path -LiteralPath (Join-Path $waiting 'scripts\new-gate-stand.ps1') -PathType Leaf | Should -BeTrue
+            Test-Path -LiteralPath $reused | Should -BeFalse
+
+            Stop-Process -Id $waiter.Id -Force; $waiter.WaitForExit(10000) | Should -BeTrue
+            $released = Remove-SourceDeliveryStaleOperationWorktrees -TempRoot $temp -MinimumAgeHours 168
+            @($released.entries | ForEach-Object path) | Should -Be @($waiting)
+            Test-Path -LiteralPath $waiting | Should -BeFalse
+            @(& git -C $root worktree list --porcelain | Where-Object { $_ -like 'worktree *itl-source-supervisor-*' }).Count | Should -Be 0
+        } finally {
+            if ($waiter -and -not $waiter.HasExited) { Stop-Process -Id $waiter.Id -Force -ErrorAction SilentlyContinue }
+            if (Test-Path -LiteralPath $root) { foreach ($copy in @($waiting, $reused)) { & git -C $root worktree remove --force $copy 2>$null } }
+            Remove-Item -LiteralPath $container -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'leases a pinned supervisor copy to its own process before it waits for the delivery lock' {
+        $supervisor = Join-Path $RepoRoot 'scripts\source-delivery-supervisor.ps1'
+        $tokens = $null; $parseErrors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($supervisor, [ref]$tokens, [ref]$parseErrors)
+        @($parseErrors) | Should -BeNullOrEmpty
+        $commands = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] }, $true))
+        $lease = @($commands | Where-Object { $_.GetCommandName() -eq 'Write-SourceDeliverySupervisorLease' })
+        $lease.Count | Should -Be 1
+        $lease[0].Extent.Text | Should -Match '-SupervisorRoot \(Split-Path -Parent \$PSScriptRoot\)'
+        $owner = $lease[0].Parent; while ($owner -and $owner -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $owner = $owner.Parent }
+        $owner | Should -BeNullOrEmpty
+        $firstWait = @($commands | Where-Object { $_.GetCommandName() -in @('Enter-DeliveryOperation', 'Invoke-DeliveryDelegatedCleanupExecutor') } | ForEach-Object { $_.Extent.StartOffset } | Sort-Object)[0]
+        $lease[0].Extent.StartOffset | Should -BeLessThan $firstWait
+        # Status and cleanup-executor copies are not leased: only the exact temp shape is.
+        . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+        Write-SourceDeliverySupervisorLease -SupervisorRoot $RepoRoot | Should -BeFalse
+    }
+
     It 'removes unregistered candidate remnants and dangling registrations but leaves registered candidates to the ledger' {
         $container = Join-Path $TestDrive ('remnants ' + [char]0x041F + ' ' + [guid]::NewGuid().ToString('N'))
         $temp = Join-Path $container 'temp root'; $root = Join-Path $container 'main repo'; $other = Join-Path $container 'other clone'

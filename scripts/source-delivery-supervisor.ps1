@@ -117,6 +117,10 @@ function Get-DeliveryCommonGitDirectory {
 . (Join-Path $PSScriptRoot "source-delivery-cleanup.ps1")
 
 [void](Invoke-DeliveryGit -Arguments @("rev-parse", "--git-dir"))
+# A pinned temp copy may wait hours for the delivery lock while another
+# publication's cleanup runs; lease it to this live process.
+try { [void](Write-SourceDeliverySupervisorLease -SupervisorRoot (Split-Path -Parent $PSScriptRoot)) }
+catch { Write-Warning "Delivery supervisor lease was not written; only the idle window protects this copy: $($_.Exception.Message)" }
 if ($CleanupExecutor) {
     Invoke-DeliveryDelegatedCleanupExecutor `
         -Channel $CleanupExecutorChannel `
