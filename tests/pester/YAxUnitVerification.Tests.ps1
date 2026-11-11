@@ -90,6 +90,46 @@
         $summary.failures | Should -Be 1
     }
 
+    It "warns without changing the result when the same tests became twice as slow" {
+        $root = Join-Path $TestDrive 'Отчёты YAxUnit с пробелом'
+        function New-SlowdownReport {
+            param([string]$Run, [double]$Seconds, [int]$Failures = 0, [double]$FastSeconds = 0.001)
+            $directory = Join-Path $root $Run
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+            $culture = [Globalization.CultureInfo]::InvariantCulture
+            $cases = @(1..6 | ForEach-Object { "<testcase name=""Т$_"" classname=""Модуль.Т$_"" time=""$($Seconds.ToString($culture))"" context=""Сервер""/>" })
+            $cases += "<testcase name=""Быстрый"" classname=""Модуль.Быстрый"" time=""$($FastSeconds.ToString($culture))"" context=""Сервер""/>"
+            $xml = "<testsuites><testsuite tests=""7"" failures=""$Failures"" errors=""0"" skipped=""0"">$($cases -join '')</testsuite></testsuites>"
+            [IO.File]::WriteAllText((Join-Path $directory 'junit.xml'), $xml, [Text.UTF8Encoding]::new($false))
+            return (Join-Path $directory 'junit.xml')
+        }
+        $baseline = New-SlowdownReport -Run 'run-20261110-120000-000' -Seconds 2
+        $failedLater = New-SlowdownReport -Run 'run-20261110-130000-000' -Seconds 1 -Failures 1
+        $slow = New-SlowdownReport -Run 'run-20261111-120000-000' -Seconds 5.5 -FastSeconds 30
+        $similar = New-SlowdownReport -Run 'run-20261111-130000-000' -Seconds 2.4
+
+        $warning = Get-YAxUnitSlowdownWarning -ReportPath $slow -BaselineReportPath $baseline
+        # One extreme outlier (0.001 -> 30 s) does not move the median of seven.
+        $warning | Should -Match '^\[WARN\] YAxUnit slowdown: 7 tests present in both runs are 2\.8x slower \(median\), 63 s vs 12 s'
+        $warning | Should -Match ([regex]::Escape($baseline))
+        $warning | Should -Match 'Verification status is unchanged'
+        Get-YAxUnitSlowdownWarning -ReportPath $similar -BaselineReportPath $baseline | Should -BeNullOrEmpty
+        Get-YAxUnitSlowdownWarning -ReportPath $slow -BaselineReportPath '' | Should -BeNullOrEmpty
+
+        # The baseline is the latest earlier run whose report passed; a failed run is skipped.
+        $output = @(& { Write-YAxUnitSlowdownWarning -RunDirectory (Split-Path -Parent $slow) -ReportPath $slow } 6>&1 | ForEach-Object { [string]$_ }) -join "`n"
+        $output | Should -Match ([regex]::Escape($baseline))
+        $output | Should -Not -Match ([regex]::Escape($failedLater))
+        # A broken report never fails the run.
+        $broken = Join-Path $root 'run-20261112-000000-000'
+        New-Item -ItemType Directory -Force -Path $broken | Out-Null
+        Set-Content -LiteralPath (Join-Path $broken 'junit.xml') -Value '<testsuites><testcase' -Encoding UTF8
+        { Write-YAxUnitSlowdownWarning -RunDirectory $broken -ReportPath (Join-Path $broken 'junit.xml') } | Should -Not -Throw
+
+        $runner = Get-Content -LiteralPath $modulePath -Raw -Encoding UTF8
+        $runner | Should -Match '(?s)Get-YAxUnitJunitSummary -Path \$reportPath\s+Write-YAxUnitSlowdownWarning -RunDirectory \$runDirectory -ReportPath \$reportPath\s+if \(-not \$summary\.passed\)'
+    }
+
     It "keeps the Designer Agent allowlist exact for YAxUnit protections" {
         $go = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\designer_agent.go") -Raw -Encoding UTF8
         $go | Should -Match ([regex]::Escape('config extensions properties set --extension YAXUNIT --safe-mode no --unsafe-action-protection no'))

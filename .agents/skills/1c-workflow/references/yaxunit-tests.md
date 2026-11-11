@@ -56,6 +56,8 @@ Run all `purpose=default-fast` groups together in one normal YAxUnit session. Th
 
 Put tests in the hierarchical test extension configured by `yaxunit.testsPath` (default `tests/yaxunit`). Register them from exported `ИсполняемыеСценарии`. Prefer testing a deterministic server/common-module function. If important logic is buried in a form or long procedure, extract the narrow pure calculation or decision into a suitable common module without changing its public behavior. Do not expose broad production APIs solely for tests and do not copy the algorithm into the test.
 
+A test leaves no data behind and prepares its own: register it with `ЮТТесты.ВТранзакции()`, or with `УдалениеТестовыхДанных()` and create data through `ЮТест.Данные()` when another session (a background or scheduled job) must see it. Never create uniquely named data on every run without removing it.
+
 By default tests check the configuration exactly as stored in the repository:
 the test extension contains no `&Перед`, `&После`, `&Вместо` or
 `&ИзменениеИКонтроль`. Assert results from outside (written data, user-visible
