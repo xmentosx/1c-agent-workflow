@@ -318,6 +318,19 @@ mechanism requires its applicable real warm/retry acceptance before claiming the
 improvement is operational; ordinary features do not acquire an extra live gate.
 Do not add duplicate tests or one test per helper just to satisfy this policy.
 
+Derive inventories from their authoritative source instead of pinning copies
+(OpenSpec `reduce-false-gate-failures`). The catalog loader reconciles every
+public-action registry, including the `advanced-actions.md` list, and the
+on-demand MCP version copies before any stage (`ACTION_REGISTRY_MISMATCH`,
+`ONDEMAND_VERSION_MISMATCH`); one message names every missing place. Targeted's
+`ondemand-mcp-lock` stage rebuilds the facade only when its build inputs changed
+and stops a stale lock before Pester; repin with
+`.\scripts\ondemand-mcp-lock.ps1 -Action Repin [-Version <next>]`. Fixtures load
+production functions by call closure (`FunctionClosure.TestSupport.ps1`).
+Reuse projections that depend on reviewed callers or file versions refuse
+themselves for unreviewed input, so the scenario executes instead of a gate
+failing; reuse regressions hold reviewed versions.
+
 ### Develop scenario coverage
 
 `developJourneys.scenarios` in the existing quality catalog defines independent

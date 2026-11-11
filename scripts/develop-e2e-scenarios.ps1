@@ -222,9 +222,63 @@ function Test-DevelopColdCutoverConsumers {
     } catch {return $false}
 }
 
+# The cold-cutover projection drops the retained-runtime readers from the fresh
+# proof. That is sound only while each of their callers is a reviewed update-only
+# owner. Any other caller withholds the projection: the inputs stay completely
+# bound and the scenario executes. A new caller never fails a gate by itself;
+# reviewing it into this set only restores reuse.
+function Get-DevelopRetainedRuntimeReaderViolations {
+    param([string]$RepositoryRoot,[string]$Commit='')
+    $reviewed=@{
+        'Get-ItlOnDemandRuntimeRecordFiles'=@(
+            '.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1:Assert-NoActiveCutoverRuntime',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Get-WorkflowUpdateRootRuntimeBusyReason')
+        'Get-WorkflowUpdateRootRuntimeBusyReason'=@(
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Assert-WorkflowUpdateReconciliationScope',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Assert-WorkflowUpdateRollbackTarget',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Get-WorkflowLegacyCopyEvidence',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Get-WorkflowUpdateRootBusyReason',
+            # The branch rollout owner before 210cdfd5 moved the call into the item owner.
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Invoke-WorkflowDevelopmentBranchRollout',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Invoke-WorkflowDevelopmentBranchItemUpdate',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Update-WorkflowPackage')
+    }
+    if(-not $RepositoryRoot) {return @('repository-unavailable')}
+    $cacheKey=if($Commit){$Commit}else{''}
+    $cache=Get-Variable -Name DevelopRetainedRuntimeReaderCache -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if($null -eq $cache) {$cache=@{};Set-Variable -Name DevelopRetainedRuntimeReaderCache -Scope Script -Value $cache}
+    if($Commit -and $cache.ContainsKey($cacheKey)) {return @($cache[$cacheKey])}
+    $readers=@($reviewed.Keys|Sort-Object)
+    $arguments=@('grep','-l','-z','-F')+@($readers|ForEach-Object {'-e',$_})+@(if($Commit){$Commit})+@('--','.agents/skills/1c-workflow/scripts')
+    $search=Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments $arguments -AllowFailure
+    $violations=New-Object System.Collections.Generic.List[string]
+    if($search.exitCode -gt 1) {
+        $violations.Add('reader-search-failed')
+    } else {
+        # git grep -z lists matching paths NUL-delimited; a revision prefixes "<commit>:".
+        foreach($entry in @(([string]$search.stdout).Split([char]0,[StringSplitOptions]::RemoveEmptyEntries))) {
+            $path=if($Commit -and $entry.StartsWith($Commit+':',[StringComparison]::Ordinal)){$entry.Substring($Commit.Length+1)}else{$entry}
+            if($path -notlike '*.ps1') {continue}
+            $text=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $path}else{[IO.File]::ReadAllText((Join-Path $RepositoryRoot $path))}
+            $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($text.TrimStart([char]0xfeff),[ref]$tokens,[ref]$errors)
+            if(@($errors).Count) {$violations.Add("${path}:<unparsed>");continue}
+            foreach($command in @($ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -cin $readers},$true))) {
+                $owner=$command.Parent;while($owner -and $owner -isnot [Management.Automation.Language.FunctionDefinitionAst]){$owner=$owner.Parent}
+                $caller=$path+':'+$(if($owner){$owner.Name}else{'<top-level>'})
+                $reader=$command.GetCommandName()
+                if($caller -cnotin @($reviewed[$reader])) {$violations.Add("$reader <- $caller")}
+            }
+        }
+    }
+    $result=@($violations|Sort-Object -Unique)
+    if($Commit) {$cache[$cacheKey]=$result}
+    return $result
+}
+
 function Get-DevelopColdCutoverProjection {
     param([string]$Path,[string]$Text,[string]$RepositoryRoot,[string]$Commit='')
     if(-not (Test-DevelopColdCutoverConsumers $RepositoryRoot $Commit)) {return $null}
+    if(@(Get-DevelopRetainedRuntimeReaderViolations $RepositoryRoot $Commit).Count) {return $null}
     $source=$Text.Replace("`r`n","`n");$bom=[string]$source.StartsWith([string][char]0xfeff,[StringComparison]::Ordinal);$source=$source.TrimStart([char]0xfeff)
     $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
     if(@($errors).Count) {return $null}
@@ -322,7 +376,7 @@ function Get-DevelopScenarioSourceProjection {
     param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario=@(),[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='', [switch]$ProbeOnly,[object]$ForkBridge=$null)
     if($Journey -ceq 'fresh' -and $Scenario.Count -gt 0 -and -not @($Scenario|Where-Object {$_ -cnotin @('install','branch','verification','stale-export','refresh','close')}).Count -and
         $Path -cin @('.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')) {
-        if($ProbeOnly) {return Test-DevelopColdCutoverConsumers $RepositoryRoot $Commit}
+        if($ProbeOnly) {return ((Test-DevelopColdCutoverConsumers $RepositoryRoot $Commit) -and -not @(Get-DevelopRetainedRuntimeReaderViolations $RepositoryRoot $Commit).Count)}
         return Get-DevelopColdCutoverProjection $Path $Text $RepositoryRoot $Commit
     }
     if($Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1' -and $Journey -ceq 'fresh' -and $Scenario.Count -gt 0 -and
@@ -389,7 +443,7 @@ function Get-DevelopScenarioSourceProjection {
         # Fixture preparation, space admission and native assertions stay bound.
         'scripts/source-e2e-storage.ps1' {$controller=@('Get-SourceE2EFixtureReaderInventory','Remove-SourceE2EFixtureCopy')}
         'scripts/check.ps1' {$controller=@('Ensure-DevelopE2ERoute','Get-WorkflowGateScriptPaths')}
-        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Test-DevelopColdCutoverConsumers','Get-DevelopColdCutoverProjection','Get-DevelopArtifactProtectionProjection','Get-DevelopColdDiagnosticProjection','Test-DevelopScenarioBrokerIndependent','ConvertTo-DevelopScenarioArtifactIdentity','Test-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
+        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Test-DevelopColdCutoverConsumers','Get-DevelopRetainedRuntimeReaderViolations','Get-DevelopColdCutoverProjection','Get-DevelopArtifactProtectionProjection','Get-DevelopColdDiagnosticProjection','Test-DevelopScenarioBrokerIndependent','ConvertTo-DevelopScenarioArtifactIdentity','Test-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
         'scripts/quality-contracts.ps1' {$controller=@('Get-QualityContractReuseInputPaths','Get-QualityPesterSemanticInputBindings','Get-DevelopE2EJourneyContractProjection','Get-QualityReleaseStageCatalog','Resolve-QualityReleaseCapabilities','ConvertTo-QualityBudgetSeconds','Get-ReleaseE2EBudgetProjection','Get-DevelopE2EJourneyHardBudgetSeconds','Resolve-PesterWorkerCount','Get-PublicLifecycleActions','Get-Agent1cSemanticModel','Resolve-Agent1cSemanticImpact','Get-Agent1cEntrypointProbeInventory','Test-QualityContractCatalog','Test-QualityPathPattern','Select-QualityPaths','Resolve-QualityContractsForPaths')}
     }
     if($controller.Count) {

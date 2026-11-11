@@ -43,3 +43,18 @@ a new service or persistent store.
 #### Scenario: Viewing unstable tests
 - **WHEN** the user requests detailed status
 - **THEN** the output lists each unstable test with occurrence count, last occurrence and its run records
+
+### Requirement: Publication refuses a frozen plan superseded by a newer accepted head
+Before running any gate stage, publication SHALL compare each queue entry frozen in the
+active plan with the currently accepted head of the same queue id. When an accepted head
+differs from the frozen head, publication MUST NOT re-run the frozen candidate. It MUST stop
+immediately, preserving the checkpoint and proof, and name the replan continuation for
+that plan, in the same way as a moved remote base.
+
+#### Scenario: Fix re-registered after a failed Develop gate
+- **WHEN** a frozen plan failed on a test, the entry's fix was re-registered with a newer accepted head, and a plain publication is started
+- **THEN** publication stops before building the stale candidate, names the entry with its frozen and accepted heads, and gives the replan command for the active plan
+
+#### Scenario: Unchanged queue
+- **WHEN** every frozen entry still matches its accepted head
+- **THEN** the frozen plan resumes as before

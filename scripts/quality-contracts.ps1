@@ -256,6 +256,67 @@ function Get-PublicLifecycleActions {
     return @($validateSet.PositionalArguments | ForEach-Object { [string]$_.SafeGetValue() } | Sort-Object -Unique)
 }
 
+# Every registry that must enumerate the public actions is compared with the
+# ValidateSet at once, so one failure names every place a new action is missing.
+function Get-QualityActionRegistryMismatches {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Actions,
+        [Parameter(Mandatory = $true)][System.Collections.Specialized.OrderedDictionary]$Registries
+    )
+    $expected = @($Actions | Sort-Object -Unique)
+    $messages = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in $Registries.GetEnumerator()) {
+        $ignored = @()
+        $listed = @($entry.Value.names | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+        if ($entry.Value.Contains('ignore')) { $ignored = @($entry.Value.ignore) }
+        $missing = @($expected | Where-Object { $_ -notin $listed -and $_ -notin $ignored })
+        $stale = @($listed | Where-Object { $_ -notin $expected })
+        if ($missing.Count -gt 0) { $messages.Add("$($entry.Key) is missing: $($missing -join ', ')") }
+        if ($stale.Count -gt 0) { $messages.Add("$($entry.Key) lists unknown actions: $($stale -join ', ')") }
+    }
+    return @($messages.ToArray())
+}
+
+function Get-QualityAdvancedActionCatalog {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    $match = [regex]::Match($Text, '(?s)Common internal actions:\s*```text(?<actions>.*?)```')
+    if (-not $match.Success) { throw "ACTION_REGISTRY_MISMATCH: advanced-actions.md has no 'Common internal actions' text block." }
+    return @($match.Groups['actions'].Value -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+# The on-demand MCP facade version is repeated in the compatibility manifest, the
+# dependency lock (version, release tag and URL) and the Go source constant.
+function Get-QualityOnDemandVersionMismatches {
+    param(
+        [Parameter(Mandatory = $true)][object]$Compatibility,
+        [Parameter(Mandatory = $true)][object]$LockEntry,
+        [Parameter(Mandatory = $true)][string]$MainSource
+    )
+    $messages = New-Object System.Collections.Generic.List[string]
+    $version = [string]$LockEntry.version
+    $tag = 'itl-ondemand-mcp-v' + $version
+    if ([string]$Compatibility.facadeVersion -cne $version) { $messages.Add("compatibility.json facadeVersion '$([string]$Compatibility.facadeVersion)' differs from dependency-lock itlOndemandMcp.version '$version'") }
+    if ([string]$LockEntry.releaseTag -cne $tag) { $messages.Add("dependency-lock itlOndemandMcp.releaseTag '$([string]$LockEntry.releaseTag)' must be '$tag'") }
+    $urlSuffix = "/releases/download/$tag/$([string]$LockEntry.assetName)"
+    if (-not ([string]$LockEntry.url).EndsWith($urlSuffix, [StringComparison]::Ordinal)) { $messages.Add("dependency-lock itlOndemandMcp.url must end with '$urlSuffix'") }
+    $source = [regex]::Match($MainSource, '(?m)^const version = "(?<version>[^"]+)"')
+    if (-not $source.Success) { $messages.Add("tools/itl-ondemand-mcp/main.go has no 'const version' declaration") }
+    elseif ($source.Groups['version'].Value -cne $version) { $messages.Add("tools/itl-ondemand-mcp/main.go version '$($source.Groups['version'].Value)' differs from dependency-lock itlOndemandMcp.version '$version'") }
+    return @($messages.ToArray())
+}
+
+function Assert-QualityOnDemandVersionConsistency {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+    $compatibilityPath = Join-Path $RepositoryRoot '.agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json'
+    $lockPath = Join-Path $RepositoryRoot 'templates\dependency-lock.json'
+    $mainPath = Join-Path $RepositoryRoot 'tools\itl-ondemand-mcp\main.go'
+    if (-not (Test-Path -LiteralPath $compatibilityPath -PathType Leaf) -or -not (Test-Path -LiteralPath $lockPath -PathType Leaf) -or -not (Test-Path -LiteralPath $mainPath -PathType Leaf)) { return }
+    $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $lock.dependencies.PSObject.Properties['itlOndemandMcp']) { return }
+    $messages = @(Get-QualityOnDemandVersionMismatches -Compatibility (Get-Content -LiteralPath $compatibilityPath -Raw -Encoding UTF8 | ConvertFrom-Json) -LockEntry $lock.dependencies.itlOndemandMcp -MainSource ([IO.File]::ReadAllText($mainPath)))
+    if ($messages.Count -gt 0) { throw "ONDEMAND_VERSION_MISMATCH: $($messages -join '; ')." }
+}
+
 function Get-QualityPesterExternalInputNames {
     @('ITL_AI_RULES_SOURCE_PATH', 'ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE')
 }
@@ -515,6 +576,8 @@ function Test-QualityContractCatalog {
         [string[]]$SkipSemanticLibraryValidation = @()
     )
 
+    Assert-QualityOnDemandVersionConsistency -RepositoryRoot $RepositoryRoot
+
     $releaseCatalogPath = Join-Path $RepositoryRoot 'scripts/release-e2e/stages.json'
     if (Test-Path -LiteralPath $releaseCatalogPath -PathType Leaf) {
         $releaseCatalog = Get-QualityReleaseStageCatalog -RepositoryRoot $RepositoryRoot
@@ -634,11 +697,7 @@ function Test-QualityContractCatalog {
             ForEach-Object { [string]$_ } |
             Sort-Object -Unique
     )
-    if (($actualActions -join "`n") -ne ($coveredActions -join "`n")) {
-        $missing = @($actualActions | Where-Object { $_ -notin $coveredActions })
-        $stale = @($coveredActions | Where-Object { $_ -notin $actualActions })
-        throw "Lifecycle action coverage mismatch. Missing: $($missing -join ', '); stale: $($stale -join ', ')."
-    }
+
 
     $semantic = $Catalog.semanticTargeting
     if (-not $semantic -or ([string]$semantic.path).Replace('\', '/') -ne ".agents/skills/1c-workflow/scripts/agent-1c.ps1") {
@@ -666,8 +725,21 @@ function Test-QualityContractCatalog {
     if (-not $entrypointModel.valid) { throw "Unable to build the entrypoint semantic model: $($entrypointModel.reason)." }
     $actionOwners = @($semantic.actionOwners.PSObject.Properties | ForEach-Object { [string]$_.Name } | Sort-Object)
     $dispatchActions = @($entrypointModel.actions.Keys | Sort-Object)
-    if (($actualActions -join "`n") -ne ($dispatchActions -join "`n") -or ($actualActions -join "`n") -ne ($actionOwners -join "`n")) {
-        throw "Action ValidateSet, literal dispatch labels, and semanticTargeting.actionOwners must be exactly equal."
+    # One message names every registry that misses or still lists an action.
+    $actionRegistries = [ordered]@{
+        'tests/quality-contracts.json lifecycleActions (journey/boundary)' = @{ names = $coveredActions }
+        'agent-1c.ps1 literal dispatch labels' = @{ names = $dispatchActions }
+        'tests/quality-contracts.json semanticTargeting.actionOwners' = @{ names = $actionOwners }
+    }
+    $advancedActionsPath = Join-Path $RepositoryRoot '.agents\skills\1c-workflow\references\advanced-actions.md'
+    if (Test-Path -LiteralPath $advancedActionsPath -PathType Leaf) {
+        $actionRegistries['.agents/skills/1c-workflow/references/advanced-actions.md Common internal actions'] = @{
+            names = @(Get-QualityAdvancedActionCatalog -Text ([IO.File]::ReadAllText($advancedActionsPath))); ignore = @('help')
+        }
+    }
+    $registryMismatches = @(Get-QualityActionRegistryMismatches -Actions $actualActions -Registries $actionRegistries)
+    if ($registryMismatches.Count -gt 0) {
+        throw "ACTION_REGISTRY_MISMATCH: every public action of agent-1c.ps1 must be registered everywhere. $($registryMismatches -join '; ')."
     }
     foreach ($mappingName in @("actionOwners", "parameterOwners", "functionOwners")) {
         foreach ($mapping in @($semantic.$mappingName.PSObject.Properties)) {

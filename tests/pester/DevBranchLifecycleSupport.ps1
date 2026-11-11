@@ -582,7 +582,9 @@ public static class $fixtureTypeName {
                 $env:GOTOOLCHAIN = $oldGoToolchain
             }
             if ($build.Count -ne 1 -or [string]$build[0].sha256 -cne [string]$entry.sha256) {
-                throw "ITL_ONDEMAND_TEST_FIXTURE_HASH_MISMATCH expected='$($entry.sha256)' actual='$($build[0].sha256)'"
+                # Registration's ondemand-mcp-lock stage owns this identity; repin with
+                # .\scripts\ondemand-mcp-lock.ps1 -Action Repin instead of editing the lock.
+                throw "ITL_ONDEMAND_TEST_FIXTURE_HASH_MISMATCH expected='$($entry.sha256)' actual='$($build[0].sha256)'. Run .\scripts\ondemand-mcp-lock.ps1 -Action Repin [-Version <next-version>]."
             }
             return $installRoot
         }

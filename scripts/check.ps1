@@ -958,6 +958,16 @@ try {
             $encoding = Get-Content -LiteralPath $encodingPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([string]$encoding.status -ne "passed") { throw "PowerShell encoding preflight reports '$([string]$encoding.status)'." }
         } | Out-Null
+        # A changed on-demand MCP build input must be repinned in the lock before
+        # Pester; unrelated changes skip the build (see ondemand-mcp-lock.ps1).
+        $onDemandLockPath = Join-Path $outputRoot "ondemand-mcp-lock.json"
+        Invoke-GateStage -Name "ondemand-mcp-lock" -Reason "register-time locked on-demand MCP build identity" -Detail $onDemandLockPath -Body {
+            $lockArguments = @("-Action", "Verify", "-RepositoryRoot", $repoRoot, "-OutputPath", $onDemandLockPath)
+            if ($BaseRef) { $lockArguments += @("-BaseRef", $BaseRef) }
+            Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot "scripts\ondemand-mcp-lock.ps1") -Arguments $lockArguments -TimeoutSeconds 600 -NoProgressSeconds 300 -LogName "ondemand-mcp-lock"
+            $onDemandLock = Get-Content -LiteralPath $onDemandLockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$onDemandLock.status -eq "failed") { throw [string]$onDemandLock.reason }
+        } | Out-Null
     }
 
     $releaseFixtureRoot = $E2EProjectRoot

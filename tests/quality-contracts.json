@@ -704,6 +704,7 @@
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/SourceQualityCatalog.Tests.ps1",
       "paths": ["tests/quality-contracts.json", "scripts/release-e2e/stages.json", "scripts/source-delivery-process.ps1"],
+      "reuseInputPaths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/references/advanced-actions.md", ".agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json", "templates/dependency-lock.json", "tools/itl-ondemand-mcp/main.go"],
       "tests": ["tests/pester/SourceQualityCatalog.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1"]
     },
     {
@@ -1579,13 +1580,23 @@
       "tests": ["tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryAdmission.Tests.ps1"]
     },
     {
+      "id": "ondemand-mcp-lock-identity",
+      "owner": "register-time locked on-demand MCP build identity and its single repin command",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/OnDemandMcpLock.Tests.ps1",
+      "paths": ["tests/pester/OnDemandMcpLock.Tests.ps1", "scripts/ondemand-mcp-lock.ps1"],
+      "reuseInputPaths": ["scripts/Build-ItlOnDemandMcp.ps1", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1", "templates/dependency-lock.json", ".agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json", "tools/itl-ondemand-mcp/*", "tests/pester/TestSupport.ps1"],
+      "tests": ["tests/pester/OnDemandMcpLock.Tests.ps1"]
+    },
+    {
       "id": "test-function-closure-import",
       "owner": "fixture loading of production functions by call closure and its fixture consumers",
       "gate": "targeted",
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/FunctionClosureImport.Tests.ps1",
       "paths": ["tests/pester/FunctionClosureImport.Tests.ps1", "tests/pester/FunctionClosure.TestSupport.ps1"],
-      "tests": ["tests/pester/FunctionClosureImport.Tests.ps1", "tests/pester/SourceDeliveryStandPreparation.Tests.ps1"]
+      "tests": ["tests/pester/FunctionClosureImport.Tests.ps1", "tests/pester/SourceDeliveryStandPreparation.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1"]
     },
     {
       "id": "source-delivery-stand-preparation",
