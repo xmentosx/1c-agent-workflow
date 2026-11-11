@@ -109,6 +109,7 @@ vibecoding1c-mcp-write-client-config
 sync-client-mcp
 context-benchmark
 update-workflow
+update-workflow-branch
 update-ai-rules
 doctor
 itl-litemode
@@ -142,6 +143,8 @@ stop-vanessa-profile
 window-helper-status
 window-helper-stop
 window-helper-restart
+window-show
+window-hide
 check-dev-branch
 verify-dev-branch
 refresh-dev-branch
@@ -224,7 +227,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action stop-vanessa-profile
 ```
 
-`window-helper-status`, `window-helper-stop` and `window-helper-restart` report, stop or restart the window helpers that serve hidden TestClients of this project; `-AllWindowHelperGroups` covers every helper of the current user. Stopping is always safe, and with `ONEC_WINDOW_MODE=visible` it shows the hidden main windows.
+`window-helper-status`, `window-helper-stop` and `window-helper-restart` report, stop or restart the window helpers that serve hidden TestClients of this project; `-AllWindowHelperGroups` covers every helper of the current user. Stopping is always safe, and with `ONEC_WINDOW_MODE=visible` it shows the hidden main windows. `window-show` and `window-hide` with `-WindowProcessId` or `-VanessaTestPort` show a hidden TestClient of this project below the active window without taking focus, keep its new windows visible, and hide it again; showing grants no OS input, and a process outside the helper groups is refused unchanged.
 
 `start-vanessa-profile` opens exactly one ownership-proven branch-local `TESTMANAGER -> TESTCLIENT` pair, positively proves the manager connection, and opens the specified `.feature` without `StartFeaturePlayer` or `run_scenario`. The pair stays open until `stop-vanessa-profile`. A persistent process retains its database reservation after the helper exits. Reuse belongs to the starting operation: Codex uses `CODEX_THREAD_ID`; another chat waits for the owner to stop instead of changing its feature or clients. Start/reuse/status return `ITL_VANESSA_PROFILE_REPORT` with safe PID, port, infobase, feature, connection and `ownerId` fields; they do not create JUnit or verification verdicts.
 
@@ -266,6 +269,6 @@ Maintenance/recovery: update base without tests, update workflow/rules, close/li
 
 `update1cbase`, `loadfrom1cbase`, `getconfigfiles`, and `deploy-and-test` are the implementations behind the four upstream-visible bridges. They reconcile state, prove the branch infobase, refuse source/master execution, and retain rollback evidence for dumps.
 
-update-workflow updates the installed package from the master worktree. For the first migration from an old installed helper, use the current source package scripts/update-installed-workflow.ps1 with an exact clean source checkout; it enters the current helper before any managed file is copied. The helper snapshots the complete managed write-set, copies package files, starts the new helper in a fresh process, then updates rules, client surfaces, dependency locks, owned environment/MCP contributions and the local master commit. It processes each available registered itldev/* worktree from the same candidate under its own lifecycle lock, retaining business edits, staged index entries and stopped-operation checkpoints. This file-only update does not merge configuration source, load an infobase or run tests. The per-root report records completed, deferred and blocked outcomes; repeat update-workflow from master for unfinished roots. Resume a stopped branch operation through its original command. Run refresh only when its normal source/configuration synchronization is wanted. Reload clients when the report requests it; for Kilo, status and doctor report the installed 1c-workflow-fast contract/SHA, while the actual client cache is not observable through a Kilo API.
+update-workflow updates the installed package from the master worktree. For the first migration from an old installed helper, use the current source package scripts/update-installed-workflow.ps1 with an exact clean source checkout; it enters the current helper before any managed file is copied. The helper snapshots the complete managed write-set, copies package files, starts the new helper in a fresh process, then updates rules, client surfaces, dependency locks, owned environment/MCP contributions and the local master commit. It processes each available registered itldev/* worktree from the same candidate under its own lifecycle lock, up to three at once in separate update-workflow-branch helpers (-MaxParallelWorkflowBranches 1-4; 1 restores the sequential rollout; a next branch waits while less than 1.5 GB of memory is free), retaining business edits, staged index entries and stopped-operation checkpoints. This file-only update does not merge configuration source, load an infobase or run tests. The per-root report records completed, deferred and blocked outcomes; repeat update-workflow from master for unfinished roots. Resume a stopped branch operation through its original command. Run refresh only when its normal source/configuration synchronization is wanted. Reload clients when the report requests it; for Kilo, status and doctor report the installed 1c-workflow-fast contract/SHA, while the actual client cache is not observable through a Kilo API.
 
 For normal developer work, prefer the short `/itl-*` commands documented in the README and developer guide.

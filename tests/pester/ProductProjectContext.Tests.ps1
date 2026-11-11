@@ -236,8 +236,13 @@
         $actions=@(($ast.ParamBlock.Parameters|Where-Object {$_.Name.VariablePath.UserPath -eq 'Action'}).Attributes|Where-Object {$_.TypeName.Name -eq 'ValidateSet'}|ForEach-Object {$_.PositionalArguments.Value})
         $brokers=@(($ast.ParamBlock.Parameters|Where-Object {$_.Name.VariablePath.UserPath -eq 'InternalOnDemandOperation'}).Attributes|Where-Object {$_.TypeName.Name -eq 'ValidateSet'}|ForEach-Object {$_.PositionalArguments.Value}|Where-Object {$_})
         # The empty "not a broker" value is excluded from this operation set.
-        $actions.Count|Should -Be 102;$brokers.Count|Should -Be 8
-        foreach($action in @('window-helper-status','window-helper-stop','window-helper-restart')){
+        $actions.Count|Should -Be 105;$brokers.Count|Should -Be 8
+        # A parallel update-workflow branch helper is part of the update transaction:
+        # no startup catalog write, and it takes its branch lease itself.
+        $actions|Should -Contain 'update-workflow-branch'
+        (Get-ItlProductProjectStartupDisposition 'update-workflow-branch')|Should -Be inherited-update
+        (Test-Agent1cActionRequiresLifecycleLock 'update-workflow-branch')|Should -BeFalse
+        foreach($action in @('window-helper-status','window-helper-stop','window-helper-restart','window-show','window-hide')){
             $actions|Should -Contain $action
             (Test-Agent1cActionRequiresLifecycleLock $action)|Should -BeFalse
             (Get-ItlProductProjectStartupDisposition $action)|Should -Be diagnostic

@@ -17,6 +17,13 @@ does not assert task progress or extend the operation deadline; native stall
 checks, helper-exit detection and the hard operation timeout remain authoritative.
 Recovery still belongs to the preserved snapshot and the original update command.
 
+After master, development worktrees run in parallel `update-workflow-branch`
+helpers (`-MaxParallelWorkflowBranches`, default 3). Each child takes its own
+branch lease with zero wait, reuses the master pass's verified machine inputs,
+never prompts, and keeps its own run log and step timings; the parent prints
+each branch's outcome, duration and log path. Children stop with the parent's
+runner; each branch then recovers from its own receipt and snapshot.
+
 Rollout saves its existing report after every classified root. An interrupted
 report cannot establish aggregate completion. On restart, a branch with no pending
 update can also prove completion from its retained terminal capsule: exact source

@@ -87,7 +87,7 @@ function Get-ItlProductProjectStartupDisposition {
     # A startup write in either phase would change client files outside its
     # recorded before/after path state: pre-copy before the snapshot, and the
     # fresh child before validating it.
-    if($RequestedAction -eq 'update-workflow'){return 'inherited-update'}
+    if($RequestedAction -in @('update-workflow','update-workflow-branch')){return 'inherited-update'}
     if($RequestedAction -eq 'init-project'){return 'bootstrap'}
     # These runtime owners intentionally do not acquire a new lifecycle guard.
     if($RequestedAction -in @('start-vanessa-profile','stop-vanessa-profile')){return 'inherited-runtime'}

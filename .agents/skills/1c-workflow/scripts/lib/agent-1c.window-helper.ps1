@@ -4,7 +4,7 @@
 
 $script:ItlWindowHelperAssetRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\assets\window-helper'))
 $script:ItlWindowHelperProtocol = 1
-$script:ItlWindowHelperOperations = @('lease', 'lease-end', 'capture-show', 'capture-end', 'adopt', 'status')
+$script:ItlWindowHelperOperations = @('lease', 'lease-end', 'capture-show', 'capture-end', 'adopt', 'status', 'show', 'hide')
 $script:ItlWindowChannelCapability = 'itl-window-channel-1'
 # Longest path the Vanessa patch writes below the group root:
 # \requests\<uuid>.json.<uuid32>.tmp is written by the helper only; 1C writes
@@ -115,11 +115,12 @@ function Test-ItlWindowHelperLockHeld {
 }
 
 # One request through the group file channel. A missing reply within three seconds
-# restarts the helper once (a hung one is replaced) and repeats the request.
+# restarts the helper once (a hung one is replaced) and repeats the request; the
+# fresh helper has until the request deadline to take it, since a start under load is slow.
 function Send-ItlWindowHelperRequest {
     param(
         [Parameter(Mandatory = $true)][string]$Directory,
-        [Parameter(Mandatory = $true)][ValidateSet('lease', 'lease-end', 'capture-show', 'capture-end', 'adopt', 'status')][string]$Operation,
+        [Parameter(Mandatory = $true)][ValidateSet('lease', 'lease-end', 'capture-show', 'capture-end', 'adopt', 'status', 'show', 'hide')][string]$Operation,
         [System.Collections.IDictionary]$Fields = @{},
         [DateTime]$DeadlineUtc = [DateTime]::UtcNow.AddSeconds(30),
         [int]$AckTimeoutMilliseconds = 3000,
@@ -138,6 +139,8 @@ function Send-ItlWindowHelperRequest {
         $responsePath = Join-Path $responses "$id.json"
         $ackPath = Join-Path $responses "$id.ack"
         $watch = [Diagnostics.Stopwatch]::StartNew()
+        $ackLimit = $AckTimeoutMilliseconds
+        if ($attempt -gt 0) { $ackLimit = [Math]::Max($AckTimeoutMilliseconds, ($DeadlineUtc.ToUniversalTime() - [DateTime]::UtcNow).TotalMilliseconds) }
         $finalLimit = [Math]::Max($AckTimeoutMilliseconds, ($DeadlineUtc.ToUniversalTime() - [DateTime]::UtcNow).TotalMilliseconds + 5000)
         $lastLiveness = 0
         while ($true) {
@@ -149,7 +152,7 @@ function Send-ItlWindowHelperRequest {
                 return $response
             }
             $acked = Test-Path -LiteralPath $ackPath -PathType Leaf
-            if (-not $acked -and $watch.ElapsedMilliseconds -ge $AckTimeoutMilliseconds) { break }
+            if (-not $acked -and $watch.ElapsedMilliseconds -ge $ackLimit) { break }
             if ($acked -and $watch.ElapsedMilliseconds -ge $finalLimit) { break }
             if ($acked -and $watch.ElapsedMilliseconds - $lastLiveness -ge 1000) {
                 $lastLiveness = $watch.ElapsedMilliseconds
@@ -258,7 +261,7 @@ function Read-ItlWindowHelperJournal {
 
 function Get-ItlWindowHelperLeaseSummary {
     param([AllowNull()][object]$Group)
-    $summary = [ordered]@{ mode = 'visible'; leases = 0; leaseMs = [int64]0; consentWaitMs = [int64]0; queueWaitMs = [int64]0; declined = 0; warning = '' }
+    $summary = [ordered]@{ mode = 'visible'; modeSource = (Get-OneCWindowModeSource); leases = 0; leaseMs = [int64]0; consentWaitMs = [int64]0; queueWaitMs = [int64]0; declined = 0; warning = '' }
     if ($null -eq $Group) { return [pscustomobject]$summary }
     $summary.mode = if ($Group.ready) { 'hidden' } else { [string]$Group.mode }
     $summary.warning = [string]$Group.warning
@@ -277,8 +280,8 @@ function Get-ItlWindowHelperLeaseSummary {
 
 function Format-ItlWindowHelperLeaseSummary {
     param([object]$Summary)
-    $line = 'Agent UI control: mode={0} leases={1} leaseSeconds={2:0.0} consentWaitSeconds={3:0.0} queueWaitSeconds={4:0.0} declined={5}' -f
-        $Summary.mode, $Summary.leases, ($Summary.leaseMs / 1000.0), ($Summary.consentWaitMs / 1000.0), ($Summary.queueWaitMs / 1000.0), $Summary.declined
+    $line = 'Agent UI control: mode={0} modeSource={6} leases={1} leaseSeconds={2:0.0} consentWaitSeconds={3:0.0} queueWaitSeconds={4:0.0} declined={5}' -f
+        $Summary.mode, $Summary.leases, ($Summary.leaseMs / 1000.0), ($Summary.consentWaitMs / 1000.0), ($Summary.queueWaitMs / 1000.0), $Summary.declined, $(if ($Summary.PSObject.Properties['modeSource']) { $Summary.modeSource } else { 'project' })
     if ($Summary.warning) { $line += " warning=$($Summary.warning)" }
     return ($line -replace ',', '.')
 }
@@ -319,7 +322,7 @@ function Select-ItlWindowHelperGroups {
 function Show-ItlWindowHelperStatus {
     param([switch]$All)
     $mode = Get-OneCWindowMode
-    Write-Host "ONEC_WINDOW_MODE=$mode (applies to the next TestClient launch)."
+    Write-Host "ONEC_WINDOW_MODE=$mode source=$(Get-OneCWindowModeSource) (applies to the next TestClient launch)."
     $groups = @(Select-ItlWindowHelperGroups -All:$All)
     if ($groups.Count -eq 0) { Write-Host 'No running window helper for this project.'; return }
     foreach ($group in $groups) {
@@ -329,7 +332,53 @@ function Show-ItlWindowHelperStatus {
         if ($null -eq $status) { Write-Host "Window helper PID $($group.processId): not answering; group='$($group.directory)' mode=$groupMode"; continue }
         $summary = Get-ItlWindowHelperLeaseSummary -Group ([pscustomobject]@{ ready = $true; directory = $group.directory; mode = $groupMode; warning = '' })
         Write-Host "Window helper PID $($status.helperPid): group='$($group.directory)' mode=$groupMode state=$($status.state) clients=$(@($status.clients).Count) members=$($status.members)"
+        $revealed = @(if ($status.PSObject.Properties['revealed']) { $status.revealed })
+        if ($revealed.Count -gt 0) { Write-Host "  Shown on request (window-hide returns hiding): $($revealed -join ', ')" }
         Write-Host "  $(Format-ItlWindowHelperLeaseSummary -Summary $summary)"
+    }
+}
+
+# Shows or hides a TestClient of one of this project's helper groups on the agent's
+# request. Showing neither activates the client nor grants OS input: input still
+# needs a consented lease. A process outside the groups is refused untouched.
+function Set-ItlWindowHelperClientVisibility {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('show', 'hide')][string]$Operation,
+        [int]$ProcessId = 0,
+        [int]$Port = 0
+    )
+    if ($ProcessId -le 0 -and $Port -le 0) {
+        throw "ITL_WINDOW_TARGET_REQUIRED: window-$Operation needs -ProcessId or -Port of a TestClient. window-helper-status lists the clients."
+    }
+    $target = $null
+    foreach ($group in @(Select-ItlWindowHelperGroups)) {
+        $fields = @{}
+        if ($Port -gt 0) { $fields.port = $Port }
+        $status = Send-ItlWindowHelperRequest -Directory $group.directory -Operation status -Fields $fields -Executable $group.executable -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(3))
+        if ($null -eq $status) { continue }
+        foreach ($client in @($status.clients)) {
+            if (($ProcessId -le 0 -or [int]$client.pid -eq $ProcessId) -and ($Port -le 0 -or [int]$client.port -eq $Port)) {
+                $target = [pscustomobject]@{ group = $group; pid = [int]$client.pid; port = [int]$client.port }
+                break
+            }
+        }
+        if ($null -ne $target) { break }
+    }
+    $what = if ($ProcessId -gt 0) { "PID $ProcessId" } else { "port $Port" }
+    if ($null -eq $target) {
+        if ((Get-OneCWindowMode) -eq 'visible') {
+            if ($Operation -eq 'show') { Write-Host "TestClient windows are already visible: ONEC_WINDOW_MODE=visible, no window helper hides them."; return }
+            throw "ITL_WINDOW_HIDE_UNAVAILABLE: ONEC_WINDOW_MODE=visible, so no window helper serves $what. Start the run or session with -WindowMode hidden to hide its TestClient."
+        }
+        throw "ITL_WINDOW_NOT_MEMBER: $what is not a TestClient of a window helper group of this project; its windows were not changed. window-helper-status lists the groups."
+    }
+    $response = Send-ItlWindowHelperRequest -Directory $target.group.directory -Operation $Operation -Fields @{ pid = $target.pid } -Executable $target.group.executable -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(5))
+    if ($null -eq $response) { throw "ITL_WINDOW_HELPER_UNAVAILABLE: the window helper of group '$($target.group.directory)' did not answer window-$Operation." }
+    if ([string]$response.status -ne 'ok') { throw "ITL_WINDOW_NOT_MEMBER: the window helper refused window-$Operation for PID $($target.pid): $($response.code)." }
+    if ($Operation -eq 'show') {
+        Write-Host "TestClient PID $($target.pid) port $($target.port) shown below the active window without focus ($($response.shown) window(s)); window-hide -ProcessId $($target.pid) hides it again."
+    } else {
+        Write-Host "TestClient PID $($target.pid) port $($target.port) hidden; its new windows are hidden again."
     }
 }
 

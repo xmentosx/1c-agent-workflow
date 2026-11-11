@@ -10722,6 +10722,252 @@ function Save-WorkflowDevelopmentBranchRolloutReport {
     return $report
 }
 
+function Invoke-WorkflowDevelopmentBranchItemUpdate {
+    param([Parameter(Mandatory = $true)][string]$BranchRoot, [Parameter(Mandatory = $true)][object]$Source,
+        [AllowEmptyCollection()][string[]]$MasterClients = @())
+
+    # One development worktree under its own lifecycle lease. The rollout runs
+    # it in process or through an update-workflow-branch child helper; both
+    # return the same outcome. A busy branch is deferred without waiting.
+    $status = ''
+    $reason = ''
+    $commit = ''
+    $appliedClients = @()
+    $lease = $null
+    try {
+        $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath $BranchRoot
+        Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $BranchRoot
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+        $lease = Wait-Agent1cLockSet -RequestedAction 'update-workflow' -TimeoutSeconds 0 -GetRequests {
+            [pscustomobject]@{ worktreePath = $BranchRoot; lockPath = $lockPath; share = [IO.FileShare]::Read; kind = 'lifecycle' }
+        }
+        $runtimeBusy = Get-WorkflowUpdateRootRuntimeBusyReason -Root $BranchRoot
+        if ($runtimeBusy) {
+            $status = 'deferred'
+            $reason = $runtimeBusy
+        } else {
+            $updated = Invoke-InProjectContext -Root $BranchRoot -ScriptBlock {
+                $completedProof = Get-WorkflowDevelopmentBranchCompletedProof -Source $Source -MasterClients $MasterClients
+                if ($null -ne $completedProof) { return $completedProof }
+                # Revalidate under the branch lease. The existing patch
+                # owner preserves exact before/after bytes and staging.
+                $branchPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow-branch' -Source $Source
+                if ($null -ne $branchPatchPlan -and $branchPatchPlan.preserve) {
+                    throw 'WORKFLOW_PATCH_PACKAGE_UNCHANGED: the recorded local patch remains active; preserve it and select a confirmed replacement package.'
+                }
+                try {
+                    if (-not (Get-ConfigValueFromObject -Object $branchPatchPlan -Path 'resuming' -Default $false)) {
+                        Invoke-WorkflowLocalPatchStep -Step Retire -Plan $branchPatchPlan
+                    }
+                    $branchResult = Invoke-WorkflowDevelopmentBranchUpdate -Source $Source -LocalPatchPlan $branchPatchPlan -MasterClients $MasterClients
+                    $branchResult
+                } catch {
+                    $branchError = $_
+                    if (Get-ConfigValueFromObject -Object $branchPatchPlan -Path 'resuming' -Default $false) {
+                        # Leave the exact interrupted transaction with
+                        # its owner; never reapply a patch over new bytes.
+                        throw $branchError
+                    }
+                    $installedCommit = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'commit' -Default '')
+                    if ($installedCommit -ceq [string]$Source.commit) {
+                        Invoke-WorkflowLocalPatchStep -Step Complete -Plan $branchPatchPlan
+                    } else {
+                        Invoke-WorkflowLocalPatchStep -Step Undo -Plan $branchPatchPlan
+                    }
+                    throw $branchError
+                }
+            }
+            $status = [string]$updated.status
+            $commit = [string]$updated.commit
+            if ($status -eq 'completed') {
+                $appliedClients = @(Get-WorkflowRolloutClients -Root $BranchRoot)
+                if (-not (Test-WorkflowRolloutClients -Root $BranchRoot -Clients $appliedClients -RequiredClients $MasterClients -SourceRoot ([string]$Source.root))) {
+                    throw 'WORKFLOW_UPDATE_CLIENTS_INCOMPLETE: preserve the branch files and repeat update-workflow from master to reconcile the recorded clients and their rules, commands and MCP files.'
+                }
+            }
+        }
+    } catch {
+        $reason = $_.Exception.Message
+        $status = if ($reason -match '^(?:LIFECYCLE_LOCK_WAIT_TIMEOUT|WORKFLOW_UPDATE_BRANCH_PATH_IN_USE)') { 'deferred' } else { 'blocked' }
+    } finally {
+        if ($null -ne $lease) {
+            foreach ($handle in @($lease.handles)) { $handle.stream.Dispose() }
+        }
+    }
+    return [pscustomobject]@{ status = $status; reason = $reason; commit = $commit; clients = @($appliedClients) }
+}
+
+function Get-WorkflowUpdateAvailableMemoryBytes {
+    try { return [int64](Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).FreePhysicalMemory * 1KB }
+    catch { return [int64]-1 }
+}
+
+function Start-WorkflowDevelopmentBranchChild {
+    param([Parameter(Mandatory = $true)][object]$Item, [Parameter(Mandatory = $true)][object]$Source,
+        [AllowEmptyCollection()][string[]]$MasterClients = @(), [Parameter(Mandatory = $true)][string]$OutputRoot,
+        [Parameter(Mandatory = $true)][string]$RunInputsPath)
+
+    $runner = Join-Path $script:Agent1cScriptRoot 'run-itl-command.ps1'
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "WORKFLOW_BRANCH_RUNNER_MISSING: $runner" }
+    $safe = ConvertTo-SafeName ([string]$Item.branch)
+    $requestPath = Join-Path $OutputRoot "$safe.request.json"
+    $resultPath = Join-Path $OutputRoot "$safe.result.json"
+    $stdout = Join-Path $OutputRoot "$safe.stdout.json"
+    $stderr = Join-Path $OutputRoot "$safe.stderr.log"
+    if (Test-Path -LiteralPath $resultPath -PathType Leaf) { Remove-Item -LiteralPath $resultPath -Force }
+    $request = [ordered]@{
+        schemaVersion = 1; mainRoot = [string]$script:ProjectRoot; branchRoot = [string]$Item.root; branch = [string]$Item.branch
+        source = [ordered]@{ root = [string]$Source.root; repo = [string]$Source.repo; ref = [string]$Source.ref; commit = [string]$Source.commit
+            source = [string]$Source.source; rolloutScope = (Get-ConfigValueFromObject $Source 'rolloutScope' $null) }
+        masterClients = @($MasterClients); runInputsPath = $RunInputsPath; resultPath = $resultPath
+    }
+    Write-Utf8TextAtomic -Path $requestPath -Value (($request | ConvertTo-Json -Depth 16) + [Environment]::NewLine)
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, '--',
+        '-Action', 'update-workflow-branch', '-WorkflowBranchRequestPath', $requestPath)
+    # The child must decide exactly like the in-process rollout: same client,
+    # rules, catalog decision, dependency selection and MCP selection inputs.
+    foreach ($name in @('AgentTarget', 'CatalogDecision', 'DependencyMode', 'DependencySelectionFile', 'McpScope', 'McpServerId', 'McpProvider', 'McpConfigId', 'McpHostId', 'McpLocalScope')) {
+        $value = [string](Get-Variable -Name $name -ValueOnly -ErrorAction SilentlyContinue)
+        if (-not [string]::IsNullOrWhiteSpace($value)) { $arguments += @("-$name", $value.Trim()) }
+    }
+    foreach ($name in @('SkipAiRules', 'Force', 'DependencyHotfixOnly')) {
+        $value = Get-Variable -Name $name -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -ne $value -and [bool]$value) { $arguments += "-$name" }
+    }
+    $process = Start-Process -FilePath 'powershell' `
+        -ArgumentList (Join-NativeCommandLineArguments -Arguments $arguments) `
+        -WorkingDirectory ([string]$Item.root) `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $stdout `
+        -RedirectStandardError $stderr `
+        -PassThru
+    return [pscustomobject]@{ item = $Item; process = $process; stdout = $stdout; stderr = $stderr; resultPath = $resultPath; startedAt = Get-Date; index = -1 }
+}
+
+function Receive-WorkflowDevelopmentBranchChild {
+    param([Parameter(Mandatory = $true)][object]$Entry)
+
+    # HasExited can precede the redirected stream flush; the parameterless
+    # wait completes it and releases the handles before the files are read.
+    $Entry.process.WaitForExit()
+    $stdoutText = if (Test-Path -LiteralPath $Entry.stdout -PathType Leaf) { Read-Utf8Text -Path $Entry.stdout } else { '' }
+    $summary = $null
+    try { if ($stdoutText) { $summary = $stdoutText | ConvertFrom-Json } } catch {}
+    $statusPath = [string](Get-StateValue -State $summary -Name 'statusPath' -Default '')
+    $logPath = if ($statusPath) { Join-Path (Split-Path -Parent $statusPath) 'console.log' } else { '' }
+    $result = $null
+    if (Test-Path -LiteralPath $Entry.resultPath -PathType Leaf) {
+        try { $result = Read-Utf8Text -Path $Entry.resultPath | ConvertFrom-Json -ErrorAction Stop } catch {}
+    }
+    if ($null -ne $result -and [string]$result.status -in @('completed', 'deferred', 'blocked')) {
+        return [pscustomobject]@{ status = [string]$result.status; reason = [string]$result.reason; commit = [string]$result.commit
+            clients = @($result.clients | Where-Object { $_ }); logPath = $logPath }
+    }
+    # No branch outcome: the child stopped before or outside the branch owner.
+    $stderrText = if (Test-Path -LiteralPath $Entry.stderr -PathType Leaf) { Read-Utf8Text -Path $Entry.stderr } else { '' }
+    $detail = [string](Get-StateValue -State $summary -Name 'error' -Default '')
+    if (-not $detail) { $detail = ($stderrText.Trim() + ' ' + $stdoutText.Trim()).Trim() }
+    if ($detail.Length -gt 2000) { $detail = $detail.Substring(0, 2000) }
+    return [pscustomobject]@{ status = 'blocked'; reason = "WORKFLOW_BRANCH_CHILD_FAILED: no branch outcome from the child helper. $detail"; commit = ''; clients = @(); logPath = $logPath }
+}
+
+function Invoke-WorkflowDevelopmentBranchChildren {
+    param([Parameter(Mandatory = $true)][object[]]$Items, [Parameter(Mandatory = $true)][object]$Source,
+        [AllowEmptyCollection()][string[]]$MasterClients = @(), [Parameter(Mandatory = $true)][int]$Limit,
+        [Parameter(Mandatory = $true)][scriptblock]$OnOutcome)
+
+    $runRoot = if ($RunStatusPath) { Split-Path -Parent (Resolve-RunFilePath -Path $RunStatusPath) } else { Join-Path $script:ProjectRoot '.agent-1c\runs' }
+    $outputRoot = Join-Path $runRoot 'workflow-branches'
+    New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+    $runInputsPath = Join-Path $outputRoot 'run-inputs.json'
+    Export-WorkflowUpdateRunSharedInputs -Path $runInputsPath -SourceCommit ([string]$Source.commit)
+    # A branch helper needs a few hundred MB; never start the next one into a
+    # machine that would swap. The first branch always starts.
+    $minimumFreeBytes = [int64]1536 * 1MB
+    $pending = [System.Collections.Generic.Queue[object]]::new()
+    foreach ($item in $Items) { $pending.Enqueue($item) }
+    $running = [System.Collections.Generic.List[object]]::new()
+    $completed = 0
+    $memoryWaitAnnounced = $false
+    $lastProgress = ''
+    while ($pending.Count -gt 0 -or $running.Count -gt 0) {
+        while ($pending.Count -gt 0 -and $running.Count -lt $Limit) {
+            if ($running.Count -gt 0) {
+                $available = Get-WorkflowUpdateAvailableMemoryBytes
+                if ($available -ge 0 -and $available -lt $minimumFreeBytes) {
+                    if (-not $memoryWaitAnnounced) {
+                        Write-Host ("Workflow branches: waiting for free memory before the next branch ({0} MB free, {1} MB required); {2} running." -f [int64]($available / 1MB), [int64]($minimumFreeBytes / 1MB), $running.Count)
+                        $memoryWaitAnnounced = $true
+                    }
+                    break
+                }
+            }
+            $memoryWaitAnnounced = $false
+            $next = $pending.Dequeue()
+            $stepName = 'workflow-update.branch ' + [string]$next.item.branch
+            Write-RunStepMarker $stepName
+            try {
+                $entry = Start-WorkflowDevelopmentBranchChild -Item $next.item -Source $Source -MasterClients $MasterClients -OutputRoot $outputRoot -RunInputsPath $runInputsPath
+                $entry.index = [int]$next.index
+                $running.Add($entry) | Out-Null
+                Write-Host "Workflow branch $($next.item.branch): started in a separate helper process."
+            } catch {
+                Write-RunStepMarker $stepName -End
+                & $OnOutcome ([int]$next.index) ([pscustomobject]@{ status = 'blocked'; reason = "WORKFLOW_BRANCH_CHILD_START_FAILED: $($_.Exception.Message)"; commit = ''; clients = @() })
+                $completed++
+            }
+        }
+        $progress = "parallel={0}; running={1}; pending={2}; complete={3}" -f $Limit, $running.Count, $pending.Count, $completed
+        if ($progress -cne $lastProgress) {
+            Set-RunStage -Stage 'workflow-update.branches' -Detail $progress
+            $lastProgress = $progress
+        }
+        foreach ($entry in @($running)) {
+            $entry.process.Refresh()
+            if (-not $entry.process.HasExited) { continue }
+            $outcome = Receive-WorkflowDevelopmentBranchChild -Entry $entry
+            Write-RunStepMarker ('workflow-update.branch ' + [string]$entry.item.branch) -End
+            $elapsed = (Get-Date) - $entry.startedAt
+            Write-Host ("Workflow branch {0}: {1} in {2:mm\:ss}. Log: {3}" -f $entry.item.branch, $outcome.status, $elapsed, $(if ($outcome.logPath) { $outcome.logPath } else { $entry.stderr }))
+            & $OnOutcome ([int]$entry.index) $outcome
+            $completed++
+            [void]$running.Remove($entry)
+        }
+        if ($running.Count -gt 0) { Start-Sleep -Milliseconds 500 }
+    }
+}
+
+function Invoke-WorkflowDevelopmentBranchChild {
+    # update-workflow-branch: one development worktree of a parallel rollout.
+    # The parent rollout owns the request, the report and the continuation.
+    if ([string]::IsNullOrWhiteSpace($WorkflowBranchRequestPath) -or -not (Test-Path -LiteralPath $WorkflowBranchRequestPath -PathType Leaf)) {
+        throw 'WORKFLOW_BRANCH_REQUEST_REQUIRED: update-workflow-branch is started only by the update-workflow rollout; repeat update-workflow from master.'
+    }
+    $request = Read-Utf8Text -Path $WorkflowBranchRequestPath | ConvertFrom-Json -ErrorAction Stop
+    if ([int]$request.schemaVersion -ne 1 -or
+        -not [string]::Equals((Resolve-Agent1cFullPath -Path ([string]$request.branchRoot)), [string]$script:ProjectRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        [string]$request.source.commit -notmatch '^[a-f0-9]{40}$' -or [string]::IsNullOrWhiteSpace([string]$request.resultPath)) {
+        throw "WORKFLOW_BRANCH_REQUEST_INVALID: '$WorkflowBranchRequestPath' does not describe this development worktree; repeat update-workflow from master."
+    }
+    $source = [pscustomobject]@{ root = [string]$request.source.root; repo = [string]$request.source.repo; ref = [string]$request.source.ref
+        commit = [string]$request.source.commit; source = [string]$request.source.source; rolloutScope = $request.source.rolloutScope }
+    Set-RunStage -Stage 'workflow-update.branch' -Detail "Updating development worktree '$($request.branch)' with workflow candidate $($source.commit)."
+    $outcome = @(Invoke-WithRunStatusHeartbeat {
+        Invoke-WorkflowUpdateRunSharedInputs {
+            $imported = Import-WorkflowUpdateRunSharedInputs -Path ([string]$request.runInputsPath) -SourceCommit ([string]$source.commit)
+            Write-Host "Shared update inputs reused from the master pass: $imported."
+            Invoke-WorkflowDevelopmentBranchItemUpdate -BranchRoot ([string]$script:ProjectRoot) -Source $source -MasterClients @($request.masterClients | Where-Object { $_ })
+        }
+    }) | Select-Object -Last 1
+    $payload = [ordered]@{ schemaVersion = 1; branch = [string]$request.branch; status = [string]$outcome.status; reason = [string]$outcome.reason
+        commit = [string]$outcome.commit; clients = @($outcome.clients) }
+    Write-Utf8TextAtomic -Path ([string]$request.resultPath) -Value (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+    if ([string]$outcome.status -ne 'completed') {
+        throw "WORKFLOW_BRANCH_$(([string]$outcome.status).ToUpperInvariant()): $($outcome.reason)"
+    }
+    Set-RunStage -Stage 'workflow-update.branch-complete' -Detail "Development worktree '$($request.branch)' updated at $($outcome.commit)."
+}
+
 function Invoke-WorkflowDevelopmentBranchRollout {
     param([Parameter(Mandatory = $true)][object]$Source)
 
@@ -10744,7 +10990,9 @@ function Invoke-WorkflowDevelopmentBranchRollout {
     $scope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$Source.commit) -RecordedScope $scope
     $selected = @(if ($null -ne $scope) { $scope.roots })
     $inventory = @(Get-WorkflowUpdateWorktreeInventory -TargetCommit ([string]$Source.commit) -SelectedRoot $selected)
-    $outcomes = [System.Collections.Generic.List[object]]::new()
+    $expectedRoots = @($inventory | Where-Object kind -EQ development | ForEach-Object root)
+    $slots = [System.Collections.Generic.List[object]]::new()
+    $eligible = [System.Collections.Generic.List[object]]::new()
     foreach ($item in @($inventory | Where-Object kind -EQ development)) {
         $status = [string]$item.eligibility
         $reason = [string]$item.reason
@@ -10782,83 +11030,49 @@ function Invoke-WorkflowDevelopmentBranchRollout {
             $commit = [string]$earlier[0].commit
             $appliedClients = @($earlier[0].clients)
         }
-        if ($status -eq 'eligible') {
-            $lease = $null
-            Write-RunStepMarker 'workflow-update.branch'
-            try {
-                $branchRoot = [string]$item.root
-                $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath $branchRoot
-                Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $branchRoot
-                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
-                $lease = Wait-Agent1cLockSet -RequestedAction 'update-workflow' -TimeoutSeconds 0 -GetRequests {
-                    [pscustomobject]@{ worktreePath = $branchRoot; lockPath = $lockPath; share = [IO.FileShare]::Read; kind = 'lifecycle' }
-                }
-                $runtimeBusy = Get-WorkflowUpdateRootRuntimeBusyReason -Root $branchRoot
-                if ($runtimeBusy) {
-                    $status = 'deferred'
-                    $reason = $runtimeBusy
-                } else {
-                    $updated = Invoke-InProjectContext -Root $branchRoot -ScriptBlock {
-                        $completedProof = Get-WorkflowDevelopmentBranchCompletedProof -Source $Source -MasterClients $masterClients
-                        if ($null -ne $completedProof) { return $completedProof }
-                        # Revalidate under the branch lease. The existing patch
-                        # owner preserves exact before/after bytes and staging.
-                        $branchPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow-branch' -Source $Source
-                        if ($null -ne $branchPatchPlan -and $branchPatchPlan.preserve) {
-                            throw 'WORKFLOW_PATCH_PACKAGE_UNCHANGED: the recorded local patch remains active; preserve it and select a confirmed replacement package.'
-                        }
-                        try {
-                            if (-not (Get-ConfigValueFromObject -Object $branchPatchPlan -Path 'resuming' -Default $false)) {
-                                Invoke-WorkflowLocalPatchStep -Step Retire -Plan $branchPatchPlan
-                            }
-                            $branchResult = Invoke-WorkflowDevelopmentBranchUpdate -Source $Source -LocalPatchPlan $branchPatchPlan -MasterClients $masterClients
-                            $branchResult
-                        } catch {
-                            $branchError = $_
-                            if (Get-ConfigValueFromObject -Object $branchPatchPlan -Path 'resuming' -Default $false) {
-                                # Leave the exact interrupted transaction with
-                                # its owner; never reapply a patch over new bytes.
-                                throw $branchError
-                            }
-                            $installedCommit = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'commit' -Default '')
-                            if ($installedCommit -ceq [string]$Source.commit) {
-                                Invoke-WorkflowLocalPatchStep -Step Complete -Plan $branchPatchPlan
-                            } else {
-                                Invoke-WorkflowLocalPatchStep -Step Undo -Plan $branchPatchPlan
-                            }
-                            throw $branchError
-                        }
-                    }
-                    $status = [string]$updated.status
-                    $commit = [string]$updated.commit
-                    if ($status -eq 'completed') {
-                        $appliedClients = @(Get-WorkflowRolloutClients -Root $branchRoot)
-                        if (-not (Test-WorkflowRolloutClients -Root $branchRoot -Clients $appliedClients -RequiredClients $masterClients -SourceRoot ([string]$Source.root))) {
-                            throw 'WORKFLOW_UPDATE_CLIENTS_INCOMPLETE: preserve the branch files and repeat update-workflow from master to reconcile the recorded clients and their rules, commands and MCP files.'
-                        }
-                    }
-                }
-            } catch {
-                $reason = $_.Exception.Message
-                $status = if ($reason -match '^(?:LIFECYCLE_LOCK_WAIT_TIMEOUT|WORKFLOW_UPDATE_BRANCH_PATH_IN_USE)') { 'deferred' } else { 'blocked' }
-            } finally {
-                if ($null -ne $lease) {
-                    foreach ($handle in @($lease.handles)) { $handle.stream.Dispose() }
-                }
-                Write-RunStepMarker 'workflow-update.branch' -End
-            }
-        }
-        $outcomes.Add([pscustomobject]@{
-            root = [string]$item.root; branch = [string]$item.branch
-            status = $status; reason = $reason; commit = $commit; clients = @($appliedClients)
-            continuation = Get-WorkflowUpdateBranchContinuation -Status $status -Reason $reason -Default $(if ($status -eq 'blocked' -and [string]$item.eligibility -eq 'eligible') {
-                'Inspect the reported branch failure and its preserved snapshot, then repeat update-workflow from master.'
-            } else { [string]$item.continuation })
-        })
-        Save-WorkflowDevelopmentBranchRolloutReport -Source $Source -MasterClients $masterClients -Scope $scope -Outcomes @($outcomes.ToArray()) -ExpectedRoots @($inventory | Where-Object kind -EQ development | ForEach-Object root) | Out-Null
+        $slots.Add([pscustomobject]@{ item = $item; outcome = $(if ($status -eq 'eligible') { $null } else {
+            [pscustomobject]@{ status = $status; reason = $reason; commit = $commit; clients = @($appliedClients) } }) }) | Out-Null
+        if ($status -eq 'eligible') { $eligible.Add([pscustomobject]@{ index = $slots.Count - 1; item = $item }) | Out-Null }
     }
-    $report = Save-WorkflowDevelopmentBranchRolloutReport -Source $Source -MasterClients $masterClients -Scope $scope -Outcomes @($outcomes.ToArray()) -ExpectedRoots @($inventory | Where-Object kind -EQ development | ForEach-Object root)
-    return $report
+    $saveReport = {
+        $outcomes = @(foreach ($slot in $slots) {
+            if ($null -eq $slot.outcome) { continue }
+            $slotStatus = [string]$slot.outcome.status
+            $slotReason = [string]$slot.outcome.reason
+            [pscustomobject]@{
+                root = [string]$slot.item.root; branch = [string]$slot.item.branch
+                status = $slotStatus; reason = $slotReason; commit = [string]$slot.outcome.commit; clients = @($slot.outcome.clients)
+                continuation = Get-WorkflowUpdateBranchContinuation -Status $slotStatus -Reason $slotReason -Default $(if ($slotStatus -eq 'blocked' -and [string]$slot.item.eligibility -eq 'eligible') {
+                    'Inspect the reported branch failure and its preserved snapshot, then repeat update-workflow from master.'
+                } else { [string]$slot.item.continuation })
+            }
+        })
+        Save-WorkflowDevelopmentBranchRolloutReport -Source $Source -MasterClients $masterClients -Scope $scope -Outcomes $outcomes -ExpectedRoots $expectedRoots
+    }
+    $recordOutcome = { param([int]$Index, [object]$Outcome) $slots[$Index].outcome = $Outcome; & $saveReport | Out-Null }
+    $inProcess = { param([object]$Next)
+        $stepName = 'workflow-update.branch ' + [string]$Next.item.branch
+        Write-RunStepMarker $stepName
+        try { $branchOutcome = Invoke-WorkflowDevelopmentBranchItemUpdate -BranchRoot ([string]$Next.item.root) -Source $Source -MasterClients $masterClients }
+        finally { Write-RunStepMarker $stepName -End }
+        & $recordOutcome ([int]$Next.index) $branchOutcome
+    }
+    $queue = @($eligible.ToArray())
+    $limitVariable = Get-Variable -Name MaxParallelWorkflowBranches -ValueOnly -ErrorAction SilentlyContinue
+    $limit = if ($null -ne $limitVariable -and [int]$limitVariable -ge 1) { [int]$limitVariable } else { 1 }
+    if ($limit -gt 1 -and $queue.Count -gt 1 -and
+        (-not (Test-WorkflowUpdateRunSharedInputsActive) -or $script:ItlWorkflowUpdateRunInputs.Count -eq 0)) {
+        # Children reuse the machine inputs this process verified for master.
+        # The resume route verified nothing yet: one in-process branch does it.
+        & $inProcess $queue[0]
+        $queue = @($queue | Select-Object -Skip 1)
+    }
+    if ($limit -gt 1 -and $queue.Count -gt 1) {
+        Invoke-WorkflowDevelopmentBranchChildren -Items $queue -Source $Source -MasterClients $masterClients -Limit $limit -OnOutcome $recordOutcome
+    } else {
+        foreach ($next in $queue) { & $inProcess $next }
+    }
+    return (& $saveReport)
     }
 }
 

@@ -1579,6 +1579,15 @@
       "tests": ["tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryAdmission.Tests.ps1"]
     },
     {
+      "id": "test-function-closure-import",
+      "owner": "fixture loading of production functions by call closure and its fixture consumers",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/FunctionClosureImport.Tests.ps1",
+      "paths": ["tests/pester/FunctionClosureImport.Tests.ps1", "tests/pester/FunctionClosure.TestSupport.ps1"],
+      "tests": ["tests/pester/FunctionClosureImport.Tests.ps1", "tests/pester/SourceDeliveryStandPreparation.Tests.ps1"]
+    },
+    {
       "id": "source-delivery-stand-preparation",
       "owner": "publisher composition with existing lifecycle and capsule owners",
       "gate": "targeted",
@@ -1900,7 +1909,7 @@
       "gate": "targeted",
       "budgetSeconds": 180,
       "primaryTest": "tests/pester/WindowHelper.Tests.ps1",
-      "paths": ["tests/pester/WindowHelper.Tests.ps1", ".agents/skills/1c-workflow/assets/window-helper/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.window-helper.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", "third-party/vanessa-automation/1.2.043.42-itl-r13/*"],
+      "paths": ["tests/pester/WindowHelper.Tests.ps1", ".agents/skills/1c-workflow/assets/window-helper/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.window-helper.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", "third-party/vanessa-automation/1.2.043.42-itl-r14/*"],
       "tests": ["tests/pester/WindowHelper.Tests.ps1"]
     },
     {
@@ -1912,6 +1921,15 @@
       "paths": ["tests/pester/WorkflowUpdateRunSharedInputs.Tests.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1"],
       "reuseInputPaths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1"],
       "tests": ["tests/pester/WorkflowUpdateRunSharedInputs.Tests.ps1"]
+    },
+    {
+      "id": "workflow-branch-parallel-rollout",
+      "owner": "update-workflow development-branch rollout in parallel update-workflow-branch helpers: limit, memory wait, failure isolation and handed-over run inputs",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/WorkflowBranchParallelRollout.Tests.ps1",
+      "paths": ["tests/pester/WorkflowBranchParallelRollout.Tests.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-itl-command.ps1"],
+      "tests": ["tests/pester/WorkflowBranchParallelRollout.Tests.ps1"]
     },
     {
       "id": "vanessa-verification-diagnostics",
@@ -2445,6 +2463,7 @@
       "vibecoding1c-mcp-write-client-config": "mcp",
       "sync-client-mcp": "mcp",
       "update-workflow": "bootstrap",
+      "update-workflow-branch": "bootstrap",
       "openspec-archive-change": "openspec",
       "openspec-context": "openspec",
       "openspec-new-change": "openspec",
@@ -2482,6 +2501,8 @@
       "window-helper-status": "vanessa",
       "window-helper-stop": "vanessa",
       "window-helper-restart": "vanessa",
+      "window-show": "vanessa",
+      "window-hide": "vanessa",
       "sync-master": "refresh",
       "get-dev-workspace-plan": "core",
       "get-dev-workspace-close-plan": "core",
@@ -2646,7 +2667,7 @@
       "check-dev-branch", "close-dev-branch", "delete-dev-branch", "export-dev-branch-result", "fork-dev-branch", "init-dev-branch-extension", "init-project", "lock-config-repository-objects", "new-dev-branch", "new-extension-dev-branch", "refresh-all-dev-branches", "refresh-dev-branch", "refresh-dev-branch-lite", "reset-dev-branch", "status", "sync-dev-branches", "sync-master", "update-workflow"
     ],
     "boundary": [
-      "activate-dev-branch-context", "adopt-dev-worktree", "begin-one-off-proof", "begin-verification-change", "begin-verification-repair", "check-auxiliary-contour", "check-tools", "clean-artifacts", "cleanup-interrupted-vanessa-run", "complete-one-off-proof", "complete-verification-change", "configure-auxiliary-contour", "configure-dev-branch-unsafe-action-protection", "configure-web-publication", "context-benchmark", "deploy-and-test", "detect-apache", "detect-web-publication", "doctor", "dump-auxiliary-contour", "dump-dev-branch-extension", "export-auxiliary-contour-result", "extend-verification-repair", "get-dev-workspace-close-plan", "get-dev-workspace-plan", "get-review-scope", "getconfigfiles", "help", "initialize-dev-branch-runtime", "install-agent-browser", "install-ui-tools", "install-vanessa-automation", "install-windows-mcp", "install-yaxunit", "itl-litemode", "itl-repository-mode", "itl-switch-client", "list-dev-branches", "list-platforms", "loadfrom1cbase", "openspec-archive-change", "openspec-context", "openspec-new-change", "provision-openspec-cli", "publish-dev-branch", "release-e2e-config-repository-lock-roundtrip", "release-e2e-config-roundtrip", "release-e2e-extension-smoke", "release-e2e-prepare-ondemand", "release-e2e-restore", "release-e2e-snapshot", "repair-dev-branch-tooling", "reset-auxiliary-contour", "set-dev-branch-extension", "set-dev-workspace-deregistration", "start-vanessa-profile", "status-auxiliary-contours", "status-vanessa-profile", "stop-dev-branch-test-clients", "stop-vanessa-profile", "switch-dev-branch", "switch-master", "sync-client-mcp", "ui-tools-status", "update-ai-rules", "update-auxiliary-contour", "update-dev-branch-base", "update1cbase", "validate", "validate-test-classification", "verify-dev-branch", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-select", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-start", "vibecoding1c-mcp-status", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-update", "vibecoding1c-mcp-write-client-config", "window-helper-restart", "window-helper-status", "window-helper-stop"
+      "activate-dev-branch-context", "adopt-dev-worktree", "begin-one-off-proof", "begin-verification-change", "begin-verification-repair", "check-auxiliary-contour", "check-tools", "clean-artifacts", "cleanup-interrupted-vanessa-run", "complete-one-off-proof", "complete-verification-change", "configure-auxiliary-contour", "configure-dev-branch-unsafe-action-protection", "configure-web-publication", "context-benchmark", "deploy-and-test", "detect-apache", "detect-web-publication", "doctor", "dump-auxiliary-contour", "dump-dev-branch-extension", "export-auxiliary-contour-result", "extend-verification-repair", "get-dev-workspace-close-plan", "get-dev-workspace-plan", "get-review-scope", "getconfigfiles", "help", "initialize-dev-branch-runtime", "install-agent-browser", "install-ui-tools", "install-vanessa-automation", "install-windows-mcp", "install-yaxunit", "itl-litemode", "itl-repository-mode", "itl-switch-client", "list-dev-branches", "list-platforms", "loadfrom1cbase", "openspec-archive-change", "openspec-context", "openspec-new-change", "provision-openspec-cli", "publish-dev-branch", "release-e2e-config-repository-lock-roundtrip", "release-e2e-config-roundtrip", "release-e2e-extension-smoke", "release-e2e-prepare-ondemand", "release-e2e-restore", "release-e2e-snapshot", "repair-dev-branch-tooling", "reset-auxiliary-contour", "set-dev-branch-extension", "set-dev-workspace-deregistration", "start-vanessa-profile", "status-auxiliary-contours", "status-vanessa-profile", "stop-dev-branch-test-clients", "stop-vanessa-profile", "switch-dev-branch", "switch-master", "sync-client-mcp", "ui-tools-status", "update-ai-rules", "update-auxiliary-contour", "update-dev-branch-base", "update-workflow-branch", "update1cbase", "validate", "validate-test-classification", "verify-dev-branch", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-select", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-start", "vibecoding1c-mcp-status", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-update", "vibecoding1c-mcp-write-client-config", "window-helper-restart", "window-helper-status", "window-helper-stop", "window-hide", "window-show"
     ]
   }
 }

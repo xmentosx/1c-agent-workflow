@@ -2,22 +2,16 @@
     . (Join-Path $PSScriptRoot 'SourceDeliveryPlan.TestSupport.ps1')
     . (Join-Path $RepoRoot 'scripts/source-delivery-process.ps1')
     . (Join-Path $RepoRoot 'scripts/source-delivery-release-recovery.ps1')
-    function Import-StandTestOwner {
-        param([string]$Path,[string[]]$Names)
-        $tokens=$null;$errors=$null
-        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot $Path),[ref]$tokens,[ref]$errors)
-        if ($errors.Count) { throw 'Owner must parse' }
-        foreach ($name in $Names) {
-            $node=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true))[0]
-            . ([scriptblock]::Create($node.Extent.Text.Replace('function '+$name+' {','function script:'+$name+' {')))
-        }
-        return $ast
-    }
-    $null=Import-StandTestOwner '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1' @('Get-ConfigValueFromObject','Get-Utf8Encoding','Read-Utf8Text','Write-Utf8TextAtomic','ConvertTo-AgentToolList','Invoke-WithRunStatusHeartbeat','Write-RunStepMarker')
-    $null=Import-StandTestOwner '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1' @('Resolve-WorkflowUpdateRolloutScope','Save-WorkflowDevelopmentBranchRolloutReport','Invoke-WorkflowDevelopmentBranchRollout','Assert-WorkflowDevelopmentBranchRolloutComplete','Get-WorkflowRolloutClients','Test-WorkflowRolloutClients')
-    $null=Import-StandTestOwner 'scripts/source-delivery-component.ps1' @('ConvertTo-DeliveryNativeArgument')
-    $null=Import-StandTestOwner 'scripts/source-delivery-cleanup.ps1' @('Invoke-PublishDevelopWithCleanup','Add-DeliveryCleanupResults')
-    $script:publisherAst=Import-StandTestOwner 'scripts/source-delivery-candidate.ps1' @()
+    . (Join-Path $PSScriptRoot 'FunctionClosure.TestSupport.ps1')
+    # Load the rollout and cleanup owners by call closure; functions this file
+    # defines are its substitutes, so a new real callee needs no fixture edit.
+    $lib='.agents/skills/1c-workflow/scripts/lib/'
+    $null=Import-TestFunctionClosure -Path @((Join-Path $RepoRoot ($lib+'agent-1c.core.ps1')),(Join-Path $RepoRoot ($lib+'agent-1c.lifecycle.ps1'))) -Root @('Resolve-WorkflowUpdateRolloutScope','Invoke-WorkflowDevelopmentBranchRollout','Assert-WorkflowDevelopmentBranchRolloutComplete') -StubSource $PSCommandPath
+    $null=Import-TestFunctionClosure -Path @(Join-Path $RepoRoot 'scripts/source-delivery-component.ps1') -Root @('ConvertTo-DeliveryNativeArgument') -StubSource $PSCommandPath
+    $null=Import-TestFunctionClosure -Path @(Join-Path $RepoRoot 'scripts/source-delivery-cleanup.ps1') -Root @('Invoke-PublishDevelopWithCleanup') -StubSource $PSCommandPath
+    $tokens=$null;$errors=$null
+    $script:publisherAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-candidate.ps1'),[ref]$tokens,[ref]$errors)
+    if ($errors.Count) { throw 'Owner must parse' }
     $script:prepareDecision=@($script:publisherAst.FindAll({param($n)
         $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text -match '^if \(-not \$frozenPlan\)'
     },$true) | Where-Object { $_.Extent.Text -match 'Invoke-DeliveryStandPreparation' })[0]

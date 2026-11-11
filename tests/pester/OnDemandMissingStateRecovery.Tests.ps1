@@ -624,6 +624,41 @@ Describe 'On-demand port ownership recovery contract' {
             $reused.stale | Should -BeTrue
             $reused.status | Should -Be 'pid-reused'
         }
+
+        It 'stops a TestClient the exited manager started before its PID was recorded' {
+            $vanessa=$script:record|ConvertTo-Json -Depth 8|ConvertFrom-Json
+            $vanessa.family='vanessa-ui'; $vanessa.portFamily='vanessa-mcp'
+            $vanessa.testClientPid=0; $vanessa.testClientPort=48151
+            $vanessa | Add-Member -NotePropertyName testClientPortFamily -NotePropertyValue 'vanessa-mcp-testclient' -Force
+            $vanessa | Add-Member -NotePropertyName testClientPortKey -NotePropertyValue 'testclient-key' -Force
+            $vanessa | Add-Member -NotePropertyName testClientPortLeaseToken -NotePropertyValue 'testclient-token' -Force
+            Save-OwnershipFixtureState $vanessa
+            $script:clientDiscoveries=[Collections.Generic.List[bool]]::new()
+            Mock Get-ItlOnDemandOwnedTestClientProcesses {
+                param($RuntimeState,[switch]$ExactStart,[switch]$RegisteredOnly)
+                $script:clientDiscoveries.Add([bool]$RegisteredOnly)
+                if ($RegisteredOnly) { return @() }
+                @([pscustomobject]@{ process=[pscustomobject]@{Id=7777}; native=[pscustomobject]@{ProcessId=7777} })
+            }
+            Mock Get-ItlOnDemandPortOwnership {
+                param($Port,$ProcessId,$RetryUntil,[switch]$TestClient)
+                if ($TestClient) {
+                    $decision=$(if ([int]$ProcessId -eq 7777) { 'owned' } else { 'foreign' })
+                    return [pscustomobject]@{decision=$decision;status='proven';owners=@(7777);diagnostic="decision=$decision expectedPid=$ProcessId"}
+                }
+                [pscustomobject]@{decision='absent';status='absent';owners=@();diagnostic='decision=absent'}
+            }
+            Mock Remove-VanessaAgentClientCodeChannel {}
+            Mock Get-ItlOnDemandManagedPortLeaseMatches {
+                param($Family,$Key,$LeaseToken)
+                if ($Family -eq 'vanessa-mcp-testclient') { [pscustomobject]@{port=48151;pid=0} } else { [pscustomobject]@{port=6003;pid=24208} }
+            }
+            $result=Stop-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('e'*32) -StrictOwnership -ExpectedRuntimeState $vanessa
+            $result.status | Should -Be 'stopped'
+            @($script:stops) | Should -Be @(7777)
+            @($script:clientDiscoveries) | Should -Be @($true, $false)
+            Read-ItlOnDemandRuntimeState vanessa-ui ('e'*32) | Should -BeNullOrEmpty
+        }
     }
 
     It 'never returns a start-unconfirmed instance to the broker on ensure' {

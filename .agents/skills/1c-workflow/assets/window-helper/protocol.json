@@ -9,7 +9,9 @@
     "capture-show": ["pid"],
     "capture-end": ["pid"],
     "adopt": ["pid"],
-    "status": ["port"]
+    "status": ["port"],
+    "show": ["pid"],
+    "hide": ["pid"]
   },
   "statuses": ["ok", "declined", "error", "protocol-mismatch"],
   "errors": ["ITL_UI_CONTROL_DECLINED", "ITL_WINDOW_ACTIVATION_FAILED", "ITL_WINDOW_HELPER_UNAVAILABLE"]

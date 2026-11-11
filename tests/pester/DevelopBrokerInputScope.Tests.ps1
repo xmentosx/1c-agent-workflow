@@ -118,6 +118,6 @@ Describe 'Cold fresh cutover proof' {
             }
         }
         @($leaf|Sort-Object -Unique)|Should -Be @('.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1:Assert-NoActiveCutoverRuntime','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Get-WorkflowUpdateRootRuntimeBusyReason')
-        @($callers|Sort-Object -Unique)|Should -Be @('Assert-WorkflowUpdateReconciliationScope','Assert-WorkflowUpdateRollbackTarget','Get-WorkflowLegacyCopyEvidence','Get-WorkflowUpdateRootBusyReason','Invoke-WorkflowDevelopmentBranchRollout','Update-WorkflowPackage')
+        @($callers|Sort-Object -Unique)|Should -Be @('Assert-WorkflowUpdateReconciliationScope','Assert-WorkflowUpdateRollbackTarget','Get-WorkflowLegacyCopyEvidence','Get-WorkflowUpdateRootBusyReason','Invoke-WorkflowDevelopmentBranchItemUpdate','Update-WorkflowPackage')
     }
 }
