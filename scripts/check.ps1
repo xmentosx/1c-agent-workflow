@@ -34,6 +34,9 @@ if ($Mode -eq "Fast") { Write-Warning "Mode Fast is deprecated and now aliases S
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+# Unattended gate: stand actions started through the external window launcher
+# (init-project, new-dev-branch, close-dev-branch) run without a visible terminal.
+$env:ITL_AGENT_WINDOW_STYLE = "Hidden"
 $CoverageContract = @($CoverageContract | ForEach-Object { @(([string]$_) -split ',') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
 function Resolve-RepositoryPath {

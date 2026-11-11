@@ -188,9 +188,37 @@ function Get-OneCIntegerSetting {
     return $parsed
 }
 
+# One run or session can override the project mode: -WindowMode sets this process
+# variable, which child processes inherit and .dev.env imports never overwrite.
+$script:OneCRunWindowModeVariable = 'ITL_RUN_WINDOW_MODE'
+
+function Get-OneCWindowModeSource {
+    $run = [Environment]::GetEnvironmentVariable($script:OneCRunWindowModeVariable, 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($run)) { return 'run' }
+    return 'project'
+}
+
+function Set-OneCRunWindowMode {
+    param([AllowEmptyString()][string]$Mode)
+    if ([string]::IsNullOrWhiteSpace($Mode)) { return }
+    $value = $Mode.Trim().ToLowerInvariant()
+    if ($value -cnotin @('hidden', 'visible')) {
+        throw "-WindowMode must be 'hidden' or 'visible'. Actual: '$Mode'. The project ONEC_WINDOW_MODE stays unchanged."
+    }
+    [Environment]::SetEnvironmentVariable($script:OneCRunWindowModeVariable, $value, 'Process')
+}
+
 # Single owner of the agent 1C window mode. It is read at every client launch, so a
 # change applies to the next launch; a running client keeps the mode it started with.
 function Get-OneCWindowMode {
+    $run = [Environment]::GetEnvironmentVariable($script:OneCRunWindowModeVariable, 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($run)) {
+        $runValue = $run.Trim().ToLowerInvariant()
+        if ($runValue -cnotin @('hidden', 'visible')) {
+            throw "$($script:OneCRunWindowModeVariable) must be 'hidden' or 'visible'. Actual: '$run'. -WindowMode sets it for one run; the project ONEC_WINDOW_MODE stays unchanged."
+        }
+        return $runValue
+    }
     $rawValue = [string](Get-EnvValue -Name 'ONEC_WINDOW_MODE' -Default 'hidden')
     $value = $rawValue.Trim().ToLowerInvariant()
     if ($value -eq '') { return 'hidden' }

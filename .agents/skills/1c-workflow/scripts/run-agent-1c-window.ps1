@@ -13,6 +13,10 @@ $PollIntervalMilliseconds = 1000
 $StatusStartTimeoutSeconds = 30
 $MaxWaitSeconds = $null
 $KeepWindowOnFailure = $false
+# The external window is for the user. An unattended caller passes -WindowStyle Hidden;
+# a gate sets ITL_AGENT_WINDOW_STYLE=Hidden once for every launcher its stands start.
+$WindowStyle = "Normal"
+if ($env:ITL_AGENT_WINDOW_STYLE -in @("Normal", "Minimized", "Hidden")) { $WindowStyle = $env:ITL_AGENT_WINDOW_STYLE }
 $AgentArgs = @()
 $GitIndexLockPath = ""
 $GitIndexLockPreExisted = $false
@@ -140,6 +144,15 @@ $rawArgs = @($args)
         }
         "-keepwindowonfailure" {
             $KeepWindowOnFailure = $true
+            continue
+        }
+        "-windowstyle" {
+            $value = Read-RequiredLauncherValue -Values $rawArgs -Index $i -Name $arg
+            if ($value.value -notin @("Normal", "Minimized", "Hidden")) {
+                throw "Launcher -WindowStyle must be Normal, Minimized or Hidden. Actual: $($value.value)"
+            }
+            $WindowStyle = $value.value
+            $i = $value.index
             continue
         }
         default {
@@ -788,7 +801,7 @@ try {
         -FilePath $powershell `
         -ArgumentList $argumentLine `
         -WorkingDirectory $projectRootFull `
-        -WindowStyle Normal `
+        -WindowStyle $WindowStyle `
         -PassThru
 } finally {
     foreach ($name in $timeoutEnvironmentNames) {
