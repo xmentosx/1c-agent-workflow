@@ -4113,6 +4113,10 @@ function Write-Vibecoding1cMcpClientConfig {
         $context=ConvertTo-ItlCatalogCanonicalValue (Get-ItlProductProjectOperationContext)
         if($context.Contains('configurationStage')){$context.Remove('configurationStage')}
         $selectedClients=if($Clients.Count){@($Clients)}elseif($Client){@($Client)}else{@(Get-ItlActiveClient)}
+        if(Test-ItlProductProjectPostCopyVerified -Clients $selectedClients -IncludeClientSurfaces:$IncludeClientSurfaces){
+            Write-Host 'Catalog MCP configuration was verified earlier in this update; catalog-owned client entries are unchanged.'
+            return
+        }
         $preview=New-ItlProductProjectPreview $context $selectedClients -IncludeClientSurfaces:$IncludeClientSurfaces
         $decisionValue=Get-Variable CatalogDecision -ErrorAction SilentlyContinue
         $decision=if($decisionValue){[string]$decisionValue.Value}else{''}

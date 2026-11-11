@@ -185,4 +185,36 @@ param([string]$Command, [string]$ProjectRoot, [string]$Source, [string]$Tools, [
         [IO.File]::ReadAllText((Join-Path $run.roots[2] '.dev.env')) | Should -Match 'ROCTUP_MCP_VERSION=v1\.8\.0'
         [IO.File]::ReadAllText((Join-Path $run.roots[1] '.dev.env')) | Should -Match 'ROCTUP_MCP_VERSION=v1\.7\.1'
     }
+
+    It 'reads a large pending receipt without per-record disk path resolution and still refuses an escaping record' {
+        # Every dependency lookup during update-workflow rereads the pending
+        # receipt (~1000 records); per-record resolution cost ~4 s per read.
+        $root = Join-Path $TestDrive 'Проект квитанции с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        & {
+            . $HelperPath -ProjectRoot $root -Action help -AgentTarget codex *> $null
+            $snapshotRoot = Join-Path $root ('.agent-1c/snapshots/workflow-update/itl-workflow-update-rollback-' + ('a' * 32))
+            New-Item -ItemType Directory -Force -Path $snapshotRoot | Out-Null
+            $snapshotRoot = Get-FullPathNormalized $snapshotRoot
+            $records = @(1..500 | ForEach-Object { @{ relativePath = ".agents/skills/папка $_/файл с пробелом.md"; existed = $false; wasDirectory = $false; backupName = '' } })
+            $writeReceipt = {
+                $receipt = @{ schemaVersion = 1; operation = 'update-workflow'; phase = 'copying'; projectRoot = $script:ProjectRoot
+                    snapshotRoot = $snapshotRoot; records = $records; parentStates = @{} }
+                Write-Utf8Text -Path (Join-Path $snapshotRoot 'transaction.json') -Value ($receipt | ConvertTo-Json -Depth 8)
+            }
+            & $writeReceipt
+            $resolved = @{ count = 0 }
+            $realResolve = ${function:Resolve-Agent1cFullPath}
+            function Resolve-Agent1cFullPath { param([AllowNull()][string]$Path) $resolved.count++; & $realResolve -Path $Path }
+
+            $pending = Get-WorkflowUpdatePendingSnapshot
+            @($pending.snapshot.records).Count | Should -Be 500
+            $pending.snapshot.records[0].targetPath | Should -BeExactly (Join-Path $script:ProjectRoot '.agents/skills/папка 1/файл с пробелом.md')
+            $resolved.count | Should -BeLessThan 20
+
+            $records[0].relativePath = 'a/../../Вне проекта/файл.md'
+            & $writeReceipt
+            { Get-WorkflowUpdatePendingSnapshot } | Should -Throw '*outside project root*'
+        }
+    }
 }

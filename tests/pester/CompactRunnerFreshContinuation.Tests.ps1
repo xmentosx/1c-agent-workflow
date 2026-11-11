@@ -168,7 +168,9 @@ if($fixture.mode -eq 'nested-report') {
     Invoke-Agent1cFreshProcess -ScriptPath (Join-Path $fixture.root 'child.ps1')
 }
 if($fixture.mode -eq 'report') {
-    Write-Section 'Отчёт внука'
+    # The section ends with its step, before the later silent wait.
+    Write-RunStepMarker 'fixture.шаг отчёта'
+    try { Write-Section 'Отчёт внука' } finally { Write-RunStepMarker 'fixture.шаг отчёта' -End }
     Set-RunUserReport -Report "## Workflow обновлён`n`nОтчёт внука с пробелом и кириллицей."
     Set-RunResultArtifacts -ResultPath (Join-Path $fixture.root 'результат внука.json') -ResultManifestPath ''
 }
@@ -513,9 +515,14 @@ exit 0
             $duration='\d{2}:\d{2}:\d{2}\.\d{3}'
             @($table | Where-Object { $_ -cmatch "^\S+   stage   $duration    2x  workflow-update\.branches$" }).Count | Should -Be 1
             @($table | Where-Object { $_ -cmatch "^\S+   stage   $duration    2x  reexec$" }).Count | Should -Be 1
-            @($table | Where-Object { $_ -cmatch "^\S+   section $duration    1x  Отчёт внука$" }).Count | Should -Be 1
+            $sectionRow=@($table | Where-Object { $_ -cmatch "^\S+   section ($duration)    1x  Отчёт внука$" })
+            $sectionRow.Count | Should -Be 1
+            # Closed at the step end, not after the following 2 s silent wait.
+            $null=$sectionRow[0] -cmatch "section ($duration)"
+            [TimeSpan]::Parse($Matches[1]).TotalSeconds | Should -BeLessThan 1.5
+            @($table | Where-Object { $_ -cmatch "^\S+   step    $duration    1x  fixture\.шаг отчёта$" }).Count | Should -Be 1
             $table[-1] | Should -Match "^\S+   total   $duration        run$"
-            $fixture.result.stdout | Should -Not -Match 'ITL stage:|ITL run timings|^\d{2}:\d{2}:\d{2}\.\d{3} '
+            $fixture.result.stdout | Should -Not -Match 'ITL stage:|ITL step|ITL run timings|^\d{2}:\d{2}:\d{2}\.\d{3} '
         } finally { Remove-FreshCompactFixture $fixture }
     }
 

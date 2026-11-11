@@ -427,6 +427,53 @@ function Get-ItlProductProjectPublisherContext {
     return $context
 }
 
+function Register-ItlProductProjectPostCopyVerification {
+    param([switch]$IncludeClientSurfaces)
+    # update-workflow post-copy only. The legacy MCP writer that follows in the
+    # same post-copy reuses this full catalog verification instead of building
+    # a second identical preview; see Test-ItlProductProjectPostCopyVerified.
+    # Never alters the caller's catalog outcome: without a record the writer
+    # takes its ordinary full preview.
+    Remove-Variable ItlProductProjectPostCopyVerification -Scope Script -ErrorAction SilentlyContinue
+    if(-not (Get-Variable ItlWorkflowPostCopyDefersClientSurfaces -Scope Script -ValueOnly -ErrorAction SilentlyContinue)){return}
+    try{
+        $clients=@(Get-ConfigValue -Path aiRules.tools -Default @()|Where-Object {$_}|Select-Object -Unique)
+        if(-not $clients.Count){$clients=@(Get-ItlActiveClient)}
+        $script:ItlProductProjectPostCopyVerification=@{root=[string]$script:ProjectRoot;context=(Get-ItlProductProjectOperationContext);clients=$clients
+            includeClientSurfaces=$IncludeClientSurfaces.IsPresent;selectionHash=(Get-ItlCatalogHash (Read-ItlProductProjectSetting selection))}
+    }catch{Remove-Variable ItlProductProjectPostCopyVerification -Scope Script -ErrorAction SilentlyContinue}
+}
+
+function Test-ItlProductProjectPostCopyVerified {
+    param([string[]]$Clients,[switch]$IncludeClientSurfaces)
+    if(-not (Get-Variable ItlWorkflowPostCopyDefersClientSurfaces -Scope Script -ValueOnly -ErrorAction SilentlyContinue)){return $false}
+    $verified=Get-Variable ItlProductProjectPostCopyVerification -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if(-not $verified -or $verified.root -cne [string]$script:ProjectRoot){return $false}
+    # The exact context object verified in this operation; any later context
+    # replacement, client, surface or private-selection change takes the preview.
+    $context=Get-ItlProductProjectOperationContext
+    if($null -eq $context -or -not [object]::ReferenceEquals($context,$verified.context)){return $false}
+    if($IncludeClientSurfaces -and -not $verified.includeClientSurfaces){return $false}
+    if(@($Clients|Where-Object {$_ -notin @($verified.clients)}).Count){return $false}
+    if((Get-ItlCatalogHash (Read-ItlProductProjectSetting selection)) -cne $verified.selectionHash){return $false}
+    $applied=Read-ItlProductProjectRecord applied
+    if(-not $applied -or $applied.configurationState -ne 'configured'){return $false}
+    $proof=Get-ItlCatalogField $applied 'proof' @{}
+    $proofKeys=@(Get-ItlCatalogKeys $proof)
+    foreach($client in @($Clients)){if(-not @($proofKeys|Where-Object {$_ -like "$client/*"}).Count){return $false}}
+    # Another writer since the verification (client surfaces) must have left
+    # every catalog-owned entry exactly as proven and added no owned key.
+    # Any unreadable state returns to the full preview, which reports it.
+    try{
+        foreach($key in $proofKeys){
+            $entry=Get-ItlCatalogField $proof $key
+            if(@(Get-ItlManagedMcpOwnerKeys -Client $entry.client -Owner $entry.owner|Where-Object {$_ -notin @($entry.names)}).Count){return $false}
+        }
+        Assert-ItlProductProjectClientProof $proof
+    }catch{return $false}
+    return $true
+}
+
 function Initialize-ItlProductProjectContext {
     param([ValidateSet('','keep-local','registry','defer')][string]$Decision='', [bool]$AllowPrompt=$false,[switch]$IncludeClientSurfaces)
     $operation=Read-ItlProductProjectRecord operation
@@ -442,7 +489,7 @@ function Initialize-ItlProductProjectContext {
         $noOpApplied=if(-not $Decision -and $applied -and $applied.context.projectId -ceq $binding.projectId -and $applied.context.productId -ceq $binding.productId -and (-not $family -or -not $appliedFamily -or $family -ceq $appliedFamily)){$applied}else{$null}
         $snapshot=Read-ItlProductProjectSnapshot -NoOpApplied $noOpApplied -IncludeClientSurfaces:$IncludeClientSurfaces
         $reused=Get-ItlCatalogField $snapshot 'reusedAppliedContext'
-        if($reused){Set-ItlProductProjectOperationContext $reused;return}
+        if($reused){Set-ItlProductProjectOperationContext $reused;Register-ItlProductProjectPostCopyVerification -IncludeClientSurfaces:$IncludeClientSurfaces;return}
         if((Get-ItlCatalogField $snapshot 'stale' $false) -and $applied){Set-ItlProductProjectAppliedContext $applied 'Catalog is offline; the validated applied revision is retained without client writes.';return}
         $publisherContext=if(-not $Decision -and -not (Get-ItlCatalogField $preferences 'defer')){Get-ItlProductProjectPublisherContext $snapshot $noOpApplied}else{$null}
         if(-not $publisherContext){
@@ -460,6 +507,7 @@ function Initialize-ItlProductProjectContext {
         $inputs=$snapshot.checkedNoOpInputs
         $null=Invoke-ItlProductProjectClientApply -Context $publisherContext -Requests @() -SavePrivateSelection:$savePrivate -PrivateSelection $preferences -ExpectedInputStates $inputs.files -ExpectedOwnerState (Get-ItlCatalogField $inputs.files (Get-ItlManagedMcpStatePath))
         Set-ItlProductProjectOperationContext $publisherContext
+        Register-ItlProductProjectPostCopyVerification -IncludeClientSurfaces:$IncludeClientSurfaces
         Write-Host 'Catalog context updated; client MCP settings unchanged.'
         return
     }
@@ -474,7 +522,7 @@ function Initialize-ItlProductProjectContext {
         (Get-ItlProductProjectResolvedHash $applied.context) -ceq (Get-ItlProductProjectResolvedHash $context) -and
         (-not $IncludeClientSurfaces -or (Get-ItlCatalogField $cachedInputs 'includeClientSurfaces' $false))){
         $currentInputs=Get-ItlProductProjectNoOpInputs $applied.proof -IncludeClientSurfaces:([bool](Get-ItlCatalogField $cachedInputs 'includeClientSurfaces' $false))
-        if((Get-ItlCatalogHash $cachedInputs) -ceq (Get-ItlCatalogHash $currentInputs)){Set-ItlProductProjectOperationContext $applied.context;return}
+        if((Get-ItlCatalogHash $cachedInputs) -ceq (Get-ItlCatalogHash $currentInputs)){Set-ItlProductProjectOperationContext $applied.context;Register-ItlProductProjectPostCopyVerification -IncludeClientSurfaces:$IncludeClientSurfaces;return}
     }
     $preview=New-ItlProductProjectPreview $context $clients -IncludeClientSurfaces:$IncludeClientSurfaces
     $defer=Get-ItlCatalogField $preferences 'defer'
@@ -488,11 +536,11 @@ function Initialize-ItlProductProjectContext {
         if((Get-ItlCatalogHash $cachedInputs) -cne (Get-ItlCatalogHash $newInputs)){$applied['noOpInputs']=$newInputs;Write-ItlProductProjectRecord applied $applied}
         # A narrower preview did not replace the applied receipt. Nested owners
         # must retain that receipt's exact context and full hash.
-        Set-ItlProductProjectOperationContext $applied.context;return
+        Set-ItlProductProjectOperationContext $applied.context;Register-ItlProductProjectPostCopyVerification -IncludeClientSurfaces:$IncludeClientSurfaces;return
     }
     $null=Invoke-ItlProductProjectClientApply -Context $chosen.context -Requests $chosen.requests -ProofRequests $chosen.proofRequests -SavePrivateSelection:$privateChanged -PrivateSelection $chosen.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState
     if($chosen.deferred){Set-ItlProductProjectAppliedContext (Read-ItlProductProjectRecord applied) 'Catalog changes deferred; current local settings were preserved on the prior revision.'}
-    else{Set-ItlProductProjectOperationContext $chosen.context;if($hasClientChanges){Write-Host 'Catalog settings applied. Reload the client/new session and verify tools before treating the active MCP context as updated.'}else{Write-Host 'Catalog context updated; client MCP settings unchanged.'}}
+    else{Set-ItlProductProjectOperationContext $chosen.context;Register-ItlProductProjectPostCopyVerification -IncludeClientSurfaces:$IncludeClientSurfaces;if($hasClientChanges){Write-Host 'Catalog settings applied. Reload the client/new session and verify tools before treating the active MCP context as updated.'}else{Write-Host 'Catalog context updated; client MCP settings unchanged.'}}
 }
 
 function Get-ItlProductProjectResolvedHash {

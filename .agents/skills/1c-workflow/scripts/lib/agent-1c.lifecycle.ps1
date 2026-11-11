@@ -6702,6 +6702,19 @@ function Resolve-WorkflowPackageSource {
 function Assert-WorkflowManagedTargetPath {
     param([string]$Path)
 
+    # A lexical full path under the lexical root is accepted by the normalized
+    # check below as well; skip its per-path disk resolution (a snapshot
+    # receipt holds ~1000 records). Environment-variable text keeps the full
+    # check because normalization expands it.
+    if (-not [string]::IsNullOrWhiteSpace($Path) -and -not [string]::IsNullOrWhiteSpace([string]$script:ProjectRoot) -and
+        $Path.IndexOf('%') -lt 0 -and ([string]$script:ProjectRoot).IndexOf('%') -lt 0) {
+        $lexicalRoot = [System.IO.Path]::GetFullPath([string]$script:ProjectRoot).TrimEnd('\')
+        $lexicalTarget = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+        if ([string]::Equals($lexicalTarget, $lexicalRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $lexicalTarget.StartsWith(($lexicalRoot + '\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+            return
+        }
+    }
     $root = Get-FullPathNormalized $script:ProjectRoot
     $target = Get-FullPathNormalized $Path
     if ($target -eq $root) {
@@ -10056,6 +10069,7 @@ function Invoke-WorkflowPackageFilePostCopyCore {
     try {
         $script:ItlMcpPreserveUserChanges = $true
         $script:ItlWorkflowPostCopyDefersClientSurfaces = $true
+        Remove-Variable -Name ItlProductProjectPostCopyVerification -Scope Script -ErrorAction SilentlyContinue
         $policyPending = Get-WorkflowUpdatePendingSnapshot
         . Import-ItlProductProjectSetup
         $catalogTransition=$null
@@ -10089,6 +10103,8 @@ function Invoke-WorkflowPackageFilePostCopyCore {
         # Native installer diagnostics must remain visible without becoming part
         # of this structured result on the already-current rules route.
         & {
+        Write-RunStepMarker 'workflow-update.dependencies'
+        try {
         Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $script:ProjectRoot
         Ensure-GitIgnore
         Ensure-ItlPinnedOpenSpecGitAttributes | Out-Null
@@ -10102,9 +10118,12 @@ function Invoke-WorkflowPackageFilePostCopyCore {
         Update-VanessaMcpArtifacts
         Sync-ItlOnDemandMcpDependencyLock | Out-Null
         Install-ItlOnDemandMcp | Out-Null
+        } finally { Write-RunStepMarker 'workflow-update.dependencies' -End }
 
         # The client surface is generated once below, after the final rules
         # installation, guidance bridge and UI tool preparation.
+        Write-RunStepMarker 'workflow-update.ai-rules'
+        try {
         if ($SkipAiRules) {
             Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
             $migrationPlan = Get-AiRulesMigrationPlan
@@ -10121,11 +10140,14 @@ function Invoke-WorkflowPackageFilePostCopyCore {
         # ai_rules_1c owns the installed root. A pre-installer bridge edit would
         # invalidate its recorded hash and prevent new upstream AGENTS.md install.
         Update-AgentGuidanceBridge
+        } finally { Write-RunStepMarker 'workflow-update.ai-rules' -End }
 
         Install-ItlUiTools -BestEffort
         # Catalog-only selection does not enter the legacy MCP refresh below.
         # Reconcile it inside file post-copy, after snapshot validation, using
         # this operation's pinned registry and existing client-set writer.
+        Write-RunStepMarker 'workflow-update.catalog'
+        try {
         if ($catalogTransition) {
             $associate={Invoke-ItlProductProjectAssociation $script:PreparedCatalogCandidate -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces}
             if($script:LifecycleOperationIsContinuation -and (Test-InteractiveInputAvailable)){
@@ -10136,10 +10158,14 @@ function Invoke-WorkflowPackageFilePostCopyCore {
             . Import-ItlProductProject
             Initialize-ItlProductProjectContext -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces
         }
+        } finally { Write-RunStepMarker 'workflow-update.catalog' -End }
+        Write-RunStepMarker 'workflow-update.client-surfaces'
+        try {
         Sync-ItlClientSurfaces
         foreach ($client in @(Get-AgentTargets)) {
             Sync-ItlClientUserEnvironment -Client $client
         }
+        } finally { Write-RunStepMarker 'workflow-update.client-surfaces' -End }
         $previousPolicyWorkflowCommit = Get-CavemanPolicyPreviousWorkflowCommit
         Invoke-CavemanPolicyTransition -EvaluatePackageEligibility -PreviousWorkflowCommit $previousPolicyWorkflowCommit | Out-Null
         if ($applyUiTestingPolicy) {
@@ -10155,6 +10181,8 @@ function Invoke-WorkflowPackageFilePostCopyCore {
 
         # Capture refreshed client configs in the same post-copy checkpoint.
         # Ready/committed continuations must keep their already recorded bytes.
+        Write-RunStepMarker 'workflow-update.mcp-client-config'
+        try {
         if (Test-Vibecoding1cMcpLegacySelectionPresent) {
             $mcpRegistryRefreshed = $false
             try {
@@ -10173,12 +10201,14 @@ function Invoke-WorkflowPackageFilePostCopyCore {
                 }
             }
         }
+        } finally { Write-RunStepMarker 'workflow-update.mcp-client-config' -End }
 
         return [pscustomobject]@{
             aiRulesPathsBefore = @($aiRulesPathsBefore)
             clientSurfacePathsBefore = @($clientSurfacePathsBefore)
         }
     } finally {
+        Remove-Variable -Name ItlProductProjectPostCopyVerification -Scope Script -ErrorAction SilentlyContinue
         if ($null -ne $previousMcpProtection) {
             $script:ItlMcpPreserveUserChanges = $previousMcpProtectionValue
         } else {
@@ -10379,15 +10409,21 @@ function Invoke-WorkflowDevelopmentBranchUpdateCore {
         if (-not $SkipAiRules) {
             $rulesTarget = Get-AiRulesBaselineTarget -TemplateRoot ([string]$Source.root)
             if (-not $rulesTarget.isConfigured) { throw "WORKFLOW_UPDATE_BRANCH_RULES_TARGET_INVALID: $($rulesTarget.reason)" }
-            Assert-WorkflowUpdateRulesRootReady -SourceRoot ([string]$Source.root)
-            $rulesCheckout = Sync-AiRules1cCheckout -RepoOverride $rulesTarget.repo -RefOverride $rulesTarget.ref -CommitOverride $rulesTarget.commit
-            $rulesClients = if ($recordClientMembership) { @($TargetClients) } else { @(Get-AgentTargets) }
-            $candidateRulesPaths = @(Get-AiRulesCandidateInstallInventory -Checkout $rulesCheckout -Tools $rulesClients)
+            Write-RunStepMarker 'workflow-update.branch-rules-inventory'
+            try {
+                Assert-WorkflowUpdateRulesRootReady -SourceRoot ([string]$Source.root)
+                $rulesCheckout = Sync-AiRules1cCheckout -RepoOverride $rulesTarget.repo -RefOverride $rulesTarget.ref -CommitOverride $rulesTarget.commit
+                $rulesClients = if ($recordClientMembership) { @($TargetClients) } else { @(Get-AgentTargets) }
+                $candidateRulesPaths = @(Get-AiRulesCandidateInstallInventory -Checkout $rulesCheckout -Tools $rulesClients)
+            } finally { Write-RunStepMarker 'workflow-update.branch-rules-inventory' -End }
         }
         $clientSnapshotInput = if ($recordClientMembership) { @{Clients=@($TargetClients)} } else { @{} }
-        $snapshot = New-WorkflowUpdateRollbackSnapshot `
-            -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot ([string]$Source.root) -AiRulesPathsAfter $candidateRulesPaths @clientSnapshotInput) `
-            -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
+        Write-RunStepMarker 'workflow-update.branch-snapshot'
+        try {
+            $snapshot = New-WorkflowUpdateRollbackSnapshot `
+                -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot ([string]$Source.root) -AiRulesPathsAfter $candidateRulesPaths @clientSnapshotInput) `
+                -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
+        } finally { Write-RunStepMarker 'workflow-update.branch-snapshot' -End }
         try {
             $snapshotDetails = @{ dependencyPlan=$dependencyPlan }
             if ($recordClientMembership) {
@@ -10411,13 +10447,16 @@ function Invoke-WorkflowDevelopmentBranchUpdateCore {
         $rollbackSucceeded = $false
         try {
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase copying
-            foreach ($relative in @(Get-WorkflowPackageCopyDirectoryPaths)) {
-                Copy-WorkflowManagedDirectory -SourceRoot ([string]$Source.root) -RelativePath $relative
-            }
-            foreach ($relative in @(Get-WorkflowPackageCopyFilePaths)) {
-                Copy-WorkflowManagedFile -SourceRoot ([string]$Source.root) -RelativePath $relative
-            }
-            Remove-LegacyWorkflowManagedFiles
+            Write-RunStepMarker 'workflow-update.branch-copy'
+            try {
+                foreach ($relative in @(Get-WorkflowPackageCopyDirectoryPaths)) {
+                    Copy-WorkflowManagedDirectory -SourceRoot ([string]$Source.root) -RelativePath $relative
+                }
+                foreach ($relative in @(Get-WorkflowPackageCopyFilePaths)) {
+                    Copy-WorkflowManagedFile -SourceRoot ([string]$Source.root) -RelativePath $relative
+                }
+                Remove-LegacyWorkflowManagedFiles
+            } finally { Write-RunStepMarker 'workflow-update.branch-copy' -End }
             Update-WorkflowPackageLockEntry -Source $Source | Out-Null
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase copy-complete
             $copyCompleted = $true
@@ -10486,7 +10525,9 @@ function Invoke-WorkflowDevelopmentBranchUpdateCore {
     $plan = Read-WorkflowBranchCommitPlanReceipt -Snapshot $snapshot
     if ($null -eq $plan) { throw "WORKFLOW_UPDATE_BRANCH_COMMIT_RECEIPT_MISSING: $($snapshot.root)" }
     $state = Read-DevBranchState -Name ''
-    $result = Apply-WorkflowBranchCommitPlan -Plan $plan -PendingMergeState $state
+    Write-RunStepMarker 'workflow-update.branch-commit'
+    try { $result = Apply-WorkflowBranchCommitPlan -Plan $plan -PendingMergeState $state }
+    finally { Write-RunStepMarker 'workflow-update.branch-commit' -End }
     Enable-WorkflowExecutionGuardForCurrentRoot
     Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation 'update-workflow' | Out-Null
     # Keep the pending transaction (and its retirement binding) until the patch
@@ -10743,6 +10784,7 @@ function Invoke-WorkflowDevelopmentBranchRollout {
         }
         if ($status -eq 'eligible') {
             $lease = $null
+            Write-RunStepMarker 'workflow-update.branch'
             try {
                 $branchRoot = [string]$item.root
                 $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath $branchRoot
@@ -10803,6 +10845,7 @@ function Invoke-WorkflowDevelopmentBranchRollout {
                 if ($null -ne $lease) {
                     foreach ($handle in @($lease.handles)) { $handle.stream.Dispose() }
                 }
+                Write-RunStepMarker 'workflow-update.branch' -End
             }
         }
         $outcomes.Add([pscustomobject]@{

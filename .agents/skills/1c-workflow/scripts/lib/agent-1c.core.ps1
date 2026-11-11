@@ -718,6 +718,15 @@ function Set-RunStage {
     Update-Agent1cLifecycleOperationStage -Stage $Stage -Detail $Detail
 }
 
+function Write-RunStepMarker {
+    param([Parameter(Mandatory = $true)][string]$Name, [switch]$End)
+    # Only a captured run log receives step markers; its single writer adds the
+    # entry-to-exit duration to the run timing table. Callers pair them with
+    # try/finally so the marked code keeps its own scope.
+    if ([string]::IsNullOrWhiteSpace([string](Get-Variable -Name RunLogPath -ValueOnly -ErrorAction SilentlyContinue))) { return }
+    if ($End) { Write-Host "ITL step end: $Name" } else { Write-Host "ITL step: $Name" }
+}
+
 function Test-Agent1cActionRequiresLifecycleLock {
     param([string]$RequestedAction)
 

@@ -943,11 +943,27 @@ function Step-ItlCompactRunTiming([string]`$Kind, [string]`$Name, [DateTime]`$At
     }
     `$itlRunOpenSpans[`$Kind] = if (`$Name) { @{name=`$Name; startedAt=`$At} } else { `$null }
 }
+# Explicit 'ITL step:'/'ITL step end:' markers time one helper phase from entry
+# to exit (inclusive of nested steps). A section ends at its next header, a
+# stage transition or a step boundary, so it never absorbs later unmarked work.
+`$itlRunOpenSteps = @{}
+function Step-ItlCompactRunStep([string]`$Name, [bool]`$Begin, [DateTime]`$At) {
+    Step-ItlCompactRunTiming 'section' '' `$At
+    if (`$Begin) { `$itlRunOpenSteps[`$Name] = `$At; return }
+    if (-not `$itlRunOpenSteps.ContainsKey(`$Name)) { return }
+    `$key = 'step' + [char]0 + `$Name
+    if (-not `$itlRunTimings.Contains(`$key)) { `$itlRunTimings[`$key] = [pscustomobject]@{kind='step'; name=`$Name; count=0; ticks=[int64]0} }
+    `$itlRunTimings[`$key].count++
+    `$itlRunTimings[`$key].ticks += (`$At - `$itlRunOpenSteps[`$Name]).Ticks
+    `$itlRunOpenSteps.Remove(`$Name)
+}
 try {
     $helperInvocation *>&1 | ForEach-Object {
         `$itlAt = [DateTime]::Now
         `$itlText = [string]`$_
-        if (`$itlText -cmatch '^ITL stage: (.+)$') { Step-ItlCompactRunTiming 'stage' `$Matches[1].Trim() `$itlAt }
+        if (`$itlText -cmatch '^ITL stage: (.+)$') { Step-ItlCompactRunTiming 'section' '' `$itlAt; Step-ItlCompactRunTiming 'stage' `$Matches[1].Trim() `$itlAt }
+        elseif (`$itlText -cmatch '^ITL step end: (.+)$') { Step-ItlCompactRunStep `$Matches[1].Trim() `$false `$itlAt }
+        elseif (`$itlText -cmatch '^ITL step: (.+)$') { Step-ItlCompactRunStep `$Matches[1].Trim() `$true `$itlAt }
         elseif (`$itlText -cmatch '^== (.+) ==$') { Step-ItlCompactRunTiming 'section' `$Matches[1].Trim() `$itlAt }
         Write-ItlCompactRunLogRecord `$itlText `$itlAt
     }

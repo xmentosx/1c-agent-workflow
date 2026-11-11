@@ -650,6 +650,46 @@
         Should -Invoke Read-ItlProductProjectSnapshot -Times 3 -Exactly
         Should -Invoke Update-Vibecoding1cMcpRegistryCheckout -Times 0 -Exactly
     }
+    It 'lets the post-copy MCP writer reuse the catalog verification only while every proven entry is unchanged' {
+        $snapshot=New-StartupCatalogFixture
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        Mock Read-ItlProductProjectSnapshot {return $snapshot}
+        Mock Read-Vibecoding1cMcpRegistry {return $snapshot.registry}
+        Mock Get-Vibecoding1cMcpCurrentEndpoints {return @()}
+        Mock Select-Vibecoding1cMcpManifestServers {return @()}
+        Mock Update-Vibecoding1cMcpRegistryCheckout {throw 'unexpected network refresh'}
+        $previews=[Collections.Generic.List[string]]::new()
+        $realPreview=${function:New-ItlProductProjectPreview}
+        Mock New-ItlProductProjectPreview {$previews.Add('preview');& $realPreview @PesterBoundParameters}
+        $key=ConvertTo-ItlClientMcpKey '1c-code-metadata-mcp' codex
+        $script:ItlWorkflowPostCopyDefersClientSurfaces=$true
+        try {
+            # Same post-copy: one full catalog preview/apply, then the legacy
+            # writer reuses it without a second identical preview.
+            Invoke-Vibecoding1cMcpRegistryOperation {
+                Initialize-ItlProductProjectContext
+                (Read-ItlClientMcpEntries codex)[$key].url|Should -Be 'https://source.invalid/mcp'
+                Write-Vibecoding1cMcpClientConfig -Clients @('codex','claude-code') *> $null
+            }
+            $previews.Count|Should -Be 1
+            # A writer between verification and the legacy writer changed a
+            # catalog-owned entry: the full preview runs again.
+            Invoke-Vibecoding1cMcpRegistryOperation {
+                Initialize-ItlProductProjectContext
+                Write-ItlClientMcpEndpointSet @(@{client='codex';owner='vibecoding1c';endpoints=@(@{name='1c-code-metadata-mcp';url='https://другой.invalid/mcp'})}) *> $null
+                try{Write-Vibecoding1cMcpClientConfig -Clients @('codex','claude-code') *> $null}catch{}
+            }
+            $previews.Count|Should -BeGreaterThan 1
+        } finally { Remove-Variable ItlWorkflowPostCopyDefersClientSurfaces,ItlProductProjectPostCopyVerification -Scope Script -ErrorAction SilentlyContinue }
+        # Outside update-workflow post-copy nothing is reused.
+        $before=$previews.Count
+        Invoke-Vibecoding1cMcpRegistryOperation {
+            Initialize-ItlProductProjectContext
+            try{Write-Vibecoding1cMcpClientConfig -Clients @('codex','claude-code') *> $null}catch{}
+        }
+        $previews.Count|Should -BeGreaterThan $before
+    }
     It 'continues offline with a validated applied context and blocks no-cache without guessing IDs' {
         $snapshot=New-StartupCatalogFixture
         $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
