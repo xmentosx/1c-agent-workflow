@@ -67,12 +67,34 @@ Root grows 13,824 -> 15,179 normalized bytes (+1,355, about 339 tokens at
 bytes/4), so its ceiling moves 14 -> 15 KiB. The same growth reaches both load
 sets that include the root: full-cycle 155,696 -> 157,421 (+1,725 with
 `project-memory.md` 10,995 -> 11,365; ceiling 153 -> 154 KiB) and subagent start
-31,700 -> 33,055 (ceiling 31 -> 33 KiB). The fork suite passed 186/186 and
+31,700 -> 33,055 (ceiling 31 -> 33 KiB). The fork Full qualification of the
+exact commit passed (186/186 Pester, 19 stages, clean and reusable);
 `tools/validate-rules.ps1` reports the three measured sets; schema-3 Verify
 covers 304 decisions. `compatibilityStatus` is `pending` until the publication
 owner qualifies the exact pin; the scoped-memory policy names the same commit
 and the new clause hash. Only Codex is in the adoption pilot; Cursor, Claude
 and Kilo receive the same root and are not separately accepted.
+
+### Local candidate before publication
+
+Pinning a commit in the lock does not make a local candidate publishable.
+`Get-DeliveryLocalAiRulesSource` checks the fork checkout before any gate, and
+`PublishDevelop` stops there unless all of these hold for the locked commit:
+
+- a clean fork worktree whose `HEAD` is that commit;
+- an annotated tag named as the lock `ref`, with the message
+  `ITL ai_rules_1c release <tag>; upstream=<ref>@<upstream sha>; fork=<commit>`
+  (the fork Full gate reads the upstream provenance from it; a lightweight tag
+  is rejected);
+- a local branch `release/<tag>` at the same commit;
+- the fork's own Full proof, `scripts\check.ps1 -Mode Full` run in that
+  worktree, which writes the ignored
+  `build\test-results\qualification\full.json` for the exact commit and tree.
+
+The fork Pester suite and `tools/validate-rules.ps1` alone are not that proof.
+The r55 candidate was first registered without the tag annotation, the release
+branch and the Full proof; the publication of the whole develop queue stopped
+twice on these checks and the entry had to be deferred.
 
 ## Earlier candidate: review evidence and large scope, local r54
 
