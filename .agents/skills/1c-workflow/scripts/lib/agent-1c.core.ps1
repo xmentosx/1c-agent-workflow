@@ -530,6 +530,63 @@ function Invoke-WorkflowUpdateRunSharedStep {
     return [pscustomobject]@{ reused = $false; value = $value }
 }
 
+# Parallel branch helpers of the same update run receive these verified inputs
+# as data. Only completed results travel: a step value, a ready state, a UI tool
+# outcome, and a successful registry refresh pinned to its exact catalog
+# revision. Anything missing or unreadable is simply prepared again.
+function Export-WorkflowUpdateRunSharedInputs {
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$SourceCommit)
+    $entries = [System.Collections.Generic.List[object]]::new()
+    if (Test-WorkflowUpdateRunSharedInputsActive) {
+        foreach ($key in @($script:ItlWorkflowUpdateRunInputs.Keys)) {
+            $entry = $script:ItlWorkflowUpdateRunInputs[$key]
+            $data = [ordered]@{}
+            if ([string]$key -like 'vibecoding1c-mcp-registry|*') {
+                if (-not $entry.ContainsKey('attempted') -or -not $entry['attempted'] -or $null -ne $entry['error']) { continue }
+                $data['attempted'] = $true
+                if ($entry.ContainsKey('catalogRefreshAttempted') -and $entry['catalogRefreshAttempted']) {
+                    if ($null -ne $entry['catalogRefreshError']) { continue }
+                    $revision = if ($entry.ContainsKey('catalogPinnedRevision') -and $entry['catalogPinnedRevision']) { [string]$entry['catalogPinnedRevision'] }
+                        elseif ($entry.ContainsKey('catalogSnapshot') -and $null -ne $entry['catalogSnapshot']) { [string](Get-ConfigValueFromObject $entry['catalogSnapshot'] 'catalogRevision' '') } else { '' }
+                    if ($revision -cnotmatch '^(?:[a-f0-9]{40}|[a-f0-9]{64})$') { continue }
+                    $data['catalogRefreshAttempted'] = $true
+                    $data['catalogPinnedRevision'] = $revision
+                    if ($entry.ContainsKey('catalogPinnedRoot') -and $entry['catalogPinnedRoot']) { $data['catalogPinnedRoot'] = [string]$entry['catalogPinnedRoot'] }
+                }
+            } else {
+                foreach ($name in @('value', 'readyState', 'outcome')) { if ($entry.ContainsKey($name)) { $data[$name] = $entry[$name] } }
+            }
+            if ($data.Count -gt 0) { $entries.Add([ordered]@{ key = [string]$key; data = $data }) | Out-Null }
+        }
+    }
+    $payload = [ordered]@{ schemaVersion = 1; sourceCommit = $SourceCommit; entries = @($entries.ToArray()) }
+    Write-Utf8TextAtomic -Path $Path -Value (($payload | ConvertTo-Json -Depth 32) + [Environment]::NewLine)
+}
+
+function Import-WorkflowUpdateRunSharedInputs {
+    param([string]$Path, [Parameter(Mandatory = $true)][string]$SourceCommit)
+    if (-not (Test-WorkflowUpdateRunSharedInputsActive) -or [string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return 0 }
+    try { $saved = Read-Utf8Text -Path $Path | ConvertFrom-Json -ErrorAction Stop }
+    catch { Write-Warning "Shared update inputs were not reused and will be prepared again: $($_.Exception.Message)"; return 0 }
+    if ([int](Get-ConfigValueFromObject $saved 'schemaVersion' 0) -ne 1 -or [string](Get-ConfigValueFromObject $saved 'sourceCommit' '') -cne $SourceCommit) { return 0 }
+    $count = 0
+    foreach ($item in @($saved.entries)) {
+        $key = [string]$item.key
+        $entry = @{}
+        foreach ($property in @($item.data.PSObject.Properties)) { $entry[$property.Name] = $property.Value }
+        if ($key -like 'vibecoding1c-mcp-registry|*') {
+            # The local checkout already holds the refreshed publication; read
+            # it without another fetch, and the catalog at the pinned revision.
+            try { $entry['snapshot'] = Read-Vibecoding1cMcpRegistryFile } catch { continue }
+            $entry['error'] = $null
+            if ($entry.ContainsKey('catalogRefreshAttempted')) { $entry['catalogRefreshError'] = $null }
+        }
+        $script:ItlWorkflowUpdateRunInputs[$key] = $entry
+        $count++
+    }
+    return $count
+}
+
 function Set-RunUserReport {
     param([AllowEmptyString()][string]$Report)
 
@@ -773,7 +830,11 @@ function Test-Agent1cActionRequiresLifecycleLock {
     # Window helpers are disposable per group under their own helper.lock; status,
     # stop and restart must reach a hung helper while a run holds the lifecycle lock.
     $windowHelperActions = @("window-helper-status", "window-helper-stop", "window-helper-restart")
+    # A parallel update-workflow child takes its branch lease itself with the
+    # same zero wait as the in-process rollout, so a busy branch is deferred.
+    $workflowBranchChildActions = @("update-workflow-branch")
     if ($readOnlyActions -contains $RequestedAction) { return $false }
+    if ($workflowBranchChildActions -contains $RequestedAction) { return $false }
     if ($branchScopeReadActions -contains $RequestedAction) { return $false }
     if ($windowHelperActions -contains $RequestedAction) { return $false }
     if ($facadeExecutionActions -contains $RequestedAction) { return $false }

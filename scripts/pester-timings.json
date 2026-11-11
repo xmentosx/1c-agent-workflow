@@ -18,6 +18,7 @@
     "VanessaClientCode.Tests.ps1": 89,
     "VanessaAgentFocus.Tests.ps1": 39,
     "WorkflowUpdateRunSharedInputs.Tests.ps1": 14,
+    "WorkflowBranchParallelRollout.Tests.ps1": 25,
     "SourceE2EStorage.Tests.ps1": 204,
     "SourceE2EDiskMonitor.Tests.ps1": 37,
     "OnDemandGo.Tests.ps1": 43,

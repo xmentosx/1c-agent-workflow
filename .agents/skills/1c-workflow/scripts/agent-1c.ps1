@@ -1,6 +1,6 @@
 ﻿[CmdletBinding(PositionalBinding = $false)]
 param(
-    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "provision-openspec-cli", "openspec-context", "openspec-new-change", "openspec-archive-change", "install-ui-tools", "ui-tools-status", "window-helper-status", "window-helper-stop", "window-helper-restart", "begin-verification-repair", "extend-verification-repair", "begin-one-off-proof", "complete-one-off-proof", "begin-verification-change", "complete-verification-change", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "clean-artifacts", "delete-dev-branch", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "get-review-scope", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "provision-openspec-cli", "openspec-context", "openspec-new-change", "openspec-archive-change", "install-ui-tools", "ui-tools-status", "window-helper-status", "window-helper-stop", "window-helper-restart", "begin-verification-repair", "extend-verification-repair", "begin-one-off-proof", "complete-one-off-proof", "begin-verification-change", "complete-verification-change", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-workflow-branch", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "clean-artifacts", "delete-dev-branch", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "get-review-scope", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -172,7 +172,9 @@ param(
     [string]$InterruptedVanessaRunParamsPath = "",
     [string]$InterruptedVanessaTestPorts = "",
     [string]$ExpectedMasterCommit = "",
-    [ValidateRange(1, 2)][int]$MaxParallelBranches = 2
+    [ValidateRange(1, 2)][int]$MaxParallelBranches = 2,
+    [ValidateRange(1, 4)][int]$MaxParallelWorkflowBranches = 3,
+    [string]$WorkflowBranchRequestPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -396,6 +398,8 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "BootstrapWorkflowSource" -Value $BootstrapWorkflowSource
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExpectedMasterCommit" -Value $ExpectedMasterCommit
     Add-Agent1cReexecArgument -Arguments $arguments -Name "MaxParallelBranches" -Value $(if ($MaxParallelBranches -ne 2) { $MaxParallelBranches } else { $null })
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "MaxParallelWorkflowBranches" -Value $(if ($MaxParallelWorkflowBranches -ne 3) { $MaxParallelWorkflowBranches } else { $null })
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "WorkflowBranchRequestPath" -Value $WorkflowBranchRequestPath
     return [string[]]$arguments.ToArray()
 }
 
@@ -621,6 +625,7 @@ try {
         "vibecoding1c-mcp-write-client-config" { Write-Vibecoding1cMcpClientConfig }
         "sync-client-mcp" { Sync-ItlClientMcpConfig -Client $Client }
         "update-workflow" { Update-WorkflowPackage }
+        "update-workflow-branch" { Invoke-WorkflowDevelopmentBranchChild }
         "update-ai-rules" { Update-AiRules1c }
         "itl-litemode" { Set-ItlLiteMode -Mode $Mode }
         "itl-repository-mode" { Set-SourceRepositoryUpdateMode -Mode $Mode }
