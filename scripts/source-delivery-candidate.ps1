@@ -497,7 +497,10 @@ function Assert-DevelopPublicationStageMayRun {
         Clear-DevelopPublicationStageFailure -Attempt $Attempt -Stage $Stage
         return
     }
-    throw "Publication stage '$Stage' produced the same failure twice for this exact candidate. Automatic retry is blocked. Fix or inspect the owner first; pass -RetryBlockedStage only for an explicit supervised retry. Last error: $([string]$blocked[0].message)"
+    # The circuit breaker is unchanged for nondeterministic failures; the
+    # diagnosis it asks for is the unstable test or its environment instead.
+    $diagnosis = if ([string]$blocked[0].failureClass -ceq 'nondeterministic') { ' The last failure passed alone in an isolated rerun: diagnose and fix the unstable test or its environment, not the product, before the supervised retry.' } else { '' }
+    throw "Publication stage '$Stage' produced the same failure twice for this exact candidate. Automatic retry is blocked. Fix or inspect the owner first; pass -RetryBlockedStage only for an explicit supervised retry.$diagnosis Last error: $([string]$blocked[0].message)"
 }
 
 function New-DevelopPublicationAttempt {

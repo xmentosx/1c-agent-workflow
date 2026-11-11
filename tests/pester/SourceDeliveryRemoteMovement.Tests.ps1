@@ -62,6 +62,46 @@ Describe 'Pre-push remote movement recovery' {
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue).Count | Should -Be 0
         } finally { $env:ITL_TEST_FAIL_DELIVERY_FULL=$prior; Remove-DeliveryFixture $fixture }
     }
+    It 'stops a pinned plan whose entry was re-registered before any gate and names the replan' {
+        # 2026-11-11: plan f68824bc froze head 2ff47734; the re-registered fix 210cdfd5 was
+        # accepted, yet a plain PublishDevelop rebuilt the stale candidate for an hour.
+        $fixture=$null; $prior=$env:ITL_TEST_FAIL_DELIVERY_DEVELOP
+        try {
+            $fixture=New-FrozenFixture
+            # This fixture's gate can fail inside Develop, after the plan is pinned.
+            $gateText=[IO.File]::ReadAllText($fixture.gate)
+            $seam='if ($Mode -eq ''Develop'') {'
+            $gateText.Contains($seam) | Should -BeTrue
+            $gateText=$gateText.Replace($seam,('if ($Mode -eq ''Develop'' -and $env:ITL_TEST_FAIL_DELIVERY_DEVELOP -eq ''true'') { exit 18 }'+"`r`n"+$seam))
+            [IO.File]::WriteAllText($fixture.gate,$gateText,[Text.UTF8Encoding]::new($true))
+            & git -C $fixture.root add --all; & git -C $fixture.root commit --quiet -m 'test: Develop gate failure seam'; & git -C $fixture.root push --quiet origin HEAD:develop
+            $fixture.base=(& git -C $fixture.root rev-parse HEAD).Trim()
+            $alpha=Add-FrozenTask $fixture alpha
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            # The pinned plan fails inside its Develop gate, as plan f68824bc did.
+            $env:ITL_TEST_FAIL_DELIVERY_DEVELOP='true'
+            (Invoke-FrozenDelivery $fixture PublishDevelop -AllowFailure).exitCode | Should -Not -Be 0
+            $oldPlan=[string](Read-FrozenAttempt $fixture).planId
+            $oldPlan | Should -Not -BeNullOrEmpty
+            $checkpointPath=Join-Path $fixture.root '.git/itl/publication-attempts/develop.json'
+            $checkpoint=[IO.File]::ReadAllText($checkpointPath)
+            $env:ITL_TEST_FAIL_DELIVERY_DEVELOP=$null
+            $fixed=Add-FrozenTask $fixture fix
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            $developRuns=@((Get-Content -LiteralPath $fixture.modeLog)|Where-Object {$_ -eq 'Develop'}).Count
+            $refused=Invoke-FrozenDelivery $fixture PublishDevelop -AllowFailure
+            $refused.exitCode | Should -Not -Be 0
+            $unwrapped=$refused.stderr.Replace("`r",'').Replace("`n",'')
+            $unwrapped | Should -Match 'DELIVERY_QUEUE_ADVANCED'
+            $unwrapped | Should -Match "'alpha' frozen $alpha accepted $fixed"
+            $unwrapped | Should -Match ([regex]::Escape("-Replan '$oldPlan'"))
+            [IO.File]::ReadAllText($checkpointPath) | Should -BeExactly $checkpoint
+            @((Get-Content -LiteralPath $fixture.modeLog)|Where-Object {$_ -eq 'Develop'}).Count | Should -Be $developRuns
+            $published=(Invoke-FrozenDelivery $fixture PublishDevelop @('-Replan',$oldPlan)).stdout | ConvertFrom-Json
+            & git -C $fixture.root merge-base --is-ancestor $fixed $published.commit
+            $LASTEXITCODE | Should -Be 0
+        } finally { $env:ITL_TEST_FAIL_DELIVERY_DEVELOP=$prior; Remove-DeliveryFixture $fixture }
+    }
 }
 Describe 'Failing registered range deferral' {
     It 'defers the one range that alone fails, publishes the rest in the same operation, and re-registration lifts it' {

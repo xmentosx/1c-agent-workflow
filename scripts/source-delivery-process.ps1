@@ -882,6 +882,9 @@ function Get-DeliveryFailureClass {
     param([string]$Message, [string]$Stage = "")
     $value = "$Stage $Message"
     if ($value -match '(?i)cleanup|housekeeping|remove stale|could not be removed') { return "cleanup" }
+    # check.ps1 reruns failed Pester files alone; a pass there is a test or
+    # environment defect, not a reproducible product failure. The gate still failed.
+    if ($value -match '(?i)passed alone \(nondeterministic') { return "nondeterministic" }
     if ($value -match '(?i)QUALITY_OWNER_MISSING|quality contract|test contract|assertion contract') { return "test-contract" }
     if ($value -match '(?i)parameter|argument|ValidateSet|requires an explicit|is valid only|invocation') { return "invocation" }
     if ($value -match '(?i)timeout|timed out|no.progress|port.+(?:busy|occupied)|environment|unavailable|access.+denied|remaining (?:mode|operation) budget|waiting for host [a-z/]+ memory') { return "environment" }
@@ -1220,6 +1223,17 @@ function Get-DeliveryFailureSummary {
     if ((Test-Path -LiteralPath $junitPath -PathType Leaf) -and (Get-Item -LiteralPath $junitPath).LastWriteTimeUtc -ge $StartedAt.ToUniversalTime().AddSeconds(-2)) {
         try { $tests = @(Get-DeliveryFailedJUnitTests -Path $junitPath -WorkingRoot $WorkingRoot) } catch { $tests = @() }
     }
+    # check.ps1's diagnostic isolated rerun: passed, failed or skipped per test.
+    $rerunPath = Join-Path $WorkingRoot 'build\test-results\local\pester-isolated-rerun.json'
+    if ($tests.Count -and (Test-Path -LiteralPath $rerunPath -PathType Leaf) -and (Get-Item -LiteralPath $rerunPath).LastWriteTimeUtc -ge $StartedAt.ToUniversalTime().AddSeconds(-2)) {
+        try {
+            $rerun = Get-Content -LiteralPath $rerunPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($test in $tests) {
+                $outcome = @($rerun.files | Where-Object { [string]$_.path -ceq [string]$test.file } | ForEach-Object { [string]$_.isolatedRerun })
+                $test | Add-Member -NotePropertyName isolatedRerun -NotePropertyValue $(if ($outcome.Count) { $outcome[0] } else { 'skipped' }) -Force
+            }
+        } catch { }
+    }
     $codeText = (@($texts) + @($logs | ForEach-Object { $_.tail })) -join "`n"
     $codes = @([regex]::Matches($codeText, '\b([A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+):') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique -First 5)
     if ($detail.Length -gt 2000) { $detail = $detail.Substring(0, 2000) }
@@ -1340,6 +1354,37 @@ function Get-DeliveryRunHistory {
         })
     }
     return [pscustomobject]@{ root=$runRoot; indexPath=[string]$state.path; indexStatus="ready"; count=[int64]$index.validRunCount; invalidCount=[int]$index.invalidRunCount; totalDurationMs=[int64]$index.totalDurationMs; byMode=@($index.byMode); lastRuns=$lastRuns; truncated=[bool]$index.truncated; nextAction="" }
+}
+
+# Unstable tests from the existing bounded run index: a test whose failed run was
+# classified nondeterministic, or whose failing tree later passed unchanged.
+function Get-DeliveryUnstableTests {
+    param([AllowEmptyCollection()][object[]]$Entries = @())
+    $passedTrees = @{}
+    foreach ($entry in @($Entries)) {
+        if ([string]$entry.status -eq 'passed' -and [string]$entry.tree) {
+            $at = [string]$entry.startedAt
+            if (-not $passedTrees.ContainsKey([string]$entry.tree) -or $at -gt $passedTrees[[string]$entry.tree]) { $passedTrees[[string]$entry.tree] = $at }
+        }
+    }
+    $byTest = [ordered]@{}
+    foreach ($entry in @($Entries | Sort-Object { [string]$_.startedAt })) {
+        if ([string]$entry.status -eq 'passed' -or -not $entry.PSObject.Properties['failure'] -or -not $entry.failure) { continue }
+        $tree = [string]$entry.tree
+        $laterPass = $tree -and $passedTrees.ContainsKey($tree) -and $passedTrees[$tree] -gt [string]$entry.startedAt
+        $nondeterministic = [string]$entry.failureClass -ceq 'nondeterministic'
+        if (-not $laterPass -and -not $nondeterministic) { continue }
+        foreach ($name in @($entry.failure.tests | ForEach-Object { [string]$_ } | Where-Object { $_ })) {
+            if (-not $byTest.Contains($name)) { $byTest[$name] = [ordered]@{ test = $name; occurrences = 0; nondeterministic = 0; passedLaterOnSameTree = 0; lastOccurrence = ''; runs = @() } }
+            $item = $byTest[$name]
+            $item.occurrences++
+            if ($nondeterministic) { $item.nondeterministic++ }
+            if ($laterPass) { $item.passedLaterOnSameTree++ }
+            $item.lastOccurrence = [string]$entry.startedAt
+            $item.runs = @(@($item.runs) + @([string]$entry.rawPath) | Select-Object -Last 5)
+        }
+    }
+    return @($byTest.Values | ForEach-Object { [pscustomobject]$_ } | Sort-Object @{ Expression = { $_.occurrences }; Descending = $true }, @{ Expression = { $_.lastOccurrence }; Descending = $true })
 }
 
 function Get-DeliveryQualificationTimingSummary {

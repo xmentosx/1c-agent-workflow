@@ -32,6 +32,16 @@ Describe "Source develop queue and delivery" {
             Register-Gate -Attempt $attempt -Class product -Failure $pesterA
             { Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage 'Develop' } | Should -Throw '*same failure twice*'
 
+            # A test that passed alone in the isolated rerun keeps the same identity and
+            # breaker; only the requested diagnosis names the unstable test instead.
+            'Pester did not pass. Isolated rerun: tests/pester/A.Tests.ps1 passed alone (nondeterministic; diagnose the unstable test, not the product).' |
+                ForEach-Object { Get-DeliveryFailureClass -Message $_ -Stage 'pester' } | Should -Be 'nondeterministic'
+            $attempt=[pscustomobject]@{ failures=@() }
+            Register-Gate -Attempt $attempt -Class product -Failure $pesterA
+            Register-Gate -Attempt $attempt -Class nondeterministic -Failure $pesterA
+            $attempt.failures[0].count | Should -Be 2
+            { Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage 'Develop' } | Should -Throw '*same failure twice*passed alone in an isolated rerun*unstable test*'
+
             $script:DeliveryLastRunFailure = $null
             $attempt=[pscustomobject]@{ failures=@() }
             Register-DevelopPublicationGateFailure -Attempt $attempt -Stage 'Develop' -Message ($gateMessage -f ('a' * 32))
