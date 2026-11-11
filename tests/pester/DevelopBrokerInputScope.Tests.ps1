@@ -6,6 +6,9 @@ Describe 'Cold fresh cutover proof' {
 
     It 'reuses all fresh scenarios for the original retained-record fix while binding upgrade and cold admission' {
         Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+        # The caller review is proven by the regression below; this scenario proves
+        # the projection of the audited retained-record fix itself.
+        Mock Get-DevelopRetainedRuntimeReaderViolations { @() }
         $f=New-IncrementalPlanFixture;$script:Root=$f.root
         Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
         $actual=Get-QualityContractCatalog $RepoRoot
@@ -105,19 +108,41 @@ Describe 'Cold fresh cutover proof' {
         }
     }
 
-    It 'keeps the retained-runtime reader inventory closed under current complete static proof' {
-        $leaf=@();$callers=@()
-        foreach($path in @(Get-RepositoryGitPathList $RepoRoot @('ls-files','-z','--','.agents/skills/1c-workflow/scripts'))|Where-Object {$_ -like '*.ps1'}) {
-            $text=[IO.File]::ReadAllText((Join-Path $RepoRoot $path))
-            if($text -notmatch 'Get-ItlOnDemandRuntimeRecordFiles|Get-WorkflowUpdateRootRuntimeBusyReason'){continue}
-            $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($text.TrimStart([char]0xfeff),[ref]$t,[ref]$e)
-            foreach($command in @($ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -cin @('Get-ItlOnDemandRuntimeRecordFiles','Get-WorkflowUpdateRootRuntimeBusyReason')},$true))) {
-                $owner=$command.Parent;while($owner -and $owner -isnot [Management.Automation.Language.FunctionDefinitionAst]){$owner=$owner.Parent}
-                $name=if($owner){$owner.Name}else{'<top-level>'}
-                if($command.GetCommandName() -ceq 'Get-ItlOnDemandRuntimeRecordFiles'){$leaf+=($path+':'+$name)}else{$callers+=$name}
-            }
-        }
-        @($leaf|Sort-Object -Unique)|Should -Be @('.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1:Assert-NoActiveCutoverRuntime','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Get-WorkflowUpdateRootRuntimeBusyReason')
-        @($callers|Sort-Object -Unique)|Should -Be @('Assert-WorkflowUpdateReconciliationScope','Assert-WorkflowUpdateRollbackTarget','Get-WorkflowLegacyCopyEvidence','Get-WorkflowUpdateRootBusyReason','Invoke-WorkflowDevelopmentBranchItemUpdate','Update-WorkflowPackage')
+    It 'withholds the cold-cutover projection from an unreviewed retained-runtime reader instead of failing' {
+        # 2026-11-11: moving the busy-reason call into a new branch owner failed Develop
+        # twice on a pinned caller list. The production projection now refuses itself
+        # for any unreviewed caller (complete binding, scenario executes) and names it.
+        $root=Join-Path $TestDrive 'Кандидат с пробелом'
+        $lib=Join-Path $root '.agents/skills/1c-workflow/scripts/lib'
+        [void][IO.Directory]::CreateDirectory($lib)
+        & git -C $root init -q
+        $reviewed=@(
+            'function Get-WorkflowUpdateRootRuntimeBusyReason { Get-ItlOnDemandRuntimeRecordFiles -RuntimeRoot $runtimeRoot }',
+            'function Update-WorkflowPackage { Get-WorkflowUpdateRootRuntimeBusyReason -Root $Root }',
+            'function Invoke-WorkflowDevelopmentBranchItemUpdate { Get-WorkflowUpdateRootRuntimeBusyReason -Root $Root }') -join "`n"
+        [IO.File]::WriteAllText((Join-Path $lib 'agent-1c.lifecycle.ps1'),$reviewed,[Text.UTF8Encoding]::new($true))
+        & git -C $root add --all; & git -C $root -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm reviewed
+        $reviewedCommit=(& git -C $root rev-parse HEAD).Trim()
+        @(Get-DevelopRetainedRuntimeReaderViolations $root $reviewedCommit) | Should -BeNullOrEmpty
+        @(Get-DevelopRetainedRuntimeReaderViolations $root) | Should -BeNullOrEmpty
+        $added=$reviewed+"`n"+(@(
+            'function Invoke-NewFreshCaller { Get-WorkflowUpdateRootRuntimeBusyReason -Root $Root }',
+            'function Read-NewRuntimeRecords { Get-ItlOnDemandRuntimeRecordFiles -RuntimeRoot $runtimeRoot }') -join "`n")
+        [IO.File]::WriteAllText((Join-Path $lib 'agent-1c.lifecycle.ps1'),$added,[Text.UTF8Encoding]::new($true))
+        & git -C $root add --all; & git -C $root -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm added
+        $addedCommit=(& git -C $root rev-parse HEAD).Trim()
+        $expected=@(
+            'Get-ItlOnDemandRuntimeRecordFiles <- .agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Read-NewRuntimeRecords',
+            'Get-WorkflowUpdateRootRuntimeBusyReason <- .agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1:Invoke-NewFreshCaller')
+        @(Get-DevelopRetainedRuntimeReaderViolations $root $addedCommit) | Should -Be $expected
+        @(Get-DevelopRetainedRuntimeReaderViolations $root) | Should -Be $expected
+        # The reviewed commit keeps its own answer after the later commit was read.
+        @(Get-DevelopRetainedRuntimeReaderViolations $root $reviewedCommit) | Should -BeNullOrEmpty
+        # With every other cold-cutover precondition met, only the caller decides.
+        Mock Test-DevelopColdCutoverConsumers { $true }
+        $lifecyclePath='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        Get-DevelopColdCutoverProjection $lifecyclePath $added $root $addedCommit | Should -BeNullOrEmpty
+        Get-DevelopScenarioSourceProjection -Path $lifecyclePath -Text $added -Journey fresh -Scenario @('verification') -RepositoryRoot $root -Commit $addedCommit -ProbeOnly | Should -BeFalse
+        Get-DevelopScenarioSourceProjection -Path $lifecyclePath -Text $reviewed -Journey fresh -Scenario @('verification') -RepositoryRoot $root -Commit $reviewedCommit -ProbeOnly | Should -BeTrue
     }
 }

@@ -96,6 +96,12 @@
                         if ($definingFile.ContainsKey($name)) { $files.Add($definingFile[$name]) } else { foreach ($source in $sourceFiles) { $files.Add($source) } }
                     }
                 }
+                foreach ($call in @($commands | Where-Object { $_.GetCommandName() -in @('Get-TestFunctionClosure', 'Import-TestFunctionClosure') })) {
+                    # A call closure indexes every owner file named by -Path; owners
+                    # outside delivery are bound by their own contracts. The shared
+                    # $DeliverySourcePaths form is covered by the unit-wide rule below.
+                    foreach ($name in @(Get-ProofOwnershipStrings $call | ForEach-Object { 'scripts/' + (Split-Path -Leaf $_) } | Where-Object { $_ -in $sourceFiles })) { $files.Add($name) }
+                }
                 foreach ($call in @($commands | Where-Object { $_.GetCommandName() -eq 'Get-DeliverySourceText' })) {
                     if (@($call.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq 'All' }).Count) {
                         foreach ($source in $sourceFiles) { $files.Add($source) }
@@ -138,6 +144,9 @@ Describe 'Delivery test source proof ownership' {
         $byTest['tests/pester/SourceDeliveryProcess.Tests.ps1'] | Should -Contain 'scripts/source-delivery-component.ps1'
         $byTest['tests/pester/ToolingReadiness.Tests.ps1'] | Should -Contain 'scripts/source-delivery-process.ps1'
         $byTest['tests/pester/SourceDeliveryProcessLifetime.Tests.ps1'] | Should -Not -Contain 'scripts/source-delivery-queue.ps1'
+        # Call-closure form: the named owner file and the closure support are inputs.
+        $byTest['tests/pester/SourceDeliveryProcessLifetime.Tests.ps1'] | Should -Contain 'scripts/source-delivery-process.ps1'
+        $byTest['tests/pester/SourceDeliveryProcessLifetime.Tests.ps1'] | Should -Contain 'tests/pester/FunctionClosure.TestSupport.ps1'
         $byTest['tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1'] | Should -Contain 'tests/pester/SourceDeliveryFrozen.TestSupport.ps1'
         $entrypoint = $byTest['tests/pester/SourceDeliveryQueue.Tests.ps1']
         foreach ($loaded in @('scripts/release-artifact-paths.ps1', 'scripts/develop-e2e-cleanup.ps1', '.agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1')) {

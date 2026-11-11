@@ -4,6 +4,40 @@
     $RepoRoot = $context.RepoRoot
 }
 
+Describe 'Duplicated registries are reconciled when the catalog loads' {
+    BeforeAll { . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1') }
+    It 'names every action registry that misses or still lists an action in one failure' {
+        $actions = @(Get-PublicLifecycleActions -RepositoryRoot $RepoRoot)
+        $advanced = @(Get-QualityAdvancedActionCatalog -Text ([IO.File]::ReadAllText((Join-Path $RepoRoot '.agents/skills/1c-workflow/references/advanced-actions.md'))))
+        @(Get-QualityActionRegistryMismatches -Actions $actions -Registries ([ordered]@{ docs = @{ names = $advanced; ignore = @('help') } })) | Should -BeNullOrEmpty
+        # 2026-11-11: a new action reached Targeted and failed first on the docs list,
+        # then on the count. The loader now names every missing place at once.
+        $new = 'update-workflow-branch'
+        $registries = [ordered]@{
+            'advanced-actions.md' = @{ names = @($advanced | Where-Object { $_ -ne $new }) + @('retired-action'); ignore = @('help') }
+            'actionOwners' = @{ names = @($actions | Where-Object { $_ -ne $new }) }
+        }
+        @(Get-QualityActionRegistryMismatches -Actions $actions -Registries $registries) | Should -Be @("advanced-actions.md is missing: $new", 'advanced-actions.md lists unknown actions: retired-action', "actionOwners is missing: $new")
+        { Get-QualityAdvancedActionCatalog -Text 'no catalog here' } | Should -Throw '*ACTION_REGISTRY_MISMATCH*'
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        function Get-QualityAdvancedActionCatalog { param([string]$Text) @('init-project') }
+        { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog } | Should -Throw "*ACTION_REGISTRY_MISMATCH*advanced-actions.md Common internal actions is missing: *$new*"
+    }
+    It 'rejects an on-demand facade version that the manifest, tag, URL or Go source do not follow' {
+        $lock = (Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.itlOndemandMcp
+        $manifest = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        @(Get-QualityOnDemandVersionMismatches -Compatibility $manifest -LockEntry $lock -MainSource ([IO.File]::ReadAllText((Join-Path $RepoRoot 'tools/itl-ondemand-mcp/main.go')))) | Should -BeNullOrEmpty
+        { Assert-QualityOnDemandVersionConsistency -RepositoryRoot $RepoRoot } | Should -Not -Throw
+        # 536c571a: the manifest moved to 0.4.29 while the lock stayed at 0.4.28.
+        $stale = [pscustomobject]@{ version = '0.4.28'; releaseTag = 'itl-ondemand-mcp-v0.4.27'; assetName = 'a.exe'; url = 'https://github.com/o/r/releases/download/itl-ondemand-mcp-v0.4.28/b.exe' }
+        @(Get-QualityOnDemandVersionMismatches -Compatibility ([pscustomobject]@{ facadeVersion = '0.4.29' }) -LockEntry $stale -MainSource 'const version = "0.4.29"') | Should -Be @(
+            "compatibility.json facadeVersion '0.4.29' differs from dependency-lock itlOndemandMcp.version '0.4.28'",
+            "dependency-lock itlOndemandMcp.releaseTag 'itl-ondemand-mcp-v0.4.27' must be 'itl-ondemand-mcp-v0.4.28'",
+            "dependency-lock itlOndemandMcp.url must end with '/releases/download/itl-ondemand-mcp-v0.4.28/a.exe'",
+            "tools/itl-ondemand-mcp/main.go version '0.4.29' differs from dependency-lock itlOndemandMcp.version '0.4.28'")
+    }
+}
+
 Describe 'Source quality catalog contracts' {
     It 'preserves fingerprint variants and file invalidation when one item prepares its input paths once' {
         . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
@@ -462,13 +496,37 @@ Describe 'Source quality catalog contracts' {
         $windowVisibilityConsumer = 'tests/pester/WindowHelper.Tests.ps1'
         # The delivery source-ownership regression is one explicit catalog consumer with its own owner.
         $proofOwnershipConsumer = 'tests/pester/SourceDeliveryProofOwnership.Tests.ps1'
-        # Keep the historical 57/80 cohort. The third registry consumer proves
-        # native input independently of setup; account for its own owner/budget
-        # rather than changing the historical counts or dropping its selection.
-        # The concurrent snapshot regression is another explicit addition.
-        @($selection.tests | Where-Object { $_ -notin $splitWorkflowConsumers -and $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer -and $_ -ne $agentFocusConsumer -and $_ -ne $runSharedInputsConsumer -and $_ -ne $parallelRolloutConsumer -and $_ -ne $windowVisibilityConsumer }).Count | Should -Be 57
-        @($selection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer -and $_ -ne $agentFocusConsumer -and $_ -ne $runSharedInputsConsumer -and $_ -ne $parallelRolloutConsumer -and $_ -ne $windowVisibilityConsumer}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + 1 + 1 + 1 + 1 + 1 + 1)
+        # The original defect was a lifecycle Targeted run that reached the hard stop
+        # (0bc3ff21, 1200 s limit). Exact cohort counts were a proxy that failed on every
+        # legitimate new consumer; estimate the real selection with the scheduler's own
+        # model and tracked weights instead. Untimed files use the median tracked weight.
+        $shardTokens = $null; $shardErrors = $null
+        $shardAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'), [ref]$shardTokens, [ref]$shardErrors)
+        @($shardErrors) | Should -BeNullOrEmpty
+        . ([scriptblock]::Create(($shardAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-PesterWorkloadEstimate' }, $true)).Extent.Text))
+        $schedulerNames = @{}
+        foreach ($variable in @('serialTestNames', 'preflightTestNames')) {
+            $assignment = $shardAst.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq ('$' + $variable) }, $true)
+            $schedulerNames[$variable] = @($assignment.Right.FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value })
+            $schedulerNames[$variable].Count | Should -BeGreaterThan 0
+        }
+        $trackedWeights = @($trackedTimings.files.PSObject.Properties | ForEach-Object { [double]$_.Value } | Sort-Object)
+        $untimedWeight = $trackedWeights[[int][Math]::Floor($trackedWeights.Count / 2)]
+        $assertTargetedCapacity = {
+            param([string[]]$Tests)
+            $files = @($Tests | ForEach-Object {
+                $leaf = Split-Path $_ -Leaf
+                [pscustomobject]@{ path = $_; execution = 'execute'; serial = $schedulerNames.serialTestNames -contains $leaf; preflight = $schedulerNames.preflightTestNames -contains $leaf
+                    estimatedSeconds = $(if ($trackedTimings.files.PSObject.Properties[$leaf]) { [double]$trackedTimings.files.$leaf } else { $untimedWeight }) }
+            })
+            # Four lanes, as in the historical comparison, under host memory admission.
+            $estimate = Get-PesterWorkloadEstimate -Files $files -WorkerCount ([Math]::Min(4, [int]$catalog.pesterWorkers.targetedImplicitDefault))
+            $largest = @($files | Sort-Object estimatedSeconds -Descending | Select-Object -First 5 | ForEach-Object { "$(Split-Path $_.path -Leaf)=$($_.estimatedSeconds)s" }) -join ', '
+            ([double]$catalog.budgets.targetedHardSeconds - $estimate) | Should -BeGreaterThan 120 -Because "estimated $estimate s for $($files.Count) files against $($catalog.budgets.targetedHardSeconds) s; largest: $largest"
+        }
+        & $assertTargetedCapacity @($selection.tests)
+        # Growth beyond the hard budget still fails and names the largest contributors.
+        { & $assertTargetedCapacity (@($selection.tests) + @(1..200 | ForEach-Object { "tests/pester/SyntheticCohortGrowth$_.Tests.ps1" })) } | Should -Throw '*estimated*largest:*'
         @($selection.tests) | Should -Contain $parallelRolloutConsumer
         @($selection.tests) | Should -Contain $diagnosticsConsumer
         @($selection.tests) | Should -Contain $agentFocusConsumer
@@ -601,16 +659,12 @@ Describe 'Source quality catalog contracts' {
         # remain unchanged, and the exact added selection is checked below. The
         # fork binding asserts over catalog entries, so it is a catalog consumer.
         $catalogInvariantConsumer = 'tests/pester/DevelopForkConsumerInventory.Tests.ps1'
-        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $routingConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $catalogInvariantConsumer -and $_ -ne $reviewScopeConsumer -and $_ -ne $diagnosticsConsumer -and $_ -ne $agentFocusConsumer -and $_ -ne $runSharedInputsConsumer -and $_ -ne $parallelRolloutConsumer -and $_ -ne $proofOwnershipConsumer -and $_ -ne $windowVisibilityConsumer}).Count | Should -Be 84
-        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1)
         @($currentSelection.tests) | Should -Contain $proofOwnershipConsumer
-        @($currentSelection.tests | Where-Object { $_ -notin $selection.tests -and $_ -notin $splitIncrementalConsumers }) | Should -Be @(
-            $catalogInvariantConsumer,
-            "tests/pester/HostTestSelection.Tests.ps1",
-            "tests/pester/LocalQualityGate.Tests.ps1",
-            "tests/pester/SourceDeliveryIncremental.Tests.ps1",
-            $proofOwnershipConsumer,
-            "tests/pester/SourceQualityCatalog.Tests.ps1")
+        # A catalog-only edit keeps selecting the static catalog proof and its consumers.
+        foreach ($consumer in @($catalogInvariantConsumer, "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1", $proofOwnershipConsumer, "tests/pester/SourceQualityCatalog.Tests.ps1")) {
+            @($currentSelection.tests) | Should -Contain $consumer
+        }
+        & $assertTargetedCapacity @($currentSelection.tests)
         @($splitIncrementalConsumers|Where-Object {$_ -notin @($currentSelection.tests)}).Count | Should -Be 0
         # Historical catalog-wide scheduler weights/four lanes, retained for comparison:
         # parallel 936.459, old complete ReleaseGate 198.938. No cache reuse is assumed.

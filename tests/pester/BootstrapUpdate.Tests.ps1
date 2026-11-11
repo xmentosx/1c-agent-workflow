@@ -238,24 +238,10 @@ exit 0
     }
 
     It "documents the helper action catalog in advanced actions" {
-        $match = [regex]::Match($HelperText, '(?s)\[ValidateSet\((.*?)\)\]\s*\[string\]\$Action')
-        $match.Success | Should -Be $true
-        $quote = [string]([char]34)
-        $actionPattern = [regex]::Escape($quote) + "(.+?)" + [regex]::Escape($quote)
-        $allowedActions = @([regex]::Matches($match.Groups[1].Value, $actionPattern) | ForEach-Object { $_.Groups[1].Value })
-
+        # The action list in this catalog is reconciled with the ValidateSet and every
+        # other action registry by the quality catalog loader before any Pester stage
+        # (ACTION_REGISTRY_MISMATCH); its regression lives in SourceQualityCatalog.
         $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
-        $advancedListMatch = [regex]::Match($advancedText, '(?s)Common internal actions:\s*```text(?<actions>.*?)```')
-        $advancedListMatch.Success | Should -Be $true
-        $advancedActions = @($advancedListMatch.Groups["actions"].Value -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-
-        foreach ($action in ($allowedActions | Where-Object { $_ -ne "help" })) {
-            ($advancedActions -contains $action) | Should -Be $true
-        }
-
-        foreach ($action in $advancedActions) {
-            ($allowedActions -contains $action) | Should -Be $true
-        }
 
         $advancedText | Should -Match "set-dev-branch-extension"
         $advancedText | Should -Match "dump-dev-branch-extension"

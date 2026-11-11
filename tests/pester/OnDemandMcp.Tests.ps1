@@ -146,12 +146,10 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins compatible catalogs and keeps development-worktree endpoint assets isolated from main" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.4.31"
         $manifest.minimumFacadeVersion | Should -Be "0.4.17"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
         $databaseRuntimeSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\database_runtime.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.4\.31"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
@@ -179,10 +177,11 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.139"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.31"
-        [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.31"
-        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.31/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "b1d6ade56dd75fe35fb56334cddcfe93bbdc64b67d72f9da822b21620e450b5c"
+        # The lock owns the facade version. Manifest, tag, URL and the Go constant are
+        # reconciled with it by the quality catalog loader before any Pester stage
+        # (ONDEMAND_VERSION_MISMATCH); its regression lives in SourceQualityCatalog.
+        [string]$lock.dependencies.itlOndemandMcp.url | Should -Match '^https://github\.com/xmentosx/1c-agent-workflow/releases/download/'
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Match '^[0-9a-f]{64}$'
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "a75216a2e1c7d65835720e4f657313de8b5813929b4e458dc0693f7b12acbb1b"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family

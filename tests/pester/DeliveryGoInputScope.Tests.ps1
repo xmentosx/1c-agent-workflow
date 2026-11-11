@@ -1,4 +1,31 @@
-﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryIncremental.TestSupport.ps1') }
+﻿BeforeAll {
+    . (Join-Path $PSScriptRoot 'SourceDeliveryIncremental.TestSupport.ps1')
+    # Reuse regressions hold reviewed consumer versions from history. A live edit
+    # of a consumer then only withholds the build-only exception in production
+    # (fail-safe binding) instead of failing these regressions.
+    function Get-AuditedConsumerTextHash([string]$Text) {
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+    }
+    function Set-AuditedGoInputConsumers {
+        param([string]$FixtureRoot)
+        $audit=Get-DevelopGoInputConsumerAudit
+        foreach($path in @($audit.Keys)) {
+            $allowed=@($audit[$path]); $text=$null
+            $live=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepoRoot $path)))
+            if((Get-AuditedConsumerTextHash $live) -cin $allowed) { $text=$live } else {
+                $history=@(Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @('log','-z','--format=%H','-n','300','--',$path))
+                foreach($commit in $history) {
+                    $candidate=Get-DevelopHistoricalSourceText $RepoRoot $commit.Trim() $path
+                    if((Get-AuditedConsumerTextHash $candidate) -cin $allowed) { $text=$candidate; break }
+                }
+            }
+            if($null -eq $text) { throw "No reviewed version of $path is reachable in history." }
+            $target=Join-Path $FixtureRoot $path; [void][IO.Directory]::CreateDirectory((Split-Path $target))
+            [IO.File]::WriteAllText($target,$text,[Text.UTF8Encoding]::new($false))
+        }
+    }
+}
 
 Describe 'Incremental delivery acceptance' {
     AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
@@ -28,6 +55,7 @@ It 'keeps Go test and README changes native-free while preserving runtime and em
     $catalog=Get-QualityContractCatalog $RepoRoot
     $paths=@('tools/itl-ondemand-mcp/main.go','tools/itl-ondemand-mcp/main_test.go','tools/itl-ondemand-mcp/README.md')
     Copy-Item -LiteralPath (Join-Path $RepoRoot 'scripts/Build-ItlOnDemandMcp.ps1') -Destination (Join-Path $f.root 'scripts/Build-ItlOnDemandMcp.ps1')
+    Set-AuditedGoInputConsumers $f.root
     foreach($path in $paths) {
         $full=Join-Path $f.root $path;[void][IO.Directory]::CreateDirectory((Split-Path $full))
         [IO.File]::WriteAllText($full,"package main`n")
@@ -96,11 +124,7 @@ It 'keeps Go test and README changes native-free while preserving runtime and em
 
 It 'is selected in Targeted by every consumer whose reviewed SHA it pins' {
     # A pinned consumer edit otherwise surfaces only in a later candidate.
-    $tokens=$null;$errors=$null
-    $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/develop-journey-inputs.ps1'),[ref]$tokens,[ref]$errors)
-    $function=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Test-DevelopGoBuildOnlyPath'},$true))[0]
-    $table=@($function.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$consumers'},$true))[0].Right.Expression
-    $consumers=@($table.KeyValuePairs|ForEach-Object {$_.Item1.Value})
+    $consumers=@((Get-DevelopGoInputConsumerAudit).Keys)
     $consumers.Count | Should -BeGreaterThan 0
     $catalog=Get-QualityContractCatalog $RepoRoot
     foreach($path in @($consumers)+@('scripts/develop-journey-inputs.ps1')) {

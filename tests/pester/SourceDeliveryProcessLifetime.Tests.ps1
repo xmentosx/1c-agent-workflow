@@ -146,7 +146,10 @@ $child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo', '-N
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'child.pid'), [string]$child.Id, [Text.UTF8Encoding]::new($false))
 while ($true) { Start-Sleep -Seconds 1 }
 '@
-            $functions = @(Get-DeliveryFunctionDefinitions -Names @('Test-DeliveryProcessCreationIdentity', 'Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob', 'Get-SourceGateHardBudgetSeconds', 'Get-SourceGateSupervisionBudgetSeconds', 'Invoke-SourceGate', 'Invoke-ComponentPublicationFinalizer'))
+            # The wrapper runs the real gate closure; only its run-record and operation writers are substituted below.
+            . (Join-Path $PSScriptRoot 'FunctionClosure.TestSupport.ps1')
+            $gateClosure = @(Get-TestFunctionClosure -Path @(Join-Path $RepoRoot 'scripts/source-delivery-process.ps1') -Root @('Invoke-SourceGate') -Exclude @('Update-DeliveryOperation', 'Write-DeliveryRunRecord'))
+            $functions = @($gateClosure) + @(Get-DeliveryFunctionDefinitions -Names @('Invoke-ComponentPublicationFinalizer'))
             $identityDefinition = $functions | Where-Object Name -eq 'Test-DeliveryProcessCreationIdentity' | Select-Object -First 1
             $stopDefinition = $functions | Where-Object Name -eq 'Stop-DeliveryProcessTree' | Select-Object -First 1
             $startDefinition = $functions | Where-Object Name -eq 'Start-DeliveryProcess' | Select-Object -First 1
@@ -170,13 +173,7 @@ while ($true) { Start-Sleep -Seconds 1 }
             $escapedRoot = $tempRoot.Replace("'", "''")
             $escapedGate = $gatePath.Replace("'", "''")
             $runspaceBody = @(
-                $identityDefinition.Extent.Text
-                $stopDefinition.Extent.Text
-                $startDefinition.Extent.Text
-                $closeJobDefinition.Extent.Text
-                ($functions | Where-Object Name -eq 'Get-SourceGateHardBudgetSeconds').Extent.Text
-                ($functions | Where-Object Name -eq 'Get-SourceGateSupervisionBudgetSeconds').Extent.Text
-                $gateDefinition.Extent.Text
+                @($gateClosure | ForEach-Object { $_.Extent.Text })
                 @'
 function Update-DeliveryOperation {
     param([hashtable]$Values)
