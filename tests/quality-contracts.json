@@ -1586,7 +1586,7 @@
       "budgetSeconds": 60,
       "primaryTest": "tests/pester/PesterIsolatedRerun.Tests.ps1",
       "paths": ["tests/pester/PesterIsolatedRerun.Tests.ps1", "scripts/check.ps1"],
-      "reuseInputPaths": ["scripts/source-delivery-process.ps1", "scripts/pester-timings.json", "tests/pester/SourceDeliveryPlan.TestSupport.ps1", "tests/pester/TestSupport.ps1"],
+      "reuseInputPaths": ["scripts/source-delivery-process.ps1", "scripts/pester-timings.json", "tests/pester/SourceDeliveryPlan.TestSupport.ps1", "scripts/ai-rules-native-inputs.ps1", "tests/pester/TestSupport.ps1"],
       "tests": ["tests/pester/PesterIsolatedRerun.Tests.ps1"]
     },
     {
