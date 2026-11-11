@@ -577,8 +577,8 @@ Describe 'Source quality catalog contracts' {
         $runSharedInputsSeconds = 20.0
         # SourceDeliveryProofOwnership.Tests.ps1: 2 cases, 18.3s in WinPS 5.1 (2026-11-09); reserve 30s for this explicit addition.
         $proofOwnershipSeconds = 30.0
-        # WindowHelper.Tests.ps1: 21 cases incl. one csc build of the helper, 17.5s in WinPS 5.1 (2026-11-10); reserve 30s for this explicit addition.
-        $windowVisibilitySeconds = 30.0
+        # WindowHelper.Tests.ps1: 28 cases incl. csc builds of the helper and a stand-in client and a 4.5 s slow-restart answer, 25.7s in WinPS 5.1 (2026-11-11); reserve 40s for this explicit addition.
+        $windowVisibilitySeconds = 40.0
         [double](@($catalog.contracts | Where-Object id -eq 'agent-1c-window-visibility')[0]).budgetSeconds | Should -BeGreaterOrEqual $windowVisibilitySeconds
         [double](@($catalog.contracts | Where-Object id -eq 'source-delivery-proof-ownership')[0]).budgetSeconds | Should -BeGreaterOrEqual $proofOwnershipSeconds
         [double]$runSharedInputsOwner.budgetSeconds | Should -BeGreaterOrEqual $runSharedInputsSeconds

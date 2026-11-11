@@ -829,7 +829,7 @@ function Test-Agent1cActionRequiresLifecycleLock {
     $branchScopeReadActions = @("get-review-scope")
     # Window helpers are disposable per group under their own helper.lock; status,
     # stop and restart must reach a hung helper while a run holds the lifecycle lock.
-    $windowHelperActions = @("window-helper-status", "window-helper-stop", "window-helper-restart")
+    $windowHelperActions = @("window-helper-status", "window-helper-stop", "window-helper-restart", "window-show", "window-hide")
     # A parallel update-workflow child takes its branch lease itself with the
     # same zero wait as the in-process rollout, so a busy branch is deferred.
     $workflowBranchChildActions = @("update-workflow-branch")

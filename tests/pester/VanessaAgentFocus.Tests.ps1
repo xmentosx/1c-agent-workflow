@@ -339,8 +339,8 @@ Describe 'Foreground measurement separates new 1C process windows from reactivat
         $facts.commandLine | Should -BeLike '*Usr=""Агент"";Pwd=***;"'
         $facts.commandLine | Should -Not -Match 'секрет|тайн'
         # Every record carries the unelevated reasons Windows lets a background window in.
-        [ItlForegroundRecorderV2]::ForegroundLockTimeoutMs() | Should -BeGreaterOrEqual 0
-        [ItlForegroundRecorderV2]::InputIdleMs() | Should -BeGreaterOrEqual 0
+        [ItlForegroundRecorderV4]::ForegroundLockTimeoutMs() | Should -BeGreaterOrEqual 0
+        [ItlForegroundRecorderV4]::InputIdleMs() | Should -BeGreaterOrEqual 0
     }
 
     It 'counts the first window of a process started during the recording apart from reactivations' {
@@ -381,6 +381,33 @@ Describe 'Foreground measurement separates new 1C process windows from reactivat
         $table['new-process/testclient/1cv8c'] | Should -Be '1:1'
         $table['reactivation/enterprise/1cv8c'] | Should -Be '1:1'
         $table['reactivation/testclient/1cv8c'] | Should -Be '1:1' -Because 'each appended initial record starts a new segment'
+    }
+
+    It 'records shown console, terminal and 1C windows only and groups them by the launching parent' {
+        # The show hook keeps only the windows that visibly flash for the user.
+        [ItlForegroundRecorderV4]::IsRecordedShow('ConsoleWindowClass', 'C:\Windows\System32\cmd.exe') | Should -BeTrue
+        [ItlForegroundRecorderV4]::IsRecordedShow('CASCADIA_HOSTING_WINDOW_CLASS', 'C:\Program Files\WindowsApps\WindowsTerminal.exe') | Should -BeTrue
+        [ItlForegroundRecorderV4]::IsRecordedShow('V8TopLevelFrameTaxiApplicationSDI', 'C:\Program Files\1cv8\8.3.27\bin\1cv8c.exe') | Should -BeTrue
+        [ItlForegroundRecorderV4]::IsRecordedShow('Chrome_WidgetWin_1', 'C:\Program Files\Code\Code.exe') | Should -BeFalse
+        $t0 = [DateTime]::new(2026, 11, 11, 13, 0, 0, [DateTimeKind]::Utc)
+        $gate = '"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe" -File "C:\Временный кандидат с пробелом\scripts\check.ps1"'
+        $lines = @(
+            ([ordered]@{ timeUtc = $t0.ToString('o'); kind = 'initial'; processId = 1; process = 'Code' } | ConvertTo-Json -Compress),
+            ([ordered]@{ timeUtc = $t0.AddSeconds(1).ToString('o'); kind = 'show'; processId = 10; process = 'cmd'; className = 'ConsoleWindowClass'; commandLine = 'cmd /c x'; parentProcess = 'powershell'; parentCommandLine = $gate } | ConvertTo-Json -Compress),
+            ([ordered]@{ timeUtc = $t0.AddSeconds(2).ToString('o'); kind = 'show'; processId = 11; process = 'cmd'; className = 'ConsoleWindowClass'; commandLine = 'cmd /c x'; parentProcess = 'powershell'; parentCommandLine = $gate } | ConvertTo-Json -Compress),
+            ([ordered]@{ timeUtc = $t0.AddSeconds(3).ToString('o'); kind = 'show'; processId = 20; process = '1cv8c'; className = 'V8NewLocalFrameBaseWnd'; commandLine = '1cv8c /TESTCLIENT'; parentProcess = '1cv8c'; parentCommandLine = '1cv8c /TESTMANAGER' } | ConvertTo-Json -Compress)
+        )
+        $path = Join-Path $TestDrive 'Замер показа окон с пробелом.jsonl'
+        [IO.File]::WriteAllLines($path, [string[]]$lines, [Text.UTF8Encoding]::new($false))
+
+        $rows = @(& $script:MeasureScript -SummarizePath $path -Shows)
+        $rows | Should -HaveCount 2
+        $rows[0].className | Should -Be 'ConsoleWindowClass'
+        $rows[0].parentCommandLine | Should -Be $gate
+        $rows[0].count | Should -Be 2
+        $rows[0].processes | Should -Be 2
+        $rows[1].process | Should -Be '1cv8c'
+        @(& $script:MeasureScript -SummarizePath $path) | Should -HaveCount 0 -Because 'shows are not 1C foreground records'
     }
 }
 

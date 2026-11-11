@@ -143,6 +143,8 @@ stop-vanessa-profile
 window-helper-status
 window-helper-stop
 window-helper-restart
+window-show
+window-hide
 check-dev-branch
 verify-dev-branch
 refresh-dev-branch
@@ -225,7 +227,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action stop-vanessa-profile
 ```
 
-`window-helper-status`, `window-helper-stop` and `window-helper-restart` report, stop or restart the window helpers that serve hidden TestClients of this project; `-AllWindowHelperGroups` covers every helper of the current user. Stopping is always safe, and with `ONEC_WINDOW_MODE=visible` it shows the hidden main windows.
+`window-helper-status`, `window-helper-stop` and `window-helper-restart` report, stop or restart the window helpers that serve hidden TestClients of this project; `-AllWindowHelperGroups` covers every helper of the current user. Stopping is always safe, and with `ONEC_WINDOW_MODE=visible` it shows the hidden main windows. `window-show` and `window-hide` with `-WindowProcessId` or `-VanessaTestPort` show a hidden TestClient of this project below the active window without taking focus, keep its new windows visible, and hide it again; showing grants no OS input, and a process outside the helper groups is refused unchanged.
 
 `start-vanessa-profile` opens exactly one ownership-proven branch-local `TESTMANAGER -> TESTCLIENT` pair, positively proves the manager connection, and opens the specified `.feature` without `StartFeaturePlayer` or `run_scenario`. The pair stays open until `stop-vanessa-profile`. A persistent process retains its database reservation after the helper exits. Reuse belongs to the starting operation: Codex uses `CODEX_THREAD_ID`; another chat waits for the owner to stop instead of changing its feature or clients. Start/reuse/status return `ITL_VANESSA_PROFILE_REPORT` with safe PID, port, infobase, feature, connection and `ownerId` fields; they do not create JUnit or verification verdicts.
 

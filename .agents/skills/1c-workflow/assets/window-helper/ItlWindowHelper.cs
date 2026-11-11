@@ -24,7 +24,7 @@ namespace Itl.WindowHelper
     internal static class Protocol
     {
         public const int Version = 1;
-        public static readonly string[] Operations = { "lease", "lease-end", "capture-show", "capture-end", "adopt", "status" };
+        public static readonly string[] Operations = { "lease", "lease-end", "capture-show", "capture-end", "adopt", "status", "show", "hide" };
         public static readonly string[] RequestFields = { "protocol", "op", "id", "scope", "deadlineUtc" };
         public const string Declined = "ITL_UI_CONTROL_DECLINED";
         public const string ActivationFailed = "ITL_WINDOW_ACTIVATION_FAILED";
@@ -1045,6 +1045,9 @@ namespace Itl.WindowHelper
         private readonly Queue<LeaseRequest> waiting = new Queue<LeaseRequest>();
         private readonly Dictionary<string, string> scopeDecisions = new Dictionary<string, string>();
         private readonly Dictionary<uint, DateTime> captures = new Dictionary<uint, DateTime>();
+        // Clients the agent showed on request: kept visible, including their new windows,
+        // until a hide request; the state lives only as long as this helper.
+        private readonly HashSet<uint> revealed = new HashSet<uint>();
         // Per consent scope: leases, lease ms, consent wait ms, queue wait ms.
         private readonly Dictionary<string, long[]> scopeStats = new Dictionary<string, long[]>();
         private DateTime lastMembershipRefresh = DateTime.MinValue;
@@ -1152,6 +1155,8 @@ namespace Itl.WindowHelper
             if (members.Clients.Contains(pid))
             {
                 if (state == LeaseState.Leased && pid == leasedPid) return;
+                // The user may click into a client the agent showed on request.
+                if (revealed.Contains(pid)) return;
                 string title = Native.TitleOf(hwnd);
                 if (!Exposed(pid)) HideOutside(hwnd, pid, "foreground");
                 string result = ReturnFocus();
@@ -1167,7 +1172,7 @@ namespace Itl.WindowHelper
 
         private bool Exposed(uint pid)
         {
-            return (state == LeaseState.Leased && pid == leasedPid) || captures.ContainsKey(pid);
+            return (state == LeaseState.Leased && pid == leasedPid) || captures.ContainsKey(pid) || revealed.Contains(pid);
         }
 
         private bool UserEligible(IntPtr hwnd)
@@ -1262,7 +1267,7 @@ namespace Itl.WindowHelper
             {
                 if (onlyPid.HasValue && pid != onlyPid.Value) continue;
                 if (Exposed(pid)) continue;
-                bool journal = reason != "lease-end" && reason != "capture-end";
+                bool journal = reason != "lease-end" && reason != "capture-end" && reason != "hide-request";
                 foreach (IntPtr h in Native.TopLevelWindows(pid))
                 {
                     if (Native.IsWindowVisible(h)) HideOutside(h, pid, reason, journal);
@@ -1271,6 +1276,13 @@ namespace Itl.WindowHelper
         }
 
         private List<IntPtr> ShowClient(uint pid, bool bottom)
+        {
+            return ShowClient(pid, bottom ? Native.HWND_BOTTOM : IntPtr.Zero);
+        }
+
+        // insertAfter: HWND_BOTTOM under every window, another window to sit directly below
+        // it, or zero for a plain show; none of them activates the client.
+        private List<IntPtr> ShowClient(uint pid, IntPtr insertAfter)
         {
             var shown = new List<IntPtr>();
             IntPtr main = WindowOps.MainWindow(pid);
@@ -1282,7 +1294,7 @@ namespace Itl.WindowHelper
             }
             foreach (IntPtr h in shown)
             {
-                if (bottom) Native.SetWindowPos(h, Native.HWND_BOTTOM, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW);
+                if (insertAfter != IntPtr.Zero) Native.SetWindowPos(h, insertAfter, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW);
                 else Native.ShowWindow(h, Native.SW_SHOWNA);
             }
             var stale = new List<IntPtr>();
@@ -1329,6 +1341,7 @@ namespace Itl.WindowHelper
             var expired = new List<uint>();
             foreach (var kv in captures) if ((DateTime.UtcNow - kv.Value).TotalMilliseconds > CaptureLimitMs) expired.Add(kv.Key);
             foreach (uint pid in expired) { captures.Remove(pid); }
+            revealed.RemoveWhere(delegate(uint gone) { return !members.Clients.Contains(gone); });
             HideClientWindows(null, "reconcile");
             IntPtr fg = Native.GetForegroundWindow();
             if (fg != IntPtr.Zero && members.Clients.Contains(Native.PidOf(fg)) && !Exposed(Native.PidOf(fg))) ReturnFocus();
@@ -1419,6 +1432,8 @@ namespace Itl.WindowHelper
                     Respond(id, op, "ok", new Dictionary<string, object> { { "members", members.Members.Count } });
                     break;
                 case "capture-show": CaptureShow(id, pid); break;
+                case "show": RevealShow(id, pid); break;
+                case "hide": RevealHide(id, pid); break;
                 case "capture-end": CaptureEnd(id, pid); break;
                 case "lease-end": LeaseEnd(id, Json.Str(request, "scope"), Json.Bool(request, "endScope")); break;
                 case "lease":
@@ -1467,7 +1482,8 @@ namespace Itl.WindowHelper
             Respond(id, "status", "ok", new Dictionary<string, object>
             {
                 { "mode", config.Mode }, { "helperPid", ownPid }, { "members", members.Members.Count },
-                { "clients", clients.ToArray() }, { "state", state.ToString().ToLowerInvariant() }
+                { "clients", clients.ToArray() }, { "state", state.ToString().ToLowerInvariant() },
+                { "revealed", new List<uint>(revealed).ToArray() }
             });
         }
 
@@ -1479,6 +1495,35 @@ namespace Itl.WindowHelper
             List<IntPtr> shown = (state == LeaseState.Leased && pid == leasedPid) ? new List<IntPtr> { leasedWindow } : ShowClient(pid, true);
             IntPtr main = WindowOps.MainWindow(pid);
             Respond(id, "capture-show", "ok", new Dictionary<string, object> { { "pid", pid }, { "hwnd", main.ToInt64() }, { "shown", shown.Count } });
+        }
+
+        // A show on request names a client of this group; any other process is refused
+        // without touching its windows. With no PID the only client is meant.
+        private uint ResolveMember(uint requested)
+        {
+            if (requested == 0) return ResolveClient(0);
+            return ResolveClient(requested) == requested ? requested : 0;
+        }
+
+        private void RevealShow(string id, uint requested)
+        {
+            uint pid = ResolveMember(requested);
+            if (pid == 0) { Respond(id, "show", "error", new Dictionary<string, object> { { "code", requested == 0 ? "no-client" : "not-member" } }); return; }
+            revealed.Add(pid);
+            // Directly below the user's active window: visible, while the foreground stays.
+            IntPtr fg = Native.GetForegroundWindow();
+            IntPtr after = fg != IntPtr.Zero && Native.PidOf(fg) != pid ? fg : Native.HWND_BOTTOM;
+            List<IntPtr> shown = ShowClient(pid, after);
+            Respond(id, "show", "ok", new Dictionary<string, object> { { "pid", pid }, { "hwnd", WindowOps.MainWindow(pid).ToInt64() }, { "shown", shown.Count } });
+        }
+
+        private void RevealHide(string id, uint requested)
+        {
+            uint pid = ResolveMember(requested);
+            if (pid == 0) { Respond(id, "hide", "error", new Dictionary<string, object> { { "code", requested == 0 ? "no-client" : "not-member" } }); return; }
+            revealed.Remove(pid);
+            HideClientWindows(pid, "hide-request");
+            Respond(id, "hide", "ok", new Dictionary<string, object> { { "pid", pid } });
         }
 
         private void CaptureEnd(string id, uint requested)

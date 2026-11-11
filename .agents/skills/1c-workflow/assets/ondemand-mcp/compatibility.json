@@ -24,18 +24,18 @@
         "vanessaExt": "1.3.9.139"
       },
       "backendRevisions": {
-        "vanessaAutomation": "itl-r13"
+        "vanessaAutomation": "itl-r14"
       },
       "vanessaAutomationArtifact": {
-        "archiveSha256": "8104f6db2e88bcb745ecd044cd475726272829c1433cb23e5dd55c7a5ed94261",
-        "epfSha256": "f10e06de9f55e7d5724634850e166b56baa16fd7f8b3cf99a30e8684fa4cd4ff",
-        "manifestSha256": "c3b67f9e897e6c224304421299c11d6d6bef549456b503e636e60c486a94b3d4",
-        "patchSha256": "3dc60fb66024fc051c480ca8675f7610bfc3064373e423466f2eea60f7d8fbb7",
+        "archiveSha256": "a63f2488fa4fdabbc83760adc50107d82263992daa03ce7ef476a39ef7348250",
+        "epfSha256": "b3b350a4dd4fed0b5fcf1fe47388868c2fa1d802745997046ce7977216e8aeba",
+        "manifestSha256": "550b9e462bf3ad62b50e33b11f880b81c8c58a0342d59786360c2c2484cecd28",
+        "patchSha256": "7179ad026d382b5b8b8864818dff7e48445eb4ee96f6c3f5e00d81a04e0b20fb",
         "upstreamCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1"
       },
       "pairedExtensionArtifact": {
-        "assetName": "VAExtension.1.32-itl-r13.cfe",
-        "sha256": "cd9300f75194347cf856bcff6197a55d60f5e1d36097e77b10f4189ef9bf4dd1",
+        "assetName": "VAExtension.1.32-itl-r14.cfe",
+        "sha256": "734119d1ac9fcf99d66487ccfcdb8d5354282fe8654c52461de6ca0869224644",
         "protocol": "itl-file-code-v1"
       },
       "lockKeys": [
