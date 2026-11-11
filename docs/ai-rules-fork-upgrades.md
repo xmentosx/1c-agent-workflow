@@ -92,9 +92,17 @@ Pinning a commit in the lock does not make a local candidate publishable.
   `build\test-results\qualification\full.json` for the exact commit and tree.
 
 The fork Pester suite and `tools/validate-rules.ps1` alone are not that proof.
-The r55 candidate was first registered without the tag annotation, the release
-branch and the Full proof; the publication of the whole develop queue stopped
+The r55 candidate was first registered without the tag annotation, the release
+branch and the Full proof; the publication of the whole develop queue stopped
 twice on these checks and the entry had to be deferred.
+
+A deferral is bound to the registered head and is removed only by registering
+a new head of the same QueueId that changes content. A repair made only in the
+fork checkout (tag, release branch, Full proof) changes nothing in the source
+tree: the unchanged head is refused with `There are no commits to register`,
+and a merge of published develop alone with `Targeted mode found no changed
+paths`. Prepare the fork candidate completely before the first registration;
+after a deferral, register a source commit that records the repair.
 
 ## Earlier candidate: review evidence and large scope, local r54
 
