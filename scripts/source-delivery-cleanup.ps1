@@ -10,6 +10,60 @@ function Test-SourceDeliveryPathInUse {
     }).Count -gt 0
 }
 
+function Get-SourceDeliverySupervisorLeasePath {
+    param([Parameter(Mandatory = $true)][string]$SupervisorRoot)
+
+    # The lease lives in the worktree's private gitdir: it never dirties the
+    # pinned checkout and disappears with the worktree registration.
+    # A pointer that names no valid gitdir cannot hold a lease.
+    $dotGit = Join-Path $SupervisorRoot '.git'
+    if (-not (Test-Path -LiteralPath $dotGit -PathType Leaf)) { return '' }
+    try {
+        $pointer = [IO.File]::ReadAllText($dotGit, [Text.UTF8Encoding]::new($false)).Trim()
+        if ($pointer -notmatch '^gitdir:\s*(.+)$') { return '' }
+        $gitDirectory = $matches[1].Trim()
+        if (-not [IO.Path]::IsPathRooted($gitDirectory)) { $gitDirectory = Join-Path $SupervisorRoot $gitDirectory }
+        return Join-Path ([IO.Path]::GetFullPath($gitDirectory)) 'itl-supervisor-owner.json'
+    } catch { return '' }
+}
+
+function Write-SourceDeliverySupervisorLease {
+    param([Parameter(Mandatory = $true)][string]$SupervisorRoot, [int]$ProcessId = $PID)
+
+    # A waiting operation runs its pinned supervisor in-process, so no command
+    # line names this copy; the lease is what keeps cleanup away from it.
+    $root = [IO.Path]::GetFullPath($SupervisorRoot).TrimEnd('\')
+    if ((Split-Path -Leaf $root) -notmatch '^itl-source-supervisor-[0-9a-f]{32}$') { return $false }
+    $leasePath = Get-SourceDeliverySupervisorLeasePath -SupervisorRoot $root
+    if (-not $leasePath -or -not (Test-Path -LiteralPath (Split-Path -Parent $leasePath) -PathType Container)) { return $false }
+    $started = (Get-Process -Id $ProcessId -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')
+    $lease = [ordered]@{ schemaVersion = 1; supervisorRoot = $root; ownerPid = $ProcessId; ownerProcessStartedAt = $started }
+    $temp = $leasePath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    [IO.File]::WriteAllText($temp, (($lease | ConvertTo-Json) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $temp -Destination $leasePath -Force
+    return $true
+}
+
+function Test-SourceDeliverySupervisorLeaseLive {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Only the exact supervisor copy shape is leased. Fail closed: an
+    # unreadable lease or an owner whose identity cannot be read keeps the
+    # copy; only a proven exited or reused owner PID releases it.
+    if ((Split-Path -Leaf ([IO.Path]::GetFullPath($Path).TrimEnd('\'))) -notmatch '^itl-source-supervisor-[0-9a-f]{32}$') { return $false }
+    $leasePath = Get-SourceDeliverySupervisorLeasePath -SupervisorRoot $Path
+    if (-not $leasePath -or -not (Test-Path -LiteralPath $leasePath -PathType Leaf)) { return $false }
+    try {
+        $lease = [IO.File]::ReadAllText($leasePath, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+        $ownerPid = [int]$lease.ownerPid
+        $expected = [DateTime]::Parse([string]$lease.ownerProcessStartedAt, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+    } catch { return $true }
+    if ($ownerPid -le 0) { return $true }
+    $process = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
+    if (-not $process) { return $false }
+    try { return [Math]::Abs(($process.StartTime.ToUniversalTime() - $expected).TotalSeconds) -lt 2 } catch { return $true }
+}
+
 function Get-SourceDeliveryTreeBytes {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -207,8 +261,9 @@ function Remove-SourceDeliveryStaleOperationWorktrees {
     # A failed RegisterChange keeps its candidate only for diagnosis; a repeated
     # registration always creates a new one, so only the newest unexpired ones
     # stay. A stable supervisor worktree is removed by its own operation; one
-    # left by an interrupted operation has no diagnostic value and goes once it
-    # is idle past the creation window. Removal takes the exact branch (a
+    # whose lease names a live owner (it may be waiting for the delivery lock)
+    # stays, one left by an interrupted operation has no diagnostic value and
+    # goes once it is idle past the creation window. Removal takes the exact branch (a
     # supervisor is detached), or a leftover directory no repository owns.
     # A publication, plan or attribution candidate that is still registered
     # belongs to the resource ledger; only its unregistered remnant (an
@@ -224,7 +279,8 @@ function Remove-SourceDeliveryStaleOperationWorktrees {
         $path = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
         $shortBranch = if ($directory.Name -like 'itl-source-register-*') { 'itl/register-' + $directory.Name.Substring('itl-source-register-'.Length) } else { '' }
         $remnantOnly = $directory.Name -notmatch '^itl-source-(register|supervisor)-'
-        if ((Test-SourceDeliveryPathInUse -Path $path) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $path)) { $retained++; continue }
+        if ((Test-SourceDeliveryPathInUse -Path $path) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $path) -or
+            (Test-SourceDeliverySupervisorLeaseLive -Path $path)) { $retained++; continue }
         $isRegistered = $registered.ContainsKey($path)
         if ($isRegistered) {
             if ($remnantOnly -or $registered[$path] -cne $(if ($shortBranch) { "refs/heads/$shortBranch" } else { '' })) { $retained++; continue }
@@ -385,7 +441,7 @@ function Remove-SourceDeliveryStaleTestFixtures {
         $bytes = [int64](@(Get-ChildItem -LiteralPath $fixtureRoot -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)
         foreach ($worktree in @($worktrees | Where-Object { -not [string]::Equals(([IO.Path]::GetFullPath([string]$_.path).TrimEnd('\')), $fixtureRoot, [StringComparison]::OrdinalIgnoreCase) })) {
             $path = [IO.Path]::GetFullPath([string]$worktree.path).TrimEnd('\')
-            if (Test-SourceDeliveryPathInUse -Path $path) { $unexpected = @($worktree); break }
+            if ((Test-SourceDeliveryPathInUse -Path $path) -or (Test-SourceDeliverySupervisorLeaseLive -Path $path)) { $unexpected = @($worktree); break }
             $bytes += [int64](@(Get-ChildItem -LiteralPath $path -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)
         }
         if ($unexpected.Count -gt 0) { continue }

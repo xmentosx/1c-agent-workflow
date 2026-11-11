@@ -143,7 +143,9 @@ best-effort post-success cleanup of exact ITL-generated candidate worktrees,
 failed-registration candidates (`itl-source-register-*`; the newest two within
 seven days stay for diagnosis, none after an explicit `-Action Cleanup`; a
 leftover directory only when no repository owns it), stable supervisors left by
-an interrupted operation (`itl-source-supervisor-*`), unregistered remnants of
+an interrupted operation (`itl-source-supervisor-*`; never one whose gitdir
+`itl-supervisor-owner.json` lease names a live process, such as a publication
+waiting for the delivery lock), unregistered remnants of
 publication, plan and attribution candidates whose `.git` link no repository
 owns, and test artifacts a killed Pester shard left in temp (all once idle for
 an hour), attribution and gate-stand build logs (`itl-source-attribution-*`,
