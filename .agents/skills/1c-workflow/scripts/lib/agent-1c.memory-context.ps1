@@ -156,8 +156,11 @@ function Get-ItlMemoryClientEndpoint {
         # included, extends a binding of the previous workflow once.
         try{Sync-ItlMemoryContext -Context $null;$binding=Read-ItlMemoryJson (Get-ItlMemoryPath binding $script:ProjectRoot)}catch{}
     }
-    if(-not $binding -or $binding.mode -ne 'enabled' -or -not (Get-ItlCatalogField $binding.policyProofs $Client)){return $null}
-    try{$null=Get-ItlMemoryPolicyProof $binding.policyProofs[$Client].path $script:ProjectRoot $Client}catch{return $null}
+    # A binding without an acknowledged policy for this client contributes no
+    # endpoint; a missing key is that case, not a failure under strict mode.
+    $proof=Get-ItlCatalogField (Get-ItlCatalogField $binding 'policyProofs') $Client
+    if(-not $binding -or $binding.mode -ne 'enabled' -or -not $proof){return $null}
+    try{$null=Get-ItlMemoryPolicyProof (Get-ItlCatalogField $proof 'path' '') $script:ProjectRoot $Client}catch{return $null}
     return [ordered]@{name='itl-scoped-cognee';transport='stdio';command='powershell.exe';args=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $script:Agent1cScriptRoot 'cognee-memory-mcp.ps1'),'-BindingPath',(Get-ItlMemoryPath binding $script:ProjectRoot),'-Client',$Client);env=@{};startupTimeoutSeconds=20;toolTimeoutSeconds=65;owner='itl'}
 }
 
