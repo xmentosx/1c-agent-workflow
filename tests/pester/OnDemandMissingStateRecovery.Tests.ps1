@@ -553,6 +553,79 @@ Describe 'On-demand port ownership recovery contract' {
         (Read-ItlOnDemandRuntimeState roctup ('e'*32)).status | Should -Be 'readiness'
     }
 
+    Context 'registered backend has exited (close_1c_session, crash or PID reuse)' {
+        BeforeEach {
+            $script:processAlive=$false
+            $script:proofPredicate='process-present'
+            $script:ownership='unknown'
+            $script:portOwners=@()
+            $script:nativeCommandLine=''
+            Mock Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{owned=$false;failedPredicate=$script:proofPredicate;expected='';actual=''} }
+            Mock Get-ItlOnDemandPortOwnership {
+                param($Port,$ProcessId,$RetryUntil,[switch]$TestClient)
+                $status=$(if($script:ownership -in @('owned','foreign')){'proven'}else{$script:ownership})
+                [pscustomobject]@{decision=$script:ownership;status=$status;owners=@($script:portOwners);diagnostic="decision=$($script:ownership) expectedPid=$ProcessId status=$status source=none address=127.0.0.1:$Port rows(state/pid/remote)=[0/0/63078,2/0/53750] connection=timeout attempts=3 elapsedMs=3424"}
+            }
+            Mock Get-Process { param($Id) $id=[int](@($Id)[0]); if($id -eq 5555 -or ($id -eq 24208 -and $script:proofPredicate -eq 'processStartTime')){[pscustomobject]@{Id=$id;StartTime=[datetime]'2026-11-11T01:27:00Z'}} }
+            Mock Get-CimInstance { [pscustomobject]@{ProcessId=5555;ExecutablePath='C:\Платформа теста\1cv8c.exe';CommandLine=$script:nativeCommandLine} }
+            Mock Stop-Process { param($Id) $script:stops.Add([int](@($Id)[0])) }
+            Mock Wait-ItlOnDemandProcessExit { $true }
+            # A listener left behind still accepts: the stop must not depend on it.
+            Mock Test-TcpPortOpen { $script:stops.Count -eq 0 }
+        }
+
+        It 'retires the instance with a residual PID-0 listener and stops nothing' {
+            $result=Stop-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -StrictOwnership -ExpectedRuntimeState $script:record
+            $result.status | Should -Be 'stopped'
+            $script:stops.Count | Should -Be 0
+            Read-ItlOnDemandRuntimeState roctup ('e'*32) | Should -BeNullOrEmpty
+            Should -Invoke Release-ItlOnDemandManagedPortLease -Times 1 -Exactly
+        }
+
+        It 'retires the instance and leaves a foreign listener on its port running' {
+            $script:ownership='foreign'; $script:portOwners=@(5555)
+            $script:nativeCommandLine='"C:\Платформа теста\1cv8c.exe" ENTERPRISE /F "C:\Другая база"'
+            (Stop-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -StrictOwnership -ExpectedRuntimeState $script:record).status | Should -Be 'stopped'
+            $script:stops.Count | Should -Be 0
+            Read-ItlOnDemandRuntimeState roctup ('e'*32) | Should -BeNullOrEmpty
+        }
+
+        It 'stops the same backend restarted under a new PID by its exact markers' {
+            $script:ownership='foreign'; $script:portOwners=@(5555)
+            $script:nativeCommandLine='"C:\Платформа теста\1cv8c.exe" ENTERPRISE /F "C:\База ROCTUP" /C "startup;mode=embedded;port=6003"'
+            (Stop-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -StrictOwnership -ExpectedRuntimeState $script:record).status | Should -Be 'stopped'
+            @($script:stops) | Should -Be @(5555)
+            Read-ItlOnDemandRuntimeState roctup ('e'*32) | Should -BeNullOrEmpty
+        }
+
+        It 'never treats a longer port number as the restarted backend marker' {
+            $script:ownership='foreign'; $script:portOwners=@(5555)
+            $script:nativeCommandLine='"C:\Платформа теста\1cv8c.exe" ENTERPRISE /F "C:\База ROCTUP" /C "startup;mode=embedded;port=60031"'
+            (Stop-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -StrictOwnership -ExpectedRuntimeState $script:record).status | Should -Be 'stopped'
+            $script:stops.Count | Should -Be 0
+        }
+
+        It 'retires a registration whose PID now names another process start' {
+            $script:proofPredicate='processStartTime'
+            (Stop-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -StrictOwnership -ExpectedRuntimeState $script:record).status | Should -Be 'stopped'
+            $script:stops.Count | Should -Be 0
+            Read-ItlOnDemandRuntimeState roctup ('e'*32) | Should -BeNullOrEmpty
+        }
+
+        It 'reports an exited or reused backend stale for owned recovery whatever its port shows' {
+            Mock Test-ItlOnDemandOwnedProcess { $false }
+            $health=Get-ItlOnDemandBackendRuntimeHealth -RuntimeState $script:record
+            $health.stale | Should -BeTrue
+            $health.status | Should -Be 'pid-dead-port-unverified'
+            $script:ownership='foreign'
+            (Get-ItlOnDemandBackendRuntimeHealth -RuntimeState $script:record).status | Should -Be 'pid-dead-port-open'
+            $script:proofPredicate='processStartTime'
+            $reused=Get-ItlOnDemandBackendRuntimeHealth -RuntimeState $script:record
+            $reused.stale | Should -BeTrue
+            $reused.status | Should -Be 'pid-reused'
+        }
+    }
+
     It 'never returns a start-unconfirmed instance to the broker on ensure' {
         Mock Read-CurrentDevBranchStateForRoctupMcp { [pscustomobject]@{devBranchInfoBasePath='C:\Целевая база';infoBaseKind='file'} }
         Mock Assert-DevBranchApplicationReady { param($State) $State }

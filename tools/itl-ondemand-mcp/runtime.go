@@ -202,6 +202,11 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 			}
 		}
 	}
+	if isFacadeSessionLifecycleTool(r.family, toolName) {
+		result := r.callSessionLifecycleLocked(ctx, toolName, arguments, progressTokenProvided)
+		r.mu.Unlock()
+		return result, nil
+	}
 	if err := r.ensureLocked(ctx); err != nil {
 		diff := r.mismatch
 		code := "ITL_ONDEMAND_START_FAILED"

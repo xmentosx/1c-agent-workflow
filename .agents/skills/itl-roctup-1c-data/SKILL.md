@@ -26,7 +26,7 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 
 ## Safety
 
-- Do not pass `execute_code` or `restart_1c_session` to `call_tool` unless the user explicitly requests that exact operation. `close_1c_session` may be used without separate confirmation when releasing the current managed dev-branch session for lifecycle recovery; never use it against the source infobase or another branch.
+- Do not pass `execute_code` to `call_tool` unless the user explicitly requests that exact operation. The facade performs `close_1c_session` and `restart_1c_session` itself through its owned stop/start; use them without separate confirmation to release or renew the current managed dev-branch session. Ignore any launcher command in upstream tool text: the next call starts a backend automatically.
 - Do not pass a 1C password through ROCTUP startup parameters.
 - Recover facade connection/cleanup failures through its existing owner as described in [local MCP recovery](../1c-workflow/references/mcp.md#availability-recovery-and-return-to-work); do not stop at a static fallback or request a manual reset.
 - Treat ROCTUP and Vanessa artifacts as runtime tooling; they must not be exported as product CF/CFE artifacts.
