@@ -184,8 +184,8 @@ Get-PesterShardFileSha256 -Path `$Path
             New-Item -ItemType Directory -Force -Path (Join-Path $root 'tests/pester'),(Join-Path $root 'templates') | Out-Null
             & git -C $root init --quiet; & git -C $root config user.name 'ITL Test'; & git -C $root config user.email 'itl-test@example.invalid'
             [IO.File]::WriteAllText((Join-Path $root '.gitignore'),"build/`nout*/`n",[Text.UTF8Encoding]::new($false))
-            [IO.File]::WriteAllText((Join-Path $root 'tests/pester/BootstrapUpdate.Tests.ps1'),"Describe 'fixture' { It 'passes' { `$true | Should -BeTrue } }",[Text.UTF8Encoding]::new($false))
-            $catalog = [ordered]@{schemaVersion=1;contracts=@([ordered]@{id='bootstrap';owner='fixture';gate='targeted';budgetSeconds=30;primaryTest='tests/pester/BootstrapUpdate.Tests.ps1';paths=@('fixture/*');tests=@('tests/pester/BootstrapUpdate.Tests.ps1')})}
+            [IO.File]::WriteAllText((Join-Path $root 'tests/pester/BootstrapUpdate.Tests.ps1'),"Describe 'fixture' { It 'passes' { if (`$env:ITL_TEST_VANESSA_ARCHIVE_PROBE) { [IO.File]::WriteAllText(`$env:ITL_TEST_VANESSA_ARCHIVE_PROBE, [string]`$env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE) }; `$true | Should -BeTrue } }",[Text.UTF8Encoding]::new($false))
+            $catalog = [ordered]@{schemaVersion=1;contracts=@([ordered]@{id='bootstrap';owner='fixture';gate='targeted';budgetSeconds=30;primaryTest='tests/pester/BootstrapUpdate.Tests.ps1';paths=@('fixture/*');tests=@('tests/pester/BootstrapUpdate.Tests.ps1')});pesterExternalInputs=[ordered]@{'tests/pester/BootstrapUpdate.Tests.ps1'=@('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE')}}
             [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'),($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
             & git -C $root add --all; & git -C $root commit --quiet -m base
             $queueBase = (& git -C $root rev-parse HEAD).Trim()
@@ -219,6 +219,18 @@ Get-PesterShardFileSha256 -Path `$Path
             Test-Path -LiteralPath $shared -PathType Leaf | Should -BeTrue
             [Convert]::ToBase64String([IO.File]::ReadAllBytes($shared)) | Should -BeExactly ([Convert]::ToBase64String($payload))
             @(Get-ChildItem -LiteralPath (Split-Path -Parent $shared) -Force | Where-Object Name -ne (Split-Path -Leaf $shared)) | Should -BeNullOrEmpty
+
+            # Workers get the durable SHA-addressed copy, never the pinning
+            # worktree's file: another candidate's worktree can be retired while
+            # the shards still run (observed as a missing qualified build).
+            $probe = Join-Path $TestDrive 'архив воркера с пробелом.txt'
+            $previousProbe = $env:ITL_TEST_VANESSA_ARCHIVE_PROBE
+            try {
+                $env:ITL_TEST_VANESSA_ARCHIVE_PROBE = $probe
+                $run = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @('-RepositoryRoot',$root,'-OutputRoot',(Join-Path $root 'out-run'),'-JunitPath',(Join-Path $root 'out-run/pester.xml'),'-SelectionPath',$selectionPath)
+            } finally { $env:ITL_TEST_VANESSA_ARCHIVE_PROBE = $previousProbe }
+            $run.exitCode | Should -Be 0 -Because $run.combinedText
+            [IO.Path]::GetFullPath([IO.File]::ReadAllText($probe)) | Should -Be ([IO.Path]::GetFullPath($shared))
 
             # Later candidates: the pinning worktree is gone and published develop no
             # longer bounds a window that reaches the pin, yet the cache satisfies it.

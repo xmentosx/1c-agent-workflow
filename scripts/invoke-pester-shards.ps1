@@ -394,7 +394,12 @@ function Initialize-VanessaSourceBuildArchiveForPester {
     }
     $script:pesterVanessaArchiveCandidates = @($validCandidates | Select-Object -Unique)
     if ($script:pesterVanessaArchiveCandidates.Count -gt 0) {
-        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $(if ($configuredArchive) { $configuredArchive } else { [string]$script:pesterVanessaArchiveCandidates[0] })
+        # Workers read the archive long after discovery. Another queue
+        # candidate's or publication's worktree can be retired meanwhile, so
+        # hand them the durable SHA-addressed copy whenever it exists.
+        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $(if ($configuredArchive) { $configuredArchive }
+            elseif (Test-Path -LiteralPath $sharedArchive -PathType Leaf) { [IO.Path]::GetFullPath($sharedArchive) }
+            else { [string]$script:pesterVanessaArchiveCandidates[0] })
         return
     }
 
