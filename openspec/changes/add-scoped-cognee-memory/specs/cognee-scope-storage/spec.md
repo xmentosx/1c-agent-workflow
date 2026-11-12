@@ -89,7 +89,15 @@
 
 ### Requirement: Проверенный контекст ограничивает чтение и запись
 
-ITL binding SHALL ограничивать datasets по выбранному workspace/cycle/project/product контексту до backend retrieval и graph expansion. Это фильтрация релевантности, SHALL NOT обещать разграничение прав людей. Отсутствующий read scope SHALL разрешаться в закреплённый набор, explicit scope SHALL только сужать его. Qualified write SHALL явно выбирать один dataset через `dataset_name`; отсутствие SHALL сохранять локальный pending, SHALL NOT использовать silent task/global default. Native ID/owner/currentness SHALL подтверждаться независимо от label; неизвестное или неоднозначное назначение SHALL NOT вызывать запись. Персональные accounts/grants, outsider и publisher roles SHALL NOT быть условиями первого выпуска. Для совместимости existing G4 поле mapping `permissions` SHALL заполняться фиксированным `["read", "write"]` для всех областей; оно SHALL NOT моделировать права сотрудников или требовать отдельного setup выбора. `principalId` SHALL обозначать обычный технический account общего подключения, не личность разработчика.
+Обычный recall SHALL ограничивать datasets по выбранному workspace/cycle/project/product контексту до backend retrieval и graph expansion. Это фильтрация релевантности, SHALL NOT обещать разграничение прав людей. Отсутствующий read scope SHALL разрешаться в закреплённый набор, явный список `datasets` SHALL только сужать его. Qualified write SHALL явно выбирать один dataset через `dataset_name`; отсутствие SHALL сохранять локальный pending, SHALL NOT использовать silent task/global default. Native ID/owner/currentness SHALL подтверждаться независимо от label; неизвестное или неоднозначное назначение SHALL NOT вызывать запись. Персональные accounts/grants, outsider и publisher roles SHALL NOT быть условиями первого выпуска. Для совместимости existing G4 поле mapping `permissions` SHALL заполняться фиксированным `["read", "write"]` для всех областей; оно SHALL NOT моделировать права сотрудников или требовать отдельного setup выбора. `principalId` SHALL обозначать обычный технический account общего подключения, не личность разработчика.
+
+Явный `recall(project_id=…)` SHALL разрешать отдельное справочное чтение
+ровно одного проектного датасета с допущенным read mapping и совпадающими
+native ID, label и owner в списке текущего account. `datasets` в обычном
+поиске SHALL сужать текущую область. Селекторы не совмещаются. Карточка
+справочного поиска SHALL указывать `source.projectId` и
+`source.referenceOnly=true`, сохраняя условия исходной заметки для
+проверки применимости в текущем проекте.
 
 #### Scenario: Запрос чужой задачи
 - **WHEN** клиент текущей задачи передаёт dataset другой задачи вне текущего контекста или опускает scope

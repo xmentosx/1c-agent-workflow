@@ -197,7 +197,7 @@ confirmation. `recall` omits `candidate` notes; local status lists durable own
 facts require a confirmed area/home and independence from customer customization.
 There is no default global/task destination or automatic organizational promotion.
 
-`recall(query, datasets?, search_type="CHUNKS", top_k<=8)` sends one query over
+`recall(query, datasets?, project_id?, search_type="CHUNKS", top_k<=8)` sends one query over
 the union of allowed exact IDs, at most 24 candidates, then checks authorized raw
 original/current status/applicability. Stale fragments never override the original.
 The optional public `datasets` argument accepts admitted labels, not UUIDs; the
@@ -205,6 +205,14 @@ owner resolves those labels to pinned native IDs. Omit it to use the current
 admitted union. An explicit list is validated before search. The denial names
 the label and says whether its dataset is absent, outside admission, or
 unverified. Correct the list or omit it to use the admitted union.
+
+For a deliberate comparison, use `project_id` with a registry project ID and
+omit `datasets`. The adapter searches only that project's dataset if its
+pinned mapping is admitted for read and Cognee lists the same ID, label and
+owner under the current account. The search uses the existing operation budget.
+Cards carry `source.projectId` and `source.referenceOnly=true`; their
+applicability describes the source fact, which the caller checks before using
+it in the current project. Source standing notes are returned as references.
 Full output uses a conservative UTF-8 byte cap below 1600 (including provenance).
 An on-recall PS5/.NET BPE counter measures serialized cards for pinned official
 cl100k_base/o200k_base vocabularies (2.47 MB compressed assets, MIT license). Eight

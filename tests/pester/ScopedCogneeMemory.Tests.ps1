@@ -799,7 +799,9 @@ try {
         $remember.description | Should -Match 'In the same turn after a user correction|Call in the same turn after a user correction'
         $remember.description | Should -Match 'source:"user",reference:"chat <date>"'
         $remember.description | Should -Match 'note_id and data_id from the recall card'
-        @($lines[1].result.tools|Where-Object name -EQ recall)[0].description | Should -Match 'before designing a 1C change.*unfamiliar areas.*Omit datasets for the admitted union'
+        $recallTool=@($lines[1].result.tools|Where-Object name -EQ recall)[0]
+        $recallTool.description | Should -Match 'before designing a 1C change.*unfamiliar areas.*Omit datasets for the admitted union'
+        $recallTool.inputSchema.properties.project_id.type | Should -BeExactly string
         @($lines[1].result.tools|Where-Object name -EQ memory_status)[0].description | Should -Match 'once at session start and after a contextChanged notice'
         $retire.description | Should -Match 'outdated or contradicts a checked source'
         $lines[0].result.instructions | Should -Match 'Seven logical areas'
@@ -1332,6 +1334,63 @@ try {
             Should -Throw '*MEMORY_READ_SCOPE_DENIED*itl_task_foreign*outside the admitted read set*'
         Should -Invoke Invoke-ItlMemoryHttp -Times 1 -Exactly -ParameterFilter {$Path -eq '/api/v1/recall'}
         Should -Invoke Invoke-ItlMemoryHttp -Times 2 -Exactly -ParameterFilter {$Path -eq '/api/v1/datasets' -and $Method -eq 'GET'}
+    }
+    It 'keeps ordinary recall local and reads an explicit admitted project as reference' {
+        $writer=New-MemoryFixture -ProjectId 'source-project'
+        $reader=New-MemoryFixture -ProjectId 'reader-project' -KeepBackend
+        $foreign=Get-ProjectDataset $writer
+        $current=Get-ProjectDataset $reader
+        $reader.provider.datasets+=@($foreign)
+        $script:NativeDatasets=@(@{name=$foreign.label;id=$foreign.datasetId;ownerId=$foreign.ownerId})
+        $evidence=@(@{source='test';reference='project reference fixture'})
+        $shared=Invoke-ItlMemoryRemember $writer 'Source project plan convention.' $foreign.label 'foreign' @{projectId='source-project'} $evidence standing
+        $own=Invoke-ItlMemoryRemember $reader 'Reader project plan convention.' $current.label 'own' @{} $evidence verified
+        $shared.state | Should -BeExactly durable
+        $own.state | Should -BeExactly durable
+        Mock-IndexedFixtureNotes
+        $script:Calls.Clear()
+
+        $ordinary=Invoke-ItlMemoryRecall $reader 'plan convention'
+        @($ordinary.cards|ForEach-Object {$_.source.dataId}) | Should -Be @($own.dataId)
+        @($script:Calls|Where-Object path -EQ '/api/v1/datasets').Count | Should -Be 0
+        @($script:Calls|Where-Object path -EQ '/api/v1/recall')[0].body.dataset_ids | Should -Not -Contain $foreign.datasetId
+        {Invoke-ItlMemoryRecall $reader 'plan convention' @($foreign.label)} | Should -Throw '*MEMORY_READ_SCOPE_DENIED*'
+
+        $explicit=Invoke-ItlMemoryRecall $reader 'plan convention' -ReferenceProjectId 'source-project'
+        @($explicit.cards|ForEach-Object {$_.source.dataId}) | Should -Be @($shared.dataId)
+        $explicit.cards[0].source.projectId | Should -BeExactly 'source-project'
+        $explicit.cards[0].source.referenceOnly | Should -BeTrue
+        $explicit.cards[0].applicability.projectId | Should -BeExactly 'source-project'
+        $explicit.cards[0].Contains('standing') | Should -BeFalse
+        @($script:Calls|Where-Object path -EQ '/api/v1/datasets').Count | Should -Be 1
+        @($script:Calls|Where-Object path -EQ '/api/v1/recall')[-1].body.dataset_ids | Should -Be @($foreign.datasetId)
+    }
+    It 'requires a single admitted read mapping and current native ownership for explicit project recall' {
+        $foreign=@{scopeKind='project';scopeId='source-project';label='itl_project_source';datasetId=[guid]::NewGuid().ToString();ownerId='ordinary-user';permissions=@('write');admitted=$true}
+        $b.provider.datasets+=@($foreign)
+        {Invoke-ItlMemoryRecall $b query -ReferenceProjectId ''} | Should -Throw '*MEMORY_ARGUMENT_INVALID*'
+        {Invoke-ItlMemoryRecall $b query -ReferenceProjectId @('source-project')} | Should -Throw '*MEMORY_ARGUMENT_INVALID*'
+        {Invoke-ItlMemoryRecall $b query @('itl_project_customer') -ReferenceProjectId 'source-project'} | Should -Throw '*MEMORY_ARGUMENT_INVALID*'
+        {Invoke-ItlMemoryRecall $b query -ReferenceProjectId 'missing-project'} | Should -Throw '*MEMORY_READ_SCOPE_DENIED*'
+        {Invoke-ItlMemoryRecall $b query -ReferenceProjectId 'source-project'} | Should -Throw '*MEMORY_READ_SCOPE_DENIED*'
+        $foreign.permissions=@('read')
+        $foreign.admitted=$false
+        {Invoke-ItlMemoryRecall $b query -ReferenceProjectId 'source-project'} | Should -Throw '*MEMORY_READ_SCOPE_DENIED*'
+        $foreign.admitted=$true
+        $duplicate=$foreign.Clone()
+        $duplicate.datasetId=[guid]::NewGuid().ToString()
+        $b.provider.datasets+=@($duplicate)
+        {Invoke-ItlMemoryRecall $b query -ReferenceProjectId 'source-project'} | Should -Throw '*MEMORY_READ_SCOPE_DENIED*'
+        $b.provider.datasets=@($b.provider.datasets|Where-Object datasetId -CNE $duplicate.datasetId)
+        Should -Invoke Invoke-ItlMemoryHttp -Times 0 -Exactly
+
+        $script:NativeDatasets=@(@{name=$foreign.label;id=$foreign.datasetId;ownerId='other-owner'})
+        {Invoke-ItlMemoryRecall $b query -ReferenceProjectId 'source-project'} | Should -Throw '*MEMORY_READ_SCOPE_DENIED*'
+        @($script:Calls|Where-Object path -EQ '/api/v1/recall').Count | Should -Be 0
+
+        $script:NativeDatasets[0].ownerId=$foreign.ownerId
+        Mock Invoke-ItlMemoryHttp { @{status=403;body=$null} } -ParameterFilter {$Path -eq '/api/v1/recall'}
+        {Invoke-ItlMemoryRecall $b query -ReferenceProjectId 'source-project'} | Should -Throw '*MEMORY_READ_SCOPE_DENIED*'
     }
 
     It 'finds the same project original across copies and still applies machine-readable conditions' {
