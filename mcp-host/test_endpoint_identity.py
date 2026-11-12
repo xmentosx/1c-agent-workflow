@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
 import shutil
 import importlib.util
@@ -115,7 +116,15 @@ class MCPFixture:
                     # A deadline regression deliberately closes a slow reply.
                     pass
 
-        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        class Server(ThreadingHTTPServer):
+            def process_request(self, request, address):
+                fixture.workers.submit(self.process_request_thread, request, address)
+
+        self.server = Server(('127.0.0.1', 0), Handler)
+        # Warm one worker before opening the test's request budget. A second
+        # worker can handle cleanup while a slow response is still in flight.
+        self.workers = ThreadPoolExecutor(max_workers=2)
+        self.workers.submit(lambda: None).result()
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.server.server_port
@@ -125,6 +134,7 @@ class MCPFixture:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join()
+        self.workers.shutdown()
 
 
 class EndpointIdentity(unittest.TestCase):
@@ -361,6 +371,38 @@ if($caseMode -eq 'seed'){
     def test_internal_health_failure_never_authorizes_restart(self):
         self.internal.error = True
         self.assertEqual(self.check()['status'], 'unverified')
+
+    def test_consecutive_identity_requests_use_one_worker(self):
+        workers = []
+        original = identity.Client._request
+
+        def observe(*args, **kwargs):
+            workers.append(threading.current_thread())
+            return original(*args, **kwargs)
+
+        with patch.object(identity.Client, '_request', autospec=True, side_effect=observe):
+            proof = identity.read_endpoint(self.public.url, health_tool=self.public.tool)
+        self.assertTrue(proof['health_passed'])
+        self.assertGreater(len(workers), 1)
+        self.assertEqual(len(set(workers)), 1)
+
+    def test_timed_out_worker_does_not_block_session_cleanup(self):
+        client = identity.Client(self.public.url, timeout=1)
+        release = threading.Event()
+
+        def blocked(*args, **kwargs):
+            release.wait()
+
+        try:
+            with patch.object(client, '_request', side_effect=blocked):
+                with self.assertRaises(identity.ProbeError) as error:
+                    client.request('tools/call', timeout=0.3)
+            self.assertEqual(error.exception.reason, 'TimeoutError')
+            client.close()
+            self.assertEqual(self.public.closed, 1)
+        finally:
+            release.set()
+            client.close()
 
     def test_plain_http_does_not_initialize_tls(self):
         with patch.object(urllib.request.HTTPSHandler, '__init__',

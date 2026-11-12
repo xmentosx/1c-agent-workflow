@@ -67,6 +67,27 @@ class Redirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError('MCP redirect changed origin or POST semantics')
 
 
+class _RequestWorker:
+    """Reuse a daemon thread for consecutive requests of one client."""
+
+    def __init__(self):
+        self.pending = queue.SimpleQueue()
+        self.started = False
+
+    def submit(self, operation):
+        self.pending.put(operation)
+        if not self.started:
+            threading.Thread(target=self._serve, daemon=True).start()
+            self.started = True
+
+    def _serve(self):
+        while (operation := self.pending.get()) is not None:
+            operation()
+
+    def close(self):
+        self.pending.put(None)
+
+
 class DeadlineTransport:
     """Invocation-local transport; bound DNS, headers, redirects and body alike.
 
@@ -131,7 +152,7 @@ class DeadlineTransport:
                         pass
                     connection.close()
 
-    def run(self, operation, timeout):
+    def run(self, operation, timeout, request_worker=None):
         results = queue.Queue(maxsize=1)
 
         def worker():
@@ -140,7 +161,10 @@ class DeadlineTransport:
             except Exception as error:
                 results.put((False, error))
 
-        threading.Thread(target=worker, daemon=True).start()
+        if request_worker is None:
+            threading.Thread(target=worker, daemon=True).start()
+        else:
+            request_worker.submit(worker)
         try:
             success, value = results.get(timeout=max(0, timeout))
             if not success:
@@ -156,6 +180,7 @@ class Client:
     def __init__(self, url, timeout, exact_endpoint=False):
         self.url, self.timeout, self.session, self.sequence = url, timeout, None, 0
         self.exact_endpoint = exact_endpoint
+        self._worker = None
         self.protocol = '2025-03-26'
         try:
             self.initialized = self.request('initialize', {
@@ -179,10 +204,20 @@ class Client:
         started = time.monotonic()
         budget = self.timeout if timeout is None else timeout
         try:
+            if self._worker is None:
+                self._worker = _RequestWorker()
             return DeadlineTransport(allow_redirects=not self.exact_endpoint).run(
-                lambda opener: self._request(method, params, notification, budget, opener), budget)
+                lambda opener: self._request(method, params, notification, budget, opener),
+                budget, self._worker)
         except Exception as error:
+            # Cleanup must run independently of a worker still blocked in I/O.
+            self._retire_worker()
             raise ProbeError(error, method, budget, time.monotonic() - started) from None
+
+    def _retire_worker(self):
+        if self._worker is not None:
+            self._worker.close()
+            self._worker = None
 
     def _request(self, method, params, notification, timeout, opener):
         self.sequence += 1
@@ -237,16 +272,19 @@ class Client:
         return value['result']
 
     def close(self):
-        if self.session:
-            try:
+        try:
+            if self.session:
                 request = urllib.request.Request(self.url, headers=self.headers(), method='DELETE')
                 def cleanup(opener):
                     with opener.open(request, timeout=self.timeout):
                         pass
-                DeadlineTransport(allow_redirects=not self.exact_endpoint).run(cleanup, self.timeout)
-            except Exception:
-                pass
+                DeadlineTransport(allow_redirects=not self.exact_endpoint).run(
+                    cleanup, self.timeout, self._worker)
+        except Exception:
+            pass
+        finally:
             self.session = None
+            self._retire_worker()
 
 
 def structural(value, properties=False):
