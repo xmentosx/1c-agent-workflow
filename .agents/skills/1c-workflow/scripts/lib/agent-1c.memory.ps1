@@ -177,7 +177,7 @@ function Assert-ItlMemoryBindingCurrent {
 }
 
 function Get-ItlMemoryScopes {
-    param([object]$Binding,[string]$Access='read',[string]$DatasetName='',[string]$KnowledgeArea='')
+    param([object]$Binding,[string]$Access='read',[string]$DatasetName='',[string]$KnowledgeArea='',[string]$ReferenceProjectId='')
     if($Access -notin @('read','write')){throw 'MEMORY_ACCESS_INVALID'}
     $context=$Binding.context;$identity=$Binding.identity
     $keys=@{taskCycle=$Binding.cycleId;workplace=$identity.workplaceId;project=$context.projectId;organization=$Binding.provider.organizationId}
@@ -191,7 +191,9 @@ function Get-ItlMemoryScopes {
     $allowed=@()
     foreach($entry in @($Binding.provider.datasets)){
         $kind=[string](Get-ItlCatalogField $entry 'scopeKind');$id=[string](Get-ItlCatalogField $entry 'scopeId')
-        $matches=if($kind -eq 'product'){$products -ccontains $id}else{$keys.ContainsKey($kind) -and $keys[$kind] -ceq $id}
+        $matches=if($ReferenceProjectId){$Access -ceq 'read' -and $kind -ceq 'project' -and $id -ceq $ReferenceProjectId}
+            elseif($kind -eq 'product'){$products -ccontains $id}
+            else{$keys.ContainsKey($kind) -and $keys[$kind] -ceq $id}
         if($kind -eq 'taskCycle' -and (Get-ItlCatalogField $entry 'workspaceId') -cne $identity.workspaceId){$matches=$false}
         if(-not $matches -or -not (Get-ItlCatalogField $entry 'admitted' $false) -or @($entry.permissions) -cnotcontains $Access){continue}
         if($DatasetName -and $entry.label -cne $DatasetName){continue}
@@ -571,9 +573,13 @@ function Test-ItlMemoryAreaApplicable {
 }
 
 function Test-ItlMemoryNoteApplicable {
-    param([object]$Binding,[object]$Note)
+    param([object]$Binding,[object]$Note,[string]$ReferenceProjectId='')
     if($Note.status -ne 'verified'){return $false}
     $project=Get-ItlCatalogField $Note.applicability 'projectId'
+    if($ReferenceProjectId){
+        return ($Note.scope.kind -ceq 'project' -and $Note.scope.id -ceq $ReferenceProjectId -and
+                (-not $project -or $project -ceq $ReferenceProjectId))
+    }
     if($project -and $project -cne $Binding.context.projectId){return $false}
     if($Note.scope.kind -eq 'taskCycle' -and ($Note.scope.id -cne $Binding.cycleId -or (Get-ItlCatalogField $Note.origin 'projectId') -cne $Binding.context.projectId)){return $false}
     if($Note.scope.kind -eq 'product' -and -not (Test-ItlMemoryAreaApplicable $Binding ([string](Get-ItlCatalogField $Note.applicability 'knowledgeArea' '')) ([string]$Note.scope.id))){return $false}
@@ -769,7 +775,7 @@ function Invoke-ItlMemoryRecallStage {
 }
 
 function Invoke-ItlMemoryRecall {
-    param([object]$Binding,[string]$Query,[string[]]$Datasets=@(),[int]$TopK=8,[ValidateSet('CHUNKS','CHUNKS_LEXICAL')][string]$SearchType='CHUNKS',[Collections.IDictionary]$Trace=@{},[DateTime]$DeadlineUtc=[DateTime]::MaxValue)
+    param([object]$Binding,[string]$Query,[string[]]$Datasets=@(),[int]$TopK=8,[ValidateSet('CHUNKS','CHUNKS_LEXICAL')][string]$SearchType='CHUNKS',[Collections.IDictionary]$Trace=@{},[DateTime]$DeadlineUtc=[DateTime]::MaxValue,[object]$ReferenceProjectId)
     $Trace['stageMs']=[ordered]@{}
     if([string]::IsNullOrWhiteSpace($Query) -or $Query.Length -gt 4096){throw 'MEMORY_QUERY_INVALID'}
     Assert-ItlMemoryBindingCurrent $Binding
@@ -779,13 +785,39 @@ function Invoke-ItlMemoryRecall {
         if(@($qualifiedTypes) -cnotcontains $SearchType){throw 'MEMORY_SEARCH_TYPE_UNQUALIFIED'}
     }
     $deadline=if($DeadlineUtc -eq [DateTime]::MaxValue){[DateTime]::UtcNow.AddSeconds(20)}else{$DeadlineUtc}
+    $reference=$PSBoundParameters.ContainsKey('ReferenceProjectId')
+    $Trace['failureStage']='scope'
+    if($reference){
+        if($ReferenceProjectId -isnot [string] -or $ReferenceProjectId -cnotmatch '^[a-z0-9][a-z0-9._-]*\z' -or $Datasets.Count){
+            throw 'MEMORY_ARGUMENT_INVALID: use one registry project_id without datasets.'
+        }
+        $selected=@(Get-ItlMemoryScopes $Binding read -ReferenceProjectId $ReferenceProjectId)
+        if($selected.Count -ne 1){throw 'MEMORY_READ_SCOPE_DENIED: project_id needs one admitted project read mapping.'}
+    }
     Invoke-ItlMemoryRecallStage $Trace 'principal' {Assert-ItlMemoryPrincipal $Binding $deadline}
-    $discovery=Invoke-ItlMemoryRecallStage $Trace 'discovery' {Sync-ItlMemorySharedPrivateDatasets $Binding $deadline -Datasets $Datasets}
+    $discovery=Invoke-ItlMemoryRecallStage $Trace 'discovery' {
+        if(-not $reference){return Sync-ItlMemorySharedPrivateDatasets $Binding $deadline -Datasets $Datasets}
+        $limit=[DateTime]::UtcNow.AddSeconds(2)
+        if($deadline -lt $limit){$limit=$deadline}
+        $listing=Invoke-ItlMemoryHttp $Binding.provider GET '/api/v1/datasets' -DeadlineUtc $limit -Raw
+        if($listing.status -eq 403){throw 'MEMORY_READ_SCOPE_DENIED: the native account cannot list the requested project dataset.'}
+        if($listing.status -ne 200 -or [string]$listing.body -notmatch '^\s*\['){
+            throw 'MEMORY_DATASET_UNCONFIRMED: retry the explicit project search when the native dataset list is available.'
+        }
+        $target=$selected[0]
+        $match=@($listing.body|ConvertFrom-Json -ErrorAction Stop|ForEach-Object {$_}|Where-Object {
+            (Get-ItlCatalogField $_ 'id') -ceq $target.datasetId -and
+            (Get-ItlCatalogField $_ 'ownerId') -ceq $target.ownerId -and
+            (Get-ItlCatalogField $_ 'name') -ceq $target.label
+        })
+        if($match.Count -ne 1){throw 'MEMORY_READ_SCOPE_DENIED: the native project dataset ID, owner and label must match the admitted mapping.'}
+        return @{unavailable=@();attempted=$true}
+    }
     $issues=@($discovery.unavailable)
     if($issues.Count){$Trace['coverageIssues']=@($issues|ForEach-Object {@{scopeKind=$_.scopeKind;reason=$_.reason}})}
     if([DateTime]::UtcNow -ge $deadline){$Trace['failureStage']='discovery';throw 'MEMORY_DEADLINE'}
     $Trace['failureStage']='scope'
-    $allowed=@(Get-ItlMemoryScopes $Binding read);$selected=@($allowed)
+    if(-not $reference){$allowed=@(Get-ItlMemoryScopes $Binding read);$selected=@($allowed)}
     if($Datasets.Count){
         foreach($label in $Datasets){
             if(@($allowed|Where-Object label -CEQ $label).Count -eq 1){continue}
@@ -808,6 +840,7 @@ function Invoke-ItlMemoryRecall {
         if([DateTime]::UtcNow -ge $deadline){throw 'MEMORY_DEADLINE'}
         return $response
     }
+    if($reference -and $result.status -in @(401,403)){$Trace['failureStage']='search';throw 'MEMORY_READ_SCOPE_DENIED: the native account refused the explicit project search.'}
     if($result.status -ne 200){$Trace['failureStage']='search';return @{cards=@();coverage='unavailable';coverageIssues=$issues;continuation='Preserve the scope and verify native access; required coverage remains incomplete.'}}
     # Native Cognee answers datasets without graph data by one system status
     # row instead of chunks. That is known absence, not unattributed results.
@@ -822,14 +855,14 @@ function Invoke-ItlMemoryRecall {
     $Trace['failureStage']='originals'
     $originalWatch=[Diagnostics.Stopwatch]::StartNew()
     try{
-        $output=Get-ItlMemoryRecallCards $Binding $selected $chunks $TopK $deadline $backendCalls $issues $Trace
+        $output=Get-ItlMemoryRecallCards $Binding $selected $chunks $TopK $deadline $backendCalls $issues $Trace -ReferenceProjectId $ReferenceProjectId
         $null=$Trace.Remove('failureStage')
         return $output
     }finally{$Trace.stageMs['originals']=$originalWatch.ElapsedMilliseconds}
 }
 
 function Get-ItlMemoryRecallCards {
-    param([object]$Binding,[object[]]$Selected,[object[]]$Chunks,[int]$TopK,[DateTime]$Deadline,[int]$BackendCalls,[object[]]$Issues,[Collections.IDictionary]$Trace)
+    param([object]$Binding,[object[]]$Selected,[object[]]$Chunks,[int]$TopK,[DateTime]$Deadline,[int]$BackendCalls,[object[]]$Issues,[Collections.IDictionary]$Trace,[string]$ReferenceProjectId='')
     $cards=@();$seen=@{};$lookups=0;$bytes=0;$partial=$issues.Count -gt 0;$budgetLimited=$false
     if(-not (Test-Path -LiteralPath 'Function:\Measure-ItlMemoryTokens')){. (Join-Path $PSScriptRoot 'agent-1c.memory-tokens.ps1')}
     # D8 bounds tokens, not UTF-8 bytes. The native transport already bounds
@@ -871,9 +904,10 @@ function Get-ItlMemoryRecallCards {
         catch{$partial=$true;$budgetLimited=$budgetLimited -or [DateTime]::UtcNow -ge $deadline;continue}
         finally{$item.pending=$null}
         if([DateTime]::UtcNow -ge $deadline){$partial=$true;$budgetLimited=$true;break}
-        if(-not $note -or -not (Test-ItlMemoryNoteApplicable $Binding $note)){$partial=$true;continue}
+        if(-not $note -or -not (Test-ItlMemoryNoteApplicable $Binding $note -ReferenceProjectId $ReferenceProjectId)){$partial=$true;continue}
         $card=[ordered]@{noteId=$note.noteId;fact=$note.fact;status=$note.status;source=@{dataset=$dataset[0].label;dataId=$id};evidence=$note.evidence;applicability=$note.applicability}
-        if(Get-ItlCatalogField $note 'standing' $false){$card['standing']=$true}
+        if($ReferenceProjectId){$card.source.projectId=$dataset[0].scopeId;$card.source.referenceOnly=$true}
+        elseif(Get-ItlCatalogField $note 'standing' $false){$card['standing']=$true}
         $next=@($cards)+@($card);$size=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $next -Depth 30 -Compress))
         try{
             $candidateTokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $next -Depth 30 -Compress)
