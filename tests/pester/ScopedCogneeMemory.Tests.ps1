@@ -206,6 +206,7 @@
         @($destinations|Where-Object {-not $_.label -or -not $_.scopeKind -or -not $_.scopeId}).Count | Should -Be 0
         @($destinations|Where-Object scopeKind -EQ project)[0].label | Should -BeExactly 'itl_project_customer'
         @($destinations|Where-Object scopeKind -EQ organization)[0].label | Should -BeExactly 'itl_org_org'
+        $local.Contains('writeGuidance') | Should -BeFalse
         {Get-ItlMemoryScopes $b write} | Should -Throw '*MEMORY_DESTINATION_REQUIRED*'
         {Get-ItlMemoryScopes $b write 'itl_product_corp' 'planning'} | Should -Throw '*MEMORY_DESTINATION_REQUIRED*'
         $b.context.knowledgeContext.knowledgeAreas=@(@{areaId='planning';status='applicable';memoryHomeProductId='corp'})
@@ -1298,13 +1299,52 @@ try {
     }
     It 'lists one destination per dataset with the knowledge areas of a product' {
         $b.context.knowledgeContext.knowledgeAreas=@(1..20|ForEach-Object {@{areaId="area-$_";status='applicable';memoryHomeProductId='corp'}})
-        $destinations=@((Invoke-ItlMemoryStatus $b -LocalOnly).destinations)
+        $status=Invoke-ItlMemoryStatus $b -LocalOnly
+        $destinations=@($status.destinations)
         $product=@($destinations|Where-Object scopeKind -EQ product)
         $product.Count | Should -Be 1
         $product[0].label | Should -BeExactly 'itl_product_corp'
         @($product[0].knowledgeAreas).Count | Should -Be 20
         @($destinations|Group-Object {$_.label}|Where-Object Count -GT 1).Count | Should -Be 0
         @($destinations|ForEach-Object {$_.scopeKind}|Sort-Object) | Should -Be @('host','organization','product','project','taskCycle','workplace','workspace')
+        $status.writeGuidance | Should -Match 'applicability\.independentOfCustomization=true'
+        Should -Invoke Invoke-ItlMemoryHttp -Times 0 -Exactly
+    }
+    It 'recalls verified product knowledge in a dependent project and keeps the source project note local' {
+        $writer=New-MemoryFixture -ProjectId 'core-development'
+        $reader=New-MemoryFixture -ProjectId 'dependent-development' -KeepBackend
+        $writer.context.productId='corp'
+        $writer.context.projectContext.customized=$false
+        $area=@{availableIn=@('corp','prof');requiresProducts=@('corp');memoryHomeProductId='corp'}
+        $relations=@{relations=@(@{type='contains';productId='prof';componentProductId='corp'})}
+        foreach($binding in @($writer,$reader)){
+            $snapshot=@{relations=$relations}
+            $decision=Resolve-ItlCatalogArea $snapshot $binding.context.productId $area
+            $decision.status | Should -BeExactly applicable
+            $binding.context.knowledgeContext.knowledgeAreas=@(@{areaId='planning';status=$decision.status;memoryHomeProductId='corp'})
+            $binding.memoryProjection=@{knowledgeAreas=@{planning=$area};snapshot=$snapshot;composition=@(Get-ItlCatalogComposition $relations $binding.context.productId)}
+        }
+        $localProject=Get-ProjectDataset $writer
+        $reader.provider.datasets+=@($localProject)
+        $status=Invoke-ItlMemoryStatus $writer -LocalOnly
+        $status.writeGuidance | Should -Match 'confirmed product knowledge.*dataset_name.*applicability\.knowledgeArea.*project or its team'
+        $status.writeGuidance | Should -Not -Match 'independentOfCustomization'
+        $productDestination=@($status.destinations|Where-Object {$_.scopeKind -ceq 'product' -and $_.knowledgeAreas -ccontains 'planning'})
+        $productDestination.Count | Should -Be 1
+        $evidence=@(@{source='user';reference='chat 2026-11-12'})
+        $shared=Invoke-ItlMemoryRemember $writer 'Общее правило расчёта планов.' $productDestination[0].label 'product-planning' @{knowledgeArea='planning'} $evidence verified
+        $local=Invoke-ItlMemoryRemember $writer 'Локальное правило команды планирования.' $localProject.label 'project-planning' @{} $evidence verified
+        $shared.state | Should -BeExactly durable
+        $local.state | Should -BeExactly durable
+        Mock-IndexedFixtureNotes
+        $query='правила планирования'
+        @((Invoke-ItlMemoryRecall $writer $query).cards|ForEach-Object {$_.source.dataId}) | Should -Contain $local.dataId
+        $recalled=Invoke-ItlMemoryRecall $reader $query
+        @($recalled.cards|ForEach-Object {$_.source.dataId}) | Should -Be @($shared.dataId)
+        $recalled.cards[0].noteId | Should -BeExactly 'product-planning'
+        $search=@($script:Calls|Where-Object path -EQ '/api/v1/recall')[-1]
+        $search.body.dataset_ids | Should -Contain (Get-ScopeDataset $writer product).datasetId
+        $search.body.dataset_ids | Should -Not -Contain $localProject.datasetId
     }
     It 'distinguishes an uncreated task destination from a readable project in a fresh branch' {
         Mock-IndexedFixtureNotes

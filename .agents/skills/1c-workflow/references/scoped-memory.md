@@ -137,7 +137,9 @@ without a backend; `note_id` reads the exact pending source. It never scans 1C
 state, transcripts or arbitrary logs. The local scan is capped at 24 recent records
 and eight summaries; an exact known ID bypasses that listing cap. `destinations`
 has one row per write destination; a product row lists its writable
-`knowledgeAreas`. Each row has `readState`: `admitted` means the binding admits
+`knowledgeAreas`. When a product destination is available, `writeGuidance`
+shows how to use its label and area in `remember`. Each row has `readState`:
+`admitted` means the binding admits
 its exact ID; `not_created` means the server listing confirmed absence under
 the expected owner, so the row can still be used for a first write; `unknown`
 means read access or existence is unconfirmed. Offline status reports
@@ -152,8 +154,8 @@ the fact's lifetime and applicability.
 | --- | --- |
 | `task` | Current cycle only, such as approval of a specific diff, a test run or interim state. |
 | `workspace` | Multiple branches of one main copy, such as their shared stand arrangement. |
-| `project` | A confirmed decision, fix or constraint that applies across project branches or copies. Give conditions and versions. |
-| `product` | Knowledge transferable within the product, with a confirmed registry knowledge area, conditions and evidence independent of customer customization. |
+| `project` | A decision, fix or constraint specific to the project or its team, including customer customizations. Give conditions and versions. |
+| `product` | Confirmed knowledge about the base product, including facts learned in its development project. Use the product home of an applicable registry knowledge area and include conditions and versions. From a customized project, prove independence from the customization. |
 | `workplace` | A practice of the same `workplaceId`. |
 | `host` | Machine environment, such as the platform version or tool location. |
 | `organization` | Confirmed knowledge across projects and products. Organizational `standing` needs explicit user direction. |
