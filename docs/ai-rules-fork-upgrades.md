@@ -43,7 +43,29 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: scoped-memory core in the root appendix, local r55
+## Current candidate: cross-branch scoped memory, local r57
+
+`itl-main-2f640143-r57` pins
+`f84f717a4ecde50dd3cefdbaa442c89c3f9789de` on the published r55 lineage.
+The upstream pin remains `2f640143756ecd01fed42100e412632aa9082385`.
+Local r56 had the same rules and an assertion that rejected paragraph wrapping. The root chooses one scope by
+lifetime and applicability, checks the current branch before claiming a
+recalled fix is present, and calls recall again in the next eligible turn.
+Detailed branch evidence and one bounded recovery after a temporary read
+failure live in `project-memory.md`. The policy clause hash, project template
+and dependency lock bind the same candidate. The publication owner qualifies
+the new pending pin for installed-client compatibility.
+
+Normalized UTF-8 sizes from the fork validator are 15,179 → 15,676 for the
+root (+497), 157,421 → 159,146 for full-cycle (+1,725), and 33,055 → 33,552
+for subagent start (+497). The root and full-cycle ceilings are 15,800 and
+159,360 bytes; the existing 33,792-byte subagent ceiling covers the change.
+The source appendix grows 4,718 → 5,215 bytes. The destination examples
+are in the on-demand ITL reference. MCP tool descriptions and initialize instructions grow
+1,721 to 2,205 bytes. The compact tools/list payload grows 2,955 to 3,439 bytes.
+The input schemas are unchanged.
+
+## Earlier candidate: scoped-memory core in the root appendix, r55
 
 The selected candidate is `itl-main-2f640143-r55`, exact commit
 `ebbbb25ce2260de0b4fd5a04cecb0a06d57f07a1`, continuing r54 with upstream

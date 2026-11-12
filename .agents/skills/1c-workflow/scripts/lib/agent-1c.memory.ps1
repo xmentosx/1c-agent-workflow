@@ -21,13 +21,16 @@ function Get-ItlMemoryRecordKind {
 }
 
 function Read-ItlMemoryJson {
-    param([string]$Path,[object]$Default=$null,[ValidateRange(1024,4194304)][int]$MaxBytes=262144,[string]$Kind='')
+    param([string]$Path,[object]$Default=$null,[ValidateRange(1024,4194304)][int]$MaxBytes=262144,[string]$Kind='',[DateTime]$DeadlineUtc=[DateTime]::MaxValue)
     if(-not (Test-Path -LiteralPath $Path -PathType Leaf)){return $Default}
     if(-not $Kind){$Kind=Get-ItlMemoryRecordKind $Path}
     # Another operation may hold or replace this record: that is a transient
     # state, repeated a bounded number of times and never reported as damage.
+    if([DateTime]::UtcNow -ge $DeadlineUtc){throw 'MEMORY_DEADLINE'}
     $read=Read-ItlMemoryRecordText $Path $MaxBytes
     for($attempt=1;$read.state -eq 'busy' -and $attempt -lt 3;$attempt++){
+        $remaining=($DeadlineUtc-[DateTime]::UtcNow).TotalMilliseconds
+        if($remaining -le 60){throw 'MEMORY_DEADLINE'}
         Start-Sleep -Milliseconds 60
         $read=Read-ItlMemoryRecordText $Path $MaxBytes
     }
@@ -74,17 +77,22 @@ function Read-ItlMemoryAppliedContext {
 }
 
 function Update-ItlMemoryJson {
-    param([string]$Path,[scriptblock]$Update,[switch]$RemoveWhenEmpty)
+    param([string]$Path,[scriptblock]$Update,[switch]$RemoveWhenEmpty,[DateTime]$DeadlineUtc=[DateTime]::MaxValue)
     # Stable companion of this one private record: never lock the replaceable
     # data inode across File.Replace. No workflow-wide/cross-owner lock or queue.
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $Path))
-    $handle=$null;$deadline=[DateTime]::UtcNow.AddSeconds(2)
+    $handle=$null;$lockDeadline=[DateTime]::UtcNow.AddSeconds(2)
     while(-not $handle){
+        if([DateTime]::UtcNow -ge $DeadlineUtc){throw 'MEMORY_DEADLINE'}
         try{$handle=[IO.File]::Open(($Path+'.write'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}
-        catch [IO.IOException]{if([DateTime]::UtcNow -ge $deadline){throw 'MEMORY_RECORD_BUSY: repeat the same operation; IDs and pending are preserved.'};Start-Sleep -Milliseconds 25}
+        catch [IO.IOException]{
+            if([DateTime]::UtcNow.AddMilliseconds(25) -ge $DeadlineUtc){throw 'MEMORY_DEADLINE'}
+            if([DateTime]::UtcNow -ge $lockDeadline){throw 'MEMORY_RECORD_BUSY: repeat the same operation; IDs and pending are preserved.'}
+            Start-Sleep -Milliseconds 25
+        }
     }
     try{
-        $current=Read-ItlMemoryJson $Path
+        $current=Read-ItlMemoryJson $Path -DeadlineUtc $DeadlineUtc
         $value=& $Update $current
         if($null -eq $value){
             if($RemoveWhenEmpty){[IO.File]::Delete($Path);return $null}
@@ -92,6 +100,7 @@ function Update-ItlMemoryJson {
         }
         $text=ConvertTo-Json -InputObject $value -Depth 60 -Compress
         if([Text.Encoding]::UTF8.GetByteCount($text) -gt 262144){throw 'MEMORY_RECORD_TOO_LARGE'}
+        if([DateTime]::UtcNow -ge $DeadlineUtc){throw 'MEMORY_DEADLINE'}
         Write-Utf8TextAtomic $Path ($text+[Environment]::NewLine)
         return $value
     }finally{$handle.Dispose()}
@@ -201,8 +210,8 @@ function Get-ItlMemoryPrivateScopes {
     param([object]$Binding)
     $identity=$Binding.identity
     $scopes=@(@{scopeKind='taskCycle';scopeId=$Binding.cycleId;workspaceId=$identity.workspaceId;label=('itl_task_'+$Binding.cycleId)})
-    # workspace is the local project (main copy and its branch copies); host is
-    # the machine. Both are lazy datasets shared under one technical account.
+    # The local project, workplace and host are lazy datasets shared under one
+    # technical account, with a different identity for each level.
     $localProject=[string](Get-ItlCatalogField $identity 'localProjectId' '')
     if($localProject){$scopes+=@{scopeKind='workspace';scopeId=$localProject;label=('itl_workspace_'+$localProject)}}
     $scopes+=@{scopeKind='workplace';scopeId=$identity.workplaceId;label=('itl_workplace_'+$identity.workplaceId)}
@@ -223,7 +232,8 @@ function Resolve-ItlMemoryPrivateDataset {
     $private=@(Get-ItlMemoryPrivateScopes $Binding|Where-Object label -CEQ $Label)
     if($private.Count -ne 1){throw 'MEMORY_DESTINATION_REQUIRED: choose an explicit current private label or an admitted shared exact-ID mapping.'}
     $path=Get-ItlMemoryPath binding $Binding.projectRoot;$key=Get-ItlCatalogHash $Label
-    $prior=Read-ItlMemoryJson $path;$reservation=Get-ItlCatalogField (Get-ItlCatalogField $prior 'datasetReservations') $key
+    $reservation=$null
+    if(-not $LookupOnly){$prior=Read-ItlMemoryJson $path;$reservation=Get-ItlCatalogField (Get-ItlCatalogField $prior 'datasetReservations') $key}
     # Another copy or user of the same account may already own this dataset:
     # look it up by exact name and owner before any creation.
     $ambiguous='MEMORY_DATASET_AMBIGUOUS: several native datasets carry this exact name and owner. No further dataset was created; an operator keeps one before this scope is used.'
@@ -253,29 +263,78 @@ function Resolve-ItlMemoryPrivateDataset {
     $entry=ConvertTo-ItlCatalogCanonicalValue $private[0]
     $entry['workspaceId']=$Binding.identity.workspaceId
     $entry['datasetId']=$native.id;$entry['ownerId']=$native.ownerId;$entry['admitted']=$true;$entry['permissions']=@('read','write')
+    $adoptionDeadline=if($LookupOnly){$DeadlineUtc}else{[DateTime]::MaxValue}
     $updated=Update-ItlMemoryJson $path {
         param($current)
         if($current.bindingId -cne $Binding.bindingId){throw 'MEMORY_STALE_CONTEXT'}
+        if($LookupOnly){
+            # A concurrent binding update may have added an explicit mapping.
+            # Honor it rather than replacing its exact ID or widening grants.
+            $mapped=@($current.provider.datasets|Where-Object label -CEQ $Label)
+            if($mapped.Count){
+                if($mapped.Count -ne 1 -or $mapped[0].datasetId -cne $native.id -or $mapped[0].ownerId -cne $native.ownerId){
+                    throw 'MEMORY_DATASET_UNCONFIRMED'
+                }
+                return $current
+            }
+        }
         $current.provider.datasets=@($current.provider.datasets|Where-Object label -CNE $Label)+@($entry)
         if(-not $current.Contains('datasetReservations')){$current['datasetReservations']=[ordered]@{}}
         $current.datasetReservations[$key]=@{state='confirmed';label=$Label;datasetId=$native.id}
         return $current
-    }
+    } -DeadlineUtc $adoptionDeadline
     $Binding.provider.datasets=$updated.provider.datasets
     return $entry
 }
 
 function Sync-ItlMemorySharedPrivateDatasets {
-    param([object]$Binding,[DateTime]$DeadlineUtc)
-    # A reader adopts the workspace/host dataset another copy or user already
-    # created; it never creates one. One list request serves both labels.
-    $missing=@(Get-ItlMemoryPrivateScopes $Binding|Where-Object {$label=$_.label;$_.scopeKind -in @('workspace','host') -and @($Binding.provider.datasets|Where-Object label -CEQ $label).Count -eq 0})
-    if(-not $missing.Count){return $true}
+    param([object]$Binding,[DateTime]$DeadlineUtc,[string[]]$Datasets=@(),[switch]$IncludeTask)
+    $limit=[DateTime]::UtcNow.AddSeconds(2)
+    if($DeadlineUtc -lt $limit){$limit=$DeadlineUtc}
+    $report=@{notCreated=@();unavailable=@();attempted=$false}
+    $mapped=@($Binding.provider.datasets|ForEach-Object {$_.label})
+    $missing=@(Get-ItlMemoryPrivateScopes $Binding|Where-Object {
+        $mapped -cnotcontains $_.label -and
+        (($Datasets.Count -and $Datasets -ccontains $_.label) -or
+            (-not $Datasets.Count -and ($IncludeTask -or $_.scopeKind -ne 'taskCycle')))
+    })
+    if(-not $missing.Count){return $report}
+    # One list serves all scopes. Never create a dataset during a read.
+    $listing=$null;$listFailure=''
     try{
-        $listing=Invoke-ItlMemoryHttp $Binding.provider GET '/api/v1/datasets' -DeadlineUtc $DeadlineUtc
-        foreach($scope in $missing){$null=Resolve-ItlMemoryPrivateDataset $Binding $scope.label $DeadlineUtc -LookupOnly -Listing $listing}
-        return $true
-    }catch{return $false}
+        $response=Invoke-ItlMemoryHttp $Binding.provider GET '/api/v1/datasets' -DeadlineUtc $limit -Raw
+        if($response.status -ne 200 -or [string]$response.body -notmatch '^\s*\['){throw 'MEMORY_DATASET_UNCONFIRMED'}
+        $rows=@($response.body|ConvertFrom-Json -ErrorAction Stop|ForEach-Object {$_})
+        if(@($rows|Where-Object {-not (Get-ItlCatalogField $_ 'name') -or -not (Get-ItlCatalogField $_ 'ownerId')}).Count){throw 'MEMORY_DATASET_UNCONFIRMED'}
+        $listing=@{status=200;body=$rows}
+    }catch{
+        $listFailure=if($_.Exception.Message -in @('MEMORY_DEADLINE','MEMORY_TRANSPORT_UNCONFIRMED: deadline')){
+            'discovery_deadline'
+        }else{'listing_unavailable'}
+    }
+    if([DateTime]::UtcNow -ge $limit){$listFailure='discovery_deadline'}
+    $report.attempted=$true
+    foreach($scope in $missing){
+        $reason=$listFailure
+        if(-not $reason){
+            try{
+                if([DateTime]::UtcNow -ge $limit){throw 'MEMORY_DEADLINE'}
+                $native=if($scope.scopeKind -eq 'taskCycle'){
+                    Find-ItlMemoryNativeDataset $Binding $scope.label $limit $listing
+                }else{
+                    Resolve-ItlMemoryPrivateDataset $Binding $scope.label $limit -LookupOnly -Listing $listing
+                }
+                if([DateTime]::UtcNow -ge $limit){throw 'MEMORY_DEADLINE'}
+                if(-not $native){$report.notCreated+=@($scope.label);continue}
+                if(@(Get-ItlMemoryScopes $Binding read $scope.label).Count -eq 1){continue}
+                $reason='not_admitted'
+            }catch{
+                $reason=if([DateTime]::UtcNow -ge $limit -or $_.Exception.Message -eq 'MEMORY_DEADLINE'){'discovery_deadline'}else{'dataset_unverified'}
+            }
+        }
+        $report.unavailable+=@{scopeKind=$scope.scopeKind;label=$scope.label;reason=$reason}
+    }
+    return $report
 }
 
 function Invoke-ItlMemoryHttp {
@@ -293,7 +352,7 @@ function Invoke-ItlMemoryHttp {
     if([string]::IsNullOrWhiteSpace($apiKey) -and [string]::IsNullOrWhiteSpace($accessToken)){throw 'MEMORY_CREDENTIAL_REQUIRED: configure an ordinary-account apiKey privately (legacy accessToken is supported); no administrator credentials.'}
     Add-Type -AssemblyName System.Net.Http
     $handler=[Net.Http.HttpClientHandler]::new();$handler.AllowAutoRedirect=$false
-    $client=[Net.Http.HttpClient]::new($handler);$client.Timeout=[TimeSpan]::FromMilliseconds($remaining)
+    $client=[Net.Http.HttpClient]::new($handler)
     $request=[Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::new($Method),$base.AbsoluteUri.TrimEnd('/')+$Path)
     if(-not [string]::IsNullOrWhiteSpace($apiKey)){$request.Headers.Add('X-Api-Key',$apiKey)}
     else{$request.Headers.Authorization=[Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$accessToken)}
@@ -304,6 +363,9 @@ function Invoke-ItlMemoryHttp {
         $request.Content.Headers.ContentType=[Net.Http.Headers.MediaTypeHeaderValue]::Parse($ContentType)
     }
     $pending=[pscustomobject]@{client=$client;handler=$handler;request=$request;response=$null;task=$null;deadline=$DeadlineUtc;raw=$Raw.IsPresent;closed=$false}
+    $remaining=[int][Math]::Min(60000,($DeadlineUtc-[DateTime]::UtcNow).TotalMilliseconds)
+    if($remaining -le 0){Close-ItlMemoryHttp $pending;throw 'MEMORY_DEADLINE'}
+    $client.Timeout=[TimeSpan]::FromMilliseconds($remaining)
     try{$pending.task=$client.SendAsync($request,[Net.Http.HttpCompletionOption]::ResponseHeadersRead)}
     catch{Close-ItlMemoryHttp $pending;throw 'MEMORY_TRANSPORT_UNCONFIRMED'}
     if($Defer){return $pending}
@@ -328,11 +390,20 @@ function Complete-ItlMemoryHttp {
     try{
         $remaining=[int][Math]::Max(0,($Pending.deadline-[DateTime]::UtcNow).TotalMilliseconds)
         try{
-            if(-not $remaining -or -not $Pending.task.Wait($remaining)){throw 'MEMORY_DEADLINE'}
-            $Pending.response=$Pending.task.GetAwaiter().GetResult()
-        }catch{throw 'MEMORY_TRANSPORT_UNCONFIRMED'}
+            $ready=$remaining -gt 0 -and $Pending.task.Wait($remaining)
+        }catch{
+            if([DateTime]::UtcNow -ge $Pending.deadline -or $Pending.task.IsCanceled){
+                throw 'MEMORY_TRANSPORT_UNCONFIRMED: deadline'
+            }
+            throw 'MEMORY_TRANSPORT_UNCONFIRMED'
+        }
+        if(-not $ready){throw 'MEMORY_TRANSPORT_UNCONFIRMED: deadline'}
+        $Pending.response=$Pending.task.GetAwaiter().GetResult()
         $status=[int]$Pending.response.StatusCode
-        $stream=$Pending.response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $remaining=[int][Math]::Max(0,($Pending.deadline-[DateTime]::UtcNow).TotalMilliseconds)
+        $open=$Pending.response.Content.ReadAsStreamAsync()
+        if(-not $remaining -or -not $open.Wait($remaining)){throw 'MEMORY_DEADLINE'}
+        $stream=$open.GetAwaiter().GetResult()
         $buffer=[byte[]]::new(8192);$memory=[IO.MemoryStream]::new()
         try{
             while($true){
@@ -682,11 +753,24 @@ function Invoke-ItlMemoryRemember {
     if($receipt.state -eq 'durable'){Complete-ItlMemoryPending $Binding $NoteId $intentHash}
     $receipt['pending']=($receipt.state -ne 'durable');$receipt['searchState']='unverified'
     $receipt['operation']=if($updating){'updated'}else{'saved'}
+    $receipt['scopeKind']=$dataset.scopeKind
     return $receipt
 }
 
+function Invoke-ItlMemoryRecallStage {
+    param([Collections.IDictionary]$Trace,[string]$Stage,[scriptblock]$Action)
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    $Trace['failureStage']=$Stage
+    try{
+        $result=& $Action
+        $null=$Trace.Remove('failureStage')
+        return $result
+    }finally{$Trace.stageMs[$Stage]=$watch.ElapsedMilliseconds}
+}
+
 function Invoke-ItlMemoryRecall {
-    param([object]$Binding,[string]$Query,[string[]]$Datasets=@(),[int]$TopK=8,[ValidateSet('CHUNKS','CHUNKS_LEXICAL')][string]$SearchType='CHUNKS')
+    param([object]$Binding,[string]$Query,[string[]]$Datasets=@(),[int]$TopK=8,[ValidateSet('CHUNKS','CHUNKS_LEXICAL')][string]$SearchType='CHUNKS',[Collections.IDictionary]$Trace=@{},[DateTime]$DeadlineUtc=[DateTime]::MaxValue)
+    $Trace['stageMs']=[ordered]@{}
     if([string]::IsNullOrWhiteSpace($Query) -or $Query.Length -gt 4096){throw 'MEMORY_QUERY_INVALID'}
     Assert-ItlMemoryBindingCurrent $Binding
     if($SearchType -ne 'CHUNKS'){
@@ -694,24 +778,59 @@ function Invoke-ItlMemoryRecall {
         $qualifiedTypes=Get-ItlCatalogField $contract 'searchTypes' @('CHUNKS')
         if(@($qualifiedTypes) -cnotcontains $SearchType){throw 'MEMORY_SEARCH_TYPE_UNQUALIFIED'}
     }
-    $deadline=[DateTime]::UtcNow.AddSeconds(20);Assert-ItlMemoryPrincipal $Binding $deadline
-    $null=Sync-ItlMemorySharedPrivateDatasets $Binding $deadline
+    $deadline=if($DeadlineUtc -eq [DateTime]::MaxValue){[DateTime]::UtcNow.AddSeconds(20)}else{$DeadlineUtc}
+    Invoke-ItlMemoryRecallStage $Trace 'principal' {Assert-ItlMemoryPrincipal $Binding $deadline}
+    $discovery=Invoke-ItlMemoryRecallStage $Trace 'discovery' {Sync-ItlMemorySharedPrivateDatasets $Binding $deadline -Datasets $Datasets}
+    $issues=@($discovery.unavailable)
+    if($issues.Count){$Trace['coverageIssues']=@($issues|ForEach-Object {@{scopeKind=$_.scopeKind;reason=$_.reason}})}
+    if([DateTime]::UtcNow -ge $deadline){$Trace['failureStage']='discovery';throw 'MEMORY_DEADLINE'}
+    $Trace['failureStage']='scope'
     $allowed=@(Get-ItlMemoryScopes $Binding read);$selected=@($allowed)
     if($Datasets.Count){
-        foreach($label in $Datasets){if(@($allowed|Where-Object label -CEQ $label).Count -ne 1){throw 'MEMORY_READ_SCOPE_DENIED'}}
+        foreach($label in $Datasets){
+            if(@($allowed|Where-Object label -CEQ $label).Count -eq 1){continue}
+            $reason=if($discovery.notCreated -ccontains $label){'dataset does not exist under the expected owner'}
+                elseif(@($issues|Where-Object {$_.label -ceq $label -and $_.reason -ne 'not_admitted'}).Count){'read access could not be verified'}
+                else{'dataset is outside the admitted read set'}
+            $name=[string]$label
+            $name=$name.Substring(0,[Math]::Min(160,$name.Length)) -replace '[\x00-\x1f]','?'
+            throw "MEMORY_READ_SCOPE_DENIED: '${name}': $reason. Correct the dataset list or omit datasets to search the admitted set."
+        }
         $selected=@($allowed|Where-Object {$Datasets -ccontains $_.label})
     }
-    if(-not $selected.Count){return @{cards=@();coverage='unavailable';continuation='Prepare admitted dataset IDs/grants; no unscoped recall was sent.'}}
+    if([DateTime]::UtcNow -ge $deadline){throw 'MEMORY_DEADLINE'}
+    if(-not $selected.Count){
+        return @{cards=@();coverage='unavailable';coverageIssues=$issues;continuation='Prepare admitted dataset IDs/grants; no unscoped recall was sent.'}
+    }
     $ids=@($selected|ForEach-Object {$_.datasetId}|Select-Object -Unique)
-    $result=Invoke-ItlMemoryHttp $Binding.provider POST '/api/v1/recall' @{query=$Query;dataset_ids=$ids;search_type=$SearchType;top_k=24;only_context=$false} $deadline
-    if($result.status -ne 200){return @{cards=@();coverage='unavailable';continuation='Preserve the scope and verify native access; required coverage remains incomplete.'}}
+    $result=Invoke-ItlMemoryRecallStage $Trace 'search' {
+        $response=Invoke-ItlMemoryHttp $Binding.provider POST '/api/v1/recall' @{query=$Query;dataset_ids=$ids;search_type=$SearchType;top_k=24;only_context=$false} $deadline
+        if([DateTime]::UtcNow -ge $deadline){throw 'MEMORY_DEADLINE'}
+        return $response
+    }
+    if($result.status -ne 200){$Trace['failureStage']='search';return @{cards=@();coverage='unavailable';coverageIssues=$issues;continuation='Preserve the scope and verify native access; required coverage remains incomplete.'}}
     # Native Cognee answers datasets without graph data by one system status
     # row instead of chunks. That is known absence, not unattributed results.
-    $statusRows=@(@($result.body)|Where-Object {([string](Get-ItlCatalogField $_ 'source')) -ceq 'system' -and -not (Get-ItlCatalogField $_ 'dataset_id')})
-    if($statusRows.Count -and $statusRows.Count -eq @($result.body).Count -and -not @($statusRows|Where-Object {([string](Get-ItlCatalogField $_ 'status')) -cne 'memory_warming_up'}).Count){
-        return [ordered]@{cards=@();coverage='empty';backendStatus='memory_warming_up';sourceLookups=0;backendCalls=2;continuation='Selected datasets hold no indexed notes yet: absence, not partial coverage. A just-saved note may still be indexing; check it by exact memory_status.';context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
+    $backendCalls=2+[int]$discovery.attempted
+    $chunks=@($result.body|Where-Object {$null -ne $_})
+    $statusRows=@($chunks|Where-Object {([string](Get-ItlCatalogField $_ 'source')) -ceq 'system' -and -not (Get-ItlCatalogField $_ 'dataset_id')})
+    if($statusRows.Count -and $statusRows.Count -eq $chunks.Count -and -not @($statusRows|Where-Object {([string](Get-ItlCatalogField $_ 'status')) -cne 'memory_warming_up'}).Count){
+        $empty=[ordered]@{cards=@();coverage=$(if($issues.Count){'partial'}else{'empty'});backendStatus='memory_warming_up';sourceLookups=0;backendCalls=$backendCalls;continuation='The searched datasets have no indexed notes yet. Check a just-saved note with exact memory_status.';context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
+        if($issues.Count){$empty['coverageIssues']=$issues}
+        return $empty
     }
-    $cards=@();$seen=@{};$lookups=0;$bytes=0;$partial=$false
+    $Trace['failureStage']='originals'
+    $originalWatch=[Diagnostics.Stopwatch]::StartNew()
+    try{
+        $output=Get-ItlMemoryRecallCards $Binding $selected $chunks $TopK $deadline $backendCalls $issues $Trace
+        $null=$Trace.Remove('failureStage')
+        return $output
+    }finally{$Trace.stageMs['originals']=$originalWatch.ElapsedMilliseconds}
+}
+
+function Get-ItlMemoryRecallCards {
+    param([object]$Binding,[object[]]$Selected,[object[]]$Chunks,[int]$TopK,[DateTime]$Deadline,[int]$BackendCalls,[object[]]$Issues,[Collections.IDictionary]$Trace)
+    $cards=@();$seen=@{};$lookups=0;$bytes=0;$partial=$issues.Count -gt 0;$budgetLimited=$false
     if(-not (Test-Path -LiteralPath 'Function:\Measure-ItlMemoryTokens')){. (Join-Path $PSScriptRoot 'agent-1c.memory-tokens.ps1')}
     # D8 bounds tokens, not UTF-8 bytes. The native transport already bounds
     # raw originals; an exact named counter admits compact non-ASCII facts.
@@ -720,7 +839,7 @@ function Invoke-ItlMemoryRecall {
     # large product group cannot starve project/workspace/workplace originals.
     $groups=@();$candidates=@()
     foreach($scope in $selected){
-        $group=@($result.body|Where-Object {([string](Get-ItlCatalogField $_ 'dataset_id')) -ceq $scope.datasetId})
+        $group=@($chunks|Where-Object {([string](Get-ItlCatalogField $_ 'dataset_id')) -ceq $scope.datasetId})
         if($group.Count){$groups+=,@($group)}
     }
     for($rank=0;$rank -lt 24 -and $candidates.Count -lt 24;$rank++){
@@ -728,7 +847,7 @@ function Invoke-ItlMemoryRecall {
             if($rank -lt $group.Count){$candidates+=,$group[$rank];if($candidates.Count -eq 24){break}}
         }
     }
-    if(@($result.body).Count -gt $candidates.Count){$partial=$true}
+    if($chunks.Count -gt $candidates.Count){$partial=$true}
     $queue=@()
     foreach($chunk in $candidates){
         $dataset=@($selected|Where-Object datasetId -CEQ ([string](Get-ItlCatalogField $chunk 'dataset_id')))
@@ -740,7 +859,7 @@ function Invoke-ItlMemoryRecall {
     $started=0
     try{
     for($position=0;$position -lt $queue.Count;$position++){
-        if([DateTime]::UtcNow -ge $deadline){$partial=$true;break}
+        if([DateTime]::UtcNow -ge $deadline){$partial=$true;$budgetLimited=$true;break}
         while($started -lt $queue.Count -and $started -le $position+1 -and [DateTime]::UtcNow -lt $deadline){
             $item=$queue[$started];$started++;$lookups++
             try{$item.pending=Invoke-ItlMemoryHttp $Binding.provider GET "/api/v1/datasets/$($item.dataset.datasetId)/data/$($item.id)/raw" -DeadlineUtc $deadline -Raw -Defer}
@@ -749,8 +868,9 @@ function Invoke-ItlMemoryRecall {
         $item=$queue[$position];$dataset=@($item.dataset);$id=$item.id
         if(-not $item.pending){$partial=$true;continue}
         try{$note=Get-ItlMemoryOriginal $Binding $item.dataset $id $deadline -Response $item.pending}
-        catch{$partial=$true;continue}
+        catch{$partial=$true;$budgetLimited=$budgetLimited -or [DateTime]::UtcNow -ge $deadline;continue}
         finally{$item.pending=$null}
+        if([DateTime]::UtcNow -ge $deadline){$partial=$true;$budgetLimited=$true;break}
         if(-not $note -or -not (Test-ItlMemoryNoteApplicable $Binding $note)){$partial=$true;continue}
         $card=[ordered]@{noteId=$note.noteId;fact=$note.fact;status=$note.status;source=@{dataset=$dataset[0].label;dataId=$id};evidence=$note.evidence;applicability=$note.applicability}
         if(Get-ItlCatalogField $note 'standing' $false){$card['standing']=$true}
@@ -761,12 +881,15 @@ function Invoke-ItlMemoryRecall {
                 $candidateTokens.cl100k_base -gt 1600 -or $candidateTokens.o200k_base -gt 1600
             }else{$size -gt 1600} # retain the labelled conservative fallback
         }catch{$partial=$true;break}
+        if([DateTime]::UtcNow -ge $deadline){$partial=$true;$budgetLimited=$true;break}
         if($exceeded){$partial=$true;continue}
         $cards=$next;$bytes=$size
         if($cards.Count -ge [Math]::Min(8,[Math]::Max(1,$TopK))){$partial=$true;break}
     }
     }finally{foreach($item in $queue){if($item.pending){Close-ItlMemoryHttp $item.pending}}}
-    $output=[ordered]@{cards=@($cards);coverage=$(if($partial){'partial'}else{'bounded'});rawCandidateCap=24;sourceLookups=$lookups;backendCalls=(2+$lookups);utf8Bytes=$bytes;tokenCounts=@{};context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
+    $output=[ordered]@{cards=@($cards);coverage=$(if($partial){'partial'}else{'bounded'});rawCandidateCap=24;sourceLookups=$lookups;backendCalls=($backendCalls+$lookups);utf8Bytes=$bytes;tokenCounts=@{};context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
+    if($budgetLimited){$issues+=@{reason='operation_deadline'};$Trace['coverageIssues']=@($Trace['coverageIssues']|Where-Object {$_})+@{reason='operation_deadline'}}
+    if($issues.Count){$output['coverageIssues']=$issues}
     # Bound the final serialized response, including provenance and metrics,
     # with the same actual token limit. Bytes remain a separate metric.
     while($true){
@@ -789,6 +912,15 @@ function Invoke-ItlMemoryRecall {
     }
     $output.utf8Bytes=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $output -Depth 30 -Compress))
     return $output
+}
+
+function Set-ItlMemoryDestinationReadStates {
+    param([object[]]$Destinations,[object[]]$ReadScopes,[string[]]$NotCreated=@())
+    foreach($destination in $Destinations){
+        $destination['readState']=if(@($ReadScopes|Where-Object label -CEQ $destination.label).Count -eq 1){'admitted'}
+            elseif($NotCreated -ccontains $destination.label){'not_created'}
+            else{'unknown'}
+    }
 }
 
 function Get-ItlMemoryLocalContext {
@@ -832,11 +964,15 @@ function Get-ItlMemoryLocalContext {
         $areas=@($Binding.context.knowledgeContext.knowledgeAreas|Where-Object {$_.status -eq 'applicable' -and $_.memoryHomeProductId -ceq $product.scopeId}|ForEach-Object {$_.areaId})
         if($areas.Count){$destinations+=@{label=$product.label;scopeKind=$product.scopeKind;scopeId=$product.scopeId;knowledgeAreas=$areas}}
     }
-    $bindingState='current'
+    $bindingState='current';$readScopes=@()
     try{Assert-ItlMemoryBindingCurrent $Binding}catch{$bindingState='stale-or-disabled';$destinations=@()}
+    if($bindingState -eq 'current'){
+        $readScopes=@(Get-ItlMemoryScopes $Binding read)
+        Set-ItlMemoryDestinationReadStates $destinations $readScopes
+    }
     $receipts=@();$candidates=@();$receiptRoot=Join-Path (Get-ItlMemoryHome) 'receipt'
     if($bindingState -eq 'current' -and (Test-Path -LiteralPath $receiptRoot -PathType Container)){
-        $readScopes=@(Get-ItlMemoryScopes $Binding read);$readIds=@($readScopes|ForEach-Object {$_.datasetId})
+        $readIds=@($readScopes|ForEach-Object {$_.datasetId})
         foreach($file in @(Get-ChildItem -LiteralPath $receiptRoot -File -Filter '*.json'|Sort-Object LastWriteTimeUtc -Descending|Select-Object -First 24)){
             $record=Read-ItlMemoryJson $file.FullName
             if(-not $record -or $readIds -cnotcontains $record.datasetId -or ($NoteId -and $record.noteId -cne $NoteId)){continue}
@@ -979,7 +1115,9 @@ function Get-ItlMemoryStatusOverview {
     $deadline=[DateTime]::UtcNow.AddSeconds(15)
     try{
         Assert-ItlMemoryPrincipal $Binding $deadline
-        $null=Sync-ItlMemorySharedPrivateDatasets $Binding $deadline
+        $discovery=Sync-ItlMemorySharedPrivateDatasets $Binding $deadline -IncludeTask
+        Set-ItlMemoryDestinationReadStates $output.destinations @(Get-ItlMemoryScopes $Binding read) $discovery.notCreated
+        if([DateTime]::UtcNow -ge $deadline){throw 'MEMORY_DEADLINE'}
         $overview=Get-ItlMemoryOverview $Binding $deadline
     }catch{
         $code=($_.Exception.Message -split ':')[0];if($code -cnotmatch '^MEMORY_[A-Z_]+$'){$code='MEMORY_OPERATION_UNCONFIRMED'}
@@ -987,6 +1125,11 @@ function Get-ItlMemoryStatusOverview {
         return $output
     }
     $output['serverCoverage']=$(if($overview.coverage -eq 'partial'){'partial: some datasets or originals were not read in time'+$(if(@($overview.unavailable).Count){' ('+(@($overview.unavailable) -join ', ')+')'}else{''})+'; not absence of knowledge'}else{'bounded'})
+    if($discovery.unavailable.Count){
+        $missed=@($discovery.unavailable|ForEach-Object {"$($_.scopeKind)=$($_.reason)"}) -join ', '
+        $suffix=if($overview.coverage -eq 'partial'){'; '+$output.serverCoverage}else{''}
+        $output['serverCoverage']='partial: '+$missed+$suffix
+    }
     $output['indexUse']='standing: rules in force. index: titles only, verified unless marked; read content with recall. more: further notes, find them with recall.'
     # 2000 tokens for the whole answer: standing notes first, then index rows,
     # in level order. Whatever does not fit is counted in more.
@@ -1120,17 +1263,27 @@ function Invoke-ItlMemoryRetire {
 }
 
 function Add-ItlMemoryUsage {
-    param([object]$Binding,[string]$Tool,[string]$SessionId,[string]$Outcome='ok',[object]$Result=$null)
+    param([object]$Binding,[string]$Tool,[string]$SessionId,[string]$Outcome='ok',[object]$Result=$null,[Collections.IDictionary]$Trace=@{})
     # Private call journal of this working copy: what was called and how it
     # ended, never the query or a fact. A journal failure changes no result.
     try{
         $entry=[ordered]@{at=[DateTime]::UtcNow.ToString('o');tool=$Tool;session=$SessionId;cycleId=[string](Get-ItlCatalogField $Binding 'cycleId' '');outcome=($Outcome -split ':')[0]}
         $kind=[regex]::Match($Outcome,'kind=([a-z-]+)')
         if($kind.Success){$entry['recordKind']=$kind.Groups[1].Value}
+        if($Tool -eq 'recall' -and $Trace.Contains('elapsedMs')){
+            foreach($field in @('elapsedMs','stageMs','failureStage','failureKind','coverageIssues')){
+                if($Trace.Contains($field)){$entry[$field]=$Trace[$field]}
+            }
+            $entry['readOutcome']=if($Outcome -ne 'ok'){'failed'}elseif($Result.coverage -in @('partial','unavailable')){$Result.coverage}elseif(-not @($Result.cards).Count){'empty'}else{'cards'}
+        }
         if($Result -is [Collections.IDictionary]){
             if($Result.Contains('cards')){$entry['cards']=@($Result['cards']).Count}
             $state=[string](Get-ItlCatalogField $Result 'state' '');$operation=[string](Get-ItlCatalogField $Result 'operation' '')
-            if($state -eq 'durable' -and $operation -in @('saved','updated')){$entry[$operation]=1}
+            if($state -eq 'durable' -and $operation -in @('saved','updated')){
+                $entry[$operation]=1
+                $scopeKind=[string](Get-ItlCatalogField $Result 'scopeKind' '')
+                if($scopeKind){$entry['scopeKind']=$scopeKind}
+            }
             if($Tool -eq 'retire_note' -and $state -in @('retired','discarded-unsent')){$entry['retired']=1}
         }
         $workspaceId=[string]$Binding.identity.workspaceId

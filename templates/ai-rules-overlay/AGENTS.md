@@ -63,11 +63,18 @@ holds the details on demand.
 - A note that contradicts checked code, documentation or the user is updated
   in place (`note_id` + `data_id`) or removed with `retire_note` in the same
   turn, never duplicated under a new ID.
-- Choose the narrowest destination `memory_status` lists. Organization: only
-  knowledge true across projects and products (platform, BSP, tooling, company
-  conventions), never client, project or configuration data; `standing` there
-  only at the user's explicit word; retire another project's organization note
-  only after the user confirms. `host`: environment facts only.
+- Choose one `dataset_name` from `memory_status` by lifetime and reach: task
+  for the current cycle, workspace across this copy's branches, project across
+  branches or copies, product with registry home and independent evidence,
+  workplace for its practices, and `host`: environment facts only.
+- Organization: only knowledge true across projects and products (platform,
+  BSP, tooling, company conventions), never client, project or configuration
+  data; `standing` there only at the user's explicit word; retire another
+  project's organization note only after the user confirms.
+- Give relevant conditions and versions. For a recalled fix, verify current
+  branch code and test as needed before claiming it is present.
+- After a transient recall failure, use the read recovery in `project-memory`
+  if needed. Recall afresh in the next eligible turn of the same chat.
 - End a 1C task report with `Memory: recall N, saved N, updated N, retired N`,
   naming any `standing` note.
 - Project corrections stay in project memory. Shared `1c-templates-mcp`
