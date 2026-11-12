@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/xmentosx/1c-agent-workflow/tools/itl-ondemand-mcp/internal/childprocess"
 )
 
 func profileOwnerArguments(config profileOwnerConfig) []string {
@@ -25,8 +26,7 @@ func launchProfileOwner(executable string, args []string, projectRoot string) (p
 		return profileProcessIdentity{}, err
 	}
 	defer log.Close()
-	command := exec.Command(executable, args...)
-	hideExecutionGuardHost(command)
+	command := childprocess.Command(executable, args...)
 	command.Stdout, command.Stderr = log, log
 	// A manual owner must own its reservation itself. It may not accidentally
 	// adopt a short-lived invoking process's environment or private broker proof.

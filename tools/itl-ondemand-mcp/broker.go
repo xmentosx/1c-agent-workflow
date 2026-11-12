@@ -7,10 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/xmentosx/1c-agent-workflow/tools/itl-ondemand-mcp/internal/childprocess"
 )
 
 const brokerMarker = "ITL_ONDEMAND_RESULT="
@@ -263,7 +264,7 @@ func (b *powershellBroker) invoke(ctx context.Context, operation string, extra [
 		"-InternalOnDemandCatalogSha256", b.CatalogHash,
 	}
 	args = append(args, extra...)
-	cmd := exec.CommandContext(callCtx, command, args...)
+	cmd := childprocess.CommandContext(callCtx, command, args...)
 	environment, environmentErr := executionBrokerEnvironment(ctx)
 	if environmentErr != nil {
 		return nil, environmentErr

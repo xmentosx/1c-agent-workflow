@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/xmentosx/1c-agent-workflow/tools/itl-ondemand-mcp/internal/childprocess"
 )
 
 type missingStateRecoveryEvidence struct {
@@ -161,7 +161,7 @@ func proveRecoveryProcessesExited(ctx context.Context, pids []int) error {
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(checkCtx, "powershell.exe", args...).CombinedOutput()
+	output, err := childprocess.CommandContext(checkCtx, "powershell.exe", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("PID exit witness failed: %w: %s", err, output)
 	}

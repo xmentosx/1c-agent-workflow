@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -13,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/xmentosx/1c-agent-workflow/tools/itl-ondemand-mcp/internal/childprocess"
 )
 
 func writeRecoveryRecord(t *testing.T, root string, state runtimeState) string {
@@ -276,7 +276,7 @@ func TestRecoveryExitWitnessObservesRealWindowsProcessWithoutStoppingIt(t *testi
 	t.Cleanup(func() { _ = current.Release() })
 	pids := []int{}
 	for i := 0; i < 2; i++ {
-		cmd := exec.Command("cmd.exe", "/c", "exit", "0")
+		cmd := childprocess.Command("cmd.exe", "/c", "exit", "0")
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
