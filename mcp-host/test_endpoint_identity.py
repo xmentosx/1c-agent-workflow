@@ -1,7 +1,9 @@
 import json
 import shutil
 import importlib.util
+import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ssl
 from pathlib import Path
 import subprocess
 import sys
@@ -9,6 +11,9 @@ import threading
 import time
 import tempfile
 import unittest
+from unittest.mock import patch
+import urllib.error
+import urllib.request
 
 import endpoint_identity as identity
 
@@ -356,6 +361,23 @@ if($caseMode -eq 'seed'){
     def test_internal_health_failure_never_authorizes_restart(self):
         self.internal.error = True
         self.assertEqual(self.check()['status'], 'unverified')
+
+    def test_plain_http_does_not_initialize_tls(self):
+        with patch.object(urllib.request.HTTPSHandler, '__init__',
+                          side_effect=AssertionError('Plain HTTP initialized TLS')):
+            proof = identity.read_endpoint(self.public.url)
+        self.assertEqual(proof['server_name'], self.public.name)
+
+    def test_https_uses_default_certificate_verification(self):
+        with patch.object(http.client.HTTPSConnection, 'connect', autospec=True,
+                          side_effect=ConnectionRefusedError) as connect:
+            with self.assertRaises(urllib.error.URLError):
+                identity.DeadlineTransport().run(
+                    lambda opener: opener.open('https://endpoint.invalid/mcp', timeout=5), 5)
+        connect.assert_called_once()
+        context = connect.call_args.args[0]._context
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
 
     def test_slow_healthy_tool_uses_its_own_budget_through_the_real_child_transport(self):
         self.public.name, self.public.tool = self.internal.name, self.internal.tool

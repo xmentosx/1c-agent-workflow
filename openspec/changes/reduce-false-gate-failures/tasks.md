@@ -38,4 +38,4 @@
 
 ## 5. Приёмка
 
-- [ ] 5.1 Сверить 12 ложных отказов и 2 случая рассогласованных данных с `evidence/failure-audit.md`. Результат в [evidence/final-acceptance.md](evidence/final-acceptance.md). Для исторического `HostNativeTransport` подтверждена диагностика, причина и устранение сбоя остаются неподтверждёнными.
+- [ ] 5.1 Сверить 12 ложных отказов и 2 случая рассогласованных данных с `evidence/failure-audit.md`. Результат в [evidence/final-acceptance.md](evidence/final-acceptance.md). Для `HostNativeTransport` воспроизведены тайм-ауты идентификации под нагрузкой и устранена лишняя инициализация TLS на HTTP. Тайм-аут при сильной перегрузке сохраняется. Исторический traceback отсутствует.

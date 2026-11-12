@@ -105,7 +105,15 @@ class DeadlineTransport:
                 return self.do_open(lambda *a, **k: factory(Connection, *a, **k), request)
 
         class HTTPS(urllib.request.HTTPSHandler):
+            def __init__(self):
+                # The standard handler can load the platform trust store eagerly.
+                # Plain HTTP probes never need that work.
+                self.initialized = False
+
             def https_open(self, request):
+                if not self.initialized:
+                    super().__init__()
+                    self.initialized = True
                 return self.do_open(lambda *a, **k: factory(SecureConnection, *a, **k), request,
                                     context=self._context)
 
