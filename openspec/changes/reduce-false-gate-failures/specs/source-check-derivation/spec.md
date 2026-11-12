@@ -30,6 +30,11 @@ addition. A replaced pinned check MUST still fail on the defect it was originall
 - **WHEN** a new quality contract adds a consumer of an already selected lifecycle path
 - **THEN** the cohort capacity check uses the real selection and stays green while the estimated critical path remains within the Targeted hard budget minus its margin
 
+#### Scenario: A legitimate consumer is added to a narrow path
+- **WHEN** an additional owner declares a test for a narrow Targeted path
+- **THEN** selection includes both owners and their tests and leaves unrelated paths unchanged
+- **AND** the route keeps its explicit exclusions and uses the existing gate budgets
+
 #### Scenario: Selection outgrows capacity
 - **WHEN** the estimated critical path of the representative lifecycle selection exceeds the Targeted hard budget minus its margin
 - **THEN** the capacity check fails and names the estimate, the budget and the largest contributors

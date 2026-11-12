@@ -183,11 +183,14 @@ queue и candidate refs. Эти refs общие для worktree, но не
 `rawPath` полной записи, поэтому причина не зависит от удаляемых логов %TEMP%.
 После сбоя Pester гейт один раз последовательно и изолированно перезапускает
 упавшие файлы (не более пяти, в пределах остатка бюджета). Это только диагностика:
-гейт всё равно падает, доказательства и кэш из повтора не создаются. Тест с
-`isolatedRerun=passed` даёт класс `nondeterministic`: чинить нужно тест или его
-окружение, а не продукт. Правило двух одинаковых сбоев не меняется.
-`-StatusDetail Full` перечисляет `unstableTests` из того же журнала: тесты класса
-`nondeterministic` и упавшие на tree, который позже прошёл без изменений.
+гейт сохраняет отказ. В `failure.tests[*].isolatedRerun` записывается исход
+`passed`, `failed` или `skipped`. Если файл прошёл изолированно, отказ получает
+класс `nondeterministic`. Повтор не создаёт доказательств, кэша или регистрации.
+После двух одинаковых сбоев сохраняется блокировка до диагностики и явного
+`-RetryBlockedStage`. Сообщение называет нестабильные тесты.
+`-StatusDetail Full` показывает `unstableTests` с числом случаев, датой последнего
+случая и записями запусков. Список включает тесты из отказов `nondeterministic`
+и тесты, упавшие на tree, который позже прошёл без изменений.
 
 ## Implementation and registration batching
 
@@ -340,7 +343,16 @@ and stops a stale lock before Pester; repin with
 production functions by call closure (`FunctionClosure.TestSupport.ps1`).
 Reuse projections that depend on reviewed callers or file versions refuse
 themselves for unreviewed input, so the scenario executes instead of a gate
-failing; reuse regressions hold reviewed versions.
+failing; reuse regressions hold reviewed versions. For narrow Targeted routes,
+assert required owners and specific routing exclusions. When Plan shows growth,
+trace added tests to their contracts and check which inputs they consume. Keep
+necessary coverage and correct overbroad path patterns at the owning contract.
+
+Verify behavior by execution or derive the invariant from the parsed syntax
+tree (AST). Use source-text assertions for prohibitions such as forbidden
+legacy names or secrets. Use stable identifiers such as error codes, flags,
+action names or anchors for documentation contracts. If a behavior-preserving
+refactor breaks a text assertion, replace it with an executable or derived check.
 
 ### Develop scenario coverage
 
@@ -1178,9 +1190,13 @@ delivery lock` не чаще раза в 5 минут) до `ITL_DELIVERY_OPERAT
 по умолчанию 21600 с; `0` возвращает немедленный отказ. Владельца ограничивают
 бюджеты его плана. Если за время ожидания чужой запуск опубликовал все записи,
 с которыми ждущий `PublishDevelop` стартовал, и очередь пуста, он завершается
-успехом `already-published`; иначе публикует оставшиеся записи. Если внешняя
-оболочка прервана, но gate жив, повторный Publish/Release блокируется и ждёт так же. После завершения
-осиротевшего gate следующий запуск архивирует operation, восстанавливает запись
+успехом `already-published`; иначе публикует оставшиеся записи.
+
+<a id="delivery-orphan-gate-wait"></a>
+
+Если внешняя оболочка прервана, новый Publish/Release ждёт завершения живого
+gate по тем же правилам. После завершения осиротевшего gate следующий запуск
+архивирует operation, восстанавливает запись
 run history и exact-tree qualification, а затем продолжает обычную безопасную
 сборку кандидата. Lock и status вручную не удаляются и не редактируются.
 
