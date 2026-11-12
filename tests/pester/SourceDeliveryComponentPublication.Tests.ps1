@@ -93,8 +93,7 @@ Describe "Source develop queue and delivery" {
     }
 
     It "finalizes every owned release surface and excludes external pinned dependencies" {
-        # Only the finalizer module and the candidate publisher that gates it;
-        # both are proof inputs of this suite through the entrypoint closure.
+        # SourceDeliveryPublish exercises capability selection, qualification and push.
         $DeliverySourceText = Get-DeliverySourceText -Name 'source-delivery-component.ps1', 'source-delivery-candidate.ps1'
         foreach ($name in @(
             'Invoke-AiRulesComponentPublicationFinalize',
@@ -107,7 +106,6 @@ Describe "Source develop queue and delivery" {
         foreach ($external in @('roctupMcpToolkit', 'vanessaMcp', 'agentBrowser', 'windowsMcp', 'piMcpExtension', 'opencodePlugin')) {
             $aggregate | Should -Not -Match ([regex]::Escape($external))
         }
-        $DeliverySourceText | Should -Match 'Owned components and the queued changes require exact-candidate Release capabilities'
         $DeliverySourceText | Should -Match 'Resolve-DeliveryAiRulesSource'
         $DeliverySourceText | Should -Match 'worktree", "list", "--porcelain", "-z"'
         $DeliverySourceText | Should -Match 'Remove-DeliveryPreparedAiRulesWorktree'

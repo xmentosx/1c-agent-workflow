@@ -51,6 +51,9 @@ Describe "Source develop queue and delivery" {
                 @($payload.releaseCapabilities) | Should -Be @('ondemand-mcp')
                 $payload.fullReleaseQualified | Should -BeFalse
                 $payload.masterReleased | Should -BeFalse
+                $gateCandidates = @(Get-Content -LiteralPath (Join-Path $fixture.root 'build\gate-candidates.log') -Encoding UTF8)
+                @($gateCandidates | Where-Object { $_ -like 'Release *' }) |
+                    Should -Be @("Release $($payload.commit)", "Release $($payload.commit)")
                 @((Get-Content -LiteralPath (Join-Path $fixture.root 'build\gate-release-capabilities.log') -Encoding UTF8)) | Should -Be @('ondemand-mcp','ondemand-mcp')
                 (Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8 | Select-Object -Last 1 | ConvertFrom-Json).releaseQualified | Should -BeTrue
                 (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $payload.commit

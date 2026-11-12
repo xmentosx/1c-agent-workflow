@@ -12,6 +12,11 @@
         $HelperText = $context.HelperText
         $LauncherText = $context.LauncherText
         $McpHostText = $context.McpHostText
+        function Assert-DeliveryOrphanGateWaitAnchor {
+            param([string]$Text)
+            $Text | Should -MatchExactly '(?m)^<a id="delivery-orphan-gate-wait"></a>\r?$'
+        }
+
         function Get-WorkflowSourceMarkdownFiles {
             param([string]$Root)
             & {
@@ -410,12 +415,26 @@
         }
     }
 
+    It 'accepts rewording of the orphan gate rule and rejects removal of its anchor' {
+        $anchor = '<a id="delivery-orphan-gate-wait"></a>'
+        $original = "$anchor`r`n`r`nA duplicate waits while the orphan gate is alive."
+        $reworded = "$anchor`n`nThe next publication waits for the orphan gate to finish."
+        { Assert-DeliveryOrphanGateWaitAnchor -Text $original } | Should -Not -Throw
+        { Assert-DeliveryOrphanGateWaitAnchor -Text $reworded } | Should -Not -Throw
+        { Assert-DeliveryOrphanGateWaitAnchor -Text ($reworded.Replace($anchor, '')) } |
+            Should -Throw '*delivery-orphan-gate-wait*'
+    }
+
     It "keeps root AGENTS source-only and enforces accumulated delivery defaults" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENTS.md") -Raw -Encoding UTF8
         $agentsText | Should -Match "source repository"
         $agentsText | Should -Match "not installed-project guidance"
         $agentsText | Should -Match ([regex]::Escape('Never add this root `AGENTS.md` to bootstrap or `update-workflow` managed-copy lists'))
-        $qualityText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8; foreach ($marker in @('до получения plan', '-ApproveLongPlan', 'Invoke-TestPowerShellFile', 'повторный Publish/Release блокируется')) { $qualityText | Should -Match ([regex]::Escape($marker)) }
+        $qualityText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8
+        foreach ($marker in @('до получения plan', '-ApproveLongPlan', 'Invoke-TestPowerShellFile')) {
+            $qualityText | Should -Match ([regex]::Escape($marker))
+        }
+        Assert-DeliveryOrphanGateWaitAnchor -Text $qualityText
         $agentsText | Should -Match "ITL owns project bootstrap and lifecycle"
         $agentsText | Should -Match ([regex]::Escape('controlled `ai_rules_1c` fork owns'))
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action RegisterChange"))

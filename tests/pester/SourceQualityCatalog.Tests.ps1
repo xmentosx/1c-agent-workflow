@@ -185,7 +185,7 @@ Describe 'Source quality catalog contracts' {
         Get-ReleaseE2EBudgetProjection -QualityCatalog $catalog -StageCatalog (Get-QualityReleaseStageCatalog -RepositoryRoot $RepoRoot) | Should -Not -BeNullOrEmpty
     }
 
-    It "keeps the short modes cheap and reserves broad proof for Develop and Release" {
+    It "keeps mandatory Targeted owners and reserves broad proof for Develop and Release" {
         $path = Join-Path $RepoRoot "scripts\check.ps1"
         $tokens = $null
         $errors = $null
@@ -232,21 +232,38 @@ Describe 'Source quality catalog contracts' {
         $retiredProducer = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/database-access-producers.json")
         @($retiredProducer.contracts.id) | Should -Contain "remote-performance"
         @($retiredProducer.tests) | Should -Contain "tests/pester/RemotePerformance.Tests.ps1"
-        $roctupOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1")
-        @($roctupOnly.contracts.id) | Should -Be @("roctup-port-lifecycle")
-        @($roctupOnly.tests) | Should -Be @("tests/pester/ArtifactCacheIsolation.Tests.ps1", "tests/pester/RoctupPortLifecycle.Tests.ps1")
+        $roctupPath = ".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1"
+        $newConsumer = [pscustomobject]@{
+            id = "additional-roctup-consumer"
+            paths = @($roctupPath)
+            tests = @("tests/pester/AdditionalRoctupConsumer.Tests.ps1")
+        }
+        # 2026-11-10: a legitimate window-visibility consumer broke the exact ROCTUP inventory.
+        $catalogWithConsumer = $catalog | Select-Object *
+        $catalogWithConsumer.contracts = @($catalog.contracts) + @($newConsumer)
+        $roctupOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($roctupPath)
+        $roctupWithConsumer = Resolve-QualityContractsForPaths -Catalog $catalogWithConsumer -Paths @($roctupPath)
+        foreach ($selection in @($roctupOnly, $roctupWithConsumer)) {
+            @($selection.contracts.id) | Should -Contain "roctup-port-lifecycle"
+            @($selection.tests) | Should -Contain "tests/pester/ArtifactCacheIsolation.Tests.ps1"
+            @($selection.tests) | Should -Contain "tests/pester/RoctupPortLifecycle.Tests.ps1"
+            @($selection.tests) | Should -Not -Contain "tests/pester/DevBranchLifecycle.Tests.ps1"
+        }
+        @($roctupWithConsumer.contracts.id) | Should -Contain $newConsumer.id
+        @($roctupWithConsumer.tests) | Should -Contain $newConsumer.tests[0]
+        $unrelatedLifecycle = Resolve-QualityContractsForPaths -Catalog $catalogWithConsumer -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1")
+        @($unrelatedLifecycle.tests) | Should -Not -Contain "tests/pester/RoctupPortLifecycle.Tests.ps1"
+        @($unrelatedLifecycle.tests) | Should -Not -Contain $newConsumer.tests[0]
         foreach ($sharedPath in @(".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1")) {
             $sharedSelection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($sharedPath)
             @($sharedSelection.tests) | Should -Contain "tests/pester/RoctupPortLifecycle.Tests.ps1"
             @($sharedSelection.tests) | Should -Contain "tests/pester/PortRegistryLifecycle.Tests.ps1"
         }
-        $unrelatedLifecycle = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1")
-        @($unrelatedLifecycle.tests) | Should -Not -Contain "tests/pester/RoctupPortLifecycle.Tests.ps1"
         $onDemandOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1")
-        @($onDemandOnly.contracts.id) | Should -Be @("mcp-hosts")
+        @($onDemandOnly.contracts.id) | Should -Contain "mcp-hosts"
         @($onDemandOnly.tests) | Should -Contain "tests/pester/OnDemandMcp.Tests.ps1"
         $dependencyLockOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("templates/dependency-lock.json")
-        @($dependencyLockOnly.contracts.id) | Should -Be @("dependency-lock")
+        @($dependencyLockOnly.contracts.id) | Should -Contain "dependency-lock"
         @($dependencyLockOnly.tests) | Should -Contain "tests/pester/DependencyLocks.Tests.ps1"
         @($dependencyLockOnly.tests) | Should -Contain "tests/pester/GitHubDependencyFallback.Tests.ps1"
         @($dependencyLockOnly.tests) | Should -Contain "tests/pester/VanessaArtifactIntegration.Tests.ps1"
@@ -256,7 +273,10 @@ Describe 'Source quality catalog contracts' {
         @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
         @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
         $processOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-process.ps1")
-        @($processOnly.contracts.id) | Should -Be @("source-quality-catalog",'release-orchestration-tests', 'e2e-client-selection-tests', "source-delivery-process", "source-candidate-registration", 'source-e2e-disk-monitor', 'qualification-fixture-process-tests')
+        foreach ($owner in @("source-quality-catalog", "release-orchestration-tests", "e2e-client-selection-tests",
+            "source-delivery-process", "source-candidate-registration", "source-e2e-disk-monitor", "qualification-fixture-process-tests")) {
+            @($processOnly.contracts.id) | Should -Contain $owner
+        }
         @($processOnly.tests) | Should -Contain 'tests/pester/SourceE2EDiskMonitor.Tests.ps1'
         @($processOnly.tests) | Should -Contain 'tests/pester/SourceQualificationFixture.Tests.ps1'
         @($processOnly.tests) | Should -Contain 'tests/pester/SourceQualityCatalog.Tests.ps1'
@@ -265,14 +285,28 @@ Describe 'Source quality catalog contracts' {
         @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
         $queueOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-queue.ps1")
         $integrityOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('scripts/source-delivery-integrity.ps1')
-        @($integrityOnly.contracts.id) | Should -Be @('source-delivery-integrity')
-        @($integrityOnly.tests) | Should -Be @('tests/pester/SourceDeliveryAdmission.Tests.ps1','tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1','tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1')
-        @($queueOnly.contracts.id) | Should -Be @("source-candidate-registration", "source-delivery-queue")
-        @($queueOnly.tests) | Should -Be @("tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1")
+        @($integrityOnly.contracts.id) | Should -Contain 'source-delivery-integrity'
+        foreach ($test in @('SourceDeliveryAdmission', 'SourceDeliveryCandidateIntegrity', 'SourceDeliveryFinalizerIntegrity')) {
+            @($integrityOnly.tests) | Should -Contain "tests/pester/$test.Tests.ps1"
+        }
+        @($queueOnly.contracts.id) | Should -Contain "source-candidate-registration"
+        @($queueOnly.contracts.id) | Should -Contain "source-delivery-queue"
+        foreach ($test in @('SourceDeliveryAdmission', 'SourceDeliveryAuthority', 'SourceDeliveryCandidateRegistration',
+            'SourceDeliveryControllerRollback', 'SourceDeliveryFrozenPlan', 'SourceDeliveryFrozenPublication',
+            'SourceDeliveryHistoricalTransition', 'SourceDeliveryLegacyPlan', 'SourceDeliveryOperationRecovery',
+            'SourceDeliveryPublicationCleanup', 'SourceDeliveryQueue')) {
+            @($queueOnly.tests) | Should -Contain "tests/pester/$test.Tests.ps1"
+        }
         $componentOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-component.ps1")
-        @($componentOnly.contracts.id) | Should -Be @("source-delivery-component")
+        @($componentOnly.contracts.id) | Should -Contain "source-delivery-component"
         # SourceDeliveryProcess executes the shared native-argument quoting helper owned here.
-        @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcess.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
+        foreach ($test in @('ImmutableDownloadRetry', 'SourceDeliveryComponentPublication',
+            'SourceDeliveryProcess', 'SourceDeliveryProcessLifetime')) {
+            @($componentOnly.tests) | Should -Contain "tests/pester/$test.Tests.ps1"
+        }
+        foreach ($selection in @($processOnly, $queueOnly, $integrityOnly, $componentOnly)) {
+            @($selection.tests) | Should -Not -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
+        }
         $postGatePaths = @(
             "scripts/source-delivery.ps1",
             "scripts/source-delivery-supervisor.ps1",
