@@ -517,6 +517,30 @@ function Read-CurrentDevBranchStateForRoctupMcp {
     return $state
 }
 
+function Start-RoctupMcpEnterprise {
+    param(
+        [object]$State,
+        [string]$ArtifactPath,
+        [int]$Port,
+        [string]$User = (Get-EnvValue -Name 'IB_USER'),
+        [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD'),
+        [hashtable]$SessionWait = @{}
+    )
+
+    $command = Get-RoctupMcpStartupCommand -Port $Port
+    $result = Start-EnterpriseBackground -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+        -User $User -Password $Password @SessionWait -EnterpriseArgs @('/Execute', $ArtifactPath, "/C$command")
+    if ((Get-StateValue -State $result -Name 'windowMode' -Default '') -eq 'hidden' -and (Test-ItlInteractiveDesktopSession)) {
+        try {
+            $watch = Start-ItlOneCMainFrameWatch -Process $result.process
+            $watch.Dispose()
+        } catch {
+            Write-Host "[WARN] ITL_WINDOW_HELPER_UNAVAILABLE: ROCTUP main window may become visible. $($_.Exception.Message)"
+        }
+    }
+    return $result
+}
+
 function Start-RoctupMcpForState {
     param(
         [object]$State,
@@ -582,11 +606,7 @@ function Start-RoctupMcpForState {
     }
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
 
-    $command = Get-RoctupMcpStartupCommand -Port $port
-    $result = Start-EnterpriseBackground `
-        -InfoBasePath $state.devBranchInfoBasePath `
-        -InfoBaseKind $state.infoBaseKind `
-        -EnterpriseArgs @("/Execute", $artifact.path, "/C$command")
+    $result = Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact.path -Port $port
 
     Update-DevBranchState -State $state -Updates @{
         roctupMcpPort = $port

@@ -1915,13 +1915,8 @@ function Start-ItlOnDemandBackendInstanceCore {
         $sessionWait = Get-OneCSessionWaitParameters
         $startupStage = 'launch'
         if ($Family -eq "roctup") {
-            $result = Start-EnterpriseBackground `
-                -InfoBasePath $state.devBranchInfoBasePath `
-                -InfoBaseKind $state.infoBaseKind `
-                -User $targetUser `
-                -Password $targetPassword `
-                @sessionWait `
-                -EnterpriseArgs @("/Execute", $artifact.path, ("/C" + (Get-RoctupMcpStartupCommand -Port $port)))
+            $result = Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact.path -Port $port `
+                -User $targetUser -Password $targetPassword -SessionWait $sessionWait
         } else {
             $result = Start-EnterpriseBackground `
                 -InfoBasePath $serviceInfoBase.path `
