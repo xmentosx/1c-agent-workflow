@@ -997,6 +997,12 @@ function Get-ItlMemoryLocalContext {
         }
     }
     $output=[ordered]@{pending=$pending;receipts=$receipts;candidates=$candidates;preservedSource=$preservedSource;continuation=$continuation;coverage='bounded-local; old task pending is history, not current';destinations=$destinations;currentCycleId=$currentCycle;bindingState=$bindingState}
+    if(@($destinations|Where-Object scopeKind -CEQ product).Count){
+        $output.writeGuidance='For confirmed product knowledge, use the product destination that lists the applicable knowledgeArea. Pass its label as dataset_name and the area as applicability.knowledgeArea to remember. Use project for facts specific to the project or its team.'
+        if(Get-ItlCatalogField $Binding.context.projectContext 'customized' $false){
+            $output.writeGuidance+=' From a customized project, prove the fact holds for the base product and set applicability.independentOfCustomization=true.'
+        }
+    }
     if($candidates.Count){$output.candidateAction='recall omits candidates. At user confirmation, a fresh passed check or before the final report: remember the same note_id and data_id with status=verified and evidence, or retire_note a disproved one.'}
     return $output
 }
