@@ -106,6 +106,15 @@
             Write-Utf8TextAtomic (Join-Path $Root '.agent-1c/dependency-lock.json') (@{schemaVersion=1;dependencies=@{aiRules1c=@{commit=$contract.rulesCandidateCommit}}}|ConvertTo-Json -Depth 10)
             return $policy
         }
+        function Mock-IndexedFixtureNotes {
+            Mock Invoke-ItlMemoryHttp {
+                $script:Calls.Add(@{method=$Method;path=$Path;body=$Body})
+                $hits=@($script:DocDatasets.Keys|Where-Object {$Body.dataset_ids -contains $script:DocDatasets[$_]}|ForEach-Object {
+                    @{dataset_id=$script:DocDatasets[$_];metadata=@{data_id=$_}}
+                })
+                return @{status=200;body=$hits}
+            } -ParameterFilter {$Path -eq '/api/v1/recall'}
+        }
         function Get-ProjectDataset {param($b) @($b.provider.datasets|Where-Object scopeKind -EQ 'project')[0]}
     }
     BeforeEach {
@@ -122,7 +131,10 @@
             param($Provider,$Method,$Path,$Body,$DeadlineUtc,$ContentType,$Raw)
             $script:Calls.Add(@{method=$Method;path=$Path;body=$Body})
             if($Path -eq '/api/v1/users/me'){return @{status=200;body=@{id='ordinary-user';is_superuser=$false}}}
-            if($Path -eq '/api/v1/datasets' -and $Method -eq 'GET'){return @{status=200;body=@($script:NativeDatasets)}}
+            if($Path -eq '/api/v1/datasets' -and $Method -eq 'GET'){
+                $listed=@($script:NativeDatasets)
+                return @{status=200;body=$(if($Raw){ConvertTo-Json -InputObject $listed -Compress}else{,$listed})}
+            }
             if($Path -eq '/api/v1/datasets' -and $Method -eq 'POST'){
                 $existing=@($script:NativeDatasets|Where-Object {$_.name -ceq $Body.name})
                 if(-not $existing.Count){$existing=@(@{name=$Body.name;id=[guid]::NewGuid().ToString();ownerId='ordinary-user'});$script:NativeDatasets+=$existing}
@@ -787,15 +799,17 @@ try {
         $remember.description | Should -Match 'In the same turn after a user correction|Call in the same turn after a user correction'
         $remember.description | Should -Match 'source:"user",reference:"chat <date>"'
         $remember.description | Should -Match 'note_id and data_id from the recall card'
-        @($lines[1].result.tools|Where-Object name -EQ recall)[0].description | Should -Match 'before designing a 1C change, on entering an unfamiliar area'
+        @($lines[1].result.tools|Where-Object name -EQ recall)[0].description | Should -Match 'before designing a 1C change.*unfamiliar areas.*Omit datasets for the admitted union'
         @($lines[1].result.tools|Where-Object name -EQ memory_status)[0].description | Should -Match 'once at session start and after a contextChanged notice'
         $retire.description | Should -Match 'outdated or contradicts a checked source'
         $lines[0].result.instructions | Should -Match 'Seven logical areas'
-        # Tool descriptions and server instructions are always in the client
-        # context. Naming when to call each tool changes them from 1178 to 1721
-        # characters (+543, about 136 tokens at bytes/4); keep that bound.
+        # R56 adds scope choice, readState and the retry continuation. The
+        # always-loaded text grows 1,721 -> 2,205 bytes and tools/list grows
+        # 2,955 -> 3,439 bytes. Keep examples and exact-read procedure on demand.
         $alwaysOn=(@($lines[1].result.tools|ForEach-Object {$_.description.Length})|Measure-Object -Sum).Sum+$lines[0].result.instructions.Length
-        $alwaysOn | Should -BeLessOrEqual 1780
+        $alwaysOn | Should -BeLessOrEqual 2250
+        $schemaBytes=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $lines[1].result -Depth 20 -Compress))
+        $schemaBytes | Should -BeLessOrEqual 3500
     }
 
     # improve-scoped-memory-adoption
@@ -1292,6 +1306,185 @@ try {
         @($destinations|Group-Object {$_.label}|Where-Object Count -GT 1).Count | Should -Be 0
         @($destinations|ForEach-Object {$_.scopeKind}|Sort-Object) | Should -Be @('host','organization','product','project','taskCycle','workplace','workspace')
     }
+    It 'distinguishes an uncreated task destination from a readable project in a fresh branch' {
+        Mock-IndexedFixtureNotes
+        $task=Get-ScopeDataset $b taskCycle
+        $null=Update-ItlMemoryJson (Get-ItlMemoryPath binding $b.projectRoot) {param($current)
+            $current.provider.datasets=@($current.provider.datasets|Where-Object scopeKind -NE taskCycle)
+            return $current
+        }
+        $b.provider.datasets=@($b.provider.datasets|Where-Object scopeKind -NE taskCycle)
+        $project=Get-ProjectDataset $b
+        $id=Add-FixtureNote $project 'shared-decision' 'Подтвержденное правило проекта.'
+        $local=Invoke-ItlMemoryStatus $b -LocalOnly
+        ($local.destinations|Where-Object scopeKind -EQ taskCycle).readState | Should -BeExactly 'unknown'
+        ($local.destinations|Where-Object scopeKind -EQ project).readState | Should -BeExactly 'admitted'
+        Should -Invoke Invoke-ItlMemoryHttp -Times 0 -Exactly
+        $status=Invoke-ItlMemoryStatus $b
+        ($status.destinations|Where-Object scopeKind -EQ taskCycle).readState | Should -BeExactly 'not_created'
+        $status.serverCoverage | Should -BeExactly 'bounded'
+        $recall=Invoke-ItlMemoryRecall $b 'общий проект'
+        $recall.cards[0].source.dataId | Should -BeExactly $id
+        $recall.coverage | Should -BeExactly 'bounded'
+        {Invoke-ItlMemoryRecall $b 'общий проект' @($project.label,$task.label)} |
+            Should -Throw "*MEMORY_READ_SCOPE_DENIED*$($task.label)*does not exist*"
+        {Invoke-ItlMemoryRecall $b 'общий проект' @($project.label,'itl_task_foreign')} |
+            Should -Throw '*MEMORY_READ_SCOPE_DENIED*itl_task_foreign*outside the admitted read set*'
+        Should -Invoke Invoke-ItlMemoryHttp -Times 1 -Exactly -ParameterFilter {$Path -eq '/api/v1/recall'}
+        Should -Invoke Invoke-ItlMemoryHttp -Times 2 -Exactly -ParameterFilter {$Path -eq '/api/v1/datasets' -and $Method -eq 'GET'}
+    }
+
+    It 'finds the same project original across copies and still applies machine-readable conditions' {
+        Mock-IndexedFixtureNotes
+        $proof=@(@{source='test';reference='checked fixture diff'})
+        $b.memoryProjection.composition=@('erp')
+        $project=Get-ProjectDataset $b
+        $saved=Invoke-ItlMemoryRemember $b 'Исправление применимо вместе с ERP.' $project.label 'erp-fix' @{requiresProducts=@('erp')} $proof verified
+        $saved.state | Should -BeExactly 'durable'
+        $other=New-MemoryFixture -KeepBackend
+        $other.context.knowledgeContext.productVersion | Should -BeExactly $b.context.knowledgeContext.productVersion
+        (Invoke-ItlMemoryStatus $other $project.label -DataId $saved.dataId).applicable | Should -BeFalse
+        @( (Invoke-ItlMemoryRecall $other 'Исправление').cards ).Count | Should -Be 0
+        $other.memoryProjection.composition=@('erp')
+        (Invoke-ItlMemoryRecall $other 'Исправление').cards[0].source.dataId | Should -BeExactly $saved.dataId
+    }
+
+    It 'adopts an existing workplace from a sibling branch for search and exact reads' {
+        Mock-IndexedFixtureNotes
+        $main=$b.projectRoot
+        $one=New-MemoryFixture -KeepBackend -MainRoot $main
+        $two=New-MemoryFixture -KeepBackend -MainRoot $main
+        foreach($copy in @($one,$two)){
+            $copy.provider.datasets=@($copy.provider.datasets|Where-Object scopeKind -NE workplace)
+            $null=Update-ItlMemoryJson (Get-ItlMemoryPath binding $copy.projectRoot) {param($old) return $copy}
+        }
+        $label=(Get-ItlMemoryPrivateScopes $one|Where-Object scopeKind -EQ workplace).label
+        $proof=@(@{source='user';reference='chat'})
+        $saved=Invoke-ItlMemoryRemember $one 'Практика рабочего места.' $label 'workplace-practice' @{} $proof verified
+        $saved.state | Should -BeExactly 'durable'
+        $saved.scopeKind | Should -BeExactly 'workplace'
+        (Invoke-ItlMemoryRecall $two 'практика').cards[0].source.dataId | Should -BeExactly $saved.dataId
+        (Invoke-ItlMemoryStatus $two $label -DataId $saved.dataId).dataId | Should -BeExactly $saved.dataId
+        Should -Invoke Invoke-ItlMemoryHttp -Times 1 -Exactly -ParameterFilter {$Path -eq '/api/v1/datasets' -and $Method -eq 'POST'}
+    }
+
+    It 'returns the admitted project and explains a failed discovery without a second listing' {
+        Mock-IndexedFixtureNotes
+        $b=New-MemoryFixture -LazyShared
+        $project=Get-ProjectDataset $b
+        $id=Add-FixtureNote $project 'project-coverage' 'Проектное решение.'
+        $label=(Get-ItlMemoryPrivateScopes $b|Where-Object scopeKind -EQ workspace).label
+        Mock Invoke-ItlMemoryHttp {@{status=503;body=$null}} -ParameterFilter {$Path -eq '/api/v1/datasets'}
+        $trace=@{}
+        $recall=Invoke-ItlMemoryRecall $b 'проектное решение' -Trace $trace
+        $recall.cards[0].source.dataId | Should -BeExactly $id
+        $recall.coverage | Should -BeExactly 'partial'
+        ($recall.coverageIssues|Where-Object scopeKind -EQ workspace).reason | Should -BeExactly 'listing_unavailable'
+        $trace.stageMs.Keys | Should -Be @('principal','discovery','search','originals')
+        Should -Invoke Invoke-ItlMemoryHttp -Times 1 -Exactly -ParameterFilter {$Path -eq '/api/v1/datasets'}
+        {Invoke-ItlMemoryRecall $b 'проектное решение' @($project.label,$label)} |
+            Should -Throw "*MEMORY_READ_SCOPE_DENIED*$label*could not be verified*"
+        $status=Invoke-ItlMemoryStatus $b
+        ($status.destinations|Where-Object scopeKind -EQ workspace).readState | Should -BeExactly 'unknown'
+        $status.serverCoverage | Should -Match '^partial: .*workspace=listing_unavailable'
+        Should -Invoke Invoke-ItlMemoryHttp -Times 1 -Exactly -ParameterFilter {$Path -eq '/api/v1/recall'}
+        Should -Invoke Invoke-ItlMemoryHttp -Times 3 -Exactly -ParameterFilter {$Path -eq '/api/v1/datasets'}
+    }
+
+    It 'keeps a verified workspace mapping when a later scope cannot be adopted' {
+        Mock-IndexedFixtureNotes
+        $b=New-MemoryFixture -LazyShared
+        $workspace=(Get-ItlMemoryPrivateScopes $b|Where-Object scopeKind -EQ workspace)
+        $workspace.datasetId=[guid]::NewGuid().ToString()
+        $hostScope=Get-ItlMemoryPrivateScopes $b|Where-Object scopeKind -EQ host
+        $script:NativeDatasets=@(@{name=$workspace.label;id=$workspace.datasetId;ownerId='ordinary-user'})+
+            @(1..2|ForEach-Object {@{name=$hostScope.label;id=[guid]::NewGuid().ToString();ownerId='ordinary-user'}})
+        $id=Add-FixtureNote $workspace 'checked-workspace' 'Факт рабочей копии.'
+        $recall=Invoke-ItlMemoryRecall $b 'копия'
+        $recall.cards[0].source.dataId | Should -BeExactly $id
+        ($recall.coverageIssues|Where-Object scopeKind -EQ host).reason | Should -BeExactly 'dataset_unverified'
+        $live=Read-ItlMemoryJson (Get-ItlMemoryPath binding $b.projectRoot)
+        @(Get-ItlMemoryScopes $live read $workspace.label)[0].datasetId | Should -BeExactly $workspace.datasetId
+        @(Get-ItlMemoryScopes $live read $hostScope.label).Count | Should -Be 0
+        Should -Invoke Invoke-ItlMemoryHttp -Times 1 -Exactly -ParameterFilter {$Path -eq '/api/v1/datasets' -and $Method -eq 'GET'}
+        Should -Invoke Invoke-ItlMemoryHttp -Times 0 -Exactly -ParameterFilter {$Path -eq '/api/v1/datasets' -and $Method -eq 'POST'}
+    }
+
+    It 'does not start search when discovery exhausts the remaining operation deadline' {
+        $b=New-MemoryFixture -LazyShared
+        Mock Invoke-ItlMemoryHttp {
+            $remaining=($DeadlineUtc-[DateTime]::UtcNow).TotalMilliseconds
+            if($remaining -gt 0){Start-Sleep -Milliseconds ([int]$remaining+10)}
+            throw 'MEMORY_TRANSPORT_UNCONFIRMED: deadline'
+        } -ParameterFilter {$Path -eq '/api/v1/datasets'}
+        $trace=@{}
+        {Invoke-ItlMemoryRecall $b 'query' -Trace $trace -DeadlineUtc ([DateTime]::UtcNow.AddMilliseconds(500))} |
+            Should -Throw '*MEMORY_DEADLINE*'
+        $trace.failureStage | Should -BeExactly 'discovery'
+        Should -Invoke Invoke-ItlMemoryHttp -Times 0 -Exactly -ParameterFilter {$Path -eq '/api/v1/recall'}
+    }
+
+    It 'closes a hung native listing once per operation while recall and status still read the project' {
+        Mock-IndexedFixtureNotes
+        $b=New-MemoryFixture -LazyShared
+        $project=Get-ProjectDataset $b
+        $id=Add-FixtureNote $project 'bounded-discovery' 'Статус проектной заметки.'
+        $ready=Join-Path $TestDrive 'discovery-port.txt'
+        $job=Start-Job -ArgumentList $ready -ScriptBlock {
+            param($Ready)
+            $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
+            $listener.Start()
+            try{
+                [IO.File]::WriteAllText($Ready,[string]$listener.LocalEndpoint.Port)
+                foreach($operation in 1..2){
+                    $peer=$listener.AcceptTcpClient();$peer.ReceiveTimeout=7000
+                    try{
+                        $stream=$peer.GetStream()
+                        $header=''
+                        while(-not $header.EndsWith("`r`n`r`n")){
+                            $v=$stream.ReadByte()
+                            if($v -lt 0 -or $header.Length -gt 8000){throw 'bad fixture request'}
+                            $header+=[char]$v
+                        }
+                        if($header -notmatch '^GET /api/v1/datasets HTTP/'){throw 'unexpected request'}
+                        if($stream.ReadByte() -ne -1){throw 'listing remained open'}
+                        'closed'
+                    }finally{$peer.Dispose()}
+                }
+                if($listener.Pending()){throw 'listing was retried'}
+            }finally{$listener.Stop()}
+        }
+        try{
+            $until=[DateTime]::UtcNow.AddSeconds(10)
+            while(-not (Test-Path -LiteralPath $ready) -and [DateTime]::UtcNow -lt $until){Start-Sleep -Milliseconds 25}
+            $b.provider.url='http://127.0.0.1:'+([IO.File]::ReadAllText($ready))+'/'
+            $b.provider.credentialFile=Join-Path $env:VIBECODING1C_MCP_LOCAL_HOME 'credential.json'
+            Write-Utf8TextAtomic $b.provider.credentialFile '{"apiKey":"fixture"}'
+            $script:ListingBudgets=[Collections.Generic.List[double]]::new()
+            Mock Invoke-ItlMemoryHttp {
+                param($Provider,$Method,$Path,$DeadlineUtc,$Raw)
+                $script:ListingBudgets.Add(($DeadlineUtc-[DateTime]::UtcNow).TotalSeconds)
+                & $NativeMemoryHttp $Provider $Method $Path -DeadlineUtc $DeadlineUtc -Raw:$Raw
+            } -ParameterFilter {$Path -eq '/api/v1/datasets'}
+            $trace=@{}
+            $recall=Invoke-ItlMemoryRecall $b 'проектная заметка' -Trace $trace
+            $recall.cards[0].source.dataId | Should -BeExactly $id
+            $recall.coverage | Should -BeExactly 'partial'
+            ($recall.coverageIssues|Where-Object scopeKind -EQ workspace).reason | Should -BeExactly 'discovery_deadline'
+            $trace.stageMs.discovery | Should -BeLessThan 3000
+            $watch=[Diagnostics.Stopwatch]::StartNew()
+            $status=Invoke-ItlMemoryStatus $b
+            $watch.Elapsed.TotalSeconds | Should -BeLessThan 15
+            ($status.destinations|Where-Object scopeKind -EQ workspace).readState | Should -BeExactly 'unknown'
+            $status.serverCoverage | Should -Match '^partial: .*workspace=discovery_deadline'
+            ($status.index|Where-Object level -EQ project).notes | Should -Contain 'Статус проектной заметки.'
+            $null=$job|Wait-Job -Timeout 5
+            @(Receive-Job $job -ErrorAction Stop) | Should -Be @('closed','closed')
+            foreach($budget in $script:ListingBudgets){$budget | Should -BeLessOrEqual 2}
+            Should -Invoke Invoke-ItlMemoryHttp -Times 2 -Exactly -ParameterFilter {$Path -eq '/api/v1/datasets'}
+        }finally{$job|Stop-Job;$job|Remove-Job -Force}
+    }
+
     It 'derives one host scope per machine and host name without elevation' {
         # The real unelevated read of this runner.
         & $NativeMachineGuid | Should -Match '^[0-9a-fA-F-]{36}$'
@@ -1438,7 +1631,8 @@ try {
         $updated=Invoke-ItlMemoryRemember $b 'Факт для журнала, уточнённый.' 'itl_project_customer' 'journal' @{} $evidence verified -DataId $saved.dataId
         $updated.operation | Should -Be updated
         Add-ItlMemoryUsage $b remember 'session-1' 'ok' $updated
-        Add-ItlMemoryUsage $b recall 'session-2' 'MEMORY_SOURCE_UNAVAILABLE: no current authorized original; do not use a cached fragment.'
+        $trace=@{elapsedMs=900;stageMs=@{principal=20;discovery=30;search=800};failureStage='search';failureKind='transport'}
+        Add-ItlMemoryUsage $b recall 'session-2' 'MEMORY_SOURCE_UNAVAILABLE: no current authorized original; do not use a cached fragment.' -Trace $trace
         Add-ItlMemoryUsage $b memory_status 'session-2' 'MEMORY_RECORD_INVALID: kind=pending; the record is not valid UTF-8 JSON.'
         Add-ItlMemoryUsage $b retire_note 'session-2' 'ok' (Invoke-ItlMemoryRetire $b 'itl_project_customer' 'journal')
         $path=Get-ItlMemoryPath usage $b.identity.workspaceId
@@ -1449,6 +1643,13 @@ try {
         $journal.entries[0].session | Should -BeExactly 'session-1'
         $journal.entries[0].cycleId | Should -BeExactly $b.cycleId
         $journal.entries[0].cards | Should -Be 0
+        $journal.entries[1].scopeKind | Should -BeExactly project
+        $journal.entries[2].scopeKind | Should -BeExactly project
+        $journal.entries[0].Contains('elapsedMs') | Should -BeFalse
+        $journal.entries[3].elapsedMs | Should -Be 900
+        $journal.entries[3].stageMs.search | Should -Be 800
+        $journal.entries[3].failureStage | Should -BeExactly search
+        $journal.entries[3].readOutcome | Should -BeExactly failed
         $journal.entries[3].outcome | Should -BeExactly 'MEMORY_SOURCE_UNAVAILABLE'
         $journal.entries[4].outcome | Should -BeExactly 'MEMORY_RECORD_INVALID'
         $journal.entries[4].recordKind | Should -BeExactly pending

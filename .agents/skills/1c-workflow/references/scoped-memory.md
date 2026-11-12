@@ -90,7 +90,8 @@ Private task/workspace/workplace/host datasets are lazy under the verified
 principal. Before creating one the adapter looks it up by exact name and native
 owner and adopts it; after creating it confirms a single match, otherwise the
 write is refused and nothing more is created. A reader adopts an existing
-workspace/host dataset and never creates one. An uncertain creation is
+workspace, workplace or host dataset by exact name and owner. A reader creates
+nothing. An uncertain creation is
 reconciled the same way; no blind create.
 An operator prepares shared product/project/organization IDs using the same
 ordinary technical connection and appends verified mappings to settings. The
@@ -135,11 +136,36 @@ missing index is not absence of knowledge. No cache between operations.
 without a backend; `note_id` reads the exact pending source. It never scans 1C
 state, transcripts or arbitrary logs. The local scan is capped at 24 recent records
 and eight summaries; an exact known ID bypasses that listing cap. `destinations`
-has one row per dataset; a product row lists its writable `knowledgeAreas`.
+has one row per write destination; a product row lists its writable
+`knowledgeAreas`. Each row has `readState`: `admitted` means the binding admits
+its exact ID; `not_created` means the server listing confirmed absence under
+the expected owner, so the row can still be used for a first write; `unknown`
+means read access or existence is unconfirmed. Offline status reports
+`admitted` or `unknown` using the local binding. Use `serverCoverage` for the
+outcome of the current server reads.
 
 `remember(data, dataset_name, note_id?, data_id?, status?, title?, applicability?, evidence?, source?, revision?)`
-saves one self-contained fact. Choose the narrowest sufficient destination from
-status. Missing destination/home/grant preserves the private pending source; the
+saves one self-contained fact. Choose one `dataset_name` from status based on
+the fact's lifetime and applicability.
+
+| Scope | When to use it |
+| --- | --- |
+| `task` | Current cycle only, such as approval of a specific diff, a test run or interim state. |
+| `workspace` | Multiple branches of one main copy, such as their shared stand arrangement. |
+| `project` | A confirmed decision, fix or constraint that applies across project branches or copies. Give conditions and versions. |
+| `product` | Knowledge transferable within the product, with a confirmed registry knowledge area, conditions and evidence independent of customer customization. |
+| `workplace` | A practice of the same `workplaceId`. |
+| `host` | Machine environment, such as the platform version or tool location. |
+| `organization` | Confirmed knowledge across projects and products. Organizational `standing` needs explicit user direction. |
+
+For a project fix, record source branch and commit or a checked diff reference,
+affected objects, applicable conditions and verification evidence. Put supported
+machine-readable conditions and version bounds in `applicability`. Before
+claiming the fix is present in another branch, check its current code and the
+relevant test if needed. A confirmed original can inform analysis or a proposed
+port if the branch lacks the fix. Record uncertainty when applicability is unclear.
+
+Missing destination/home/grant preserves the private pending source; the
 refusal names its `note_id` and both ways on: repeat `remember` with that ID and
 a `dataset_name`, or `retire_note(note_id)`. The default note ID is derived from
 the branch copy, project and fact, not from the destination, so repeating the
@@ -176,8 +202,9 @@ the union of allowed exact IDs, at most 24 candidates, then checks authorized ra
 original/current status/applicability. Stale fragments never override the original.
 The optional public `datasets` argument accepts admitted labels, not UUIDs; the
 owner resolves those labels to pinned native IDs. Omit it to use the current
-admitted union. A lazy task destination without a created dataset is not an
-admitted reader merely because local status lists its label.
+admitted union. An explicit list is validated before search. The denial names
+the label and says whether its dataset is absent, outside admission, or
+unverified. Correct the list or omit it to use the admitted union.
 Full output uses a conservative UTF-8 byte cap below 1600 (including provenance).
 An on-recall PS5/.NET BPE counter measures serialized cards for pinned official
 cl100k_base/o200k_base vocabularies (2.47 MB compressed assets, MIT license). Eight
@@ -185,9 +212,23 @@ frozen `tiktoken 0.12.0 encode_ordinary` vectors cover Russian, BSL, whitespace 
 JSON. Non-BMP categories are reported unknown with the retained byte bound.
 Mapping the named encoding to the actual client/model and whole-task costs/quality
 remain G5; no measurement is invented for another tokenizer or hidden chat framing.
-The total deadline is 20 seconds; write/status use 60 seconds. Capped/time-limited
-results report partial coverage. Native original lookups are separate bounded calls.
-A native `memory_warming_up` status reports `coverage=empty`: no indexed notes yet.
+Recall has a 20-second operation budget, overview status has 15 seconds,
+and exact status and writes have 60 seconds. Discovery of unmapped private
+datasets shares one listing and a deadline of at most two seconds inside recall
+or overview status. If nothing needs discovery it is skipped. Confirmed absence
+leaves coverage intact. An incomplete listing or adoption leaves unread scopes
+`unknown`; the request closes and proceeds over admitted IDs in the remaining
+time. Recall reports `coverageIssues` with the affected scopes and reasons,
+including `operation_deadline` when original reads run out of time. If no time
+remains before search, the operation reports a deadline failure.
+
+A native `memory_warming_up` response indicates no indexed notes in the searched
+datasets; coverage is `empty` when discovery has no outstanding issues. A
+temporary recall failure leaves coverage unknown for that call. If the fact is
+needed in the current turn, use exact status for a known original or make one
+more recall with the same admitted set. After another failure, continue with
+available sources and report the gap. Make a fresh recall in the next eligible
+turn in the same chat. Reconcile uncertain writes by exact IDs.
 
 `memory_status(dataset_name, note_id|data_id)` reconciles the exact source and
 updates its local receipt/pending. Dataset
@@ -246,7 +287,11 @@ with its continuation text; an unexpected cause stays in the client log.
 Every call adds one entry to a private journal of the branch copy
 (`memory/usage/<hash>.json`, last 200): tool, time, server-process session,
 cycle, `ok` or the error code with the record kind, counts of cards and of
-saved, updated and retired notes; never a query or a fact. A journal failure
+saved, updated and retired notes. New recall entries record elapsed milliseconds,
+timings for principal, discovery, search and original reads, the failing stage
+when known, and the result or coverage issues. Successful saves and updates
+include the scope kind. Older entries remain readable. The journal contains
+technical fields only. A journal failure
 changes no call. `vibecoding1c-mcp-status -MemoryAction status` returns its
 summary for the current cycle as `usage`; a passed `/itl-check` prints one
 informational line while memory is enabled and is never blocked by it.

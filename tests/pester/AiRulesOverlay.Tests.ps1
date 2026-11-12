@@ -301,9 +301,9 @@ Describe "controlled ai_rules_1c release overlay" {
         $core.Value | Should -Match ([regex]::Escape('{source:"user", reference:"chat <date>"}'))
         $core.Value | Should -Match 'never `candidate`'
         $core.Value | Should -Match 'updated\s+in place \(`note_id` \+ `data_id`\) or removed with `retire_note` in the same\s+turn, never duplicated under a new ID'
-        $core.Value | Should -Match 'never client, project or configuration data'
-        $core.Value | Should -Match "``standing`` there\s+only at the user's explicit word"
-        $core.Value | Should -Match "retire another project's organization note\s+only after the user confirms"
+        $core.Value | Should -Match 'never client, project or configuration\s+data'
+        $core.Value | Should -Match "``standing`` there only at the user's explicit word"
+        $core.Value | Should -Match "retire another\s+project's organization note only after the user confirms"
         $core.Value | Should -Match '`host`: environment facts only'
         $core.Value | Should -Match 'Memory: recall N, saved N, updated N, retired N'
         # The memory line this core absorbed keeps its trigger, action,
@@ -315,13 +315,13 @@ Describe "controlled ai_rules_1c release overlay" {
         # Provider routing, recovery, budgets and the note format stay on demand.
         $core.Value | Should -Match '`project-memory`\s+holds the details on demand'
         $core.Value | Should -Not -Match 'OpenViking|CHUNKS|dataset ID|pending source'
-        # Always-on cost: the core is 1,578 normalized UTF-8 bytes and replaces the
-        # three-line memory bullet, so the appendix grows 3,363 -> 4,718 (+1,355,
-        # about 339 tokens at bytes/4) and the fork root 13,824 -> 15,179 under
-        # its 15 KiB ceiling. PM5 agents read the on-demand rule in 24 of 25
-        # sessions and used scoped memory in 4; the call triggers must be loaded.
-        [Text.Encoding]::UTF8.GetByteCount($core.Value.TrimEnd("`n")) | Should -BeLessOrEqual 1600
-        [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 4750
+        $core.Value | Should -Match 'one `dataset_name` from `memory_status` by lifetime and reach'
+        $core.Value | Should -Match 'verify current\s+branch code and test as needed'
+        $core.Value | Should -Match 'next eligible turn of the same chat'
+        # R56 adds 497 UTF-8 bytes: core 1,578 -> 2,075 and appendix 4,718 -> 5,215.
+        # Examples and read recovery details stay on demand.
+        [Text.Encoding]::UTF8.GetByteCount($core.Value.TrimEnd("`n")) | Should -BeLessOrEqual 2100
+        [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 5250
         $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
         # One qualification call for both rules: the session-start status.
         $userRules | Should -Match ([regex]::Escape('`itl-scoped-cognee` `memory_status` returns `bindingState=current`'))
