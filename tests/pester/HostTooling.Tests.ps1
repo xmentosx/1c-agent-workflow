@@ -1870,7 +1870,7 @@ services:
             Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
             Set-Content -LiteralPath $fixturePath -Encoding UTF8 -Value @'
 param([string]$ChildPidPath)
-$child = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 120") -PassThru
+$child = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 120") -WindowStyle Hidden -PassThru
 [IO.File]::WriteAllText($ChildPidPath, [string]$child.Id)
 Start-Sleep -Seconds 120
 '@

@@ -9,13 +9,14 @@ import (
 	"encoding/json"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xmentosx/1c-agent-workflow/tools/itl-ondemand-mcp/internal/childprocess"
 )
 
 func projectTestsRequestFixture(t *testing.T) (*designerAgentRequest, projectTestsClaims) {
@@ -309,7 +310,7 @@ $cap=New-ProjectTestsDesignerCapability -State $state -InfoBaseKind $state.infoB
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-RepoRoot", claims.HelperRoot, "-FixturePath", fixturePath, "-ResultPath", resultPath)
+	command := childprocess.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-RepoRoot", claims.HelperRoot, "-FixturePath", fixturePath, "-ResultPath", resultPath)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("factory failed: %v: %s", err, output)
 	}

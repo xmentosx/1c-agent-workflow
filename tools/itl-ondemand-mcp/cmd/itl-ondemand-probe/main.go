@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/xmentosx/1c-agent-workflow/tools/itl-ondemand-mcp/internal/childprocess"
 )
 
 type runtimeState struct {
@@ -615,7 +616,7 @@ func connect(ctx context.Context, exe, family, projectRoot, catalog, helper stri
 }
 
 func facadeCommand(exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration) *exec.Cmd {
-	return exec.Command(exe, "serve", "--family", family, "--project-root", projectRoot, "--catalog", catalog, "--helper", helper, "--idle-timeout", idleTimeout.String(), "--cleanup-timeout", facadeCleanupTimeout.String())
+	return childprocess.Command(exe, "serve", "--family", family, "--project-root", projectRoot, "--catalog", catalog, "--helper", helper, "--idle-timeout", idleTimeout.String(), "--cleanup-timeout", facadeCleanupTimeout.String())
 }
 
 func catalogToolCount(path string) (int, error) {
@@ -902,7 +903,7 @@ func waitForTestClientWindowTitle(ctx context.Context, port int, timeout time.Du
 	deadline := time.Now().Add(timeout)
 	script := `& { param([int]$Port) $pattern='(?i)-TPort\s+'+[regex]::Escape([string]$Port)+'(?:\s|$)'; foreach($native in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { [string]$_.CommandLine -match '(?i)/TESTCLIENT' -and [string]$_.CommandLine -match $pattern })) { $title=[string](Get-Process -Id $native.ProcessId -ErrorAction SilentlyContinue).MainWindowTitle; if($title){$title; break} } }`
 	for {
-		command := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script, strconv.Itoa(port))
+		command := childprocess.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script, strconv.Itoa(port))
 		raw, err := command.Output()
 		if err == nil && strings.TrimSpace(string(raw)) != "" {
 			return strings.TrimSpace(string(raw)), nil

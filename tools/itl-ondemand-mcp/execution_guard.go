@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/xmentosx/1c-agent-workflow/tools/itl-ondemand-mcp/internal/childprocess"
 )
 
 type databaseConnection struct {
@@ -93,10 +95,9 @@ func acquireExecutionGuard(ctx context.Context, python, runtimeRoot string, requ
 	if python == "" {
 		python = "python"
 	}
-	cmd := exec.Command(python, "-B", "-X", "utf8", "-u", "-m", "itl_remote.execution_guard_host")
+	cmd := childprocess.Command(python, "-B", "-X", "utf8", "-u", "-m", "itl_remote.execution_guard_host")
 	cmd.Dir = runtimeRoot
 	cmd.Env = executionHostEnvironment(runtimeRoot)
-	hideExecutionGuardHost(cmd)
 	cmd.Stderr = io.Discard
 	input, err := cmd.StdinPipe()
 	if err != nil {
