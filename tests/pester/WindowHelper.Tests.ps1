@@ -365,7 +365,7 @@ Describe 'Window helper build, group and channel' {
         } finally { $script:ProjectRoot = $saved }
     }
 
-    It 'shows a member TestClient on request without focus, keeps its new windows and hides it again' {
+    It 'supports TestClient reveal and keeps only the ROCTUP main frame hidden' {
         # A stand-in TestClient: a 1cv8c image with /TESTCLIENT whose V8-class windows sit
         # off screen, so nothing appears for the user while the helper shows them.
         $fakeDir = Join-Path $TestDrive 'Платформа клиента с пробелом'
@@ -389,7 +389,7 @@ static class FakeClient {
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
     static WndProc proc = Proc; static string flag; static bool second;
     static IntPtr Proc(IntPtr h, uint m, IntPtr w, IntPtr l) {
-        if (m == 0x0113 && !second && File.Exists(flag)) { second = true; Open("V8NewLocalFrameBaseWnd", "ITL fake dialog"); }
+        if (m == 0x0113 && !second && File.Exists(flag)) { second = true; Open("V8TopLevelFrameSDIsec", "ITL fake dialog"); }
         return DefWindowProc(h, m, w, l);
     }
     static IntPtr Open(string cls, string title) {
@@ -416,6 +416,7 @@ static class FakeClient {
         $client = [Diagnostics.Process]::Start($start)
         Add-Type -Namespace WhTest -Name User -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int cmd);
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
 '@ -ErrorAction SilentlyContinue
@@ -425,6 +426,7 @@ static class FakeClient {
             return [bool](& $Condition)
         }
         $saved = $script:ProjectRoot
+        $mainFrameWatch = $null
         try {
             $main = [IntPtr]::Zero
             (Wait-Wh { $script:main = [WhTest.User]::FindWindow('V8TopLevelFrameSDI', 'ITL fake TestClient'); $script:main -ne [IntPtr]::Zero }) | Should -BeTrue
@@ -439,8 +441,8 @@ static class FakeClient {
             [WhTest.User]::IsWindowVisible($main) | Should -BeTrue
             [WhTest.User]::GetForegroundWindow() | Should -Not -Be $main -Because 'a show on request never takes the foreground'
             [IO.File]::WriteAllText($flag, 'open')
-            (Wait-Wh { [WhTest.User]::FindWindow('V8NewLocalFrameBaseWnd', 'ITL fake dialog') -ne [IntPtr]::Zero }) | Should -BeTrue
-            $dialog = [WhTest.User]::FindWindow('V8NewLocalFrameBaseWnd', 'ITL fake dialog')
+            (Wait-Wh { [WhTest.User]::FindWindow('V8TopLevelFrameSDIsec', 'ITL fake dialog') -ne [IntPtr]::Zero }) | Should -BeTrue
+            $dialog = [WhTest.User]::FindWindow('V8TopLevelFrameSDIsec', 'ITL fake dialog')
             Start-Sleep -Milliseconds 700
             [WhTest.User]::IsWindowVisible($dialog) | Should -BeTrue -Because 'new windows of a shown client stay visible'
             $revealed = @((Send-ItlWindowHelperRequest -Directory $group.directory -Operation status -Executable $group.executable).revealed)
@@ -470,10 +472,33 @@ static class FakeClient {
             Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory, '--hung') | Should -Be 0
             (Wait-Wh { -not [WhTest.User]::IsWindowVisible($main) }) | Should -BeTrue
             @((Send-ItlWindowHelperRequest -Directory $group.directory -Operation status -Executable $group.executable).revealed) | Should -HaveCount 0
+
+            # Reuse the same Win32 fixture without the TestClient group's policy.
+            Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('stop', $group.directory) | Should -Be 0
+            [WhTest.User]::ShowWindowAsync($main, 8) | Should -BeTrue
+            [WhTest.User]::ShowWindowAsync($dialog, 8) | Should -BeTrue
+            (Wait-Wh { [WhTest.User]::IsWindowVisible($main) -and [WhTest.User]::IsWindowVisible($dialog) }) | Should -BeTrue
+            (Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('watch-main', [string]$client.Id, '1')) | Should -Be 2
+            [WhTest.User]::IsWindowVisible($main) | Should -BeTrue -Because 'an unverified PID must not be touched'
+
+            $mainFrameWatch = Start-ItlOneCMainFrameWatch -Process $client
+            (Wait-Wh { -not [WhTest.User]::IsWindowVisible($main) }) | Should -BeTrue
+            [WhTest.User]::IsWindowVisible($dialog) | Should -BeTrue
+            # Post a new show without activation and let the watcher hide it again.
+            [WhTest.User]::ShowWindowAsync($main, 8) | Should -BeTrue
+            Start-Sleep -Milliseconds 700
+            [WhTest.User]::IsWindowVisible($main) | Should -BeFalse
+            [WhTest.User]::IsWindowVisible($dialog) | Should -BeTrue -Because 'the user must be able to answer a ROCTUP dialog'
         } finally {
             $script:ProjectRoot = $saved
             if (-not $client.HasExited) { $client.Kill(); $client.WaitForExit(5000) | Out-Null }
             $client.Dispose()
+            if ($mainFrameWatch) {
+                $exited = $mainFrameWatch.WaitForExit(5000)
+                if (-not $exited) { $mainFrameWatch.Kill(); $mainFrameWatch.WaitForExit(5000) | Out-Null }
+                $mainFrameWatch.Dispose()
+                $exited | Should -BeTrue -Because 'the watcher lives only as long as its ROCTUP process'
+            }
         }
     }
 

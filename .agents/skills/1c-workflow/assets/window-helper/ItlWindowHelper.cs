@@ -1,7 +1,7 @@
-// ITL window helper for hidden 1C TestClient groups.
+// ITL window helper for hidden 1C TestClient groups and ROCTUP main frames.
 // Built locally by csc.exe from .NET Framework 4.x; the language is limited to C# 5.
-// One process serves one group directory. Every file in the group is data: the
-// helper may be killed at any time and the next request starts it again.
+// One TestClient helper serves one group directory. Every file in the group
+// is data: the helper may be killed and the next request starts it again.
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -37,15 +37,24 @@ namespace Itl.WindowHelper
         {
             if (args.Length < 2)
             {
-                Console.Error.WriteLine("usage: itl-window-helper run|ensure|stop <group-directory> [--hung] [--show-hidden]");
+                Console.Error.WriteLine("usage: itl-window-helper run|ensure|stop <group-directory> [--hung] [--show-hidden], or watch-main <pid> <creation-filetime>");
                 return 2;
             }
             string verb = args[0];
-            string dir = Path.GetFullPath(args[1]);
-            bool hung = Array.IndexOf(args, "--hung") >= 0;
-            bool showHidden = Array.IndexOf(args, "--show-hidden") >= 0;
             try
             {
+                if (verb == "watch-main")
+                {
+                    int pid;
+                    long creation;
+                    if (args.Length != 3 || !int.TryParse(args[1], NumberStyles.None, CultureInfo.InvariantCulture, out pid) ||
+                        !long.TryParse(args[2], NumberStyles.None, CultureInfo.InvariantCulture, out creation)) return 2;
+                    return MainFrameWatch.Run(pid, creation);
+                }
+
+                string dir = Path.GetFullPath(args[1]);
+                bool hung = Array.IndexOf(args, "--hung") >= 0;
+                bool showHidden = Array.IndexOf(args, "--show-hidden") >= 0;
                 switch (verb)
                 {
                     case "run": return Daemon.Run(dir);
@@ -746,16 +755,22 @@ namespace Itl.WindowHelper
     {
         public const string SplashTitle = "Загрузка конфигурационной информации";
 
+        public static bool IsMainFrame(IntPtr hwnd)
+        {
+            if (Native.GetWindow(hwnd, 4) != IntPtr.Zero) return false;
+            string cls = Native.ClassOf(hwnd);
+            return cls.StartsWith("V8TopLevelFrame", StringComparison.Ordinal) &&
+                !cls.EndsWith("sec", StringComparison.Ordinal) &&
+                !Native.TitleOf(hwnd).StartsWith(SplashTitle, StringComparison.Ordinal);
+        }
+
         public static IntPtr MainWindow(uint pid)
         {
             IntPtr best = IntPtr.Zero;
             long bestArea = 0;
             foreach (IntPtr h in Native.TopLevelWindows(pid))
             {
-                if (Native.GetWindow(h, 4) != IntPtr.Zero) continue;
-                string cls = Native.ClassOf(h);
-                if (!cls.StartsWith("V8TopLevelFrame", StringComparison.Ordinal) || cls.EndsWith("sec", StringComparison.Ordinal)) continue;
-                if (Native.TitleOf(h).StartsWith(SplashTitle, StringComparison.Ordinal)) continue;
+                if (!IsMainFrame(h)) continue;
                 Rectangle r = Native.RectOf(h);
                 long area = (long)r.Width * r.Height;
                 if (area > bestArea) { best = h; bestArea = area; }
@@ -772,6 +787,62 @@ namespace Itl.WindowHelper
             if (cls == "V8Window") return false;
             Rectangle r = Native.RectOf(hwnd);
             return r.Width > 40 && r.Height > 40 && r.Width * (long)r.Height > 4000;
+        }
+    }
+
+    // Bound to one launched 1C process. Secondary frames and owned dialogs are
+    // left to 1C, including ROCTUP's write confirmation.
+    internal static class MainFrameWatch
+    {
+        public static int Run(int pid, long creation)
+        {
+            using (Process target = Process.GetProcessById(pid))
+            using (var timer = new System.Windows.Forms.Timer())
+            {
+                // Keep the process handle open so a recycled PID cannot become the target.
+                if (target.Handle == IntPtr.Zero || target.StartTime.ToFileTimeUtc() != creation) return 2;
+                string name = target.ProcessName;
+                if (!string.Equals(name, "1cv8c", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(name, "1cv8", StringComparison.OrdinalIgnoreCase)) return 2;
+
+                Native.WinEventDelegate shown = delegate(IntPtr hook, uint kind, IntPtr hwnd, int obj, int child, uint thread, uint time)
+                {
+                    if (obj == 0 && child == 0 && !target.HasExited) Hide(hwnd, (uint)pid);
+                };
+                IntPtr showHook = Native.SetWinEventHook(Native.EVENT_OBJECT_SHOW, Native.EVENT_OBJECT_SHOW,
+                    IntPtr.Zero, shown, (uint)pid, 0, Native.WINEVENT_OUTOFCONTEXT);
+                try
+                {
+                    Action reconcile = delegate
+                    {
+                        foreach (IntPtr hwnd in Native.TopLevelWindows((uint)pid)) Hide(hwnd, (uint)pid);
+                    };
+                    if (target.HasExited) return 0;
+                    reconcile();
+                    timer.Interval = 500;
+                    timer.Tick += delegate
+                    {
+                        if (target.HasExited) Application.ExitThread();
+                        else reconcile();
+                    };
+                    timer.Start();
+                    Native.TrimWorkingSet();
+                    Application.Run();
+                    return 0;
+                }
+                finally
+                {
+                    if (showHook != IntPtr.Zero) Native.UnhookWinEvent(showHook);
+                    GC.KeepAlive(shown);
+                }
+            }
+        }
+
+        private static void Hide(IntPtr hwnd, uint pid)
+        {
+            if (Native.IsWindowVisible(hwnd) && Native.PidOf(hwnd) == pid &&
+                Native.GetAncestor(hwnd, 2) == hwnd && WindowOps.IsMainFrame(hwnd))
+                Native.ShowWindowAsync(hwnd, Native.SW_HIDE);
         }
     }
 

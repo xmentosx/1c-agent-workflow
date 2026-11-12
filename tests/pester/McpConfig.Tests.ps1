@@ -334,17 +334,40 @@
         Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
         $commands = & {
             . $HelperPath -ProjectRoot $root -Action help *> $null
-            function Test-ItlInteractiveDesktopSession { $true }
-            $interactive = Get-RoctupMcpStartupCommand -Port 6003
-            function Test-ItlInteractiveDesktopSession { $false }
-            [pscustomobject]@{ interactive = $interactive; service = (Get-RoctupMcpStartupCommand -Port 6003) }
+            $state = [pscustomobject]@{ devBranchInfoBasePath = $root; infoBaseKind = 'file' }
+            $artifact = Join-Path $root 'MCP_Toolkit.epf'
+            $watchStarts = [Collections.Generic.List[int]]::new()
+            function Test-ItlInteractiveDesktopSession { $desktop }
+            function Start-EnterpriseBackground {
+                param($InfoBasePath, $InfoBaseKind, $User, $Password, $EnterpriseArgs)
+                [pscustomobject]@{ arguments = $EnterpriseArgs; windowMode = $mode; process = [Diagnostics.Process]::GetCurrentProcess() }
+            }
+            function Start-ItlOneCMainFrameWatch {
+                param([Diagnostics.Process]$Process)
+                $watchStarts.Add($Process.Id)
+                [Diagnostics.Process]::new()
+            }
+            $desktop = $true
+            $mode = 'hidden'
+            $interactive = (Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact -Port 6003).arguments
+            $mode = 'visible'
+            $visible = (Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact -Port 6003).arguments
+            $desktop = $false
+            $mode = 'hidden'
+            $service = (Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact -Port 6003).arguments
+            [pscustomobject]@{ interactive = $interactive; visible = $visible; service = $service; watchStarts = $watchStarts.ToArray() }
         }
         # Omitted danger_* keys fall back to the processing's saved settings, so
         # every key is explicit; nothing is auto-allowed.
-        $commands.interactive | Should -BeExactly 'startup;mode=embedded;port=6003;danger_confirm=true;danger_auto_write=false;danger_auto_priv=false'
-        $commands.service | Should -BeExactly 'startup;mode=embedded;port=6003;danger_confirm=false;danger_auto_write=false;danger_auto_priv=false'
+        $commands.interactive[0] | Should -BeExactly '/Execute'
+        $commands.interactive[1] | Should -BeExactly (Join-Path $root 'MCP_Toolkit.epf')
+        $commands.interactive[2] | Should -BeExactly '/Cstartup;mode=embedded;port=6003;danger_confirm=true;danger_auto_write=false;danger_auto_priv=false'
+        $commands.visible[2] | Should -BeExactly $commands.interactive[2]
+        $commands.service[2] | Should -BeExactly '/Cstartup;mode=embedded;port=6003;danger_confirm=false;danger_auto_write=false;danger_auto_priv=false'
+        $commands.watchStarts | Should -HaveCount 1
+        $commands.watchStarts[0] | Should -Be $PID
         $ondemandText = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1') -Raw -Encoding UTF8
-        $ondemandText | Should -Match ([regex]::Escape('("/C" + (Get-RoctupMcpStartupCommand -Port $port))'))
+        $ondemandText | Should -Match ([regex]::Escape('Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact.path -Port $port'))
         $ondemandText | Should -Not -Match 'startup;mode=embedded'
     }
 
