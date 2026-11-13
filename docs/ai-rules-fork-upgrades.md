@@ -43,7 +43,17 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: cross-branch scoped memory, local r57
+## Current candidate: OpenSpec apply continuation, local r58
+
+`itl-main-2f640143-r58` pins
+`23654440a7e39a22bfad2a4344e6c531d82a93e1` over r57 on the same audited
+upstream. The bundle generator applies the same continuation policy to all
+nine native apply entrypoints. The installed ITL reference reconciles task
+checkboxes with their own current evidence. The pin is pending release
+admission. See [continuation evidence](../openspec/changes/continue-openspec-apply/evidence/acceptance.md)
+for the exact installation and remaining behavioural acceptance.
+
+## Earlier candidate: cross-branch scoped memory, r57
 
 `itl-main-2f640143-r57` pins
 `f84f717a4ecde50dd3cefdbaa442c89c3f9789de` on the published r55 lineage.
