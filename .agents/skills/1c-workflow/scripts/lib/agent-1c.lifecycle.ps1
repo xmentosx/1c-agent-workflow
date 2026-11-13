@@ -21891,18 +21891,23 @@ function Write-DevBranchMemoryUsageNote {
 function Invoke-DevBranchCheck {
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
+    $dumpInfoSnapshot = $null
+    $repairAttemptConsumed = $false
+    $repairAttemptTicket = $null
+    $repairVerificationPassed = $false
+    $scenarioLoopDiagnostic = $false
+    $platformPreparation = $null
+    $repairStartedAt = Get-Date
+    $repairPhase = 'preflight'
+    $canonicalRepair = $false
+    $verification = $null
+    try {
     Assert-ItlVerificationRepairScope -Trigger $trigger
     # Reject an unknown diagnostic module before any load or 1C process.
     Get-YAxUnitModuleFilter | Out-Null
     $state = Read-DevBranchState -Name $DevBranchName
     $checkExportPath = if ((Get-DevBranchKind -State $state) -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
     $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Assert-ExportPathInsideProject -ExportPath $checkExportPath)
-    $repairAttemptConsumed = $false
-    $repairAttemptTicket = $null
-    $repairVerificationPassed = $false
-    $scenarioLoopDiagnostic = $false
-    $platformPreparation = $null
-    try {
     try {
     if (-not $script:ActiveAuxiliaryVanessaContext) {
         $classificationYaxunit = Get-ItlVerificationExecutionDecision -Component 'yaxunit' -Trigger $trigger -ExplicitComponents $explicit
@@ -21931,20 +21936,28 @@ function Invoke-DevBranchCheck {
     $fullProofEligible = Test-ItlFullVerificationProofEligible -Trigger $trigger -ExplicitComponents $explicit
     if ($trigger -eq "repair") {
         $repairSession = Get-ItlMatchingVerificationRepairSession
-        $scenarioLoopDiagnostic = [string](Get-StateValue $repairSession 'kind' 'canonical-repair') -eq 'scenario-loop' -and
+        $canonicalRepair = [string](Get-StateValue $repairSession 'kind' 'canonical-repair') -eq 'canonical-repair'
+        $scenarioLoopDiagnostic = -not $canonicalRepair -and
             (Test-ItlDiagnosticVerificationScope)
         if ($scenarioLoopDiagnostic -and -not (Get-ItlVerificationExecutionDecision -Component 'vanessa' -Trigger $trigger -ExplicitComponents $explicit).run) {
             throw 'ITL_VERIFICATION_SCENARIO_RUNNER_SKIPPED: Vanessa is unavailable under the effective execution mode. Correct the mode or use an authorized named invocation before consuming a repair attempt.'
         }
         if ($fullProofEligible -or $scenarioLoopDiagnostic) {
-            $repairAttemptTicket = Use-ItlVerificationRepairAttempt
+            $repairInputFingerprint = ''
+            if ($canonicalRepair) {
+                try { $repairInputFingerprint = Get-VerificationFingerprint }
+                catch { Write-Warning 'Could not identify repair inputs. Inspect the current verification evidence.' -WarningAction Continue }
+            }
+            $repairAttemptTicket = Use-ItlVerificationRepairAttempt -InputFingerprint $repairInputFingerprint
             $repairAttemptConsumed = $true
         }
     }
+    $repairPhase = 'platform-preparation'
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
     $platformPreparation = Update-DevBranchBase -PassThruPlatformPreparation
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+    $repairPhase = 'verification'
     Invoke-ItlVerificationCycle `
         -Trigger $trigger `
         -ExplicitComponents $explicit `
@@ -21990,7 +22003,7 @@ function Invoke-DevBranchCheck {
         $evidenceKind = [string](Get-StateValue -State $verifiedState -Name "lastVerificationEvidenceKind" -Default "")
         if (($verification.isFreshPassed -and $evidenceKind -in @('full', 'complete/current-obligations', 'complete/current-change')) -or
             ((Get-VerificationModel) -eq 'change' -and [bool](Get-StateValue $verification 'changeFreshPassed' $false) -and $evidenceKind -eq 'change/task-pending')) {
-            Complete-ItlVerificationRepairSession
+            if (-not $canonicalRepair) { Complete-ItlVerificationRepairSession }
             $repairVerificationPassed = $true
         } elseif ($scenarioLoopDiagnostic) {
             throw 'ITL_VERIFICATION_SCENARIO_FULL_PROOF_INCOMPLETE: the named scenario passed but the unfiltered assessment did not produce fresh full proof. Diagnose the due component and resume the same repair session.'
@@ -21998,6 +22011,10 @@ function Invoke-DevBranchCheck {
     }
     Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
     Write-DevBranchMemoryUsageNote
+    if ($canonicalRepair) {
+        $repairResult = Get-ItlVerificationRepairRunResult -Phase $repairPhase -State $verifiedState -Verification $verification -StartedAt $repairStartedAt
+        Publish-ItlVerificationRepairRun -Ticket $repairAttemptTicket -Result $repairResult -SessionPassed $repairVerificationPassed -StartedAt $repairStartedAt
+    }
     } catch {
         $checkFailure = $_
         if ($null -ne $platformPreparation) {
@@ -22007,7 +22024,16 @@ function Invoke-DevBranchCheck {
                 Write-Warning "Could not render the verification failure report: $($_.Exception.Message)" -WarningAction Continue
             }
         }
-        if ($repairAttemptConsumed -and -not $repairVerificationPassed) {
+        if ($trigger -eq 'repair' -and (-not $repairAttemptConsumed -or $canonicalRepair)) {
+            Set-RunFailureContextFromMessage -Message $checkFailure.Exception.Message -RequestedAction 'check-dev-branch'
+            try {
+                $latestState = if ($repairAttemptConsumed) { Read-DevBranchState -Name $DevBranchName } else { $null }
+                $repairResult = Get-ItlVerificationRepairRunResult -Phase $repairPhase -State $latestState -Failure $checkFailure -StartedAt $repairStartedAt
+                Publish-ItlVerificationRepairRun -Ticket $repairAttemptTicket -Result $repairResult -Failure $checkFailure -StartedAt $repairStartedAt
+            } catch {
+                Write-Warning "Could not persist repair diagnostics: $($_.Exception.Message)" -WarningAction Continue
+            }
+        } elseif ($repairAttemptConsumed -and -not $repairVerificationPassed) {
             Complete-ItlVerificationRepairFailure -Failure $checkFailure -AttemptTicket $repairAttemptTicket
         }
         throw $checkFailure

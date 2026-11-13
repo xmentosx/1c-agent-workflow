@@ -5,13 +5,11 @@ agent: code
 
 Use this command only in an active `itldev/*` worktree after skipped YAxUnit/Vanessa coverage or failed complete verification.
 
-Begin one helper-owned repair session. Keep its id; it permits at most `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` (default `5`) unfiltered runs. Do not pass `VanessaFeaturePath` or `VanessaFilterTags`:
+Begin one helper-owned repair session. Keep its ID and use the admission and report in compact `userReport`. A new session has an overall limit only when explicitly configured. Do not pass `VanessaFeaturePath` or `VanessaFilterTags`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action begin-verification-repair
 ```
-
-Use the session id from compact `userReport`.
 
 1. Identify the current agent-made configuration/extension change from the request, Git diff and configured roots. A master merge alone is not agent-made behavior. For classification, read the inventory; unchanged legacy BSL is exempt.
 2. Read `.agents/skills/1c-workflow/references/verification-result.md`. Use JUnit, helper/1C/event logs and owned process evidence to distinguish runner or environment, test fixture, and product failure before editing. An assertion or missing UI element needs requirement and runtime evidence.
@@ -24,7 +22,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 The helper owns the branch infobase update, both test layers, `TESTMANAGER -> TESTCLIENT`, JUnit/log evidence, and event-log baseline check. Do not update the base separately.
 
-On failure, diagnose again. Fix a defective scenario only when requirement evidence proves it wrong; fix the implementation for a product defect. Apply the conditional post-failure runtime diagnostic from `vanessa-authoring.md` before an evidence-dependent UI edit or the next full attempt; it is not an extra gate or repair attempt. Never delete, skip, filter or weaken the core assertion for a green run. Batch edits with targeted/static checks; rerun the full helper at a decision milestone or after the final relevant edit, not after every small edit. Reuse this session. At the configured maximum the helper refuses another full run: preserve blocker diagnostics; suspected workflow defects follow `1c-workflow/references/workflow-incidents.md` without resetting the session. After a pass, resume the original task.
+On failure, diagnose again. Fix a defective scenario only when requirement evidence proves it wrong; fix the implementation for a product defect. Apply the conditional post-failure runtime diagnostic from `vanessa-authoring.md` before an evidence-dependent UI edit or the next full attempt; it is not an extra gate or repair attempt. Never delete, skip, filter or weaken the core assertion for a green run. Batch edits with targeted/static checks and rerun at a decision milestone. From the fifth accounted attempt in an unlimited session, read the assessment in `verification-result.md` and record the reason before each subsequent full run. A basis `WARN` calls for diagnosis before repeating. After three unsuccessful fixes at the same obstacle, or earlier when a common mechanism is established in several places, follow the systemic diagnostic route there. Reuse the session. If blocked, preserve the evidence and continue available work within the original plan. After a pass, resume the original task.
 
 If the user explicitly authorizes a larger numeric limit, use the same-session `extend-verification-repair` continuation in `verification-result.md`; preserve all counters and diagnostics. Without that grant, or at the technical maximum 100, report the blocker. Extension itself never passes a gate.
 

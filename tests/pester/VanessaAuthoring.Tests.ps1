@@ -221,7 +221,7 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "defaults to five helper-owned repair attempts and honors a bounded environment override" {
+    It "continues past five helper-owned attempts and honors a bounded environment override" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-repair-budget-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
@@ -247,14 +247,18 @@
                     $RepairSessionId = 'wrong-session'
                     $mismatchError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
                     $RepairSessionId = [string]$record.sessionId
-                    foreach ($attempt in 1..5) { Use-ItlVerificationRepairAttempt *> $null }
-                    $defaultExhaustedError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
-                    $restartExhaustedError = try { Start-ItlVerificationRepairSession *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                    foreach ($attempt in 1..5) {
+                        $ticket = Use-ItlVerificationRepairAttempt
+                        Complete-ItlVerificationRepairFailure -AttemptTicket $ticket
+                    }
+                    Start-ItlVerificationRepairSession *> $null
+                    $checkpointReport = $script:RunUserReport
+                    $previous = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $sixth = Use-ItlVerificationRepairAttempt 3>$null
+                    Complete-ItlVerificationRepairSession -AttemptTicket $sixth
+                    $defaultTerminal = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
 
                     $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = '2'
-                    # Model a successful tooling recovery before the next bounded session.
-                    $recoveredState = Read-DevBranchState -Name 'demo'
-                    Update-DevBranchState -State $recoveredState -Updates @{ toolingRecoveryId='recovery-for-override'; toolingRecoveredAt=(Get-Date).ToString('o'); toolingRecoveredMutationAt=(Get-Date).ToString('o') }
                     Start-ItlVerificationRepairSession *> $null
                     $overrideRecord = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
                     $RepairSessionId = [string]$overrideRecord.sessionId
@@ -283,12 +287,16 @@
                     $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = '0'
                     $invalidLimitError = try { Start-ItlVerificationRepairSession *> $null; 'not-blocked' } catch { $_.Exception.Message }
                     [pscustomobject]@{
-                        defaultMaximum = [int]$record.maximumAttempts
+                        defaultMaximum = $record.maximumAttempts
                         overrideMaximum = [int]$overrideRecord.maximumAttempts
                         missingIdError = $missingIdError
                         mismatchError = $mismatchError
-                        defaultExhaustedError = $defaultExhaustedError
-                        restartExhaustedError = $restartExhaustedError
+                        checkpointReport = $checkpointReport
+                        sameSession = $defaultTerminal.sessionId -ceq $record.sessionId
+                        fifthAttempt = $previous.attempts
+                        sixthAttempt = $defaultTerminal.attempts
+                        sixthBasis = $defaultTerminal.runs[-1].basis.status
+                        sixthOutcome = $defaultTerminal.runs[-1].outcome
                         overrideExhaustedError = $overrideExhaustedError
                         overrideFirstFailureStatus = [string]$overrideFirstFailureRecord.status
                         overrideTerminalStatus = [string]$overrideTerminalRecord.status
@@ -303,12 +311,16 @@
                     $env:AGENT_1C_ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = $savedPrefixedLimit
                 }
             }
-            $result.defaultMaximum | Should -Be 5
+            $result.defaultMaximum | Should -BeNullOrEmpty
             $result.overrideMaximum | Should -Be 2
             $result.missingIdError | Should -Match 'requires RepairSessionId'
             $result.mismatchError | Should -Match 'Repair session mismatch'
-            $result.defaultExhaustedError | Should -Match 'exhausted its 5 full verification runs'
-            $result.restartExhaustedError | Should -Match 'ITL_VERIFICATION_REPAIR_EXHAUSTED'
+            $result.checkpointReport | Should -Match 'Assessment required before the next full run'
+            $result.sameSession | Should -BeTrue
+            $result.fifthAttempt | Should -Be 5
+            $result.sixthAttempt | Should -Be 6
+            $result.sixthBasis | Should -BeExactly 'missing'
+            $result.sixthOutcome | Should -BeExactly 'completed'
             $result.overrideFirstFailureStatus | Should -Be 'active'
             $result.overrideTerminalStatus | Should -Be 'exhausted'
             $result.overrideExhaustedError | Should -Match 'terminal \(status=exhausted\)'

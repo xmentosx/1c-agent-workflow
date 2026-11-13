@@ -17,13 +17,62 @@ Use targeted/static checks while implementing. Use `/itl-check` or helper action
 
 Invoke `check-dev-branch` through `.agents/skills/1c-workflow/scripts/run-itl-command.ps1`, as the generated `/itl-check` command does. That parent runner owns the helper Job Object (`KILL_ON_JOB_CLOSE`), abrupt helper-exit detection, stale-status watchdog even when `liveness` is empty, and the `ITL_RUNNER_OPERATION_TIMEOUT_SECONDS` ceiling (default 3600). Long native waits publish a generic helper heartbeat; Designer and Vanessa add operation-specific progress/stall evidence, so the generic stale watchdog does not preempt a live operation that is still within its published stall budget. After an abrupt helper exit, the runner first uses the exact persisted database/native recovery ticket and retained `ownedProcessScopes`; legacy exact Vanessa evidence remains only a fallback. A verified recovery releases the database, reports stopped owned PIDs with `foreignProcessesStopped=[]`, and returns `retry-original-command` rather than asking for manual process cleanup. Direct `agent-1c.ps1` invocation is an internal debugging path and cannot recover from termination of its own PowerShell process.
 
-`/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. Its cheap preflight checks the suite and reports bounded source-only feature warnings without executing a second authoring run. Missing classification or failed unfiltered verification routes to `/itl-verify-fix`. An ordinary filtered diagnostic failure routes to fixing the cause and repeating that scope without a repair session. An explicitly requested `/test-fix-loop` instead starts one `scenario-loop` repair session pinned to the named Vanessa feature/tag scope. If no retained feature covers the requested behavior, the agent may author a minimal transient `.feature` under ignored `.agent-1c/verification/scenario-loop/`, with explicit expected outcomes and the normal Vanessa authoring checks, then pass that exact path to the same helper. Preserve the file through the session and any evidence/diagnosis that references it; do not count it as retained regression coverage or silently change an expectation to pass. If the requested behavior cannot be made into a reliable executable scenario, report the missing prerequisite before starting the loop. Its default limit is three rounds; `-VerificationRepairMaxAttempts N` sets the limit only when creating a new session, while repeat `begin-verification-repair` resumes the existing budget. Canonical repair keeps `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` (default `5`). Recovery first separates runner, fixture, and product causes; a proven product defect then uses sufficient existing YAxUnit/Vanessa coverage or the smallest missing regression. The agent resolves classification and repair without asking the user to choose tests or catalogs.
+`/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. Its cheap preflight checks the suite and reports bounded source-only feature warnings without executing a second authoring run. Missing classification or failed unfiltered verification routes to `/itl-verify-fix`. An ordinary filtered diagnostic failure routes to fixing the cause and repeating that scope without a repair session. An explicitly requested `/test-fix-loop` instead starts one `scenario-loop` repair session pinned to the named Vanessa feature/tag scope. If no retained feature covers the requested behavior, the agent may author a minimal transient `.feature` under ignored `.agent-1c/verification/scenario-loop/`, with explicit expected outcomes and the normal Vanessa authoring checks, then pass that exact path to the same helper. Preserve the file through the session and any evidence/diagnosis that references it; do not count it as retained regression coverage or silently change an expectation to pass. If the requested behavior cannot be made into a reliable executable scenario, report the missing prerequisite before starting the loop. Its default limit is three rounds; `-VerificationRepairMaxAttempts N` sets the limit only when creating a new session, while repeat `begin-verification-repair` resumes the existing budget. Recovery first separates runner, fixture, and product causes; a proven product defect then uses sufficient existing YAxUnit/Vanessa coverage or the smallest missing regression. The agent resolves classification and repair without asking the user to choose tests or catalogs.
 
 The compact result exposes `errorCategory` and `requiredAction`. Categories are `missing-suite`, `test-fixture`, `unsupported-step`, `scenario-context`, `product-assertion`, `runner`, and `event-log`. They are routing hints, not automatic proof that the test or product is wrong. Follow the structured action; read the last 80 log lines only for an unclassified runner failure.
 
 Long Designer work publishes structured liveness from its own bounded completion probe: current stage, elapsed time, seconds without CPU/log/process progress, timeout remaining, exact owned PIDs, CPU/log deltas, and working set. `stalled-suspected` begins after `DESIGNER_STALL_WARNING_SECONDS` (default 300); `DESIGNER_STALL_TIMEOUT_SECONDS` (default 600) fails the operation. Vanessa uses the same principle against the exact current run: `vanessa.log` growth, owned TestManager/TestClient process-set changes and CPU activity reset its no-progress budget; a normal 1800-second run gets a 300-second warning and 600-second stall bound while still emitting a helper heartbeat well inside the generic 120-second stale threshold. YAxUnit and other native waits also emit the generic heartbeat even when they have no richer progress probe. The independent hard operation/native timeout remains fail-closed. Never kill 1C manually from a stale-looking heartbeat.
 
 Do not run a separate base update first. `/deploy-and-test` and `verify-dev-branch` are compatibility aliases to the same canonical `check-dev-branch` path, not independent loaders. `Run-DevBranchTests` is its private Vanessa phase. A canonical check may select one feature or tag filter for repeated performance profiling, but any `VanessaFeaturePath` or `VanessaFilterTags` keeps that run diagnostic-only. So does `YAxUnitModule` ([yaxunit-tests.md](yaxunit-tests.md)). `canonical-repair` rejects filters. `scenario-loop` admits only the scope recorded when its session began; a changed feature/tag scope stops before 1C. A named component override may run Vanessa for that session even when its persistent execution switch is `off`, but does not change the switch or lift a broader user no-UI instruction. One `check-dev-branch` scenario-loop call consumes one outer attempt: it checks the filtered scenario, then checks due YAxUnit/Vanessa/event-log obligations unfiltered without a second base update or attempt. The filtered phase alone cannot produce full proof. Only the unfiltered phase supplies fresh passed evidence or completes either repair kind; unverified export follows the policy below. A passed repair id means resume the original task; an exhausted id preserves the blocker and routes suspected workflow defects to `workflow-incidents.md`. Neither state starts another repair. Do not replace executable evidence with MCP or a headless EPF.
+
+### Canonical repair assessment
+
+The report in compact `userReport` points to the helper-owned session record.
+Read the latest counted result and the primary artifacts it references. The
+history records admissions, preflight refusals, refunded workflow refusals and
+available elapsed time. An interrupted admission keeps its charge and links to
+the original run status. Read the stage, symptom, possible mechanism and
+strength of evidence separately. A test can pass its earlier failure point
+while the hypothesis of a common mechanism remains open.
+
+After the fifth counted run in a session without an explicit limit, assess
+every proposed full run. Write a short UTF-8 JSON file in the project with
+`previousRunId` from the latest completed or failed counted run in that session,
+`evidencePath` from that run, and nonempty `progress`, `change`, `expected`
+strings. Cite the observed advance or new diagnostic evidence, the relevant
+input or state change and the result to observe. The previous run's final
+compact status can serve as the evidence reference. Inspect primary artifacts
+before deciding. To validate the reference without launching 1C, pass
+`-VerificationRepairBasisPath <file>` to the original `begin-verification-repair`
+invocation. Pass the same argument to the full repair command with the existing
+`RepairSessionId`. The helper checks linkage and available file identity under
+the lifecycle lock. With a basis `WARN`, diagnose and complete the basis before
+the full repeat. A linked basis leaves the decision on diagnostic sufficiency
+to the agent. Without an actionable basis, keep the dependent check open and
+continue available work in plan order.
+
+A failed repair means one coherent fix followed by a check of the original
+failure path. After three failed repairs without crossing the same obstacle,
+perform systemic diagnosis before another full run, including when a new log
+arrives. Diagnose earlier when several failures share a confirmed mechanism.
+Review the affected contract and analogous cases, fix their common source
+where possible, and gather targeted evidence. Logs and static checks alone
+neither add a repair nor reset the history. A technical refusal before product
+verification routes to the workflow or environment owner.
+
+Read the YAxUnit executed and expected counts, omitted modules and their
+loader diagnostics separately from the event-log verdict. The inventory can
+name modules while the expected case count remains unknown. Keep missing
+coverage and remaining acceptance criteria open. A green subset applies only
+to its observed inputs. Use the existing freshness and task assessment.
+
+For future canonical sessions, remove a legacy `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS=5`
+from `.dev.env` and remove any corresponding process or `AGENT_1C_` override
+if the project wants the new default. A recorded numeric limit and extension
+history continue with the existing session. Older helpers reject the new
+record with no overall limit. If reverting, preserve that record and its
+run artifacts, pause canonical repair and restore a compatible helper before
+resuming the same ID. Numeric records remain readable by the preceding helper.
 
 ### Authorized repair-session continuation
 

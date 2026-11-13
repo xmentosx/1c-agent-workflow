@@ -362,6 +362,17 @@
             }
         }
 
+        # One on-demand dev command adds 177 UTF-8 bytes for the assessment,
+        # diagnostic continuation and report routing (3711 -> 3888).
+        # Keep detailed evidence rules in the on-demand verification reference.
+        $repairTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents/skills/1c-workflow/kilo-command-templates/dev/itl-verify-fix.md.template')
+        $repairTemplate | Should -Match 'fifth accounted attempt'
+        $repairTemplate | Should -Match 'three unsuccessful fixes'
+        [Text.Encoding]::UTF8.GetByteCount($repairTemplate.Replace("`r`n", "`n").TrimEnd("`n")) | Should -BeLessOrEqual 3888
+        foreach ($key in @($expectedRendered.Keys | Where-Object { $_ -like 'dev/*' })) {
+            $expectedRendered[$key].maxBytes += 177
+        }
+
         $rendered = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             foreach ($surface in @("master", "dev")) {
@@ -1205,7 +1216,9 @@
         $recoveryText | Should -Match "reuse it unchanged"
         $recoveryText | Should -Match "do not add or edit a test merely because this command was invoked"
         $recoveryText | Should -Match "-Action\s+check-dev-branch"
-        $recoveryText | Should -Match "configured maximum"
+        $recoveryText | Should -Match 'overall limit only when explicitly configured'
+        $recoveryText | Should -Match 'basis `WARN` calls for diagnosis'
+        $recoveryText | Should -Match 'extend-verification-repair'
 
         $menuText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
         $menuText | Should -Match ([regex]::Escape("/itl-check"))

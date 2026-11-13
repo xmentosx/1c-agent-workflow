@@ -135,6 +135,7 @@ param(
     [ValidateSet("", "yaxunit", "vanessa", "event-log", "all")]
     [string]$ExplicitVerificationComponent = "",
     [string]$RepairSessionId = "",
+    [string]$VerificationRepairBasisPath = "",
     [string]$VerificationObligationId = "",
     [string]$VerificationEvidencePath = "",
     [ValidateSet("", "canonical-repair", "scenario-loop")]
@@ -378,6 +379,7 @@ function Get-Agent1cReexecArguments {
     if ($ResultPurpose -eq 'production') { Add-Agent1cReexecArgument -Arguments $arguments -Name 'ResultPurpose' -Value $ResultPurpose }
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExplicitVerificationComponent" -Value $ExplicitVerificationComponent
     Add-Agent1cReexecArgument -Arguments $arguments -Name "RepairSessionId" -Value $RepairSessionId
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationRepairBasisPath" -Value $VerificationRepairBasisPath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationObligationId" -Value $VerificationObligationId
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationEvidencePath" -Value $VerificationEvidencePath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationRepairKind" -Value $VerificationRepairKind

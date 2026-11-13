@@ -643,7 +643,7 @@ Describe "Exhausted repair session after tooling recovery" {
         Mock Set-RunUserReport {}
     }
 
-    It "archives the exhausted record and starts a bounded session after proved recovery" {
+    It "archives the exhausted record and starts a new session after proved recovery" {
         Start-ItlVerificationRepairSession
         $old=Get-Content (Join-Path $TestDrive 'history/old-session.json') -Raw | ConvertFrom-Json
         $old.attempts | Should -Be 5
@@ -652,7 +652,7 @@ Describe "Exhausted repair session after tooling recovery" {
         $new.sessionId | Should -Not -Be old-session
         $new.toolingRecoveryId | Should -Be new-recovery
         $new.attempts | Should -Be 0
-        $new.maximumAttempts | Should -Be 5
+        $new.maximumAttempts | Should -BeNullOrEmpty
     }
 
     It "resumes the active session without resetting its outer attempt budget" {
@@ -870,7 +870,7 @@ Describe 'repair session explicit extension' {
         $actual.projectRoot | Should -Be $script:ProjectRoot
         $actual.branch | Should -Be 'itldev/branch'
         $actual.kind | Should -Be 'canonical-repair'
-        $actual.startedAt | Should -Be '2026-10-01T10:00:00Z'
+        [datetimeoffset]$actual.startedAt | Should -Be ([datetimeoffset]'2026-10-01T10:00:00Z')
         $actual.attempts | Should -Be $script:extensionRecord.attempts
         $actual.maximumAttempts | Should -Be 10
         $actual.status | Should -Be 'active'
@@ -1056,17 +1056,23 @@ Describe 'repair session workflowBlocked attempts' {
         $again.workflowBlockedCount | Should -Be 3
     }
 
-    It 'keeps a legacy record byte-exact for a counted non-final product failure' {
+    It 'keeps the legacy budget and records a counted non-final product result once' {
         $ticket = Use-ItlVerificationRepairAttempt
-        $before = [IO.File]::ReadAllBytes($script:blockedPath)
         $script:RunErrorCategory = 'product-assertion'
         Complete-ItlVerificationRepairFailure -Failure 'Expected 1, actual 2' -AttemptTicket $ticket
-        [IO.File]::ReadAllBytes($script:blockedPath) | Should -Be $before
         $legacy = Read-Utf8Text -Path $script:blockedPath | ConvertFrom-Json
+        $legacy.schemaVersion | Should -Be 1
+        $legacy.sessionId | Should -BeExactly $script:blockedRecord.sessionId
         $legacy.attempts | Should -Be 1
+        $legacy.maximumAttempts | Should -Be 2
+        $legacy.status | Should -BeExactly 'active'
         $legacy.PSObject.Properties['workflowBlocked'] | Should -BeNullOrEmpty
-        Complete-ItlVerificationRepairFailure
-        [IO.File]::ReadAllBytes($script:blockedPath) | Should -Be $before
+        $legacy.runs.Count | Should -Be 1
+        $legacy.runs[0].id | Should -BeExactly $ticket.runId
+        $legacy.runs[0].outcome | Should -BeExactly 'failed'
+        $completed = [IO.File]::ReadAllBytes($script:blockedPath)
+        Complete-ItlVerificationRepairFailure -AttemptTicket $ticket
+        [IO.File]::ReadAllBytes($script:blockedPath) | Should -Be $completed
     }
 
     It 'restores the scenario-loop input identity after a refunded refusal' {
@@ -1086,6 +1092,122 @@ Describe 'repair session workflowBlocked attempts' {
         $counted.attempts | Should -Be 1
         $counted.lastAttemptInputIdentity | Should -Not -BeNullOrEmpty
         { Use-ItlVerificationRepairAttempt } | Should -Throw '*ITL_VERIFICATION_REPAIR_NO_CHANGE*'
+    }
+}
+
+Describe 'canonical repair continuation' {
+    BeforeEach {
+        $script:ProjectRoot = Join-Path $TestDrive 'История проверки'
+        New-Item -ItemType Directory -Path $script:ProjectRoot -Force | Out-Null
+        $script:continuationPath = Join-Path $script:ProjectRoot 'current.json'
+        $script:continuationRecord = [pscustomobject]@{
+            schemaVersion=2; kind='canonical-repair'; sessionId='continuation'; branch='itldev/branch'
+            projectRoot=$script:ProjectRoot; status='active'; maximumAttempts=$null; attempts=0
+            updatedAt=(Get-Date).ToString('o'); scenarioFeature=''; scenarioTags=''
+        }
+        Write-Utf8Text -Path $script:continuationPath -Value ($script:continuationRecord | ConvertTo-Json)
+        Mock Get-ItlVerificationRepairStatePath { $script:continuationPath }
+        Mock Get-CurrentBranch { 'itldev/branch' }
+        $RepairSessionId = 'continuation'
+        $VerificationTrigger = 'repair'
+        $script:RunErrorCategory = 'product-assertion'
+        $script:RunUserReport = ''
+        $VerificationRepairBasisPath = ''
+        $basisPath = Join-Path $script:ProjectRoot 'основание.json'
+        $evidence = Join-Path $script:ProjectRoot 'отчёт 1.json'
+        Write-Utf8Text -Path $evidence -Value '{}'
+        foreach ($number in 1..5) {
+            $ticket = Use-ItlVerificationRepairAttempt
+            $result = Get-ItlVerificationRepairRunResult -Phase verification -StartedAt (Get-Date)
+            $item = Get-Item -LiteralPath $evidence
+            $result.evidence = @([pscustomobject]@{path=$item.FullName;length=$item.Length;modifiedTicks=$item.LastWriteTimeUtc.Ticks})
+            Complete-ItlVerificationRepairFailure -AttemptTicket $ticket -Result $result
+        }
+        $fifth = Get-ItlMatchingVerificationRepairSession
+        $basis = [ordered]@{
+            previousRunId=$fifth.runs[-1].id; evidencePath=$evidence
+            progress='Предыдущая точка отказа пройдена'; change='Исправлена привязка fixture'; expected='Сценарий достигает проверки результата'
+        }
+    }
+
+    It 'records <expectedStatus> without changing full-run admission' -TestCases @(
+        @{ defect='none'; expectedStatus='linked' }
+        @{ defect='absent'; expectedStatus='missing' }
+        @{ defect='incomplete'; expectedStatus='incomplete' }
+        @{ defect='other session'; expectedStatus='unrelated-result' }
+        @{ defect='older result'; expectedStatus='stale' }
+        @{ defect='overwritten artifact'; expectedStatus='stale-evidence' }
+        @{ defect='unrelated artifact'; expectedStatus='unrelated-evidence' }
+    ) {
+        param($defect, $expectedStatus)
+
+        switch ($defect) {
+            'incomplete' { $basis.expected = '' }
+            'other session' { $basis.previousRunId = [guid]::NewGuid().ToString('N') }
+            'older result' { $basis.previousRunId = $fifth.runs[-2].id }
+            'overwritten artifact' { Write-Utf8Text -Path $evidence -Value '{"changed":true}' }
+            'unrelated artifact' { $basis.evidencePath = $basisPath }
+        }
+        if ($defect -ne 'absent') {
+            Write-Utf8Text -Path $basisPath -Value ($basis | ConvertTo-Json)
+            $VerificationRepairBasisPath = $basisPath
+        }
+        $ticket = Use-ItlVerificationRepairAttempt 3>$null
+        $result = Get-ItlVerificationRepairRunResult -Phase verification -StartedAt (Get-Date)
+        Publish-ItlVerificationRepairRun -Ticket $ticket -Result $result -StartedAt (Get-Date)
+        $sixth = Get-ItlMatchingVerificationRepairSession
+        $sixth.sessionId | Should -BeExactly $fifth.sessionId
+        $sixth.attempts | Should -Be 6
+        $sixth.runs.Count | Should -Be 6
+        $sixth.runs[-1].outcome | Should -BeExactly 'completed'
+        $sixth.runs[-1].basis.status | Should -BeExactly $expectedStatus
+        $sixth.runs[-1].basis.present | Should -Be ($defect -ne 'absent')
+        if ($defect -eq 'none') {
+            $sixth.runs[-1].basis.linked | Should -BeTrue
+            $sixth.runs[-1].basis.evidenceCurrent | Should -BeTrue
+        } else {
+            $script:RunUserReport | Should -Match 'Admission: WARN'
+        }
+    }
+
+    It 'retains the interrupted admission and records an uncharged preflight refusal' {
+        $interrupted = Use-ItlVerificationRepairAttempt 3>$null
+        $failure = [System.Management.Automation.ErrorRecord]::new(
+            [Exception]::new('ITL_TEST_CLASSIFICATION_REQUIRED: classify changed inputs'), 'fixture', 'NotSpecified', $null)
+        $result = Get-ItlVerificationRepairRunResult -Phase preflight -StartedAt (Get-Date) -Failure $failure
+        Publish-ItlVerificationRepairRun -Failure $failure -Result $result -StartedAt (Get-Date)
+        $record = Get-ItlMatchingVerificationRepairSession
+        $record.attempts | Should -Be 6
+        $record.runs[-2].id | Should -BeExactly $interrupted.runId
+        $record.runs[-2].outcome | Should -BeExactly 'interrupted'
+        $record.runs[-1].outcome | Should -BeExactly 'preflight-refused'
+        $record.runs[-1].result.phase | Should -BeExactly 'preflight'
+    }
+
+    It 'keeps all state and the identifier at the explicit limit' {
+        $fifth.schemaVersion = 1
+        $fifth.maximumAttempts = 20
+        $fifth.attempts = 20
+        $fifth.status = 'exhausted'
+        $fifth | Add-Member -NotePropertyName limitExtensions -NotePropertyValue @([pscustomobject]@{previousMaximum=5;maximum=20})
+        Write-ItlVerificationRepairRecord -Record $fifth
+        { Use-ItlVerificationRepairAttempt } | Should -Throw '*terminal (status=exhausted)*'
+        $failure = [System.Management.Automation.ErrorRecord]::new(
+            [Exception]::new('Session exhausted'), 'fixture', 'NotSpecified', $null)
+        Publish-ItlVerificationRepairRun -Failure $failure -StartedAt (Get-Date)
+        $saved = Read-Utf8Text -Path $script:continuationPath | ConvertFrom-Json
+        $saved.sessionId | Should -BeExactly $fifth.sessionId
+        $saved.attempts | Should -Be 20
+        $saved.maximumAttempts | Should -Be 20
+        $saved.status | Should -BeExactly 'exhausted'
+        $saved.limitExtensions[0].maximum | Should -Be 20
+        $saved.runs[-1].outcome | Should -BeExactly 'limit-refused'
+    }
+
+    It 'uses the existing lifecycle lock for resume, admission and extension' {
+        foreach ($action in 'begin-verification-repair', 'check-dev-branch', 'verify-dev-branch', 'extend-verification-repair') {
+            Test-Agent1cActionRequiresLifecycleLock -RequestedAction $action | Should -BeTrue
+        }
     }
 }
 

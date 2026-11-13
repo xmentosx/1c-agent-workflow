@@ -738,6 +738,14 @@ Describe 'YAxUnit test iteration loop' {
             switch ($script:loopRunMode) {
                 'timeout' { Write-LoopJunit -Path $config.reportPath -Cases 3 -Partial; throw "1C Enterprise timed out after $TimeoutSeconds seconds. PID: 42. Log: C:\Логи 1С\run.log" }
                 'fail' { Write-LoopJunit -Path $config.reportPath -Cases 2 -Failure }
+                'partial-discovery' {
+                    Write-LoopJunit -Path $config.reportPath -Cases 2
+                    Write-Utf8Text -Path $config.logging.file -Value @'
+Ошибка инициализации модуля: Тесты ОбщийМодуль.ТестыСнимков.Модуль
+{Тесты ОбщийМодуль.ТестыСнимков.Модуль(42,2)}: Ожидается символ ','
+[ОшибкаКомпиляцииВстроенногоЯзыка]
+'@
+                }
                 default { Write-LoopJunit -Path $config.reportPath -Cases 2 }
             }
         }
@@ -747,6 +755,16 @@ Describe 'YAxUnit test iteration loop' {
         foreach ($name in @($script:savedLoopEnv.Keys)) { [Environment]::SetEnvironmentVariable($name, $script:savedLoopEnv[$name], 'Process') }
         $script:RunErrorCategory = ''
         $script:RunRequiredAction = ''
+    }
+
+    It 'does not award component evidence to a green JUnit with an omitted module' {
+        $script:loopRunMode = 'partial-discovery'
+        $result = Invoke-YAxUnitVerification -State $script:loopState
+        $result.status | Should -BeExactly 'partial'
+        $updates = $script:loopUpdates[-1]
+        $updates.lastYAxUnitCoverage.missingModules[0].name | Should -BeExactly 'ТестыСнимков'
+        $updates.lastVerificationComponentEvidence.yaxunit.status | Should -BeExactly 'partial'
+        $updates.lastVerificationComponentEvidence.yaxunit.artifacts | Should -BeNullOrEmpty
     }
 
     It 'reports the timeout value, duration, completed tests and the .dev.env continuation, then applies the project value' {
@@ -865,5 +883,54 @@ Describe 'YAxUnit test iteration loop' {
         $after.issue | Should -Match 'Diagnostic test inputs changed'
         Add-Content -LiteralPath (Join-Path $script:ProjectRoot 'tests\yaxunit\CommonModules\ТестРасчёта\Ext\Module.bsl') -Value '// правка'
         (Get-VerificationOneOffProofAssessment -Obligation $script:loopObligation -State $script:loopState).issue | Should -Match 'checked inputs or loaded test infobase changed'
+    }
+}
+
+
+Describe 'YAxUnit partial discovery evidence' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        . $context.HelperPath -ProjectRoot $context.RepoRoot -Action help *> $null
+    }
+
+    It 'reports omitted tests and module compilation separately from the event-log result' {
+        $junit = Join-Path $TestDrive 'junit.xml'
+        Set-Content -LiteralPath $junit -Encoding UTF8 -Value '<testsuites><testsuite tests="39" failures="0" errors="0"/><testsuite tests="13" failures="0" errors="0"/></testsuites>'
+        $loaderLog = Join-Path $TestDrive 'yaxunit.log'
+        Set-Content -LiteralPath $loaderLog -Encoding UTF8 -Value @'
+23:55:02.301 [Клиент][ERR]: ЗагрузкаТестов:
+Ошибка инициализации модуля: tests ОбщийМодуль.ТестыСнимков.Модуль
+по причине:
+{tests ОбщийМодуль.ТестыСнимков.Модуль(1148,41)}: Ожидается символ ','
+[ОшибкаКомпиляцииВстроенногоЯзыка]
+23:55:02.524 [Клиент][INF]: Выполнение тестовых сценариев
+'@
+        $junitSummary = Get-YAxUnitJunitSummary -Path $junit
+        $coverage = Get-YAxUnitRunCoverage -Summary $junitSummary -LogPath $loaderLog -ExtensionName tests -ExpectedTests 89
+        $coverage.status | Should -BeExactly 'partial'
+        $coverage.executedTests | Should -Be 52
+        $coverage.expectedTests | Should -Be 89
+        $coverage.missingTests | Should -Be 37
+        $coverage.missingModules[0].name | Should -BeExactly 'ТестыСнимков'
+        $coverage.missingModules[0].reason | Should -BeExactly 'compilation'
+        $coverage.missingModules[0].diagnostic | Should -Match 'Ожидается символ'
+        $unknown = Get-YAxUnitRunCoverage -Summary $junitSummary
+        $unknown.expectedTests | Should -BeNullOrEmpty
+        $unknown.status | Should -BeExactly 'unknown'
+        $now = Get-Date
+        $state = [pscustomobject]@{
+            lastYAxUnitTestAt=$now.ToString('o'); lastYAxUnitCoverage=$coverage; lastYAxUnitStatus='partial'
+            lastYAxUnitReportPath=$junit; lastYAxUnitLogPath=$loaderLog
+            lastEventLogOnlyCheckedAt=$now.ToString('o'); lastEventLogOnlyStatus='failed'
+        }
+        $script:RunErrorCategory = 'event-log'
+        try {
+            $result = Get-ItlVerificationRepairRunResult -Phase verification -State $state -StartedAt $now.AddSeconds(-1)
+            $result.category | Should -BeExactly 'event-log'
+            $result.eventLog.status | Should -BeExactly 'failed'
+            $result.yaxunit.coverage.missingTests | Should -Be 37
+            $result.freshPassed | Should -BeFalse
+        } finally { $script:RunErrorCategory = '' }
     }
 }
