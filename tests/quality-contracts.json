@@ -1930,6 +1930,7 @@
       "gate": "targeted",
       "budgetSeconds": 180,
       "primaryTest": "tests/pester/WindowHelper.Tests.ps1",
+      "reuseInputPaths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1"],
       "paths": ["tests/pester/WindowHelper.Tests.ps1", ".agents/skills/1c-workflow/assets/window-helper/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.window-helper.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", "third-party/vanessa-automation/1.2.043.42-itl-r14/*"],
       "tests": ["tests/pester/WindowHelper.Tests.ps1"]
     },

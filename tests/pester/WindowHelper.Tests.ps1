@@ -3,7 +3,7 @@
     $script:WhLib = Join-Path $script:WhRepo '.agents/skills/1c-workflow/scripts/lib'
     $script:WhAssets = Join-Path $script:WhRepo '.agents/skills/1c-workflow/assets/window-helper'
     $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r14'
-    foreach ($module in 'agent-1c.core.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1', 'agent-1c.window-helper.ps1') {
+    foreach ($module in 'agent-1c.runtime-values.ps1', 'agent-1c.core.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1', 'agent-1c.window-helper.ps1') {
         . (Join-Path $script:WhLib $module)
     }
     $script:ProjectRoot = Join-Path $TestDrive 'Проект окон с пробелом'
@@ -165,7 +165,7 @@ Describe 'Agent 1C launch path' {
     It 'adds /DisableSplash and the focus return to the runner TestManager monitor' {
         $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $script:WhLib 'agent-1c.core.ps1'), [ref]$null, [ref]$null)
         $invoke = [string]($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-Enterprise' }, $true)[0].Extent.Text)
-        $invoke | Should -Match '(?s)\$args \+= "/TESTMANAGER"\s*if \(\(Get-OneCWindowMode\) -eq ''hidden''\) \{\s*\$args \+= "/DisableSplash"\s*\$launchFocusGuard = New-OneCLaunchFocusGuard -UserWindow \(Get-OneCLaunchUserWindow\)'
+        $invoke | Should -Match '(?s)\$args \+= "/TESTMANAGER"\s*if \(\$hiddenEnterprise\) \{\s*\$launchFocusGuard = New-OneCLaunchFocusGuard -UserWindow \(Get-OneCLaunchUserWindow\)'
         $invoke | Should -Match '(?s)Invoke-OneCLaunchFocusReturn -Guard \$launchFocusGuard -ProcessId \(\[int\]\$probeContext\.processId\).*?& \$focusedCompletionProbe \$probeContext'
     }
 
@@ -175,6 +175,162 @@ Describe 'Agent 1C launch path' {
         Invoke-OneCLaunchFocusReturn -Guard $guard | Should -Be 'user'
         $guard.untilUtc = [DateTime]::UtcNow.AddSeconds(-1)
         Invoke-OneCLaunchFocusReturn -Guard $guard | Should -Be 'expired'
+    }
+
+    It 'routes <Phase> through main-frame-only hiding in hidden mode' -ForEach @(
+        @{ Phase = 'normalization'; Extra = @('/Execute', 'ДляАвтоматическогоОбновленияИБ.epf') }
+        @{ Phase = 'tooling'; Extra = @('/Execute', 'ToolingProbe.epf', '/CToolingProbe;Params=запрос.json') }
+        @{ Phase = 'yaxunit'; Extra = @('/C', 'RunUnitTests=тесты.json') }
+    ) {
+        Mock Get-OneCWindowMode { 'hidden' }
+        Mock Invoke-WithOneCSessionAdmissionContext { & $ScriptBlock }
+        Mock Confirm-OneCNativeOperationRelease { }
+        Mock Invoke-NativeProcessAndWaitResult {
+            $script:Launched = @{ arguments = $Arguments; hide = [bool]$HideOneCMainFrame }
+            @{ exitCode = 0; timedOut = $false }
+        }
+        Invoke-Enterprise -InfoBasePath 'C:\База с пробелом' -InfoBaseKind file -EnterpriseArgs $Extra -User '' -Password '' | Out-Null
+        $script:Launched.arguments | Should -Contain '/DisableSplash'
+        $script:Launched.hide | Should -BeTrue
+        foreach ($arg in $Extra) { $script:Launched.arguments | Should -Contain $arg }
+        Should -Invoke Get-OneCLaunchUserWindow -Times 0 -Because 'service launches do not acquire or restore user focus'
+    }
+
+    It 'leaves visible service launches and TestManager ownership unchanged' -ForEach @(
+        @{ Mode = 'visible'; Port = 0; Splash = $false }
+        @{ Mode = 'hidden'; Port = 48100; Splash = $true }
+    ) {
+        Mock Get-OneCWindowMode { $Mode }
+        Mock Invoke-WithOneCSessionAdmissionContext { & $ScriptBlock }
+        Mock Confirm-OneCNativeOperationRelease { }
+        Mock Invoke-NativeProcessAndWaitResult {
+            $script:Launched = @{ arguments = $Arguments; hide = [bool]$HideOneCMainFrame }
+            @{ exitCode = 0; timedOut = $false }
+        }
+        Invoke-Enterprise -InfoBasePath 'C:\База с пробелом' -InfoBaseKind file -TestClientPort $Port -User '' -Password '' | Out-Null
+        ($script:Launched.arguments -contains '/DisableSplash') | Should -Be $Splash
+        $script:Launched.hide | Should -BeFalse
+    }
+}
+
+Describe 'Service Enterprise main-frame launch' {
+    BeforeAll {
+        $script:ServiceDir = Join-Path $TestDrive 'Служебный клиент с пробелом'
+        [void][IO.Directory]::CreateDirectory($script:ServiceDir)
+        $source = Join-Path $script:ServiceDir 'client.cs'
+        # Real off-screen Win32 windows, no 1C installation, input or activation.
+        [IO.File]::WriteAllText($source, @'
+using System; using System.IO; using System.Runtime.InteropServices; using System.Threading;
+static class ServiceClient {
+    delegate IntPtr WndProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    struct WC { public uint style; public WndProc proc; public int a,b; public IntPtr inst,icon,cursor,brush; public string menu,name; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w,l; public uint t; public int x,y; }
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern ushort RegisterClass(ref WC c);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex,string cls,string title,uint style,int x,int y,int w,int h,IntPtr p,IntPtr menu,IntPtr inst,IntPtr param);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h,int cmd);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr DefWindowProc(IntPtr h,uint m,IntPtr w,IntPtr l);
+    [DllImport("user32.dll")] static extern bool PeekMessage(out MSG m,IntPtr h,uint min,uint max,uint remove);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
+    static WndProc proc=DefWindowProc;
+    static IntPtr Open(string cls,string title) {
+        var c=new WC {proc=proc,name=cls,inst=GetModuleHandle(null)}; RegisterClass(ref c);
+        IntPtr h=CreateWindowEx(0,cls,title,0x00CF0000,-32000,-32000,160,120,IntPtr.Zero,IntPtr.Zero,c.inst,IntPtr.Zero);
+        ShowWindow(h,4); return h;
+    }
+    [STAThread] static int Main(string[] args) {
+        string root=args[Array.IndexOf(args,"/C")+1];
+        if (root=="quick") return 0;
+        Thread.Sleep(300); // The main frame does not exist at process creation.
+        IntPtr main=Open("V8TopLevelFrameSDI","ITL service main");
+        Open("V8TopLevelFrameSDIsec","ITL service diagnostic");
+        File.WriteAllText(root+".shown","yes");
+        var until=DateTime.UtcNow.AddSeconds(12); bool reshown=false;
+        while(DateTime.UtcNow<until) {
+            MSG m; while(PeekMessage(out m,IntPtr.Zero,0,0,1)) { TranslateMessage(ref m); DispatchMessage(ref m); }
+            if(!reshown && File.Exists(root+".reshow")) { ShowWindow(main,4); reshown=true; File.WriteAllText(root+".reshown","yes"); }
+            if(File.Exists(root+".stop")) return 0;
+            Thread.Sleep(20);
+        }
+        return 7;
+    }
+}
+'@, [Text.UTF8Encoding]::new($false))
+        $script:ServiceExe = Join-Path $script:ServiceDir '1cv8c.exe'
+        $build = Invoke-ItlNativeProcessCapture -FilePath (Get-ItlWindowHelperCompilerPath) -WorkingDirectory $script:ServiceDir -TimeoutSeconds 120 -Arguments @('/nologo', '/target:winexe', "/out:$script:ServiceExe", $source)
+        $build.exitCode | Should -Be 0 -Because ([string]$build.stdout)
+        Add-Type -Namespace WhServiceTest -Name User -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+'@
+    }
+    BeforeEach {
+        Mock Resolve-EnterpriseClientExecutablePath { $script:ServiceExe }
+        Mock Assert-InfoBaseAvailable { }
+        Mock Get-OneCWindowMode { 'hidden' }
+        Mock Invoke-WithOneCSessionAdmissionContext { & $ScriptBlock }
+        Mock Invoke-OneCSessionProcessStart { & $StartProcess }
+        Mock Publish-Agent1cLifecycleOperationProcessEvidence { }
+        Mock Publish-NativeWaitRunStatus { }
+        Mock Confirm-OneCNativeOperationRelease { }
+    }
+    It 'hides late and reshown main frames, preserves diagnostics and ends its watcher with the exact client' {
+        $script:ServiceFlag = Join-Path $script:ServiceDir 'готовность'
+        $script:ServiceObserved = $false
+        $script:ServiceWatch = $null
+        $script:ServiceClient = $null
+        $script:StartWatchImpl = ${function:Start-ItlOneCMainFrameWatch}
+        Mock Start-ItlOneCMainFrameWatch {
+            $script:ServiceClient = $Process
+            $watch = & $script:StartWatchImpl -Process $Process -Executable $Executable
+            $script:ServiceWatch = [Diagnostics.Process]::GetProcessById($watch.Id)
+            $null = $script:ServiceWatch.Handle
+            return $watch
+        }
+        try {
+            Invoke-Enterprise -InfoBasePath $script:ServiceDir -InfoBaseKind file -User '' -Password '' -EnterpriseArgs @('/C', $script:ServiceFlag) -TimeoutSeconds 20 -CompletionGraceSeconds 0 -CompletionProbe {
+                param($context)
+                if (Test-Path -LiteralPath ($script:ServiceFlag + '.shown')) {
+                    $main = [WhServiceTest.User]::FindWindow('V8TopLevelFrameSDI', 'ITL service main')
+                    $dialog = [WhServiceTest.User]::FindWindow('V8TopLevelFrameSDIsec', 'ITL service diagnostic')
+                    if ($main -ne [IntPtr]::Zero -and $dialog -ne [IntPtr]::Zero -and
+                        -not [WhServiceTest.User]::IsWindowVisible($main) -and [WhServiceTest.User]::IsWindowVisible($dialog)) {
+                        [uint32]$windowPid = 0
+                        [void][WhServiceTest.User]::GetWindowThreadProcessId($main, [ref]$windowPid)
+                        if ($windowPid -ne $context.processId) { throw 'wrong main-frame owner' }
+                        if ([WhServiceTest.User]::GetForegroundWindow() -in @($main, $dialog)) { throw 'fixture stole focus' }
+                        if (Test-Path -LiteralPath ($script:ServiceFlag + '.reshown')) {
+                            $script:ServiceObserved = $true
+                            [IO.File]::WriteAllText($script:ServiceFlag + '.stop', 'done')
+                        } else { [IO.File]::WriteAllText($script:ServiceFlag + '.reshow', 'again') }
+                    }
+                }
+                return ($script:ServiceObserved -and $context.launcherExited)
+            } | Out-Null
+            $script:ServiceObserved | Should -BeTrue
+            $script:ServiceWatch | Should -Not -BeNullOrEmpty
+            $script:ServiceWatch.WaitForExit(5000) | Should -BeTrue
+            $script:ServiceWatch.ExitCode | Should -Be 0
+        } finally {
+            # Only these two exact test process handles; never enumerate user 1C.
+            foreach ($owned in @($script:ServiceClient, $script:ServiceWatch)) {
+                if ($null -ne $owned) {
+                    if (-not $owned.HasExited) { $owned.Kill(); [void]$owned.WaitForExit(5000) }
+                    $owned.Dispose()
+                }
+            }
+        }
+    }
+    It 'continues the original Enterprise operation when helper preparation fails' {
+        Mock Get-ItlWindowHelperExecutable { throw 'fixture compiler unavailable' }
+        $output = Invoke-Enterprise -InfoBasePath $script:ServiceDir -InfoBaseKind file -User '' -Password '' -EnterpriseArgs @('/C', 'quick') -TimeoutSeconds 10 6>&1
+        ($output -join "`n") | Should -Match 'ITL_WINDOW_HELPER_UNAVAILABLE: Enterprise main window may become visible.*fixture compiler unavailable'
+        $script:LastProcessTimedOut | Should -BeFalse
+        Get-Process -Id $script:LastProcessId -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
     }
 }
 

@@ -7588,6 +7588,7 @@ function Invoke-NativeProcessAndWaitResult {
         [string]$FilePath,
         [string[]]$Arguments,
         [switch]$OneCCreateInfoBaseSyntax,
+        [switch]$HideOneCMainFrame,
         [int]$TimeoutSeconds = 0,
         [scriptblock]$OnTimeout = $null,
         [scriptblock]$CompletionProbe = $null,
@@ -7611,6 +7612,13 @@ function Invoke-NativeProcessAndWaitResult {
         [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($StderrPath))
     }
 
+    # Compile/verify before launching 1C, so a cold helper cache cannot leave
+    # the client's early main window visible for the whole build duration.
+    $mainFrameWatchExecutable = ''
+    if ($HideOneCMainFrame) {
+        try { $mainFrameWatchExecutable = Get-ItlWindowHelperExecutable }
+        catch { Write-Host "[WARN] ITL_WINDOW_HELPER_UNAVAILABLE: Enterprise main window may become visible. $($_.Exception.Message)" }
+    }
     $script:LastNativeProcessStarted = $false
     Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
     $argumentLine = if ($OneCCreateInfoBaseSyntax) {
@@ -7645,6 +7653,22 @@ function Invoke-NativeProcessAndWaitResult {
     # exits unless its native handle is retained before monitoring begins.
     # In that case [int]$process.ExitCode would silently turn null into success.
     $null = $process.Handle
+
+    if ($mainFrameWatchExecutable) {
+        try {
+            if (-not $process.HasExited) {
+                $watch = Start-ItlOneCMainFrameWatch -Process $process -Executable $mainFrameWatchExecutable
+                # Releasing our handle does not stop the watcher. It validates
+                # PID + creation time and exits with this exact client, including
+                # timeout/cancellation, without a group or an input lease.
+                $watch.Dispose()
+            }
+        } catch {
+            if (-not $process.HasExited) {
+                Write-Host "[WARN] ITL_WINDOW_HELPER_UNAVAILABLE: Enterprise PID $($process.Id) main window may become visible. $($_.Exception.Message)"
+            }
+        }
+    }
 
     $nativeProcessStartedAtUtc = ''
     try { $nativeProcessStartedAtUtc = $process.StartTime.ToUniversalTime().ToString('o') } catch { }
@@ -8813,10 +8837,11 @@ function Invoke-Enterprise {
         $effectiveTestClientPort = $VanessaTestPort
     }
     $launchFocusGuard = $null
+    $hiddenEnterprise = (Get-OneCWindowMode) -eq 'hidden'
+    if ($hiddenEnterprise) { $args += '/DisableSplash' }
     if ($effectiveTestClientPort -gt 0) {
         $args += "/TESTMANAGER"
-        if ((Get-OneCWindowMode) -eq 'hidden') {
-            $args += "/DisableSplash"
+        if ($hiddenEnterprise) {
             $launchFocusGuard = New-OneCLaunchFocusGuard -UserWindow (Get-OneCLaunchUserWindow)
         }
     }
@@ -8901,6 +8926,7 @@ function Invoke-Enterprise {
                 Invoke-NativeProcessAndWaitResult `
                     -FilePath $platformPath `
                     -Arguments $nativeArguments `
+                    -HideOneCMainFrame:($hiddenEnterprise -and $effectiveTestClientPort -le 0) `
                     -TimeoutSeconds $TimeoutSeconds `
                     -OnTimeout $OnTimeout `
                     -CompletionProbe $effectiveCompletionProbe `

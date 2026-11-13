@@ -94,12 +94,15 @@ function Invoke-ItlWindowHelperVerb {
 }
 
 function Start-ItlOneCMainFrameWatch {
-    param([Parameter(Mandatory = $true)][Diagnostics.Process]$Process)
+    param(
+        [Parameter(Mandatory = $true)][Diagnostics.Process]$Process,
+        [string]$Executable = ''
+    )
 
-    $exe = Get-ItlWindowHelperExecutable
+    if (-not $Executable) { $Executable = Get-ItlWindowHelperExecutable }
     $creation = $Process.StartTime.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)
     $arguments = Join-NativeCommandLineArguments -Arguments @('watch-main', [string]$Process.Id, $creation)
-    return (Start-Process -FilePath $exe -ArgumentList $arguments -WindowStyle Hidden -PassThru -ErrorAction Stop)
+    return (Start-Process -FilePath $Executable -ArgumentList $arguments -WindowStyle Hidden -PassThru -ErrorAction Stop)
 }
 
 function Get-ItlWindowHelperGroupConfig {
