@@ -577,6 +577,54 @@ function Get-YAxUnitJunitSummary {
     }
 }
 
+function Get-YAxUnitRunCoverage {
+    param([object]$Summary, [string]$LogPath, [string]$ExtensionName, [Nullable[int]]$ExpectedTests)
+
+    # YAxUnit can omit a module from JUnit after logging a load failure.
+    # The classified inventory names modules; dynamic registrations can hide the case count.
+    $missing = [Collections.Generic.List[object]]::new()
+    if ($LogPath -and $ExtensionName -and (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+        $pattern = '(?i)^(?:Ошибка инициализации модуля|Error initializing module):\s+' +
+            [regex]::Escape($ExtensionName) + '\s+(?:ОбщийМодуль|CommonModule)\.([\p{L}\p{N}_]+)\.'
+        $module = $null
+        $reader = $null
+        try {
+            $reader = [IO.StreamReader]::new($LogPath, [Text.Encoding]::UTF8)
+            for ($lineCount = 0; $lineCount -lt 4096; $lineCount++) {
+                $line = $reader.ReadLine()
+                if ($null -eq $line -or $line -match '\[INF\]:\s*(?:Выполнение тестовых сценариев|Executing test scenarios)') { break }
+                if ($line -match $pattern) {
+                    $module = [pscustomobject]@{ name = $Matches[1]; reason = 'initialization'; diagnostic = '' }
+                    $missing.Add($module)
+                } elseif ($null -ne $module) {
+                    if ($line -match '^\{[^}]+\}:\s*(.+)$' -and -not $module.diagnostic) { $module.diagnostic = $line.Trim() }
+                    elseif ($line -match '^\[(?:ОшибкаКомпиляцииВстроенногоЯзыка|ScriptCompilationError)\]') { $module.reason = 'compilation' }
+                    elseif ($line -match '^\d{2}:\d{2}:\d{2}') { $module = $null }
+                }
+            }
+        } catch {
+            Write-Warning 'YAxUnit loader diagnostics could not be read. Inspect the original log.' -WarningAction Continue
+        } finally {
+            if ($null -ne $reader) { $reader.Dispose() }
+        }
+    }
+    $reported = Get-StateValue $Summary 'tests' $null
+    $skipped = Get-StateValue $Summary 'skipped' $null
+    $executed = if ($null -ne $reported) { [int]$reported - [int]$skipped } else { $null }
+    $status = if ($missing.Count -gt 0 -or ($null -ne $ExpectedTests -and $null -ne $executed -and $executed -lt $ExpectedTests)) {
+        'partial'
+    } elseif ($null -ne $ExpectedTests -and $null -ne $executed -and $executed -eq $ExpectedTests) { 'complete' }
+    else { 'unknown' }
+    return [pscustomobject]@{
+        status = $status
+        expectedTests = $ExpectedTests
+        executedTests = $executed
+        skippedTests = $skipped
+        missingTests = $(if ($null -ne $ExpectedTests -and $null -ne $executed) { [Math]::Max(0, $ExpectedTests - $executed) } else { $null })
+        missingModules = $missing.ToArray()
+    }
+}
+
 function Test-ProjectTestsAdoptedObjects {
     # Adoption belongs to the test source snapshot; the proof stores it with testsFingerprint.
     param([string]$Path)
@@ -1067,6 +1115,9 @@ function Invoke-YAxUnitVerification {
         }
         Update-DevBranchState -State $State -Updates @{
             lastYAxUnitStatus = "not-applicable"
+            lastYAxUnitCoverage = $null
+            lastYAxUnitReportPath = ''
+            lastYAxUnitLogPath = ''
             lastYAxUnitReason = $reason
             lastYAxUnitTestAt = (Get-Date).ToString("o")
         }
@@ -1084,6 +1135,8 @@ function Invoke-YAxUnitVerification {
     $extensionName = Get-YAxUnitExtensionName
     $testsExtensionName = Get-YAxUnitTestsExtensionName
     $entry = Get-YAxUnitPinnedEntry
+
+    $summary = $null
 
     try {
         $State = Ensure-ProjectTestsReady -State $State -TrustCurrentProof:$diagnostic
@@ -1134,9 +1187,12 @@ function Invoke-YAxUnitVerification {
             Write-Host "YAxUnit diagnostic run passed for modules $(@($filter.modules) -join ', '): tests=$($summary.tests), skipped=$($summary.skipped). It is not verification evidence. Report: $reportPath; inputs: $diagnosticInputManifest"
             return [pscustomobject]@{ status = "diagnostic-passed"; tests = $summary.tests; reportPath = $reportPath; diagnosticInputsPath = $diagnosticInputManifest }
         }
+        $coverage = Get-YAxUnitRunCoverage -Summary $summary -LogPath $yaxunitLogPath -ExtensionName $testsExtensionName
+        $yaxunitStatus = if ($coverage.status -eq 'partial') { 'partial' } else { 'passed' }
         $passedUpdates = @{
-            lastYAxUnitStatus = "passed"
-            lastYAxUnitReason = "JUnit report passed."
+            lastYAxUnitStatus = $yaxunitStatus
+            lastYAxUnitReason = $(if ($yaxunitStatus -eq 'partial') { 'The test loader reported a module initialization failure.' } else { 'JUnit report passed.' })
+            lastYAxUnitCoverage = $coverage
             lastYAxUnitTestAt = (Get-Date).ToString("o")
             lastYAxUnitReportPath = $reportPath
             lastYAxUnitLogPath = $yaxunitLogPath
@@ -1148,14 +1204,15 @@ function Invoke-YAxUnitVerification {
             lastYAxUnitVersion = [string]$entry.version
             lastYAxUnitArtifactSha256 = ([string]$entry.sha256).ToLowerInvariant()
         }
-        Add-VerificationComponentEvidenceUpdates -Updates $passedUpdates -State $State -Component 'yaxunit' -Status 'passed' -ArtifactPaths @($reportPath)
+        Add-VerificationComponentEvidenceUpdates -Updates $passedUpdates -State $State -Component 'yaxunit' -Status $yaxunitStatus -ArtifactPaths @($reportPath)
         Update-DevBranchState -State $State -Updates $passedUpdates
-        Write-Host "YAxUnit verification passed: tests=$($summary.tests), skipped=$($summary.skipped). Report: $reportPath"
-        return [pscustomobject]@{ status = "passed"; tests = $summary.tests; reportPath = $reportPath }
+        Write-Host "YAxUnit verification ${yaxunitStatus}: tests=$($summary.tests), skipped=$($summary.skipped). Report: $reportPath"
+        return [pscustomobject]@{ status = $yaxunitStatus; tests = $summary.tests; reportPath = $reportPath }
     } catch {
         $failure = $_
         if (-not $diagnostic) { try { $failedUpdates = @{
             lastYAxUnitStatus = "failed"
+            lastYAxUnitCoverage = Get-YAxUnitRunCoverage -Summary $summary -LogPath $yaxunitLogPath -ExtensionName $testsExtensionName
             lastYAxUnitReason = $failure.Exception.Message
             lastYAxUnitTestAt = (Get-Date).ToString("o")
             lastYAxUnitReportPath = $reportPath

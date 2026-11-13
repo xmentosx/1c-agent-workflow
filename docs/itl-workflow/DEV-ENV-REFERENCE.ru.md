@@ -105,7 +105,7 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `ITL_YAXUNIT_TESTING` | Запуск YAxUnit для локальных алгоритмических тестов | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_VANESSA_TESTING` | Запуск Vanessa Automation | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_CHECK_EVENT_LOG` | Проверка журнала регистрации | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
-| `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` | Максимум полных прогонов в одной repair-сессии `/itl-verify-fix`; значение фиксируется при старте сессии | целое `1..100`, default `5` | user |
+| `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` | Явный максимум полных прогонов в новой repair-сессии `/itl-verify-fix`; значение фиксируется при старте сессии | целое `1..100`, без настройки общий предел отсутствует | user |
 | `ITL_VERIFICATION_MODEL` | Модель оценки: текущая правка или прежние накопленные обязательства; обновление однократно записывает default, явный последующий выбор сохраняется | `change`/`cumulative`, default `change` | user |
 | `VERIFICATION_POLICY` | Политика result/close | `warn`/`block`, default `warn` | user |
 | `GITHUB_TOKEN` | Необязательный GitHub API token: поднимает лимит API (60 → 5000 запросов в час), в том числе для загрузки ассетов | строка или пусто; имеет приоритет | user/secret |

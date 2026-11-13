@@ -888,7 +888,10 @@ Describe 'Classification before infobase preparation' {
         function Assert-VanessaVerificationPreflight {}
         function Test-ItlFullVerificationProofEligible { $true }
         function Get-ItlMatchingVerificationRepairSession { [pscustomobject]@{ kind = 'canonical-repair' } }
-        function Use-ItlVerificationRepairAttempt { $script:PreflightEvents.Add('attempt') }
+        function Use-ItlVerificationRepairAttempt {
+            $script:PreflightEvents.Add('attempt')
+            [pscustomobject]@{sessionId='fixture';runId='fixture-attempt'}
+        }
         function Ensure-DevBranchEventLogBaseline { $script:PreflightEvents.Add('baseline'); $script:PreflightState }
         function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{ path = 'cursor'; capturedAt = [datetime]'2026-10-24' } }
         function Update-DevBranchBase { $script:PreflightEvents.Add('load'); if ($script:PreflightLateEdit) { $script:PreflightSourceOid = 'changed-during-load' } }
@@ -898,15 +901,29 @@ Describe 'Classification before infobase preparation' {
         }
         function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
         function Get-VerificationState { [pscustomobject]@{ isFreshPassed = $true } }
-        function Complete-ItlVerificationRepairSession { $script:PreflightEvents.Add('repair-complete') }
-        function Complete-ItlVerificationRepairFailure { $script:PreflightEvents.Add('repair-failed') }
+        function Set-RunFailureContextFromMessage {}
+        function Get-ItlVerificationRepairRunResult { param($Phase) [pscustomobject]@{ phase=$Phase } }
+        function Publish-ItlVerificationRepairRun {
+            param($Ticket, $Result, $Failure, $SessionPassed)
+            if ($null -ne $Failure) {
+                if ($null -ne $Ticket) {
+                    $Result.phase | Should -BeExactly 'verification'
+                    $script:PreflightEvents.Add('repair-failed')
+                } else {
+                    $Result.phase | Should -BeExactly 'preflight'
+                    $script:PreflightEvents.Add('preflight-reported')
+                }
+            } elseif ($SessionPassed) {
+                $script:PreflightEvents.Add('repair-complete')
+            }
+        }
         function Write-DevBranchVerificationRunUserReport { $script:PreflightEvents.Add('report') }
     }
 
     It 'rejects stale source classification without load, runtime release, baseline or repair-attempt consumption' {
         $VerificationTrigger = 'repair'
         { Invoke-DevBranchCheck } | Should -Throw '*ITL_TEST_CLASSIFICATION_REQUIRED*sourceOid=current*'
-        @($script:PreflightEvents) | Should -Be @('normalize', 'classify', 'classify-tests-and-repeat-original-itl-command', 'restore')
+        @($script:PreflightEvents) | Should -Be @('normalize', 'classify', 'classify-tests-and-repeat-original-itl-command', 'restore', 'preflight-reported')
     }
 
     It 'continues the original repair after classification is corrected' {
@@ -917,8 +934,8 @@ Describe 'Classification before infobase preparation' {
         @($script:PreflightEvents | Where-Object { $_ -eq 'attempt' }).Count | Should -Be 1
         @($script:PreflightEvents | Where-Object { $_ -eq 'load' }).Count | Should -Be 1
         $script:PreflightEvents | Should -Contain 'verified'
-        $script:PreflightEvents | Should -Contain 'repair-complete'
-        $script:PreflightEvents[-1] | Should -Be 'report'
+        $script:PreflightEvents | Should -Contain 'report'
+        $script:PreflightEvents[-1] | Should -Be 'repair-complete'
     }
 
     It 'preserves the adopted dirty-source baseline through cursor persistence and a failed load (<Model>)' -TestCases @(@{Model='cumulative'},@{Model='change'}) {

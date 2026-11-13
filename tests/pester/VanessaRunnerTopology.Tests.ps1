@@ -440,8 +440,13 @@
             function Invoke-ItlVerificationCycle { $script:Verified++ }
             function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
             function Get-VerificationState { [pscustomobject]@{ isFreshPassed = $true } }
-            function Complete-ItlVerificationRepairSession {}
-            function Complete-ItlVerificationRepairFailure {}
+            function Publish-ItlVerificationRepairRun {
+                param($Ticket, $Result, $Failure, $SessionPassed)
+                if ($null -eq $Failure) {
+                    $SessionPassed | Should -BeTrue
+                    $Result.phase | Should -BeExactly 'verification'
+                }
+            }
             function Write-DevBranchVerificationRunUserReport {}
             $fixture.state | Add-Member -NotePropertyName lastVerificationEvidenceKind -NotePropertyValue 'full'
 
