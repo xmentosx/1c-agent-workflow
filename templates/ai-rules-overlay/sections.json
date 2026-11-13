@@ -383,11 +383,11 @@
     {
       "path": "content/openspec-bundle/claude-code/.claude/commands/opsx/apply.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-OPENSPEC-001 for r25 by replacing the Claude namespace command with its flat opsx-apply entrypoint. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-OPENSPEC-001 for r25 by replacing the Claude namespace command with its flat opsx-apply entrypoint. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "553af249c3923f52f1cee7894ca5d6702727bfac239229f3bc2e8e56eb3df23f",
       "baselineSha256": "9f375560db4bb7874284c871fcd99022ed8f1b4e93f7de994b96331328fcee4b",
-      "resultSha256": "9f375560db4bb7874284c871fcd99022ed8f1b4e93f7de994b96331328fcee4b"
+      "resultSha256": "5e4ef1dbfb9da7aefe40e1ea5d7352563ce6a832eb26606f19864fa322f98eb6"
     },
     {
       "path": "content/openspec-bundle/claude-code/.claude/commands/opsx/archive.md",
@@ -437,11 +437,11 @@
     {
       "path": "content/openspec-bundle/claude-code/.claude/skills/openspec-apply-change/SKILL.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "5b95051c452ef1169234fc335ed85943707335ae0eb84eb667f6332d2c05383c",
       "baselineSha256": "579a6c9282683bba2738d17dd6d1e89d6c2f7a76bb2be8b6b2072e385bfbcc97",
-      "resultSha256": "579a6c9282683bba2738d17dd6d1e89d6c2f7a76bb2be8b6b2072e385bfbcc97"
+      "resultSha256": "b235ceb1bf65cbfb30447141c4f8e47bebf36a9d3bdfda09bbe1eb738a0ae79a"
     },
     {
       "path": "content/openspec-bundle/claude-code/.claude/skills/openspec-archive-change/SKILL.md",
@@ -491,11 +491,11 @@
     {
       "path": "content/openspec-bundle/codex/.agents/skills/openspec-apply-change/SKILL.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "adapt-bundle-local-home-and-itl-contracts; exact candidate audited against upstream and r36 baseline. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "adapt-bundle-local-home-and-itl-contracts; exact candidate audited against upstream and r36 baseline. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "c50b84cb0016367fbbb38c9df943127cc8823fca6507926535f3c6d8061487f0",
       "baselineSha256": "f5ff46536e5bc15f67369be559b1fe98fa4a357d60e463e99272667dff17edc1",
-      "resultSha256": "f5ff46536e5bc15f67369be559b1fe98fa4a357d60e463e99272667dff17edc1"
+      "resultSha256": "8bbb26fc134b022ef211fdafe6a1b716349f1592ae851f0370aa17ee8888060b"
     },
     {
       "path": "content/openspec-bundle/codex/.agents/skills/openspec-archive-change/SKILL.md",
@@ -545,11 +545,11 @@
     {
       "path": "content/openspec-bundle/cursor/.cursor/commands/opsx-apply.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "1e226b55e48b745de42b703a015377339938a574133de228d90e08afebff6ae5",
       "baselineSha256": "0cfa99f10a69fa2b0a9fe66abdcdf32fa3b0aeeae526870a12bc3bd14f408de2",
-      "resultSha256": "0cfa99f10a69fa2b0a9fe66abdcdf32fa3b0aeeae526870a12bc3bd14f408de2"
+      "resultSha256": "0d8fab83a8d5970a0433cfc7c9282a54a070e2716f7405dd327fcc93ea0e1fee"
     },
     {
       "path": "content/openspec-bundle/cursor/.cursor/commands/opsx-archive.md",
@@ -599,11 +599,11 @@
     {
       "path": "content/openspec-bundle/cursor/.cursor/skills/openspec-apply-change/SKILL.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "6ccac69b7e5fe892c74112d171648cb8a57794358325398e84a2c10ed007de7a",
       "baselineSha256": "334095bddfdf95537cc05c4c73e1ab54424d985111ae36d2270af5c4bbeccea0",
-      "resultSha256": "334095bddfdf95537cc05c4c73e1ab54424d985111ae36d2270af5c4bbeccea0"
+      "resultSha256": "079e7f4993ccb80b676d57fdf314dbcdb647a055755b3f64e999413517c932bc"
     },
     {
       "path": "content/openspec-bundle/cursor/.cursor/skills/openspec-archive-change/SKILL.md",
@@ -653,11 +653,11 @@
     {
       "path": "content/openspec-bundle/kilocode/.kilocode/skills/openspec-apply-change/SKILL.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "6ccac69b7e5fe892c74112d171648cb8a57794358325398e84a2c10ed007de7a",
       "baselineSha256": "334095bddfdf95537cc05c4c73e1ab54424d985111ae36d2270af5c4bbeccea0",
-      "resultSha256": "334095bddfdf95537cc05c4c73e1ab54424d985111ae36d2270af5c4bbeccea0"
+      "resultSha256": "079e7f4993ccb80b676d57fdf314dbcdb647a055755b3f64e999413517c932bc"
     },
     {
       "path": "content/openspec-bundle/kilocode/.kilocode/skills/openspec-archive-change/SKILL.md",
@@ -707,11 +707,11 @@
     {
       "path": "content/openspec-bundle/kilocode/.kilocode/workflows/opsx-apply.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "d777461bc7216c86c0ffd8c7575f70d0e577a3120afd82e115fe981c3225341d",
       "baselineSha256": "d336f661c437e7fd702b371530c3b1c24f029b814c7dce53feba500a04b949c7",
-      "resultSha256": "d336f661c437e7fd702b371530c3b1c24f029b814c7dce53feba500a04b949c7"
+      "resultSha256": "d66ee4197e3490ca3903767a7c27970bff94f786bb438fa5976a1c4515846c3f"
     },
     {
       "path": "content/openspec-bundle/kilocode/.kilocode/workflows/opsx-archive.md",
@@ -761,11 +761,11 @@
     {
       "path": "content/openspec-bundle/opencode/.opencode/commands/opsx-apply.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "adapt-bundle-local-home-and-itl-contracts; exact candidate audited against upstream and r36 baseline. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "adapt-bundle-local-home-and-itl-contracts; exact candidate audited against upstream and r36 baseline. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "37ef0bf5edb37a25a89ccf564a70223d8449bac2fb85908079f98c2a7633869b",
       "baselineSha256": "63a49908b86ab6515c934178098394df2894b165cce2197bc68120992e256f3a",
-      "resultSha256": "63a49908b86ab6515c934178098394df2894b165cce2197bc68120992e256f3a"
+      "resultSha256": "580b8a597e7c72bbab4ce1962e83ac2b11b71eaa8219a730d94f7fc3dc48e390"
     },
     {
       "path": "content/openspec-bundle/opencode/.opencode/commands/opsx-archive.md",
@@ -815,11 +815,11 @@
     {
       "path": "content/openspec-bundle/opencode/.opencode/skills/openspec-apply-change/SKILL.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "6ccac69b7e5fe892c74112d171648cb8a57794358325398e84a2c10ed007de7a",
       "baselineSha256": "334095bddfdf95537cc05c4c73e1ab54424d985111ae36d2270af5c4bbeccea0",
-      "resultSha256": "334095bddfdf95537cc05c4c73e1ab54424d985111ae36d2270af5c4bbeccea0"
+      "resultSha256": "079e7f4993ccb80b676d57fdf314dbcdb647a055755b3f64e999413517c932bc"
     },
     {
       "path": "content/openspec-bundle/opencode/.opencode/skills/openspec-archive-change/SKILL.md",
@@ -1032,10 +1032,10 @@
       "path": "content/rules/sdd-integrations.md",
       "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
       "disposition": "resolved",
-      "reason": "Qualify branch-local ROCTUP only for bounded read-only query evidence; preserve provider and target identity. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-UPSTREAM-ANCHORS-001. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R47: expose material scope costs and require executable risk-based acceptance without new documents or weaker approved coverage. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. Apply step 3 keeps its trigger and points to review-criteria.md; design.md covers the Plan check.",
+      "reason": "Qualify branch-local ROCTUP only for bounded read-only query evidence; preserve provider and target identity. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-UPSTREAM-ANCHORS-001. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R47: expose material scope costs and require executable risk-based acceptance without new documents or weaker approved coverage. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. Apply step 3 keeps its trigger and points to review-criteria.md; design.md covers the Plan check. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "0c4dda48f15addc69b08c27060b0109292f47263f012a9a16519ceb9fb93439e",
       "baselineSha256": "f18f30484abccbdda49e24a28a82f2df55a146baf2964a6430d87a91bb647528",
-      "resultSha256": "dfba60bf7548569e2f4c5e7a53dec105cdcdb5619f3d82e6dc8dc13dedd045ba"
+      "resultSha256": "15628fb10a4b34726f9a64595490e8e7498dca868ed7cf9a3773d90567a00d4a"
     },
     {
       "path": "content/rules/subagent-core.md",
@@ -2498,11 +2498,11 @@
     {
       "path": "tools/apply-openspec-downstream-overlay.ps1",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. c1 checkout exposed a real CRLF repair defect. Preserve original LF/CRLF and UTF-8 BOM on changed overlay files, leave no-op files untouched. Original byte-hash repair case plus four LF/CRLF with/without BOM repairs and no-ops passed without weakening its reproducer. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. c1 checkout exposed a real CRLF repair defect. Preserve original LF/CRLF and UTF-8 BOM on changed overlay files, leave no-op files untouched. Original byte-hash repair case plus four LF/CRLF with/without BOM repairs and no-ops passed without weakening its reproducer. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R58: preserve approved apply scope, continue independent work and reconcile acceptance before completion.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "80ffb1a6b2002a1765ec478df255a3060c0561fb4b54a55741e7ed689653db0b",
-      "resultSha256": "80ffb1a6b2002a1765ec478df255a3060c0561fb4b54a55741e7ed689653db0b"
+      "resultSha256": "b055da65e000b7e009c717af05d9b92ad207fe6ca106d6b44c8a1d6b838b1dfd"
     },
     {
       "path": "tools/refresh-openspec-bundle.ps1",
