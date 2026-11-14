@@ -136,9 +136,11 @@ missing index is not absence of knowledge. No cache between operations.
 without a backend; `note_id` reads the exact pending source. It never scans 1C
 state, transcripts or arbitrary logs. The local scan is capped at 24 recent records
 and eight summaries; an exact known ID bypasses that listing cap. `destinations`
-has one row per write destination; a product row lists its writable
-`knowledgeAreas`. When a product destination is available, `writeGuidance`
-shows how to use its label and area in `remember`. Each row has `readState`:
+offers the write choices project, organization, workplace, host and task. The
+project row lists the `knowledgeAreas` that route to a writable product home;
+product rows are not offered. The local-project workspace stays readable and an
+explicit workspace or product label is still accepted, but neither is offered.
+`writeGuidance` explains the routing. Each row has `readState`:
 `admitted` means the binding admits
 its exact ID; `not_created` means the server listing confirmed absence under
 the expected owner, so the row can still be used for a first write; `unknown`
@@ -147,18 +149,33 @@ means read access or existence is unconfirmed. Offline status reports
 outcome of the current server reads.
 
 `remember(data, dataset_name, note_id?, data_id?, status?, title?, applicability?, evidence?, source?, revision?)`
-saves one self-contained fact. Choose one `dataset_name` from status based on
-the fact's lifetime and applicability.
+saves one self-contained fact that would change work in another session or
+branch. A note is knowledge, not a work log: progress, run and attempt numbers,
+SHAs, line numbers, counters and statuses stay in the `memory_status`
+checkpoint, OpenSpec, evidence, Git or test results. `data` is at most 600
+characters on every level: rule, why, when to apply, conditions and versions;
+proofs go by reference in `evidence` and conditions in `applicability`, outside
+that limit. A longer `data` is refused with `MEMORY_NOTE_TOO_LONG` before any
+backend call; the pending source is kept and `remember` with the same `note_id`
+and shortened data completes it. Notes stored before the limit are read as before.
 
-| Scope | When to use it |
+| Choice | When to use it |
 | --- | --- |
-| `task` | Current cycle only, such as approval of a specific diff, a test run or interim state. |
-| `workspace` | Multiple branches of one main copy, such as their shared stand arrangement. |
-| `project` | A decision, fix or constraint specific to the project or its team, including customer customizations. Give conditions and versions. |
-| `product` | Confirmed knowledge about the base product, including facts learned in its development project. Use the product home of an applicable registry knowledge area and include conditions and versions. From a customized project, prove independence from the customization. |
+| project | A confirmed decision, fix, constraint or lesson for other branches or copies of the project, including customer customizations. Add `applicability.knowledgeArea` for base-product behaviour. |
+| `organization` | Confirmed knowledge across projects and products (platform, BSP, tooling, company conventions), never client, project or configuration data. Organizational `standing` needs explicit user direction. |
 | `workplace` | A practice of the same `workplaceId`. |
 | `host` | Machine environment, such as the platform version or tool location. |
-| `organization` | Confirmed knowledge across projects and products. Organizational `standing` needs explicit user direction. |
+| `task` | Only the user's decisions and permissions for the current cycle, such as an approved exception or a chosen release version. Never a run result or interim state. |
+
+A project write with `applicability.knowledgeArea` goes to the product home
+when the area is applicable, has exactly one confirmed home among admitted
+writable products, the note is not `candidate`, and the project is not
+customized or `applicability.independentOfCustomization=true`. Otherwise it
+stays in the project. An unsent draft that was already attempted and an
+existing project note keep their dataset. The answer names `routedTo` and
+`routeReason`: `product-home`, `no-area`, `candidate`, `area-not-applicable`,
+`ambiguous-home`, `customization-unproven` or `existing-note`. An explicit
+product label keeps its own rule (`MEMORY_PROJECT_CANDIDATE`).
 
 For a project fix, record source branch and commit or a checked diff reference,
 affected objects, applicable conditions and verification evidence. Put supported
@@ -198,10 +215,24 @@ confirmation. `recall` omits `candidate` notes; local status lists durable own
 `candidates` until the same note is verified with evidence or retired. Product
 facts require a confirmed area/home and independence from customer customization.
 There is no default global/task destination or automatic organizational promotion.
+The informational memory line of `/itl-check` lists up to eight titles of notes
+saved from this copy in the current cycle with their level, newest first, from
+local sources only, so the agent reviews them before completion.
 
 `recall(query, datasets?, project_id?, search_type="CHUNKS", top_k<=8)` sends one query over
 the union of allowed exact IDs, at most 24 candidates, then checks authorized raw
 original/current status/applicability. Stale fragments never override the original.
+Groups of datasets are interleaved so a large dataset cannot starve a small one;
+inside each group, fragments beyond the calibrated relevance threshold are
+dropped before originals are read. `CHUNKS` uses the native cosine distance with
+a maximum per qualified profile in `assets/scoped-memory-policy.json`
+(`cognee-qwen4096-v1`: 0.40); `CHUNKS_LEXICAL` has no native score and keeps a
+fragment holding at least half of the query terms. A profile without a rule
+drops nothing. `belowThreshold` counts dropped fragments; no remaining card is
+not proof of absence. `coverage=partial` means incomplete coverage (a failed or
+late group, an unattributed fragment, an unread or inapplicable original);
+reaching `top_k`, the candidate cap or the token cap sets `truncated=true`
+instead. Calibration: improve-memory-content-quality evidence.
 The optional public `datasets` argument accepts admitted labels, not UUIDs; the
 owner resolves those labels to pinned native IDs. Omit it to use the current
 admitted union. An explicit list is validated before search. The denial names
@@ -237,8 +268,9 @@ datasets; coverage is `empty` when discovery has no outstanding issues. A
 temporary recall failure leaves coverage unknown for that call. If the fact is
 needed in the current turn, use exact status for a known original or make one
 more recall with the same admitted set. After another failure, continue with
-available sources and report the gap. Make a fresh recall in the next eligible
-turn in the same chat. Reconcile uncertain writes by exact IDs.
+available sources and report the gap. Recall once per topic; search again for
+a new area or object, missing context or after such a failure, not merely
+because a new turn started. Reconcile uncertain writes by exact IDs.
 
 `memory_status(dataset_name, note_id|data_id)` reconciles the exact source and
 updates its local receipt/pending. Dataset

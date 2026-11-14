@@ -43,7 +43,29 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: OpenSpec apply continuation, local r58
+## Current candidate: scoped memory content quality, local r59
+
+`itl-main-2f640143-r59` pins
+`d6a65870801af5108302e98464def8985d1c2c0f` over r58 on the same audited
+upstream. In PM5 copies 113 of 116 `remember` calls went to the task level as
+a work log, and one shared note reached 74% of `recall` answers
+([baseline](../openspec/changes/improve-memory-content-quality/evidence/baseline-2026-11-14.md)).
+The root core now keeps a note as reusable knowledge of at most 600
+characters, keeps task progress in the checkpoint, offers the project with
+routing of a base-product knowledge area to its product home, narrows task to
+the user's decisions of the cycle and asks for recall once per topic.
+`project-memory.md` names the calibrated relevance threshold and drops the
+per-turn recall after a transient failure.
+
+Normalized UTF-8 sizes from the fork validator: root 15,676 -> 15,659 (-17),
+full-cycle 159,146 -> 159,237 (+91) and subagent start 33,552 -> 33,535 (-17),
+all within the existing ceilings. The source appendix shrinks 5,215 -> 5,198
+bytes. MCP tool descriptions and initialize instructions grow 2,184 -> 2,454
+bytes and tools/list 3,459 -> 3,729 bytes, within the approved +0.3 KB. The
+policy clause hash, project template and dependency lock bind the candidate;
+`compatibilityStatus` stays `pending` until the publication owner qualifies it.
+
+## Earlier candidate: OpenSpec apply continuation, local r58
 
 `itl-main-2f640143-r58` pins
 `23654440a7e39a22bfad2a4344e6c531d82a93e1` over r57 on the same audited

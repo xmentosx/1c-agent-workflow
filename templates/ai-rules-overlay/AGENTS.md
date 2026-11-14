@@ -53,28 +53,30 @@ Applies only when the `memory_status` tool is available; `project-memory`
 holds the details on demand.
 
 - Call `memory_status` once at session start and after a `contextChanged`
-  notice: continuation, pending, standing rules and a title index.
-- `recall` the topic before designing a 1C change, in an unfamiliar area and
-  whenever context is missing.
+  notice. Task progress goes to its `checkpoint`, not notes.
+- `recall` once per topic before designing a 1C change; again only for a new
+  area or object, missing context or a transient failure (see
+  `project-memory`).
 - `remember` in the same turn after a user correction, a rejected approach, a
-  non-obvious finding or a standing condition. A user statement is `verified`,
-  an "always/never" rule `standing`, with evidence
-  `{source:"user", reference:"chat <date>"}`; never `candidate`.
-- A note that contradicts checked code, documentation or the user is updated
-  in place (`note_id` + `data_id`) or removed with `retire_note` in the same
-  turn, never duplicated under a new ID.
-- Choose one `dataset_name` from `memory_status` by lifetime and reach: task
-  for the current cycle, workspace across this copy's branches, project across
-  branches or copies, product with registry home and independent evidence,
-  workplace for its practices, and `host`: environment facts only.
-- Organization: only knowledge true across projects and products (platform,
-  BSP, tooling, company conventions), never client, project or configuration
-  data; `standing` there only at the user's explicit word; retire another
-  project's organization note only after the user confirms.
-- Give relevant conditions and versions. For a recalled fix, verify current
-  branch code and test as needed before claiming it is present.
-- After a transient recall failure, use the read recovery in `project-memory`
-  if needed. Recall afresh in the next eligible turn of the same chat.
+  standing condition or a confirmed lesson for another session or branch.
+  Never save what code, OpenSpec, evidence, Git or test results hold:
+  progress, runs, SHAs, line numbers, statuses.
+- One fact, at most 600 characters: rule, why, when, conditions and versions;
+  evidence by reference. A user statement is `verified`, an "always/never"
+  rule `standing`, evidence `{source:"user", reference:"chat <date>"}`;
+  never `candidate`.
+- Destination: the project; add `applicability.knowledgeArea` for base-product
+  behavior to route it to the product home. Organization only for knowledge
+  true across projects and products (platform, BSP, tooling, company
+  conventions), never client, project or configuration data; `standing` there
+  only at the user's word. Workplace for your practices, `host` for machine
+  facts, task only for user decisions for this cycle.
+- Update a note that contradicts checked code, documentation or the user in
+  place (`note_id` + `data_id`) or `retire_note` it in the same turn, never
+  under a new ID; another project's organization note only after the user
+  confirms.
+- Verify current branch code and test as needed before claiming a recalled
+  fix is present.
 - End a 1C task report with `Memory: recall N, saved N, updated N, retired N`,
   naming any `standing` note.
 - Project corrections stay in project memory. Shared `1c-templates-mcp`

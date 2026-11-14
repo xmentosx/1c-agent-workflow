@@ -651,6 +651,9 @@ function Invoke-ItlMemoryRemember {
     if($ContextHold){throw "MEMORY_CONTEXT_CHANGED: the task cycle or project changed under this session, so nothing was written. Call memory_status, then repeat remember only if the fact belongs to the new context. $kept."}
     Assert-ItlMemoryBindingCurrent $Binding
     if($Status -eq 'standing' -and $Data.Length -gt 400){throw "MEMORY_STANDING_TOO_LONG: a standing rule is at most 400 characters. Shorten the fact or save it as verified. $kept."}
+    # A note is reusable knowledge, not a work log: progress, runs and proofs
+    # belong to the checkpoint, OpenSpec, evidence, Git or test results.
+    if($Data.Length -gt 600){throw "MEMORY_NOTE_TOO_LONG: a note is one fact of at most 600 characters: rule, why, when to apply, conditions and versions. Cite proofs by reference in evidence and keep progress in the memory_status checkpoint. $kept`: repeat remember with that note_id and the shortened data."}
     $private=@(Get-ItlMemoryPrivateScopes $Binding|Where-Object label -CEQ $DatasetName)
     if($private.Count -and @($Binding.provider.datasets|Where-Object label -CEQ $DatasetName).Count -eq 0){
         Assert-ItlMemoryPrincipal $Binding $deadline
@@ -661,7 +664,11 @@ function Invoke-ItlMemoryRemember {
         if($_.Exception.Message -notlike 'MEMORY_DESTINATION_REQUIRED*'){throw}
         throw "MEMORY_DESTINATION_REQUIRED: select one dataset_name from memory_status destinations. $kept`: repeat remember with that note_id and the dataset_name, or discard it with retire_note(note_id)."
     }
-    $dataset=$datasets[0]
+    $dataset=$datasets[0];$route=$null
+    if($dataset.scopeKind -eq 'project' -and -not $DataId){
+        $route=Resolve-ItlMemoryProjectRoute $Binding $dataset $NoteId $Applicability $Status $pendingPath
+        $dataset=$route.dataset
+    }
     if($dataset.scopeKind -eq 'product' -and (Get-ItlCatalogField $Binding.context.projectContext 'customized' $false) -and -not (Get-ItlCatalogField $Applicability 'independentOfCustomization' $false)){
         throw 'MEMORY_PROJECT_CANDIDATE: prove independence from customer customizations before a product write; the private pending source is retained.'
     }
@@ -702,6 +709,7 @@ function Invoke-ItlMemoryRemember {
             $receipt=[ordered]@{schemaVersion=1;state='durable';noteId=$NoteId;datasetId=$dataset.datasetId;dataId=$found.dataId;contentHash=$intentHash;status=$Status}
             $null=Update-ItlMemoryJson $receiptPath {param($old) if((Get-ItlCatalogHash $old) -cne $existingHash){throw 'MEMORY_WRITE_IN_FLIGHT'};return $receipt}
             Complete-ItlMemoryPending $Binding $NoteId $intentHash
+            if($route){$receipt['routedTo']=$dataset.label;$receipt['routeReason']=$route.reason}
             return $receipt
         }
         # A confirmed existing original is updated precisely, never superseded
@@ -760,7 +768,38 @@ function Invoke-ItlMemoryRemember {
     $receipt['pending']=($receipt.state -ne 'durable');$receipt['searchState']='unverified'
     $receipt['operation']=if($updating){'updated'}else{'saved'}
     $receipt['scopeKind']=$dataset.scopeKind
+    if($route){$receipt['routedTo']=$dataset.label;$receipt['routeReason']=$route.reason}
     return $receipt
+}
+
+function Resolve-ItlMemoryProjectRoute {
+    param([object]$Binding,[object]$Project,[string]$NoteId,[object]$Applicability,[string]$Status,[string]$PendingPath)
+    # The agent writes shared knowledge to its project. Base-product behaviour
+    # with one confirmed home goes to that product; an existing note, a sent
+    # attempt or any doubt keeps the project. Registry applicability stays the
+    # only owner of which product may receive the fact.
+    $keep={param($reason) @{dataset=$Project;reason=$reason}}
+    $pending=Read-ItlMemoryJson $PendingPath
+    $attempt=if($pending -and $pending.state -ne 'durable'){Get-ItlCatalogField $pending 'attempt'}else{$null}
+    if($attempt){
+        $locked=@(Get-ItlMemoryScopes $Binding read|Where-Object datasetId -CEQ ([string]$attempt.datasetId))
+        if($locked.Count -eq 1 -and $locked[0].scopeKind -eq 'product'){return @{dataset=$locked[0];reason='existing-note'}}
+        return (& $keep 'existing-note')
+    }
+    $projectReceipt=Read-ItlMemoryJson (Get-ItlMemoryPath receipt (Get-ItlMemoryRecordKey $Binding $Project.datasetId $NoteId))
+    if($projectReceipt -and $projectReceipt.state -notin @('rejected')){return (& $keep 'existing-note')}
+    $area=[string](Get-ItlCatalogField $Applicability 'knowledgeArea' '')
+    if(-not $area){return (& $keep 'no-area')}
+    if($Status -eq 'candidate'){return (& $keep 'candidate')}
+    $allAreas=Get-ItlCatalogField (Get-ItlCatalogField $Binding.context 'knowledgeContext') 'knowledgeAreas' @()
+    $homes=@(@($allAreas)|Where-Object {$_ -and [string](Get-ItlCatalogField $_ 'areaId' '') -ceq $area -and (Get-ItlCatalogField $_ 'status') -eq 'applicable' -and (Get-ItlCatalogField $_ 'memoryHomeProductId')}|ForEach-Object {[string](Get-ItlCatalogField $_ 'memoryHomeProductId' '')}|Select-Object -Unique)
+    if($homes.Count -eq 0){return (& $keep 'area-not-applicable')}
+    if($homes.Count -gt 1){return (& $keep 'ambiguous-home')}
+    if((Get-ItlCatalogField $Binding.context.projectContext 'customized' $false) -and -not (Get-ItlCatalogField $Applicability 'independentOfCustomization' $false)){return (& $keep 'customization-unproven')}
+    $products=@(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -eq 'product' -and $_.scopeId -ceq $homes[0] -and @($_.permissions) -contains 'write'})
+    if($products.Count -ne 1){return (& $keep 'area-not-applicable')}
+    try{$target=@(Get-ItlMemoryScopes $Binding write $products[0].label $area)}catch{return (& $keep 'area-not-applicable')}
+    return @{dataset=$target[0];reason='product-home'}
 }
 
 function Invoke-ItlMemoryRecallStage {
@@ -852,18 +891,68 @@ function Invoke-ItlMemoryRecall {
         if($issues.Count){$empty['coverageIssues']=$issues}
         return $empty
     }
+    # Interleaving keeps small groups visible; the calibrated threshold keeps a
+    # group's best but unrelated note out of the answer.
+    $relevance=Select-ItlMemoryRelevantChunks $chunks $Query $SearchType ([string](Get-ItlCatalogField $Binding.provider 'profile' ''))
+    $chunks=@($relevance.chunks)
     $Trace['failureStage']='originals'
     $originalWatch=[Diagnostics.Stopwatch]::StartNew()
     try{
         $output=Get-ItlMemoryRecallCards $Binding $selected $chunks $TopK $deadline $backendCalls $issues $Trace -ReferenceProjectId $ReferenceProjectId
+        if($relevance.dropped){
+            $output['belowThreshold']=$relevance.dropped
+            if(-not @($output.cards).Count){$output['continuation']='No note passed the relevance threshold. This is not proof of absence; search again only with more specific terms or for another topic.'}
+        }
         $null=$Trace.Remove('failureStage')
         return $output
     }finally{$Trace.stageMs['originals']=$originalWatch.ElapsedMilliseconds}
 }
 
+function Get-ItlMemoryQueryTerms {
+    param([string]$Query)
+    # Terms of three or more letters/digits, case- and yo-insensitive.
+    $stop=@('the','and','for','with','from','that','this','are','not')
+    $normal=$Query.ToLowerInvariant().Replace([string][char]0x0451,[string][char]0x0435)
+    return @([regex]::Matches($normal,'[\p{L}\p{N}_.-]{3,}')|ForEach-Object {$_.Value.Trim('.','-')}|Where-Object {$_.Length -ge 3 -and $stop -cnotcontains $_}|Select-Object -Unique)
+}
+
+function Select-ItlMemoryRelevantChunks {
+    param([object[]]$Chunks,[string]$Query,[string]$SearchType,[string]$Profile='')
+    # Thresholds are calibrated per search type in the policy. CHUNKS carries a
+    # native cosine distance that depends on the embedding model, so its rule
+    # belongs to the qualified profile; CHUNKS_LEXICAL has no usable score, so
+    # the share of query terms present in the chunk is used for every profile.
+    # Without a rule, or for a chunk without a score, nothing is dropped.
+    $contract=Read-ItlMemoryJson (Join-Path $PSScriptRoot '../../assets/scoped-memory-policy.json')
+    $profiles=Get-ItlCatalogField $contract 'additionalQualifiedProfiles' @()
+    $profileEntry=@(@($profiles)|Where-Object {$Profile -and [string](Get-ItlCatalogField $_ 'profile' '') -ceq $Profile})
+    $rule=if($profileEntry.Count -eq 1){Get-ItlCatalogField (Get-ItlCatalogField $profileEntry[0] 'recallRelevance') $SearchType}else{$null}
+    if(-not $rule){$rule=Get-ItlCatalogField (Get-ItlCatalogField $contract 'recallRelevance') $SearchType}
+    if(-not $rule -or -not @($Chunks).Count){return @{chunks=@($Chunks);dropped=0}}
+    $kept=@();$measure=[string](Get-ItlCatalogField $rule 'measure' '')
+    if($measure -ceq 'distance'){
+        $max=[double](Get-ItlCatalogField $rule 'max' 2)
+        foreach($chunk in $Chunks){
+            $score=Get-ItlCatalogField $chunk 'score' $null
+            if($null -eq $score -or ([string](Get-ItlCatalogField $chunk 'source')) -ceq 'system' -or [double]$score -le $max){$kept+=,$chunk}
+        }
+    }elseif($measure -ceq 'termShare'){
+        $min=[double](Get-ItlCatalogField $rule 'min' 0);$terms=@(Get-ItlMemoryQueryTerms $Query)
+        foreach($chunk in $Chunks){
+            $text=([string](Get-ItlCatalogField $chunk 'text' '')).ToLowerInvariant().Replace([string][char]0x0451,[string][char]0x0435)
+            $hits=@($terms|Where-Object {$text.Contains($_)}).Count
+            if(-not $terms.Count -or ([string](Get-ItlCatalogField $chunk 'source')) -ceq 'system' -or $hits/$terms.Count -ge $min){$kept+=,$chunk}
+        }
+    }else{$kept=@($Chunks)}
+    return @{chunks=$kept;dropped=(@($Chunks).Count-$kept.Count)}
+}
+
 function Get-ItlMemoryRecallCards {
     param([object]$Binding,[object[]]$Selected,[object[]]$Chunks,[int]$TopK,[DateTime]$Deadline,[int]$BackendCalls,[object[]]$Issues,[Collections.IDictionary]$Trace,[string]$ReferenceProjectId='')
     $cards=@();$seen=@{};$lookups=0;$bytes=0;$partial=$issues.Count -gt 0;$budgetLimited=$false
+    # partial means incomplete coverage; reaching top_k, the candidate cap or
+    # the token cap is a separate truncation of a complete search.
+    $truncated=$false
     if(-not (Test-Path -LiteralPath 'Function:\Measure-ItlMemoryTokens')){. (Join-Path $PSScriptRoot 'agent-1c.memory-tokens.ps1')}
     # D8 bounds tokens, not UTF-8 bytes. The native transport already bounds
     # raw originals; an exact named counter admits compact non-ASCII facts.
@@ -880,7 +969,11 @@ function Get-ItlMemoryRecallCards {
             if($rank -lt $group.Count){$candidates+=,$group[$rank];if($candidates.Count -eq 24){break}}
         }
     }
-    if($chunks.Count -gt $candidates.Count){$partial=$true}
+    # A chunk outside every admitted group is unattributed coverage; more
+    # attributed chunks than the candidate cap is only truncation.
+    $attributed=0;foreach($group in $groups){$attributed+=$group.Count}
+    if($chunks.Count -gt $attributed){$partial=$true}
+    if($attributed -gt $candidates.Count){$truncated=$true}
     $queue=@()
     foreach($chunk in $candidates){
         $dataset=@($selected|Where-Object datasetId -CEQ ([string](Get-ItlCatalogField $chunk 'dataset_id')))
@@ -916,12 +1009,13 @@ function Get-ItlMemoryRecallCards {
             }else{$size -gt 1600} # retain the labelled conservative fallback
         }catch{$partial=$true;break}
         if([DateTime]::UtcNow -ge $deadline){$partial=$true;$budgetLimited=$true;break}
-        if($exceeded){$partial=$true;continue}
+        if($exceeded){$truncated=$true;continue}
         $cards=$next;$bytes=$size
-        if($cards.Count -ge [Math]::Min(8,[Math]::Max(1,$TopK))){$partial=$true;break}
+        if($cards.Count -ge [Math]::Min(8,[Math]::Max(1,$TopK))){$truncated=$truncated -or $position -lt $queue.Count-1;break}
     }
     }finally{foreach($item in $queue){if($item.pending){Close-ItlMemoryHttp $item.pending}}}
     $output=[ordered]@{cards=@($cards);coverage=$(if($partial){'partial'}else{'bounded'});rawCandidateCap=24;sourceLookups=$lookups;backendCalls=($backendCalls+$lookups);utf8Bytes=$bytes;tokenCounts=@{};context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
+    if($truncated){$output['truncated']=$true}
     if($budgetLimited){$issues+=@{reason='operation_deadline'};$Trace['coverageIssues']=@($Trace['coverageIssues']|Where-Object {$_})+@{reason='operation_deadline'}}
     if($issues.Count){$output['coverageIssues']=$issues}
     # Bound the final serialized response, including provenance and metrics,
@@ -942,7 +1036,7 @@ function Get-ItlMemoryRecallCards {
             }else{$size -gt 1600}
         }catch{$output.cards=@();$output.coverage='partial';$output.tokenCounts=@{measurement='unavailable';continuation='repair the packaged tokenizer; no unmeasured cards returned'};break}
         if(-not @($output.cards).Count -or -not $exceeded){break}
-        $output.cards=@($output.cards|Select-Object -SkipLast 1);$output.coverage='partial'
+        $output.cards=@($output.cards|Select-Object -SkipLast 1);$output['truncated']=$true
     }
     $output.utf8Bytes=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $output -Depth 30 -Compress))
     return $output
@@ -989,14 +1083,20 @@ function Get-ItlMemoryLocalContext {
     }
     $continuation=Read-ItlMemoryJson (Get-ItlMemoryPath continuation $Binding.identity.workspaceId)
     if($continuation -and ((Get-ItlCatalogField $continuation 'projectId') -cne $project -or (Get-ItlCatalogField $continuation 'cycleId') -cne $currentCycle)){$continuation=$null}
+    # Offered write choices: project (routing base-product areas to their home),
+    # organization, workplace, host and task. The local-project workspace stays
+    # readable and an explicit label is still accepted, but it is not offered.
     $destinations=@(Get-ItlMemoryPrivateScopes $Binding|Where-Object {
         $privateLabel=$_.label;$mapped=@($Binding.provider.datasets|Where-Object label -CEQ $privateLabel)
-        -not $mapped.Count -or ($mapped.Count -eq 1 -and $mapped[0].admitted -and @($mapped[0].permissions) -ccontains 'write')
-    })+@(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -notin @('taskCycle','workspace','workplace','host','product') -and @($_.permissions) -contains 'write'}|ForEach-Object {@{label=$_.label;scopeKind=$_.scopeKind;scopeId=$_.scopeId}})
-    # One row per dataset: a product lists its writable knowledge areas.
-    foreach($product in @(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -eq 'product' -and @($_.permissions) -contains 'write'})){
-        $areas=@($Binding.context.knowledgeContext.knowledgeAreas|Where-Object {$_.status -eq 'applicable' -and $_.memoryHomeProductId -ceq $product.scopeId}|ForEach-Object {$_.areaId})
-        if($areas.Count){$destinations+=@{label=$product.label;scopeKind=$product.scopeKind;scopeId=$product.scopeId;knowledgeAreas=$areas}}
+        $_.scopeKind -ne 'workspace' -and (-not $mapped.Count -or ($mapped.Count -eq 1 -and $mapped[0].admitted -and @($mapped[0].permissions) -ccontains 'write'))
+    })
+    $writableProducts=@(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -eq 'product' -and @($_.permissions) -contains 'write'}|ForEach-Object {[string]$_.scopeId})
+    $allAreas=Get-ItlCatalogField (Get-ItlCatalogField $Binding.context 'knowledgeContext') 'knowledgeAreas' @()
+    $routedAreas=@(@($allAreas)|Where-Object {$_ -and (Get-ItlCatalogField $_ 'status') -eq 'applicable' -and $writableProducts -ccontains [string](Get-ItlCatalogField $_ 'memoryHomeProductId' '')}|ForEach-Object {[string](Get-ItlCatalogField $_ 'areaId' '')}|Select-Object -Unique)
+    foreach($shared in @(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -notin @('taskCycle','workspace','workplace','host','product') -and @($_.permissions) -contains 'write'})){
+        $row=@{label=$shared.label;scopeKind=$shared.scopeKind;scopeId=$shared.scopeId}
+        if($shared.scopeKind -eq 'project' -and $routedAreas.Count){$row['knowledgeAreas']=$routedAreas}
+        $destinations+=$row
     }
     $bindingState='current';$readScopes=@()
     try{Assert-ItlMemoryBindingCurrent $Binding}catch{$bindingState='stale-or-disabled';$destinations=@()}
@@ -1031,8 +1131,8 @@ function Get-ItlMemoryLocalContext {
         }
     }
     $output=[ordered]@{pending=$pending;receipts=$receipts;candidates=$candidates;preservedSource=$preservedSource;continuation=$continuation;coverage='bounded-local; old task pending is history, not current';destinations=$destinations;currentCycleId=$currentCycle;bindingState=$bindingState}
-    if(@($destinations|Where-Object scopeKind -CEQ product).Count){
-        $output.writeGuidance='For confirmed product knowledge, use the product destination that lists the applicable knowledgeArea. Pass its label as dataset_name and the area as applicability.knowledgeArea to remember. Use project for facts specific to the project or its team.'
+    if(@($destinations|Where-Object {$_.Contains('knowledgeAreas')}).Count){
+        $output.writeGuidance='Write shared knowledge to the project destination. For confirmed base-product behaviour add applicability.knowledgeArea from its knowledgeAreas: remember routes it to the product home and reports routedTo and routeReason. Without an area the note stays in the project.'
         if(Get-ItlCatalogField $Binding.context.projectContext 'customized' $false){
             $output.writeGuidance+=' From a customized project, prove the fact holds for the base product and set applicability.independentOfCustomization=true.'
         }
@@ -1356,5 +1456,35 @@ function Get-ItlMemoryUsageLine {
     $binding=Read-ItlMemoryJson (Get-ItlMemoryPath binding $ProjectRoot)
     if(-not $binding -or $binding.mode -ne 'enabled'){return $null}
     $summary=Get-ItlMemoryUsageSummary $binding
-    return ('Memory (current task cycle): recall: {0}, remember: {1}; saved {2}, updated {3}, retired {4}, errors {5}.' -f $summary.recall,$summary.remember,$summary.saved,$summary.updated,$summary.retired,$summary.errors)
+    $line='Memory (current task cycle): recall: {0}, remember: {1}; saved {2}, updated {3}, retired {4}, errors {5}.' -f $summary.recall,$summary.remember,$summary.saved,$summary.updated,$summary.retired,$summary.errors
+    $notes=@(Get-ItlMemoryCycleNoteTitles $binding)
+    if($notes.Count){
+        $shown=@($notes|Select-Object -First 8)
+        $line+=' Notes this cycle (review before completion): '+(($shown|ForEach-Object {'['+$_.level+'] '+$_.title}) -join '; ')
+        if($notes.Count -gt $shown.Count){$line+='; and '+($notes.Count-$shown.Count)+' more'}
+        $line+='.'
+    }
+    return $line
+}
+
+function Get-ItlMemoryCycleNoteTitles {
+    param([object]$Binding)
+    # Local sources only: no backend call, an unreadable record is skipped.
+    $cycleId=[string](Get-ItlCatalogField $Binding 'cycleId' '')
+    $directory=Join-Path (Join-Path (Get-ItlMemoryHome) 'source') ([string]$Binding.identity.workspaceId)
+    if(-not $cycleId -or -not (Test-Path -LiteralPath $directory -PathType Container)){return @()}
+    $kinds=@{};foreach($entry in @($Binding.provider.datasets)){$kinds[[string](Get-ItlCatalogField $entry 'datasetId' '')]=[string](Get-ItlCatalogField $entry 'scopeKind' '')}
+    $notes=foreach($file in @(Get-ChildItem -LiteralPath $directory -File -Filter '*.json')){
+        $record=try{Read-ItlMemoryJson $file.FullName}catch{$null}
+        if(-not $record -or [string](Get-ItlCatalogField $record 'cycleId' '') -cne $cycleId -or [string](Get-ItlCatalogField $record 'state' '') -cne 'durable'){continue}
+        $intent=Get-ItlCatalogField $record 'intent'
+        $label=[string](Get-ItlCatalogField $intent 'datasetName' '')
+        $level=$kinds[[string](Get-ItlCatalogField (Get-ItlCatalogField $record 'attempt') 'datasetId' '')]
+        if(-not $level){$level=if($label -match '^itl_([a-z]+)_'){$Matches[1]}else{'unknown'}}
+        if($level -ceq 'taskCycle'){$level='task'}
+        $title=[string](Get-ItlCatalogField $intent 'title' '')
+        if(-not $title){$fact=[string](Get-ItlCatalogField $intent 'data' '');$title=$fact.Substring(0,[Math]::Min(60,$fact.Length))}
+        [pscustomobject]@{level=$level;title=$title;at=[string](Get-ItlCatalogField $intent 'at' '')}
+    }
+    return @($notes|Sort-Object at -Descending)
 }

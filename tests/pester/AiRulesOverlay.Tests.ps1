@@ -296,15 +296,22 @@ Describe "controlled ai_rules_1c release overlay" {
         # It binds nothing in a project where the memory server is not registered.
         $core.Value | Should -Match 'Applies only when the `memory_status` tool is available'
         $core.Value | Should -Match 'Call `memory_status` once at session start and after a `contextChanged`'
-        $core.Value | Should -Match '`recall` the topic before designing a 1C change, in an unfamiliar area and\s+whenever context is missing'
-        $core.Value | Should -Match '`remember` in the same turn after a user correction, a rejected approach, a\s+non-obvious finding or a standing condition'
+        $core.Value | Should -Match 'Task progress goes to its `checkpoint`, not notes'
+        $core.Value | Should -Match '`recall` once per topic before designing a 1C change; again only for a new\s+area or object, missing context or a transient failure'
+        $core.Value | Should -Match '`remember` in the same turn after a user correction, a rejected approach, a\s+standing condition or a confirmed lesson for another session or branch'
+        # The note is knowledge, not a work log (improve-memory-content-quality D1).
+        $core.Value | Should -Match 'Never save what code, OpenSpec, evidence, Git or test results hold:\s+progress, runs, SHAs, line numbers, statuses'
+        $core.Value | Should -Match 'One fact, at most 600 characters'
+        $core.Value | Should -Not -Match 'non-obvious finding'
         $core.Value | Should -Match ([regex]::Escape('{source:"user", reference:"chat <date>"}'))
         $core.Value | Should -Match 'never `candidate`'
-        $core.Value | Should -Match 'updated\s+in place \(`note_id` \+ `data_id`\) or removed with `retire_note` in the same\s+turn, never duplicated under a new ID'
+        $core.Value | Should -Match 'in\s+place \(`note_id` \+ `data_id`\) or `retire_note` it in the same turn, never\s+under a new ID'
         $core.Value | Should -Match 'never client, project or configuration\s+data'
-        $core.Value | Should -Match "``standing`` there only at the user's explicit word"
-        $core.Value | Should -Match "retire another\s+project's organization note only after the user confirms"
-        $core.Value | Should -Match '`host`: environment facts only'
+        $core.Value | Should -Match "``standing`` there\s+only at the user's word"
+        $core.Value | Should -Match "another project's organization note only after the user\s+confirms"
+        $core.Value | Should -Match '`host` for machine\s+facts, task only for user decisions for this cycle'
+        # One project choice routes base-product behaviour to its home (D3/D4).
+        $core.Value | Should -Match 'Destination: the project; add `applicability.knowledgeArea` for base-product\s+behavior to route it to the product home'
         $core.Value | Should -Match 'Memory: recall N, saved N, updated N, retired N'
         # The memory line this core absorbed keeps its trigger, action,
         # exception and prohibition.
@@ -315,10 +322,11 @@ Describe "controlled ai_rules_1c release overlay" {
         # Provider routing, recovery, budgets and the note format stay on demand.
         $core.Value | Should -Match '`project-memory`\s+holds the details on demand'
         $core.Value | Should -Not -Match 'OpenViking|CHUNKS|dataset ID|pending source'
-        $core.Value | Should -Match 'one `dataset_name` from `memory_status` by lifetime and reach'
-        $core.Value | Should -Match 'verify current\s+branch code and test as needed'
-        $core.Value | Should -Match 'next eligible turn of the same chat'
+        $core.Value | Should -Match 'Verify current branch code and test as needed'
+        # Recall is once per topic, not repeated in every turn (D7).
+        $core.Value | Should -Not -Match 'next eligible turn'
         # R56 adds 497 UTF-8 bytes: core 1,578 -> 2,075 and appendix 4,718 -> 5,215.
+        # improve-memory-content-quality rewrites the core without growth: 2,075 -> 2,058.
         # Examples and read recovery details stay on demand.
         [Text.Encoding]::UTF8.GetByteCount($core.Value.TrimEnd("`n")) | Should -BeLessOrEqual 2100
         [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 5250

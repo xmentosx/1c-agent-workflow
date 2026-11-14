@@ -400,9 +400,11 @@
             $note.scope=[pscustomobject]@{kind='product';id='corp'}
             $note.applicability=[pscustomobject]@{availableIn=@('corp');knowledgeArea='planning'}
             $script:Originals[$id]=ConvertTo-Json $note -Depth 30 -Compress
-            $script:GroupedRecallChunks+=,@{text='Untrusted grouped fragment';dataset_id=$product.datasetId;metadata=@{data_id=$id}}
+            # A lexical hit contains the searched term; the term-share threshold
+            # keeps every fragment of this fixture.
+            $script:GroupedRecallChunks+=,@{text='Untrusted grouped fragment Object.ErrorCode';dataset_id=$product.datasetId;metadata=@{data_id=$id}}
         }
-        $script:GroupedRecallChunks+=@($script:BudgetOriginalIds|ForEach-Object {@{text='Wrong stale chunk';dataset_id=$dataset.datasetId;metadata=@{data_id=$_}}})
+        $script:GroupedRecallChunks+=@($script:BudgetOriginalIds|ForEach-Object {@{text='Wrong stale chunk Object.ErrorCode';dataset_id=$dataset.datasetId;metadata=@{data_id=$_}}})
         Mock Invoke-ItlMemoryHttp {
             param($Provider,$Method,$Path,$Body)
             $script:Calls.Add(@{method=$Method;path=$Path;body=$Body})
@@ -800,8 +802,14 @@ try {
         $remember.description | Should -Match 'In the same turn after a user correction|Call in the same turn after a user correction'
         $remember.description | Should -Match 'source:"user",reference:"chat <date>"'
         $remember.description | Should -Match 'note_id and data_id from the recall card'
+        # A note is knowledge, not a work log; the project choice routes product areas.
+        $remember.description | Should -Match 'One fact up to 600 characters.*Never save progress, runs, SHAs, line numbers'
+        $remember.description | Should -Match 'dataset_name: the project \(applicability\.knowledgeArea routes base-product behaviour to its product home; see routedTo\)'
+        $remember.description | Should -Match 'task only for user decisions for this cycle'
         $recallTool=@($lines[1].result.tools|Where-Object name -EQ recall)[0]
-        $recallTool.description | Should -Match 'before designing a 1C change.*unfamiliar areas.*Omit datasets for the admitted union'
+        $recallTool.description | Should -Match 'Search once per topic before designing a 1C change; again only for a new area or object.*Omit datasets for the admitted union'
+        $recallTool.description | Should -Match 'below the relevance threshold are omitted; no card is not proof of absence'
+        $recallTool.description | Should -Not -Match 'next eligible turn'
         $recallTool.inputSchema.properties.project_id.type | Should -BeExactly string
         @($lines[1].result.tools|Where-Object name -EQ memory_status)[0].description | Should -Match 'once at session start and after a contextChanged notice'
         $retire.description | Should -Match 'outdated or contradicts a checked source'
@@ -810,9 +818,13 @@ try {
         # always-loaded text grows 1,721 -> 2,205 bytes and tools/list grows
         # 2,955 -> 3,439 bytes. Keep examples and exact-read procedure on demand.
         $alwaysOn=(@($lines[1].result.tools|ForEach-Object {$_.description.Length})|Measure-Object -Sum).Sum+$lines[0].result.instructions.Length
-        $alwaysOn | Should -BeLessOrEqual 2250
+        # improve-memory-content-quality (checkpoint 2026-11-14, at most +0.3 KB):
+        # remember/recall say what not to save, the 600-character limit, project
+        # routing and once-per-topic recall: 2,184 -> 2,454 bytes (+270).
+        $alwaysOn | Should -BeLessOrEqual 2470
         $schemaBytes=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $lines[1].result -Depth 20 -Compress))
-        $schemaBytes | Should -BeLessOrEqual 3500
+        # The same +270 description bytes move tools/list from 3,459 to 3,729.
+        $schemaBytes | Should -BeLessOrEqual 3750
     }
 
     # improve-scoped-memory-adoption
@@ -1057,7 +1069,8 @@ try {
         try{
             $status=Invoke-MemoryServerCall $server memory_status @{local_only=$true}
             $status.bindingState | Should -BeExactly current -Because (ConvertTo-Json -InputObject $status -Depth 6 -Compress)
-            @($status.destinations|ForEach-Object {$_.scopeKind}) | Should -Contain workspace
+            # The local-project workspace is readable but not offered for writing.
+            @($status.destinations|ForEach-Object {$_.scopeKind}) | Should -Not -Contain workspace
             @($status.destinations|ForEach-Object {$_.scopeKind}) | Should -Contain host
         }finally{$serverErrors=Stop-MemoryServer $server}
         $serverErrors | Should -BeNullOrEmpty
@@ -1299,16 +1312,17 @@ try {
         $legacy.more | Should -Be 2
         @($script:Calls|Where-Object {$_.path -like '*/raw'}).Count | Should -Be 6
     }
-    It 'lists one destination per dataset with the knowledge areas of a product' {
+    It 'offers project, organization, workplace, host and task with routed product areas on the project row' {
         $b.context.knowledgeContext.knowledgeAreas=@(1..20|ForEach-Object {@{areaId="area-$_";status='applicable';memoryHomeProductId='corp'}})
         $status=Invoke-ItlMemoryStatus $b -LocalOnly
         $destinations=@($status.destinations)
-        $product=@($destinations|Where-Object scopeKind -EQ product)
-        $product.Count | Should -Be 1
-        $product[0].label | Should -BeExactly 'itl_product_corp'
-        @($product[0].knowledgeAreas).Count | Should -Be 20
+        @($destinations|Where-Object scopeKind -EQ product).Count | Should -Be 0
+        $project=@($destinations|Where-Object scopeKind -EQ project)
+        $project.Count | Should -Be 1
+        @($project[0].knowledgeAreas).Count | Should -Be 20
         @($destinations|Group-Object {$_.label}|Where-Object Count -GT 1).Count | Should -Be 0
-        @($destinations|ForEach-Object {$_.scopeKind}|Sort-Object) | Should -Be @('host','organization','product','project','taskCycle','workplace','workspace')
+        @($destinations|ForEach-Object {$_.scopeKind}|Sort-Object) | Should -Be @('host','organization','project','taskCycle','workplace')
+        $status.writeGuidance | Should -Match 'project destination.*applicability\.knowledgeArea.*routedTo'
         $status.writeGuidance | Should -Match 'applicability\.independentOfCustomization=true'
         Should -Invoke Invoke-ItlMemoryHttp -Times 0 -Exactly
     }
@@ -1329,15 +1343,23 @@ try {
         $localProject=Get-ProjectDataset $writer
         $reader.provider.datasets+=@($localProject)
         $status=Invoke-ItlMemoryStatus $writer -LocalOnly
-        $status.writeGuidance | Should -Match 'confirmed product knowledge.*dataset_name.*applicability\.knowledgeArea.*project or its team'
+        $status.writeGuidance | Should -Match 'project destination.*applicability\.knowledgeArea.*product home'
         $status.writeGuidance | Should -Not -Match 'independentOfCustomization'
-        $productDestination=@($status.destinations|Where-Object {$_.scopeKind -ceq 'product' -and $_.knowledgeAreas -ccontains 'planning'})
-        $productDestination.Count | Should -Be 1
+        $projectDestination=@($status.destinations|Where-Object {$_.scopeKind -ceq 'project' -and $_.knowledgeAreas -ccontains 'planning'})
+        $projectDestination.Count | Should -Be 1
+        $projectDestination[0].label | Should -BeExactly $localProject.label
         $evidence=@(@{source='user';reference='chat 2026-11-12'})
-        $shared=Invoke-ItlMemoryRemember $writer 'Общее правило расчёта планов.' $productDestination[0].label 'product-planning' @{knowledgeArea='planning'} $evidence verified
+        # The agent names its project; base-product behaviour with one confirmed
+        # home in an uncustomized project is routed to that product.
+        $shared=Invoke-ItlMemoryRemember $writer 'Общее правило расчёта планов.' $localProject.label 'product-planning' @{knowledgeArea='planning'} $evidence verified
         $local=Invoke-ItlMemoryRemember $writer 'Локальное правило команды планирования.' $localProject.label 'project-planning' @{} $evidence verified
         $shared.state | Should -BeExactly durable
+        $shared.routedTo | Should -BeExactly (Get-ScopeDataset $writer product).label
+        $shared.routeReason | Should -BeExactly 'product-home'
+        $shared.scopeKind | Should -BeExactly product
         $local.state | Should -BeExactly durable
+        $local.routedTo | Should -BeExactly $localProject.label
+        $local.routeReason | Should -BeExactly 'no-area'
         Mock-IndexedFixtureNotes
         $query='правила планирования'
         @((Invoke-ItlMemoryRecall $writer $query).cards|ForEach-Object {$_.source.dataId}) | Should -Contain $local.dataId
@@ -1484,7 +1506,8 @@ try {
         {Invoke-ItlMemoryRecall $b 'проектное решение' @($project.label,$label)} |
             Should -Throw "*MEMORY_READ_SCOPE_DENIED*$label*could not be verified*"
         $status=Invoke-ItlMemoryStatus $b
-        ($status.destinations|Where-Object scopeKind -EQ workspace).readState | Should -BeExactly 'unknown'
+        # The workspace is read but not offered for writing; its failed discovery stays in serverCoverage.
+        @($status.destinations|ForEach-Object {$_.scopeKind}) | Should -Not -Contain workspace
         $status.serverCoverage | Should -Match '^partial: .*workspace=listing_unavailable'
         Should -Invoke Invoke-ItlMemoryHttp -Times 1 -Exactly -ParameterFilter {$Path -eq '/api/v1/recall'}
         Should -Invoke Invoke-ItlMemoryHttp -Times 3 -Exactly -ParameterFilter {$Path -eq '/api/v1/datasets'}
@@ -1574,7 +1597,7 @@ try {
             $watch=[Diagnostics.Stopwatch]::StartNew()
             $status=Invoke-ItlMemoryStatus $b
             $watch.Elapsed.TotalSeconds | Should -BeLessThan 15
-            ($status.destinations|Where-Object scopeKind -EQ workspace).readState | Should -BeExactly 'unknown'
+            @($status.destinations|ForEach-Object {$_.scopeKind}) | Should -Not -Contain workspace
             $status.serverCoverage | Should -Match '^partial: .*workspace=discovery_deadline'
             ($status.index|Where-Object level -EQ project).notes | Should -Contain 'Статус проектной заметки.'
             $null=$job|Wait-Job -Timeout 5
@@ -1709,7 +1732,9 @@ try {
         $strict.status.standing[0].dataId | Should -BeExactly $rule
         @($strict.status.index|Where-Object level -EQ project)[0].notes | Should -Be @('Заметка прежней версии.','Возможно, причина в индексе. [candidate]')
         @($strict.status.index|Where-Object level -EQ product)[0].notes | Should -Be @('Планирование')
-        @($strict.status.destinations|Where-Object scopeKind -EQ workspace)[0].label | Should -BeExactly $workspace.label
+        # The adopted workspace of another copy is read, though not offered for writing.
+        @($strict.status.destinations|ForEach-Object {$_.scopeKind}) | Should -Not -Contain workspace
+        @($script:Calls|Where-Object path -EQ '/api/v1/recall')[-1].body.dataset_ids | Should -Contain $workspace.datasetId
         $strict.saved.state | Should -Be durable
         $strict.moved.operation | Should -Be updated
         $strict.draft | Should -Match '^MEMORY_CONTEXT_CHANGED'
@@ -1719,7 +1744,7 @@ try {
         $strict.line | Should -Match 'recall: 1, remember: 1'
         $strict.discarded.state | Should -BeExactly 'discarded-unsent'
         $strict.retired.state | Should -BeExactly retired
-        @($strict.local.destinations).Count | Should -BeGreaterThan 5
+        @($strict.local.destinations|ForEach-Object {$_.scopeKind}|Sort-Object) | Should -Be @('host','organization','project','taskCycle','workplace')
     }
     It 'journals each call without its text and summarizes the current cycle' {
         $evidence=@(@{source='user';reference='chat 2026-11-11'})
@@ -1795,6 +1820,109 @@ try {
         Should -Invoke Write-Host -Times 1 -Exactly
         # The check prints it only after its own successful report.
         $lifecycle=[IO.File]::ReadAllText((Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'),[Text.Encoding]::UTF8)
-        $lifecycle | Should -Match 'Write-DevBranchVerificationRunUserReport -State \$verifiedState -PlatformPreparation \$platformPreparation\r?\n\s+Write-DevBranchMemoryUsageNote\r?\n\s+\} catch \{'
+        # The note follows the successful report directly and appears once.
+        $lifecycle | Should -Match 'Write-DevBranchVerificationRunUserReport -State \$verifiedState -PlatformPreparation \$platformPreparation\r?\n\s+Write-DevBranchMemoryUsageNote\r?\n'
+        ([regex]::Matches($lifecycle,'(?m)^\s+Write-DevBranchMemoryUsageNote\s*$')).Count | Should -Be 1
+    }
+    It 'refuses a note longer than 600 characters and keeps its source for a shortened retry' {
+        $evidence=@(@{source='user';reference='chat 2026-11-15'})
+        $long='Правило. '+('Подробность прогона и проверки. '*30)
+        $long.Length | Should -BeGreaterThan 600
+        {Invoke-ItlMemoryRemember $b $long 'itl_project_customer' 'long-note' @{} $evidence verified} | Should -Throw '*MEMORY_NOTE_TOO_LONG*note_id=long-note*'
+        @($script:Calls|Where-Object path -EQ '/api/v1/remember').Count | Should -Be 0
+        @((Invoke-ItlMemoryStatus $b -NoteId 'long-note' -LocalOnly).pending|ForEach-Object {$_.noteId}) | Should -Contain 'long-note'
+        $short=Invoke-ItlMemoryRemember $b 'Правило: короткая формулировка с условиями.' 'itl_project_customer' 'long-note' @{} $evidence verified
+        $short.state | Should -BeExactly durable
+        @($script:Calls|Where-Object path -EQ '/api/v1/remember').Count | Should -Be 1
+        @((Invoke-ItlMemoryStatus $b -LocalOnly).pending|Where-Object noteId -EQ 'long-note').Count | Should -Be 0
+        # A note stored before the limit is still read.
+        $null=Add-FixtureNote (Get-ProjectDataset $b) 'old-long' $long
+        Mock-IndexedFixtureNotes
+        @((Invoke-ItlMemoryRecall $b 'правило').cards|ForEach-Object {$_.noteId}) | Should -Contain 'old-long'
+    }
+    It 'keeps a project write in the project unless one confirmed product home is proven' {
+        $evidence=@(@{source='user';reference='chat 2026-11-15'})
+        $project=Get-ProjectDataset $b;$product=Get-ScopeDataset $b product
+        $b.context.knowledgeContext.knowledgeAreas=@(
+            @{areaId='planning';status='applicable';memoryHomeProductId='corp'},
+            @{areaId='shared';status='applicable';memoryHomeProductId='corp'},
+            @{areaId='shared';status='applicable';memoryHomeProductId='prof'},
+            @{areaId='sales';status='not-applicable';memoryHomeProductId='corp'})
+        # The fixture project is customized.
+        (Invoke-ItlMemoryRemember $b 'Факт доработки.' $project.label 'r1' @{knowledgeArea='planning'} $evidence verified).routeReason | Should -BeExactly 'customization-unproven'
+        (Invoke-ItlMemoryRemember $b 'Гипотеза о планировании.' $project.label 'r2' @{knowledgeArea='planning'} @() candidate).routeReason | Should -BeExactly 'candidate'
+        (Invoke-ItlMemoryRemember $b 'Факт о продажах.' $project.label 'r3' @{knowledgeArea='sales'} $evidence verified).routeReason | Should -BeExactly 'area-not-applicable'
+        (Invoke-ItlMemoryRemember $b 'Факт двух продуктов.' $project.label 'r4' @{knowledgeArea='shared'} $evidence verified).routeReason | Should -BeExactly 'ambiguous-home'
+        $b.context.projectContext.customized=$false
+        (Invoke-ItlMemoryRemember $b 'Проектная заметка.' $project.label 'r5' @{} $evidence verified).routeReason | Should -BeExactly 'no-area'
+        # An existing project note stays where it is, even with an area.
+        $again=Invoke-ItlMemoryRemember $b 'Проектная заметка, уточнённая.' $project.label 'r5' @{knowledgeArea='planning'} $evidence verified
+        $again.routeReason | Should -BeExactly 'existing-note'
+        $again.routedTo | Should -BeExactly $project.label
+        $again.operation | Should -BeExactly updated
+        $routed=Invoke-ItlMemoryRemember $b 'Поведение продукта.' $project.label 'r6' @{knowledgeArea='planning'} $evidence verified
+        $routed.routeReason | Should -BeExactly 'product-home'
+        $routed.routedTo | Should -BeExactly $product.label
+        @($script:DocDatasets.Keys|Where-Object {$script:DocDatasets[$_] -ceq $product.datasetId}).Count | Should -Be 1
+        @($script:DocDatasets.Keys|Where-Object {$script:DocDatasets[$_] -ceq $project.datasetId}).Count | Should -Be 5
+        # An explicit product label keeps its own customization rule.
+        $b.context.projectContext.customized=$true
+        {Invoke-ItlMemoryRemember $b 'Явно в продукт.' $product.label 'r7' @{knowledgeArea='planning'} $evidence verified} | Should -Throw '*MEMORY_PROJECT_CANDIDATE*'
+    }
+    It 'drops chunks above the calibrated distance inside each group and reports truncation apart from partial coverage' {
+        $contract=Read-ItlMemoryJson (Join-Path $RepoRoot '.agents/skills/1c-workflow/assets/scoped-memory-policy.json')
+        $qwen=@(@($contract.additionalQualifiedProfiles)|Where-Object {$_.profile -eq 'cognee-qwen4096-v1'})[0]
+        $qwen.recallRelevance.CHUNKS.max | Should -Be 0.4
+        $b.provider.profile=$qwen.profile
+        $project=Get-ProjectDataset $b;$organization=Get-ScopeDataset $b organization
+        $near=Add-FixtureNote $project 'near' 'Сохранение версии плана.'
+        $far=Add-FixtureNote $organization 'far' 'Посторонняя тема.'
+        $alsoNear=Add-FixtureNote $organization 'also-near' 'Копия плана.'
+        $script:ScoredChunks=@(
+            @{text='a';score=0.21;dataset_id=$project.datasetId;metadata=@{data_id=$near}},
+            @{text='b';score=0.62;dataset_id=$organization.datasetId;metadata=@{data_id=$far}},
+            @{text='c';score=0.33;dataset_id=$organization.datasetId;metadata=@{data_id=$alsoNear}})
+        Mock Invoke-ItlMemoryHttp {param($Provider,$Method,$Path,$Body)
+            $script:Calls.Add(@{method=$Method;path=$Path;body=$Body})
+            @{status=200;body=@($script:ScoredChunks)}
+        } -ParameterFilter {$Path -eq '/api/v1/recall'}
+        $recall=Invoke-ItlMemoryRecall $b 'план'
+        @($recall.cards|ForEach-Object {$_.noteId}|Sort-Object) | Should -Be @('also-near','near')
+        $recall.belowThreshold | Should -Be 1
+        $recall.coverage | Should -BeExactly bounded
+        $one=Invoke-ItlMemoryRecall $b 'план' -TopK 1
+        @($one.cards).Count | Should -Be 1
+        $one.coverage | Should -BeExactly bounded
+        $one.truncated | Should -BeTrue
+        $script:ScoredChunks=@(@{text='b';score=0.62;dataset_id=$organization.datasetId;metadata=@{data_id=$far}})
+        $none=Invoke-ItlMemoryRecall $b 'план'
+        @($none.cards).Count | Should -Be 0
+        $none.coverage | Should -BeExactly bounded
+        $none.continuation | Should -Match 'not proof of absence'
+        # A profile without a calibrated distance drops nothing.
+        $b.provider.profile=$contract.profile
+        @((Invoke-ItlMemoryRecall $b 'план').cards).Count | Should -Be 1
+        # Lexical search keeps a chunk only when enough query terms are present.
+        $script:ScoredChunks=@(
+            @{text='ОшибкаЗаписи в модуле РегистрСведений';score=0;dataset_id=$project.datasetId;metadata=@{data_id=$near}},
+            @{text='Посторонний текст';score=0;dataset_id=$organization.datasetId;metadata=@{data_id=$far}})
+        $lexical=Invoke-ItlMemoryRecall $b 'ОшибкаЗаписи РегистрСведений' -SearchType CHUNKS_LEXICAL
+        @($lexical.cards|ForEach-Object {$_.noteId}) | Should -Be @('near')
+        $lexical.belowThreshold | Should -Be 1
+    }
+    It 'lists the titles of this cycle notes in the check line from local sources only' {
+        $evidence=@(@{source='user';reference='chat 2026-11-15'})
+        foreach($n in 1..11){$null=Invoke-ItlMemoryRemember $b "Правило номер $n." 'itl_project_customer' "cycle-$n" @{} $evidence verified -Title "Заголовок $n"}
+        $script:Calls.Clear()
+        $line=Get-ItlMemoryUsageLine $b.projectRoot
+        $line | Should -Match 'Notes this cycle \(review before completion\): \[project\] Заголовок'
+        ([regex]::Matches($line,'\[project\]')).Count | Should -Be 8
+        $line | Should -Match 'and 3 more\.$'
+        $script:Calls.Count | Should -Be 0
+        # An unreadable source is skipped without failing the check.
+        $directory=Join-Path (Join-Path (Get-ItlMemoryHome) 'source') $b.identity.workspaceId
+        [IO.File]::WriteAllText((Join-Path $directory 'broken.json'),'{ broken')
+        {Get-ItlMemoryUsageLine $b.projectRoot} | Should -Not -Throw
+        ([regex]::Matches((Get-ItlMemoryUsageLine $b.projectRoot),'\[project\]')).Count | Should -Be 8
     }
 }

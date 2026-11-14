@@ -3,19 +3,26 @@
   "capabilities": [
     "scoped-cognee-memory-v1"
   ],
-  "clauseSha256": "6d03972b5876574ae820fb4f8224a36fe6bfd07ae45fe56b4203e08bf3f0a6b7",
+  "clauseSha256": "60831c00323c997ac04f7e32f9ed03633238d6383d9c19d315f5a277a747fbe4",
   "profile": "cognee-1.6.5-g1-c",
   "qualificationResultSha256": "be8219d1d090343f2d7deebace513b77d5aa7a322e353f10b9f3324d7048582d",
   "imageDigest": "sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820",
   "openApiSha256": "b863f72d912c07ceb4bb914d790152659427c0ad33863d553d38b5fa64e24171",
   "rulesBaselineCommit": "c91682404a498f356810b179ce8336711a411170",
   "candidateStatus": "local-source; MO and publication pending",
-  "rulesCandidateCommit": "23654440a7e39a22bfad2a4344e6c531d82a93e1",
+  "rulesCandidateCommit": "d6a65870801af5108302e98464def8985d1c2c0f",
   "searchTypes": [
     "CHUNKS",
     "CHUNKS_LEXICAL"
   ],
   "searchQualification": "B01 native lexical + two current raw reads; memory-mo-20261027/native-capabilities-r2.json",
+  "recallRelevance": {
+    "qualification": "openspec/changes/improve-memory-content-quality/evidence/recall-relevance-2026-11-15.md",
+    "CHUNKS_LEXICAL": {
+      "measure": "termShare",
+      "min": 0.5
+    }
+  },
   "additionalQualifiedProfiles": [
     {
       "profile": "cognee-qwen4096-v1",
@@ -24,7 +31,13 @@
       "embeddingModel": "qwen/qwen3-embedding-8b",
       "embeddingDimensions": 4096,
       "imageDigest": "sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820",
-      "openApiSha256": "41584822e9403d6fd96966f285714c004e5c77fff72c26514d72d99268bbbe8a"
+      "openApiSha256": "41584822e9403d6fd96966f285714c004e5c77fff72c26514d72d99268bbbe8a",
+      "recallRelevance": {
+        "CHUNKS": {
+          "measure": "distance",
+          "max": 0.4
+        }
+      }
     }
   ]
 }
