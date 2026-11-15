@@ -20,7 +20,7 @@ Managed интеграция SHALL сохранять recall-first, correction-c
 
 #### Scenario: Только Cognee
 - **WHEN** Cognee подключён и qualified, OpenViking отсутствует или off
-- **THEN** шесть областей работают без предупреждения о необходимости второго провайдера и без дополнительных probes его установки
+- **THEN** семь областей работают без предупреждения о необходимости второго провайдера и без дополнительных probes его установки
 
 #### Scenario: Выбран required provider
 - **WHEN** пользователь явно выбрал required provider, который недоступен или не имеет scoped binding
@@ -38,9 +38,9 @@ Managed интеграция SHALL сохранять recall-first, correction-c
 
 Selected context SHALL вычисляться программно без LLM и загрузки всего каталога. Один тематический recall SHALL передавать объединённый разрешённый набор datasets вместо отдельного агентского запроса на каждую область. Ограниченный backend candidate set SHALL отличаться от меньшего final agent budget. Scope SHALL применяться до retrieval; native applicability filter до cap используется только при поддержке, иначе чистая проверка original/current status и применимости выполняется над ограниченными кандидатами до выдачи агенту. Выдача SHALL сохранять проверяемые ссылки, ограничения и статусы с общим provenance без ненужных повторов. Обязательные инструкции SHALL NOT теряться из-за retrieval budget. Служебные schemas и always-on инструкции SHALL оставаться минимальными и измеряемыми.
 
-#### Scenario: Все шесть областей содержат знания
+#### Scenario: Все семь областей содержат знания
 - **WHEN** выполняется один task recall в Cognee-only режиме
-- **THEN** нет обязательных шести remember/recall инструментов или двенадцати вызовов; native datasets selection ограничивает область, CHUNKS выдаёт bounded факты без синтеза ответа другой моделью
+- **THEN** нет обязательных семи remember/recall инструментов или четырнадцати вызовов; native datasets selection ограничивает область, CHUNKS выдаёт bounded факты без синтеза ответа другой моделью
 
 #### Scenario: Применимый факт ниже первых восьми кандидатов
 - **WHEN** первые восемь найденных фактов неприменимы к ПРОФ, а нужный находится далее в пределах настроенного backend cap
@@ -48,7 +48,7 @@ Selected context SHALL вычисляться программно без LLM и
 
 ### Requirement: Поиск и сохранение не превращаются в фоновую фабрику контекста
 
-Реализация SHALL сохранять upstream budget: один task query на выбранный reader, отдельный standing query на первом reader и одну переформулировку после пустого relevant answer. Недобор final budget SHALL NOT вызывать добор поиском. Bounded native original/status lookups SHALL учитываться отдельно и SHALL NOT превращаться в дополнительные semantic queries. Частичная/неподтверждённая выдача SHALL NOT доказывать отсутствие знаний. Она SHALL NOT импортировать всю историю чатов/репозитория, строить отдельный ITL граф, запускать LLM-классификатор каждой реплики или автоматически реплицировать заметки.
+Реализация SHALL сохранять upstream budget: один task query на выбранный reader и одну переформулировку после пустого relevant answer. Постоянные заметки SHALL приходить в выдаче `memory_status`; отдельного standing query SHALL NOT быть. Недобор final budget SHALL NOT вызывать добор поиском. Bounded native original/status lookups SHALL учитываться отдельно и SHALL NOT превращаться в дополнительные semantic queries. Частичная/неподтверждённая выдача SHALL NOT доказывать отсутствие знаний. Она SHALL NOT импортировать всю историю чатов/репозитория, строить отдельный ITL граф, запускать LLM-классификатор каждой реплики или автоматически реплицировать заметки.
 
 #### Scenario: Повтор того же вопроса в неизменном контексте
 - **WHEN** релевантная выдача уже получена и scope/source/цикл не изменились
@@ -113,7 +113,7 @@ Managed память SHALL иметь default-on policy после готово�
 
 Existing reader SHALL ограничивать параллельное чтение originals двумя read-only raw GET внутри recall, сохраняя dedupe, round-robin порядок и deterministic выдачу независимо от завершения. SHALL сохраняться общий deadline 20 секунд, candidate cap 24, до 8 cards и до 1600 токенов всего сериализованного recall payload, current original/status/applicability и raw byte limits. Максимум одно уже начатое speculative чтение сверх sequential раннего выхода SHALL учитываться отдельно. Ошибка/отмена SHALL сохранять partial/continuation, SHALL NOT доказывать отсутствие знаний. Reader SHALL прекращать dispatch по deadline/cancel и очищать только свои ресурсы; SHALL NOT вводить общий scheduler, межоперационный original cache или parallel semantic/writer операции.
 
-Routing SHALL выбирать один маршрут: подтверждённый dataset/data ID → exact memory_status; точный термин/ошибка → CHUNKS_LEXICAL только после native qualification pinned профиля; смысловой вопрос → CHUNKS. До lexical qualification SHALL использоваться прежний CHUNKS; OpenAPI enum SHALL NOT заменять proof. Exact read SHALL NOT заменять обязательные standing/task queries, если нужны другие знания. SHALL NOT требоваться новая LLM, обход scopes или скрытый lexical+semantic fallback; прежние TOOL/query budgets сохраняются. Narrowing SHALL опираться на подтверждённую область; иначе SHALL сохраняться весь allowed read set.
+Routing SHALL выбирать один маршрут: подтверждённый dataset/data ID → exact memory_status; точный термин/ошибка → CHUNKS_LEXICAL только после native qualification pinned профиля; смысловой вопрос → CHUNKS. До lexical qualification SHALL использоваться прежний CHUNKS; OpenAPI enum SHALL NOT заменять proof. Exact read SHALL NOT заменять выдачу `memory_status` и обязательный task query, если нужны другие знания. SHALL NOT требоваться новая LLM, обход scopes или скрытый lexical+semantic fallback; прежние TOOL/query budgets сохраняются. Narrowing SHALL опираться на подтверждённую область; иначе SHALL сохраняться весь allowed read set.
 
 #### Scenario: Originals завершаются в другом порядке
 - **WHEN** два GET завершаются в обратном порядке или один даёт ошибку

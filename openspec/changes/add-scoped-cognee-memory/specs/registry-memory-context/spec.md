@@ -29,7 +29,7 @@
 
 Отсутствие generation/hash/stamp конкретного ответа Code/Graph или исходников Graph SHALL NOT быть условием отказа G3/G4/G5 либо основанием объявлять все сведения MCP непроверенными. Доработка этих серверов и обязательный новый протокол их metadata SHALL NOT требоваться. Версия registry SHALL сохраняться как версия MCP-источника с provenance; она SHALL NOT объявляться версией клиентских доработок. Достаточность evidence SHALL определяться утверждением, применимостью и подтверждёнными отличиями проекта, без обязательного побайтного attestation каждого ответа.
 
-Remember/recall/startup памяти SHALL NOT добавлять Code/Graph probes, новый manifest/verifier/cache, fetch или обязательную доступность этих MCP для всех шести областей. Изменение endpoint/версии источника SHALL NOT само менять dataset IDs/home или обобщать существующие записи. Native Cognee currentness, policy и budgets SHALL сохраняться независимо; этот отказ от source stamp SHALL NOT ослаблять проверку актуальной записи в Cognee.
+Remember/recall/startup памяти SHALL NOT добавлять Code/Graph probes, новый manifest/verifier/cache, fetch или обязательную доступность этих MCP для всех семи областей. Изменение endpoint/версии источника SHALL NOT само менять dataset IDs/home или обобщать существующие записи. Native Cognee currentness, policy и budgets SHALL сохраняться независимо; этот отказ от source stamp SHALL NOT ослаблять проверку актуальной записи в Cognee.
 
 #### Scenario: Доработанный проект и типовой источник
 - **WHEN** проект на PM5 КОРП имеет собственные доработки, но явно использует типовой MCP как базовый источник

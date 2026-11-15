@@ -58,7 +58,8 @@
 
 ## 10. Связь с add-scoped-cognee-memory
 
-- [ ] 10.1 Перед sync любого из двух change перенести четыре формулировки из D11: как MODIFIED в этот change, если `add-scoped-cognee-memory` уже в `openspec/specs`, иначе в спеки `add-scoped-cognee-memory` через `openspec-update-change`. Проверка: после sync обоих change в `openspec/specs` нет противоречащих требований о числе областей, ключе продолжения, старом контексте и standing query.
+- [x] 10.1 Перед sync любого из двух change перенести четыре формулировки из D11: как MODIFIED в этот change, если `add-scoped-cognee-memory` уже в `openspec/specs`, иначе в спеки `add-scoped-cognee-memory` через `openspec-update-change`. Проверка: после sync обоих change в `openspec/specs` нет противоречащих требований о числе областей, ключе продолжения, старом контексте и standing query.
+  Выполнено 2026-11-15: `add-scoped-cognee-memory` в `openspec/specs` не перенесён, поэтому формулировки внесены в его спеки. `cognee-scope-storage`: требование «Семь областей с устойчивой идентичностью» (добавлен `host`, workspace — локальный проект), число областей в назначении, перестроении и общем подключении. `memory-task-cycle`: продолжение привязано к копии ветки и циклу, ключ хранения прежний; старый контекст — автоматический переход, отказ первой записи до `memory_status`, чтения сразу. `memory-policy-and-budget`: отдельного standing query нет, постоянные заметки приходят в `memory_status`; счёт областей в сценариях. `registry-memory-context`: «всех семи областей». В спеках этого change две формулировки переставлены так, чтобы SHALL стоял в первой строке требования, без смены смысла: `openspec validate` отклонял их, а sync выполняется только для валидного change. `openspec validate` обоих change проходит; поиск «шести областей» и «standing query» по `openspec/specs` и спекам активных change противоречий не находит.
 
 ## 11. Поставка
 
@@ -76,6 +77,7 @@
   - удаление pending от 2026-11-08 через `retire_note`.
 
   Проверка: `evidence/installed-<дата>.md`.
+  Частично выполнено 2026-11-15: [evidence/installed-2026-11-15.md](evidence/installed-2026-11-15.md). Подтверждены `memory_status` с постоянной заметкой и кандидатом в оглавлении, видимость workspace между ветками одной основной копии (и невидимость в другой), вызовы без `MEMORY_STALE_CONTEXT` в сессии, открытой до раскатки, и удаление pending. Открыто: `contextChanged` и отказ первой записи после reset (нужен `/itl-reset-branch` ветки пилота). Однократный `MEMORY_STALE_CONTEXT` на живых копиях не воспроизводится: дополнение привязки уже прошло на всех 19 привязках PM5, остаётся доказательство Pester.
 - [x] 12.2 Пилот по `test-plan.md`: первые ~15 сессий с изменениями BSL в копиях PM5, пороги по логам Codex, доля ошибок по журналу. Проверка: `evidence/pilot-<дата>.md` со значениями каждого порога; при недоборе — правка формулировок и повтор, без блокирующих проверок. Выполнено: [evidence/pilot-2026-11-14.md](evidence/pilot-2026-11-14.md) — пороги не достигнуты; формулировки исправлены в change `improve-memory-content-quality`, повтор пилота — его задача 8.1.
 
 ## Заметки реализации (2026-11-11)
@@ -102,10 +104,10 @@
 Задачи отмечены по фактам поставки и пилота:
 
 - **9.3, 11.1, 11.2.** Изменение `4a93f5ca` зарегистрировано и опубликовано в `develop`; совместимость `ai_rules_1c` r55 продвинута коммитом `d03a8ff5` (`chore: promote ai rules r55 compatibility`) после Develop-квалификации. Позднее r55 заменён r57–r59.
+- **10.1.** Формулировки D11 перенесены в спеки `add-scoped-cognee-memory` 2026-11-15; оба change проходят `openspec validate`.
 - **12.2.** [evidence/pilot-2026-11-14.md](evidence/pilot-2026-11-14.md): по 22 тредам с правками BSL `memory_status` 64%, `recall` 59%, строка `Memory:` 18%, ошибки 6,0% — пороги не достигнуты. Исправление формулировками и повтор пилота перенесены в `improve-memory-content-quality` (задача 8.1).
 
 Не выполнено и не отмечено:
 
-- **10.1.** Четыре формулировки D11 не перенесены. Это условие sync и архивации этого change и `add-scoped-cognee-memory`; без него change не архивируется.
-- **12.1.** Отдельный canary этого change с `evidence/installed-<дата>.md` не проводился. Из его пунктов фактически проверено позже только удаление pending от 2026-11-08 (`retire_note`, 2026-11-15, [pm5-notes-review](../improve-memory-content-quality/evidence/pm5-notes-review-2026-11-15.md)) и `memory_status` с destinations ([canary](../improve-memory-content-quality/evidence/canary-2026-11-15.md)). Не проверены: однократный `MEMORY_STALE_CONTEXT` у сессии, открытой до обновления; отсутствие `MEMORY_STALE_CONTEXT` при параллельном `update-workflow`; `contextChanged` и отказ первой записи после reset; видимость заметки workspace из другой ветки того же локального проекта.
-- **Пилот:** выборочная проверка сохранения исправлений пользователя в том же ходе не выполнялась; `host` на терминальном сервере и клиенты Cursor, Claude и Kilo не проверялись.
+- **12.1.** Canary проведён 2026-11-15 ([installed](evidence/installed-2026-11-15.md)). Не проверены вызовами клиента: `contextChanged` и отказ первой записи после reset; однократный `MEMORY_STALE_CONTEXT` при дополнении привязки (на живых копиях не воспроизводится).
+- **Пилот:** выборка исправлений пользователя сделана 2026-11-15 ([pilot](evidence/pilot-2026-11-14.md)): в том же ходе 2/4, в форме слов пользователя 0/4 — порог не достигнут, повтор в пилоте 8.1 `improve-memory-content-quality`. `host` на терминальном сервере с двумя профилями Windows и клиенты Cursor, Claude и Kilo не проверялись: на этой машине нет терминального сервера; в копиях PM5 память включена только для клиента Codex (`-Client codex`), в `.mcp.json` Claude Code сервера `itl-scoped-cognee` нет, хотя Claude Code в копиях запускался. Проверка других клиентов требует включить память для них (`vibecoding1c-mcp-select -MemoryAction enable -Client <клиент>`) в выбранной копии.

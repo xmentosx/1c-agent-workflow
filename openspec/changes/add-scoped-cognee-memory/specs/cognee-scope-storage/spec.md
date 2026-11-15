@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Хранить полезные знания в штатном Cognee с явной принадлежностью одной из шести областей, сохраняя доступ, происхождение и возможность исправления без изменения провайдера.
+Хранить полезные знания в штатном Cognee с явной принадлежностью одной из семи областей, сохраняя доступ, происхождение и возможность исправления без изменения провайдера.
 
 ## ADDED Requirements
 
@@ -20,7 +20,7 @@
 
 ### Requirement: Перестроение сохраняет знания и устойчивую идентичность
 
-При разрешённом перестроении SHALL сохраняться логические шесть scope keys, noteId, current original payload/status/provenance/applicability и согласованный полный backup relational/auth/original/graph/vector/config/mapping. При переносе существующего реального рабочего source native principal SHALL сохраняться; при подтверждённом пустом старте ordinary account SHALL создаваться без fixture identity. Прежняя local taskCycle/workspace/workplace identity SHALL сохраняться. Новые instance/dataset/data IDs SHALL иметь подтверждённое exact mapping, SHALL NOT получаться по догадке из label или приниматься за прежние IDs. Неизвестные записи и исходные pending SHALL сохраняться; ранее отправленный unconfirmed write SHALL оставаться pinned к прежнему instance/principal/dataset без replay на candidate. Учебные данные SHALL NOT автоматически становиться рабочим набором. Прямое редактирование backend БД и пересоздание локального цикла ради reindex SHALL NOT допускаться.
+При разрешённом перестроении SHALL сохраняться логические scope keys всех семи областей, noteId, current original payload/status/provenance/applicability и согласованный полный backup relational/auth/original/graph/vector/config/mapping. При переносе существующего реального рабочего source native principal SHALL сохраняться; при подтверждённом пустом старте ordinary account SHALL создаваться без fixture identity. Прежняя local taskCycle/workspace/workplace identity SHALL сохраняться. Новые instance/dataset/data IDs SHALL иметь подтверждённое exact mapping, SHALL NOT получаться по догадке из label или приниматься за прежние IDs. Неизвестные записи и исходные pending SHALL сохраняться; ранее отправленный unconfirmed write SHALL оставаться pinned к прежнему instance/principal/dataset без replay на candidate. Учебные данные SHALL NOT автоматически становиться рабочим набором. Прямое редактирование backend БД и пересоздание локального цикла ради reindex SHALL NOT допускаться.
 
 #### Scenario: Dataset и data ID изменились при переносе
 - **WHEN** тот же current noteId перенесён в новый4096 dataset с другим native dataId
@@ -49,7 +49,7 @@
 
 ### Requirement: Одно общее подключение без пользовательских ACL
 
-Первый выпуск SHALL использовать один Cognee instance и одно техническое подключение/account для workflow. Шесть областей SHALL обозначать принадлежность и применимость, SHALL NOT заявлять backend конфиденциальность между разработчиками. Аутентификация/secret storage SHALL сохраняться как транспорт подключения; ITL SHALL NOT требовать личные Cognee accounts, роли, membership, permissions matrix или outsider проверки. User-local IDs рабочего места SHALL оставаться независимыми от backend principal; смена сессии SHALL NOT менять workplace. При проверке pending/unknown native write SHALL сохраняться pin исходного instance/connection identity/exact dataset, без blind replay.
+Первый выпуск SHALL использовать один Cognee instance и одно техническое подключение/account для workflow. Семь областей SHALL обозначать принадлежность и применимость, SHALL NOT заявлять backend конфиденциальность между разработчиками. Аутентификация/secret storage SHALL сохраняться как транспорт подключения; ITL SHALL NOT требовать личные Cognee accounts, роли, membership, permissions matrix или outsider проверки. User-local IDs рабочего места SHALL оставаться независимыми от backend principal; смена сессии SHALL NOT менять workplace. При проверке pending/unknown native write SHALL сохраняться pin исходного instance/connection identity/exact dataset, без blind replay.
 
 #### Scenario: Несколько разработчиков используют один account
 - **WHEN** workflow использует один настроенный Cognee credential на разных рабочих местах
@@ -67,9 +67,9 @@
 - **WHEN** оператор атомарно заменяет private credential file либо сервер отклоняет отозванный ключ
 - **THEN** следующий запрос читает актуальный файл без перезапуска; отказ не считается durable success и не приводит к login/replay, исходные IDs/pending сохраняются для существующего status continuation
 
-### Requirement: Шесть областей с устойчивой идентичностью
+### Requirement: Семь областей с устойчивой идентичностью
 
-Система SHALL различать `taskCycle`, `workspace`, `workplace`, `product`, `project`, `organization`. Задача, ветка и база SHALL иметь одну область текущего цикла. Область SHALL иметь стабильный ID и основной dataset; локальные task/workspace/workplace datasets создаются по необходимости, общие — по подтверждённой native привязке того же технического подключения. Имя каталога, адрес сервера или имя ветки SHALL NOT подменять идентичность. Одно знание SHALL иметь одно основное место хранения, без обязательных копий по всем областям/провайдерам.
+Система SHALL различать `taskCycle`, `workspace`, `workplace`, `host`, `product`, `project`, `organization`. Workspace SHALL означать локальный проект: основную копию вместе с её копиями-ветками; две отдельные основные копии одного `projectId` SHALL оставаться разными workspace. `host` SHALL означать машину, общую для её пользователей под одним техническим подключением. Задача, ветка и база SHALL иметь одну область текущего цикла. Область SHALL иметь стабильный ID и основной dataset; локальные task/workspace/workplace datasets создаются по необходимости, общие — по подтверждённой native привязке того же технического подключения. Имя каталога, адрес сервера или имя ветки SHALL NOT подменять идентичность. Одно знание SHALL иметь одно основное место хранения, без обязательных копий по всем областям/провайдерам.
 
 #### Scenario: Несколько локальных установок одного проекта
 - **WHEN** два разработчика работают с одним `projectId` в разных локальных установках
