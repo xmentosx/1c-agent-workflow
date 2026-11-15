@@ -33,14 +33,14 @@
 ## 6. Форк, поставка, canary
 
 - [x] 6.1 На ветке апгрейда форка по `docs/ai-rules-fork-upgrades.md`: переписать абзацы назначения и повторного recall в блоке `ITL-SCOPED-MEMORY-V1` `content/rules/project-memory.md`, пересобрать корень из upstream и ITL-приложения, выпустить релиз (ветка `release/<tag>`, аннотированный tag, Full форка). Проверка: Verify и `scripts\check.ps1 -Mode Full` форка проходят; семантическая сверка блока без потери safety-контрактов.
-- [ ] 6.2 Обновить записи `templates/ai-rules-overlay/sections.json`, clause hash и `rulesCandidateCommit` в `assets/scoped-memory-policy.json`, пины (`dependency-lock.json`, `templates/project.json`, `DependencyLocks.Tests.ps1`, `docs/ai-rules-fork-upgrades.md`). Проверка: тесты совместимости ai-rules проходят в составе Targeted.
-- [ ] 6.3 Один целостный локальный коммит ITL-части и `scripts/source-delivery.ps1 -Action RegisterChange`. Проверка: `-Action Status` показывает зарегистрированное изменение.
-- [ ] 6.4 Публикация `develop` через `PublishDevelop`. Проверка: успешный Develop-статус в журнале поставки.
-- [ ] 6.5 Canary на одной копии PM5 после `update-workflow`, фактическими вызовами клиента: длинная запись отклоняется и проходит после сокращения; запись с областью в `pm5-core-development` уходит в product с `routeReason=product-home`; `recall` о Канбане не возвращает заметку о Редакторе планов; строка `/itl-check` показывает заголовки цикла. Проверка: `evidence/canary-<дата>.md`.
+- [x] 6.2 Обновить записи `templates/ai-rules-overlay/sections.json`, clause hash и `rulesCandidateCommit` в `assets/scoped-memory-policy.json`, пины (`dependency-lock.json`, `templates/project.json`, `DependencyLocks.Tests.ps1`, `docs/ai-rules-fork-upgrades.md`). Проверка: тесты совместимости ai-rules проходят в составе Targeted.
+- [x] 6.3 Один целостный локальный коммит ITL-части и `scripts/source-delivery.ps1 -Action RegisterChange`. Проверка: `-Action Status` показывает зарегистрированное изменение.
+- [x] 6.4 Публикация `develop` через `PublishDevelop`. Проверка: успешный Develop-статус в журнале поставки.
+- [x] 6.5 Canary на одной копии PM5 после `update-workflow`, фактическими вызовами клиента: длинная запись отклоняется и проходит после сокращения; запись с областью в `pm5-core-development` уходит в product с `routeReason=product-home`; `recall` о Канбане не возвращает заметку о Редакторе планов; строка `/itl-check` показывает заголовки цикла. Проверка: `evidence/canary-<дата>.md`.
 
 ## 7. Накопленные заметки и закрытие прежнего change
 
-- [ ] 7.1 Подготовить список накопленных заметок PM5 (task, project и зависшая pending от 2026-11-08): для каждой — поднять в project, product или organization в новом формате либо снять. Пользователь утверждает список; запись — штатными `remember` и `retire_note`. Проверка: `evidence/pm5-notes-review-<дата>.md` с утверждённым списком и квитанциями без текстов заметок.
+- [x] 7.1 Подготовить список накопленных заметок PM5 (task, project и зависшая pending от 2026-11-08): для каждой — поднять в project, product или organization в новом формате либо снять. Пользователь утверждает список; запись — штатными `remember` и `retire_note`. Проверка: `evidence/pm5-notes-review-<дата>.md` с утверждённым списком и квитанциями без текстов заметок.
 - [ ] 7.2 Закрыть `improve-scoped-memory-adoption`: исходный срез этого change как evidence пилота 12.2, отметить выполненные задачи по фактическим доказательствам. Проверка: ссылка на evidence в задаче 12.2 того change; незавершённые задачи названы, а не отмечены.
 
 ## 8. Пилот

@@ -1477,9 +1477,13 @@ function Get-ItlMemoryCycleNoteTitles {
     $notes=foreach($file in @(Get-ChildItem -LiteralPath $directory -File -Filter '*.json')){
         $record=try{Read-ItlMemoryJson $file.FullName}catch{$null}
         if(-not $record -or [string](Get-ItlCatalogField $record 'cycleId' '') -cne $cycleId -or [string](Get-ItlCatalogField $record 'state' '') -cne 'durable'){continue}
+        # retire_note records the retirement in the receipt, not in the source.
+        $datasetId=[string](Get-ItlCatalogField (Get-ItlCatalogField $record 'attempt') 'datasetId' '')
+        $receipt=try{Read-ItlMemoryJson (Get-ItlMemoryPath receipt (Get-ItlMemoryRecordKey $Binding $datasetId ([string](Get-ItlCatalogField $record 'noteId' ''))))}catch{$null}
+        if($receipt -and [string](Get-ItlCatalogField $receipt 'state' '') -ceq 'retired'){continue}
         $intent=Get-ItlCatalogField $record 'intent'
         $label=[string](Get-ItlCatalogField $intent 'datasetName' '')
-        $level=$kinds[[string](Get-ItlCatalogField (Get-ItlCatalogField $record 'attempt') 'datasetId' '')]
+        $level=$kinds[$datasetId]
         if(-not $level){$level=if($label -match '^itl_([a-z]+)_'){$Matches[1]}else{'unknown'}}
         if($level -ceq 'taskCycle'){$level='task'}
         $title=[string](Get-ItlCatalogField $intent 'title' '')

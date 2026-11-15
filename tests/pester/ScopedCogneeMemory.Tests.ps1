@@ -1919,6 +1919,12 @@ try {
         ([regex]::Matches($line,'\[project\]')).Count | Should -Be 8
         $line | Should -Match 'and 3 more\.$'
         $script:Calls.Count | Should -Be 0
+        # A note retired in this cycle is no longer offered for review.
+        (Invoke-ItlMemoryRetire $b 'itl_project_customer' 'cycle-11').state | Should -Be 'retired'
+        $line=Get-ItlMemoryUsageLine $b.projectRoot
+        $line | Should -Not -Match 'Заголовок 11'
+        ([regex]::Matches($line,'\[project\]')).Count | Should -Be 8
+        $line | Should -Match 'and 2 more\.$'
         # An unreadable source is skipped without failing the check.
         $directory=Join-Path (Join-Path (Get-ItlMemoryHome) 'source') $b.identity.workspaceId
         [IO.File]::WriteAllText((Join-Path $directory 'broken.json'),'{ broken')
