@@ -12,7 +12,9 @@ file/settings recovery operations.
 The parent helper publishes its PID-owned heartbeat throughout development-branch
 rollout, including `workflow-update.resume-branches` when master is already current.
 Silent synchronous preflight/post-copy work can exceed the generic 120-second
-stale-status threshold without losing the parent's liveness signal. This heartbeat
+stale-status threshold without losing the parent's liveness signal. Each
+`update-workflow-branch` child keeps the same heartbeat; a sidecar briefly held by
+a reader is retried, and only its removal ends the signal. This heartbeat
 does not assert task progress or extend the operation deadline; native stall
 checks, helper-exit detection and the hard operation timeout remain authoritative.
 Recovery still belongs to the preserved snapshot and the original update command.

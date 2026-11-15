@@ -453,13 +453,19 @@ function Invoke-WithRunStatusHeartbeat {
     try {
         $job = Start-Job -ScriptBlock {
         param($HeartbeatPath, $StopPath, $IntervalSeconds)
+        $delaySeconds = $IntervalSeconds
         while (-not (Test-Path -LiteralPath $StopPath)) {
-            Start-Sleep -Seconds $IntervalSeconds
+            Start-Sleep -Seconds $delaySeconds
             if (Test-Path -LiteralPath $StopPath) { break }
             try {
                 [IO.File]::SetLastWriteTimeUtc($HeartbeatPath, [DateTime]::UtcNow)
+                $delaySeconds = $IntervalSeconds
             } catch {
-                break
+                # Only a withdrawn sidecar ends liveness. A reader or scanner
+                # holding it is transient: retry soon instead of going silent
+                # for the rest of the body while the owner is still working.
+                if (-not (Test-Path -LiteralPath $HeartbeatPath -PathType Leaf)) { break }
+                $delaySeconds = 1
             }
         }
         } -ArgumentList $heartbeatPath, $stopPath, $IntervalSeconds

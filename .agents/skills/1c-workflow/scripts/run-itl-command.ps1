@@ -448,7 +448,11 @@ function Get-RunnerHeartbeatAgeSeconds {
     $heartbeatPath = $StatusPath + ".heartbeat"
     if (-not (Test-Path -LiteralPath $heartbeatPath -PathType Leaf)) { return [double]::PositiveInfinity }
     try {
-        $identity = [IO.File]::ReadAllText($heartbeatPath, [Text.Encoding]::ASCII).Trim()
+        # Share write/delete with the helper: a poll must not fail on, or make
+        # fail, the heartbeat touch and owner removal that run concurrently.
+        $stream = [IO.FileStream]::new($heartbeatPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        try { $identity = [IO.StreamReader]::new($stream, [Text.Encoding]::ASCII).ReadToEnd().Trim() }
+        finally { $stream.Dispose() }
         if ($identity -cne [string]$HelperProcessId) { return [double]::PositiveInfinity }
         $writtenAtUtc = [IO.File]::GetLastWriteTimeUtc($heartbeatPath)
         if ($writtenAtUtc -lt $NotBeforeUtc.AddSeconds(-5)) { return [double]::PositiveInfinity }

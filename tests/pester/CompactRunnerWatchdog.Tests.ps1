@@ -375,6 +375,79 @@ exit $payload.exitCode
         }
     }
 
+    It 'keeps a real update-workflow-branch child live through a contended heartbeat tick beyond the watchdog' {
+        # PM5 2026-11-15: the branch child's rules/MCP phase never republished
+        # status.json; a concurrent sidecar read made one heartbeat touch fail,
+        # the heartbeat stopped for good, and the live child was killed as stale.
+        $tempRoot = Join-Path $TestDrive 'ветка heartbeat путь'
+        $savedEnvironment = @{}
+        foreach ($name in @('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS','ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS','ITL_RUNNER_OPERATION_TIMEOUT_SECONDS')) {
+            $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        }
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            [void][IO.Directory]::CreateDirectory($scriptRoot)
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            $outputRoot = Join-Path $tempRoot 'вывод раскатки'
+            [void][IO.Directory]::CreateDirectory($outputRoot)
+            $runInputs = Join-Path $outputRoot 'run-inputs.json'
+            $resultPath = Join-Path $outputRoot 'результат ветки.json'
+            [IO.File]::WriteAllText($runInputs, ('{"schemaVersion":1,"sourceCommit":"' + ('1' * 40) + '","entries":[]}'), [Text.UTF8Encoding]::new($false))
+            $requestPath = Join-Path $outputRoot 'запрос ветки.json'
+            [IO.File]::WriteAllText($requestPath, ((@{ schemaVersion = 1; mainRoot = $tempRoot; branchRoot = $tempRoot; branch = 'itldev/ветка-1'
+                source = @{ root = $tempRoot; repo = 'fixture'; ref = 'pin'; commit = ('1' * 40); source = 'path'; rolloutScope = $null }
+                masterClients = @('codex'); runInputsPath = $runInputs; resultPath = $resultPath }) | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+            $helperPath = Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+            $body = @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action,[string]$WorkflowBranchRequestPath)
+$fixtureStatusPath=$RunStatusPath
+. '__HELPER__' -ProjectRoot $ProjectRoot -Action help -WorkflowBranchRequestPath $WorkflowBranchRequestPath *> $null
+$script:RunStatusPath=$fixtureStatusPath
+# Only the branch workload varies: it stays silent toward status.json beyond
+# the watchdog while a sidecar reader holds the file across a heartbeat tick.
+function Invoke-WorkflowDevelopmentBranchItemUpdate {
+    $sidecar = $script:RunStatusPath + '.heartbeat'
+    $reader = [IO.FileStream]::new($sidecar, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try { Start-Sleep -Seconds 20 } finally { $reader.Dispose() }
+    Start-Sleep -Seconds 25
+    [pscustomobject]@{ status='completed'; reason=''; commit=('1'*40); clients=@('codex') }
+}
+$now=[DateTimeOffset]::Now.ToString('o')
+$payload=[ordered]@{schemaVersion=1;projectRoot=$ProjectRoot;pid=$PID;action='update-workflow-branch';status='running';stage='startup';stageDetail='';startedAt=$now;updatedAt=$now;exitCode=$null;errorMessage=''}
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+try {
+    Invoke-WorkflowDevelopmentBranchChild
+    $payload.status='succeeded';$payload.stage='complete';$payload.exitCode=0
+} catch {
+    $payload.status='failed';$payload.stage='branch-failed';$payload.exitCode=1;$payload.errorMessage=$_.Exception.Message
+}
+$payload.updatedAt=[DateTimeOffset]::Now.ToString('o')
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+exit $payload.exitCode
+'@
+            $body = $body.Replace('__HELPER__', $helperPath.Replace("'", "''"))
+            [IO.File]::WriteAllText((Join-Path $scriptRoot 'agent-1c.ps1'), $body, [Text.UTF8Encoding]::new($true))
+            $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS = '1'
+            $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS = '30'
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = '120'
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            Push-Location $tempRoot
+            try {
+                $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--','-Action','update-workflow-branch','-WorkflowBranchRequestPath',$requestPath)
+            } finally { Pop-Location }
+            $watch.Stop()
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.stage | Should -BeExactly 'complete' -Because ("$($summary.error)`n" + ($result.stderr -join "`n"))
+            $result.exitCode | Should -Be 0
+            $watch.Elapsed.TotalSeconds | Should -BeGreaterThan 45
+            ($result.stderr -join "`n") | Should -Match 'liveness=helper-heartbeat'
+            (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be 'completed'
+            Test-Path -LiteralPath ($summary.statusPath + '.heartbeat') | Should -BeFalse
+        } finally {
+            foreach ($name in @($savedEnvironment.Keys)) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+        }
+    }
+
     It "does not slide the action deadline when a phase repeats its remaining budget" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl deadline путь " + [guid]::NewGuid().ToString("N"))
         $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "Process")
@@ -875,6 +948,19 @@ Describe 'compact runner heartbeat handoff snapshot' {
         ($script:snapshotReads -join ',') | Should -Be 'heartbeat,status'
         $snapshot.statusAgeSeconds | Should -BeGreaterThan 120
         $snapshot.livenessAgeSeconds | Should -Be 0
+    }
+
+    It 'samples the owned sidecar while the helper heartbeat holds it for a touch' {
+        $path = Join-Path $TestDrive 'занятый heartbeat.json'
+        [IO.File]::WriteAllText($path, ('{"pid":' + $PID + ',"updatedAt":"2000-01-01T00:00:00Z"}'))
+        [IO.File]::WriteAllText(($path + '.heartbeat'), [string]$PID)
+        # A timestamp touch holds a write handle; the runner's poll must neither
+        # fail on it nor keep the writer from its next touch.
+        $writer = [IO.FileStream]::new(($path + '.heartbeat'), [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+        try {
+            $snapshot = Get-RunnerLivenessSnapshot -StatusPath $path -HelperProcessId $PID -NotBeforeUtc ([DateTime]::UtcNow.AddMinutes(-1))
+        } finally { $writer.Dispose() }
+        $snapshot.livenessAgeSeconds | Should -BeLessThan 5
     }
 
     It 'rejects a fresh foreign sidecar as proof that a stale helper is live' {
