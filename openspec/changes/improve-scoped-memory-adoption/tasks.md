@@ -54,7 +54,7 @@
 
 - [x] 9.1 В `templates/ai-rules-overlay/AGENTS.md` добавить условное ядро из спеки и объединить с ним существующую строку про память. Проверка: семантическая сверка строки по триггеру, действию, исключениям и исходу отказа — запрет неявного включения провайдера и доступность `templatesearch` сохранены; размер ядра ~1,2 КБ измерен.
 - [x] 9.2 На ветке апгрейда форка по `docs/ai-rules-fork-upgrades.md`: пересобрать корень из upstream и приложения, сократить `content/rules/project-memory.md` (общая маршрутизация провайдеров — только вне управляемого проекта), поднять потолок корня в `tools/validate-rules.ps1` с 14 до 15 КБ с замером и обоснованием. Проверка: Verify форка принимает корень как «upstream + приложение»; измеренный размер корня и прирост записаны в обосновании лимита; семантическая сверка `project-memory` без потери safety-контрактов.
-- [ ] 9.3 Обновить записи `AGENTS.md` и `ITL-SCOPED-MEMORY-001` в `templates/ai-rules-overlay/sections.json`, clause hash и `rulesCandidateCommit` в `assets/scoped-memory-policy.json`, выпустить релиз форка и обновить пины ITL (`dependency-lock.json`, `templates/project.json`, `DependencyLocks.Tests.ps1`, `docs/ai-rules-fork-upgrades.md`). Проверка: тесты совместимости ai-rules (`scripts/test-ai-rules-compatibility.ps1` в составе Targeted) проходят на новом релизе.
+- [x] 9.3 Обновить записи `AGENTS.md` и `ITL-SCOPED-MEMORY-001` в `templates/ai-rules-overlay/sections.json`, clause hash и `rulesCandidateCommit` в `assets/scoped-memory-policy.json`, выпустить релиз форка и обновить пины ITL (`dependency-lock.json`, `templates/project.json`, `DependencyLocks.Tests.ps1`, `docs/ai-rules-fork-upgrades.md`). Проверка: тесты совместимости ai-rules (`scripts/test-ai-rules-compatibility.ps1` в составе Targeted) проходят на новом релизе.
 
 ## 10. Связь с add-scoped-cognee-memory
 
@@ -62,8 +62,8 @@
 
 ## 11. Поставка
 
-- [ ] 11.1 Один целостный локальный коммит ITL-части, `scripts/source-delivery.ps1 -Action RegisterChange` (при изменении поведения без нового теста — с `-CoverageContract`). Проверка: `-Action Status` показывает зарегистрированное изменение.
-- [ ] 11.2 Публикация `develop` по обычному процессу (`PublishDevelop`). Проверка: успешный Develop-статус в журнале поставки.
+- [x] 11.1 Один целостный локальный коммит ITL-части, `scripts/source-delivery.ps1 -Action RegisterChange` (при изменении поведения без нового теста — с `-CoverageContract`). Проверка: `-Action Status` показывает зарегистрированное изменение.
+- [x] 11.2 Публикация `develop` по обычному процессу (`PublishDevelop`). Проверка: успешный Develop-статус в журнале поставки.
 
 ## 12. Установленная копия и пилот
 
@@ -76,7 +76,7 @@
   - удаление pending от 2026-11-08 через `retire_note`.
 
   Проверка: `evidence/installed-<дата>.md`.
-- [ ] 12.2 Пилот по `test-plan.md`: первые ~15 сессий с изменениями BSL в копиях PM5, пороги по логам Codex, доля ошибок по журналу. Проверка: `evidence/pilot-<дата>.md` со значениями каждого порога; при недоборе — правка формулировок и повтор, без блокирующих проверок.
+- [x] 12.2 Пилот по `test-plan.md`: первые ~15 сессий с изменениями BSL в копиях PM5, пороги по логам Codex, доля ошибок по журналу. Проверка: `evidence/pilot-<дата>.md` со значениями каждого порога; при недоборе — правка формулировок и повтор, без блокирующих проверок. Выполнено: [evidence/pilot-2026-11-14.md](evidence/pilot-2026-11-14.md) — пороги не достигнуты; формулировки исправлены в change `improve-memory-content-quality`, повтор пилота — его задача 8.1.
 
 ## Заметки реализации (2026-11-11)
 
@@ -96,3 +96,16 @@
 - **9.3.** Ledger, clause hash, `rulesCandidateCommit` и пины обновлены; Verify форка проходит (304 решения). Тег r55 локальный: «выпустить релиз форка» и статус `passed` — дело владельца публикации (`PublishDevelop`), поэтому пункт остаётся открытым до неё. Локальный кандидат сначала был подготовлен не полностью: тег был простым, не было ветки `release/itl-main-2f640143-r55` и Full-квалификации форка, и публикация очереди дважды останавливалась на проверке форка, а запись была отложена. Исправлено без изменения коммита форка: аннотированный тег, ветка релиза, Full форка пройден (186/186 Pester, 19 стадий). Перечень условий записан в `docs/ai-rules-fork-upgrades.md`. Запись была отложена дважды (вторая отсрочка поставлена на уже исправленный head по устаревшей причине); в ветку влит опубликованный `develop` (`07100006`), отсрочка снимается регистрацией нового head с изменением содержимого.
 
 Не проверено этим изменением: фактические вызовы клиента на установленной копии (12.1), пилот (12.2), `host` на терминальном сервере с двумя профилями Windows, клиенты Cursor, Claude и Kilo.
+
+## Закрытие (2026-11-15)
+
+Задачи отмечены по фактам поставки и пилота:
+
+- **9.3, 11.1, 11.2.** Изменение `4a93f5ca` зарегистрировано и опубликовано в `develop`; совместимость `ai_rules_1c` r55 продвинута коммитом `d03a8ff5` (`chore: promote ai rules r55 compatibility`) после Develop-квалификации. Позднее r55 заменён r57–r59.
+- **12.2.** [evidence/pilot-2026-11-14.md](evidence/pilot-2026-11-14.md): по 22 тредам с правками BSL `memory_status` 64%, `recall` 59%, строка `Memory:` 18%, ошибки 6,0% — пороги не достигнуты. Исправление формулировками и повтор пилота перенесены в `improve-memory-content-quality` (задача 8.1).
+
+Не выполнено и не отмечено:
+
+- **10.1.** Четыре формулировки D11 не перенесены. Это условие sync и архивации этого change и `add-scoped-cognee-memory`; без него change не архивируется.
+- **12.1.** Отдельный canary этого change с `evidence/installed-<дата>.md` не проводился. Из его пунктов фактически проверено позже только удаление pending от 2026-11-08 (`retire_note`, 2026-11-15, [pm5-notes-review](../improve-memory-content-quality/evidence/pm5-notes-review-2026-11-15.md)) и `memory_status` с destinations ([canary](../improve-memory-content-quality/evidence/canary-2026-11-15.md)). Не проверены: однократный `MEMORY_STALE_CONTEXT` у сессии, открытой до обновления; отсутствие `MEMORY_STALE_CONTEXT` при параллельном `update-workflow`; `contextChanged` и отказ первой записи после reset; видимость заметки workspace из другой ветки того же локального проекта.
+- **Пилот:** выборочная проверка сохранения исправлений пользователя в том же ходе не выполнялась; `host` на терминальном сервере и клиенты Cursor, Claude и Kilo не проверялись.
