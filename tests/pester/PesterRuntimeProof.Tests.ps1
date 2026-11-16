@@ -436,6 +436,24 @@ Describe 'External Pester runtime custom configuration' {
         $receipt.git.status | Should -BeExactly unknown
         $receipt.git.reason | Should -Match 'external hooks/attribute/template'
     }
+    It 'qualifies agent-host noninteractive Git settings by their exact values' {
+        $names=@('GIT_EDITOR','GIT_SEQUENCE_EDITOR','GIT_TERMINAL_PROMPT')
+        $saved=@{};foreach($name in $names){$saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
+        try {
+            $profiles=[pscustomobject]@{git=[pscustomobject]@{kind='git'}}
+            foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$null,'Process')}
+            $plain=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $env:GIT_EDITOR='true';$env:GIT_SEQUENCE_EDITOR='true';$env:GIT_TERMINAL_PROMPT='0'
+            $agent=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $again=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $env:GIT_TERMINAL_PROMPT='1'
+            $prompting=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            foreach($receipt in @($plain,$agent,$prompting)){$receipt.git.status | Should -BeExactly known}
+            $again.git.sha256 | Should -BeExactly $agent.git.sha256
+            $agent.git.sha256 | Should -Not -Be $plain.git.sha256
+            $prompting.git.sha256 | Should -Not -Be $agent.git.sha256
+        } finally {foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$saved[$name],'Process')}}
+    }
     It 'does not qualify an unobserved Git process override' {
         $saved=$env:GIT_TEMPLATE_DIR
         try {
