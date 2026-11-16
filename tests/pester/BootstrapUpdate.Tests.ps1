@@ -1581,103 +1581,183 @@ local after
         }
     }
 
-    It "repairs tracked damage in managed workflow checkouts without mutating explicit path sources" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-workflow-source-repair-" + [guid]::NewGuid().ToString("N"))
-        $sourceRoot = Join-Path $tempRoot "source"
-        $remoteRoot = Join-Path $tempRoot "remote.git"
-        $previousSourcePath = $env:ITL_WORKFLOW_SOURCE_PATH
-        $previousRepo = $env:ITL_WORKFLOW_REPO
-        $previousRef = $env:ITL_WORKFLOW_REF
-
-        try {
-            foreach ($relativePath in @(
-                "install-agent-1c-workflow.ps1",
-                "AGENT-INSTALL.md",
-                ".agents\skills\1c-workflow\scripts\agent-1c.ps1",
-                ".agents\skills\1c-workflow-fast\SKILL.md",
-                ".agents\skills\product-docs\SKILL.md",
-                ".agents\skills\itl-roctup-1c-data\SKILL.md",
-                ".agents\skills\itl-vanessa-ui-mcp\SKILL.md",
-                ".agents\skills\itl-remote-runner\SKILL.md",
-                ".agents\skills\itl-remote-agent\SKILL.md",
-                ".agents\skills\itl-performance\SKILL.md",
-                "templates\USER-RULES.append.md",
-                "tracked-marker.txt"
-            )) {
-                $path = Join-Path $sourceRoot $relativePath
-                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
-                Set-Content -LiteralPath $path -Encoding UTF8 -Value "original: $relativePath"
-            }
-
-            & git -C $sourceRoot init --quiet
-            & git -C $sourceRoot config user.email "test@example.invalid"
-            & git -C $sourceRoot config user.name "ITL Test"
-            & git -C $sourceRoot add .
-            & git -C $sourceRoot commit --quiet -m "workflow source"
-            & git -C $sourceRoot branch -M master
-            & git -C $sourceRoot tag repair-tag
-            $expectedCommit = ((& git -C $sourceRoot rev-parse HEAD) -join "").Trim()
-            $expectedSkillHash = (Get-FileHash -LiteralPath (Join-Path $sourceRoot ".agents\skills\product-docs\SKILL.md") -Algorithm SHA256).Hash
-            & git clone --quiet --bare $sourceRoot $remoteRoot
-
-            $env:ITL_WORKFLOW_SOURCE_PATH = ""
-            $env:ITL_WORKFLOW_REPO = $remoteRoot
-            $repairResults = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $managedRoot = ""
-                function Get-WorkflowPackageTempRoot { return $managedRoot }
-
-                foreach ($case in @(
-                    [pscustomobject]@{ ref = "master"; root = (Join-Path $tempRoot "managed-branch") },
-                    [pscustomobject]@{ ref = "repair-tag"; root = (Join-Path $tempRoot "managed-tag") }
+    Context "workflow package source cache" {
+        BeforeAll {
+            function New-WorkflowPackageCacheFixture {
+                $root = Join-Path $TestDrive ('пакет кэш ' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+                $source = Join-Path $root 'исходник пакета'
+                foreach ($relative in @(
+                    'install-agent-1c-workflow.ps1', 'AGENT-INSTALL.md',
+                    '.agents/skills/1c-workflow/scripts/agent-1c.ps1',
+                    '.agents/skills/1c-workflow/assets/ondemand-mcp/catalogs/каталог vanessa.json',
+                    '.agents/skills/1c-workflow-fast/SKILL.md', '.agents/skills/product-docs/SKILL.md',
+                    '.agents/skills/itl-roctup-1c-data/SKILL.md', '.agents/skills/itl-vanessa-ui-mcp/SKILL.md',
+                    '.agents/skills/itl-remote-runner/SKILL.md', '.agents/skills/itl-remote-agent/SKILL.md',
+                    '.agents/skills/itl-performance/SKILL.md', 'docs/itl-workflow/README.md',
+                    'templates/USER-RULES.append.md', 'tracked-marker.txt'
                 )) {
-                    $env:ITL_WORKFLOW_REF = $case.ref
-                    $managedRoot = $case.root
-                    Resolve-WorkflowPackageSource | Out-Null
-
-                    Remove-Item -LiteralPath (Join-Path $managedRoot ".agents\skills\product-docs\SKILL.md") -Force
-                    Set-Content -LiteralPath (Join-Path $managedRoot "tracked-marker.txt") -Encoding UTF8 -Value "damaged"
-                    Set-Content -LiteralPath (Join-Path $managedRoot "sentinel.local") -Encoding UTF8 -Value "keep"
-
-                    $resolved = Resolve-WorkflowPackageSource
-                    [pscustomobject]@{
-                        ref = $resolved.ref
-                        commit = $resolved.commit
-                        skillHash = (Get-FileHash -LiteralPath (Join-Path $managedRoot ".agents\skills\product-docs\SKILL.md") -Algorithm SHA256).Hash
-                        marker = (Get-Content -LiteralPath (Join-Path $managedRoot "tracked-marker.txt") -Raw -Encoding UTF8).Trim()
-                        trackedStatus = @(& git -C $managedRoot status --short --untracked-files=no)
-                        fullStatus = @(& git -C $managedRoot status --short)
-                    }
+                    $path = Join-Path $source $relative
+                    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
+                    [IO.File]::WriteAllText($path, "original: $relative")
                 }
+                $remote = Join-Path $root 'удалённый repo.git'
+                foreach ($arguments in @(
+                    @('init', '--quiet'), @('config', 'user.email', 'test@example.invalid'), @('config', 'user.name', 'ITL Test'),
+                    @('add', '.'), @('commit', '--quiet', '-m', 'workflow source'), @('branch', '-M', 'master'), @('tag', 'repair-tag')
+                )) {
+                    & git -C $source @arguments
+                    if ($LASTEXITCODE -ne 0) { throw "fixture git $($arguments -join ' ') failed" }
+                }
+                & git clone --quiet --bare $source $remote
+                if ($LASTEXITCODE -ne 0) { throw 'fixture bare clone failed' }
+                $fixture = [pscustomobject]@{
+                    root = $root; source = $source; remote = $remote
+                    project = (Join-Path $root 'проект пользователя'); cache = (Join-Path $root 'кэш артефактов'); temp = (Join-Path $root 'temp каталог')
+                    commit = ((& git -C $source rev-parse HEAD) -join '').Trim()
+                    catalog = '.agents/skills/1c-workflow/assets/ondemand-mcp/catalogs/каталог vanessa.json'
+                }
+                New-Item -ItemType Directory -Force -Path $fixture.project, $fixture.temp | Out-Null
+                return $fixture
             }
 
-            @($repairResults).Count | Should -Be 2
-            foreach ($result in @($repairResults)) {
-                $result.commit | Should -Be $expectedCommit
-                $result.skillHash | Should -Be $expectedSkillHash
-                $result.marker | Should -Be "original: tracked-marker.txt"
-                @($result.trackedStatus).Count | Should -Be 0
-                @($result.fullStatus) | Should -Contain "?? sentinel.local"
+            function Set-WorkflowPackageFixtureAge {
+                param([string]$Path, [datetime]$Time)
+                foreach ($item in @(Get-ChildItem -LiteralPath $Path -Recurse -Force) + @(Get-Item -LiteralPath $Path -Force)) { $item.LastWriteTime = $Time }
             }
-            @($repairResults | Select-Object -ExpandProperty ref) | Should -Be @("master", "repair-tag")
+        }
 
-            Set-Content -LiteralPath (Join-Path $sourceRoot "tracked-marker.txt") -Encoding UTF8 -Value "explicit path change"
-            $env:ITL_WORKFLOW_SOURCE_PATH = $sourceRoot
-            $env:ITL_WORKFLOW_REF = "master"
-            $pathResult = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Resolve-WorkflowPackageSource
+        BeforeEach {
+            $savedEnvironment = @{}
+            foreach ($name in @('ITL_WORKFLOW_SOURCE_PATH', 'ITL_WORKFLOW_REPO', 'ITL_WORKFLOW_REF', 'ITL_ARTIFACT_CACHE_ROOT', 'TEMP')) {
+                $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
             }
+            $fixture = New-WorkflowPackageCacheFixture
+            [Environment]::SetEnvironmentVariable('ITL_WORKFLOW_SOURCE_PATH', $null, 'Process')
+            [Environment]::SetEnvironmentVariable('ITL_WORKFLOW_REPO', $fixture.remote, 'Process')
+            [Environment]::SetEnvironmentVariable('ITL_WORKFLOW_REF', 'master', 'Process')
+            [Environment]::SetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', $fixture.cache, 'Process')
+            [Environment]::SetEnvironmentVariable('TEMP', $fixture.temp, 'Process')
+        }
 
-            $pathResult.source | Should -Be "path"
-            (Get-Content -LiteralPath (Join-Path $sourceRoot "tracked-marker.txt") -Raw -Encoding UTF8).Trim() | Should -Be "explicit path change"
-            @(& git -C $sourceRoot status --short --untracked-files=no) | Should -Contain " M tracked-marker.txt"
-        } finally {
-            $env:ITL_WORKFLOW_SOURCE_PATH = $previousSourcePath
-            $env:ITL_WORKFLOW_REPO = $previousRepo
-            $env:ITL_WORKFLOW_REF = $previousRef
-            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
-                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        AfterEach {
+            foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+        }
+
+        It "keeps the exact <ref> checkout outside TEMP and rebuilds tracked damage from the mirror" -ForEach @(
+            @{ ref = 'master' }, @{ ref = 'repair-tag' }
+        ) {
+            [Environment]::SetEnvironmentVariable('ITL_WORKFLOW_REF', $ref, 'Process')
+            & {
+                . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+                $first = Resolve-WorkflowPackageSource
+                $first.root | Should -Be (Join-Path (Get-WorkflowPackageCacheRepoRoot -Repo $fixture.remote) $fixture.commit.Substring(0, 12))
+                $first.root.StartsWith((Resolve-Agent1cFullPath -Path $fixture.cache) + '\', [StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+                $first.commit | Should -Be $fixture.commit
+                $first.ref | Should -Be $ref
+                $first.source | Should -Be 'git'
+                Test-Path -LiteralPath (Join-Path $fixture.temp '1c-agent-workflow') | Should -BeFalse
+
+                # The 2026-11-15 incident: Storage Sense deleted tracked files of the cached source.
+                Remove-Item -LiteralPath (Join-Path $first.root $fixture.catalog)
+                [IO.File]::WriteAllText((Join-Path $first.root 'tracked-marker.txt'), 'damaged')
+                [IO.File]::WriteAllText((Join-Path $first.root 'посторонний.local'), 'keep for diagnosis')
+                $captured = @(Resolve-WorkflowPackageSource 3>&1)
+                $warnings = @($captured | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }) -join ' '
+                $second = @($captured | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+
+                $second.root | Should -Be $first.root
+                $second.commit | Should -Be $fixture.commit
+                [IO.File]::ReadAllText((Join-Path $second.root $fixture.catalog)) | Should -BeExactly "original: $($fixture.catalog)"
+                [IO.File]::ReadAllText((Join-Path $second.root 'tracked-marker.txt')) | Should -BeExactly 'original: tracked-marker.txt'
+                @(Get-GitPathListAt -Root $second.root -Arguments @('status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching')).Count | Should -Be 0
+                $warnings | Should -Match 'WORKFLOW_PACKAGE_CACHE_RECOVERED.*diagnostic='
+                $diagnostic = [regex]::Match($warnings, "diagnostic='([^']+)'").Groups[1].Value
+                $diagnostic | Should -Match '[\\/]invalid-[0-9a-f]{12}$'
+                [IO.File]::ReadAllText((Join-Path $diagnostic 'посторонний.local')) | Should -BeExactly 'keep for diagnosis'
+                Test-Path -LiteralPath (Join-Path $diagnostic $fixture.catalog) | Should -BeFalse
+            }
+        }
+
+        It "follows a moved branch to a new exact checkout and leaves an explicit path source user-owned" {
+            & {
+                . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+                $first = Resolve-WorkflowPackageSource
+                [IO.File]::WriteAllText((Join-Path $fixture.source 'tracked-marker.txt'), 'second commit')
+                foreach ($arguments in @(@('commit', '--quiet', '-am', 'second'), @('push', '--quiet', $fixture.remote, 'master'))) {
+                    & git -C $fixture.source @arguments
+                    if ($LASTEXITCODE -ne 0) { throw "fixture git $($arguments -join ' ') failed" }
+                }
+                $second = Resolve-WorkflowPackageSource
+                $second.commit | Should -Not -Be $first.commit
+                $second.root | Should -Not -Be $first.root
+                [IO.File]::ReadAllText((Join-Path $second.root 'tracked-marker.txt')) | Should -BeExactly 'second commit'
+                # A rollout of the previous commit keeps reading unchanged bytes.
+                [IO.File]::ReadAllText((Join-Path $first.root 'tracked-marker.txt')) | Should -BeExactly 'original: tracked-marker.txt'
+                (Get-ItlGitSourceCacheState -Root $first.root -Repo $fixture.remote -ExpectedCommit $first.commit).valid | Should -BeTrue
+
+                [IO.File]::WriteAllText((Join-Path $fixture.source 'tracked-marker.txt'), 'explicit path change')
+                [Environment]::SetEnvironmentVariable('ITL_WORKFLOW_SOURCE_PATH', $fixture.source, 'Process')
+                $pathSource = Resolve-WorkflowPackageSource
+                $pathSource.source | Should -Be 'path'
+                $pathSource.root | Should -Be (Resolve-Agent1cFullPath -Path $fixture.source)
+                Set-WorkflowPackageCacheUse -Root $pathSource.root
+                Test-Path -LiteralPath (Join-Path $fixture.source '.git/itl-last-used') | Should -BeFalse
+                [IO.File]::ReadAllText((Join-Path $fixture.source 'tracked-marker.txt')) | Should -BeExactly 'explicit path change'
+            }
+        }
+
+        It "rejects an incomplete cached source before copy-complete and accepts the repeated update" {
+            & {
+                . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+                $source = Resolve-WorkflowPackageSource
+                Remove-Item -LiteralPath (Join-Path $source.root $fixture.catalog)
+                { Copy-WorkflowPackageManagedContent -Source $source } |
+                    Should -Throw '*WORKFLOW_PACKAGE_SOURCE_INCOMPLETE*repeat the same update-workflow*'
+
+                # Continuation: the repeated update re-resolves the source, which rebuilds it.
+                $repeated = Resolve-WorkflowPackageSource 3> $null
+                $repeated.root | Should -Be $source.root
+                Copy-WorkflowPackageManagedContent -Source $repeated
+                [IO.File]::ReadAllText((Join-Path $fixture.project $fixture.catalog)) | Should -BeExactly "original: $($fixture.catalog)"
+
+                function Remove-LegacyWorkflowManagedFiles { Remove-Item -LiteralPath (Join-Path $fixture.project 'templates/USER-RULES.append.md') }
+                { Copy-WorkflowPackageManagedContent -Source $repeated } |
+                    Should -Throw '*WORKFLOW_PACKAGE_COPY_INCOMPLETE*missing templates/USER-RULES.append.md*'
+            }
+        }
+
+        It "keeps recent exact checkouts, removes idle ones and the idle legacy TEMP checkout, and rebuilds a recorded source" {
+            & {
+                . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+                $current = Resolve-WorkflowPackageSource
+                $repoCache = Split-Path -Parent $current.root
+                foreach ($day in 2, 3, 4, 5) {
+                    $entry = Join-Path $repoCache ('00000000000' + $day)
+                    [void][IO.Directory]::CreateDirectory((Join-Path $entry '.git'))
+                    [IO.File]::WriteAllText((Join-Path $entry '.git/itl-last-used'), '')
+                    Set-WorkflowPackageFixtureAge -Path $entry -Time (Get-Date).AddDays(-$day)
+                }
+                $legacy = Join-Path $fixture.temp '1c-agent-workflow\workflow-package'
+                foreach ($name in @('HEAD', 'index', 'FETCH_HEAD')) {
+                    [void][IO.Directory]::CreateDirectory((Join-Path $legacy '.git'))
+                    [IO.File]::WriteAllText((Join-Path $legacy ".git/$name"), 'x')
+                }
+                [IO.File]::WriteAllText((Join-Path $legacy 'tracked-marker.txt'), 'legacy bytes')
+
+                Resolve-WorkflowPackageSource | Out-Null
+                Test-Path -LiteralPath $legacy | Should -BeTrue
+                @(Get-ChildItem -LiteralPath $repoCache -Directory -Force | ForEach-Object Name | Sort-Object) |
+                    Should -Be @(@((Split-Path -Leaf $current.root), '000000000002', '000000000003', '000000000004', 'mirror.git') | Sort-Object)
+
+                Set-WorkflowPackageFixtureAge -Path $legacy -Time (Get-Date).AddDays(-8)
+                Resolve-WorkflowPackageSource | Out-Null
+                Test-Path -LiteralPath $legacy | Should -BeFalse
+
+                # A pending update whose recorded exact source retention removed.
+                Remove-Item -LiteralPath $current.root -Recurse -Force
+                Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{ sourceRoot = $current.root; sourceCommit = $current.commit; sourceRepo = $fixture.remote })
+                [IO.File]::ReadAllText((Join-Path $current.root $fixture.catalog)) | Should -BeExactly "original: $($fixture.catalog)"
+                Test-Path -LiteralPath (Join-Path $current.root '.git/itl-last-used') | Should -BeTrue
             }
         }
     }
@@ -1991,6 +2071,7 @@ exit 0
                     $script:copyCalls++
                     $script:copyPaths += $RelativePath
                 }
+                function Assert-WorkflowPackageCopyComplete { param($Source) }
                 function Update-WorkflowPackageLockEntry {}
                 function Invoke-Agent1cFreshProcess { param([string[]]$AdditionalArguments); $script:reexecArgs = $AdditionalArguments; throw "reexec-stop" }
 
@@ -2168,6 +2249,7 @@ exit 0
                 function Get-WorkflowUpdateSnapshotRelativePaths { param([string]$SourceRoot,[string[]]$AiRulesPathsAfter); @(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths) + @('.agent-1c/dependency-lock.json','.kilo/kilo.json','.dev.env') }
                 function Copy-WorkflowManagedDirectory { param($SourceRoot, $RelativePath) }
                 function Copy-WorkflowManagedFile { param($SourceRoot, $RelativePath) }
+                function Assert-WorkflowPackageCopyComplete { param($Source) }
                 function Update-WorkflowPackageLockEntry {}
                 function Invoke-Agent1cFreshProcess { param([string[]]$AdditionalArguments); throw "reexec-stop" }
 
@@ -3038,7 +3120,7 @@ exit 2
     }
 
     It "retries only the idempotent ai_rules fetch boundary" {
-        (& { . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null; $script:fetchAttempts=0; function Invoke-GitAt { $script:fetchAttempts++; if($script:fetchAttempts -lt 3){throw 'transient'} }; function Start-Sleep {}; Invoke-AiRules1cFetchWithRetry -Root $RepoRoot; $script:fetchAttempts }) | Should -Be 3
+        (& { . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null; $script:fetchAttempts=0; function Invoke-GitAt { $script:fetchAttempts++; if($script:fetchAttempts -lt 3){throw 'transient'} }; function Start-Sleep {}; Invoke-ItlGitFetchWithRetry -Root $RepoRoot; $script:fetchAttempts }) | Should -Be 3
     }
 
     It "builds a safe initialization user report without reading secret settings" {

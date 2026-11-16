@@ -208,6 +208,25 @@ partially deleted. `Sync-AiRules1cCheckout` stays the only owner; publication is
 an atomic move without a lock or coordinator. No installed-state migration:
 rollback restores TEMP clones, and only idle generated legacy TEMP names are removed.
 
+On 2026-11-16 the user approved moving the `source=git` workflow package source
+to the same exact-commit Git source cache (`<artifact cache>\workflow-package`).
+On 2026-11-15 Storage Sense deleted 435 tracked files from the shared TEMP
+checkout while a parallel branch rollout was copying from it. Six branches
+received an incomplete package, and their recorded fingerprints were reproduced
+exactly. One generic cache owner serves `ai_rules_1c` and the workflow package;
+`Resolve-WorkflowPackageCacheCheckout` maps a branch, tag or commit to an
+immutable checkout, so a rollout reads stable bytes. Every package copy records
+`copy-complete` only after the copied managed paths match the source byte for
+byte and an exact cached source is still a clean complete checkout; otherwise the
+existing copy rollback restores the branch, and repeating the same update
+re-verifies and repairs the cache. Retention keeps the current checkout, the
+three most recently used, and any used during the last day; an active rollout
+refreshes its checkout's use. A recorded exact source that retention removed is
+rebuilt from the mirror for recovery. Idle
+legacy TEMP checkouts are removed after seven days. `ITL_WORKFLOW_SOURCE_PATH`
+stays user-owned and is never verified as a cache or cleaned. No lock,
+coordinator or installed-state migration is introduced.
+
 The user approved producer-marked diagnostic retention on 2026-10-22. The
 existing artifact-retention owner consumes immutable completion receipts for
 individual native temporary files and derived XML/ETLX, preserving original

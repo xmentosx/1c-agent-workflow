@@ -580,6 +580,7 @@ Describe 'Workflow commit over a stopped development merge' {
             function Copy-WorkflowManagedDirectory { param([string]$SourceRoot,[string]$RelativePath)
                 [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'workflow.txt'), 'new', [Text.UTF8Encoding]::new($false)) }
             function Copy-WorkflowManagedFile { param([string]$SourceRoot,[string]$RelativePath) }
+            function Assert-WorkflowPackageCopyComplete { param([object]$Source) }
             function Remove-LegacyWorkflowManagedFiles {}
             function Update-WorkflowPackageLockEntry { param([object]$Source) }
             function Invoke-WorkflowPackageFilePostCopy { [pscustomobject]@{aiRulesPathsBefore=@();clientSurfacePathsBefore=@()} }
