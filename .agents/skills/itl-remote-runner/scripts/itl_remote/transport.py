@@ -7,7 +7,8 @@ from pathlib import Path
 import re
 import shutil
 
-from .common import FileLock, WorkError, beneath, capture, digest, read_json, stamp, write_json
+from .common import (PYTHON_LAUNCH_OPTIONS, FileLock, WorkError, beneath, capture, digest,
+                     powershell_python_environment, read_json, stamp, write_json)
 from .jobs import execution_contract, status, submit, validate_package
 
 CHUNK = 512 * 1024
@@ -151,8 +152,9 @@ class Connection:
             "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; "
             "$utf8=[Text.UTF8Encoding]::new($false); [Console]::InputEncoding=$utf8; [Console]::OutputEncoding=$utf8; $OutputEncoding=$utf8; "
             "$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + parameters + "'))|ConvertFrom-Json; "
-            "$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'; "
-            "[Console]::In.ReadToEnd() | & $p.python -u $p.runtime rpc --spool $p.spool; exit $LASTEXITCODE"
+            + "; ".join(powershell_python_environment()) + "; "
+            "[Console]::In.ReadToEnd() | & $p.python " + " ".join(PYTHON_LAUNCH_OPTIONS) +
+            " -u $p.runtime rpc --spool $p.spool; exit $LASTEXITCODE"
         )
         encoded = base64.b64encode(bootstrap.encode("utf-16-le")).decode("ascii")
         command = [config.get("executable", "ssh"), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]
