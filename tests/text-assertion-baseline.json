@@ -62,7 +62,7 @@
                   "tests/pester/OpenCodeConfigLayers.Tests.ps1":  2,
                   "tests/pester/OpenCodeWorkspace.Tests.ps1":  10,
                   "tests/pester/OpenSpecCliRuntime.Tests.ps1":  4,
-                  "tests/pester/ParserDocsBudgets.Tests.ps1":  218,
+                  "tests/pester/ParserDocsBudgets.Tests.ps1":  220,
                   "tests/pester/PendingMergeWorkflowTransition.Tests.ps1":  6,
                   "tests/pester/PesterCacheCompatibility.Tests.ps1":  1,
                   "tests/pester/PesterIsolatedRerun.Tests.ps1":  2,
