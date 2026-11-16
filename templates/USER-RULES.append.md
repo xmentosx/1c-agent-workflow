@@ -12,7 +12,7 @@ Classify code/metadata independently as `executionPath=quick-fix|full-cycle` and
 
 Before any OpenSpec write, resolve the workspace with the ITL `openspec-context` helper; only this checkout's local `openspec/` is supported. `OPEN_SPEC_EXTERNAL_STORE_DEFERRED` stops that phase: preserve the external binding and documents and never silently create a local substitute (`dev-branch-openspec.md`).
 
-For PM5 product logic, architecture, workflows, permissions, reports, integrations, acceptance tests, or OpenSpec, activate `.agents/skills/product-docs/SKILL.md`. For the same OpenSpec scope, reuse current/proposal `Context Sources`; otherwise search `BookStack-product-docs-mcp` before broad repository traversal. Use sufficient non-duplicative current evidence; never repeat native discovery after sufficient code/graph MCP results. Cite sources and surface conflicts. PM4 uses a helper-installed replacement.
+For product logic, architecture, workflows, permissions, reports, integrations, acceptance tests, or OpenSpec, activate `.agents/skills/product-docs/SKILL.md`. For the same OpenSpec scope, reuse current/proposal `Context Sources`; otherwise search `BookStack-product-docs-mcp` before broad repository traversal. Use sufficient non-duplicative current evidence; never repeat native discovery after sufficient code/graph MCP results. Cite sources and surface conflicts.
 
 Use sibling `itldev/*` worktrees and only the state-proven copied branch infobase. Never load/dump/test against the source infobase. `/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`, and `/deploy-and-test` are ITL bridges that reconcile branch state. On `master` or outside managed `itldev/*`, they stop without mutation.
 

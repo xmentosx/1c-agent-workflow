@@ -11744,11 +11744,11 @@ function Update-UserRules {
     $marker = "## 1C Project Lifecycle"
     $templateBlock = (Read-Utf8Text -Path $templatePath).Trim()
     if (-not (Test-ProductDocsMcpAllowed)) {
-        $productDocsRulePattern = '(?m)^For PM5 product logic,.*$'
+        $productDocsRulePattern = '(?m)^For product logic,.*$'
         if (-not [regex]::IsMatch($templateBlock, $productDocsRulePattern)) {
-            throw "PM5 product-docs rule was not found in USER-RULES overlay; refusing to install PM5 BookStack routing into a PM4 project."
+            throw "Product-docs rule was not found in USER-RULES overlay; refusing to install BookStack routing into a project without product documentation."
         }
-        $pm4Rule = 'For PM4 projects, PM5 product documentation MCP is disabled. Before answering, exploring, planning, proposing, or changing product logic, technical or implementation architecture, internal subsystem design, technical decisions/constraints/rationale, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
+        $pm4Rule = 'This project has no product documentation MCP (its registry productDocs role is disabled, or it is a legacy PM4 project). Before answering, exploring, planning, proposing, or changing product logic, technical or implementation architecture, internal subsystem design, technical decisions/constraints/rationale, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
         $templateBlock = [regex]::Replace($templateBlock, $productDocsRulePattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $pm4Rule }, 1)
     }
     $block = ($startMarker + [Environment]::NewLine + $templateBlock + [Environment]::NewLine + $endMarker)
