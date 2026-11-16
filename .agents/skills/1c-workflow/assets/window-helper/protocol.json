@@ -4,7 +4,7 @@
   "capability": "itl-window-channel-1",
   "requestFields": ["protocol", "op", "id", "scope", "deadlineUtc"],
   "operations": {
-    "lease": ["scope", "deadlineUtc", "pid"],
+    "lease": ["scope", "deadlineUtc", "pid", "step", "feature", "line"],
     "lease-end": ["scope", "endScope"],
     "capture-show": ["pid"],
     "capture-end": ["pid"],

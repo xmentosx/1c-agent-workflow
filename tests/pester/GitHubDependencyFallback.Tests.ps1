@@ -87,8 +87,8 @@
             }
             $roctup.name | Should -Be "MCP_Toolkit.epf"
             $client.name | Should -Be "client_mcp.cfe"
-            $extension.name | Should -Be "VAExtension.1.32-itl-r15.cfe"
-            $extension.expectedSha256 | Should -Be "695e0a8ccf37f4fe3c9c9d4ebd0312e85664d41113db289f8859d456e156f30d"
+            $extension.name | Should -Be "VAExtension.1.32-itl-r16.cfe"
+            $extension.expectedSha256 | Should -Be "c72232bd3f27058e21735dc29e1da659b286983e67b52e6b9331d2114cb4f8e5"
             $client.version | Should -BeExactly 'v0.6.5'
             $client.url | Should -BeExactly 'https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe'
             $client.expectedSha256 | Should -BeExactly 'd1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f'
@@ -126,8 +126,8 @@
         $lock.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Not -Contain "publicationStatus"
         $download = Get-VanessaAutomationDownloadInfo
         $download.source | Should -Be "workflow-pinned"
-        $download.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r15/vanessa-automation-single.1.2.043.42-itl-r15.zip"
-        $download.expectedSha256 | Should -Be "58d4af17555aa87b7d2a25c338d6cd6ceb9b36f3ba831dd9c5ebc873b1233b5b"
+        $download.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r16/vanessa-automation-single.1.2.043.42-itl-r16.zip"
+        $download.expectedSha256 | Should -Be "787c75f35c20b79a5eb2b368e7d224b7adcd36cac3439d42fdea3009f72e34e1"
         Assert-MockCalled Invoke-RestMethod -Times 0
     }
 
