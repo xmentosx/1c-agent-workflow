@@ -9,6 +9,14 @@ permission and repair budgets remain independent.
 
 ## Prepare one current plan
 
+Short path:
+
+1. Run `begin-verification-change` without a path. It returns the unaccepted delta and writes `draftPlanPath`: retained suites/groups whose obligations already cover a changed path are proposed with a `DRAFT:` reason, and `draftUncoveredPaths` lists the rest.
+2. Edit the draft: replace every `DRAFT:` reason with your impact decision (keep, change or drop the proposed check), give each uncovered path a sufficient check, and add the task description and source (or `requirementPaths`) and every criterion. The helper refuses a remaining `DRAFT:` reason.
+3. Run `begin-verification-change -VerificationEvidencePath <draft>`, then the normal `/itl-check`, then `complete-verification-change`.
+
+The rest of this section and the next one explain the record and how to choose checks for uncovered paths.
+
 Use the existing helper action `begin-verification-change` without an evidence
 path to inspect its accepted base, full unaccepted source delta and prior task
 criteria. A new commit does not advance that base. Prepare the compact JSON in

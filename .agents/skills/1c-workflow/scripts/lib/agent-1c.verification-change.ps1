@@ -110,7 +110,7 @@ function Assert-VerificationChangeReady {
     $change=Read-VerificationChange
     if ($null -eq $change) {
         Set-RunFailureContext -Category missing-suite -RequiredAction 'prepare-current-change-plan-and-repeat-original-itl-command'
-        throw 'VERIFICATION_CHANGE_REQUIRED: use begin-verification-change to inspect the full unaccepted delta, prepare its impact plan, then repeat with -VerificationEvidencePath <plan.json>; no history or criteria will be discarded.'
+        throw 'VERIFICATION_CHANGE_REQUIRED: use begin-verification-change to inspect the full unaccepted delta; it writes a draft plan (draftPlanPath) proposing covering retained checks. Complete the draft, then repeat with -VerificationEvidencePath <plan.json>; no history or criteria will be discarded.'
     }
     Assert-VerificationChangeCurrent -Change $change
     $target=Get-VerificationChangeTarget -State $State
@@ -206,6 +206,55 @@ function Get-VerificationChangeSystemInput {
     }
 }
 
+function New-VerificationChangeDraftPlan {
+    # A starting point, not a decision: retained coverage whose obligation
+    # inputPaths already cover a changed path is proposed with a DRAFT reason
+    # the agent must replace; every other path is listed as uncovered.
+    param([string[]]$ChangedPaths, [AllowNull()][object]$Previous)
+    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+    $yax = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
+    $retained = @()
+    $valid = [bool](Get-VerificationCatalogValue -Value $catalog -Name valid -Default $false)
+    foreach ($obligation in @(if ($valid) { Get-VerificationCatalogValue -Value $catalog -Name obligations -Default @() })) {
+        $suiteId = [string](Get-VerificationCatalogValue -Value $obligation -Name suiteId -Default '')
+        $suite = @(Get-VerificationCatalogValue -Value $catalog -Name suites -Default @() | Where-Object { [string]$_.id -ceq $suiteId })
+        if ($suiteId -and [string]$obligation.retention -ceq 'retained' -and $suite.Count -eq 1 -and [string]$suite[0].purpose -ceq 'acceptance') {
+            $retained += [pscustomobject]@{ id = [string]$obligation.id; kind = 'suiteId'; owner = $suiteId; inputPaths = @($obligation.inputPaths) }
+        }
+    }
+    foreach ($obligation in @(Get-VerificationCatalogValue -Value $yax -Name obligations -Default @())) {
+        $groupId = [string](Get-VerificationCatalogValue -Value $obligation -Name groupId -Default '')
+        $group = @(Get-VerificationCatalogValue -Value $yax -Name groups -Default @() | Where-Object { [string]$_.id -ceq $groupId })
+        if ($groupId -and [string]$obligation.retention -ceq 'retained' -and $group.Count -eq 1 -and [string]$group[0].purpose -ceq 'default-fast') {
+            $retained += [pscustomobject]@{ id = [string]$obligation.id; kind = 'groupId'; owner = $groupId; inputPaths = @($obligation.inputPaths) }
+        }
+    }
+    $checks = [ordered]@{}; $paths = @(); $uncovered = @()
+    foreach ($path in $ChangedPaths) {
+        $covering = @($retained | Where-Object { @($_.inputPaths | Where-Object { Test-VerificationRepoPathPattern -Path $path -Pattern $_ }).Count -gt 0 })
+        if ($covering.Count -eq 0) { $uncovered += $path; continue }
+        foreach ($item in $covering) { $checks["$($item.kind):$($item.owner)"] = [ordered]@{ $item.kind = $item.owner } }
+        $names = (@($covering | ForEach-Object { "$($_.kind -replace 'Id$','') '$($_.owner)'" }) -join ', ')
+        $paths += [ordered]@{ path = $path; checkIds = @($covering.id); reason = "DRAFT: retained $names covers this path; replace with your impact decision or choose other checks." }
+    }
+    $taskId = [string](Get-VerificationCatalogValue -Value $Previous -Name taskId -Default '')
+    if (-not $taskId) {
+        $branchName = [string](Get-Variable -Name DevBranchName -ValueOnly -ErrorAction SilentlyContinue)
+        $taskId = ($branchName.ToLowerInvariant() -replace '[^a-z0-9._-]+', '-').Trim('-', '.', '_')
+        if ($taskId -notmatch '^[a-z0-9][a-z0-9._-]*$') { $taskId = 'change' }
+    }
+    $draft = [ordered]@{
+        taskId = $taskId; taskDescription = ''; sourceReference = ''
+        requirementPaths = @(Get-VerificationCatalogValue -Value $Previous -Name requirements -Default @() | ForEach-Object path)
+        checks = @($checks.Values); paths = $paths
+        criteria = @(Get-VerificationCatalogValue -Value $Previous -Name criteria -Default @()); retainedDispositions = @()
+    }
+    $draftPath = Join-Path (Get-VerificationSelectionStateRoot) 'change-plan.draft.json'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $draftPath) | Out-Null
+    Write-Utf8TextAtomic -Path $draftPath -Value (($draft | ConvertTo-Json -Depth 10) + "`n")
+    return [pscustomobject]@{ path = (Get-VerificationRepoRelativePath -Path $draftPath); uncoveredPaths = @($uncovered) }
+}
+
 function Start-VerificationChange {
     param([string]$EvidencePath = '')
     if ((Get-VerificationModel) -cne 'change') { throw 'VERIFICATION_CHANGE_MODEL: select ITL_VERIFICATION_MODEL=change before preparing a change plan.' }
@@ -217,9 +266,16 @@ function Start-VerificationChange {
         $tree = Get-VerificationSelectionEffectiveTree
         $changed = @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree $tree)
         $system = Get-VerificationChangeSystemInput -ChangedPaths $changed -CurrentTree $tree
+        $decide = @($changed | Where-Object { $_ -cnotin $system.paths })
+        # The draft is a convenience: an unreadable catalog leaves the preview intact.
+        try { $draft = New-VerificationChangeDraftPlan -ChangedPaths $decide -Previous $previous }
+        catch { $draft = [pscustomobject]@{ path = ''; uncoveredPaths = $decide; issue = $_.Exception.Message } }
         return [pscustomobject]@{
             model='change';status='planning';baseTree=$base;tree=$tree
-            changedPaths=@($changed | Where-Object { $_ -cnotin $system.paths })
+            changedPaths=$decide
+            draftPlanPath=$draft.path
+            draftUncoveredPaths=$draft.uncoveredPaths
+            draftNote=$(if ($draft.path) { 'Edit the draft: replace every DRAFT reason, decide each uncovered path, add the task description, source and criteria, then pass it as -VerificationEvidencePath.' } else { "No draft: $($draft.issue) Prepare the plan manually." })
             systemCoveredPaths=[pscustomobject]@{acceptedMasterCommit=$system.acceptedMasterCommit;importedPaths=$system.importedPaths;verificationOwnerPaths=$system.verificationOwnerPaths;reason='No impact decision: the normal check runs the complete existing acceptance set for these paths.'}
             taskId=(Get-VerificationCatalogValue -Value $previous -Name taskId -Default '')
             criteria=@(Get-VerificationCatalogValue -Value $previous -Name criteria -Default @())
@@ -253,6 +309,9 @@ function Start-VerificationChange {
         if ($entry.Count -eq 0 -and $path -cin $system.paths) { continue }
         if ($entry.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$entry[0].reason)) {
             throw "VERIFICATION_CHANGE_PATH_PENDING: '$path' needs one impact decision, reason and sufficient checkIds; update the plan and repeat begin-verification-change."
+        }
+        if (([string]$entry[0].reason).TrimStart().StartsWith('DRAFT:', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "VERIFICATION_CHANGE_DRAFT_UNREVIEWED: '$path' still has the helper's DRAFT reason; replace it with your impact decision and repeat begin-verification-change."
         }
         $ids = @($entry[0].checkIds)
         $declared = "Declared check ids: $((@($checks.id) | ForEach-Object { "'$_'" }) -join ', ')."
