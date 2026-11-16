@@ -2270,9 +2270,13 @@ exit 0
     It "documents long external shell timeout for ITL lifecycle commands" {
         $instructionPaths = @(
             ".agents\skills\1c-workflow-fast\SKILL.md",
-            ".agents\skills\1c-workflow\SKILL.md",
-            "templates\USER-RULES.append.md"
+            ".agents\skills\1c-workflow\SKILL.md"
         ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        # The always-on rules route to the owners instead of repeating them.
+        $alwaysOnRules = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
+        $alwaysOnRules | Should -Match 'Long actions follow the timeout or background rule of the generated command or `1c-workflow-fast`'
+        $alwaysOnRules | Should -Not -Match 'timeout_ms'
 
         foreach ($path in $instructionPaths) {
             $text = Get-Content -Encoding UTF8 -Raw $path

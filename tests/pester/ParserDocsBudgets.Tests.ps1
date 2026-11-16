@@ -1041,10 +1041,13 @@
         $rulesTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
 
-        $rulesTemplateText | Should -Match 'Native `/itl`'
-        $rulesTemplateText | Should -Match 'one fenced `text` block'
-        $rulesTemplateText | Should -Match "line breaks, blank lines, and indentation"
-        $rulesTemplateText | Should -Match "write nothing outside"
+        # The generated /itl command owns its output format; the always-on
+        # rules do not repeat it next to the opposite userReport rule.
+        $itlTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md.template")
+        $itlTemplateText | Should -Match 'exactly one fenced `text` block with nothing outside it'
+        $itlTemplateText | Should -Match "Preserve every helper line break, blank line, and indentation"
+        $itlTemplateText | Should -Match "omit content, or merge sections"
+        $rulesTemplateText | Should -Not -Match 'Native `/itl`'
         $installText | Should -Match 'exactly one fenced `text` block'
         $installText | Should -Match "preserving every line break, blank line, and indentation"
         $installText | Should -Match "actual error instead of fabricating a panel"
