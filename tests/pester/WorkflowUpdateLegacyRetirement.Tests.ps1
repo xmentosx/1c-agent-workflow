@@ -28,6 +28,7 @@ It 'finishes known legacy retirement through the branch update owner with Alread
             function Read-DevBranchState { [pscustomobject]@{devBranch='itldev/finalize';worktreePath=$fixture.root} }
             function Copy-WorkflowManagedDirectory {}
             function Copy-WorkflowManagedFile {}
+            function Assert-WorkflowPackageCopyComplete {}
             function Update-WorkflowPackageLockEntry {}
             function Get-WorkflowUpdateExpectedClientWritePaths {@()}
             function Invoke-WorkflowPackageFilePostCopy {[pscustomobject]@{aiRulesPathsBefore=@();clientSurfacePathsBefore=@()}}
@@ -69,6 +70,7 @@ It 'preserves a custom README arriving after snapshot capture and completes the 
             function Assert-WorkflowUpdateDevelopmentBranchRoot {}
             function Read-DevBranchState {[pscustomobject]@{devBranch='itldev/finalize';worktreePath=$fixture.root}}
             function Copy-WorkflowManagedDirectory {}
+            function Assert-WorkflowPackageCopyComplete {}
             $script:lateReadmeInjected=$false
             function Copy-WorkflowManagedFile {
                 if(-not $script:lateReadmeInjected){
