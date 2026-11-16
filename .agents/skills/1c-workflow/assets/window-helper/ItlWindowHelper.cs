@@ -1883,7 +1883,7 @@ namespace Itl.WindowHelper
                 { "code", Protocol.ActivationFailed }, { "foregroundTitle", title }, { "foregroundPid", Native.PidOf(fg) }
             });
             activation = "fail";
-            EndLease("activation-failed", false);
+            EndLease("activation-failed");
         }
 
         private void CancelLease()
@@ -1893,12 +1893,9 @@ namespace Itl.WindowHelper
             EndLease("user-cancel");
         }
 
+        // A lease ends silently: one MCP call or scenario may take several leases, and
+        // only the end of its scope tells the user that the operation is over.
         private void EndLease(string outcome)
-        {
-            EndLease(outcome, true);
-        }
-
-        private void EndLease(string outcome, bool notify)
         {
             if (state != LeaseState.Leased) return;
             string returned = ReturnFocus();
@@ -1917,21 +1914,26 @@ namespace Itl.WindowHelper
                 { "consentWaitMs", consentWaitMs }, { "queueWaitMs", queueWaitMs }, { "idleWaitMs", idleWaitMs },
                 { "requests", leaseRequests }, { "activation", activation }, { "focusReturn", returned }, { "outcome", outcome }
             });
-            if (notify)
-            {
-                Rectangle bounds;
-                IntPtr anchor = UserAnchor();
-                Rectangle work = Native.MonitorWorkArea(anchor, out bounds);
-                completion = new PanelForm(work, Rectangle.Empty, ScaleFor(anchor), "Операция завершена, можно пользоваться", new[] { "OK" },
-                    new EventHandler[] { delegate { CloseCompletion(); } });
-                completion.Click += delegate { CloseCompletion(); };
-                completion.Show();
-                completionSince = DateTime.UtcNow;
-                stateTimer.Enabled = true;
-            }
             current = null;
             Next();
             if (current == null) Native.TrimWorkingSet();
+        }
+
+        // Shown once when a scope that held the user's input ends; a request already
+        // waiting for consent or a lease keeps its own overlay instead.
+        private void ShowCompletion()
+        {
+            if (current != null) return;
+            CloseCompletion();
+            Rectangle bounds;
+            IntPtr anchor = UserAnchor();
+            Rectangle work = Native.MonitorWorkArea(anchor, out bounds);
+            completion = new PanelForm(work, Rectangle.Empty, ScaleFor(anchor), "Операция завершена, можно пользоваться", new[] { "OK" },
+                new EventHandler[] { delegate { CloseCompletion(); } });
+            completion.Click += delegate { CloseCompletion(); };
+            completion.Show();
+            completionSince = DateTime.UtcNow;
+            stateTimer.Enabled = true;
         }
 
         private void LeaseEnd(string id, string scope, bool endScope)
@@ -1945,6 +1947,7 @@ namespace Itl.WindowHelper
                 scopeDecisions.Remove(scope);
                 scopeStats.Remove(scope);
                 if (currentScope == scope) currentScope = null;
+                if (stats[0] > 0) ShowCompletion();
             }
             Respond(id, "lease-end", "ok", new Dictionary<string, object>
             {
