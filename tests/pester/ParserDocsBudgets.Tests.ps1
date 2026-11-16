@@ -373,6 +373,20 @@
             $expectedRendered[$key].maxBytes += 177
         }
 
+        # The renderer owns the long-run rule: 14 long templates carry one
+        # ITL_LONG_RUN marker instead of their own timeout_ms paragraph.
+        # timeout_ms clients shrink by 206 bytes on master; dev grows by 476
+        # because fork/sync-branches/verify-fix now state the complete rule
+        # instead of a bare "timeout_ms >= 3900000 when supported". Claude Code
+        # caps its foreground timeout at 600000 ms, so it receives the
+        # background-notification rule instead: master +378, dev +1762. The
+        # rule loads only with an invoked command (about +140 bytes each).
+        foreach ($key in @($expectedRendered.Keys)) {
+            if ($key -eq 'master/claude-code') { $expectedRendered[$key].maxBytes += 378 }
+            elseif ($key -eq 'dev/claude-code') { $expectedRendered[$key].maxBytes += 1762 }
+            elseif ($key -like 'dev/*') { $expectedRendered[$key].maxBytes += 476 }
+        }
+
         $rendered = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             foreach ($surface in @("master", "dev")) {

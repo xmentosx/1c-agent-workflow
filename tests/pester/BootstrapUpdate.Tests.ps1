@@ -2283,46 +2283,68 @@ exit 0
             $text | Should -Match "status.*help.*do not|status`/help.*do not"
         }
 
-        $longTemplatePaths = @(
-            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-sync-master.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-refresh-all.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-reset-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-lock-objects.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-update-workflow.md.template"
-        ) | ForEach-Object { Join-Path $RepoRoot $_ }
-
-        foreach ($path in $longTemplatePaths) {
-            $text = Get-Content -Encoding UTF8 -Raw $path
-            $text | Should -Match "agent shell tool supports"
-            if ($path -like "*itl-sync-master.md.template") {
-                $text | Should -Match "timeout_ms\s*>=\s*14700000"
-            } else {
-                $text | Should -Match "timeout_ms\s*>=\s*3900000"
-            }
-            $text | Should -Match 'do not use\s+`?120000 ms'
+        foreach ($path in @(
+            ".agents\skills\1c-workflow-fast\SKILL.md",
+            ".agents\skills\1c-workflow\SKILL.md"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }) {
+            # A client whose foreground shell timeout is capped below the action
+            # limit waits for its own background completion instead.
+            (Get-Content -Encoding UTF8 -Raw $path) | Should -Match 'Claude Code.*run_in_background: true'
         }
 
-        $platformTemplatePaths = @(
-            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-sync-master.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-refresh-all.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-reset-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-lock-objects.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template"
-        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+        # Long command templates carry one marker; the renderer owns the
+        # client-specific wording, so no template repeats a timeout rule.
+        $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
+        $longTemplates = @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md.template" |
+            Where-Object { (Get-Content -Encoding UTF8 -Raw $_.FullName) -match '<!-- ITL_LONG_RUN -->' })
+        @($longTemplates.Name | Sort-Object) | Should -Be @(
+            "itl-check.md.template", "itl-fork-branch.md.template", "itl-lock-objects.md.template",
+            "itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-refresh-all.md.template",
+            "itl-refresh-lite.md.template", "itl-refresh.md.template", "itl-reset-branch.md.template",
+            "itl-result.md.template", "itl-sync-branches.md.template", "itl-sync-master.md.template",
+            "itl-update-workflow.md.template", "itl-verify-fix.md.template")
+        foreach ($template in @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md.template")) {
+            $text = Get-Content -Encoding UTF8 -Raw $template.FullName
+            $text | Should -Not -Match "timeout_ms" -Because $template.Name
+            ([regex]::Matches($text, '<!-- ITL_LONG_RUN -->')).Count | Should -BeLessOrEqual 1
+        }
 
-        foreach ($path in $platformTemplatePaths) {
-            (Get-Content -Encoding UTF8 -Raw $path) | Should -Match "1C Designer/Enterprise"
+        $renderRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-long-run-render-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Force -Path (Join-Path $renderRoot ".agent-1c") | Out-Null
+        Set-Content -LiteralPath (Join-Path $renderRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+        $rendered = & {
+            . $HelperPath -ProjectRoot $renderRoot -Action help *> $null
+            $result = @{}
+            foreach ($client in @((Get-ItlClientAdapterRegistry).Keys)) {
+                foreach ($template in $longTemplates) {
+                    $name = $template.Name.Substring(0, $template.Name.Length - ".template".Length)
+                    $result["$client|$name"] = Convert-ItlCommandForClient -Text (Read-Utf8Text -Path $template.FullName) -Client $client -FileName $name
+                }
+            }
+            $result
+        }
+        Remove-Item -LiteralPath $renderRoot -Recurse -Force -ErrorAction SilentlyContinue
+        $rendered.Count | Should -Be (12 * $longTemplates.Count)
+        foreach ($key in $rendered.Keys) {
+            $client, $name = $key -split '\|', 2
+            $text = $rendered[$key]
+            if ($client -eq "opencode" -and $name -in @("itl-new-config-branch.md", "itl-new-extension-branch.md")) {
+                $text | Should -Not -Match "ITL_LONG_RUN"
+                continue
+            }
+            $text | Should -Not -Match "ITL_LONG_RUN" -Because $key
+            $text | Should -Match "1C Designer/Enterprise" -Because $key
+            $text | Should -Match "LoadConfigFromFiles.*UpdateDBCfg" -Because $key
+            if ($client -eq "claude-code") {
+                $text | Should -Match 'run_in_background: true' -Because $key
+                $text | Should -Match 'completion notification' -Because $key
+                $text | Should -Not -Match 'timeout_ms' -Because $key
+            } else {
+                $minimum = if ($name -eq "itl-sync-master.md") { "14700000" } else { "3900000" }
+                $text | Should -Match ("timeout_ms\s*>=\s*" + $minimum) -Because $key
+                $text | Should -Match 'Do not use\s+`?120000 ms' -Because $key
+                $text | Should -Not -Match 'run_in_background' -Because $key
+            }
         }
 
         $shortTemplatePaths = @(
