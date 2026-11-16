@@ -396,7 +396,7 @@
         $HelperText | Should -Match "VAExtension"
 
         $devEnvTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")
-        foreach ($name in @("ROCTUP_MCP_ENABLED=true", "ROCTUP_MCP_AUTO_START=false", "ROCTUP_MCP_REQUIRED=false", "ROCTUP_MCP_INSTALL_ROOT=.agent-1c/tools/roctup-mcp-toolkit", "ROCTUP_MCP_PORT_RANGE=6003..6102", "VANESSA_MCP_AUTO_START=false")) {
+        foreach ($name in @("ROCTUP_MCP_ENABLED=true", "ROCTUP_MCP_REQUIRED=false", "ROCTUP_MCP_INSTALL_ROOT=.agent-1c/tools/roctup-mcp-toolkit", "ROCTUP_MCP_PORT_RANGE=6003..6102")) {
             $devEnvTemplate | Should -Match ([regex]::Escape($name))
         }
 
