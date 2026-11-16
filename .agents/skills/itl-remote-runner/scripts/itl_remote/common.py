@@ -9,8 +9,28 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import time
 import uuid
+
+
+# One launch contract for every workflow-owned Python process. The shared
+# managed runtime is verified file-for-file, so any bytecode written into its
+# Lib tree fails verification and forces a fresh runtime generation. Flags do
+# not reach grandchildren; the environment does, so both are always applied.
+PYTHON_LAUNCH_OPTIONS = ("-B", "-X", "utf8")
+PYTHON_LAUNCH_ENVIRONMENT = {"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"}
+
+
+def python_command(*arguments, executable=None):
+    """Argv for a workflow-owned Python child; never spell interpreter flags per caller."""
+    return [str(executable or sys.executable), *PYTHON_LAUNCH_OPTIONS, *(str(value) for value in arguments)]
+
+
+def powershell_python_environment():
+    """The same contract for a PowerShell launcher that starts the interpreter itself."""
+    lines = ["$env:" + key + "='" + value + "'" for key, value in PYTHON_LAUNCH_ENVIRONMENT.items()]
+    return lines + ["$env:PYTHONNOUSERSITE='1'", "$env:PYTHONHOME=$null"]
 
 
 DEFAULT_RESOURCE_LIMITS = {
@@ -453,7 +473,7 @@ def native_environment(extra=None, *, windows_powershell=False):
         for key in list(env):
             if key.lower() == "psmodulepath":
                 del env[key]
-    env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    env.update(PYTHON_LAUNCH_ENVIRONMENT)
     env.update(extra or {})
     return env
 

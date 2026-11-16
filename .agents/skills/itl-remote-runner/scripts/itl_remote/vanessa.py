@@ -8,12 +8,11 @@ from pathlib import Path
 import queue
 import re
 import subprocess
-import sys
 import threading
 import time
 import uuid
 
-from .common import WorkError, digest, native_environment, read_json, write_json
+from .common import WorkError, digest, native_environment, python_command, read_json, write_json
 from .deadlines import Deadline
 
 
@@ -300,9 +299,10 @@ def command(operation, feature=None, *, context_path=None):
         if (control / "started.json").exists():
             raise WorkError("ITL_PERFORMANCE_ADAPTER_ALREADY_STARTED")
         with (run / "vanessa-daemon.log").open("wb") as log:
-            process = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent.parent / "vanessa_work.py"),
-                                        "daemon", str(Path(feature).resolve())],
-                                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+            process = subprocess.Popen(python_command(Path(__file__).resolve().parent.parent / "vanessa_work.py",
+                                                      "daemon", Path(feature).resolve()),
+                                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                       env=native_environment())
         write_json(control / "started.json", {"jobId": context["jobId"], "pid": process.pid})
         return wait_response(control / "prepared.json", context)
     if operation == "cleanup" and not (control / "prepared.json").exists():

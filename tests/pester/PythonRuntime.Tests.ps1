@@ -223,3 +223,59 @@ $runtime = Get-ItlManagedPythonRuntime -Offline -AssetRoot $Assets
         ($invalid.stderr -join "`n") | Should -Match 'invalid choice'
     }
 }
+
+Describe 'Workflow-owned Python launch contract' {
+    # The managed runtime is verified file-for-file: one __pycache__ written
+    # into its Lib tree forces a fresh generation. The caller's own Python
+    # environment is stripped so it cannot mask a missing contract value.
+    It 'starts children and their grandchildren without bytecode and in UTF-8 mode from a clean caller environment' {
+        $python = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $modules = Join-Path (Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))) 'Модули с пробелом'
+        [void][IO.Directory]::CreateDirectory($modules)
+        foreach ($name in @('launch_probe_child', 'launch_probe_grandchild')) {
+            [IO.File]::WriteAllText((Join-Path $modules ($name + '.py')), "VALUE = 1`n", [Text.UTF8Encoding]::new($false))
+        }
+        $probe = Join-Path $modules 'probe.py'
+        [IO.File]::WriteAllText($probe, @'
+import json, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import launch_probe_child
+grandchild = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); import launch_probe_grandchild; print(int(sys.flags.dont_write_bytecode), int(sys.flags.utf8_mode))", sys.argv[1]], stdout=subprocess.PIPE, check=True)
+print(json.dumps({"child": [int(sys.flags.dont_write_bytecode), int(sys.flags.utf8_mode)], "grandchild": [int(v) for v in grandchild.stdout.decode("ascii").split()]}))
+'@, [Text.UTF8Encoding]::new($false))
+        $saved = @{}
+        foreach ($item in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'PYTHON*' })) {
+            $saved[$item.Name] = $item.Value
+            [Environment]::SetEnvironmentVariable($item.Name, $null, 'Process')
+        }
+        try {
+            $start = New-ItlPythonProcessStartInfo -Executable $python -Arguments @($probe, $modules)
+            $start.RedirectStandardOutput = $true
+            $start.RedirectStandardError = $true
+            $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+            $process = [Diagnostics.Process]::Start($start)
+            try {
+                $stderr = $process.StandardError.ReadToEndAsync()
+                $stdout = $process.StandardOutput.ReadToEnd()
+                $process.WaitForExit()
+                $process.ExitCode | Should -Be 0 -Because $stderr.GetAwaiter().GetResult()
+            } finally { $process.Dispose() }
+        } finally {
+            foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        }
+        $flags = $stdout | ConvertFrom-Json
+        @($flags.child) | Should -Be @(1, 1)
+        @($flags.grandchild) | Should -Be @(1, 1)
+        @(Get-ChildItem -LiteralPath $modules -Recurse -Force -Filter '*.pyc') | Should -HaveCount 0
+    }
+    It 'routes every PowerShell-started Python process through the one start contract' {
+        $scripts = Join-Path $script:PythonRuntimeRepo '.agents/skills/itl-remote-runner/scripts'
+        $runtime = [IO.File]::ReadAllText((Join-Path $scripts 'PythonRuntime.ps1'), [Text.Encoding]::UTF8)
+        $guard = [IO.File]::ReadAllText((Join-Path $scripts 'ExecutionGuard.ps1'), [Text.Encoding]::UTF8)
+        ([regex]::Matches($runtime, 'ProcessStartInfo\]::new\(')).Count | Should -Be 1
+        ([regex]::Matches($guard, 'ProcessStartInfo\]::new\(')).Count | Should -Be 0
+        ([regex]::Matches($guard, 'New-ItlPythonProcessStartInfo ')).Count | Should -Be 2
+        ([regex]::Matches($runtime, "'-B',\s*'-X'")).Count | Should -Be 1
+        $guard | Should -Not -Match "'-B',\s*'-X'"
+    }
+}
