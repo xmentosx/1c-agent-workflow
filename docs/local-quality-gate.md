@@ -365,7 +365,9 @@ action names or anchors for documentation contracts. If a behavior-preserving
 refactor breaks a text assertion, replace it with an executable or derived check.
 `TextAssertionPolicy.Tests.ps1` counts `Should -Match` patterns of four or more
 words per test file against `tests/text-assertion-baseline.json`. A count may
-only go down: lower it when you replace one, and never raise it.
+only go down: lower it when you replace one, and never raise it. It is a Pester
+preflight file: it runs before costly files start, so a violation stops
+registration within seconds and the retry reuses every already passed file.
 
 ### Develop scenario coverage
 

@@ -815,7 +815,7 @@ if (@($testFiles | Where-Object Name -eq "BootstrapUpdate.Tests.ps1").Count -gt 
 $serialTestNames = @("CompactRunnerWatchdog.Tests.ps1", "CompactItlRunner.Tests.ps1", "DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1", "ReleaseOrchestration.Tests.ps1", "E2EClientSelection.Tests.ps1", "ReleaseSnapshotContinuation.Tests.ps1", "ReleaseAdmission.Tests.ps1")
 # These existing short owner checks finish before costly native files start.
 # Keep this scheduling policy beside serial admission; cached files stay reused.
-$preflightTestNames = @("SourceDeliveryAdmission.Tests.ps1", "ReleaseRouting.Tests.ps1")
+$preflightTestNames = @("SourceDeliveryAdmission.Tests.ps1", "ReleaseRouting.Tests.ps1", "TextAssertionPolicy.Tests.ps1")
 $weights = @{}
 foreach ($property in $timings.files.PSObject.Properties) { $weights[$property.Name] = [double]$property.Value }
 $defaultSeconds = [double]$timings.defaultSeconds
