@@ -797,7 +797,10 @@ missing modules fail closed for reuse. Custom Python startup/search hooks and
 Git path/execution overrides, conditional configuration or external hook/attribute paths
 also disable reuse; the original checks remain executable. The noninteractive
 `GIT_PAGER=cat` host setting is ignored consistently by Git, ancestor and inventory
-identity, so it neither disables nor splits an otherwise identical proof. Go observation disables
+identity, so it neither disables nor splits an otherwise identical proof. Agent
+hosts also set `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR` or `GIT_TERMINAL_PROMPT`; these
+act only when Git would ask a person, so the Git profile qualifies them by exact
+value: equal values reuse, a changed value executes again. Go observation disables
 downloads.
 Source stdlib-only venv creation uses `-I -S` so global Python site plugins are
 not unobserved inputs. BookStack/SPPR keep their original direct package tests:

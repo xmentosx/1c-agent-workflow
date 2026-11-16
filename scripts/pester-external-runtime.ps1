@@ -130,7 +130,11 @@ function Get-PesterExternalProfile {
             if($config -match '(?i)(?:^|\x00)(?:includeif\.[^\n]+|core\.(?:hookspath|attributesfile|excludesfile)|init\.templatedir)\n'){
                 throw 'Git conditional configuration or external hooks/attribute/template paths are not qualified; execute without reuse.'
             }
-            if(@(Get-ChildItem Env:|Where-Object {$_.Name -match '^GIT_' -and $_.Value -and -not ($_.Name -eq 'GIT_PAGER' -and $_.Value -ceq 'cat')}).Count){
+            # Agent hosts set noninteractive editor/prompt/pager values. They act
+            # only when Git would ask a person, and the environment line below
+            # hashes their exact values. Path and execution overrides stay unknown.
+            $interactive=@('GIT_PAGER','GIT_EDITOR','GIT_SEQUENCE_EDITOR','GIT_TERMINAL_PROMPT')
+            if(@(Get-ChildItem Env:|Where-Object {$_.Name -match '^GIT_' -and $_.Value -and $_.Name -notin $interactive}).Count){
                 throw 'Git process overrides are not qualified; execute without reuse.'
             }
             $userRoot=if($env:HOME){$env:HOME}else{$env:USERPROFILE}
