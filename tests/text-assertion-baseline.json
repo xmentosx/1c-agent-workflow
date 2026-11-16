@@ -128,7 +128,7 @@
                   "tests/pester/VerificationGuidance.Tests.ps1":  39,
                   "tests/pester/VerificationProofReuse.Tests.ps1":  3,
                   "tests/pester/VerificationSelection.Tests.ps1":  7,
-                  "tests/pester/WindowHelper.Tests.ps1":  15,
+                  "tests/pester/WindowHelper.Tests.ps1":  16,
                   "tests/pester/WorkflowBranchParallelRollout.Tests.ps1":  2,
                   "tests/pester/WorkflowLocalPatch.Tests.ps1":  2,
                   "tests/pester/WorkflowUpdateLegacyRecovery.Tests.ps1":  1,
