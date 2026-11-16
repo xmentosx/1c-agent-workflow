@@ -65,4 +65,4 @@ ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and needs no
 
 Read ignored runtime folders only when diagnosing a specific helper run or artifact.
 
-When launching native Windows executables such as `1cv8.exe` through `Start-Process`, pass `-ArgumentList` as one joined and correctly quoted native command-line string, never as a PowerShell array.
+Never start `1cv8.exe` through `Start-Process`: it bypasses the per-infobase session guard. Every 1C launch, including a user request such as "open Designer for base X", goes through `Start-OneCProcessBackground` with any command-line arguments, the exact base, and `-Visible` when the window is for the user (hidden otherwise); see `references/workflow.md`.
