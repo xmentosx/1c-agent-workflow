@@ -190,4 +190,40 @@ It "refuses executable changes without tests or an explicit reused contract" {
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -BeNullOrEmpty
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
+    It "covers a change only the documentation contract owns and keeps the explicit contract for shared paths" {
+        $fixture = $null; try {
+            $fixture = New-DeliveryFixture
+            $catalog = [ordered]@{ schemaVersion = 1; contracts = @(
+                [ordered]@{ id = 'documentation'; owner = 'docs'; gate = 'targeted'; budgetSeconds = 60; primaryTest = 'tests/pester/Docs.Tests.ps1'; paths = @('docs/*'); tests = @('tests/pester/Docs.Tests.ps1') },
+                [ordered]@{ id = 'shared-reference'; owner = 'product'; gate = 'targeted'; budgetSeconds = 60; primaryTest = 'tests/pester/Shared.Tests.ps1'; paths = @('docs/общая справка.md'); tests = @('tests/pester/Shared.Tests.ps1') }) }
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root 'tests'), (Join-Path $fixture.root 'docs') | Out-Null
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add tests/quality-contracts.json
+            & git -C $fixture.root commit --quiet -m 'test: catalog' *> $null
+            & git -C $fixture.root push --quiet origin HEAD:develop *> $null
+            # The recording gate lives outside the repository and logs the contracts it receives.
+            $gateRoot = Join-Path $TestDrive ('coverage gate ' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Force -Path $gateRoot | Out-Null
+            $gate = Join-Path $gateRoot 'coverage-gate.ps1'
+            $gateText = (Get-Content -LiteralPath $fixture.gate -Raw -Encoding UTF8).Replace('if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }', "Add-Content -LiteralPath (Join-Path `$PSScriptRoot 'coverage.log') -Encoding UTF8 -Value (@(`$CoverageContract) -join ',')")
+            $gateText | Should -Not -BeExactly (Get-Content -LiteralPath $fixture.gate -Raw -Encoding UTF8)
+            [IO.File]::WriteAllText($gate, $gateText, [Text.UTF8Encoding]::new($true))
+            Set-Content -LiteralPath (Join-Path $fixture.root 'docs/руководство с пробелом.md') -Encoding UTF8 -Value 'guide'
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit --quiet -m 'docs: guide' *> $null
+            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $gate + '"'), "-QueueId", "docs-only")
+            ($result.stdout | ConvertFrom-Json).status | Should -Be 'registered'
+            @(Get-Content -LiteralPath (Join-Path $gateRoot 'coverage.log') -Encoding UTF8)[-1] | Should -BeExactly 'documentation'
+            $registered = (& git -C $fixture.root rev-parse refs/itl/develop-queue/docs-only/head).Trim()
+            $gateRuns = @(Get-Content -LiteralPath (Join-Path $gateRoot 'coverage.log') -Encoding UTF8).Count
+
+            Set-Content -LiteralPath (Join-Path $fixture.root 'docs/общая справка.md') -Encoding UTF8 -Value 'shared'
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit --quiet -m 'docs: shared reference' *> $null
+            $refused = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $gate + '"'), "-QueueId", "docs-only") -AllowFailure
+            $refused.exitCode | Should -Not -Be 0
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/docs-only/head).Trim() | Should -Be $registered
+            @(Get-Content -LiteralPath (Join-Path $gateRoot 'coverage.log') -Encoding UTF8).Count | Should -Be $gateRuns
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
 }

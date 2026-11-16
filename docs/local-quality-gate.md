@@ -174,7 +174,10 @@ authority. Старый владелец может читать сохранё�
 `Status.sourceCandidate` показывает `legacy`, `ready` или `requires-integration`;
 это состояние интеграции, не доказательство квалификации выпуска.
 
-`-CoverageContract` не нужен, если диапазон уже содержит изменённый Pester-тест.
+`-CoverageContract` не нужен, если диапазон уже содержит изменённый Pester-тест,
+или если каждый изменённый путь принадлежит только контракту `documentation`:
+тогда регистрация сама передаёт `documentation`. Путь, которым владеет и другой
+контракт (инструкции навыков, product references), требует явного выбора.
 Регистрация сама выполняет `Targeted` и только после успеха атомарно записывает
 queue и candidate refs. Эти refs общие для worktree, но не
 публикуются. `-Action Status` показывает компактную очередь, текущую фазу и три
@@ -363,6 +366,9 @@ tree (AST). Use source-text assertions for prohibitions such as forbidden
 legacy names or secrets. Use stable identifiers such as error codes, flags,
 action names or anchors for documentation contracts. If a behavior-preserving
 refactor breaks a text assertion, replace it with an executable or derived check.
+`TextAssertionPolicy.Tests.ps1` counts `Should -Match` patterns of four or more
+words per test file against `tests/text-assertion-baseline.json`. A count may
+only go down: lower it when you replace one, and never raise it.
 
 ### Develop scenario coverage
 

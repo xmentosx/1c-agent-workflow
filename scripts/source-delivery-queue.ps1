@@ -378,6 +378,21 @@ function Get-SourceRegistrationUtcNow {
     return [DateTime]::UtcNow
 }
 
+function Get-SourceDocumentationOnlyCoverage {
+    # A change whose every path the documentation contract alone owns is
+    # covered by that contract's own test; the agent need not restate it. A
+    # path any other contract also owns (agent instructions, product
+    # references) or an unowned path keeps the explicit -CoverageContract.
+    param([string[]]$Paths)
+    if (@($Paths).Count -eq 0) { return '' }
+    try { $catalog = Get-QualityContractCatalog -RepositoryRoot $script:Root } catch { return '' }
+    foreach ($path in $Paths) {
+        $owners = @((Resolve-QualityContractsForPaths -Catalog $catalog -Paths @([string]$path)).contracts | ForEach-Object { [string]$_.id } | Sort-Object -Unique)
+        if ($owners.Count -ne 1 -or $owners[0] -cne 'documentation') { return '' }
+    }
+    return 'documentation'
+}
+
 function Register-SourceChange {
     Assert-CleanDeliveryWorktree
     $head = Get-GitValue -Arguments @("rev-parse", "HEAD")
@@ -427,7 +442,11 @@ function Register-SourceChange {
             $changed = @(Get-RepositoryGitPathList -RepositoryRoot $script:Root -Arguments @("diff", "--name-only", "-z", "$targetBase...$head", "--"))
             $testChanged = @($changed | Where-Object { ([string]$_).Replace('\', '/') -like "tests/pester/*.Tests.ps1" }).Count -gt 0
             if (-not $testChanged -and @($CoverageContract | Where-Object { $_ }).Count -eq 0) {
-                throw "Executable changes without a test change must declare an existing -CoverageContract. Registration was not created."
+                $documentationOnly = Get-SourceDocumentationOnlyCoverage -Paths $changed
+                if (-not $documentationOnly) {
+                    throw "Executable changes without a test change must declare an existing -CoverageContract. Registration was not created."
+                }
+                $script:CoverageContract = @($documentationOnly)
             }
             $startPoint = Get-SourceRegistrationStartPoint -Snapshot $snapshot
             if (-not $worktree) { $worktree = New-DeliveryWorktree -StartPoint $startPoint -Purpose "register" }
