@@ -399,6 +399,10 @@
         foreach ($name in @("ROCTUP_MCP_ENABLED=true", "ROCTUP_MCP_REQUIRED=false", "ROCTUP_MCP_INSTALL_ROOT=.agent-1c/tools/roctup-mcp-toolkit", "ROCTUP_MCP_PORT_RANGE=6003..6102")) {
             $devEnvTemplate | Should -Match ([regex]::Escape($name))
         }
+        # Branch MCP servers start on demand; no code reads an auto-start key.
+        foreach ($name in @("ROCTUP_MCP_AUTO_START", "VANESSA_MCP_AUTO_START")) {
+            $devEnvTemplate | Should -Not -Match ([regex]::Escape($name))
+        }
 
         $dependencyLock = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
         $dependencyLock.dependencies.roctupMcpToolkit.version | Should -Be "v1.10.0"

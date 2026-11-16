@@ -4070,7 +4070,28 @@ function Get-BaseConfigurationVersion {
 }
 
 function Test-ProductDocsMcpAllowed {
+    # A project bound to the product registry follows the productDocs role of
+    # its applied context. An unbound (legacy) project, or one whose role is
+    # not resolved yet, keeps the previous PM5 family rule.
+    $resolution = Get-ProductDocsRegistryResolution
+    if ($resolution -eq "resolved") { return $true }
+    if ($resolution -eq "disabled") { return $false }
     return ((Get-BaseConfigurationVersion) -eq "PM5")
+}
+
+function Get-ProductDocsRegistryResolution {
+    try {
+        if ($null -eq (Get-ConfigValue -Path "productProject" -Default $null)) { return "" }
+        $path = Join-Path $script:ProjectRoot ".agent-1c\mcp\product-context-applied.json"
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return "" }
+        $record = Read-Utf8Text -Path $path | ConvertFrom-Json -ErrorAction Stop
+        if ([IO.Path]::GetFullPath([string]$record.projectRoot).TrimEnd('\') -ine [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\')) { return "" }
+        $role = $record.context.roles.PSObject.Properties["productDocs"]
+        if ($null -eq $role) { return "" }
+        return [string]$role.Value.resolution
+    } catch {
+        return ""
+    }
 }
 
 function Set-ProjectBaseConfigurationVersion {

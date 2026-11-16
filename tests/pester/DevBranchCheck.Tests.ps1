@@ -218,3 +218,48 @@ Describe 'Git tree object lookup' {
         Should -Invoke Get-GitPathList -Times 1 -Exactly
     }
 }
+
+Describe 'Check duration journal' {
+    It 'reports component durations and keeps a bounded project journal shared by branches' {
+        $main = Join-Path $TestDrive 'Основной проект с пробелом'
+        New-Item -ItemType Directory -Force -Path $main | Out-Null
+        $state = [pscustomobject]@{ devBranch = 'itldev/demo'; mainWorktreePath = $main }
+
+        Start-ItlCheckTiming
+        Set-ItlCheckTimingValue -Name platformMs -Value 65000
+        Set-ItlCheckTimingValue -Name vanessaMs -Value 120000
+        Set-ItlCheckTimingValue -Name selectionMode -Value 'incremental'
+        $text = Format-DevBranchCheckDurationText -Timing (Get-ItlCheckTimingSnapshot)
+        $text | Should -Match 'загрузка 1 мин 5 с'
+        $text | Should -Match 'Vanessa 2 мин 0 с'
+        $text | Should -Not -Match 'YAxUnit'
+        $text | Should -Match 'наборы Vanessa: incremental'
+
+        $path = Get-ItlCheckHistoryPath -State $state
+        $path | Should -BeExactly (Join-Path $main '.agent-1c\verification-selection\check-history.jsonl')
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+        $old = 1..600 | ForEach-Object { '{"at":"2026-11-01T00:00:00Z","branch":"itldev/other","status":"passed","totalMs":' + ($_ * 1000) + ',"selectionMode":"full"}' }
+        [IO.File]::WriteAllText($path, (($old -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+        Add-ItlCheckHistoryRecord -State $state -Status 'passed' -Trigger 'command'
+        $lines = @(Get-Content -LiteralPath $path -Encoding UTF8 | Where-Object { $_.Trim() })
+        $lines.Count | Should -Be 500
+        $last = $lines[-1] | ConvertFrom-Json
+        $last.branch | Should -BeExactly 'itldev/demo'
+        $last.platformMs | Should -Be 65000
+        $last.selectionMode | Should -BeExactly 'incremental'
+
+        $status = @(Write-ItlCheckHistoryStatusLines -State $state 6>&1 | ForEach-Object { [string]$_ })
+        @($status | Where-Object { $_ -like 'Check *: passed, *(load 65s, Vanessa 120s); Vanessa suites incremental' }).Count | Should -Be 1
+        @($status | Where-Object { $_ -match '^Project check median: \d+s over 500 passed runs; full Vanessa selections: 499 of 500$' }).Count | Should -Be 1
+    }
+
+    It 'never fails the check when the journal cannot be written' {
+        $main = Join-Path $TestDrive 'Проект с занятым журналом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $main '.agent-1c') | Out-Null
+        # A file where the journal directory belongs makes every write fail.
+        [IO.File]::WriteAllText((Join-Path $main '.agent-1c\verification-selection'), 'not a directory', [Text.UTF8Encoding]::new($false))
+        Start-ItlCheckTiming
+        { Add-ItlCheckHistoryRecord -State ([pscustomobject]@{ devBranch = 'itldev/demo'; mainWorktreePath = $main }) -Status 'failed' -Trigger 'command' 3>$null } | Should -Not -Throw
+        Test-Path -LiteralPath (Join-Path $main '.agent-1c\verification-selection') -PathType Leaf | Should -BeTrue
+    }
+}
