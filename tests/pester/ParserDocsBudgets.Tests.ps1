@@ -235,7 +235,7 @@
 
     It "documentation budgets keep review thresholds below hard limits" {
         $budgets = @(
-            @{ path = "AGENTS.md"; maxWords = 1440; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "source-only maintainer rules retain semantic comparison and the selection/cost/reuse pointer. Required project-local artifact routing adds 11 words (1415 to 1426), so maxWords increases 1420 to 1440; the measured result is 2676 byte-4 proxy tokens. Review and hard token limits and safety contracts remain" },
+            @{ path = "AGENTS.md"; maxWords = 1320; reviewApproxTokens = 2500; maxApproxTokens = 2550; rationale = "source-only maintainer rules retain semantic comparison and the selection/cost/reuse pointer. Publication, master/component release and frozen-repair rules move unchanged to on-demand docs/source-publication.md behind one trigger-and-route rule: 1437/2686 to 1300/2422 words/byte-4 proxy tokens (-137/-264), so maxWords decreases 1440 to 1320 and hard tokens 2800 to 2550. Review threshold and safety contracts remain" },
             @{ path = "templates\AGENTS.append.md"; maxWords = 80; reviewApproxTokens = 180; maxApproxTokens = 220; rationale = "small installed workflow bridge" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1630; rationale = "explicit direct CheckConfig intent adds 12 words and 28 byte-4 proxy tokens (738/1597 to 750/1625 words/tokens); hard tokens increase 1600 to 1630 for the required action/flag mapping. Review threshold, word budget and safety contracts remain; duplicated command-template guidance is removed" },
@@ -449,9 +449,17 @@
         $agentsText | Should -Match "ITL owns project bootstrap and lifecycle"
         $agentsText | Should -Match ([regex]::Escape('controlled `ai_rules_1c` fork owns'))
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action RegisterChange"))
-        $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PublishDevelop"))
-        $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PromoteRelease"))
-        $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action ReleaseMaster"))
+        # Publication rules load on demand from one owner; AGENTS keeps the trigger and the route.
+        $publicationText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\source-publication.md") -Raw -Encoding UTF8
+        $agentsText | Should -Match 'Publish only when the user asks'
+        $agentsText | Should -Match ([regex]::Escape('read `docs/source-publication.md`'))
+        $publicationText | Should -Match 'Publication runs only when\s+the user asks for it'
+        $publicationText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PublishDevelop"))
+        $publicationText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PromoteRelease"))
+        $publicationText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action ReleaseMaster"))
+        $publicationText | Should -Match ([regex]::Escape('Do not tag or publish an `itl-ondemand-mcp` component build from Targeted proof'))
+        $publicationText | Should -Match ([regex]::Escape('preserves the queue/checkpoint and forbids publication'))
+        $publicationText | Should -Match ([regex]::Escape('Repair a failed frozen publication through `scripts/source-repair.ps1`, not per-attempt registration'))
         $agentsText | Should -Match ([regex]::Escape('follow the blocking policy in `docs/package-architecture.md`'))
         $architectureText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\package-architecture.md") -Raw -Encoding UTF8
         $architectureNormalized = $architectureText -replace '\s+', ' '
@@ -481,7 +489,8 @@
             "AGENT-INSTALL.md",
             "docs/ai-rules-fork-upgrades.md",
             "docs/local-quality-gate.md",
-            "docs/release-checklist.md"
+            "docs/release-checklist.md",
+            "docs/source-publication.md"
         )) {
             Test-Path -LiteralPath (Join-Path $RepoRoot $relativePath) -PathType Leaf | Should -BeTrue
         }
@@ -492,11 +501,11 @@
             ($qualityText -replace '\s+', ' ') | Should -Match ([regex]::Escape($marker))
         }
         $agentsText | Should -Match '`Fast` is a deprecated alias for `Smoke`'
-        $agentsText | Should -Match 'integrates the queue, qualifies and finalizes an installable candidate'
-        $agentsText | Should -Match 'without changing `master`'
-        $agentsText | Should -Match '`-RequireRelease`.*full catalog'
-        $agentsText | Should -Match 'Passed `Develop` already contains exact-tree Full/static proof'
-        $agentsText | Should -Match 'queue is empty and local `develop` equals `origin/develop`'
+        $publicationText | Should -Match 'integrates the queue, qualifies and finalizes an installable candidate'
+        $publicationText | Should -Match 'without changing `master`'
+        $publicationText | Should -Match '`-RequireRelease`.*full catalog'
+        $publicationText | Should -Match 'Passed `Develop` already contains exact-tree Full/static proof'
+        $publicationText | Should -Match 'queue is empty and local `develop` equals `origin/develop`'
         $agentsText | Should -Match 'Do not ask which gate to run'
         $agentsText | Should -Match 'Do not activate them for source-repository maintenance'
         $agentsText | Should -Match 'separate installed project whose root the user identifies'

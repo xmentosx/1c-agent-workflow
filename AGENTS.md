@@ -47,14 +47,10 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 - Read-only source maintenance does not run `Targeted`, `Smoke`, `Full`, `Develop`, or `Release`; use focused non-mutating evidence only.
 - Batch directly owned tests following `docs/local-quality-gate.md`; avoid unchanged reruns. Do not run a broad gate merely because a chat is ending. `Fast` is a deprecated alias for `Smoke` and is never the normal source-development step.
 - For changes to tests, selection, or input dependencies, follow `Maintaining selection, cost and reuse` in `docs/local-quality-gate.md`.
-- Publish `develop` via `scripts/source-delivery.ps1 -Action PublishDevelop` with the exact fork/E2E stand: it integrates the queue, qualifies and finalizes an installable candidate without changing `master`. Missing owned assets select required Release capabilities; `-RequireRelease` selects the full catalog. See `docs/local-quality-gate.md`.
-- Passed `Develop` already contains exact-tree Full/static proof. Never run separate `Full` for that tree.
+- Publish only when the user asks. Before `PublishDevelop`, `PromoteRelease`, `ReleaseMaster`, a component release, or frozen-publication repair, read `docs/source-publication.md`; once asked, carry the publication through without confirmation prompts.
 - Reuse a passed Targeted/Full Pester shard only when owner inputs, inventory, locks, checker/runtime versions, controlled-fork identity, and Vanessa build identity match; unknown ownership disables reuse.
 - Follow delivery timeout/recovery and UTF-8 rules in `docs/local-quality-gate.md`; never bypass locks.
-- For a non-empty queue going to both channels, use `scripts/source-delivery.ps1 -Action PromoteRelease`; it reuses one candidate's Develop/Release proof. Use `scripts/source-delivery.ps1 -Action ReleaseMaster` only when the queue is empty and local `develop` equals `origin/develop`. Retain server support. Absent stand/`server-reset` evidence is unverified, never blocks publication, and permits no direct push. If code blocks, fix workflow/tests/docs.
-- Do not tag or publish an `itl-ondemand-mcp` component build from Targeted proof. Its exact source commit and executable SHA must pass the real `ondemand-mcp` Release E2E stage for both backend families; fixture evidence and unrelated prior runs are not release qualification.
-- Do not ask which gate to run unless the user overrides this model. Failure, conflict, remote movement, timeout, or no-progress preserves the queue/checkpoint and forbids publication. The same stage failure twice requires diagnosis before an explicit `-RetryBlockedStage`.
-- Repair a failed frozen publication through `scripts/source-repair.ps1`, not per-attempt registration.
+- Do not ask which gate to run unless the user overrides this model. The same stage failure twice requires diagnosis before an explicit `-RetryBlockedStage`.
 - Do not weaken the Vanessa completion gate, fresh passed `/itl-check`, checked-load rollback, or artifact SHA checks.
 - Tests must leave tracked state unchanged. A passing gate with a dirty worktree is not a release qualification.
 
@@ -66,3 +62,4 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 - Controlled fork intake and migration: `docs/ai-rules-fork-upgrades.md`.
 - Source package layout and ownership: `docs/package-architecture.md`.
 - Local and release gates: `docs/local-quality-gate.md` and `docs/release-checklist.md`.
+- Publication of `develop`, `master`, components, and frozen repair: `docs/source-publication.md`.
