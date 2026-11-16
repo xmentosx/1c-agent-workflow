@@ -8,12 +8,11 @@ import subprocess
 import sys
 import time
 
-from itl_remote.common import read_json, stamp, write_json
+from itl_remote.common import python_command, read_json, stamp, write_json
 
 
 def _command(runtime, args, generation=None, confirmation=None):
-    command = [sys.executable, "-B", "-X", "utf8", "-u", str(runtime), "worker",
-               "--spool", str(args.spool)]
+    command = python_command("-u", runtime, "worker", "--spool", args.spool)
     if args.connection:
         command += ["--connection", str(args.connection)]
     if args.persistent:

@@ -27,14 +27,14 @@ the source task, accepted refs, candidate worktree/checkpoint, and existing proo
 the continuation is the same RegisterChange from the source checkout. Legacy
 base/head records remain readable and are integrated on the next registration.
 This protocol checkpoint was approved by the user on 2026-10-11 in
-`openspec/changes/redesign-source-delivery/design.md`. The existing publication
+`openspec/changes/archive/2026-11-16-redesign-source-delivery/design.md`. The existing publication
 attempt freezes queue membership and its queued candidate; a saved plan also
 binds membership, while legacy plans retain their original identity and authority.
 Publication cleanup compares only frozen queue pairs, preserves later work, and
 retries ref movement without repeating qualification. Post-push recovery uses
 the frozen attempt rather than next-release registrations. Historical-plan
 transition and functional rollback retaining a compatible queue decoder have
-native acceptance in [candidate recovery](../openspec/changes/redesign-source-delivery/evidence/candidate-recovery.md).
+native acceptance in [candidate recovery](../openspec/changes/archive/2026-11-16-redesign-source-delivery/evidence/candidate-recovery.md).
 Explicit PublishDevelop Replan archives the original checkpoint and rejected
 proof through this same owner; unchanged inputs cannot reset its circuit breaker.
 This adds no state owner, lock family or master-channel authority.
@@ -207,6 +207,29 @@ ITL artifact cache, replacing per-project TEMP clones that Storage Sense
 partially deleted. `Sync-AiRules1cCheckout` stays the only owner; publication is
 an atomic move without a lock or coordinator. No installed-state migration:
 rollback restores TEMP clones, and only idle generated legacy TEMP names are removed.
+The managed Python runtime and Vanessa Automation owners apply the same owner-local
+retention to their own families: entry write time marks use, the selected entry
+stays, and the shared stateless remover retires an idle entry only by an atomic
+rename that Windows refuses while a process holds it. No lock, state or migration.
+
+On 2026-11-16 the user approved moving the `source=git` workflow package source
+to the same exact-commit Git source cache (`<artifact cache>\workflow-package`).
+On 2026-11-15 Storage Sense deleted 435 tracked files from the shared TEMP
+checkout while a parallel branch rollout was copying from it. Six branches
+received an incomplete package, and their recorded fingerprints were reproduced
+exactly. One generic cache owner serves `ai_rules_1c` and the workflow package;
+`Resolve-WorkflowPackageCacheCheckout` maps a branch, tag or commit to an
+immutable checkout, so a rollout reads stable bytes. Every package copy records
+`copy-complete` only after the copied managed paths match the source byte for
+byte and an exact cached source is still a clean complete checkout; otherwise the
+existing copy rollback restores the branch, and repeating the same update
+re-verifies and repairs the cache. Retention keeps the current checkout, the
+three most recently used, and any used during the last day; an active rollout
+refreshes its checkout's use. A recorded exact source that retention removed is
+rebuilt from the mirror for recovery. Idle
+legacy TEMP checkouts are removed after seven days. `ITL_WORKFLOW_SOURCE_PATH`
+stays user-owned and is never verified as a cache or cleaned. No lock,
+coordinator or installed-state migration is introduced.
 
 The user approved producer-marked diagnostic retention on 2026-10-22. The
 existing artifact-retention owner consumes immutable completion receipts for
@@ -730,6 +753,26 @@ branch runtime. A patch of the wrong copy is not a repair; any required change
 to the shared runtime needs authorization covering that scope. No arbitrary
 runtime-source switch or automatic patch reapplication is introduced. See the
 installed [incident procedure](../.agents/skills/1c-workflow/references/workflow-incidents.md).
+
+Architecture checkpoint approved on 2026-11-16: in the `change` model the agent
+chooses the proof and the helper executes it. A passed check proves the loaded,
+updated branch infobase with a clean event log and every check the current plan
+selects (plus `always` suites and suites of changed branch feature files). A
+retained suite covering a branch change runs unless the plan declares it
+`unaffected` with a reason; the branch start, master input, `Configuration.xml`,
+shared Vanessa support, the verification owner and the pinned runtime select
+nothing by themselves (the owner amended this on the same day: earlier accepted
+results stay valid after a test-support change), and readiness needs current
+receipts only for the required suites. Overlaps with master (paths
+changed on both sides, suites whose area both changed) are proposed in the draft
+plan, computed from Git without new state. A path that needs no runtime
+observation uses a one-off `loaded-target` check. Export keeps
+`VERIFICATION_POLICY` and only reports suites never run in the branch and the
+last full pass. The owner stays the existing verification-change/selection pair;
+no coordinator, lock, migration or client-surface growth. `cumulative` is
+unchanged. Rollback reverts the commits; plans using the new decisions are then
+refused by the old helper and re-planned. Accepted risk: master regressions are
+no longer found automatically by every branch after refresh.
 
 ## 1C source byte-preservation policy
 

@@ -149,6 +149,69 @@ $runtime = Get-ItlManagedPythonRuntime -Offline -AssetRoot $Assets
             }
         }
     }
+    It 'removes idle replaced generations and keeps pointed, recent, running and linked ones' {
+        $first = Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root
+        $generationRoot = Join-Path $env:ITL_ARTIFACT_CACHE_ROOT 'py'
+        $active = Split-Path -Parent $first.executable
+        $old = [DateTime]::UtcNow.AddDays(-10)
+        function New-Generation([string]$Prefix = 'runtime-') {
+            $path = Join-Path $generationRoot ($Prefix + [guid]::NewGuid().ToString('N'))
+            [void][IO.Directory]::CreateDirectory((Join-Path $path 'Lib'))
+            [IO.File]::WriteAllText((Join-Path $path 'python.exe'), 'old interpreter')
+            return $path
+        }
+        $idle = New-Generation
+        $recent = New-Generation
+        $running = New-Generation
+        $otherPin = New-Generation
+        $linked = New-Generation
+        $foreign = Join-Path $caseRoot 'Чужой каталог'
+        [void][IO.Directory]::CreateDirectory($foreign)
+        [IO.File]::WriteAllText((Join-Path $foreign 'keep.txt'), 'foreign')
+        New-Item -ItemType Junction -Path (Join-Path $linked 'link') -Target $foreign | Out-Null
+        $staleStaging = New-Generation '.install-'
+        $freshStaging = New-Generation '.install-'
+        $retired = New-Generation '.retire-'
+        # Another workflow version on the same machine selects its own generation.
+        $otherPointer = Join-Path $generationRoot ('3.12.10\' + ('e' * 64))
+        [void][IO.Directory]::CreateDirectory($otherPointer)
+        [IO.File]::WriteAllText((Join-Path $otherPointer 'current.json'), (@{ schemaVersion = 1; directory = (Split-Path -Leaf $otherPin) } | ConvertTo-Json))
+        foreach ($path in @($active, $idle, $running, $otherPin, $linked)) { [IO.Directory]::SetLastWriteTimeUtc($path, $old) }
+        [IO.Directory]::SetLastWriteTimeUtc($recent, [DateTime]::UtcNow.AddDays(-2))
+        [IO.Directory]::SetLastWriteTimeUtc($staleStaging, [DateTime]::UtcNow.AddDays(-2))
+
+        $handle = [IO.File]::Open((Join-Path $running 'python.exe'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try {
+            Mock Invoke-ItlImmutableFileAcquire { throw 'Retention must not acquire' }
+            (Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root).executable | Should -BeExactly $first.executable
+        } finally { $handle.Dispose() }
+
+        (Get-Item -LiteralPath $active).LastWriteTimeUtc | Should -BeGreaterThan $old.AddDays(9)
+        Test-Path -LiteralPath $idle | Should -BeFalse
+        Test-Path -LiteralPath $staleStaging | Should -BeFalse
+        Test-Path -LiteralPath $retired | Should -BeFalse
+        foreach ($kept in @($recent, $running, $otherPin, $freshStaging)) { Test-Path -LiteralPath $kept | Should -BeTrue }
+        [IO.File]::ReadAllText((Join-Path $foreign 'keep.txt')) | Should -BeExactly 'foreign'
+        @(Get-ChildItem -LiteralPath $generationRoot -Directory -Force | Where-Object { $_.Name -match '^(?:runtime|\.retire)-' }).Count | Should -Be 5
+
+        # Released and still idle, the previously running generation goes on the next use.
+        [IO.Directory]::SetLastWriteTimeUtc($running, $old)
+        $null = Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root
+        Test-Path -LiteralPath $running | Should -BeFalse
+        Test-Path -LiteralPath $first.executable | Should -BeTrue
+    }
+    It 'keeps every generation when any runtime pointer is unreadable' {
+        $first = Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root
+        $generationRoot = Join-Path $env:ITL_ARTIFACT_CACHE_ROOT 'py'
+        $idle = Join-Path $generationRoot ('runtime-' + [guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory($idle)
+        [IO.Directory]::SetLastWriteTimeUtc($idle, [DateTime]::UtcNow.AddDays(-30))
+        $brokenPointer = Join-Path $generationRoot ('3.12.10\' + ('f' * 64))
+        [void][IO.Directory]::CreateDirectory($brokenPointer)
+        [IO.File]::WriteAllText((Join-Path $brokenPointer 'current.json'), '{ truncated')
+        (Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root).executable | Should -BeExactly $first.executable
+        Test-Path -LiteralPath $idle | Should -BeTrue
+    }
     It 'rejects a changed payload manifest before extracting or executing files' {
         [IO.File]::AppendAllText((Join-Path $fixture.root 'payload.json'), ' ')
         { Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root } | Should -Throw '*PAYLOAD_MANIFEST_HASH_MISMATCH*'
@@ -221,5 +284,61 @@ $runtime = Get-ItlManagedPythonRuntime -Offline -AssetRoot $Assets
         $invalid = Invoke-TestPowerShellFile -FilePath $wrapper -Arguments @('-Python', $python, 'no-such-command')
         $invalid.exitCode | Should -Be 2
         ($invalid.stderr -join "`n") | Should -Match 'invalid choice'
+    }
+}
+
+Describe 'Workflow-owned Python launch contract' {
+    # The managed runtime is verified file-for-file: one __pycache__ written
+    # into its Lib tree forces a fresh generation. The caller's own Python
+    # environment is stripped so it cannot mask a missing contract value.
+    It 'starts children and their grandchildren without bytecode and in UTF-8 mode from a clean caller environment' {
+        $python = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $modules = Join-Path (Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))) 'Модули с пробелом'
+        [void][IO.Directory]::CreateDirectory($modules)
+        foreach ($name in @('launch_probe_child', 'launch_probe_grandchild')) {
+            [IO.File]::WriteAllText((Join-Path $modules ($name + '.py')), "VALUE = 1`n", [Text.UTF8Encoding]::new($false))
+        }
+        $probe = Join-Path $modules 'probe.py'
+        [IO.File]::WriteAllText($probe, @'
+import json, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import launch_probe_child
+grandchild = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); import launch_probe_grandchild; print(int(sys.flags.dont_write_bytecode), int(sys.flags.utf8_mode))", sys.argv[1]], stdout=subprocess.PIPE, check=True)
+print(json.dumps({"child": [int(sys.flags.dont_write_bytecode), int(sys.flags.utf8_mode)], "grandchild": [int(v) for v in grandchild.stdout.decode("ascii").split()]}))
+'@, [Text.UTF8Encoding]::new($false))
+        $saved = @{}
+        foreach ($item in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'PYTHON*' })) {
+            $saved[$item.Name] = $item.Value
+            [Environment]::SetEnvironmentVariable($item.Name, $null, 'Process')
+        }
+        try {
+            $start = New-ItlPythonProcessStartInfo -Executable $python -Arguments @($probe, $modules)
+            $start.RedirectStandardOutput = $true
+            $start.RedirectStandardError = $true
+            $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+            $process = [Diagnostics.Process]::Start($start)
+            try {
+                $stderr = $process.StandardError.ReadToEndAsync()
+                $stdout = $process.StandardOutput.ReadToEnd()
+                $process.WaitForExit()
+                $process.ExitCode | Should -Be 0 -Because $stderr.GetAwaiter().GetResult()
+            } finally { $process.Dispose() }
+        } finally {
+            foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        }
+        $flags = $stdout | ConvertFrom-Json
+        @($flags.child) | Should -Be @(1, 1)
+        @($flags.grandchild) | Should -Be @(1, 1)
+        @(Get-ChildItem -LiteralPath $modules -Recurse -Force -Filter '*.pyc') | Should -HaveCount 0
+    }
+    It 'routes every PowerShell-started Python process through the one start contract' {
+        $scripts = Join-Path $script:PythonRuntimeRepo '.agents/skills/itl-remote-runner/scripts'
+        $runtime = [IO.File]::ReadAllText((Join-Path $scripts 'PythonRuntime.ps1'), [Text.Encoding]::UTF8)
+        $guard = [IO.File]::ReadAllText((Join-Path $scripts 'ExecutionGuard.ps1'), [Text.Encoding]::UTF8)
+        ([regex]::Matches($runtime, 'ProcessStartInfo\]::new\(')).Count | Should -Be 1
+        ([regex]::Matches($guard, 'ProcessStartInfo\]::new\(')).Count | Should -Be 0
+        ([regex]::Matches($guard, 'New-ItlPythonProcessStartInfo ')).Count | Should -Be 2
+        ([regex]::Matches($runtime, "'-B',\s*'-X'")).Count | Should -Be 1
+        $guard | Should -Not -Match "'-B',\s*'-X'"
     }
 }

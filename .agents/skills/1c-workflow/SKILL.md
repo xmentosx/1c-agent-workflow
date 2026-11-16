@@ -47,7 +47,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 Do not call the wizard helper directly, preflight with `Test-Path` (raw probes may emit CLIXML), use background PowerShell or `timeout: 0`. If terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. The launcher owns status and uses the shared action timeout policy (`init-project` defaults to 14400 seconds); use `-KeepWindowOnFailure` only for debugging.
 
-Long actions use a positive long timeout above their configured action limit. For `init-project` and `sync-master`, use `timeout_ms >= 14700000` with the default four-hour limit; for other long actions, `timeout_ms >= 3900000` remains the one-hour baseline. Raise the outer timeout when the configured action limit is higher. Do not use `120000 ms`; status/help do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
+Long actions use a positive long timeout above their action limit: `timeout_ms >= 14700000` for default `init-project`/`sync-master`, `timeout_ms >= 3900000` for other long actions; raise it for a higher limit. A client with a lower foreground cap (Claude Code) runs the same command with `run_in_background: true` and awaits its notification; that is not background PowerShell. Do not use `120000 ms`; status/help do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
 
 If monitored bootstrap is interrupted, repeat the same command with `timeout_ms >= 14700000` for the default limit, or configured limit plus 300 seconds; the launcher owns orphan detection and resume. Do not delete Git locks, continue init manually, or edit run status.
 
@@ -65,4 +65,4 @@ ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and needs no
 
 Read ignored runtime folders only when diagnosing a specific helper run or artifact.
 
-When launching native Windows executables such as `1cv8.exe` through `Start-Process`, pass `-ArgumentList` as one joined and correctly quoted native command-line string, never as a PowerShell array.
+Never start `1cv8.exe` through `Start-Process`: it bypasses the per-infobase session guard. Every 1C launch, including a user request such as "open Designer for base X", goes through `Start-OneCProcessBackground` with any command-line arguments, the exact base, and `-Visible` when the window is for the user (hidden otherwise); see `references/workflow.md`.

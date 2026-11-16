@@ -152,17 +152,17 @@
         $lockTemplate.mode | Should -Be "workflow"
         $project = $projectTemplate | ConvertFrom-Json
         $project.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $project.aiRules.ref | Should -Be "itl-main-2f640143-r59"
+        $project.aiRules.ref | Should -Be "itl-main-2f640143-r60"
         @($project.aiRules.tools).Count | Should -Be 0
         $lockTemplate.dependencies.aiRules1c.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-2f640143-r59"
+        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-2f640143-r60"
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "d6a65870801af5108302e98464def8985d1c2c0f"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "2db0058ca7e135715525f48ba35cb454da057118"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
         $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "2f640143756ecd01fed42100e412632aa9082385"
-        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 59
+        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 60
         $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -BeIn @("pending", "passed")
         if ($lockTemplate.dependencies.aiRules1c.compatibilityStatus -eq "pending") {
             $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ""
@@ -194,13 +194,13 @@
         $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "03fd32f3d5bd556c98f30ee789f69ebdfbce8327205eb060af94d6752cd2ca18"
         $lockTemplate.dependencies.itlOndemandMcp.releaseTag | Should -Be ("itl-ondemand-mcp-v" + $lockTemplate.dependencies.itlOndemandMcp.version)
         $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "29f741db8a379384cd8270398761ec96e7e8e548071a0c180d4ffc6ddd8443b6"
-        $lockTemplate.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r14.cfe"
+        $lockTemplate.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r15.cfe"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"
-        $lockTemplate.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "734119d1ac9fcf99d66487ccfcdb8d5354282fe8654c52461de6ca0869224644"
+        $lockTemplate.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "695e0a8ccf37f4fe3c9c9d4ebd0312e85664d41113db289f8859d456e156f30d"
         $lockTemplate.dependencies.vanessaAutomation.compatibilityVersion | Should -Be "1.2.043.42"
-        $lockTemplate.dependencies.vanessaAutomation.downstreamRevision | Should -Be "itl-r14"
-        $lockTemplate.dependencies.vanessaAutomation.sha256 | Should -Be "a63f2488fa4fdabbc83760adc50107d82263992daa03ce7ef476a39ef7348250"
-        $lockTemplate.dependencies.vanessaAutomation.epfSha256 | Should -Be "b3b350a4dd4fed0b5fcf1fe47388868c2fa1d802745997046ce7977216e8aeba"
+        $lockTemplate.dependencies.vanessaAutomation.downstreamRevision | Should -Be "itl-r15"
+        $lockTemplate.dependencies.vanessaAutomation.sha256 | Should -Be "58d4af17555aa87b7d2a25c338d6cd6ceb9b36f3ba831dd9c5ebc873b1233b5b"
+        $lockTemplate.dependencies.vanessaAutomation.epfSha256 | Should -Be "d64bb4359c537341191cb0d89ce5b2b8e8903f6ffd0c368691b92d14b56ea607"
         $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Not -Contain "publicationStatus"
         $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Contain "sha256"
         $lockTemplate.dependencies.vanessaMcp.clientMcp.PSObject.Properties.Name | Should -Contain "sha256"

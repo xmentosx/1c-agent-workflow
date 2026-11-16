@@ -4179,7 +4179,7 @@ try {
         $HelperText | Should -Match "Test-VanessaTestPortUsedByForeignProcess"
         $HelperText | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE"
         $HelperText | Should -Match "ConvertFrom-Utf8Base64"
-        $HelperText | Should -Match '(?s)function Run-DevBranchTests.*?Assert-VanessaSourceBuildArchiveMatchesActivePin.*?\$vanessa = Get-VanessaAutomationState'
+        $HelperText | Should -Match '(?s)function Run-DevBranchTests.*?Assert-VanessaSourceBuildArchiveMatchesActivePin.*?\$vanessa = Ensure-VanessaAutomationReady'
 
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_PORT_RANGE=48051\.\.48150"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"

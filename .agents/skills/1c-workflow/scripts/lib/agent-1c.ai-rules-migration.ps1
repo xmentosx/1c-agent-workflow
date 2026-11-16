@@ -386,7 +386,7 @@ function Test-AiRulesUserRulesMatchesControlledSourcePrefix {
     }
     $sourceOrigin = @(& git -C $sourceRoot remote get-url origin 2>$null)
     if ($LASTEXITCODE -ne 0 -or $sourceOrigin.Count -ne 1 -or
-        (Get-AiRules1cRepositoryIdentity -Repo ([string]$sourceOrigin[0])) -ne (Get-AiRules1cRepositoryIdentity -Repo $currentRepo)) {
+        (Get-ItlGitRepositoryIdentity -Repo ([string]$sourceOrigin[0])) -ne (Get-ItlGitRepositoryIdentity -Repo $currentRepo)) {
         return $false
     }
 
@@ -691,8 +691,8 @@ function Get-AiRulesMigrationPlan {
 
     $currentRepo = [string](Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/comol/ai_rules_1c.git")
     $currentRef = [string](Get-ConfigValue -Path "aiRules.ref" -Default "")
-    $currentIdentity = Get-AiRules1cRepositoryIdentity -Repo $currentRepo
-    $targetIdentity = Get-AiRules1cRepositoryIdentity -Repo $target.repo
+    $currentIdentity = Get-ItlGitRepositoryIdentity -Repo $currentRepo
+    $targetIdentity = Get-ItlGitRepositoryIdentity -Repo $target.repo
     $currentEntry = Get-DependencyLockEntry -Name "aiRules1c"
     $currentCommit = [string](Get-ConfigValueFromObject -Object $currentEntry -Path "commit" -Default "")
     $currentRevision = [int](Get-ConfigValueFromObject -Object $currentEntry -Path "downstreamRevision" -Default 0)
@@ -734,7 +734,7 @@ function Get-AiRulesMigrationPlan {
             return [pscustomobject]@{ status = "controlled-ref-invalid"; eligible = $false; suppressRegularUpdate = $true; reason = "controlled fork project does not use an immutable itl-* ref"; target = $target }
         }
         $lockRepo = [string](Get-ConfigValueFromObject -Object $currentEntry -Path "repo" -Default "")
-        if ((Get-AiRules1cRepositoryIdentity -Repo $lockRepo) -ne $targetIdentity) {
+        if ((Get-ItlGitRepositoryIdentity -Repo $lockRepo) -ne $targetIdentity) {
             return [pscustomobject]@{ status = "controlled-lock-mismatch"; eligible = $false; suppressRegularUpdate = $true; reason = "controlled fork lock repository does not match project configuration"; target = $target }
         }
         if ($target.downstreamRevision -le $currentRevision -and -not $target.explicitWorkflowAdoption) {

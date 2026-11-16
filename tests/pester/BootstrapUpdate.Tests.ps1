@@ -370,7 +370,7 @@ exit 0
             $productDocsSkillText | Should -Match ([regex]::Escape($marker))
         }
 
-        $guardIndex = $productDocsSkillText.IndexOf("Evaluate the PM4/PM5 guard", [StringComparison]::Ordinal)
+        $guardIndex = $productDocsSkillText.IndexOf("Evaluate the availability guard", [StringComparison]::Ordinal)
         $reuseIndex = $productDocsSkillText.IndexOf("For the same OpenSpec change", [StringComparison]::Ordinal)
         $guardIndex | Should -BeGreaterOrEqual 0
         $guardIndex | Should -BeLessThan $reuseIndex
@@ -397,6 +397,33 @@ exit 0
         $installText | Should -Match "USER-RULES.md"
     }
 
+    It "decides product documentation by the registry productDocs role and keeps the PM5 rule for unbound projects: <Name>" -TestCases @(
+        @{ Name = 'PM5 with a disabled role'; Family = 'PM5'; Bound = $true; Resolution = 'disabled'; Expected = $false },
+        @{ Name = 'PM4 with a resolved role'; Family = 'PM4'; Bound = $true; Resolution = 'resolved'; Expected = $true },
+        @{ Name = 'PM5 with a deferred role'; Family = 'PM5'; Bound = $true; Resolution = 'deferred'; Expected = $true },
+        @{ Name = 'PM5 bound before apply'; Family = 'PM5'; Bound = $true; Resolution = ''; Expected = $true },
+        @{ Name = 'unbound PM5'; Family = 'PM5'; Bound = $false; Resolution = 'disabled'; Expected = $true },
+        @{ Name = 'unbound PM4'; Family = 'PM4'; Bound = $false; Resolution = 'resolved'; Expected = $false }
+    ) {
+        param($Name, $Family, $Bound, $Resolution, $Expected)
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-product-docs-role " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\mcp") | Out-Null
+            $project = [ordered]@{ schemaVersion = 1; baseConfigurationVersion = $Family }
+            if ($Bound) { $project.productProject = [ordered]@{ schemaVersion = 1; requiredCapability = 'product-project-registry-v1'; projectId = 'demo'; productId = 'pm5-corp' } }
+            [IO.File]::WriteAllText((Join-Path $tempRoot ".agent-1c\project.json"), ($project | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+            if ($Resolution) {
+                # An applied record left for a binding that no longer exists is not authority.
+                $applied = @{ schemaVersion = 1; projectRoot = $tempRoot; context = @{ roles = @{ productDocs = @{ resolution = $Resolution } } } }
+                [IO.File]::WriteAllText((Join-Path $tempRoot ".agent-1c\mcp\product-context-applied.json"), ($applied | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+            }
+            $allowed = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Test-ProductDocsMcpAllowed }
+            $allowed | Should -Be $Expected
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "installs BookStack routing only for PM5 and keeps fresh/update overlay behavior identical" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-product-docs-routing-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -415,7 +442,8 @@ exit 0
                 [pscustomobject]@{ pm4 = $pm4; pm5 = $pm5 }
             }
 
-            $result.pm4 | Should -Match "For PM4 projects"
+            $result.pm4 | Should -Match "This project has no product documentation MCP"
+            $result.pm4 | Should -Not -Match "(?m)^For product logic"
             $result.pm4 | Should -Match "technical or implementation architecture"
             $result.pm4 | Should -Not -Match "BookStack-product-docs-mcp"
             $result.pm4 | Should -Not -Match "reuse current/proposal"
@@ -900,7 +928,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousMcpRegistryRepo = $env:VIBECODING1C_MCP_REGISTRY_REPO
         $artifactCacheRoot = Join-Path $tempRoot "artifact cache"
         $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
-            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.42-itl-r14\vanessa-automation-single.1.2.043.42-itl-r14.zip"
+            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.42-itl-r15\vanessa-automation-single.1.2.043.42-itl-r15.zip"
         } else {
             [System.IO.Path]::GetFullPath($previousVanessaSourceBuild)
         }
@@ -1581,103 +1609,183 @@ local after
         }
     }
 
-    It "repairs tracked damage in managed workflow checkouts without mutating explicit path sources" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-workflow-source-repair-" + [guid]::NewGuid().ToString("N"))
-        $sourceRoot = Join-Path $tempRoot "source"
-        $remoteRoot = Join-Path $tempRoot "remote.git"
-        $previousSourcePath = $env:ITL_WORKFLOW_SOURCE_PATH
-        $previousRepo = $env:ITL_WORKFLOW_REPO
-        $previousRef = $env:ITL_WORKFLOW_REF
-
-        try {
-            foreach ($relativePath in @(
-                "install-agent-1c-workflow.ps1",
-                "AGENT-INSTALL.md",
-                ".agents\skills\1c-workflow\scripts\agent-1c.ps1",
-                ".agents\skills\1c-workflow-fast\SKILL.md",
-                ".agents\skills\product-docs\SKILL.md",
-                ".agents\skills\itl-roctup-1c-data\SKILL.md",
-                ".agents\skills\itl-vanessa-ui-mcp\SKILL.md",
-                ".agents\skills\itl-remote-runner\SKILL.md",
-                ".agents\skills\itl-remote-agent\SKILL.md",
-                ".agents\skills\itl-performance\SKILL.md",
-                "templates\USER-RULES.append.md",
-                "tracked-marker.txt"
-            )) {
-                $path = Join-Path $sourceRoot $relativePath
-                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
-                Set-Content -LiteralPath $path -Encoding UTF8 -Value "original: $relativePath"
-            }
-
-            & git -C $sourceRoot init --quiet
-            & git -C $sourceRoot config user.email "test@example.invalid"
-            & git -C $sourceRoot config user.name "ITL Test"
-            & git -C $sourceRoot add .
-            & git -C $sourceRoot commit --quiet -m "workflow source"
-            & git -C $sourceRoot branch -M master
-            & git -C $sourceRoot tag repair-tag
-            $expectedCommit = ((& git -C $sourceRoot rev-parse HEAD) -join "").Trim()
-            $expectedSkillHash = (Get-FileHash -LiteralPath (Join-Path $sourceRoot ".agents\skills\product-docs\SKILL.md") -Algorithm SHA256).Hash
-            & git clone --quiet --bare $sourceRoot $remoteRoot
-
-            $env:ITL_WORKFLOW_SOURCE_PATH = ""
-            $env:ITL_WORKFLOW_REPO = $remoteRoot
-            $repairResults = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $managedRoot = ""
-                function Get-WorkflowPackageTempRoot { return $managedRoot }
-
-                foreach ($case in @(
-                    [pscustomobject]@{ ref = "master"; root = (Join-Path $tempRoot "managed-branch") },
-                    [pscustomobject]@{ ref = "repair-tag"; root = (Join-Path $tempRoot "managed-tag") }
+    Context "workflow package source cache" {
+        BeforeAll {
+            function New-WorkflowPackageCacheFixture {
+                $root = Join-Path $TestDrive ('пакет кэш ' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+                $source = Join-Path $root 'исходник пакета'
+                foreach ($relative in @(
+                    'install-agent-1c-workflow.ps1', 'AGENT-INSTALL.md',
+                    '.agents/skills/1c-workflow/scripts/agent-1c.ps1',
+                    '.agents/skills/1c-workflow/assets/ondemand-mcp/catalogs/каталог vanessa.json',
+                    '.agents/skills/1c-workflow-fast/SKILL.md', '.agents/skills/product-docs/SKILL.md',
+                    '.agents/skills/itl-roctup-1c-data/SKILL.md', '.agents/skills/itl-vanessa-ui-mcp/SKILL.md',
+                    '.agents/skills/itl-remote-runner/SKILL.md', '.agents/skills/itl-remote-agent/SKILL.md',
+                    '.agents/skills/itl-performance/SKILL.md', 'docs/itl-workflow/README.md',
+                    'templates/USER-RULES.append.md', 'tracked-marker.txt'
                 )) {
-                    $env:ITL_WORKFLOW_REF = $case.ref
-                    $managedRoot = $case.root
-                    Resolve-WorkflowPackageSource | Out-Null
-
-                    Remove-Item -LiteralPath (Join-Path $managedRoot ".agents\skills\product-docs\SKILL.md") -Force
-                    Set-Content -LiteralPath (Join-Path $managedRoot "tracked-marker.txt") -Encoding UTF8 -Value "damaged"
-                    Set-Content -LiteralPath (Join-Path $managedRoot "sentinel.local") -Encoding UTF8 -Value "keep"
-
-                    $resolved = Resolve-WorkflowPackageSource
-                    [pscustomobject]@{
-                        ref = $resolved.ref
-                        commit = $resolved.commit
-                        skillHash = (Get-FileHash -LiteralPath (Join-Path $managedRoot ".agents\skills\product-docs\SKILL.md") -Algorithm SHA256).Hash
-                        marker = (Get-Content -LiteralPath (Join-Path $managedRoot "tracked-marker.txt") -Raw -Encoding UTF8).Trim()
-                        trackedStatus = @(& git -C $managedRoot status --short --untracked-files=no)
-                        fullStatus = @(& git -C $managedRoot status --short)
-                    }
+                    $path = Join-Path $source $relative
+                    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
+                    [IO.File]::WriteAllText($path, "original: $relative")
                 }
+                $remote = Join-Path $root 'удалённый repo.git'
+                foreach ($arguments in @(
+                    @('init', '--quiet'), @('config', 'user.email', 'test@example.invalid'), @('config', 'user.name', 'ITL Test'),
+                    @('add', '.'), @('commit', '--quiet', '-m', 'workflow source'), @('branch', '-M', 'master'), @('tag', 'repair-tag')
+                )) {
+                    & git -C $source @arguments
+                    if ($LASTEXITCODE -ne 0) { throw "fixture git $($arguments -join ' ') failed" }
+                }
+                & git clone --quiet --bare $source $remote
+                if ($LASTEXITCODE -ne 0) { throw 'fixture bare clone failed' }
+                $fixture = [pscustomobject]@{
+                    root = $root; source = $source; remote = $remote
+                    project = (Join-Path $root 'проект пользователя'); cache = (Join-Path $root 'кэш артефактов'); temp = (Join-Path $root 'temp каталог')
+                    commit = ((& git -C $source rev-parse HEAD) -join '').Trim()
+                    catalog = '.agents/skills/1c-workflow/assets/ondemand-mcp/catalogs/каталог vanessa.json'
+                }
+                New-Item -ItemType Directory -Force -Path $fixture.project, $fixture.temp | Out-Null
+                return $fixture
             }
 
-            @($repairResults).Count | Should -Be 2
-            foreach ($result in @($repairResults)) {
-                $result.commit | Should -Be $expectedCommit
-                $result.skillHash | Should -Be $expectedSkillHash
-                $result.marker | Should -Be "original: tracked-marker.txt"
-                @($result.trackedStatus).Count | Should -Be 0
-                @($result.fullStatus) | Should -Contain "?? sentinel.local"
+            function Set-WorkflowPackageFixtureAge {
+                param([string]$Path, [datetime]$Time)
+                foreach ($item in @(Get-ChildItem -LiteralPath $Path -Recurse -Force) + @(Get-Item -LiteralPath $Path -Force)) { $item.LastWriteTime = $Time }
             }
-            @($repairResults | Select-Object -ExpandProperty ref) | Should -Be @("master", "repair-tag")
+        }
 
-            Set-Content -LiteralPath (Join-Path $sourceRoot "tracked-marker.txt") -Encoding UTF8 -Value "explicit path change"
-            $env:ITL_WORKFLOW_SOURCE_PATH = $sourceRoot
-            $env:ITL_WORKFLOW_REF = "master"
-            $pathResult = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Resolve-WorkflowPackageSource
+        BeforeEach {
+            $savedEnvironment = @{}
+            foreach ($name in @('ITL_WORKFLOW_SOURCE_PATH', 'ITL_WORKFLOW_REPO', 'ITL_WORKFLOW_REF', 'ITL_ARTIFACT_CACHE_ROOT', 'TEMP')) {
+                $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
             }
+            $fixture = New-WorkflowPackageCacheFixture
+            [Environment]::SetEnvironmentVariable('ITL_WORKFLOW_SOURCE_PATH', $null, 'Process')
+            [Environment]::SetEnvironmentVariable('ITL_WORKFLOW_REPO', $fixture.remote, 'Process')
+            [Environment]::SetEnvironmentVariable('ITL_WORKFLOW_REF', 'master', 'Process')
+            [Environment]::SetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', $fixture.cache, 'Process')
+            [Environment]::SetEnvironmentVariable('TEMP', $fixture.temp, 'Process')
+        }
 
-            $pathResult.source | Should -Be "path"
-            (Get-Content -LiteralPath (Join-Path $sourceRoot "tracked-marker.txt") -Raw -Encoding UTF8).Trim() | Should -Be "explicit path change"
-            @(& git -C $sourceRoot status --short --untracked-files=no) | Should -Contain " M tracked-marker.txt"
-        } finally {
-            $env:ITL_WORKFLOW_SOURCE_PATH = $previousSourcePath
-            $env:ITL_WORKFLOW_REPO = $previousRepo
-            $env:ITL_WORKFLOW_REF = $previousRef
-            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
-                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        AfterEach {
+            foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+        }
+
+        It "keeps the exact <ref> checkout outside TEMP and rebuilds tracked damage from the mirror" -ForEach @(
+            @{ ref = 'master' }, @{ ref = 'repair-tag' }
+        ) {
+            [Environment]::SetEnvironmentVariable('ITL_WORKFLOW_REF', $ref, 'Process')
+            & {
+                . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+                $first = Resolve-WorkflowPackageSource
+                $first.root | Should -Be (Join-Path (Get-WorkflowPackageCacheRepoRoot -Repo $fixture.remote) $fixture.commit.Substring(0, 12))
+                $first.root.StartsWith((Resolve-Agent1cFullPath -Path $fixture.cache) + '\', [StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+                $first.commit | Should -Be $fixture.commit
+                $first.ref | Should -Be $ref
+                $first.source | Should -Be 'git'
+                Test-Path -LiteralPath (Join-Path $fixture.temp '1c-agent-workflow') | Should -BeFalse
+
+                # The 2026-11-15 incident: Storage Sense deleted tracked files of the cached source.
+                Remove-Item -LiteralPath (Join-Path $first.root $fixture.catalog)
+                [IO.File]::WriteAllText((Join-Path $first.root 'tracked-marker.txt'), 'damaged')
+                [IO.File]::WriteAllText((Join-Path $first.root 'посторонний.local'), 'keep for diagnosis')
+                $captured = @(Resolve-WorkflowPackageSource 3>&1)
+                $warnings = @($captured | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }) -join ' '
+                $second = @($captured | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+
+                $second.root | Should -Be $first.root
+                $second.commit | Should -Be $fixture.commit
+                [IO.File]::ReadAllText((Join-Path $second.root $fixture.catalog)) | Should -BeExactly "original: $($fixture.catalog)"
+                [IO.File]::ReadAllText((Join-Path $second.root 'tracked-marker.txt')) | Should -BeExactly 'original: tracked-marker.txt'
+                @(Get-GitPathListAt -Root $second.root -Arguments @('status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching')).Count | Should -Be 0
+                $warnings | Should -Match 'WORKFLOW_PACKAGE_CACHE_RECOVERED.*diagnostic='
+                $diagnostic = [regex]::Match($warnings, "diagnostic='([^']+)'").Groups[1].Value
+                $diagnostic | Should -Match '[\\/]invalid-[0-9a-f]{12}$'
+                [IO.File]::ReadAllText((Join-Path $diagnostic 'посторонний.local')) | Should -BeExactly 'keep for diagnosis'
+                Test-Path -LiteralPath (Join-Path $diagnostic $fixture.catalog) | Should -BeFalse
+            }
+        }
+
+        It "follows a moved branch to a new exact checkout and leaves an explicit path source user-owned" {
+            & {
+                . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+                $first = Resolve-WorkflowPackageSource
+                [IO.File]::WriteAllText((Join-Path $fixture.source 'tracked-marker.txt'), 'second commit')
+                foreach ($arguments in @(@('commit', '--quiet', '-am', 'second'), @('push', '--quiet', $fixture.remote, 'master'))) {
+                    & git -C $fixture.source @arguments
+                    if ($LASTEXITCODE -ne 0) { throw "fixture git $($arguments -join ' ') failed" }
+                }
+                $second = Resolve-WorkflowPackageSource
+                $second.commit | Should -Not -Be $first.commit
+                $second.root | Should -Not -Be $first.root
+                [IO.File]::ReadAllText((Join-Path $second.root 'tracked-marker.txt')) | Should -BeExactly 'second commit'
+                # A rollout of the previous commit keeps reading unchanged bytes.
+                [IO.File]::ReadAllText((Join-Path $first.root 'tracked-marker.txt')) | Should -BeExactly 'original: tracked-marker.txt'
+                (Get-ItlGitSourceCacheState -Root $first.root -Repo $fixture.remote -ExpectedCommit $first.commit).valid | Should -BeTrue
+
+                [IO.File]::WriteAllText((Join-Path $fixture.source 'tracked-marker.txt'), 'explicit path change')
+                [Environment]::SetEnvironmentVariable('ITL_WORKFLOW_SOURCE_PATH', $fixture.source, 'Process')
+                $pathSource = Resolve-WorkflowPackageSource
+                $pathSource.source | Should -Be 'path'
+                $pathSource.root | Should -Be (Resolve-Agent1cFullPath -Path $fixture.source)
+                Set-WorkflowPackageCacheUse -Root $pathSource.root
+                Test-Path -LiteralPath (Join-Path $fixture.source '.git/itl-last-used') | Should -BeFalse
+                [IO.File]::ReadAllText((Join-Path $fixture.source 'tracked-marker.txt')) | Should -BeExactly 'explicit path change'
+            }
+        }
+
+        It "rejects an incomplete cached source before copy-complete and accepts the repeated update" {
+            & {
+                . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+                $source = Resolve-WorkflowPackageSource
+                Remove-Item -LiteralPath (Join-Path $source.root $fixture.catalog)
+                { Copy-WorkflowPackageManagedContent -Source $source } |
+                    Should -Throw '*WORKFLOW_PACKAGE_SOURCE_INCOMPLETE*repeat the same update-workflow*'
+
+                # Continuation: the repeated update re-resolves the source, which rebuilds it.
+                $repeated = Resolve-WorkflowPackageSource 3> $null
+                $repeated.root | Should -Be $source.root
+                Copy-WorkflowPackageManagedContent -Source $repeated
+                [IO.File]::ReadAllText((Join-Path $fixture.project $fixture.catalog)) | Should -BeExactly "original: $($fixture.catalog)"
+
+                function Remove-LegacyWorkflowManagedFiles { Remove-Item -LiteralPath (Join-Path $fixture.project 'templates/USER-RULES.append.md') }
+                { Copy-WorkflowPackageManagedContent -Source $repeated } |
+                    Should -Throw '*WORKFLOW_PACKAGE_COPY_INCOMPLETE*missing templates/USER-RULES.append.md*'
+            }
+        }
+
+        It "keeps recent exact checkouts, removes idle ones and the idle legacy TEMP checkout, and rebuilds a recorded source" {
+            & {
+                . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+                $current = Resolve-WorkflowPackageSource
+                $repoCache = Split-Path -Parent $current.root
+                foreach ($day in 2, 3, 4, 5) {
+                    $entry = Join-Path $repoCache ('00000000000' + $day)
+                    [void][IO.Directory]::CreateDirectory((Join-Path $entry '.git'))
+                    [IO.File]::WriteAllText((Join-Path $entry '.git/itl-last-used'), '')
+                    Set-WorkflowPackageFixtureAge -Path $entry -Time (Get-Date).AddDays(-$day)
+                }
+                $legacy = Join-Path $fixture.temp '1c-agent-workflow\workflow-package'
+                foreach ($name in @('HEAD', 'index', 'FETCH_HEAD')) {
+                    [void][IO.Directory]::CreateDirectory((Join-Path $legacy '.git'))
+                    [IO.File]::WriteAllText((Join-Path $legacy ".git/$name"), 'x')
+                }
+                [IO.File]::WriteAllText((Join-Path $legacy 'tracked-marker.txt'), 'legacy bytes')
+
+                Resolve-WorkflowPackageSource | Out-Null
+                Test-Path -LiteralPath $legacy | Should -BeTrue
+                @(Get-ChildItem -LiteralPath $repoCache -Directory -Force | ForEach-Object Name | Sort-Object) |
+                    Should -Be @(@((Split-Path -Leaf $current.root), '000000000002', '000000000003', '000000000004', 'mirror.git') | Sort-Object)
+
+                Set-WorkflowPackageFixtureAge -Path $legacy -Time (Get-Date).AddDays(-8)
+                Resolve-WorkflowPackageSource | Out-Null
+                Test-Path -LiteralPath $legacy | Should -BeFalse
+
+                # A pending update whose recorded exact source retention removed.
+                Remove-Item -LiteralPath $current.root -Recurse -Force
+                Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{ sourceRoot = $current.root; sourceCommit = $current.commit; sourceRepo = $fixture.remote })
+                [IO.File]::ReadAllText((Join-Path $current.root $fixture.catalog)) | Should -BeExactly "original: $($fixture.catalog)"
+                Test-Path -LiteralPath (Join-Path $current.root '.git/itl-last-used') | Should -BeTrue
             }
         }
     }
@@ -1991,6 +2099,7 @@ exit 0
                     $script:copyCalls++
                     $script:copyPaths += $RelativePath
                 }
+                function Assert-WorkflowPackageCopyComplete { param($Source) }
                 function Update-WorkflowPackageLockEntry {}
                 function Invoke-Agent1cFreshProcess { param([string[]]$AdditionalArguments); $script:reexecArgs = $AdditionalArguments; throw "reexec-stop" }
 
@@ -2168,6 +2277,7 @@ exit 0
                 function Get-WorkflowUpdateSnapshotRelativePaths { param([string]$SourceRoot,[string[]]$AiRulesPathsAfter); @(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths) + @('.agent-1c/dependency-lock.json','.kilo/kilo.json','.dev.env') }
                 function Copy-WorkflowManagedDirectory { param($SourceRoot, $RelativePath) }
                 function Copy-WorkflowManagedFile { param($SourceRoot, $RelativePath) }
+                function Assert-WorkflowPackageCopyComplete { param($Source) }
                 function Update-WorkflowPackageLockEntry {}
                 function Invoke-Agent1cFreshProcess { param([string[]]$AdditionalArguments); throw "reexec-stop" }
 
@@ -2270,9 +2380,13 @@ exit 0
     It "documents long external shell timeout for ITL lifecycle commands" {
         $instructionPaths = @(
             ".agents\skills\1c-workflow-fast\SKILL.md",
-            ".agents\skills\1c-workflow\SKILL.md",
-            "templates\USER-RULES.append.md"
+            ".agents\skills\1c-workflow\SKILL.md"
         ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        # The always-on rules route to the owners instead of repeating them.
+        $alwaysOnRules = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
+        $alwaysOnRules | Should -Match 'Long actions follow the timeout or background rule of the generated command or `1c-workflow-fast`'
+        $alwaysOnRules | Should -Not -Match 'timeout_ms'
 
         foreach ($path in $instructionPaths) {
             $text = Get-Content -Encoding UTF8 -Raw $path
@@ -2283,46 +2397,70 @@ exit 0
             $text | Should -Match "status.*help.*do not|status`/help.*do not"
         }
 
-        $longTemplatePaths = @(
-            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-sync-master.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-refresh-all.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-reset-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-lock-objects.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-update-workflow.md.template"
-        ) | ForEach-Object { Join-Path $RepoRoot $_ }
-
-        foreach ($path in $longTemplatePaths) {
-            $text = Get-Content -Encoding UTF8 -Raw $path
-            $text | Should -Match "agent shell tool supports"
-            if ($path -like "*itl-sync-master.md.template") {
-                $text | Should -Match "timeout_ms\s*>=\s*14700000"
-            } else {
-                $text | Should -Match "timeout_ms\s*>=\s*3900000"
-            }
-            $text | Should -Match 'do not use\s+`?120000 ms'
+        foreach ($path in @(
+            ".agents\skills\1c-workflow-fast\SKILL.md",
+            ".agents\skills\1c-workflow\SKILL.md"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }) {
+            # A client whose foreground shell timeout is capped below the action
+            # limit waits for its own background completion instead.
+            (Get-Content -Encoding UTF8 -Raw $path) | Should -Match 'Claude Code.*run_in_background: true'
         }
 
-        $platformTemplatePaths = @(
-            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-sync-master.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-refresh-all.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-reset-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-lock-objects.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template"
-        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+        # Long command templates carry one marker; the renderer owns the
+        # client-specific wording, so no template repeats a timeout rule.
+        $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
+        $longTemplates = @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md.template" |
+            Where-Object { (Get-Content -Encoding UTF8 -Raw $_.FullName) -match '<!-- ITL_LONG_RUN -->' })
+        $longTemplateNames = [string[]]@($longTemplates.Name)
+        [Array]::Sort($longTemplateNames, [StringComparer]::Ordinal)
+        @($longTemplateNames) | Should -Be @(
+            "itl-check.md.template", "itl-fork-branch.md.template", "itl-lock-objects.md.template",
+            "itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-refresh-all.md.template",
+            "itl-refresh-lite.md.template", "itl-refresh.md.template", "itl-reset-branch.md.template",
+            "itl-result.md.template", "itl-sync-branches.md.template", "itl-sync-master.md.template",
+            "itl-update-workflow.md.template", "itl-verify-fix.md.template")
+        foreach ($template in @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md.template")) {
+            $text = Get-Content -Encoding UTF8 -Raw $template.FullName
+            $text | Should -Not -Match "timeout_ms" -Because $template.Name
+            ([regex]::Matches($text, '<!-- ITL_LONG_RUN -->')).Count | Should -BeLessOrEqual 1
+        }
 
-        foreach ($path in $platformTemplatePaths) {
-            (Get-Content -Encoding UTF8 -Raw $path) | Should -Match "1C Designer/Enterprise"
+        $renderRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-long-run-render-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Force -Path (Join-Path $renderRoot ".agent-1c") | Out-Null
+        Set-Content -LiteralPath (Join-Path $renderRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+        $rendered = & {
+            . $HelperPath -ProjectRoot $renderRoot -Action help *> $null
+            $result = @{}
+            foreach ($client in @((Get-ItlClientAdapterRegistry).Keys)) {
+                foreach ($template in $longTemplates) {
+                    $name = $template.Name.Substring(0, $template.Name.Length - ".template".Length)
+                    $result["$client|$name"] = Convert-ItlCommandForClient -Text (Read-Utf8Text -Path $template.FullName) -Client $client -FileName $name
+                }
+            }
+            $result
+        }
+        Remove-Item -LiteralPath $renderRoot -Recurse -Force -ErrorAction SilentlyContinue
+        $rendered.Count | Should -Be (12 * $longTemplates.Count)
+        foreach ($key in $rendered.Keys) {
+            $client, $name = $key -split '\|', 2
+            $text = $rendered[$key]
+            if ($client -eq "opencode" -and $name -in @("itl-new-config-branch.md", "itl-new-extension-branch.md")) {
+                $text | Should -Not -Match "ITL_LONG_RUN"
+                continue
+            }
+            $text | Should -Not -Match "ITL_LONG_RUN" -Because $key
+            $text | Should -Match "1C Designer/Enterprise" -Because $key
+            $text | Should -Match "LoadConfigFromFiles.*UpdateDBCfg" -Because $key
+            if ($client -eq "claude-code") {
+                $text | Should -Match 'run_in_background: true' -Because $key
+                $text | Should -Match 'completion notification' -Because $key
+                $text | Should -Not -Match 'timeout_ms' -Because $key
+            } else {
+                $minimum = if ($name -eq "itl-sync-master.md") { "14700000" } else { "3900000" }
+                $text | Should -Match ("timeout_ms\s*>=\s*" + $minimum) -Because $key
+                $text | Should -Match 'Do not use\s+`?120000 ms' -Because $key
+                $text | Should -Not -Match 'run_in_background' -Because $key
+            }
         }
 
         $shortTemplatePaths = @(
@@ -3038,7 +3176,7 @@ exit 2
     }
 
     It "retries only the idempotent ai_rules fetch boundary" {
-        (& { . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null; $script:fetchAttempts=0; function Invoke-GitAt { $script:fetchAttempts++; if($script:fetchAttempts -lt 3){throw 'transient'} }; function Start-Sleep {}; Invoke-AiRules1cFetchWithRetry -Root $RepoRoot; $script:fetchAttempts }) | Should -Be 3
+        (& { . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null; $script:fetchAttempts=0; function Invoke-GitAt { $script:fetchAttempts++; if($script:fetchAttempts -lt 3){throw 'transient'} }; function Start-Sleep {}; Invoke-ItlGitFetchWithRetry -Root $RepoRoot; $script:fetchAttempts }) | Should -Be 3
     }
 
     It "builds a safe initialization user report without reading secret settings" {

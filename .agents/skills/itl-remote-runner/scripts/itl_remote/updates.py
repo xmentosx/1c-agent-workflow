@@ -5,12 +5,11 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 import tempfile
 import zipfile
 
 from . import VERSION
-from .common import WorkError, beneath, digest, publish_path, read_json, stamp, write_json
+from .common import WorkError, beneath, digest, publish_path, python_command, read_json, stamp, write_json
 
 
 RUNTIME_RELATIVE = ".agents/skills/itl-remote-runner/scripts/remote_work.py"
@@ -106,7 +105,7 @@ def stage(spool, message, connection):
         raise WorkError("WORKER_UPDATE_GENERATION_INVALID")
     runtime = destination / RUNTIME_RELATIVE
     supervisor = destination / SUPERVISOR_RELATIVE
-    completed = subprocess.run([sys.executable, "-B", "-X", "utf8", str(runtime), "version"],
+    completed = subprocess.run(python_command(runtime, "version"),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
     if completed.returncode != 0:
         raise WorkError("WORKER_UPDATE_SELF_TEST_FAILED")

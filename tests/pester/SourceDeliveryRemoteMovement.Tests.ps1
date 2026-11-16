@@ -141,6 +141,13 @@ Describe 'Failing registered range deferral' {
             & git -C $fixture.root add --all; & git -C $fixture.root commit --quiet -m 'fix: beta'
             Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','beta') | Out-Null
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue/beta/deferred).Count | Should -Be 0
+            # The lifted deferral stays countable after its ref is gone.
+            $history=(Invoke-FrozenDelivery $fixture Status @('-StatusDetail','Full')).stdout | ConvertFrom-Json
+            $history.deferredQueue | Should -BeNullOrEmpty
+            $history.deferralHistory.total | Should -Be 1
+            $history.deferralHistory.recent[0].id | Should -BeExactly 'beta'
+            $history.deferralHistory.recent[0].head | Should -Be $beta
+            $history.deferralHistory.recent[0].reason | Should -Match 'tests/pester/beta\.Tests\.ps1'
         } finally { Remove-DeliveryFixture $fixture }
     }
     It 'defers an agent-diagnosed range with its dependents and replaces the pinned plan in one command' {
@@ -182,6 +189,10 @@ Describe 'Failing registered range deferral' {
             @($status.queue.id) | Should -Be @('beta','gamma')
             @($status.deferredQueue.id) | Should -Be @('beta','gamma')
             @($status.deferredQueue.head) | Should -Be @($beta,$gamma)
+            $history=(Invoke-FrozenDelivery $fixture Status @('-StatusDetail','Full')).stdout | ConvertFrom-Json
+            $history.deferralHistory.total | Should -Be 2
+            @($history.deferralHistory.recent.id | Sort-Object) | Should -Be @('beta','gamma')
+            @($history.deferralHistory.recent.stage | Sort-Object -Unique) | Should -Be @('requested')
             Test-Path -LiteralPath (Join-Path $fixture.root ".git/itl/publication-attempts/replaced/$oldPlan") | Should -BeTrue
         } finally { $env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$prior; Remove-DeliveryFixture $fixture }
     }

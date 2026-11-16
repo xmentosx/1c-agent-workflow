@@ -1,21 +1,21 @@
 ---
 name: product-docs
-description: Use BookStack product documentation through the BookStack-product-docs-mcp server for PM5 projects before answering, researching, planning, proposing, applying, or changing product business logic, technical or implementation architecture, internal subsystem design, technical decisions and constraints, user workflows, terminology, permissions, reports, integrations, acceptance tests, and OpenSpec explore/propose/apply tasks. Search BookStack before broad repository traversal, then close task-relevant current-state gaps with the minimum sufficient non-duplicative code, metadata, test, runtime, or MCP evidence, cite relevant pages, and surface conflicts.
+description: Use BookStack product documentation through the BookStack-product-docs-mcp server, when the project has it, before answering, researching, planning, proposing, applying, or changing product business logic, technical or implementation architecture, internal subsystem design, technical decisions and constraints, user workflows, terminology, permissions, reports, integrations, acceptance tests, and OpenSpec explore/propose/apply tasks. Search BookStack before broad repository traversal, then close task-relevant current-state gaps with the minimum sufficient non-duplicative code, metadata, test, runtime, or MCP evidence, cite relevant pages, and surface conflicts.
 ---
 
 # Product Docs
 
-## PM4/PM5 Guard
+## Availability Guard
 
-Before using BookStack, inspect `.agent-1c/project.json` when it exists. If `baseConfigurationVersion` is `PM4`, do not use `BookStack-product-docs-mcp`; BookStack product docs cover PM5 only. Continue from the user request and the minimum sufficient available code, test, current-metadata, runtime, or non-product MCP evidence, and explicitly state that PM5 product docs were skipped for a PM4 project.
+The project registry decides whether a project has product documentation (its `productDocs` role); the helper configures `BookStack-product-docs-mcp` and the installed `USER-RULES.md` accordingly. A legacy project without a registry binding keeps the old rule: `baseConfigurationVersion` `PM4` in `.agent-1c/project.json` has no product docs. When `USER-RULES.md` says the project has no product documentation MCP, or the server is absent from this session's tools after deferred discovery (`1c-workflow/references/mcp.md`), do not use it. Continue from the user request and the minimum sufficient available code, test, current-metadata, runtime, or non-product MCP evidence, and explicitly state that product docs were skipped because the project has none.
 
 ## Workflow
 
-Use `BookStack-product-docs-mcp` as the source of product context and intended behavior for the PM5 scope in the description, including OpenSpec explore/propose/apply.
+Use `BookStack-product-docs-mcp` as the source of product context and intended behavior for the scope in the description, including OpenSpec explore/propose/apply.
 
 ### OpenSpec Context Reuse
 
-Evaluate the PM4/PM5 guard before either BookStack lookup or reuse. A PM4 project must not reuse recorded PM5 BookStack context as product evidence.
+Evaluate the availability guard before either BookStack lookup or reuse. A project without product docs must not reuse recorded BookStack context as product evidence.
 
 For the same OpenSpec change and unchanged scope, do not repeat `search_docs` or `read_page` when the conversation or proposal `## Context Sources` contains a sufficient handoff. In `proposal.md`, record each material page title, URL, exact `updated_at` returned by BookStack, and relevant conclusion. Explore may reuse the conversation; propose writes the handoff; apply reads it through OpenSpec `contextFiles`.
 

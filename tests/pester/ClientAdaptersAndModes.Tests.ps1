@@ -168,6 +168,46 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "finds the fork-installed memory policy under every client rules directory" {
+        # rules.copyTo of adapters/*.yaml in the pinned controlled fork
+        # (itl-main-2f640143-r60). Claude Code deliberately uses rules-1c:
+        # .claude/rules would load every rule into each session. Update this
+        # table only together with the fork adapter that owns the placement.
+        $forkRules = [ordered]@{
+            "codex" = ".codex/rules/project-memory.md"; "kilocode" = ".kilo/rules-1c/project-memory.md"
+            "claude-code" = ".claude/rules-1c/project-memory.md"; "cursor" = ".cursor/rules/project-memory.mdc"
+            "opencode" = ".opencode/rules/project-memory.md"; "kimi" = ".kimi-code/rules-1c/project-memory.md"
+            "qwen" = ".qwen/rules-1c/project-memory.md"; "command-code" = ".commandcode/rules-1c/project-memory.md"
+            "cline" = ".cline/rules-1c/project-memory.md"; "zcode" = ".zcode/rules-1c/project-memory.md"
+            "mimocode" = ".mimocode/rules-1c/project-memory.md"; "pi" = ".pi/rules-1c/project-memory.md"
+        }
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-memory-rules-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $found = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                foreach ($leaf in @("agent-1c.product-catalog.ps1", "agent-1c.memory.ps1", "agent-1c.memory-context.ps1")) {
+                    . (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\$leaf")
+                }
+                @((Get-ItlClientAdapterRegistry).Keys) | Should -Be @($forkRules.Keys)
+                $result = [ordered]@{}
+                foreach ($client in $forkRules.Keys) {
+                    # A foreign-client copy of the same rule must not be selected.
+                    $files = [ordered]@{
+                        $forkRules[$client] = @{ source = "content/rules/project-memory.md" }
+                        ".other-client/rules/project-memory.md" = @{ source = "content/rules/project-memory.md" }
+                        ".agents/skills/x/SKILL.md" = @{ source = "content/skills/x/SKILL.md" }
+                    }
+                    [IO.File]::WriteAllText((Join-Path $tempRoot ".ai-rules.json"), (@{ schemaVersion = 1; tools = @($client); files = $files } | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+                    $result[$client] = Get-ItlMemoryPolicyRelativePath -Client $client
+                }
+                $result
+            }
+            foreach ($client in $forkRules.Keys) { $found[$client] | Should -BeExactly $forkRules[$client] -Because $client }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "configures the OpenCode native workspace user flag idempotently" {
         $name = "OPENCODE_EXPERIMENTAL_WORKSPACES"
         $originalUser = [Environment]::GetEnvironmentVariable($name, "User")

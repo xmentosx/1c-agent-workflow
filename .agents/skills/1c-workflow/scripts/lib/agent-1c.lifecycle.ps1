@@ -5593,7 +5593,7 @@ function Get-AiRules1cOpenSpecStatus {
     return (New-ItlOpenSpecStatus -Mode native -Invocations $invocations -Cli $cli -Store $store)
 }
 
-function Get-AiRules1cRepositoryIdentity {
+function Get-ItlGitRepositoryIdentity {
     param([string]$Repo)
 
     if ([string]::IsNullOrWhiteSpace($Repo)) {
@@ -5608,14 +5608,15 @@ function Get-AiRules1cRepositoryIdentity {
 
 function Test-AiRules1cForkRepository {
     param([string]$Repo)
-    return (Get-AiRules1cRepositoryIdentity -Repo $Repo) -eq "https://github.com/xmentosx/itl_ai_rules_1c"
+    return (Get-ItlGitRepositoryIdentity -Repo $Repo) -eq "https://github.com/xmentosx/itl_ai_rules_1c"
 }
 
-function Invoke-AiRules1cFetchWithRetry {
+function Invoke-ItlGitFetchWithRetry {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
         [string[]]$Arguments = @("fetch", "--all", "--tags", "--prune"),
-        [int]$MaxAttempts = 3
+        [int]$MaxAttempts = 3,
+        [string]$Label = 'ai_rules_1c'
     )
 
     $failure = $null
@@ -5627,14 +5628,14 @@ function Invoke-AiRules1cFetchWithRetry {
             $failure = $_
             if ($attempt -ge $MaxAttempts) { break }
             $delaySeconds = [int][Math]::Pow(2, $attempt)
-            Write-Warning "ai_rules_1c fetch attempt $attempt/$MaxAttempts failed; retrying the same idempotent fetch in $delaySeconds seconds."
+            Write-Warning "$Label fetch attempt $attempt/$MaxAttempts failed; retrying the same idempotent fetch in $delaySeconds seconds."
             Start-Sleep -Seconds $delaySeconds
         }
     }
     throw $failure
 }
 
-function Get-AiRules1cCacheState {
+function Get-ItlGitSourceCacheState {
     param([string]$Root, [string]$Repo, [string]$ExpectedCommit = '')
 
     $owned = $false
@@ -5651,7 +5652,7 @@ function Get-AiRules1cCacheState {
         if ((Resolve-Agent1cFullPath -Path $top) -ine $Root -or
             (Resolve-Agent1cFullPath -Path $gitDir) -ine (Join-Path $Root '.git')) { throw 'checkout boundary mismatch' }
         $origin = (Get-GitOutputAt -Root $Root -Arguments @('remote', 'get-url', 'origin')).Trim()
-        if ((Get-AiRules1cRepositoryIdentity -Repo $origin) -ne (Get-AiRules1cRepositoryIdentity -Repo $Repo)) {
+        if ((Get-ItlGitRepositoryIdentity -Repo $origin) -ne (Get-ItlGitRepositoryIdentity -Repo $Repo)) {
             throw 'repository identity mismatch'
         }
         $owned = $true
@@ -5677,11 +5678,11 @@ function Get-AiRules1cCacheRoot {
     return (Join-Path (Get-ItlSharedArtifactCacheRoot) 'ai_rules_1c')
 }
 
-function New-AiRules1cCacheId {
+function New-ItlGitSourceCacheId {
     return [guid]::NewGuid().ToString('N').Substring(0, 12)
 }
 
-function Test-AiRules1cPhysicalDirectory {
+function Test-ItlGitSourceCachePhysicalDirectory {
     param([string]$Path)
     try {
         $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
@@ -5691,9 +5692,9 @@ function Test-AiRules1cPhysicalDirectory {
     }
 }
 
-function Test-AiRules1cBareMirror {
+function Test-ItlGitSourceCacheMirror {
     param([string]$Root)
-    if (-not (Test-AiRules1cPhysicalDirectory -Path $Root)) { return $false }
+    if (-not (Test-ItlGitSourceCachePhysicalDirectory -Path $Root)) { return $false }
     try {
         $bare = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--is-bare-repository')).Trim()
         $gitDir = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--absolute-git-dir')).Trim()
@@ -5710,7 +5711,7 @@ function Get-AiRules1cMirrorTagCommit {
     return (Get-GitOutputAt -Root $Mirror -Arguments @('rev-parse', "$tagRef^{commit}")).Trim()
 }
 
-function Set-AiRules1cCacheLastUsed {
+function Set-ItlGitSourceCacheLastUsed {
     param([string]$Root)
     try {
         $marker = Join-Path $Root '.git\itl-last-used'
@@ -5723,7 +5724,7 @@ function Set-AiRules1cCacheLastUsed {
     }
 }
 
-function Get-AiRules1cCacheLastUsedUtc {
+function Get-ItlGitSourceCacheLastUsedUtc {
     param([string]$Root)
     foreach ($path in @((Join-Path $Root '.git\itl-last-used'), $Root)) {
         try {
@@ -5734,6 +5735,43 @@ function Get-AiRules1cCacheLastUsedUtc {
     return [DateTime]::MinValue
 }
 
+function Initialize-ItlGitSourceCacheMirror {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoCache,
+        [Parameter(Mandatory = $true)][string]$SourceRepo,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [Parameter(Mandatory = $true)][string]$CodePrefix
+    )
+
+    $mirror = Join-Path $RepoCache 'mirror.git'
+    if ((Test-Path -LiteralPath $mirror) -and -not (Test-ItlGitSourceCacheMirror -Root $mirror)) {
+        if (-not (Test-ItlGitSourceCachePhysicalDirectory -Path $mirror)) {
+            throw "$($CodePrefix)_CACHE_FOREIGN: '$mirror' is not an ITL $Label mirror. Move it away and repeat the original operation."
+        }
+        $diagnostic = Join-Path $RepoCache ('invalid-' + (New-ItlGitSourceCacheId))
+        Move-Item -LiteralPath $mirror -Destination $diagnostic -ErrorAction Stop
+        Write-Warning "$($CodePrefix)_CACHE_INVALID path='$mirror' state='not a bare repository' diagnostic='$diagnostic'. Recreating the shared mirror."
+    }
+    if (-not (Test-Path -LiteralPath $mirror)) {
+        $prepare = Join-Path $RepoCache ('prepare-' + (New-ItlGitSourceCacheId))
+        try {
+            Invoke-GitAt -Root $RepoCache -Arguments @('clone', '--bare', '--quiet', $SourceRepo, $prepare)
+        } catch {
+            throw "Failed to clone $Label from '$SourceRepo' into '$prepare': $($_.Exception.Message). Existing caches are preserved; resolve the source/transport failure and repeat the original operation."
+        }
+        try {
+            Move-Item -LiteralPath $prepare -Destination $mirror -ErrorAction Stop
+        } catch {
+            # A concurrent preparation published the mirror first.
+            if (-not (Test-ItlGitSourceCacheMirror -Root $mirror)) {
+                throw "$($CodePrefix)_CACHE_PUBLISH_FAILED: cannot publish '$prepare' as '$mirror': $($_.Exception.Message). Repeat the original operation."
+            }
+            Remove-Item -LiteralPath $prepare -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return $mirror
+}
+
 function Resolve-AiRules1cMirror {
     param(
         [Parameter(Mandatory = $true)][string]$RepoCache,
@@ -5742,39 +5780,13 @@ function Resolve-AiRules1cMirror {
         [Parameter(Mandatory = $true)][string]$Commit
     )
 
-    $mirror = Join-Path $RepoCache 'mirror.git'
-    if ((Test-Path -LiteralPath $mirror) -and -not (Test-AiRules1cBareMirror -Root $mirror)) {
-        if (-not (Test-AiRules1cPhysicalDirectory -Path $mirror)) {
-            throw "AI_RULES_CACHE_FOREIGN: '$mirror' is not an ITL ai_rules_1c mirror. Move it away and repeat the original operation."
-        }
-        $diagnostic = Join-Path $RepoCache ('invalid-' + (New-AiRules1cCacheId))
-        Move-Item -LiteralPath $mirror -Destination $diagnostic -ErrorAction Stop
-        Write-Warning "AI_RULES_CACHE_INVALID path='$mirror' state='not a bare repository' diagnostic='$diagnostic'. Recreating the shared mirror."
-    }
-    if (-not (Test-Path -LiteralPath $mirror)) {
-        $prepare = Join-Path $RepoCache ('prepare-' + (New-AiRules1cCacheId))
-        try {
-            Invoke-GitAt -Root $RepoCache -Arguments @('clone', '--bare', '--quiet', $SourceRepo, $prepare)
-        } catch {
-            throw "Failed to clone ai_rules_1c from '$SourceRepo' into '$prepare': $($_.Exception.Message). Existing caches are preserved; resolve the source/transport failure and repeat the original operation."
-        }
-        try {
-            Move-Item -LiteralPath $prepare -Destination $mirror -ErrorAction Stop
-        } catch {
-            # A concurrent preparation published the mirror first.
-            if (-not (Test-AiRules1cBareMirror -Root $mirror)) {
-                throw "AI_RULES_CACHE_PUBLISH_FAILED: cannot publish '$prepare' as '$mirror': $($_.Exception.Message). Repeat the original operation."
-            }
-            Remove-Item -LiteralPath $prepare -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-
+    $mirror = Initialize-ItlGitSourceCacheMirror -RepoCache $RepoCache -SourceRepo $SourceRepo -Label 'ai_rules_1c' -CodePrefix 'AI_RULES'
     $tagCommit = Get-AiRules1cMirrorTagCommit -Mirror $mirror -Tag $Tag
     if ($tagCommit -cne $Commit) {
         # Fetch only when the exact pinned tag is absent or differs locally;
         # an existing immutable commit needs no network access.
         try {
-            Invoke-AiRules1cFetchWithRetry -Root $mirror -Arguments @('fetch', '--quiet', $SourceRepo, '+refs/heads/*:refs/heads/*', '+refs/tags/*:refs/tags/*')
+            Invoke-ItlGitFetchWithRetry -Root $mirror -Arguments @('fetch', '--quiet', $SourceRepo, '+refs/heads/*:refs/heads/*', '+refs/tags/*:refs/tags/*')
         } catch {
             throw "Failed to update ai_rules_1c in '$mirror': $($_.Exception.Message). Preserve the cache and repeat the original operation after resolving the fetch failure."
         }
@@ -5789,11 +5801,13 @@ function Resolve-AiRules1cMirror {
     return $mirror
 }
 
-function Invoke-AiRules1cCacheRetention {
+function Invoke-ItlGitSourceCacheRetention {
     param(
         [Parameter(Mandatory = $true)][string]$CacheRoot,
         [string]$KeepRoot = '',
-        [int]$UnusedDays = 30
+        [int]$UnusedDays = 30,
+        # The most recently used exact checkouts that survive any idle time.
+        [int]$KeepRecent = 0
     )
 
     $nowUtc = [DateTime]::UtcNow
@@ -5803,10 +5817,14 @@ function Invoke-AiRules1cCacheRetention {
         $children = @(Get-ChildItem -LiteralPath $repoCache.FullName -Directory -Force -ErrorAction SilentlyContinue |
             Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $_.FullName.TrimEnd('\', '/') -ine $keep })
         $expired = [System.Collections.Generic.List[string]]::new()
+        $recent = @($children | Where-Object { $_.Name -match '^[0-9a-f]{12}$' } |
+            Sort-Object { Get-ItlGitSourceCacheLastUsedUtc -Root $_.FullName } -Descending |
+            Select-Object -First ([Math]::Max(0, $KeepRecent)) | ForEach-Object { $_.FullName })
         foreach ($child in $children) {
-            if ($child.Name -match '^[0-9a-f]{12}$' -and (Get-AiRules1cCacheLastUsedUtc -Root $child.FullName) -lt $nowUtc.AddDays(-$UnusedDays)) {
+            if ($child.Name -match '^[0-9a-f]{12}$' -and $recent -notcontains $child.FullName -and
+                (Get-ItlGitSourceCacheLastUsedUtc -Root $child.FullName) -lt $nowUtc.AddDays(-$UnusedDays)) {
                 $expired.Add($child.FullName) | Out-Null
-            } elseif ($child.Name -match '^prepare-[0-9a-f]{12}$' -and (Get-AiRules1cCacheLastUsedUtc -Root $child.FullName) -lt $nowUtc.AddDays(-1)) {
+            } elseif ($child.Name -match '^prepare-[0-9a-f]{12}$' -and (Get-ItlGitSourceCacheLastUsedUtc -Root $child.FullName) -lt $nowUtc.AddDays(-1)) {
                 $expired.Add($child.FullName) | Out-Null
             }
         }
@@ -5820,7 +5838,7 @@ function Invoke-AiRules1cCacheRetention {
         $remaining = @(Get-ChildItem -LiteralPath $repoCache.FullName -Directory -Force -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match '^(?:[0-9a-f]{12}|(?:prepare|invalid)-[0-9a-f]{12})$' })
         $repoKept = $keep -and $keep.StartsWith(($repoCache.FullName.TrimEnd('\', '/') + '\'), [StringComparison]::OrdinalIgnoreCase)
-        if (-not $repoKept -and $remaining.Count -eq 0 -and (Test-AiRules1cBareMirror -Root $mirror) -and
+        if (-not $repoKept -and $remaining.Count -eq 0 -and (Test-ItlGitSourceCacheMirror -Root $mirror) -and
             (Get-Item -LiteralPath $mirror -Force).LastWriteTimeUtc -lt $nowUtc.AddDays(-$UnusedDays)) {
             try {
                 Remove-Item -LiteralPath $mirror -Recurse -Force -ErrorAction Stop
@@ -5872,8 +5890,87 @@ function Remove-AiRules1cLegacyTempCaches {
 
 function Invoke-AiRules1cCacheMaintenance {
     param([string]$CacheRoot, [string]$KeepRoot)
-    try { Invoke-AiRules1cCacheRetention -CacheRoot $CacheRoot -KeepRoot $KeepRoot } catch { }
+    try { Invoke-ItlGitSourceCacheRetention -CacheRoot $CacheRoot -KeepRoot $KeepRoot } catch { }
     try { Remove-AiRules1cLegacyTempCaches -TempRoot (Get-Agent1cTempRoot) } catch { }
+}
+
+function Publish-ItlGitSourceCacheCheckout {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoCache,
+        [Parameter(Mandatory = $true)][string]$Mirror,
+        [Parameter(Mandatory = $true)][string]$Repo,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [Parameter(Mandatory = $true)][string]$RefLabel,
+        [Parameter(Mandatory = $true)][string]$CodePrefix
+    )
+
+    # Returns a verified clean checkout of the exact commit: the published
+    # <repo16>\<commit12> copy, or a private preparation while a reader still
+    # holds a damaged published copy.
+    $target = Join-Path $RepoCache $Commit.Substring(0, 12)
+    $targetState = $null
+    if (Test-Path -LiteralPath $target) {
+        $targetState = Get-ItlGitSourceCacheState -Root $target -Repo $Repo -ExpectedCommit $Commit
+        if ($targetState.owned -and (Test-Path -LiteralPath (Join-Path $target '.git/index.lock'))) {
+            throw "$($CodePrefix)_CACHE_BUSY: preserve '$target' and its Git lock. Wait for the owning Git operation to finish, then repeat the original operation. $(Get-GitIndexLockRecoveryHint -Root $target)"
+        }
+        if ($targetState.valid) {
+            Set-ItlGitSourceCacheLastUsed -Root $target
+            return $target
+        }
+        Write-Warning "$($CodePrefix)_CACHE_INVALID path='$target' expectedCommit='$Commit' state='$($targetState.reason)'. Preparing a verified source before installation."
+    }
+
+    # Prepare beside the published copy. Failure/interruption leaves both the
+    # partial preparation and any damaged copy intact for diagnosis.
+    $prepare = Join-Path $RepoCache ('prepare-' + (New-ItlGitSourceCacheId))
+    try {
+        Invoke-GitAt -Root $RepoCache -Arguments @("-c", "core.longpaths=true", "clone", "--quiet", "--no-checkout", "--config", "core.longpaths=true", $Mirror, $prepare)
+        Invoke-GitAt -Root $prepare -Arguments @("remote", "set-url", "origin", $Repo)
+        Invoke-GitAt -Root $prepare -Arguments @("-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", $Commit)
+    } catch {
+        throw "Failed to prepare $Label '$RefLabel' in '$prepare': $($_.Exception.Message). Previous cache '$target' is preserved; resolve the failure and repeat the original operation."
+    }
+    $ready = Get-ItlGitSourceCacheState -Root $prepare -Repo $Repo -ExpectedCommit $Commit
+    if (-not $ready.valid) {
+        throw "$($CodePrefix)_SOURCE_NOT_READY: path='$prepare' expectedCommit='$Commit' state='$($ready.reason)'. Preserve this diagnostic copy, resolve the source integrity failure and repeat the original operation; this source was not used."
+    }
+    Set-ItlGitSourceCacheLastUsed -Root $prepare
+
+    $root = $prepare
+    $diagnostic = $target
+    if ($null -ne $targetState -and $targetState.owned) {
+        # Recheck physical ownership before the only move of a damaged copy.
+        $beforeMove = Get-ItlGitSourceCacheState -Root $target -Repo $Repo
+        if ($beforeMove.owned) {
+            $candidate = Join-Path $RepoCache ('invalid-' + (New-ItlGitSourceCacheId))
+            try {
+                Move-Item -LiteralPath $target -Destination $candidate -ErrorAction Stop
+                $diagnostic = $candidate
+            } catch {
+                # A reader still holds the damaged copy; this invocation uses
+                # its verified private preparation instead.
+            }
+        }
+    }
+    if (-not (Test-Path -LiteralPath $target)) {
+        try {
+            Move-Item -LiteralPath $prepare -Destination $target -ErrorAction Stop
+            $root = $target
+        } catch {
+            # A concurrent preparation may have published the same commit first.
+            if ((Get-ItlGitSourceCacheState -Root $target -Repo $Repo -ExpectedCommit $Commit).valid) {
+                Remove-Item -LiteralPath $prepare -Recurse -Force -ErrorAction SilentlyContinue
+                $root = $target
+                Set-ItlGitSourceCacheLastUsed -Root $target
+            }
+        }
+    }
+    if ($null -ne $targetState) {
+        Write-Warning "$($CodePrefix)_CACHE_RECOVERED path='$target' expectedCommit='$Commit' result='verified source ready' source='$root' diagnostic='$diagnostic'. Unknown directories remain untouched."
+    }
+    return $root
 }
 
 function Sync-AiRules1cCheckout {
@@ -5903,7 +6000,7 @@ function Sync-AiRules1cCheckout {
             throw "ITL_AI_RULES_SOURCE_PATH is not a Git checkout: $sourceRoot"
         }
         $sourceOrigin = (Get-GitOutputAt -Root $sourceRoot -Arguments @("remote", "get-url", "origin")).Trim()
-        if ((Get-AiRules1cRepositoryIdentity -Repo $sourceOrigin) -ne (Get-AiRules1cRepositoryIdentity -Repo $repo)) {
+        if ((Get-ItlGitRepositoryIdentity -Repo $sourceOrigin) -ne (Get-ItlGitRepositoryIdentity -Repo $repo)) {
             throw "ITL_AI_RULES_SOURCE_PATH origin does not match configured ai_rules_1c repo: source='$sourceOrigin' configured='$repo'."
         }
         if (@(Get-GitPathListAt -Root $sourceRoot -Arguments @("status", "--porcelain=v1", "-z", "--untracked-files=all")).Count -gt 0) {
@@ -5915,78 +6012,16 @@ function Sync-AiRules1cCheckout {
     # One bare mirror per repository and one immutable checkout per exact
     # commit, shared by every project and worktree pinned to that commit.
     $cacheRoot = Resolve-Agent1cFullPath -Path (Get-AiRules1cCacheRoot)
-    $repoKey = (Get-StringSha256 -Value (Get-AiRules1cRepositoryIdentity -Repo $repo)).Substring(0, 16)
+    $repoKey = (Get-StringSha256 -Value (Get-ItlGitRepositoryIdentity -Repo $repo)).Substring(0, 16)
     $repoCache = Join-Path $cacheRoot $repoKey
     try {
         [void][IO.Directory]::CreateDirectory($repoCache)
     } catch {
         throw "AI_RULES_CACHE_UNAVAILABLE: cannot create '$repoCache': $($_.Exception.Message). Make the ITL artifact cache writable or set ITL_ARTIFACT_CACHE_ROOT, then repeat the original operation."
     }
-    $target = Join-Path $repoCache $lockedCommit.Substring(0, 12)
     $mirror = Resolve-AiRules1cMirror -RepoCache $repoCache -SourceRepo $checkoutRepo -Tag $configuredRef -Commit $lockedCommit
 
-    $targetState = $null
-    if (Test-Path -LiteralPath $target) {
-        $targetState = Get-AiRules1cCacheState -Root $target -Repo $repo -ExpectedCommit $lockedCommit
-        if ($targetState.owned -and (Test-Path -LiteralPath (Join-Path $target '.git/index.lock'))) {
-            throw "AI_RULES_CACHE_BUSY: preserve '$target' and its Git lock. Wait for the owning Git operation to finish, then repeat the original operation. $(Get-GitIndexLockRecoveryHint -Root $target)"
-        }
-        if ($targetState.valid) {
-            Set-AiRules1cCacheLastUsed -Root $target
-            Invoke-AiRules1cCacheMaintenance -CacheRoot $cacheRoot -KeepRoot $target
-            return [pscustomobject]@{ root = $target; repo = $repo; ref = $configuredRef; commit = $lockedCommit }
-        }
-        Write-Warning "AI_RULES_CACHE_INVALID path='$target' expectedCommit='$lockedCommit' state='$($targetState.reason)'. Preparing a verified source before installation."
-    }
-
-    # Prepare beside the published copy. Failure/interruption leaves both the
-    # partial preparation and any damaged copy intact for diagnosis.
-    $prepare = Join-Path $repoCache ('prepare-' + (New-AiRules1cCacheId))
-    try {
-        Invoke-GitAt -Root $repoCache -Arguments @("-c", "core.longpaths=true", "clone", "--quiet", "--no-checkout", "--config", "core.longpaths=true", $mirror, $prepare)
-        Invoke-GitAt -Root $prepare -Arguments @("remote", "set-url", "origin", $repo)
-        Invoke-GitAt -Root $prepare -Arguments @("-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", $lockedCommit)
-    } catch {
-        throw "Failed to prepare ai_rules_1c '$configuredRef' in '$prepare': $($_.Exception.Message). Previous cache '$target' is preserved; resolve the failure and repeat the original operation."
-    }
-    $ready = Get-AiRules1cCacheState -Root $prepare -Repo $repo -ExpectedCommit $lockedCommit
-    if (-not $ready.valid) {
-        throw "AI_RULES_SOURCE_NOT_READY: path='$prepare' expectedCommit='$lockedCommit' state='$($ready.reason)'. Preserve this diagnostic copy, resolve the source integrity failure and repeat the original operation; this source was not passed to the installer."
-    }
-    Set-AiRules1cCacheLastUsed -Root $prepare
-
-    $root = $prepare
-    $diagnostic = $target
-    if ($null -ne $targetState -and $targetState.owned) {
-        # Recheck physical ownership before the only move of a damaged copy.
-        $beforeMove = Get-AiRules1cCacheState -Root $target -Repo $repo
-        if ($beforeMove.owned) {
-            $candidate = Join-Path $repoCache ('invalid-' + (New-AiRules1cCacheId))
-            try {
-                Move-Item -LiteralPath $target -Destination $candidate -ErrorAction Stop
-                $diagnostic = $candidate
-            } catch {
-                # A reader still holds the damaged copy; this invocation uses
-                # its verified private preparation instead.
-            }
-        }
-    }
-    if (-not (Test-Path -LiteralPath $target)) {
-        try {
-            Move-Item -LiteralPath $prepare -Destination $target -ErrorAction Stop
-            $root = $target
-        } catch {
-            # A concurrent preparation may have published the same commit first.
-            if ((Get-AiRules1cCacheState -Root $target -Repo $repo -ExpectedCommit $lockedCommit).valid) {
-                Remove-Item -LiteralPath $prepare -Recurse -Force -ErrorAction SilentlyContinue
-                $root = $target
-                Set-AiRules1cCacheLastUsed -Root $target
-            }
-        }
-    }
-    if ($null -ne $targetState) {
-        Write-Warning "AI_RULES_CACHE_RECOVERED path='$target' expectedCommit='$lockedCommit' result='verified source ready' source='$root' diagnostic='$diagnostic'. Unknown directories remain untouched."
-    }
+    $root = Publish-ItlGitSourceCacheCheckout -RepoCache $repoCache -Mirror $mirror -Repo $repo -Commit $lockedCommit -Label 'ai_rules_1c' -RefLabel $configuredRef -CodePrefix 'AI_RULES'
     Invoke-AiRules1cCacheMaintenance -CacheRoot $cacheRoot -KeepRoot $root
 
     return [pscustomobject]@{
@@ -6592,8 +6627,39 @@ function Get-WorkflowPackageRef {
     return $ref
 }
 
-function Get-WorkflowPackageTempRoot {
+function Get-WorkflowPackageLegacyTempRoot {
+    # Former shared checkout. Storage Sense deleted its tracked files while a
+    # rollout copied from it, so only legacy cleanup still reads this path.
     return (Resolve-Agent1cFullPath -Path (Join-Path (Join-Path (Get-Agent1cTempRoot) "1c-agent-workflow") "workflow-package"))
+}
+
+function Get-WorkflowPackageCacheRoot {
+    return (Resolve-Agent1cFullPath -Path (Join-Path (Get-ItlSharedArtifactCacheRoot) 'workflow-package'))
+}
+
+function Get-WorkflowPackageCacheRepoRoot {
+    param([Parameter(Mandatory = $true)][string]$Repo)
+    $repoKey = (Get-StringSha256 -Value (Get-ItlGitRepositoryIdentity -Repo $Repo)).Substring(0, 16)
+    return (Join-Path (Get-WorkflowPackageCacheRoot) $repoKey)
+}
+
+function Test-WorkflowPackageCacheCheckoutPath {
+    param([string]$Root)
+
+    # Only an entry the cache owner generated: <cache>\<repo16>\<commit12|prepare-id>.
+    if ([string]::IsNullOrWhiteSpace($Root)) { return $false }
+    $full = (Resolve-Agent1cFullPath -Path $Root).TrimEnd('\', '/')
+    $cache = (Get-WorkflowPackageCacheRoot).TrimEnd('\', '/')
+    if (-not $full.StartsWith(($cache + '\'), [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    $parts = $full.Substring($cache.Length + 1).Split('\')
+    return ($parts.Count -eq 2 -and $parts[0] -match '^[0-9a-f]{16}$' -and $parts[1] -match '^(?:[0-9a-f]{12}|prepare-[0-9a-f]{12})$')
+}
+
+function Set-WorkflowPackageCacheUse {
+    param([string]$Root)
+    # Retention spares checkouts that a rollout or recovery still reads; a
+    # user-owned ITL_WORKFLOW_SOURCE_PATH is never marked.
+    if (Test-WorkflowPackageCacheCheckoutPath -Root $Root) { Set-ItlGitSourceCacheLastUsed -Root $Root }
 }
 
 function Test-GitRefExistsAt {
@@ -6611,6 +6677,93 @@ function Test-GitRefExistsAt {
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
+}
+
+function Get-GitCommitAt {
+    param([string]$Root, [string]$Revision)
+
+    # Empty when the revision does not name a commit in this repository.
+    $resolvedRoot = Resolve-Agent1cFullPath -Path $Root
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = @(& git -C $resolvedRoot rev-parse --verify --quiet ($Revision + '^{commit}'))
+        if ($LASTEXITCODE -ne 0 -or $output.Count -ne 1 -or [string]$output[0] -notmatch '^[a-f0-9]{40}$') { return '' }
+        return [string]$output[0]
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
+function Resolve-WorkflowPackageCacheCheckout {
+    param(
+        [Parameter(Mandatory = $true)][string]$Repo,
+        [string]$Ref = '',
+        [string]$Commit = ''
+    )
+
+    # One bare mirror per repository and one immutable checkout per exact
+    # commit under the ITL artifact cache: a rollout reads stable bytes, and
+    # Storage Sense never ages the package out of TEMP mid-rollout.
+    $repoCache = Get-WorkflowPackageCacheRepoRoot -Repo $Repo
+    try {
+        [void][IO.Directory]::CreateDirectory($repoCache)
+    } catch {
+        throw "WORKFLOW_PACKAGE_CACHE_UNAVAILABLE: cannot create '$repoCache': $($_.Exception.Message). Make the ITL artifact cache writable or set ITL_ARTIFACT_CACHE_ROOT, then repeat the original operation."
+    }
+    $label = 'ITL workflow package'
+    $mirror = Initialize-ItlGitSourceCacheMirror -RepoCache $repoCache -SourceRepo $Repo -Label $label -CodePrefix 'WORKFLOW_PACKAGE'
+    $fetch = {
+        try {
+            Invoke-ItlGitFetchWithRetry -Root $mirror -Label $label -Arguments @('fetch', '--quiet', '--prune', $Repo, '+refs/heads/*:refs/heads/*', '+refs/tags/*:refs/tags/*')
+        } catch {
+            throw "Failed to update the $label mirror '$mirror': $($_.Exception.Message). The cache is preserved; resolve the fetch failure and repeat the original operation."
+        }
+    }
+    if ($Commit) {
+        # A recorded exact source needs no network access while its commit is local.
+        if ($Commit -notmatch '^[a-f0-9]{40}$') { throw "WORKFLOW_PACKAGE_COMMIT_INVALID: '$Commit' is not an exact commit." }
+        if (-not (Get-GitCommitAt -Root $mirror -Revision $Commit)) { & $fetch }
+        $resolved = Get-GitCommitAt -Root $mirror -Revision $Commit
+        if ($resolved -cne $Commit) {
+            throw "WORKFLOW_PACKAGE_COMMIT_UNAVAILABLE: commit '$Commit' is not available from '$Repo'. Restore access to that repository and repeat the original operation."
+        }
+        $refLabel = $Commit
+    } else {
+        Write-Host "Updating ITL workflow package mirror: $mirror"
+        & $fetch
+        # A branch wins over a same-named tag, as the former checkout did.
+        $resolved = if (Test-GitRefExistsAt -Root $mirror -Ref "refs/heads/$Ref") { Get-GitCommitAt -Root $mirror -Revision "refs/heads/$Ref" } else { Get-GitCommitAt -Root $mirror -Revision $Ref }
+        if (-not $resolved) { throw "Configured ITL workflow ref was not found in '$Repo': $Ref" }
+        $refLabel = $Ref
+    }
+    $root = Publish-ItlGitSourceCacheCheckout -RepoCache $repoCache -Mirror $mirror -Repo $Repo -Commit $resolved -Label $label -RefLabel $refLabel -CodePrefix 'WORKFLOW_PACKAGE'
+    # Removed checkouts are rebuilt from the mirror on demand, so retention can
+    # stay tight; maintenance failure never blocks the update.
+    try { Invoke-ItlGitSourceCacheRetention -CacheRoot (Get-WorkflowPackageCacheRoot) -KeepRoot $root -UnusedDays 1 -KeepRecent 3 } catch { }
+    try { Remove-WorkflowPackageLegacyTempCache } catch { }
+    return $root
+}
+
+function Remove-WorkflowPackageLegacyTempCache {
+    param([int]$IdleDays = 7)
+
+    # Only the exact former checkout, only when it is a physical Git checkout
+    # whose working tree and Git state have been idle, so a pending update that
+    # still records it keeps its source for a week.
+    $root = Get-WorkflowPackageLegacyTempRoot
+    $item = Get-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or -not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+    $gitDir = Join-Path $root '.git'
+    $gitItem = Get-Item -LiteralPath $gitDir -Force -ErrorAction SilentlyContinue
+    if ($null -eq $gitItem -or -not $gitItem.PSIsContainer -or ($gitItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+    $cutoffUtc = [DateTime]::UtcNow.AddDays(-$IdleDays)
+    $recent = @(foreach ($path in @($root, $gitDir, (Join-Path $gitDir 'index'), (Join-Path $gitDir 'HEAD'), (Join-Path $gitDir 'FETCH_HEAD'))) {
+        try { (Get-Item -LiteralPath $path -Force -ErrorAction Stop).LastWriteTimeUtc } catch { }
+    }) | Where-Object { $_ -gt $cutoffUtc }
+    if (@($recent).Count) { return }
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop
+    Write-Host "Removed the idle legacy ITL workflow package TEMP checkout '$root'."
 }
 
 function Assert-WorkflowPackageSourceRoot {
@@ -6650,26 +6803,7 @@ function Resolve-WorkflowPackageSource {
         }
         $sourceKind = "path"
     } else {
-        $root = Get-WorkflowPackageTempRoot
-        $parent = Split-Path -Parent $root
-        New-Item -ItemType Directory -Force -Path $parent | Out-Null
-
-        if (-not (Test-Path -LiteralPath $root -PathType Container -ErrorAction SilentlyContinue)) {
-            Write-Host "Cloning ITL workflow package: $repo"
-            Invoke-GitAt -Root $parent -Arguments @("clone", $repo, $root)
-        } elseif (-not (Test-Path -LiteralPath (Join-Path $root ".git") -PathType Container -ErrorAction SilentlyContinue)) {
-            throw "Managed ITL workflow package checkout exists but is not a Git repository: $root. Remove it or set ITL_WORKFLOW_SOURCE_PATH."
-        }
-
-        Write-Host "Updating ITL workflow package checkout: $root"
-        Invoke-GitAt -Root $root -Arguments @("fetch", "--all", "--tags", "--prune")
-        # This checkout is workflow-owned; force restores tracked damage in the shared cached copy.
-        $remoteRef = "refs/remotes/origin/$ref"
-        if (Test-GitRefExistsAt -Root $root -Ref $remoteRef) {
-            Invoke-GitAt -Root $root -Arguments @("checkout", "--force", "-B", $ref, "origin/$ref")
-        } else {
-            Invoke-GitAt -Root $root -Arguments @("checkout", "--force", "--detach", $ref)
-        }
+        $root = Resolve-WorkflowPackageCacheCheckout -Repo $repo -Ref $ref
     }
 
     Assert-WorkflowPackageSourceRoot -SourceRoot $root
@@ -7499,6 +7633,77 @@ function Copy-WorkflowManagedFile {
 
     Invoke-WorkflowManagedPathReplace -SourcePath $sourcePath -TargetPath $targetPath
     Write-Host "Updated workflow file: $RelativePath"
+}
+
+function Copy-WorkflowPackageManagedContent {
+    param([Parameter(Mandatory = $true)][object]$Source)
+
+    # The only package copy used by master and development worktrees. A thrown
+    # error leaves the caller's copy rollback to restore the pre-copy paths.
+    foreach ($relativePath in @(Get-WorkflowPackageCopyDirectoryPaths)) {
+        Copy-WorkflowManagedDirectory -SourceRoot ([string]$Source.root) -RelativePath $relativePath
+    }
+    foreach ($relativePath in @(Get-WorkflowPackageCopyFilePaths)) {
+        Copy-WorkflowManagedFile -SourceRoot ([string]$Source.root) -RelativePath $relativePath
+    }
+    Remove-LegacyWorkflowManagedFiles
+    Assert-WorkflowPackageCopyComplete -Source $Source
+}
+
+function Get-WorkflowPackageContentInventory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Relative path -> SHA-256 of the package content under one managed path,
+    # with the same Python-cache exclusion as the package copy.
+    $inventory = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::OrdinalIgnoreCase)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return $inventory }
+    $files = if ($item.PSIsContainer) { @(Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction Stop) } else { @($item) }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($file in $files) {
+            $relative = if ($item.PSIsContainer) { $file.FullName.Substring($item.FullName.TrimEnd('\').Length).TrimStart('\').Replace('\', '/') } else { '' }
+            if ($relative -and -not (Test-WorkflowPackageContentPath -RelativePath $relative)) { continue }
+            $stream = [IO.File]::OpenRead($file.FullName)
+            try { $inventory[$relative] = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') } finally { $stream.Dispose() }
+        }
+    } finally {
+        $sha.Dispose()
+    }
+    return $inventory
+}
+
+function Assert-WorkflowPackageCopyComplete {
+    param([Parameter(Mandatory = $true)][object]$Source)
+
+    # copy-complete is recorded only for a complete package. A file missing
+    # from the source is missing from the copy too, so an exact cached source
+    # must still be a clean complete checkout of its commit; the copied managed
+    # paths must then equal the source byte for byte.
+    $root = [string]$Source.root
+    if (Test-WorkflowPackageCacheCheckoutPath -Root $root) {
+        $state = Get-ItlGitSourceCacheState -Root $root -Repo ([string]$Source.repo) -ExpectedCommit ([string]$Source.commit)
+        if (-not $state.valid) {
+            throw "WORKFLOW_PACKAGE_SOURCE_INCOMPLETE: cached source '$root' of commit '$($Source.commit)' is no longer a clean complete checkout ($($state.reason)). The copy was not accepted and the managed paths are restored; repeat the same update-workflow, which rebuilds the cached source."
+        }
+    }
+    $differences = [System.Collections.Generic.List[string]]::new()
+    foreach ($relativePath in @(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths)) {
+        $expected = Get-WorkflowPackageContentInventory -Path (Join-Path $root $relativePath)
+        $actual = Get-WorkflowPackageContentInventory -Path (Join-Path $script:ProjectRoot $relativePath)
+        $prefix = $relativePath.Replace('\', '/')
+        foreach ($key in $expected.Keys) {
+            $name = if ($key) { "$prefix/$key" } else { $prefix }
+            if (-not $actual.ContainsKey($key)) { $differences.Add("missing $name") }
+            elseif ($actual[$key] -cne $expected[$key]) { $differences.Add("changed $name") }
+        }
+        foreach ($key in $actual.Keys) {
+            if (-not $expected.ContainsKey($key)) { $differences.Add("unexpected $(if ($key) { "$prefix/$key" } else { $prefix })") }
+        }
+    }
+    if ($differences.Count) {
+        throw "WORKFLOW_PACKAGE_COPY_INCOMPLETE: $($differences.Count) managed file(s) differ from source '$root': $(@($differences | Select-Object -First 5) -join '; '). The copy was not accepted and the managed paths are restored; repeat the same update-workflow."
+    }
 }
 
 function Get-LegacyWorkflowManagedFileHashes {
@@ -10449,13 +10654,7 @@ function Invoke-WorkflowDevelopmentBranchUpdateCore {
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase copying
             Write-RunStepMarker 'workflow-update.branch-copy'
             try {
-                foreach ($relative in @(Get-WorkflowPackageCopyDirectoryPaths)) {
-                    Copy-WorkflowManagedDirectory -SourceRoot ([string]$Source.root) -RelativePath $relative
-                }
-                foreach ($relative in @(Get-WorkflowPackageCopyFilePaths)) {
-                    Copy-WorkflowManagedFile -SourceRoot ([string]$Source.root) -RelativePath $relative
-                }
-                Remove-LegacyWorkflowManagedFiles
+                Copy-WorkflowPackageManagedContent -Source $Source
             } finally { Write-RunStepMarker 'workflow-update.branch-copy' -End }
             Update-WorkflowPackageLockEntry -Source $Source | Out-Null
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase copy-complete
@@ -10546,8 +10745,8 @@ function Assert-WorkflowUpdateRulesRootReady {
     $installed = Get-DependencyLockEntry -Name 'aiRules1c'
     if ([string](Get-ConfigValueFromObject -Object $installed -Path 'commit' -Default '') -ceq [string]$target.commit) { return }
     $currentRepo = [string](Get-ConfigValue -Path 'aiRules.repo' -Default 'https://github.com/comol/ai_rules_1c.git')
-    $currentIdentity = Get-AiRules1cRepositoryIdentity -Repo $currentRepo
-    $targetIdentity = Get-AiRules1cRepositoryIdentity -Repo ([string]$target.repo)
+    $currentIdentity = Get-ItlGitRepositoryIdentity -Repo $currentRepo
+    $targetIdentity = Get-ItlGitRepositoryIdentity -Repo ([string]$target.repo)
     if ($currentIdentity -notin @($targetIdentity, 'https://github.com/comol/ai_rules_1c') -and -not $target.explicitWorkflowAdoption) { return }
 
     $manifestPath = Join-Path $script:ProjectRoot '.ai-rules.json'
@@ -10951,6 +11150,7 @@ function Invoke-WorkflowDevelopmentBranchChild {
     }
     $source = [pscustomobject]@{ root = [string]$request.source.root; repo = [string]$request.source.repo; ref = [string]$request.source.ref
         commit = [string]$request.source.commit; source = [string]$request.source.source; rolloutScope = $request.source.rolloutScope }
+    Set-WorkflowPackageCacheUse -Root ([string]$source.root)
     Set-RunStage -Stage 'workflow-update.branch' -Detail "Updating development worktree '$($request.branch)' with workflow candidate $($source.commit)."
     $outcome = @(Invoke-WithRunStatusHeartbeat {
         Invoke-WorkflowUpdateRunSharedInputs {
@@ -11119,6 +11319,17 @@ function Assert-WorkflowUpdateRecordedSource {
 
     $root = [string]$Receipt.sourceRoot
     $commit = [string]$Receipt.sourceCommit
+    $repo = [string](Get-StateValue -State $Receipt -Name 'sourceRepo' -Default '')
+    if ($commit -match '^[a-f0-9]{40}$' -and $repo -and (Test-WorkflowPackageCacheCheckoutPath -Root $root) -and
+        [string]::Equals((Resolve-Agent1cFullPath -Path $root), (Join-Path (Get-WorkflowPackageCacheRepoRoot -Repo $repo) $commit.Substring(0, 12)), [StringComparison]::OrdinalIgnoreCase)) {
+        # Retention may have removed, or damage replaced, the recorded exact
+        # cached source; rebuild that same path from the mirror.
+        $rebuilt = Resolve-WorkflowPackageCacheCheckout -Repo $repo -Commit $commit
+        if (-not [string]::Equals($rebuilt, $root, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "WORKFLOW_UPDATE_SOURCE_BUSY: the recorded cached source '$root' is still held by another reader; a verified copy is at '$rebuilt'. Close that reader and repeat update-workflow."
+        }
+    }
+    Set-WorkflowPackageCacheUse -Root $root
     if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) {
         throw "WORKFLOW_UPDATE_SOURCE_MISSING: pending update requires its recorded source at '$root'. Restore that exact source before repeating update-workflow."
     }
@@ -11532,8 +11743,6 @@ function Update-WorkflowPackage {
             if (-not $SkipAiRules) { Assert-WorkflowUpdateRulesRootReady -SourceRoot ([string]$source.root) }
 
             Set-RunStage -Stage "workflow-update.copy" -Detail "Copying the managed workflow package files."
-            $copyDirectoryPaths = @(Get-WorkflowPackageCopyDirectoryPaths)
-            $copyFilePaths = @(Get-WorkflowPackageCopyFilePaths)
             $candidateRulesPaths = @(Get-WorkflowUpdateCandidateRulesPaths -SourceRoot $source.root)
             $copySnapshot = New-WorkflowUpdateRollbackSnapshot `
                 -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot $source.root -AiRulesPathsAfter $candidateRulesPaths) `
@@ -11556,13 +11765,7 @@ function Update-WorkflowPackage {
             $rollbackSucceeded = $false
             try {
                 Save-WorkflowUpdateSnapshotReceipt -Snapshot $copySnapshot -Source $source -Phase copying
-                foreach ($relativePath in $copyDirectoryPaths) {
-                    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath $relativePath
-                }
-                foreach ($relativePath in $copyFilePaths) {
-                    Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
-                }
-                Remove-LegacyWorkflowManagedFiles
+                Copy-WorkflowPackageManagedContent -Source $source
                 Update-WorkflowPackageLockEntry -Source $source | Out-Null
                 Save-WorkflowUpdateSnapshotReceipt -Snapshot $copySnapshot -Source $source -Phase copy-complete
                 $copyCompleted = $true
@@ -11744,11 +11947,11 @@ function Update-UserRules {
     $marker = "## 1C Project Lifecycle"
     $templateBlock = (Read-Utf8Text -Path $templatePath).Trim()
     if (-not (Test-ProductDocsMcpAllowed)) {
-        $productDocsRulePattern = '(?m)^For PM5 product logic,.*$'
+        $productDocsRulePattern = '(?m)^For product logic,.*$'
         if (-not [regex]::IsMatch($templateBlock, $productDocsRulePattern)) {
-            throw "PM5 product-docs rule was not found in USER-RULES overlay; refusing to install PM5 BookStack routing into a PM4 project."
+            throw "Product-docs rule was not found in USER-RULES overlay; refusing to install BookStack routing into a project without product documentation."
         }
-        $pm4Rule = 'For PM4 projects, PM5 product documentation MCP is disabled. Before answering, exploring, planning, proposing, or changing product logic, technical or implementation architecture, internal subsystem design, technical decisions/constraints/rationale, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
+        $pm4Rule = 'This project has no product documentation MCP (its registry productDocs role is disabled, or it is a legacy PM4 project). Before answering, exploring, planning, proposing, or changing product logic, technical or implementation architecture, internal subsystem design, technical decisions/constraints/rationale, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
         $templateBlock = [regex]::Replace($templateBlock, $productDocsRulePattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $pm4Rule }, 1)
     }
     $block = ($startMarker + [Environment]::NewLine + $templateBlock + [Environment]::NewLine + $endMarker)
@@ -12582,7 +12785,30 @@ function Write-DevBranchVerificationRunUserReport {
         $reportPath = [string](Get-StateValue -State $State -Name 'lastVerifiedReportPath' -Default '')
         if ($reportPath) { Add-RunUserReportLine -Lines $lines -Label 'Отчёт проверки' -Value $reportPath }
     }
+    $timing = Get-ItlCheckTimingSnapshot
+    $duration = Format-DevBranchCheckDurationText -Timing $timing
+    if ($duration) { Add-RunUserReportLine -Lines $lines -Label 'Длительность' -Value $duration }
+    if ($null -ne $timing -and $timing.selectionReason) { Add-RunUserReportLine -Lines $lines -Label 'Выбор наборов Vanessa' -Value $timing.selectionReason }
     Write-AndSetRunUserReport -Lines $lines -PlatformPreparation $PlatformPreparation
+}
+
+function Format-DevBranchCheckDurationText {
+    param([AllowNull()][object]$Timing)
+    if ($null -eq $Timing) { return '' }
+    $format = {
+        param($Milliseconds)
+        $seconds = [int][Math]::Round(([double]$Milliseconds) / 1000)
+        if ($seconds -lt 60) { "$seconds с" } else { "$([int][Math]::Floor($seconds / 60)) мин $($seconds % 60) с" }
+    }
+    $parts = @()
+    foreach ($item in @(@('загрузка', 'platformMs'), @('YAxUnit', 'yaxunitMs'), @('Vanessa', 'vanessaMs'))) {
+        $value = $Timing.PSObject.Properties[$item[1]].Value
+        if ($null -ne $value) { $parts += "$($item[0]) $(& $format $value)" }
+    }
+    $text = & $format $Timing.totalMs
+    if ($parts.Count -gt 0) { $text += " ($($parts -join ', '))" }
+    if ($Timing.selectionMode) { $text += "; наборы Vanessa: $($Timing.selectionMode)" }
+    return $text
 }
 
 function Write-AndSetRunUserReport {
@@ -21869,6 +22095,7 @@ function Show-WorkflowStatus {
     if ($verification.reason) {
         Write-Host "Last verification reason: $($verification.reason)"
     }
+    Write-ItlCheckHistoryStatusLines -State $state
     Write-Host "Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
     Write-Host "Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
     $override = Get-StateValue -State $state -Name "lastUnverifiedOverrideAt" -Default ""
@@ -21901,6 +22128,7 @@ function Invoke-DevBranchCheck {
     $repairPhase = 'preflight'
     $canonicalRepair = $false
     $verification = $null
+    Start-ItlCheckTiming
     try {
     Assert-ItlVerificationRepairScope -Trigger $trigger
     # Reject an unknown diagnostic module before any load or 1C process.
@@ -21955,7 +22183,9 @@ function Invoke-DevBranchCheck {
     $repairPhase = 'platform-preparation'
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
-    $platformPreparation = Update-DevBranchBase -PassThruPlatformPreparation
+    $platformStarted = Get-Date
+    try { $platformPreparation = Update-DevBranchBase -PassThruPlatformPreparation }
+    finally { Set-ItlCheckTimingValue -Name platformMs -Value ([int64]((Get-Date) - $platformStarted).TotalMilliseconds) }
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
     $repairPhase = 'verification'
     Invoke-ItlVerificationCycle `
@@ -22011,6 +22241,9 @@ function Invoke-DevBranchCheck {
     }
     Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
     Write-DevBranchMemoryUsageNote
+    $historyVerification = Get-VerificationState -State $verifiedState
+    $historyStatus = if ($historyVerification.isFreshPassed -or [bool](Get-StateValue $historyVerification 'changeFreshPassed' $false)) { 'passed' } else { 'partial' }
+    Add-ItlCheckHistoryRecord -State $verifiedState -Status $historyStatus -Trigger $trigger
     if ($canonicalRepair) {
         $repairResult = Get-ItlVerificationRepairRunResult -Phase $repairPhase -State $verifiedState -Verification $verification -StartedAt $repairStartedAt
         Publish-ItlVerificationRepairRun -Ticket $repairAttemptTicket -Result $repairResult -SessionPassed $repairVerificationPassed -StartedAt $repairStartedAt
@@ -22024,6 +22257,8 @@ function Invoke-DevBranchCheck {
                 Write-Warning "Could not render the verification failure report: $($_.Exception.Message)" -WarningAction Continue
             }
         }
+        # A run stopped before the base load measured nothing worth comparing.
+        if ($null -ne $platformPreparation) { Add-ItlCheckHistoryRecord -State $state -Status 'failed' -Trigger $trigger }
         if ($trigger -eq 'repair' -and (-not $repairAttemptConsumed -or $canonicalRepair)) {
             Set-RunFailureContextFromMessage -Message $checkFailure.Exception.Message -RequestedAction 'check-dev-branch'
             try {
@@ -22226,6 +22461,12 @@ function Export-DevBranchResult {
     Add-RunUserReportLine -Lines $reportLines -Label "Ветка" -Value $state.devBranch
     Add-RunUserReportLine -Lines $reportLines -Label "Проверка" -Value $(if ($verificationDecision -eq "warn-unverified") { "ВНИМАНИЕ: fresh passed отсутствует; выгружено по политике warn" } else { "fresh passed" })
     Add-RunUserReportLine -Lines $reportLines -Label 'Назначение' -Value $(if ($platformPreparation.purpose -eq 'production') { 'Подготовка к рабочей ИБ' } else { 'Промежуточный результат' })
+    if ((Get-VerificationModel) -eq 'change') {
+        # Information for the person accepting the result; it never blocks export.
+        $coverage = Get-ItlBranchSuiteCoverageSummary -State $state
+        if (@($coverage.neverRan).Count -gt 0) { Add-RunUserReportLine -Lines $reportLines -Label 'Наборы Vanessa без прогона в ветке' -Value (@($coverage.neverRan) -join ', ') }
+        Add-RunUserReportLine -Lines $reportLines -Label 'Полный приёмочный набор в ветке' -Value $(if ($coverage.lastFullAt) { "последний раз пройден $($coverage.lastFullAt)" } else { 'не запускался' })
+    }
     Add-ConfigRepositoryTransferPlanRunUserReportLines -Lines $reportLines -Plan $repositoryTransferPlan
     Write-AndSetRunUserReport -Lines $reportLines -PlatformPreparation $platformPreparation
     Write-Host "Branch: $($state.devBranch)"

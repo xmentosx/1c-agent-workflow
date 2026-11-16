@@ -16,8 +16,9 @@ import zipfile
 from datetime import datetime, timezone
 
 from . import VERSION
-from .common import (WorkError, current_user_identity, digest, process_identity, process_is_alive, read_json,
-                     publish_path, resolve_resource_limits, stamp, write_json)
+from .common import (PYTHON_LAUNCH_OPTIONS, WorkError, current_user_identity, digest, powershell_python_environment,
+                     process_identity, process_is_alive, read_json, publish_path, resolve_resource_limits, stamp,
+                     write_json)
 
 
 WORKER_HEARTBEAT_MAX_AGE_SECONDS = 5.0
@@ -146,14 +147,13 @@ def prepare(spool, configuration, worker_connection=None, update_policy=None, *,
         raise WorkError("WORKER_RESUME_RUNTIME_MISMATCH")
     write_json(current_path, current)
     quote = lambda value: "'" + str(value).replace("'", "''") + "'"
-    launcher = ("$ErrorActionPreference='Stop'\n$env:PYTHONUTF8='1'\n$env:PYTHONIOENCODING='utf-8'\n"
-                "$env:PYTHONDONTWRITEBYTECODE='1'\n$env:PYTHONNOUSERSITE='1'\n$env:PYTHONHOME=$null\n"
+    launcher = ("$ErrorActionPreference='Stop'\n" + "\n".join(powershell_python_environment()) + "\n"
                 "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n"
                 "$current=" + quote(runtime_root / "current.json") + "\n"
                 "$supervisor=" + quote(supervisor) + "\n"
                 "if(Test-Path -LiteralPath $current){$state=[IO.File]::ReadAllText($current,[Text.Encoding]::UTF8)|ConvertFrom-Json;"
                 "if($state.supervisor -and (Test-Path -LiteralPath $state.supervisor)){$supervisor=$state.supervisor}}\n"
-                "& " + quote(sys.executable) + " -B -X utf8 -u $supervisor --spool " + quote(spool) +
+                "& " + quote(sys.executable) + " " + " ".join(PYTHON_LAUNCH_OPTIONS) + " -u $supervisor --spool " + quote(spool) +
                 " --bootstrap-runtime " + quote(script) +
                 ((" --connection " + quote(worker_connection_path) + " --persistent") if worker_connection_path else "") +
                 "\nexit $LASTEXITCODE\n")

@@ -2133,6 +2133,73 @@ function Test-ItlPathUnderSharedArtifactCache {
         $resolvedPath.StartsWith(($cacheRoot + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-ItlSharedArtifactPhysicalDirectory {
+    param([string]$Path)
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        return ($item.PSIsContainer -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint))
+    } catch {
+        return $false
+    }
+}
+
+function Test-ItlSharedArtifactEntryPath {
+    param([string]$Path)
+    if (-not (Test-ItlPathUnderSharedArtifactCache -Path $Path)) { return $false }
+    try {
+        $cacheRoot = (Resolve-Agent1cFullPath -Path (Get-ItlSharedArtifactCacheRoot)).TrimEnd("\", "/")
+        return -not [string]::Equals((Resolve-Agent1cFullPath -Path $Path).TrimEnd("\", "/"), $cacheRoot, [StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+
+function Set-ItlSharedArtifactLastUsed {
+    param([string]$Path)
+    # The entry directory's own write time is the usage signal for owner
+    # retention; it adds no file to an immutable payload.
+    try {
+        if ((Test-ItlSharedArtifactEntryPath -Path $Path) -and (Test-ItlSharedArtifactPhysicalDirectory -Path $Path)) {
+            [IO.Directory]::SetLastWriteTimeUtc($Path, [DateTime]::UtcNow)
+        }
+    } catch {
+        # Usage time only steers retention; a concurrent writer may own the entry.
+    }
+}
+
+function Remove-ItlSharedArtifactEntry {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Owners decide eligibility; this only removes safely. The atomic rename is
+    # the in-use probe: Windows refuses it while any process holds a handle,
+    # an image or a working directory inside the entry. Links are never followed.
+    if (-not (Test-ItlSharedArtifactEntryPath -Path $Path) -or -not (Test-ItlSharedArtifactPhysicalDirectory -Path $Path)) { return $false }
+    $retired = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($Path))) ('.retire-' + [guid]::NewGuid().ToString('N'))
+    try { [IO.Directory]::Move($Path, $retired) } catch { return $false }
+    return (Remove-ItlSharedArtifactRetiredEntry -Path $retired)
+}
+
+function Remove-ItlSharedArtifactRetiredEntry {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        if (-not (Test-ItlSharedArtifactEntryPath -Path $Path) -or -not (Test-ItlSharedArtifactPhysicalDirectory -Path $Path) -or
+            [IO.Path]::GetFileName($Path) -cnotmatch '^\.retire-[a-f0-9]{32}$') { return $false }
+        $pending = [Collections.Generic.Stack[string]]::new()
+        $pending.Push($Path)
+        while ($pending.Count -gt 0) {
+            foreach ($item in @(Get-ChildItem -LiteralPath $pending.Pop() -Force -ErrorAction Stop)) {
+                if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+                if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+            }
+        }
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        return $true
+    } catch {
+        # Nothing references a retired name; a later owner run retries it.
+        return $false
+    }
+}
+
 function Test-ItlPathUnderManagedProjectTools {
     param([string]$Path)
 
@@ -4003,7 +4070,28 @@ function Get-BaseConfigurationVersion {
 }
 
 function Test-ProductDocsMcpAllowed {
+    # A project bound to the product registry follows the productDocs role of
+    # its applied context. An unbound (legacy) project, or one whose role is
+    # not resolved yet, keeps the previous PM5 family rule.
+    $resolution = Get-ProductDocsRegistryResolution
+    if ($resolution -eq "resolved") { return $true }
+    if ($resolution -eq "disabled") { return $false }
     return ((Get-BaseConfigurationVersion) -eq "PM5")
+}
+
+function Get-ProductDocsRegistryResolution {
+    try {
+        if ($null -eq (Get-ConfigValue -Path "productProject" -Default $null)) { return "" }
+        $path = Join-Path $script:ProjectRoot ".agent-1c\mcp\product-context-applied.json"
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return "" }
+        $record = Read-Utf8Text -Path $path | ConvertFrom-Json -ErrorAction Stop
+        if ([IO.Path]::GetFullPath([string]$record.projectRoot).TrimEnd('\') -ine [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\')) { return "" }
+        $role = $record.context.roles.PSObject.Properties["productDocs"]
+        if ($null -eq $role) { return "" }
+        return [string]$role.Value.resolution
+    } catch {
+        return ""
+    }
 }
 
 function Set-ProjectBaseConfigurationVersion {

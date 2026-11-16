@@ -35,7 +35,7 @@ For a mapped routine, make the helper the first and only tool action after one s
 
 ## Command Template
 
-From project root, run mutations/long checks with `timeout_ms >= 3900000`; default `init-project`/`sync-master` need `>= 14700000`. Exceed overrides. Do not use `120000 ms`; `status`/`help` do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
+From project root, run mutations/long checks with `timeout_ms >= 3900000`; default `init-project`/`sync-master` need `>= 14700000`. Exceed overrides. A client with a lower foreground cap (Claude Code) uses `run_in_background: true` and awaits its notification. Do not use `120000 ms`; `status`/`help` do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action <action>
@@ -59,7 +59,7 @@ split oversized/mixed feature files yourself. Do not ask the developer to classi
 
 Current-branch actions infer `itldev/<name>`; do not ask for a branch name. Data/UI work uses the matching MCP skill. `/itl-check` is Vanessa Automation verification, not MCP.
 
-When the user requests an executable milestone or completion check, run `check-dev-branch` directly; do not pre-run base update or `/deploy-and-test`. Do not add `VanessaFeaturePath` or `VanessaFilterTags` to a final run. Its stderr heartbeat reports stage, elapsed time, liveness, no-progress time, timeout remaining, owned PIDs, CPU/log deltas, and working set. Never kill 1C manually: the helper warns at `stalled-suspected`, applies its bounded stall timeout, and cleans up exact tracked processes. Liveness never replaces or weakens the independent Designer memory guard or overall hard timeout.
+When the user requests an executable milestone or completion check, run `check-dev-branch` directly; do not pre-run base update or `/deploy-and-test`. Do not add `VanessaFeaturePath` or `VanessaFilterTags` to a final run. Stderr heartbeat shows stage and liveness. Never kill 1C manually: the helper warns at `stalled-suspected`, applies its bounded stall timeout, and cleans up exact tracked processes. Liveness never replaces or weakens the independent Designer memory guard or overall hard timeout.
 
 For export/close, obey the helper's `verificationPolicy`.
 

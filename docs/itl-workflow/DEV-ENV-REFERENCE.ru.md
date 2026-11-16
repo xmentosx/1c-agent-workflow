@@ -14,7 +14,7 @@
 
 Для защиты от `MAX_PATH=260` абсолютный путь начального корня проекта ограничен 35 символами, а путь нового worktree `<родитель>\<проект>-<ветка>` — 50 символами. Допустимая длина имени ветки вычисляется только как остаток от 50 после родительского пути, имени папки проекта, разделителя и дефиса; содержимое исходников не анализируется. Временные транзакции выгрузки конфигурации, расширения и установки Vanessa используют игнорируемую папку `.tx` внутри проекта.
 
-Workflow-managed Vanessa Automation, ROCTUP, Vanessa UI MCP и YAxUnit binaries хранятся вне worktree в immutable-кэше `%LOCALAPPDATA%\ITL\artifacts\<family>\<version>\<sha256>`. `ITL_ARTIFACT_CACHE_ROOT` переопределяет его корень только для maintainer/test сценариев; обычному проекту этот параметр не нужен. `itl-update-workflow` заполняет кэш новых pin-версий, а `itl-refresh`, `itl-refresh-lite` и `itl-refresh-all` проверяют/дозаполняют его и переписывают helper-owned bindings ветки до загрузки 1С. Закреплённые GitHub release-ассеты сначала скачиваются через GitHub REST API (без ключей), а при отказе API — по URL из lock; решает SHA256 из lock.
+Workflow-managed Vanessa Automation, ROCTUP, Vanessa UI MCP и YAxUnit binaries хранятся вне worktree в immutable-кэше `%LOCALAPPDATA%\ITL\artifacts\<family>\<version>\<sha256>`. `ITL_ARTIFACT_CACHE_ROOT` переопределяет его корень только для maintainer/test сценариев; обычному проекту этот параметр не нужен. `itl-update-workflow` заполняет кэш новых pin-версий, а `itl-refresh`, `itl-refresh-lite` и `itl-refresh-all` проверяют/дозаполняют его и переписывают helper-owned bindings ветки до загрузки 1С. Каждое использование EPF Vanessa Automation отмечает её ревизию; после установки удаляются ревизии, которые ни один проект на машине не использовал 30 дней (текущий пин и занятые процессом ревизии сохраняются), а удалённый пин проект восстанавливает при следующем запуске тестов. Закреплённые GitHub release-ассеты сначала скачиваются через GitHub REST API (без ключей), а при отказе API — по URL из lock; решает SHA256 из lock.
 
 ## Платформа, исходная база и хранилище
 
@@ -170,7 +170,6 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
-| `VANESSA_MCP_AUTO_START` | Автозапуск | default `false` | user |
 | `VANESSA_MCP_INSTALL_ROOT` | Явный пользовательский каталог; managed default адресуется через immutable-кэш | default `.agent-1c/tools/vanessa-mcp` как логический managed marker | helper/user |
 | `VANESSA_MCP_CLIENT_CFE_PATH` | Точный путь к client CFE в immutable user-local cache | определяется helper | helper |
 | `VANESSA_MCP_CLIENT_CFE_VERSION` | Версия client CFE | определяется helper | helper |
@@ -188,7 +187,6 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
 | `ROCTUP_MCP_ENABLED` | Доступность integration | default `true` | user |
-| `ROCTUP_MCP_AUTO_START` | Автозапуск | default `false` | user |
 | `ROCTUP_MCP_REQUIRED` | Блокировать без MCP | default `false` | user |
 | `ROCTUP_MCP_INSTALL_ROOT` | Явный пользовательский каталог; managed default адресуется через immutable-кэш | default `.agent-1c/tools/roctup-mcp-toolkit` как логический managed marker | helper/user |
 | `ROCTUP_MCP_PORT_RANGE` | Диапазон портов | default `6003..6102` | user |

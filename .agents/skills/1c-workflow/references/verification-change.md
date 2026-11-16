@@ -9,6 +9,22 @@ permission and repair budgets remain independent.
 
 ## Prepare one current plan
 
+Short path:
+
+1. Run `begin-verification-change` without a path. It returns the unaccepted delta and writes `draftPlanPath`: retained suites/groups whose obligations already cover a changed path are proposed with a `DRAFT:` reason, and `draftUncoveredPaths` lists the rest.
+2. Edit the draft: replace every `DRAFT:` reason with your impact decision (keep, change or drop the proposed check), give each uncovered path a sufficient check, and add the task description and source (or `requirementPaths`) and every criterion. The helper refuses a remaining `DRAFT:` reason.
+3. Run `begin-verification-change -VerificationEvidencePath <draft>`, then the normal `/itl-check`, then `complete-verification-change`.
+
+You choose the proof; the helper runs exactly what the plan selects. Helper proposals are candidates, not requirements: keep a suite only when this change needs its observation in the base, never "just in case". Each decision is yours and is shown in the check report.
+
+- A retained suite whose obligation covers a changed branch path must be decided: keep it as a check, or declare it in `retainedDispositions` as `unaffected` with your reason. A plan that does neither is refused (`VERIFICATION_CHANGE_SUITE_UNDECIDED`).
+- The branch start and master input are the accepted base and run nothing by themselves. The draft marks branch paths master also changed (`draftMasterOverlapPaths`) and proposes, as `DRAFT:` dispositions, suites whose area both master and the branch changed (`draftOverlapSuiteIds`); `systemCoveredPaths.importedPaths` lists all master input for implicit dependencies such as shared modules. You decide.
+- A changed branch feature file selects its suite. The goal is working configuration behavior, not a working test: when this change does not need that suite's observation, declare it `unaffected` with your reason. Only an `always` suite cannot be excluded. A changed shared Vanessa support file, verification owner or pinned runtime is only reported in the check's selection reason: earlier accepted results stay valid, and the suites you select exercise the changed support. The catalog `always` policy is kept.
+- When no runtime observation is needed (a comment, a message text), give the path a one-off check with `admissibleProof: ["loaded-target"]` and say why. The check's own load, Enterprise update and event-log evidence prove it; `begin-one-off-proof` is not used for it.
+- A full acceptance run on request: list every acceptance suite as `run`.
+
+The rest of this section and the next one explain the record and how to choose checks for uncovered paths.
+
 Use the existing helper action `begin-verification-change` without an evidence
 path to inspect its accepted base, full unaccepted source delta and prior task
 criteria. A new commit does not advance that base. Prepare the compact JSON in

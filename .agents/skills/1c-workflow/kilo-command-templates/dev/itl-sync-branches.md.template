@@ -5,7 +5,9 @@ agent: code
 
 Use this command only from an active ready `itldev/*` worktree. A single branch name selects pair synchronization. For several branches or an explicit `-BranchSyncRequestPath`, use the group request below. Infer the named sources and final recipients from the user's authorized scope; ask only if that scope is missing.
 
-Run the monitored helper directly from the current project directory with `timeout_ms >= 3900000` when supported:
+<!-- ITL_LONG_RUN -->
+
+Run the monitored helper directly from the current project directory:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action sync-dev-branches -PeerDevBranchName "<other-dev-branch-name>"

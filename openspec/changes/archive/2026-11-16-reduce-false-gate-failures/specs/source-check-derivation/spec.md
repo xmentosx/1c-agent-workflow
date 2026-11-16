@@ -9,8 +9,7 @@
 ## ADDED Requirements
 
 ### Requirement: Inventories derive from their authoritative source
-A source check that needs an inventory of functions, actions, operations, consumers or
-versions SHALL derive that inventory from the authoritative source it protects.
+A source check that needs an inventory of functions, actions, operations, consumers or versions SHALL derive that inventory from the authoritative source it protects.
 It MUST NOT require a hand-maintained copy whose only failure mode is a legitimate
 addition. A replaced pinned check MUST still fail on the defect it was originally written for.
 

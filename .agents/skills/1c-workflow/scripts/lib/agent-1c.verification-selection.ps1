@@ -332,6 +332,16 @@ function Get-VerificationOneOffCheckerIdentity {
     return Get-VerificationSelectionSha256 -Text ($parts -join "`n")
 }
 
+function Test-VerificationLoadedTargetObligation {
+    # admissibleProof "loaded-target": the agent decided no runtime observation
+    # is needed; the check's own load, Enterprise update and event-log evidence,
+    # asserted by every readiness assessment, is the whole proof.
+    param([AllowNull()][object]$Obligation)
+    if ($null -eq $Obligation) { return $false }
+    $proof = @(Get-VerificationCatalogValue -Value $Obligation -Name 'admissibleProof' -Default @())
+    return ($proof.Count -eq 1 -and [string]$proof[0] -ceq 'loaded-target')
+}
+
 function Get-VerificationOneOffProofAssessment {
     param(
         [Parameter(Mandatory = $true)][object]$Obligation,
@@ -339,6 +349,9 @@ function Get-VerificationOneOffProofAssessment {
         [string]$Treeish = '',
         [AllowNull()][object]$Proof = $null
     )
+    if (Test-VerificationLoadedTargetObligation -Obligation $Obligation) {
+        return [pscustomobject]@{ passed = $true; issue = ''; path = '' }
+    }
     $path = Get-VerificationOneOffProofPath -ObligationId ([string]$Obligation.id)
     $issue = "VERIFICATION_ONE_OFF_PROOF_PENDING: obligation '$($Obligation.id)' needs complete observed evidence. Next step: -Action begin-one-off-proof -VerificationObligationId $($Obligation.id), perform the declared check, then -Action complete-one-off-proof -VerificationEvidencePath <evidence.json>."
     if ($null -eq $Proof -and -not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -428,6 +441,9 @@ function Start-VerificationOneOffProof {
     $matches = @(Get-VerificationOneOffObligations | Where-Object id -eq $ObligationId)
     if ($matches.Count -ne 1) {
         throw "VERIFICATION_ONE_OFF_OBLIGATION_MISSING: '$ObligationId' must name one schema-2 one-off obligation."
+    }
+    if (Test-VerificationLoadedTargetObligation -Obligation $matches[0]) {
+        throw "VERIFICATION_ONE_OFF_LOADED_TARGET: '$ObligationId' needs no observation; the normal /itl-check load, update and event-log evidence proves it."
     }
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'begin-one-off-proof'
@@ -1615,7 +1631,10 @@ function Get-VerificationCurrentProofAssessment {
 }
 
 function Get-VerificationCumulativeProofAssessment {
-    param([object]$State, [string]$Fingerprint, [AllowEmptyCollection()][object[]]$OneOffOverride, [string[]]$UnaffectedSuiteIds = @())
+    # -RequiredSuiteIds (change model) limits the retained receipts to the
+    # suites the current change must observe; without it every acceptance
+    # suite needs a current receipt (cumulative model).
+    param([object]$State, [string]$Fingerprint, [AllowEmptyCollection()][object[]]$OneOffOverride, [string[]]$UnaffectedSuiteIds = @(), [AllowNull()][string[]]$RequiredSuiteIds = $null)
 
     $issues = [Collections.Generic.List[string]]::new()
     $oneOffIssues = [Collections.Generic.List[string]]::new()
@@ -1653,7 +1672,9 @@ function Get-VerificationCumulativeProofAssessment {
             if (-not $assessment.passed) { $oneOffIssues.Add([string]$assessment.issue) }
         }
         $proof = Read-VerificationSelectionProof
-        foreach ($suite in @($catalog.suiteFingerprints | Where-Object purpose -eq 'acceptance')) {
+        $assessedSuites = @($catalog.suiteFingerprints | Where-Object purpose -eq 'acceptance')
+        if ($PSBoundParameters.ContainsKey('RequiredSuiteIds')) { $assessedSuites = @($assessedSuites | Where-Object { [string]$_.id -cin @($RequiredSuiteIds) }) }
+        foreach ($suite in $assessedSuites) {
             $obligation = @($catalog.obligations | Where-Object suiteId -eq $suite.id)[0]
             $oldSuite = @(Get-VerificationCatalogValue -Value $proof -Name 'acceptanceSuites' -Default @() | Where-Object id -eq $suite.id)
             $receipt = @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @() | Where-Object id -eq $suite.id)

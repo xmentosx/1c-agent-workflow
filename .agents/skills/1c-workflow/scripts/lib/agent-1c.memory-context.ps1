@@ -58,6 +58,21 @@ function Get-ItlMemoryPolicyProof {
     return @{path=$full;clauseSha256=$contract.clauseSha256;capability='scoped-cognee-memory-v1';sourceCommit=$pin.commit}
 }
 
+function Get-ItlMemoryPolicyRelativePath {
+    param([string]$Client)
+    # The installed fork rule is found by its manifest source under the client's
+    # rules directory; the adapter registry owns that directory.
+    if(-not (Test-Path -LiteralPath 'Function:\Get-ItlClientAdapter')){. (Join-Path $PSScriptRoot 'agent-1c.client-adapters.ps1')}
+    $manifest=Read-ItlMemoryJson (Join-Path $script:ProjectRoot '.ai-rules.json') -MaxBytes 4194304
+    $rules=([string](Get-ItlClientAdapter -Client $Client).rulesPath).TrimEnd('/')+'/'
+    $paths=@(Get-ItlCatalogKeys (Get-ItlCatalogField $manifest 'files')|Where-Object {
+        $_.Replace('\','/').StartsWith($rules,[StringComparison]::OrdinalIgnoreCase) -and
+        (Get-ItlCatalogField (Get-ItlCatalogField $manifest.files $_) 'source') -ceq 'content/rules/project-memory.md'
+    })
+    if($paths.Count -ne 1){throw 'MEMORY_POLICY_UNQUALIFIED'}
+    return [string]$paths[0]
+}
+
 function Get-ItlMemoryProjection {
     param([object]$Context,[object]$Snapshot)
     if(-not $Snapshot -or $Snapshot.catalogRevision -cne $Context.catalogRevision){throw 'MEMORY_REGISTRY_PROJECTION: use the existing pinned registry operation; do not fetch another catalog.'}
@@ -191,17 +206,7 @@ function Invoke-ItlMemorySetup {
                 if($old -and $old.mode -eq 'enabled'){return Invoke-ItlMemorySetup disable -Client $Client}
                 return @{mode='disabled';preference='off';memoryEnabled=$false}
             }
-            if(-not $PolicyPath){
-                if(-not (Test-Path -LiteralPath 'Function:\Get-ItlClientAdapter')){. (Join-Path $PSScriptRoot 'agent-1c.client-adapters.ps1')}
-                $manifest=Read-ItlMemoryJson (Join-Path $script:ProjectRoot '.ai-rules.json') -MaxBytes 4194304
-                $rules=([string](Get-ItlClientAdapter -Client $Client).rulesPath).TrimEnd('/')+'/'
-                $paths=@(Get-ItlCatalogKeys (Get-ItlCatalogField $manifest 'files')|Where-Object {
-                    $_.Replace('\','/').StartsWith($rules,[StringComparison]::OrdinalIgnoreCase) -and
-                    (Get-ItlCatalogField (Get-ItlCatalogField $manifest.files $_) 'source') -ceq 'content/rules/project-memory.md'
-                })
-                if($paths.Count -ne 1){throw 'MEMORY_POLICY_UNQUALIFIED'}
-                $PolicyPath=Join-Path $script:ProjectRoot $paths[0]
-            }
+            if(-not $PolicyPath){$PolicyPath=Join-Path $script:ProjectRoot (Get-ItlMemoryPolicyRelativePath -Client $Client)}
             if($old -and $old.mode -eq 'enabled' -and -not (Test-ItlMemoryIdentityComplete $old.identity)){
                 # Extend a binding of the previous workflow before the
                 # unchanged-configuration exit below.

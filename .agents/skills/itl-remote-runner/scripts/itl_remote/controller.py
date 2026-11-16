@@ -15,11 +15,10 @@ import re
 import socket
 import ssl
 import subprocess
-import sys
 import time
 import uuid
 
-from .common import FileLock, WorkError, publish_path, read_json, write_json
+from .common import FileLock, WorkError, publish_path, python_command, read_json, write_json
 from .pull import _pull
 
 
@@ -188,9 +187,8 @@ def ensure(name):
                     raise WorkError("BROKER_PORT_OCCUPIED_OR_PAIR_NOT_LOADED")
                 _same_broker(connection, settings)
                 runtime = Path(__file__).resolve().parent.parent / "remote_work.py"
-                command = [sys.executable, "-B", "-X", "utf8", "-u", str(runtime),
-                           "pull-serve", "--listen", settings["listen"], "--port", str(settings["port"]),
-                           "--connection-directory", str(home)]
+                command = python_command("-u", runtime, "pull-serve", "--listen", settings["listen"],
+                                         "--port", settings["port"], "--connection-directory", home)
                 if settings["certificate"]:
                     command += ["--certificate", settings["certificate"],
                                 "--private-key", settings["privateKey"]]
