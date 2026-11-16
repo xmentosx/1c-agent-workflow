@@ -12582,7 +12582,28 @@ function Write-DevBranchVerificationRunUserReport {
         $reportPath = [string](Get-StateValue -State $State -Name 'lastVerifiedReportPath' -Default '')
         if ($reportPath) { Add-RunUserReportLine -Lines $lines -Label 'Отчёт проверки' -Value $reportPath }
     }
+    $duration = Format-DevBranchCheckDurationText -Timing (Get-ItlCheckTimingSnapshot)
+    if ($duration) { Add-RunUserReportLine -Lines $lines -Label 'Длительность' -Value $duration }
     Write-AndSetRunUserReport -Lines $lines -PlatformPreparation $PlatformPreparation
+}
+
+function Format-DevBranchCheckDurationText {
+    param([AllowNull()][object]$Timing)
+    if ($null -eq $Timing) { return '' }
+    $format = {
+        param($Milliseconds)
+        $seconds = [int][Math]::Round(([double]$Milliseconds) / 1000)
+        if ($seconds -lt 60) { "$seconds с" } else { "$([int][Math]::Floor($seconds / 60)) мин $($seconds % 60) с" }
+    }
+    $parts = @()
+    foreach ($item in @(@('загрузка', 'platformMs'), @('YAxUnit', 'yaxunitMs'), @('Vanessa', 'vanessaMs'))) {
+        $value = $Timing.PSObject.Properties[$item[1]].Value
+        if ($null -ne $value) { $parts += "$($item[0]) $(& $format $value)" }
+    }
+    $text = & $format $Timing.totalMs
+    if ($parts.Count -gt 0) { $text += " ($($parts -join ', '))" }
+    if ($Timing.selectionMode) { $text += "; наборы Vanessa: $($Timing.selectionMode)" }
+    return $text
 }
 
 function Write-AndSetRunUserReport {
@@ -21869,6 +21890,7 @@ function Show-WorkflowStatus {
     if ($verification.reason) {
         Write-Host "Last verification reason: $($verification.reason)"
     }
+    Write-ItlCheckHistoryStatusLines -State $state
     Write-Host "Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
     Write-Host "Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
     $override = Get-StateValue -State $state -Name "lastUnverifiedOverrideAt" -Default ""
@@ -21901,6 +21923,7 @@ function Invoke-DevBranchCheck {
     $repairPhase = 'preflight'
     $canonicalRepair = $false
     $verification = $null
+    Start-ItlCheckTiming
     try {
     Assert-ItlVerificationRepairScope -Trigger $trigger
     # Reject an unknown diagnostic module before any load or 1C process.
@@ -21955,7 +21978,9 @@ function Invoke-DevBranchCheck {
     $repairPhase = 'platform-preparation'
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
-    $platformPreparation = Update-DevBranchBase -PassThruPlatformPreparation
+    $platformStarted = Get-Date
+    try { $platformPreparation = Update-DevBranchBase -PassThruPlatformPreparation }
+    finally { Set-ItlCheckTimingValue -Name platformMs -Value ([int64]((Get-Date) - $platformStarted).TotalMilliseconds) }
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
     $repairPhase = 'verification'
     Invoke-ItlVerificationCycle `
@@ -22011,6 +22036,9 @@ function Invoke-DevBranchCheck {
     }
     Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
     Write-DevBranchMemoryUsageNote
+    $historyVerification = Get-VerificationState -State $verifiedState
+    $historyStatus = if ($historyVerification.isFreshPassed -or [bool](Get-StateValue $historyVerification 'changeFreshPassed' $false)) { 'passed' } else { 'partial' }
+    Add-ItlCheckHistoryRecord -State $verifiedState -Status $historyStatus -Trigger $trigger
     if ($canonicalRepair) {
         $repairResult = Get-ItlVerificationRepairRunResult -Phase $repairPhase -State $verifiedState -Verification $verification -StartedAt $repairStartedAt
         Publish-ItlVerificationRepairRun -Ticket $repairAttemptTicket -Result $repairResult -SessionPassed $repairVerificationPassed -StartedAt $repairStartedAt
@@ -22024,6 +22052,8 @@ function Invoke-DevBranchCheck {
                 Write-Warning "Could not render the verification failure report: $($_.Exception.Message)" -WarningAction Continue
             }
         }
+        # A run stopped before the base load measured nothing worth comparing.
+        if ($null -ne $platformPreparation) { Add-ItlCheckHistoryRecord -State $state -Status 'failed' -Trigger $trigger }
         if ($trigger -eq 'repair' -and (-not $repairAttemptConsumed -or $canonicalRepair)) {
             Set-RunFailureContextFromMessage -Message $checkFailure.Exception.Message -RequestedAction 'check-dev-branch'
             try {

@@ -980,13 +980,19 @@ function Invoke-ItlVerificationCycle {
     }
     if ($vanessa.run) {
         $selectionPlan = Get-ItlVanessaVerificationSelectionPlan -YAxUnitVerificationPlanned:$yaxunit.run
+        Set-ItlCheckTimingValue -Name selectionMode -Value ([string]$selectionPlan.mode)
+        Set-ItlCheckTimingValue -Name selectionReason -Value ([string](Get-StateValue -State $selectionPlan -Name reason -Default ''))
     }
 
     if ($yaxunit.run) {
-        Invoke-YAxUnitVerification -State $state | Out-Null
+        $componentStarted = Get-Date
+        try { Invoke-YAxUnitVerification -State $state | Out-Null }
+        finally { Set-ItlCheckTimingValue -Name yaxunitMs -Value ([int64]((Get-Date) - $componentStarted).TotalMilliseconds) }
         $state = Read-DevBranchState -Name $DevBranchName
     }
 
+    $vanessaStarted = Get-Date
+    try {
     if ($vanessa.run) {
         $script:ItlSkipEventLogForVerification = -not $eventLog.run
         if ($null -ne $selectionPlan -and $selectionPlan.mode -eq "reuse") {
@@ -1035,6 +1041,9 @@ function Invoke-ItlVerificationCycle {
     } elseif ($eventLog.run) {
         Test-ItlEventLogCurrent -State $state -CursorPath $EventLogCursorPath -BoundaryAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope -Trigger $Trigger
     }
+    } finally {
+        if ($vanessa.run) { Set-ItlCheckTimingValue -Name vanessaMs -Value ([int64]((Get-Date) - $vanessaStarted).TotalMilliseconds) }
+    }
     $state = Read-DevBranchState -Name $DevBranchName
     if (Test-ItlDiagnosticVerificationScope) {
         return
@@ -1072,5 +1081,108 @@ function Invoke-ItlVerificationCycle {
                 Write-Host "[WARN] Retained verification completed, but one-off proof is still pending: $($oneOffIssues -join '; '). Result readiness remains partial until the agent performs each named one-off check on this loaded infobase; it is the next step, not a final result."
             }
         }
+    }
+}
+
+# Check duration diagnostics. A bounded project journal keeps the cost of
+# check-dev-branch visible across branches; it never changes or blocks a check.
+function Start-ItlCheckTiming {
+    $script:ItlCheckTiming = [ordered]@{
+        startedAt = Get-Date; platformMs = $null; yaxunitMs = $null; vanessaMs = $null
+        selectionMode = ''; selectionReason = ''
+    }
+}
+
+function Set-ItlCheckTimingValue {
+    param([string]$Name, [AllowNull()][object]$Value)
+    if ((Test-Path Variable:script:ItlCheckTiming) -and $null -ne $script:ItlCheckTiming) { $script:ItlCheckTiming[$Name] = $Value }
+}
+
+function Get-ItlCheckTimingSnapshot {
+    # Current totals for the user report; the report owner formats the text.
+    if (-not (Test-Path Variable:script:ItlCheckTiming) -or $null -eq $script:ItlCheckTiming) { return $null }
+    $timing = $script:ItlCheckTiming
+    return [pscustomobject]@{
+        totalMs = [int64]((Get-Date) - [datetime]$timing.startedAt).TotalMilliseconds
+        platformMs = $timing.platformMs; yaxunitMs = $timing.yaxunitMs; vanessaMs = $timing.vanessaMs
+        selectionMode = [string]$timing.selectionMode
+    }
+}
+
+function Get-ItlCheckHistoryPath {
+    param([AllowNull()][object]$State)
+    # One journal per project: the main worktree's ignored verification state.
+    $root = [string](Get-StateValue -State $State -Name 'mainWorktreePath' -Default '')
+    if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { $root = $script:ProjectRoot }
+    return (Join-Path $root '.agent-1c\verification-selection\check-history.jsonl')
+}
+
+function Add-ItlCheckHistoryRecord {
+    param([AllowNull()][object]$State, [string]$Status, [string]$Trigger)
+    try {
+        if (-not (Test-Path Variable:script:ItlCheckTiming) -or $null -eq $script:ItlCheckTiming) { return }
+        $timing = $script:ItlCheckTiming
+        $reason = [string]$timing.selectionReason
+        $record = [ordered]@{
+            at = (Get-Date).ToUniversalTime().ToString('o')
+            branch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
+            status = $Status; trigger = $Trigger
+            totalMs = [int64]((Get-Date) - [datetime]$timing.startedAt).TotalMilliseconds
+            platformMs = $timing.platformMs; yaxunitMs = $timing.yaxunitMs; vanessaMs = $timing.vanessaMs
+            selectionMode = [string]$timing.selectionMode
+            selectionReason = $reason.Substring(0, [Math]::Min(240, $reason.Length))
+        }
+        $line = ($record | ConvertTo-Json -Compress -Depth 4)
+        $path = Get-ItlCheckHistoryPath -State $State
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        for ($attempt = 1; $attempt -le 20; $attempt++) {
+            try {
+                # The exclusive handle serializes concurrent branches.
+                $stream = [IO.File]::Open($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+                try {
+                    $reader = [IO.StreamReader]::new($stream, $utf8, $false, 4096, $true)
+                    $lines = @(($reader.ReadToEnd() -split "`n") | Where-Object { $_.Trim() })
+                    $reader.Dispose()
+                    $lines = @(@($lines) + @($line) | Select-Object -Last 500)
+                    $bytes = $utf8.GetBytes((($lines -join "`n") + "`n"))
+                    $stream.SetLength(0); $stream.Write($bytes, 0, $bytes.Length)
+                } finally { $stream.Dispose() }
+                return
+            } catch [IO.IOException] { Start-Sleep -Milliseconds 100 }
+        }
+        Write-Warning "Check duration journal is busy; this run was not recorded: $path" -WarningAction Continue
+    } catch {
+        Write-Warning "Could not record the check duration: $($_.Exception.Message)" -WarningAction Continue
+    }
+}
+
+function Write-ItlCheckHistoryStatusLines {
+    param([AllowNull()][object]$State, [string]$Indent = '')
+    try {
+        $path = Get-ItlCheckHistoryPath -State $State
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Write-Host "${Indent}Check durations: no recorded check-dev-branch runs"; return }
+        $records = @(Get-Content -LiteralPath $path -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object {
+            try { $_ | ConvertFrom-Json } catch { }
+        } | Where-Object { $null -ne $_ })
+        $branch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
+        foreach ($item in @($records | Where-Object { [string]$_.branch -ceq $branch } | Select-Object -Last 3)) {
+            $detail = @()
+            foreach ($part in @(@('load', 'platformMs'), @('YAxUnit', 'yaxunitMs'), @('Vanessa', 'vanessaMs'))) {
+                $value = $item.PSObject.Properties[$part[1]].Value
+                if ($null -ne $value) { $detail += "$($part[0]) $([int][Math]::Round([double]$value / 1000))s" }
+            }
+            $mode = if ($item.selectionMode) { "; Vanessa suites $($item.selectionMode)" } else { '' }
+            Write-Host "${Indent}Check $($item.at): $($item.status), $([int][Math]::Round([double]$item.totalMs / 1000))s ($($detail -join ', '))$mode"
+        }
+        $passed = @($records | Where-Object { [string]$_.status -ceq 'passed' } | ForEach-Object { [double]$_.totalMs } | Sort-Object)
+        if ($passed.Count -gt 0) {
+            $middle = [int][Math]::Floor($passed.Count / 2)
+            $median = if ($passed.Count % 2) { $passed[$middle] } else { ($passed[$middle - 1] + $passed[$middle]) / 2 }
+            $full = @($records | Where-Object { [string]$_.selectionMode -ceq 'full' }).Count
+            Write-Host "${Indent}Project check median: $([int][Math]::Round($median / 1000))s over $($passed.Count) passed runs; full Vanessa selections: $full of $($records.Count)"
+        }
+    } catch {
+        Write-Host "${Indent}Check durations: unavailable ($($_.Exception.Message))"
     }
 }
