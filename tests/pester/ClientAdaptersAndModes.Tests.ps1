@@ -170,7 +170,7 @@
 
     It "finds the fork-installed memory policy under every client rules directory" {
         # rules.copyTo of adapters/*.yaml in the pinned controlled fork
-        # (itl-main-2f640143-r59). Claude Code deliberately uses rules-1c:
+        # (itl-main-2f640143-r60). Claude Code deliberately uses rules-1c:
         # .claude/rules would load every rule into each session. Update this
         # table only together with the fork adapter that owns the placement.
         $forkRules = [ordered]@{

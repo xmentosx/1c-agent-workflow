@@ -43,7 +43,27 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: scoped memory content quality, local r59
+## Current candidate: installed workflow adequacy, local r60
+
+`itl-main-2f640143-r60` pins
+`2db0058ca7e135715525f48ba35cb454da057118` over r59 on the same audited
+upstream ([plan](installed-workflow-execution-plan.md), tasks F1 and F3).
+The quick-fix gate in `verification-policy.md` now states evidence reuse, the
+retry owner and the missing-validator record itself, so a quick-fix whose
+validators run without a finding no longer loads `verification-gates.md`
+(26.9 KB); the gates' quick-fix checklist item points back to it. The Claude
+Code entry `CLAUDE.md` imports `USER-RULES.md`, `memory.md` and `LLM-RULES.md`,
+which `AGENTS.md` ranks above itself and the installer always places, instead
+of relying on a manual read each session. The installer test checks the
+imports. Fork commands that duplicate ITL routes were reviewed and kept: each
+already redirects to ITL in a managed project.
+
+Normalized UTF-8 sizes from the fork validator: root 15,659 (unchanged),
+full-cycle 159,237 -> 159,309 (+72) and subagent start 33,535 (unchanged), all
+within the existing ceilings. `compatibilityStatus` stays `pending` until the
+publication owner qualifies it.
+
+## Earlier candidate: scoped memory content quality, local r59
 
 `itl-main-2f640143-r59` pins
 `d6a65870801af5108302e98464def8985d1c2c0f` over r58 on the same audited
@@ -146,8 +166,8 @@ Pinning a commit in the lock does not make a local candidate publishable.
   `build\test-results\qualification\full.json` for the exact commit and tree.
 
 The fork Pester suite and `tools/validate-rules.ps1` alone are not that proof.
-The r55 candidate was first registered without the tag annotation, the release
-branch and the Full proof; the publication of the whole develop queue stopped
+The r55 candidate was first registered without the tag annotation, the release
+branch and the Full proof; the publication of the whole develop queue stopped
 twice on these checks and the entry had to be deferred.
 
 A deferral is bound to the registered head and is removed only by registering
