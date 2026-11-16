@@ -471,10 +471,10 @@ Describe 'Current-window expression failure attribution in controlled Vanessa r6
     }
 
     It 'pins the tested recipe and paired extension in the delivery lock' {
-        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r14'
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r15'
         $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $lock = Get-Content -LiteralPath (Join-Path $repoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $lock.dependencies.vanessaAutomation.downstreamRevision | Should -Be 'itl-r14'
+        $lock.dependencies.vanessaAutomation.downstreamRevision | Should -Be 'itl-r15'
         $lock.dependencies.vanessaAutomation.patchSha256 | Should -Be $manifest.patch.sha256
         $lock.dependencies.vanessaAutomation.manifestSha256 | Should -Be (Get-FileHash -LiteralPath (Join-Path $assetRoot 'manifest.json')).Hash.ToLowerInvariant()
         $lock.dependencies.vanessaAutomation.assetName | Should -Be $manifest.artifact.fileName
@@ -494,6 +494,73 @@ Describe 'Current-window expression failure attribution in controlled Vanessa r6
             $filtered = (Invoke-RepositoryGit -RepositoryRoot $repoRoot -Arguments @('hash-object',('--path='+$relative),$path)).stdout.Trim()
             $filtered | Should -BeExactly $raw
         }
+    }
+}
+
+Describe 'Hidden Windows consoles in controlled Vanessa r15' {
+    BeforeAll {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r15'
+        $previousRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r14'
+        $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $previous = Get-Content -LiteralPath (Join-Path $previousRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $patch = [IO.File]::ReadAllText((Join-Path $assetRoot 'file-operations.patch'), [Text.Encoding]::UTF8)
+        $sections = @{}
+        foreach ($section in @($patch -split '(?m)(?=^diff --git )' | Where-Object { $_ })) {
+            $path = [regex]::Match(($section -split "`n")[0], '^diff --git a/(.+) b/').Groups[1].Value
+            $sections[$path] = $section
+        }
+        function Get-PostImageProcedure([string]$Path, [string]$Name) {
+            $lines = @($sections[$Path] -split '\r?\n' | Where-Object { $_ -match '^[ +]' -and $_ -notmatch '^\+\+\+ ' } | ForEach-Object { $_.Substring(1) })
+            $start = [array]::FindIndex([string[]]$lines, [Predicate[string]]{ param($l) $l -match "^Процедура $Name\(" })
+            if ($start -lt 0) { return $null }
+            $end = [array]::FindIndex([string[]]$lines, $start, [Predicate[string]]{ param($l) $l -match '^КонецПроцедуры' })
+            return ($lines[$start..$end] -join "`n")
+        }
+        $mainForm = 'VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl'
+        $postingForm = 'lib/VAExtension/DataProcessors/VAExtension_ПроведениеДокумента/Forms/Форма/Ext/Form/Module.bsl'
+        $videoForm = 'lib/Video/РаботаСВидео/Forms/Форма/Ext/Form/Module.bsl'
+    }
+
+    It 'pins r15 as r14 plus the video command owner' {
+        $manifest.downstreamRevision | Should -Be 'itl-r15'
+        (Get-FileHash -LiteralPath (Join-Path $assetRoot 'file-operations.patch')).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+        $manifest.patch.gitDiffFormat | Should -Be 'full-index'
+        $manifest.artifact.fileName | Should -Be 'vanessa-automation-single.1.2.043.42-itl-r15.zip'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r15.cfe'
+        # The notice ships inside the archive; its title names this revision.
+        (Get-Content -LiteralPath (Join-Path $assetRoot 'ITL-NOTICE.txt') -TotalCount 1 -Encoding UTF8) | Should -BeExactly 'Vanessa Automation 1.2.043.42-itl-r15'
+        (@($manifest.patch.expectedChangedPaths) -join "`n") | Should -BeExactly ((@($previous.patch.expectedChangedPaths) + $videoForm) -join "`n")
+        foreach ($property in 'upstream', 'build', 'license') {
+            ($manifest.$property | ConvertTo-Json -Depth 8) | Should -BeExactly ($previous.$property | ConvertTo-Json -Depth 8)
+        }
+    }
+
+    It 'runs the Windows server sleep hidden and fails on its exit code: <form>' -TestCases @(
+        @{ form = 'main' }, @{ form = 'posting' }
+    ) {
+        $path = if ($form -eq 'main') { $mainForm } else { $postingForm }
+        $body = Get-PostImageProcedure -Path $path -Name 'SleepOnServer'
+        $body | Should -Not -BeNullOrEmpty
+        $branches = $body -split '(?m)^\tИначе\s*$'
+        $branches | Should -HaveCount 2
+        $branches[0] | Should -Match 'Если ЭтоLinux\(\) Тогда'
+        $branches[0] | Should -Match 'ЗапуститьПриложение\(Команда,, Истина\)'
+        $branches[1] | Should -Match 'Start-Sleep -Milliseconds'
+        $branches[1] | Should -Match 'Оболочка = Новый COMОбъект\("WScript\.Shell"\);'
+        # 1C rejects a method call directly on a Новый expression; the module would not compile.
+        $branches[1] | Should -Match 'Если Оболочка\.Run\(Команда, 0, Истина\) <> 0 Тогда'
+        $branches[1] | Should -Not -Match 'Новый [^;\r\n]*\)\.'
+        $branches[1] | Should -Match 'ВызватьИсключение "SleepOnServer: не удалось выполнить Start-Sleep"'
+        $branches[1] | Should -Not -Match '(?m)^(?!\s*//).*(ЗапуститьПриложение|КомандаСистемы)\('
+    }
+
+    It 'routes the public OS command and video commands through the hidden runner on Windows' {
+        $command = Get-PostImageProcedure -Path $mainForm -Name 'ВыполнитьКомандуОС'
+        $command | Should -Match '(?s)Если ЭтоLinux Тогда\s+МодульГенерацияEPF\.ВыполнитьКомандуОС\(Стр\);\s+Иначе\s+ВыполнитьКомандуОСБезПоказаЧерногоОкна\(Стр\);\s+КонецЕсли;'
+        $sections[$videoForm] | Should -Match '(?m)^\+\tЕсли ПараметрыВидео\.ЗаписьВидеоСкрытьСлужебныеОкна ИЛИ НЕ Ванесса\.ЭтоLinux Тогда\r?$'
+        $sections[$videoForm] | Should -Match '(?m)^-\tЕсли ПараметрыВидео\.ЗаписьВидеоСкрытьСлужебныеОкна Тогда\r?$'
+        $patch | Should -Not -Match '(?m)^\+(?!\s*//).*(ЗапуститьПриложение|КомандаСистемы)\(.*Start-Sleep'
     }
 }
 
