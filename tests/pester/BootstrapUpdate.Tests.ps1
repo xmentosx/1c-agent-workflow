@@ -2297,7 +2297,9 @@ exit 0
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
         $longTemplates = @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md.template" |
             Where-Object { (Get-Content -Encoding UTF8 -Raw $_.FullName) -match '<!-- ITL_LONG_RUN -->' })
-        @($longTemplates.Name | Sort-Object) | Should -Be @(
+        $longTemplateNames = [string[]]@($longTemplates.Name)
+        [Array]::Sort($longTemplateNames, [StringComparer]::Ordinal)
+        @($longTemplateNames) | Should -Be @(
             "itl-check.md.template", "itl-fork-branch.md.template", "itl-lock-objects.md.template",
             "itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-refresh-all.md.template",
             "itl-refresh-lite.md.template", "itl-refresh.md.template", "itl-reset-branch.md.template",
