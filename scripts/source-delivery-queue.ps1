@@ -223,7 +223,39 @@ function Add-QueueDeferral {
         "verify $script:QueueRoot/$($Entry.id)/head $($Entry.head)",
         "update $script:QueueRoot/$($Entry.id)/deferred $object $zero",
         "prepare", "commit")
-    return $result.exitCode -eq 0
+    if ($result.exitCode -ne 0) { return $false }
+    Add-QueueDeferralHistory -Record $record
+    return $true
+}
+
+function Get-QueueDeferralHistoryRoot { Join-Path (Get-DeliveryCommonGitDirectory) 'itl\deferral-history\v1' }
+
+function Add-QueueDeferralHistory {
+    # Re-registration deletes the deferral ref; this copy keeps how often and
+    # why deferral fires. It never undoes or blocks the deferral itself.
+    param([Parameter(Mandatory = $true)][object]$Record)
+    try {
+        $root = Get-QueueDeferralHistoryRoot
+        [void][IO.Directory]::CreateDirectory($root)
+        $name = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff') + '-' + [guid]::NewGuid().ToString('N') + '.json'
+        $temporary = Join-Path $root ('.' + $name + '.tmp')
+        [IO.File]::WriteAllText($temporary, ($Record | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        [IO.File]::Move($temporary, (Join-Path $root $name))
+    } catch { [Console]::Error.WriteLine("WARNING: Deferral of '$([string]$Record.id)' was not added to its history: $($_.Exception.Message)") }
+}
+
+function Get-QueueDeferralHistory {
+    param([int]$Limit = 20)
+    $root = Get-QueueDeferralHistoryRoot
+    $files = @(if ([IO.Directory]::Exists($root)) { [IO.Directory]::GetFiles($root, '*.json') | Sort-Object })
+    $recent = @($files | Select-Object -Last $Limit | ForEach-Object {
+        try {
+            $item = [IO.File]::ReadAllText($_, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            [pscustomobject]@{ id=[string]$item.id; head=[string]$item.head; stage=[string]$item.stage; reason=[string]$item.reason; deferredAt=[string]$item.deferredAt }
+        } catch { [pscustomobject]@{ id=''; head=''; stage=''; reason='unreadable history record'; deferredAt=[IO.Path]::GetFileName($_) } }
+    })
+    [array]::Reverse($recent)
+    return [pscustomobject]@{ total=$files.Count; recent=$recent }
 }
 
 function Add-RequestedQueueDeferrals {

@@ -183,6 +183,7 @@ try {
                 disposition = (Get-DeliveryDispositionReport)
                 recoveryArchives = $(if ($StatusDetail -eq 'Full') { Get-DeliveryRecoveryInventory -IncludeEntries } else { $null })
                 sourceStores = $(if ($StatusDetail -eq 'Full') { Get-DeliveryStoreInventory } else { $null })
+                deferralHistory = $(if ($StatusDetail -eq 'Full') { Get-QueueDeferralHistory } else { $null })
                 unstableTests = $(if ($StatusDetail -eq 'Full') { @(Get-DeliveryUnstableTests -Entries @((Get-DeliveryRunHistory -Limit $script:DeliveryRunHotIndexCapacity -IncludeDetails).lastRuns)) } else { $null })
                 runHistory = $history
             }
