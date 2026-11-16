@@ -110,6 +110,76 @@ function Get-VanessaAutomationEpfPath {
     return ""
 }
 
+function Get-VanessaAutomationCacheRoot {
+    return (Join-Path (Get-ItlSharedArtifactCacheRoot) "vanessa-automation")
+}
+
+function Get-VanessaAutomationCacheEntry {
+    param([string]$Path)
+    # Returns the shared cache entry <revision>\<epf sha256> that contains Path.
+    if (-not $Path) { return "" }
+    try {
+        $familyRoot = (Resolve-Agent1cFullPath -Path (Get-VanessaAutomationCacheRoot)).TrimEnd("\", "/")
+        $resolved = Resolve-Agent1cFullPath -Path $Path
+    } catch {
+        return ""
+    }
+    if (-not $resolved.StartsWith(($familyRoot + "\"), [StringComparison]::OrdinalIgnoreCase)) { return "" }
+    $segments = $resolved.Substring($familyRoot.Length + 1).Split("\")
+    if ($segments.Count -lt 2 -or $segments[0].StartsWith(".") -or $segments[1] -cnotmatch '^[a-f0-9]{64}$') { return "" }
+    return (Join-Path (Join-Path $familyRoot $segments[0]) $segments[1])
+}
+
+function Invoke-VanessaAutomationCacheRetention {
+    param(
+        [string]$CacheRoot = (Get-VanessaAutomationCacheRoot),
+        [string]$KeepRoot = "",
+        [int]$UnusedDays = 30
+    )
+
+    # Projects on this machine may pin other revisions; each use refreshes the
+    # entry's write time, so only revisions no project used for UnusedDays go.
+    $nowUtc = [DateTime]::UtcNow
+    $keep = Get-VanessaAutomationCacheEntry -Path $KeepRoot
+    foreach ($revision in @(Get-ChildItem -LiteralPath $CacheRoot -Directory -Force -ErrorAction Stop)) {
+        if ($revision.Name.StartsWith(".") -or ($revision.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+        foreach ($entry in @(Get-ChildItem -LiteralPath $revision.FullName -Directory -Force -ErrorAction SilentlyContinue)) {
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+            if ($entry.Name -cmatch '^\.retire-[a-f0-9]{32}$') {
+                [void](Remove-ItlSharedArtifactRetiredEntry -Path $entry.FullName)
+            } elseif ($entry.Name -cmatch '^[a-f0-9]{64}$' -and $entry.FullName.TrimEnd("\", "/") -ine $keep -and
+                $entry.LastWriteTimeUtc -lt $nowUtc.AddDays(-$UnusedDays)) {
+                [void](Remove-ItlSharedArtifactEntry -Path $entry.FullName)
+            }
+        }
+        # An installer creates the revision directory just before publishing
+        # into it, so only a revision emptied by an earlier run is removed.
+        try {
+            $revisionItem = Get-Item -LiteralPath $revision.FullName -Force -ErrorAction Stop
+            if ($revisionItem.LastWriteTimeUtc -lt $nowUtc.AddDays(-1) -and
+                @(Get-ChildItem -LiteralPath $revision.FullName -Force -ErrorAction Stop).Count -eq 0) {
+                [IO.Directory]::Delete($revision.FullName, $false)
+            }
+        } catch { }
+    }
+}
+
+function Invoke-VanessaAutomationCacheMaintenance {
+    param([string]$KeepRoot)
+    try { Invoke-VanessaAutomationCacheRetention -KeepRoot $KeepRoot } catch { }
+}
+
+function Ensure-VanessaAutomationReady {
+    # Retention may have removed an idle revision; the pinned install restores it.
+    $state = Get-VanessaAutomationState
+    if ($state.ready) { return $state }
+    Write-Host "Vanessa Automation EPF is missing; installing it first."
+    Install-VanessaAutomation | Out-Null
+    $state = Get-VanessaAutomationState
+    if (-not $state.ready) { throw "Vanessa Automation is not installed: $($state.message) Run install-vanessa-automation and repeat the original operation." }
+    return $state
+}
+
 function Get-VanessaAutomationState {
     $epfPath = Get-VanessaAutomationEpfPath
     $entry = Get-WorkflowDependencyEntry -Name "vanessaAutomation"
@@ -131,6 +201,8 @@ function Get-VanessaAutomationState {
                 message = "Vanessa Automation EPF SHA256 does not match the workflow pin."
             }
         }
+        $cacheEntry = Get-VanessaAutomationCacheEntry -Path $epfPath
+        if ($cacheEntry) { Set-ItlSharedArtifactLastUsed -Path $cacheEntry }
         return [pscustomobject]@{
             ready = $true
             epfPath = $epfPath
@@ -416,6 +488,7 @@ function Install-VanessaAutomation {
     if ($state.ready) {
         Write-Host "Vanessa Automation is already installed: $($state.epfPath)"
         Save-VanessaAutomationSettingsToDotEnv -EpfPath $state.epfPath -Version $downloadInfo.compatibilityVersion -DownstreamRevision $downloadInfo.downstreamRevision
+        Invoke-VanessaAutomationCacheMaintenance -KeepRoot $state.epfPath
         return
     }
 
@@ -428,6 +501,7 @@ function Install-VanessaAutomation {
             [void](Invoke-ItlImmutableFileAcquire -Source $legacyEpf -DestinationPath $cachedEpf -ExpectedSha256 $legacyHash -Label "Vanessa Automation EPF")
             Save-VanessaAutomationSettingsToDotEnv -EpfPath $cachedEpf -Version $downloadInfo.compatibilityVersion -DownstreamRevision $downloadInfo.downstreamRevision
             Write-Host "Vanessa Automation EPF imported into the immutable cache: $cachedEpf"
+            Invoke-VanessaAutomationCacheMaintenance -KeepRoot $cachedEpf
             return
         }
     }
@@ -444,6 +518,7 @@ function Install-VanessaAutomation {
     }
     Save-VanessaAutomationSettingsToDotEnv -EpfPath $epfPath -Version $downloadInfo.compatibilityVersion -DownstreamRevision $downloadInfo.downstreamRevision
     Write-Host "Vanessa Automation EPF: $epfPath"
+    Invoke-VanessaAutomationCacheMaintenance -KeepRoot $epfPath
 }
 
 function Ensure-VanessaAutomationForInit {
@@ -5707,10 +5782,7 @@ function Run-DevBranchTests {
     $state = Ensure-VanessaMcpInstalled -State $state
 
     Assert-VanessaSourceBuildArchiveMatchesActivePin
-    $vanessa = Get-VanessaAutomationState
-    if (-not $vanessa.ready) {
-        throw "Vanessa Automation is not installed. Run install-vanessa-automation first."
-    }
+    $vanessa = Ensure-VanessaAutomationReady
 
     $featuresPath = Get-VanessaFeaturesPath
     $featureFiles = @(Get-VanessaFeatureFiles -FeaturePath $featuresPath)
@@ -8879,11 +8951,7 @@ function Install-VanessaMcp {
     $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
-    $vanessa = Get-VanessaAutomationState
-    if (-not $vanessa.ready) {
-        Write-Host "Vanessa Automation EPF is missing; installing it first."
-        Install-VanessaAutomation
-    }
+    $vanessa = Ensure-VanessaAutomationReady
 
     $artifactsByKey = @{}
     foreach ($artifact in Install-VanessaMcpArtifacts) {

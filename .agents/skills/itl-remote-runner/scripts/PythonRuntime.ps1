@@ -109,6 +109,48 @@ function Expand-ItlPythonRuntimePackage {
     if (-not (Test-ItlPythonRuntimePayload -Root $DestinationPath -Definition $Definition)) { throw 'ITL_PYTHON_RUNTIME_EXTRACTION_INVALID' }
 }
 
+function Get-ItlPythonRuntimePointedGenerations {
+    param([Parameter(Mandatory = $true)][string]$GenerationRoot)
+    # Every pinned runtime identity on the machine has its own current.json;
+    # any unreadable pointer makes the active set unknown, so nothing is removed.
+    $active = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($versionDirectory in @(Get-ChildItem -LiteralPath $GenerationRoot -Directory -Force -ErrorAction Stop |
+            Where-Object { $_.Name -notmatch '^(?:runtime|\.install|\.retire)-' })) {
+        if ($versionDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $null }
+        foreach ($identity in @(Get-ChildItem -LiteralPath $versionDirectory.FullName -Directory -Force -ErrorAction Stop)) {
+            if ($identity.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $null }
+            $pointerPath = Join-Path $identity.FullName 'current.json'
+            if (-not (Test-Path -LiteralPath $pointerPath)) { continue }
+            try { $pointer = Get-Content -LiteralPath $pointerPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
+            if ([string]$pointer.directory -cnotmatch '^runtime-[a-f0-9]{32}$') { return $null }
+            [void]$active.Add([string]$pointer.directory)
+        }
+    }
+    return ,$active
+}
+
+function Invoke-ItlPythonRuntimeRetention {
+    param([Parameter(Mandatory = $true)][string]$GenerationRoot, [int]$IdleDays = 7, [int]$StagingIdleHours = 24)
+    # A replaced generation is never selected again; only processes started
+    # before the pointer moved use it. They are protected by the idle window and
+    # by the in-use rename probe of Remove-ItlSharedArtifactEntry.
+    $active = Get-ItlPythonRuntimePointedGenerations -GenerationRoot $GenerationRoot
+    if ($null -eq $active) { return }
+    $nowUtc = [DateTime]::UtcNow
+    foreach ($entry in @(Get-ChildItem -LiteralPath $GenerationRoot -Directory -Force -ErrorAction Stop)) {
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        if ($entry.Name -cmatch '^\.retire-[a-f0-9]{32}$') {
+            [void](Remove-ItlSharedArtifactRetiredEntry -Path $entry.FullName)
+        } elseif ($entry.Name -cmatch '^runtime-[a-f0-9]{32}$') {
+            if (-not $active.Contains($entry.Name) -and $entry.LastWriteTimeUtc -lt $nowUtc.AddDays(-$IdleDays)) {
+                [void](Remove-ItlSharedArtifactEntry -Path $entry.FullName)
+            }
+        } elseif ($entry.Name -cmatch '^\.install-[a-f0-9]{32}$' -and $entry.LastWriteTimeUtc -lt $nowUtc.AddHours(-$StagingIdleHours)) {
+            [void](Remove-ItlSharedArtifactEntry -Path $entry.FullName)
+        }
+    }
+}
+
 function Get-ItlManagedPythonRuntime {
     param([switch]$Offline, [switch]$RequireArchive, [string]$ArchivePath = '', [string]$AssetRoot = (Join-Path $PSScriptRoot '../assets/python-runtime'))
     $definition = Read-ItlPythonRuntimeManifest -AssetRoot $AssetRoot
@@ -170,6 +212,8 @@ function Get-ItlManagedPythonRuntime {
             $staging = ''
             Write-Utf8TextAtomic -Path $pointerPath -Value (@{ schemaVersion = 1; directory = $directory } | ConvertTo-Json)
         }
+        Set-ItlSharedArtifactLastUsed -Path $runtime
+        try { Invoke-ItlPythonRuntimeRetention -GenerationRoot $generationRoot } catch { }
         [pscustomobject]@{ executable = (Join-Path $runtime $manifest.executable); archivePath = $packagePath; version = $manifest.version; managed = $true }
     } finally {
         try {

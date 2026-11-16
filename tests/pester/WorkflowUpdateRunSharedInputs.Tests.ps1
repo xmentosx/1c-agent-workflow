@@ -83,6 +83,8 @@ param([string]$Command, [string]$ProjectRoot, [string]$Source, [string]$Tools, [
                         $counts.vanessaEpf++
                         [pscustomobject]@{ready=$true;epfPath=(Get-VanessaAutomationEpfPath);version='1.2.043.42';downstreamRevision='itl-r8'}
                     }
+                    # The fixture EPF is outside the machine cache; never age out real revisions.
+                    function Invoke-VanessaAutomationCacheMaintenance { param([string]$KeepRoot) }
                     # Vanessa UI MCP: shared CFE acquisition; lock entry is unchanged.
                     function Get-VanessaMcpReleaseAssetInfo { param([object]$Definition) [pscustomobject]@{url="https://example.invalid/$($Definition.lockKey).cfe";name="$($Definition.lockKey).cfe";version='0.6.5';expectedSha256=('d' * 64);source='workflow-selection'} }
                     function Get-VanessaMcpManagedArtifactPath { param([object]$Definition) Join-Path $artifactRoot "vanessa-mcp\$($Definition.lockKey).cfe" }

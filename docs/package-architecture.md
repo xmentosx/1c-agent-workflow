@@ -207,6 +207,10 @@ ITL artifact cache, replacing per-project TEMP clones that Storage Sense
 partially deleted. `Sync-AiRules1cCheckout` stays the only owner; publication is
 an atomic move without a lock or coordinator. No installed-state migration:
 rollback restores TEMP clones, and only idle generated legacy TEMP names are removed.
+The managed Python runtime and Vanessa Automation owners apply the same owner-local
+retention to their own families: entry write time marks use, the selected entry
+stays, and the shared stateless remover retires an idle entry only by an atomic
+rename that Windows refuses while a process holds it. No lock, state or migration.
 
 The user approved producer-marked diagnostic retention on 2026-10-22. The
 existing artifact-retention owner consumes immutable completion receipts for

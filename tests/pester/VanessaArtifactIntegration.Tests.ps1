@@ -202,4 +202,71 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($existingEpf)) | Should -Be ([Convert]::ToBase64String($existingBytes))
         (Test-Path -LiteralPath (Join-Path $rollbackProjectPath ".tx")) | Should -BeFalse
     }
+
+    It "removes revisions no project used for 30 days and reinstalls a removed pin on use" {
+        $cacheRoot = Join-Path $TestDrive "Retention cache $script:NonAsciiWord with space"
+        [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $cacheRoot, "Process")
+        $testProjectPath = Join-Path $TestDrive "$script:NonAsciiWord retention project"
+        $helperPath = New-VanessaArtifactTestProject -Root $testProjectPath
+        [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $script:FixtureArchivePath, "Process")
+        $family = Join-Path $cacheRoot "vanessa-automation"
+        $old = (Get-Date).ToUniversalTime().AddDays(-40)
+        function New-CachedRevision([string]$Revision, [string]$Fill) {
+            $entry = Join-Path (Join-Path $family $Revision) ($Fill * 64)
+            New-Item -ItemType Directory -Force -Path $entry | Out-Null
+            [IO.File]::WriteAllText((Join-Path $entry "vanessa.epf"), "other project EPF")
+            return $entry
+        }
+
+        $result = & {
+            . $helperPath -ProjectRoot $testProjectPath -Action help *> $null
+            Install-VanessaAutomation *> $null
+            $active = Split-Path -Parent (Get-VanessaAutomationState).epfPath
+            $idle = New-CachedRevision "1.2.043.42-itl-r1" "a"
+            $recent = New-CachedRevision "1.2.043.42-itl-r9" "b"
+            $held = New-CachedRevision "1.2.043.42-itl-r4" "c"
+            $linked = New-CachedRevision "1.2.043.42-itl-r8" "d"
+            $foreign = Join-Path $TestDrive "$script:NonAsciiWord foreign target"
+            New-Item -ItemType Directory -Force -Path $foreign | Out-Null
+            [IO.File]::WriteAllText((Join-Path $foreign "keep.txt"), "foreign")
+            New-Item -ItemType Junction -Path (Join-Path $linked "link") -Target $foreign | Out-Null
+            $retired = Join-Path (Split-Path -Parent $recent) (".retire-" + [guid]::NewGuid().ToString("N"))
+            New-Item -ItemType Directory -Force -Path $retired | Out-Null
+            $emptied = Join-Path $family "1.2.043.28-itl-r2"
+            New-Item -ItemType Directory -Force -Path $emptied | Out-Null
+            foreach ($path in @($active, $idle, $held, $linked)) { [IO.Directory]::SetLastWriteTimeUtc($path, $old) }
+            [IO.Directory]::SetLastWriteTimeUtc($recent, (Get-Date).ToUniversalTime().AddDays(-5))
+            [IO.Directory]::SetLastWriteTimeUtc($emptied, (Get-Date).ToUniversalTime().AddDays(-2))
+
+            # Every use of the pinned EPF marks its entry; the current pin is kept regardless.
+            $null = Get-VanessaAutomationState
+            $activeTouched = (Get-Item -LiteralPath $active).LastWriteTimeUtc
+            [IO.Directory]::SetLastWriteTimeUtc($active, $old)
+            $handle = [IO.File]::Open((Join-Path $held "vanessa.epf"), "Open", "Read", "ReadWrite")
+            try { Invoke-VanessaAutomationCacheRetention -KeepRoot (Join-Path $active "vanessa.epf") } finally { $handle.Dispose() }
+            $afterRetention = [pscustomobject]@{
+                active = Test-Path -LiteralPath $active; idle = Test-Path -LiteralPath $idle; recent = Test-Path -LiteralPath $recent
+                held = Test-Path -LiteralPath $held; retired = Test-Path -LiteralPath $retired; emptied = Test-Path -LiteralPath $emptied
+                linkedRemaining = @(Get-ChildItem -LiteralPath (Join-Path $family "1.2.043.42-itl-r8") -Directory -Force).Count
+            }
+
+            # An idle project whose pin was removed restores it on its next run.
+            Remove-Item -LiteralPath $active -Recurse -Force
+            $restored = Ensure-VanessaAutomationReady 6> $null
+            [pscustomobject]@{ activeTouched = $activeTouched; after = $afterRetention; restored = $restored; active = $active }
+        }
+
+        $result.activeTouched | Should -BeGreaterThan $old.AddDays(39)
+        $result.after.active | Should -BeTrue
+        $result.after.idle | Should -BeFalse
+        $result.after.recent | Should -BeTrue
+        $result.after.held | Should -BeTrue
+        $result.after.retired | Should -BeFalse
+        $result.after.emptied | Should -BeFalse
+        $result.after.linkedRemaining | Should -Be 1
+        [IO.File]::ReadAllText((Join-Path $TestDrive "$script:NonAsciiWord foreign target\keep.txt")) | Should -Be "foreign"
+        $result.restored.ready | Should -BeTrue
+        $result.restored.epfSha256 | Should -Be $script:FixtureEpfSha256
+        Split-Path -Parent $result.restored.epfPath | Should -Be $result.active
+    }
 }
