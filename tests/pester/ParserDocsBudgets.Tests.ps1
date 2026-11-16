@@ -451,15 +451,12 @@
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action RegisterChange"))
         # Publication rules load on demand from one owner; AGENTS keeps the trigger and the route.
         $publicationText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\source-publication.md") -Raw -Encoding UTF8
-        $agentsText | Should -Match 'Publish only when the user asks'
-        $agentsText | Should -Match ([regex]::Escape('read `docs/source-publication.md`'))
-        $publicationText | Should -Match 'Publication runs only when\s+the user asks for it'
-        $publicationText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PublishDevelop"))
-        $publicationText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PromoteRelease"))
-        $publicationText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action ReleaseMaster"))
-        $publicationText | Should -Match ([regex]::Escape('Do not tag or publish an `itl-ondemand-mcp` component build from Targeted proof'))
-        $publicationText | Should -Match ([regex]::Escape('preserves the queue/checkpoint and forbids publication'))
-        $publicationText | Should -Match ([regex]::Escape('Repair a failed frozen publication through `scripts/source-repair.ps1`, not per-attempt registration'))
+        # Stable identifiers only (source-check-derivation): rewording a rule keeps these.
+        $agentsText | Should -Match ([regex]::Escape('`docs/source-publication.md`'))
+        foreach ($identifier in @('scripts/source-delivery.ps1 -Action PublishDevelop', 'scripts/source-delivery.ps1 -Action PromoteRelease',
+            'scripts/source-delivery.ps1 -Action ReleaseMaster', '`itl-ondemand-mcp`', '`scripts/source-repair.ps1`', '`-RequireRelease`', '`server-reset`')) {
+            $publicationText | Should -Match ([regex]::Escape($identifier))
+        }
         $agentsText | Should -Match ([regex]::Escape('follow the blocking policy in `docs/package-architecture.md`'))
         $architectureText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\package-architecture.md") -Raw -Encoding UTF8
         $architectureNormalized = $architectureText -replace '\s+', ' '
@@ -501,11 +498,6 @@
             ($qualityText -replace '\s+', ' ') | Should -Match ([regex]::Escape($marker))
         }
         $agentsText | Should -Match '`Fast` is a deprecated alias for `Smoke`'
-        $publicationText | Should -Match 'integrates the queue, qualifies and finalizes an installable candidate'
-        $publicationText | Should -Match 'without changing `master`'
-        $publicationText | Should -Match '`-RequireRelease`.*full catalog'
-        $publicationText | Should -Match 'Passed `Develop` already contains exact-tree Full/static proof'
-        $publicationText | Should -Match 'queue is empty and local `develop` equals `origin/develop`'
         $agentsText | Should -Match 'Do not ask which gate to run'
         $agentsText | Should -Match 'Do not activate them for source-repository maintenance'
         $agentsText | Should -Match 'separate installed project whose root the user identifies'

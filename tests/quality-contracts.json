@@ -1704,6 +1704,15 @@
       "tests": ["tests/pester/SourceDeliveryProofOwnership.Tests.ps1"]
     },
     {
+      "id": "text-assertion-policy",
+      "owner": "per-file count of assertions over prose wording (source-check-derivation)",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/TextAssertionPolicy.Tests.ps1",
+      "paths": ["tests/pester/*.Tests.ps1", "tests/text-assertion-baseline.json"],
+      "tests": ["tests/pester/TextAssertionPolicy.Tests.ps1"]
+    },
+    {
       "id": "source-delivery-process",
       "owner": "delivery child lifetime and gate process",
       "gate": "targeted",
