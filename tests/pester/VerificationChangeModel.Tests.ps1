@@ -217,6 +217,38 @@ Describe 'Change mode recovery and reuse boundaries' {
             (Get-VerificationState -State $script:ChangeTestState).isFreshPassed | Should -BeTrue
         }
     }
+    It 'drafts covering retained checks for review and refuses an unreviewed draft' {
+        $root=Join-Path $TestDrive 'Черновик плана с пробелами'; New-ChangeFixture $root -Retained
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/other.bsl') -Value 'Other fix'
+            $preview=Start-VerificationChange
+            @($preview.changedPaths) | Should -Be @('src/cf/current.bsl','src/cf/other.bsl')
+            @($preview.draftUncoveredPaths) | Should -Be @('src/cf/other.bsl')
+            $preview.draftPlanPath | Should -BeExactly '.agent-1c/verification-selection/change-plan.draft.json'
+            Test-Path -LiteralPath (Get-VerificationChangePath) | Should -BeFalse
+            $draft=Read-Utf8Text -Path (Join-Path $root $preview.draftPlanPath)|ConvertFrom-Json
+            @($draft.checks).Count | Should -Be 1
+            $draft.checks[0].suiteId | Should -BeExactly 'existing'
+            @($draft.paths).Count | Should -Be 1
+            $draft.paths[0].path | Should -BeExactly 'src/cf/current.bsl'
+            @($draft.paths[0].checkIds) | Should -Be @('existing-result')
+            $draft.paths[0].reason | Should -Match '^DRAFT: retained suite ''existing'' covers this path'
+            $draft.taskId | Should -Match '^[a-z0-9][a-z0-9._-]*$'
+
+            # Completing only the task fields still leaves the helper's reason unreviewed.
+            $draft.taskDescription='Fix current and other results'; $draft.sourceReference='Named user request'
+            $draft.criteria=@([pscustomobject]@{id='AC-01';expectedResult='Current result';decision='check';checkIds=@('existing-result','other-result')})
+            $draft.checks+=@([pscustomobject]@{id='other-result';expectedResult='Other result is correct';inputPaths=@('src/cf/other.bsl');admissibleProof=@('runtime-observation')})
+            $draft.paths+=@([pscustomobject]@{path='src/cf/other.bsl';checkIds=@('other-result');reason='Observe the changed other result once.'})
+            Write-Utf8TextAtomic -Path (Join-Path $root 'evidence/draft.json') -Value ($draft|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath 'evidence/draft.json' } | Should -Throw "*VERIFICATION_CHANGE_DRAFT_UNREVIEWED: 'src/cf/current.bsl'*"
+            $draft.paths[0].reason='Current result changed; the existing UI suite observes it.'
+            Write-Utf8TextAtomic -Path (Join-Path $root 'evidence/draft.json') -Value ($draft|ConvertTo-Json -Depth 10)
+            (Start-VerificationChange -EvidencePath 'evidence/draft.json').status | Should -BeExactly 'pending'
+        }
+    }
+
     It 'covers unchanged master imports and verification-owner updates without impact decisions, but not a branch edit of an import' {
         $root=Join-Path $TestDrive 'Импорт из master с пробелами'; New-ChangeFixture $root
         $owner='.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1'

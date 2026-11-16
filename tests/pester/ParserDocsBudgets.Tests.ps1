@@ -373,6 +373,20 @@
             $expectedRendered[$key].maxBytes += 177
         }
 
+        # The renderer owns the long-run rule: 14 long templates carry one
+        # ITL_LONG_RUN marker instead of their own timeout_ms paragraph.
+        # timeout_ms clients shrink by 206 bytes on master; dev grows by 476
+        # because fork/sync-branches/verify-fix now state the complete rule
+        # instead of a bare "timeout_ms >= 3900000 when supported". Claude Code
+        # caps its foreground timeout at 600000 ms, so it receives the
+        # background-notification rule instead: master +378, dev +1762. The
+        # rule loads only with an invoked command (about +140 bytes each).
+        foreach ($key in @($expectedRendered.Keys)) {
+            if ($key -eq 'master/claude-code') { $expectedRendered[$key].maxBytes += 378 }
+            elseif ($key -eq 'dev/claude-code') { $expectedRendered[$key].maxBytes += 1762 }
+            elseif ($key -like 'dev/*') { $expectedRendered[$key].maxBytes += 476 }
+        }
+
         $rendered = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             foreach ($surface in @("master", "dev")) {
@@ -1019,10 +1033,13 @@
         $rulesTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
 
-        $rulesTemplateText | Should -Match 'Native `/itl`'
-        $rulesTemplateText | Should -Match 'one fenced `text` block'
-        $rulesTemplateText | Should -Match "line breaks, blank lines, and indentation"
-        $rulesTemplateText | Should -Match "write nothing outside"
+        # The generated /itl command owns its output format; the always-on
+        # rules do not repeat it next to the opposite userReport rule.
+        $itlTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md.template")
+        $itlTemplateText | Should -Match 'exactly one fenced `text` block with nothing outside it'
+        $itlTemplateText | Should -Match "Preserve every helper line break, blank line, and indentation"
+        $itlTemplateText | Should -Match "omit content, or merge sections"
+        $rulesTemplateText | Should -Not -Match 'Native `/itl`'
         $installText | Should -Match 'exactly one fenced `text` block'
         $installText | Should -Match "preserving every line break, blank line, and indentation"
         $installText | Should -Match "actual error instead of fabricating a panel"

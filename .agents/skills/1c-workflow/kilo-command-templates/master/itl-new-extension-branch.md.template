@@ -11,7 +11,7 @@ On `requiredAction=prepare-lifecycle-git:`, read `references/lifecycle-git-conti
 
 Run the monitored helper launcher from the current project directory so the manual unsafe-action protection confirmation is visible:
 
-If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 3900000` by default so the outer shell outlives the 3600-second Designer limit; if that limit is configured higher, raise the outer timeout too. Do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.
+<!-- ITL_LONG_RUN -->
 
 For an Empty extension:
 

@@ -61,6 +61,7 @@
             mcpApprovalPath = ".claude/settings.local.json"
             mcpApprovalKey = "enabledMcpjsonServers"
             mcpApprovalDenyKey = "disabledMcpjsonServers"
+            longRunMode = "background-notification"
             reload = "Restart Claude Code."
             reloadUserReport = "Перезапустите Claude Code."
         }
@@ -1765,6 +1766,52 @@ function Get-ItlRoutineLongCommandNames {
     )
 }
 
+function Get-ItlLongRunCommandLimits {
+    # Default helper action limit (seconds) of every command template that
+    # carries the ITL_LONG_RUN marker; the renderer owns the client wording.
+    $limits = [ordered]@{}
+    # itl-switch-client is long for routine routing but starts no 1C process.
+    foreach ($name in @(Get-ItlRoutineLongCommandNames) + @("itl-verify-fix.md")) {
+        if ($name -ne "itl-switch-client.md") { $limits[$name] = 3600 }
+    }
+    $limits["itl-sync-master.md"] = 14400
+    return $limits
+}
+
+function Get-ItlLongRunInstructionText {
+    param([string]$Client, [string]$FileName)
+
+    $limits = Get-ItlLongRunCommandLimits
+    if (-not $limits.Contains($FileName)) { throw "ITL long-run instruction requested for a short command: $FileName" }
+    $seconds = [int]$limits[$FileName]
+    $minimum = ($seconds + 300) * 1000
+    $adapter = Get-ItlClientAdapter -Client $Client
+    $mode = if ($adapter.PSObject.Properties.Name -contains "longRunMode") { [string]$adapter.longRunMode } else { "outer-timeout" }
+    $scope = "Long action: 1C Designer/Enterprise may run ``/LoadConfigFromFiles ... /UpdateDBCfg`` within a $seconds-second limit."
+    switch ($mode) {
+        "background-notification" {
+            return "$scope It outlasts this client's foreground timeout cap: run the exact helper command with ``run_in_background: true``, do not poll or sleep, wait for the completion notification, then read the output for the compact JSON summary. Never use ``Start-Job``, ``timeout: 0`` or a detached process."
+        }
+        default {
+            return "$scope If the shell tool supports ``timeout_ms``, use ``timeout_ms >= $minimum`` (a higher configured limit plus 300 seconds); do not use ``120000 ms`` or another short default."
+        }
+    }
+}
+
+function Add-ItlLongRunInstruction {
+    param([string]$Text, [string]$Client, [string]$FileName)
+
+    # Keep the template's own line ending: replace only the marker text.
+    $marker = '(?m)^<!-- ITL_LONG_RUN -->(?=\r?$)'
+    $hasMarker = [regex]::IsMatch($Text, $marker)
+    if ((Get-ItlLongRunCommandLimits).Contains($FileName) -ne $hasMarker) {
+        throw "ITL long-run marker mismatch in command template: $FileName"
+    }
+    if (-not $hasMarker) { return $Text }
+    $instruction = Get-ItlLongRunInstructionText -Client $Client -FileName $FileName
+    return [regex]::Replace($Text, $marker, [System.Text.RegularExpressions.MatchEvaluator] { param($m) $instruction }, 1)
+}
+
 function Get-ItlRoutineMode {
     $value = ([string](Get-EnvValue -Name "ITL_ROUTINE_MODE" -Default "off")).Trim().ToLowerInvariant()
     if (-not $value) { return "off" }
@@ -1899,6 +1946,7 @@ If `itl_create_dev_workspace` is not present in the current tool list, return ex
 "@
     }
     $Text = Add-ItlExplicitRoutineContract -Text $Text -FileName $FileName
+    $Text = Add-ItlLongRunInstruction -Text $Text -Client $Client -FileName $FileName
     if ($adapter.commandRouting -eq "none") {
         $Text = [regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?\n', '')
     } elseif (Test-ItlRoutineEnabledForCommand -FileName $FileName -Client $Client) {

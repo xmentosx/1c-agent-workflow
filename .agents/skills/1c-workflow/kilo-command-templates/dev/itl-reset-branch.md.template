@@ -7,7 +7,7 @@ Use this command only from an active ready configuration `itldev/*` worktree.
 
 Run the helper directly from the current project directory:
 
-If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 3900000` by default so the outer shell outlives the 3600-second 1C Designer/Enterprise limit. Do not use `120000 ms` or another short default.
+<!-- ITL_LONG_RUN -->
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action reset-dev-branch
