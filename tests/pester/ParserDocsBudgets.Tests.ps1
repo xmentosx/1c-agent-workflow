@@ -801,6 +801,18 @@
         $itl = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "common\itl.md.template")
         $result = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "dev\itl-result.md.template")
         $update = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "common\itl-update-workflow.md.template")
+        # Agent references are English. Russian stays only in fenced or inline
+        # code (user-facing examples, Gherkin), quoted user phrases ("..." or
+        # curly quotes) and single 1C identifiers; two adjacent Cyrillic words
+        # outside them are prose.
+        foreach ($reference in Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references") -Filter "*.md") {
+            $prose = Get-Content -Encoding UTF8 -Raw $reference.FullName
+            $prose = [regex]::Replace($prose, '(?s)```.*?```', '')
+            $prose = [regex]::Replace($prose, '`[^`\r\n]*`', '')
+            $prose = [regex]::Replace($prose, '“[^”\r\n]*”|"[^"\r\n]*"', '')
+            $prose | Should -Not -Match '[Ѐ-ӿ]+[\s,.;:—-]+[Ѐ-ӿ]+' -Because "$($reference.Name) is agent-facing"
+        }
+
         $itl | Should -Match "Run the helper panel from the current project directory"
         $result | Should -Match "Use this command only from an active"
         $update | Should -Match 'from either the `master` worktree or an active `itldev/\*` worktree'
@@ -1305,7 +1317,7 @@
             "/opsx-apply",
             "quick-fix",
             "hybrid cadence",
-            "достаточное текущее доказательство",
+            "sufficient current proof",
             "targeted/static",
             "pending verification",
             "unfiltered",
@@ -1314,21 +1326,21 @@
             $text | Should -Match ([regex]::Escape($marker))
         }
 
-        $text | Should -Match "quick-fix.*переиспользуйте.*существующее proof"
-        $text | Should -Match "Сохраняемый regression test.*будущих изменений"
+        $text | Should -Match "quick-fix reuse sufficient existing proof"
+        $text | Should -Match "retained regression test only when future changes need it"
         $text | Should -Match "OpenSpec.*hybrid cadence"
-        $text | Should -Match "milestone.*результат решает.*реализац"
-        $text | Should -Match 'последней verification-relevant правки.*unfiltered `/itl-check`'
-        $text | Should -Not -Match 'Для каждого среза.*выполняет `/itl-check`'
-        $text | Should -Not -Match 'после каждого значимого среза.*обязательно.*`/itl-check`'
-        $text | Should -Match "сохраняемая регрессия полезна.*1–2 Vanessa"
-        $text | Should -Not -Match "четвертая проверка.*обоснован"
-        $text | Should -Match "git branch --show-current.*не каталог"
+        $text | Should -Match "milestone whose runtime result decides further implementation"
+        $text | Should -Match 'last verification-relevant edit an ordinary unfiltered `/itl-check`'
+        $text | Should -Match 'Do not run `/itl-check` automatically after every slice'
+        $text | Should -Not -Match 'after each (significant )?slice.*(must|mandatory).*`/itl-check`'
+        $text | Should -Match "retained regression is useful, usually 1–2 Vanessa"
+        $text | Should -Not -Match "fourth check.*justif"
+        $text | Should -Match "git branch --show-current.*not a directory"
         $text | Should -Match "exportPath.*extensionsPath"
         $text | Should -Match "master.*branch-safety blocker"
-        $text | Should -Match "изменение существующей формы или wired metadata"
-        $text | Should -Match "Promotion trigger.*сам по себе не требует OpenSpec"
-        $text | Should -Not -Match "(?m)^- изменение поведения системы;$"
+        $text | Should -Match "change of an existing form or wired metadata"
+        $text | Should -Match "promotion trigger.*by itself.*not require OpenSpec"
+        $text | Should -Not -Match "(?m)^- (a )?change of system behavior;$"
         $text | Should -Not -Match "2-4 Vanessa"
 
         foreach ($relativePath in @(
@@ -1343,12 +1355,25 @@
         }
 
         $routerText = $developmentTexts[".agents\skills\1c-workflow\references\dev-branch-development.md"]
-        foreach ($marker in @("dev-branch-quick-fix.md", "dev-branch-direct.md", "dev-branch-openspec.md", "ровно один matching reference")) {
+        foreach ($marker in @("dev-branch-quick-fix.md", "dev-branch-direct.md", "dev-branch-openspec.md", "exactly one matching reference")) {
             $routerText | Should -Match ([regex]::Escape($marker))
         }
+        # Every menu line names an executable ITL command or helper action.
+        $helperActions = @([regex]::Matches(([regex]::Match($HelperText, '\[ValidateSet\(([^)]*)\)\]')).Groups[1].Value, '"([a-z0-9-]+)"') | ForEach-Object { $_.Groups[1].Value })
+        $commandNames = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { '/' + ($_.Name -replace '\.md\.template$', '') })
+        $menu = [regex]::Match($routerText, '(?s)## Running actions.*?```text\r?\n(.*?)```').Groups[1].Value
+        $menuNames = @($menu -split '\r?\n' | Where-Object { $_.Trim() } | ForEach-Object { ($_.Trim() -split '\s+')[0] })
+        $menuNames.Count | Should -BeGreaterThan 5
+        foreach ($name in $menuNames) {
+            (($commandNames -contains $name) -or ($helperActions -contains $name)) | Should -BeTrue -Because "menu entry '$name' must be executable"
+        }
+        $routerText | Should -Not -Match "helper action\s{2,}"
 
         $quickText = $developmentTexts[".agents\skills\1c-workflow\references\dev-branch-quick-fix.md"]
-        $quickText | Should -Match "quick-fix.*переиспользуйте.*существующее proof"
+        $quickText | Should -Match "quick-fix reuse sufficient existing proof"
+        # One executable check after the last edit; no mandatory regression test.
+        ([regex]::Matches($quickText, '(?m)^\d+\. .*`/itl-check`')).Count | Should -Be 1
+        $quickText | Should -Not -Match "(?i)create or update (a|the) (targeted )?regression test"
         $quickText | Should -Not -Match "/opsx-(?:explore|propose|apply|archive)"
 
         $directText = $developmentTexts[".agents\skills\1c-workflow\references\dev-branch-direct.md"]
@@ -1360,7 +1385,7 @@
         $openSpecText | Should -Match "planningMode=OpenSpec"
         $openSpecText | Should -Match "executionPath=quick-fix\|full-cycle"
         $openSpecText | Should -Match "OpenSpec.*hybrid cadence"
-        $openSpecText | Should -Match "сохраняемая регрессия полезна.*1–2 Vanessa"
+        $openSpecText | Should -Match "retained regression is useful, usually 1–2 Vanessa"
         $openSpecText | Should -Match "YAxUnit"
         $openSpecText | Should -Match "test-report.md"
     }
@@ -1414,7 +1439,8 @@
             foreach ($request in @("Исследуй задачу в режиме OpenSpec", "Подготовь OpenSpec proposal", "Реализуй согласованный OpenSpec change", "Заархивируй принятый OpenSpec change")) {
                 $text | Should -Match ([regex]::Escape($request))
             }
-            $text | Should -Match "не считайте.*универсальным|не универсаль"
+            # Russian human guide and English agent reference state the same rule.
+            $text | Should -Match "не считайте.*универсальным|не универсаль|not a universal contract"
         }
         $agentText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\dev-branch-openspec.md")
         $agentText | Should -Match "/opsx-propose.*proposal"
