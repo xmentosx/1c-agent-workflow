@@ -132,4 +132,4 @@ update-workflow managed-copy. Source launcher `scripts/source-openspec.ps1`
 
 При обновлении проверьте metadata и ссылки, измерьте bytes router/skill metadata,
 поведение выбранных маршрутов и обнаружение в свежем контексте Codex. Пилот и
-его ограничения: [enable-source-planning](../openspec/changes/enable-source-planning/test-plan.md).
+его ограничения: [enable-source-planning](../openspec/changes/archive/2026-11-16-enable-source-planning/test-plan.md).

@@ -103,7 +103,7 @@ Replan архивирует только повторно подтверждён
 already-reachable без новой квалификации и изменения следующей очереди.
 Исторический активный план завершается прежним owner перед новым RegisterChange;
 функциональный rollback сохраняет совместимый queue decoder. Сценарии и пределы
-доказательств: [candidate recovery](../openspec/changes/redesign-source-delivery/evidence/candidate-recovery.md).
+доказательств: [candidate recovery](../openspec/changes/archive/2026-11-16-redesign-source-delivery/evidence/candidate-recovery.md).
 
 ### Ремонт упавшей замороженной публикации
 
@@ -225,7 +225,7 @@ venv through `scripts/host-test-runtime.ps1`; tests use its absolute interpreter
 `ITL_SOURCE_TEST_PYTHON` selects bootstrap explicitly. `SPPR_TEST_PYTHON` is a
 verified read-only isolated override. Owned missing dependencies repair through
 the same component test; unknown runtime identity still disables proof reuse.
-Scope and acceptance: [component environments](../openspec/changes/redesign-source-delivery/evidence/component-python-environments.md).
+Scope and acceptance: [component environments](../openspec/changes/archive/2026-11-16-redesign-source-delivery/evidence/component-python-environments.md).
 
 `MultiClientMcpOwnership` uses a private registry, distribution and local cache for
 each test, including a cached-registry refresh failure. `OpenSpecCliRuntime` records
