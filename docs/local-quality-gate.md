@@ -207,6 +207,13 @@ Group related edits before checking them; do not run tests mechanically after
 each patch. Repeat passed checks only when their relevant inputs changed or new
 evidence requires it.
 
+Run that selection through `.\scripts\test.ps1 -Path <tests/pester/*.Tests.ps1>`.
+It uses the gate's own shard scheduler and worker: strict mode, the isolated
+fixture environment and the same Windows PowerShell host. A file that passes
+there is saved in the shared shard cache, and `RegisterChange` reuses it while
+its owner inputs are unchanged. A plain `Invoke-Pester` has neither strict mode
+nor that isolation; its pass does not predict registration and is never reused.
+
 Treat `Targeted` as a potentially expensive registration gate, not an intermediate
 development check. Run it once through `RegisterChange` after the implementation
 unit is complete; never pre-run it manually or start a broad gate merely because
