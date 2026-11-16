@@ -819,6 +819,9 @@ if($result.roots[0].status -ne 'completed'){throw ($result.roots[0].reason)}
             Mock Get-WorkflowPackageCopyDirectoryPaths { '.agents/skills/1c-workflow' }
             Mock Get-WorkflowPackageCopyFilePaths { @() }
             Mock Remove-LegacyWorkflowManagedFiles {}
+            # The mocked copy writes only the patched file; the real copy owner
+            # verifies a real copy against its source.
+            Mock Assert-WorkflowPackageCopyComplete {}
             Mock Update-WorkflowPackageLockEntry {}
             Mock Invoke-Agent1cFreshProcess { throw 'REEXEC_BOUNDARY' }
         }
