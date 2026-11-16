@@ -1,47 +1,61 @@
 # Retention belongs to the existing source-delivery owner and manual operation lease.
-# Only bulky recovery payloads expire; proof, indexes and test evidence stay intact.
-function Get-DeliveryRecoveryPolicy {
+# Recovery payloads expire with their proof retained; the registration audit
+# store and the Pester shard cache expire by age of last write or reuse.
+function Get-DeliveryRetentionSettings {
+    param([string]$Prefix, [object[]]$Defaults, [string]$Label)
     $common = Get-DeliveryCommonGitDirectory
     $envPath = Join-Path $script:Root '.dev.env'
     if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) {
         $envPath = Join-Path (Split-Path -Parent $common) '.dev.env'
     }
+    $names = @($Defaults | ForEach-Object { [string]$_[0] }) -join '|'
     $values = @{}
     if (Test-Path -LiteralPath $envPath -PathType Leaf) {
         foreach ($line in Get-Content -LiteralPath $envPath -Encoding UTF8) {
-            if ($line -match '^\s*(ITL_SOURCE_RECOVERY_(?:RETENTION_DAYS|KEEP_COUNT))\s*=\s*["'']?(\d+)["'']?\s*(?:#.*)?$') {
+            if ($line -match "^\s*($Prefix(?:$names))\s*=\s*[""']?(\d+)[""']?\s*(?:#.*)?$") {
                 $values[$matches[1]] = $matches[2]
-            } elseif ($line -match '^\s*ITL_SOURCE_RECOVERY_(RETENTION_DAYS|KEEP_COUNT)\s*=') {
-                throw 'Invalid source recovery retention setting in .dev.env; use nonnegative integers.'
+            } elseif ($line -match "^\s*$Prefix($names)\s*=") {
+                throw "Invalid $Label retention setting in .dev.env; use nonnegative integers."
             }
         }
     }
-    $settings = @{}
-    foreach ($setting in @(@('RETENTION_DAYS', 7), @('KEEP_COUNT', 2))) {
-        $name = 'ITL_SOURCE_RECOVERY_' + $setting[0]
+    $settings = @{ envPath=$envPath }
+    foreach ($setting in $Defaults) {
+        $name = $Prefix + $setting[0]
         $value = [Environment]::GetEnvironmentVariable($name, 'Process')
         if ([string]::IsNullOrEmpty($value)) { $value = if ($values.ContainsKey($name)) { $values[$name] } else { [string]$setting[1] } }
         $number = 0
         if (-not [int]::TryParse($value, [ref]$number) -or $number -lt 0) { throw "Invalid $name; use a nonnegative integer." }
         $settings[$setting[0]] = $number
     }
-    return [pscustomobject]@{ retentionDays=$settings.RETENTION_DAYS; keepCount=$settings.KEEP_COUNT; envPath=$envPath }
+    return $settings
+}
+
+function Get-DeliveryRecoveryPolicy {
+    $settings = Get-DeliveryRetentionSettings -Prefix 'ITL_SOURCE_RECOVERY_' -Defaults @(@('RETENTION_DAYS', 7), @('KEEP_COUNT', 2)) -Label 'source recovery'
+    return [pscustomobject]@{ retentionDays=$settings.RETENTION_DAYS; keepCount=$settings.KEEP_COUNT; envPath=$settings.envPath }
+}
+
+function Assert-DeliveryContainedPath {
+    param([string]$Path, [string]$CommonGit)
+    $common = [IO.Path]::GetFullPath($CommonGit).TrimEnd('\', '/')
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    if (-not $full.StartsWith($common + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Retention path escapes common Git.' }
+    $cursor = $full
+    while ($cursor) {
+        if (Test-Path -LiteralPath $cursor) {
+            if ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Retention path contains a reparse point.' }
+        }
+        if ($cursor -ieq $common) { break }
+        $cursor = Split-Path -Parent $cursor
+    }
+    return $full
 }
 
 function Get-DeliveryRecoveryFiles {
     param([string]$Path, [string]$CommonGit)
     # Check ancestors before walking. Get-ChildItem -Recurse must never follow a link.
-    $common = [IO.Path]::GetFullPath($CommonGit).TrimEnd('\', '/')
-    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
-    if (-not $full.StartsWith($common + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Recovery path escapes common Git.' }
-    $cursor = $full
-    while ($cursor) {
-        if (Test-Path -LiteralPath $cursor) {
-            if ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Recovery path contains a reparse point.' }
-        }
-        if ($cursor -ieq $common) { break }
-        $cursor = Split-Path -Parent $cursor
-    }
+    $full = Assert-DeliveryContainedPath -Path $Path -CommonGit $CommonGit
     $pending = [Collections.Generic.Stack[string]]::new()
     $pending.Push($full)
     while ($pending.Count) {
@@ -265,5 +279,128 @@ function Invoke-DeliveryRecoveryCleanup {
         finally { foreach ($handle in $streams.Values) { $handle.Dispose() } }
     }
     if ($result.warnings.Count) { $result.status='completed-with-warnings' }
+    return [pscustomobject]$result
+}
+
+# Registration records are audit copies that no gate reads after acceptance.
+# A shard cache entry is admitted only for its exact owner-input digest, and
+# its reader refreshes the entry directory time on reuse. Both expire after the
+# configured days without a write or reuse; the registration named by the
+# current candidate state is kept at any age.
+function Get-DeliveryStorePolicy {
+    $settings = Get-DeliveryRetentionSettings -Prefix 'ITL_SOURCE_STORE_' -Defaults @(, @('RETENTION_DAYS', 14)) -Label 'source store'
+    return [pscustomobject]@{ retentionDays=$settings.RETENTION_DAYS; envPath=$settings.envPath }
+}
+
+function Get-DeliveryStoreInventory {
+    param([switch]$IncludeEntries)
+    $common = Get-DeliveryCommonGitDirectory
+    $now = [DateTime]::UtcNow
+    $warnings = @(); $policy = $null
+    try { $policy = Get-DeliveryStorePolicy } catch { $warnings += $_.Exception.Message }
+    $stores = @(
+        [pscustomobject]@{ name='registrations'; root=(Join-Path $common 'itl\registrations\v1'); pattern='^\d{8}-\d{6}-\d{3}-[a-z]+-[0-9a-f]{32}$' },
+        [pscustomobject]@{ name='pester-shards'; root=(Join-Path $common 'itl\pester-shards\v1'); pattern='^[0-9a-f]{64}$' })
+    $entries = [Collections.Generic.List[object]]::new()
+    $summary = [ordered]@{}
+    foreach ($store in $stores) {
+        $counts = [pscustomobject][ordered]@{ total=0; eligible=0; kept=0 }
+        $summary[$store.name] = $counts
+        if (-not (Test-Path -LiteralPath $store.root -PathType Container)) { continue }
+        $storeEntries = [Collections.Generic.List[object]]::new()
+        $protected = @{}; $storeReason = ''
+        if (-not $policy) { $storeReason = 'policy-unavailable' }
+        elseif ($policy.retentionDays -eq 0) { $storeReason = 'retention-disabled' }
+        elseif ($store.name -eq 'registrations') {
+            try {
+                $snapshot = Get-SourceRegistrationSnapshot
+                if ($snapshot.stateObject -and -not $snapshot.state) { throw 'Candidate state is unreadable.' }
+                $state = $snapshot.state
+                if ($state -and $state.PSObject.Properties['evidence'] -and $state.evidence -and $state.evidence.PSObject.Properties['path']) {
+                    $protected[(Split-Path -Leaf ([string]$state.evidence.path))] = $true
+                }
+            } catch { $storeReason = 'candidate-state-unavailable'; $warnings += "registrations: $($_.Exception.Message)" }
+        }
+        try {
+            $null = Assert-DeliveryContainedPath -Path $store.root -CommonGit $common
+            foreach ($directory in ([IO.DirectoryInfo]::new($store.root)).EnumerateDirectories()) {
+                $counts.total++
+                $reason = $storeReason; $abandoned = $false
+                if (-not $reason) {
+                    if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { $reason = 'reparse-point' }
+                    elseif ($directory.Name -match '^\.expired-') { $abandoned = $true }
+                    elseif ($store.name -eq 'pester-shards' -and $directory.Name -match '^\.[0-9a-f]{64}\.[0-9a-f]{32}\.tmp$') {
+                        # An interrupted writer's staging directory; a live one is seconds old.
+                        if ($directory.LastWriteTimeUtc -gt $now.AddDays(-1)) { $reason = 'writer-in-progress' } else { $abandoned = $true }
+                    }
+                    elseif ($directory.Name -notmatch $store.pattern) { $reason = 'unrecognized' }
+                    elseif ($protected.ContainsKey($directory.Name)) { $reason = 'candidate-evidence' }
+                    elseif ($directory.LastWriteTimeUtc -gt $now.AddDays(-$policy.retentionDays)) { $reason = 'within-retention' }
+                }
+                if ($reason) { $counts.kept++; continue }
+                $counts.eligible++
+                if ($IncludeEntries) { $storeEntries.Add([pscustomobject]@{ store=$store.name; path=$directory.FullName; abandoned=$abandoned }) }
+            }
+            $entries.AddRange($storeEntries)
+        } catch {
+            $warnings += "$($store.name): $($_.Exception.Message)"
+            $counts.kept += $counts.eligible; $counts.eligible = 0
+        }
+    }
+    return [pscustomobject][ordered]@{ readOnly=$true; policy=$policy; warnings=$warnings; stores=[pscustomobject]$summary; entries=@($entries) }
+}
+
+function Remove-DeliveryStoreTree {
+    param([string]$Path)
+    # Never follow a link: a reparse point anywhere keeps the whole tree.
+    $directories = [Collections.Generic.List[string]]::new()
+    $files = [Collections.Generic.List[IO.FileInfo]]::new()
+    $pending = [Collections.Generic.Stack[IO.DirectoryInfo]]::new()
+    $pending.Push([IO.DirectoryInfo]::new($Path))
+    while ($pending.Count) {
+        $directory = $pending.Pop()
+        if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Store tree contains a reparse point.' }
+        $directories.Add($directory.FullName)
+        foreach ($item in $directory.EnumerateFileSystemInfos()) {
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Store tree contains a reparse point.' }
+            if ($item -is [IO.DirectoryInfo]) { $pending.Push($item) } else { $files.Add($item) }
+        }
+    }
+    foreach ($file in $files) { if ($file.IsReadOnly) { $file.IsReadOnly = $false }; $file.Delete() }
+    for ($index = $directories.Count - 1; $index -ge 0; $index--) { [IO.Directory]::Delete($directories[$index], $false) }
+    return $files.Count
+}
+
+function Invoke-DeliveryStoreRetention {
+    # Manual Cleanup, or a successful PublishDevelop after it closed its attempt.
+    param([ValidateSet('Cleanup', 'PublishDevelop')][string]$OperationAction = 'Cleanup')
+    [void](Assert-DeliveryOwnedOperationLease -Action $OperationAction)
+    $inventory = Get-DeliveryStoreInventory -IncludeEntries
+    $result = [ordered]@{ status='completed'; removedEntries=0; removedFiles=0; refreshedEntries=0; warnings=@($inventory.warnings); stores=$inventory.stores }
+    $cutoff = if ($inventory.policy) { [DateTime]::UtcNow.AddDays(-$inventory.policy.retentionDays) } else { [DateTime]::MinValue }
+    $failures = 0; $index = 0
+    foreach ($entry in $inventory.entries) {
+        if (($index++ % 500) -eq 0) { [void](Assert-DeliveryOwnedOperationLease -Action $OperationAction) }
+        try {
+            $directory = [IO.DirectoryInfo]::new($entry.path)
+            if (-not $directory.Exists) { continue }
+            $removable = $entry.path
+            if (-not $entry.abandoned) {
+                # A reuse after the inventory refreshed this entry.
+                if ($directory.LastWriteTimeUtc -gt $cutoff) { $result.refreshedEntries++; continue }
+                # Moving aside hides the entry from readers first, and fails while
+                # a reader or writer holds one of its files open.
+                $removable = Join-Path $directory.Parent.FullName ('.expired-' + $directory.Name + '-' + [guid]::NewGuid().ToString('N'))
+                [IO.Directory]::Move($entry.path, $removable)
+            }
+            $result.removedFiles += Remove-DeliveryStoreTree -Path $removable
+            $result.removedEntries++
+        } catch {
+            $failures++
+            if ($failures -le 5) { $result.warnings += "$($entry.path): $($_.Exception.Message)" }
+        }
+    }
+    if ($failures -gt 5) { $result.warnings += "$($failures - 5) more store entries were retained after errors." }
+    if ($result.warnings.Count) { $result.status = 'completed-with-warnings' }
     return [pscustomobject]$result
 }

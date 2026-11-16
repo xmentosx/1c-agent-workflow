@@ -862,6 +862,14 @@ function Invoke-PublishDevelopWithCleanup {
         Write-Warning "Recovery archive retention: $(@($recovery.warnings) -join '; ')"
         $result | Add-Member -NotePropertyName deliveryStatus -NotePropertyValue 'completed-with-cleanup-warnings' -Force
     }
+    # The registration audit store and shard cache expire under the same lease.
+    try { $stores = Invoke-DeliveryStoreRetention -OperationAction PublishDevelop }
+    catch { $stores = [pscustomobject]@{ status='completed-with-warnings'; removedEntries=0; removedFiles=0; warnings=@($_.Exception.Message) } }
+    $result | Add-Member -NotePropertyName sourceStores -NotePropertyValue $stores -Force
+    if ([string]$stores.status -eq 'completed-with-warnings') {
+        Write-Warning "Source store retention: $(@($stores.warnings) -join '; ')"
+        $result | Add-Member -NotePropertyName deliveryStatus -NotePropertyValue 'completed-with-cleanup-warnings' -Force
+    }
     return $result
 }
 

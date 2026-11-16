@@ -668,7 +668,8 @@ function Get-ShardCacheEntryRoot {
         $target = Join-Path $store $Digest
         $candidates += $target
         if (Test-Path -LiteralPath $target -PathType Container) {
-            $candidates += @(Get-ChildItem -LiteralPath $target -Directory -Filter ".$Digest.*.tmp")
+            # Store retention may move an expired entry aside at any moment.
+            try { $candidates += @(Get-ChildItem -LiteralPath $target -Directory -Filter ".$Digest.*.tmp" -ErrorAction Stop) } catch {}
         }
     }
     foreach ($candidate in $candidates) {
@@ -703,6 +704,11 @@ function Restore-ShardCache {
     try {
         $result = Get-Content -LiteralPath $cachedResult -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([string]$result.status -ne "passed" -or [int]$result.failed -ne 0) { return $null }
+        # Source store retention expires local entries by their last reuse.
+        $localEntry = Join-Path $cacheRoot $Digest
+        if ($entryRoot -ieq $localEntry -or $entryRoot.StartsWith($localEntry + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            try { [IO.Directory]::SetLastWriteTimeUtc($localEntry, [DateTime]::UtcNow) } catch {}
+        }
         $result | Add-Member -NotePropertyName proofSource -NotePropertyValue $entryRoot -Force
         if ($ReadOnly) { return $result }
         Copy-Item -LiteralPath $cachedJunit -Destination $JunitPath -Force

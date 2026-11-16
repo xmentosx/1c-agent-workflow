@@ -254,6 +254,128 @@ Describe 'Source recovery archive retention' {
     }
 }
 
+Describe 'Source store retention' {
+    BeforeAll {
+        $script:StoreInventoryBody = (Get-Command Get-DeliveryStoreInventory).ScriptBlock
+        function Get-SourceRegistrationSnapshot { $script:StoreSnapshot }
+        function New-StoreEntry {
+            param([ValidateSet('registrations', 'pester-shards')][string]$Store, [string]$Name, [double]$AgeDays)
+            $path = Join-Path (Get-DeliveryCommonGitDirectory) "itl/$Store/v1/$Name"
+            [void][IO.Directory]::CreateDirectory((Join-Path $path 'вложенный каталог'))
+            [IO.File]::WriteAllText((Join-Path $path 'result.json'), '{}')
+            [IO.File]::WriteAllText((Join-Path $path 'вложенный каталог/log.txt'), 'log')
+            [IO.Directory]::SetLastWriteTimeUtc($path, [DateTime]::UtcNow.AddDays(-$AgeDays))
+            return $path
+        }
+        function New-RegistrationName { '20261001-120000-000-targeted-' + [guid]::NewGuid().ToString('N') }
+        function New-ShardName { ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')) }
+        $script:savedStoreDays = $env:ITL_SOURCE_STORE_RETENTION_DAYS
+    }
+    BeforeEach {
+        $script:Root = Join-Path $TestDrive ('репозиторий с пробелом ' + [guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory((Get-DeliveryCommonGitDirectory))
+        $script:ActiveOperation = $null
+        $script:StoreSnapshot = [pscustomobject]@{ stateObject=''; state=$null }
+        $env:ITL_SOURCE_STORE_RETENTION_DAYS = '14'
+    }
+    AfterEach { Exit-DeliveryOperation }
+    AfterAll { $env:ITL_SOURCE_STORE_RETENTION_DAYS = $script:savedStoreDays }
+
+    It 'expires entries unused for the retention period, keeps candidate evidence and unknown names, and is idempotent' {
+        $oldRegistration = New-StoreEntry registrations (New-RegistrationName) 20
+        $freshRegistration = New-StoreEntry registrations (New-RegistrationName) 1
+        $candidateName = New-RegistrationName
+        $candidateRegistration = New-StoreEntry registrations $candidateName 40
+        $unknown = New-StoreEntry registrations 'manual notes' 40
+        $digest = New-ShardName
+        $oldShard = New-StoreEntry pester-shards $digest 20
+        $freshShard = New-StoreEntry pester-shards (New-ShardName) 1
+        $abandoned = New-StoreEntry pester-shards ('.' + (New-ShardName) + '.' + [guid]::NewGuid().ToString('N') + '.tmp') 2
+        $writing = New-StoreEntry pester-shards ('.' + (New-ShardName) + '.' + [guid]::NewGuid().ToString('N') + '.tmp') 0
+        $interrupted = New-StoreEntry pester-shards ('.expired-' + (New-ShardName) + '-' + [guid]::NewGuid().ToString('N')) 0
+        $script:StoreSnapshot = [pscustomobject]@{ stateObject=('a' * 40); state=[pscustomobject]@{ evidence=[pscustomobject]@{ path="itl/registrations/v1/$candidateName"; manifestSha256=('b' * 64) } } }
+
+        $preview = Get-DeliveryStoreInventory
+        $preview.stores.registrations.eligible | Should -Be 1
+        $preview.stores.'pester-shards'.eligible | Should -Be 3
+        Test-Path -LiteralPath $oldShard | Should -BeTrue
+
+        $null = Enter-DeliveryOperation -Action Cleanup
+        $report = Invoke-DeliveryStoreRetention
+        $report.warnings | Should -BeNullOrEmpty
+        $report.removedEntries | Should -Be 4
+        $report.removedFiles | Should -Be 8
+        foreach ($path in @($oldRegistration, $oldShard, $abandoned, $interrupted)) { Test-Path -LiteralPath $path | Should -BeFalse -Because $path }
+        foreach ($path in @($freshRegistration, $candidateRegistration, $unknown, $freshShard, $writing)) { Test-Path -LiteralPath $path | Should -BeTrue -Because $path }
+        @(Get-ChildItem -LiteralPath (Split-Path -Parent $oldShard) -Directory -Force -Filter '.expired-*').Count | Should -Be 0
+        (Invoke-DeliveryStoreRetention).removedEntries | Should -Be 0
+    }
+
+    It 'requires the operation lease and keeps every registration when candidate state is unreadable' {
+        $registration = New-StoreEntry registrations (New-RegistrationName) 30
+        $shard = New-StoreEntry pester-shards (New-ShardName) 30
+        { Invoke-DeliveryStoreRetention } | Should -Throw '*manual Cleanup*'
+        $script:StoreSnapshot = [pscustomobject]@{ stateObject=('a' * 40); state=$null }
+        $null = Enter-DeliveryOperation -Action Cleanup
+        $report = Invoke-DeliveryStoreRetention
+        $report.status | Should -Be 'completed-with-warnings'
+        $report.removedEntries | Should -Be 1
+        Test-Path -LiteralPath $registration | Should -BeTrue
+        Test-Path -LiteralPath $shard | Should -BeFalse
+    }
+
+    It 'lets a successful publication apply it under its own lease and disables it at zero days' {
+        $shard = New-StoreEntry pester-shards (New-ShardName) 30
+        $null = Enter-DeliveryOperation -Action PublishDevelop
+        $env:ITL_SOURCE_STORE_RETENTION_DAYS = '0'
+        (Invoke-DeliveryStoreRetention -OperationAction PublishDevelop).removedEntries | Should -Be 0
+        Test-Path -LiteralPath $shard | Should -BeTrue
+        $env:ITL_SOURCE_STORE_RETENTION_DAYS = '14'
+        (Invoke-DeliveryStoreRetention -OperationAction PublishDevelop).removedEntries | Should -Be 1
+        Test-Path -LiteralPath $shard | Should -BeFalse
+    }
+
+    It 'keeps an entry reused after the inventory and an entry with an open file' {
+        $reused = New-StoreEntry pester-shards (New-ShardName) 30
+        $open = New-StoreEntry pester-shards (New-ShardName) 30
+        $script:ReusedEntry = $reused
+        Mock Get-DeliveryStoreInventory {
+            param([switch]$IncludeEntries)
+            $inventory = & $script:StoreInventoryBody -IncludeEntries:$IncludeEntries
+            [IO.Directory]::SetLastWriteTimeUtc($script:ReusedEntry, [DateTime]::UtcNow)
+            $inventory
+        }
+        $reader = [IO.File]::Open((Join-Path $open 'result.json'), 'Open', 'Read', 'Read')
+        try {
+            $null = Enter-DeliveryOperation -Action Cleanup
+            $report = Invoke-DeliveryStoreRetention
+            $report.refreshedEntries | Should -Be 1
+            $report.removedEntries | Should -Be 0
+            $report.status | Should -Be 'completed-with-warnings'
+            Test-Path -LiteralPath $reused | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $open 'result.json') | Should -BeTrue
+        } finally { $reader.Dispose() }
+    }
+
+    It 'retains a tree with a reparse point and never visits its target' -Skip:($env:OS -ne 'Windows_NT') {
+        $shard = New-StoreEntry pester-shards (New-ShardName) 30
+        $outside = Join-Path $TestDrive ('внешние данные ' + [guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory($outside)
+        [IO.File]::WriteAllText((Join-Path $outside 'keep.txt'), 'untouched')
+        $null = New-Item -ItemType Junction -Path (Join-Path $shard 'linked') -Target $outside
+        [IO.Directory]::SetLastWriteTimeUtc($shard, [DateTime]::UtcNow.AddDays(-30))
+        try {
+            $null = Enter-DeliveryOperation -Action Cleanup
+            $report = Invoke-DeliveryStoreRetention
+            $report.removedEntries | Should -Be 0
+            $report.status | Should -Be 'completed-with-warnings'
+            (Get-Content -LiteralPath (Join-Path $outside 'keep.txt') -Encoding UTF8) | Should -Be 'untouched'
+        } finally {
+            foreach ($link in @(Get-ChildItem -LiteralPath (Split-Path -Parent $shard) -Directory -Force | ForEach-Object { Join-Path $_.FullName 'linked' } | Where-Object { Test-Path -LiteralPath $_ })) { [IO.Directory]::Delete($link) }
+        }
+    }
+}
+
 AfterAll {
     $env:ITL_SOURCE_RECOVERY_RETENTION_DAYS = $savedDays
     $env:ITL_SOURCE_RECOVERY_KEEP_COUNT = $savedKeep

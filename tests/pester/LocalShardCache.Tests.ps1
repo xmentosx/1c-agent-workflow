@@ -263,8 +263,12 @@ Get-PesterShardFileSha256 -Path `$Path
             Add-Content -LiteralPath $testPath -Encoding UTF8 -Value "# focused proof"
             $invoke = Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"; $out1 = Join-Path $root "out1"; $firstRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out1, "-JunitPath", (Join-Path $out1 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $firstRun.exitCode | Should -Be 0 -Because ((@($firstRun.stdout) + @($firstRun.stderr)) -join [Environment]::NewLine); $first = ($firstRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
             & git -C $root add --all; & git -C $root commit -m proven *> $null
+            # Store retention expires entries by last reuse; a reuse must refresh it.
+            $cacheEntry = Join-Path $root (".git\itl\pester-shards\v1\" + [string]$first.workers[0].inputDigest)
+            [IO.Directory]::SetLastWriteTimeUtc($cacheEntry, [DateTime]::UtcNow.AddDays(-30))
             $out2 = Join-Path $root "out2"; $secondRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out2, "-JunitPath", (Join-Path $out2 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $secondRun.exitCode | Should -Be 0 -Because ((@($secondRun.stdout) + @($secondRun.stderr)) -join [Environment]::NewLine); $second = ($secondRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
             $first.executedWorkerCount | Should -Be 1; $second.reusedWorkerCount | Should -Be 1; [string]$second.workers[0].inputDigest | Should -Be ([string]$first.workers[0].inputDigest)
+            ([IO.Directory]::GetLastWriteTimeUtc($cacheEntry)) | Should -BeGreaterThan ([DateTime]::UtcNow.AddDays(-1))
             $second.legacyDigestCount | Should -Be 0
             $second.fingerprintPlanMs | Should -BeGreaterOrEqual 0
             $second.cacheLookupMs | Should -BeGreaterOrEqual 0

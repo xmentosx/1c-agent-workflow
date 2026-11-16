@@ -1628,7 +1628,8 @@ seed DT, вынесенный по точному SHA, восстанавлив�
 Если данные изменились после первого архива, сохраняются обе версии: исходный
 архив не перезаписывается, новый вызов получает другой DiagnosticRoot.
 
-Срок хранения крупных recovery payloads и read-only предпросмотр ручной уборки:
+Срок хранения крупных recovery payloads, записей регистраций и Pester shard
+cache, а также read-only предпросмотр ручной уборки:
 [source recovery retention](source-recovery-retention.md). Proofs, indexes и
 stage evidence сохраняются; publication sweeps не удаляют recovery payloads.
 

@@ -182,6 +182,7 @@ try {
                 cleanupDebt = (Get-DeliveryResourceLedgerSummary)
                 disposition = (Get-DeliveryDispositionReport)
                 recoveryArchives = $(if ($StatusDetail -eq 'Full') { Get-DeliveryRecoveryInventory -IncludeEntries } else { $null })
+                sourceStores = $(if ($StatusDetail -eq 'Full') { Get-DeliveryStoreInventory } else { $null })
                 unstableTests = $(if ($StatusDetail -eq 'Full') { @(Get-DeliveryUnstableTests -Entries @((Get-DeliveryRunHistory -Limit $script:DeliveryRunHotIndexCapacity -IncludeDetails).lastRuns)) } else { $null })
                 runHistory = $history
             }
@@ -197,7 +198,9 @@ try {
             $cleanup | Add-Member -NotePropertyName refCleanup -NotePropertyValue $refCleanup
             $recoveryCleanup = Invoke-DeliveryRecoveryCleanup
             $cleanup | Add-Member -NotePropertyName recoveryArchives -NotePropertyValue $recoveryCleanup
-            if (([string]$refCleanup.status -eq 'needs-attention' -or [string]$recoveryCleanup.status -eq 'completed-with-warnings') -and [string]$cleanup.status -eq 'completed') {
+            $storeCleanup = Invoke-DeliveryStoreRetention
+            $cleanup | Add-Member -NotePropertyName sourceStores -NotePropertyValue $storeCleanup
+            if (([string]$refCleanup.status -eq 'needs-attention' -or [string]$recoveryCleanup.status -eq 'completed-with-warnings' -or [string]$storeCleanup.status -eq 'completed-with-warnings') -and [string]$cleanup.status -eq 'completed') {
                 $cleanup | Add-Member -NotePropertyName status -NotePropertyValue 'completed-with-warnings' -Force
             }
             $cleanup
