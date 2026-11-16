@@ -1054,6 +1054,10 @@ namespace Itl.WindowHelper
         public string Scope = "";
         public uint Pid;
         public DateTime DeadlineUtc;
+        // Optional diagnostics: the Vanessa step and feature line that asked for OS input.
+        public string Step = "";
+        public string Feature = "";
+        public long Line;
         public DateTime ReceivedUtc = DateTime.UtcNow;
     }
 
@@ -1513,6 +1517,9 @@ namespace Itl.WindowHelper
                     lease.Id = id;
                     lease.Scope = Json.Str(request, "scope");
                     lease.Pid = pid;
+                    lease.Step = Clip(Json.Str(request, "step"), 300);
+                    lease.Feature = Clip(Json.Str(request, "feature"), 260);
+                    lease.Line = Json.Num(request, "line", 0);
                     DateTime deadline;
                     lease.DeadlineUtc = DateTime.TryParse(Json.Str(request, "deadlineUtc"), CultureInfo.InvariantCulture,
                         DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out deadline) ? deadline : DateTime.UtcNow.AddSeconds(60);
@@ -1908,12 +1915,12 @@ namespace Itl.WindowHelper
             mutex.Release();
             long duration = (long)(DateTime.UtcNow - leaseSince).TotalMilliseconds;
             if (current != null) AddScopeStats(current.Scope, outcome == "activation-failed" ? 0 : 1, outcome == "activation-failed" ? 0 : duration);
-            Journal(paths.LeaseLog, new Dictionary<string, object>
+            Journal(paths.LeaseLog, WithStep(new Dictionary<string, object>
             {
                 { "t", Now() }, { "scope", current == null ? "" : current.Scope }, { "pid", pid }, { "durationMs", duration },
                 { "consentWaitMs", consentWaitMs }, { "queueWaitMs", queueWaitMs }, { "idleWaitMs", idleWaitMs },
                 { "requests", leaseRequests }, { "activation", activation }, { "focusReturn", returned }, { "outcome", outcome }
-            });
+            }, current));
             current = null;
             Next();
             if (current == null) Native.TrimWorkingSet();
@@ -1983,15 +1990,30 @@ namespace Itl.WindowHelper
             if (mutex.Held || state == LeaseState.Consent || state == LeaseState.IdleWait) mutex.Release();
             if (journal || reason != "scope-declined")
             {
-                Journal(paths.LeaseLog, new Dictionary<string, object>
+                Journal(paths.LeaseLog, WithStep(new Dictionary<string, object>
                 {
                     { "t", Now() }, { "scope", r.Scope }, { "pid", r.Pid }, { "durationMs", 0 }, { "consentWaitMs", consentWaitMs },
                     { "queueWaitMs", queueWaitMs }, { "idleWaitMs", idleWaitMs }, { "requests", 1 }, { "activation", "" }, { "outcome", "declined:" + reason }
-                });
+                }, r));
             }
             current = null;
             SetState(LeaseState.Idle);
             Next();
+        }
+
+        // A lease journal row names the step that started the lease when the client sent it.
+        private static Dictionary<string, object> WithStep(Dictionary<string, object> row, LeaseRequest r)
+        {
+            if (r == null) return row;
+            if (r.Step.Length > 0) row["step"] = r.Step;
+            if (r.Feature.Length > 0) row["feature"] = r.Feature;
+            if (r.Line > 0) row["line"] = r.Line;
+            return row;
+        }
+
+        private static string Clip(string value, int max)
+        {
+            return value.Length <= max ? value : value.Substring(0, max);
         }
 
         private void Next()

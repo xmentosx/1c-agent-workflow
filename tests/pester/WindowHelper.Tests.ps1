@@ -2,7 +2,7 @@
     $script:WhRepo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
     $script:WhLib = Join-Path $script:WhRepo '.agents/skills/1c-workflow/scripts/lib'
     $script:WhAssets = Join-Path $script:WhRepo '.agents/skills/1c-workflow/assets/window-helper'
-    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r15'
+    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r16'
     foreach ($module in 'agent-1c.runtime-values.ps1', 'agent-1c.core.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1', 'agent-1c.window-helper.ps1') {
         . (Join-Path $script:WhLib $module)
     }
@@ -709,6 +709,10 @@ Describe 'Window channel operation contract' {
         $used | Should -Not -BeNullOrEmpty
         @($used | Where-Object { $operations -notcontains $_ }) | Should -HaveCount 0
         foreach ($field in $protocol.requestFields) { $patch | Should -Match ('Запрос\.Вставить\("' + [regex]::Escape($field) + '"') }
+        foreach ($field in $protocol.operations.lease) {
+            $source | Should -Match ('"' + [regex]::Escape($field) + '"') -Because "the helper reads lease field $field"
+            $patch | Should -Match ('Вставить\("' + [regex]::Escape($field) + '"') -Because "Vanessa sends lease field $field"
+        }
         $patch | Should -Match ([regex]::Escape('Запрос.Вставить("protocol", 1);'))
         $protocol.protocol | Should -Be 1
     }
@@ -724,17 +728,29 @@ Describe 'Window channel operation contract' {
             if ($line[0] -eq '+' -or $line[0] -eq ' ') { [void]$builder.Append($line.Substring(1) + "`n") }
         }
         $form = $builder.ToString()
-        $methods = 'ITLУдалитьФайлПомощникаОкон', 'ITLПрочитатьJSONПомощникаОкон', 'ITLПомощникОконЖив', 'ITLОтправитьЗапросПомощникуОкон', 'ITLПерезапуститьПомощникОкон', 'ITLЗапросПомощникуОкон', 'ITLПроверитьОтветПомощникаОкон' | ForEach-Object {
+        $methods = 'ITLУдалитьФайлПомощникаОкон', 'ITLПрочитатьJSONПомощникаОкон', 'ITLПомощникОконЖив', 'ITLОтправитьЗапросПомощникуОкон', 'ITLПерезапуститьПомощникОкон', 'ITLЗапросПомощникуОкон', 'ITLПроверитьОтветПомощникаОкон', 'ITLОбластьУправления', 'ITLДобавитьШагЗапросаУправления' | ForEach-Object {
             $match = [regex]::Match($form, '(?ms)^(?:Функция|Процедура) ' + [regex]::Escape($_) + '\(.*?^Конец(?:Функции|Процедуры)[^\n]*')
             $match.Success | Should -BeTrue -Because $_
             $match.Value
+        }
+        # OneScript accepts member access on a parenthesized expression such as (Новый Файл(П)).Имя;
+        # the 1C platform rejects the whole form module and Vanessa never opens (itl-r16 build, 2026-11-16).
+        foreach ($method in $methods) {
+            $method | Should -Not -Match '(?<![\p{L}\p{N}_])\((?:[^()\n]|\([^()\n]*\))*\)\.\p{L}' -Because 'only a call result, not a parenthesized expression, can be dereferenced in 1C'
         }
         $group = New-WhGroup 'OneScript клиент'
         Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
         $stubs = @'
 Перем Каталог;
 Перем Ответ;
+Перем ITLСеансУправления;
+Перем ИдЗадачиMCP;
+Перем МассивСценариевДляВыполнения;
+Перем ТекИД_СценарияВМассиве;
+Перем ТекИД_ШагаВМассиве;
 Функция ITLКаталогКаналаОкон() Возврат Каталог; КонецФункции
+Функция ИдентификаторЗадачиMCP() Возврат ИдЗадачиMCP; КонецФункции
+Функция ИдетВыполнениеСценариев() Возврат Истина; КонецФункции
 Функция ФайлСуществуетКомандаСистемы(Имя) Возврат (Новый Файл(Имя)).Существует(); КонецФункции
 Процедура УдалитьФайлыКомандаСистемы(Имя) УдалитьФайлы(Имя); КонецПроцедуры
 Процедура ЗаписатьЛогВЖРОшибка(Где, Текст) Сообщить("LOG " + Где + ": " + Текст); КонецПроцедуры
@@ -761,6 +777,21 @@ Describe 'Window channel operation contract' {
 Ответ = ITLЗапросПомощникуОкон("lease", Новый Структура("scope", "scenario:1"), 5);
 Сообщить("LEASE " + Ответ.status + " " + Ответ.reason);
 Сообщить("DECLINED " + Ошибка("ITLПроверитьОтветПомощникаОкон(Ответ, ""ввод ОС"")"));
+// PM5 2026-11-16: the lease journal could not name the step that took the user's input.
+Шаги = Новый Массив;
+Шаги.Добавить(Новый Структура("Имя,НомерСтрокиВФиче", "И я нажимаю сочетание клавиш 'ENTER'", 42));
+МассивСценариевДляВыполнения = Новый Массив;
+МассивСценариевДляВыполнения.Добавить(Новый Структура("Шаги,ПолныйПутьКФиче", Шаги, Каталог + "\Ввод в ячейку.feature"));
+ТекИД_СценарияВМассиве = 0;
+ТекИД_ШагаВМассиве = 0;
+ИдЗадачиMCP = 142;
+Поля = Новый Структура("scope", ITLОбластьУправления());
+ITLДобавитьШагЗапросаУправления(Поля);
+Сообщить("SCOPE " + Поля.scope);
+Ответ = ITLЗапросПомощникуОкон("lease", Поля, 5);
+Сообщить("STEP LEASE " + Ответ.status + " " + Ответ.reason);
+// The helper answers in order: this reply follows the journal row of the declined lease.
+ITLЗапросПомощникуОкон("status", Новый Структура("port", 1), 5);
 // The helper dies: the next request restarts it through ensure --hung and repeats once.
 ЗапуститьПриложение("taskkill /F /PID " + Формат(ПИД, "ЧГ="), , Истина);
 Ответ = ITLЗапросПомощникуОкон("status", Новый Структура, 5);
@@ -784,6 +815,16 @@ Describe 'Window channel operation contract' {
         $output | Should -Match 'STATUS ok clients=0'
         $output | Should -Match 'LEASE declined no-client'
         $output | Should -Match 'DECLINED .*ITL_UI_CONTROL_DECLINED: .*\(no-client\)'
+        # The scope carries a session id, so a restarted Vanessa never reuses mcp:142 consent.
+        $scope = [regex]::Match($output, 'SCOPE (?<scope>mcp:142@[0-9a-f]{8})\r?\n').Groups['scope'].Value
+        $scope | Should -Not -BeNullOrEmpty -Because $output
+        $output | Should -Match 'STEP LEASE declined no-client'
+        $row = @(Read-ItlWindowHelperJournal -Path (Join-Path $group.directory 'journal\leases.jsonl') | Where-Object { $_.scope -ceq $scope })
+        $row | Should -HaveCount 1
+        $row[0].outcome | Should -Be 'declined:no-client'
+        $row[0].step | Should -BeExactly "И я нажимаю сочетание клавиш 'ENTER'"
+        $row[0].line | Should -Be 42
+        $row[0].feature | Should -BeExactly 'Ввод в ячейку.feature'
         $output | Should -Match 'RESTARTED ok pid=\d+'
         $output | Should -Match 'UNAVAILABLE .*ITL_WINDOW_HELPER_UNAVAILABLE: .*ONEC_WINDOW_MODE=visible'
     }
@@ -827,8 +868,8 @@ Describe 'Window channel operation contract' {
         }
         $patch | Should -Not -Match '(?m)^\+.*<WindowOpeningMode>(LockOwnerWindow|LockWholeInterface)</WindowOpeningMode>'
         $manifest = Get-Content -LiteralPath (Join-Path $script:WhRevision 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.downstreamRevision | Should -Be 'itl-r15'
-        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r15.cfe'
+        $manifest.downstreamRevision | Should -Be 'itl-r16'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r16.cfe'
         foreach ($form in $forms) { $manifest.patch.expectedChangedPaths | Should -Contain "lib/VAExtension/DataProcessors/$form/Forms/Форма/Ext/Form.xml" }
     }
     It 'calls no server-only date function from the added thin-client channel code' {
