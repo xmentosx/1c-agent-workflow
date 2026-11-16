@@ -980,7 +980,7 @@ function Invoke-ItlVerificationCycle {
     }
     if ($vanessa.run) {
         $selectionPlan = Get-ItlVanessaVerificationSelectionPlan -YAxUnitVerificationPlanned:$yaxunit.run
-        Set-ItlCheckTimingValue -Name selectionMode -Value ([string]$selectionPlan.mode)
+        Set-ItlCheckTimingValue -Name selectionMode -Value ([string](Get-StateValue -State $selectionPlan -Name mode -Default ''))
         Set-ItlCheckTimingValue -Name selectionReason -Value ([string](Get-StateValue -State $selectionPlan -Name reason -Default ''))
     }
 
