@@ -149,6 +149,69 @@ $runtime = Get-ItlManagedPythonRuntime -Offline -AssetRoot $Assets
             }
         }
     }
+    It 'removes idle replaced generations and keeps pointed, recent, running and linked ones' {
+        $first = Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root
+        $generationRoot = Join-Path $env:ITL_ARTIFACT_CACHE_ROOT 'py'
+        $active = Split-Path -Parent $first.executable
+        $old = [DateTime]::UtcNow.AddDays(-10)
+        function New-Generation([string]$Prefix = 'runtime-') {
+            $path = Join-Path $generationRoot ($Prefix + [guid]::NewGuid().ToString('N'))
+            [void][IO.Directory]::CreateDirectory((Join-Path $path 'Lib'))
+            [IO.File]::WriteAllText((Join-Path $path 'python.exe'), 'old interpreter')
+            return $path
+        }
+        $idle = New-Generation
+        $recent = New-Generation
+        $running = New-Generation
+        $otherPin = New-Generation
+        $linked = New-Generation
+        $foreign = Join-Path $caseRoot 'Чужой каталог'
+        [void][IO.Directory]::CreateDirectory($foreign)
+        [IO.File]::WriteAllText((Join-Path $foreign 'keep.txt'), 'foreign')
+        New-Item -ItemType Junction -Path (Join-Path $linked 'link') -Target $foreign | Out-Null
+        $staleStaging = New-Generation '.install-'
+        $freshStaging = New-Generation '.install-'
+        $retired = New-Generation '.retire-'
+        # Another workflow version on the same machine selects its own generation.
+        $otherPointer = Join-Path $generationRoot ('3.12.10\' + ('e' * 64))
+        [void][IO.Directory]::CreateDirectory($otherPointer)
+        [IO.File]::WriteAllText((Join-Path $otherPointer 'current.json'), (@{ schemaVersion = 1; directory = (Split-Path -Leaf $otherPin) } | ConvertTo-Json))
+        foreach ($path in @($active, $idle, $running, $otherPin, $linked)) { [IO.Directory]::SetLastWriteTimeUtc($path, $old) }
+        [IO.Directory]::SetLastWriteTimeUtc($recent, [DateTime]::UtcNow.AddDays(-2))
+        [IO.Directory]::SetLastWriteTimeUtc($staleStaging, [DateTime]::UtcNow.AddDays(-2))
+
+        $handle = [IO.File]::Open((Join-Path $running 'python.exe'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try {
+            Mock Invoke-ItlImmutableFileAcquire { throw 'Retention must not acquire' }
+            (Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root).executable | Should -BeExactly $first.executable
+        } finally { $handle.Dispose() }
+
+        (Get-Item -LiteralPath $active).LastWriteTimeUtc | Should -BeGreaterThan $old.AddDays(9)
+        Test-Path -LiteralPath $idle | Should -BeFalse
+        Test-Path -LiteralPath $staleStaging | Should -BeFalse
+        Test-Path -LiteralPath $retired | Should -BeFalse
+        foreach ($kept in @($recent, $running, $otherPin, $freshStaging)) { Test-Path -LiteralPath $kept | Should -BeTrue }
+        [IO.File]::ReadAllText((Join-Path $foreign 'keep.txt')) | Should -BeExactly 'foreign'
+        @(Get-ChildItem -LiteralPath $generationRoot -Directory -Force | Where-Object { $_.Name -match '^(?:runtime|\.retire)-' }).Count | Should -Be 5
+
+        # Released and still idle, the previously running generation goes on the next use.
+        [IO.Directory]::SetLastWriteTimeUtc($running, $old)
+        $null = Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root
+        Test-Path -LiteralPath $running | Should -BeFalse
+        Test-Path -LiteralPath $first.executable | Should -BeTrue
+    }
+    It 'keeps every generation when any runtime pointer is unreadable' {
+        $first = Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root
+        $generationRoot = Join-Path $env:ITL_ARTIFACT_CACHE_ROOT 'py'
+        $idle = Join-Path $generationRoot ('runtime-' + [guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory($idle)
+        [IO.Directory]::SetLastWriteTimeUtc($idle, [DateTime]::UtcNow.AddDays(-30))
+        $brokenPointer = Join-Path $generationRoot ('3.12.10\' + ('f' * 64))
+        [void][IO.Directory]::CreateDirectory($brokenPointer)
+        [IO.File]::WriteAllText((Join-Path $brokenPointer 'current.json'), '{ truncated')
+        (Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root).executable | Should -BeExactly $first.executable
+        Test-Path -LiteralPath $idle | Should -BeTrue
+    }
     It 'rejects a changed payload manifest before extracting or executing files' {
         [IO.File]::AppendAllText((Join-Path $fixture.root 'payload.json'), ' ')
         { Get-ItlManagedPythonRuntime -Offline -AssetRoot $fixture.root } | Should -Throw '*PAYLOAD_MANIFEST_HASH_MISMATCH*'
