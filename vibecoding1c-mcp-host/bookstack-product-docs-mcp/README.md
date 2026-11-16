@@ -99,7 +99,7 @@ contains `apiBase: https://openrouter.ai/api/v1`, `model: qwen/qwen3-embedding-8
 the existing authorized `apiKey`; keep it private and out of Git. An explicit remote
 profile without its key fails instead of silently selecting CPU. Model defaults apply
 when `semanticMinScore` is null: E5 0.82, Qwen 0.50. The latter separates the fixed
-positive/absent-topic sample in `openspec/changes/bookstack-qwen-fulltext/qualification.md`;
+positive/absent-topic sample in `openspec/changes/archive/2026-11-16-bookstack-qwen-fulltext/qualification.md`;
 that small sample is not a universal relevance guarantee.
 
 The image installs the CPU PyTorch wheel for the host's local embedding mode. It retains
