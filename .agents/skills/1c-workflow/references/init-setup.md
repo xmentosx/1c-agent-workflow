@@ -74,7 +74,7 @@ Ask only for values the helper cannot collect or infer:
 - One mandatory active client: `codex`, `kilocode`, `claude-code`, `cursor`, or `opencode`.
 - Project/source infobase kind and path/server/name.
 - For a file source, read `.itl-source-credentials.json` beside `1Cv8.1CD` when the developer accepts reuse (`yes` by default); otherwise collect values and offer to save them there (`yes` by default). The unencrypted JSON contains only `ibUser`, `ibPassword`, `repositoryPath`, `repositoryUser`, and `repositoryPassword`; an empty repository path means storage is disabled. Never use this shared-file behavior for a server infobase.
-- Base configuration version: `PM4` or `PM5`. Default is `PM5`; store it in committed `.agent-1c/project.json` as `baseConfigurationVersion`.
+- Product project: the wizard asks for a project from the published product registry (`projectId`; `CATALOG_PROJECT_REQUIRED` without one) and derives the product, its `PM4`/`PM5` family and the project MCP roles, including product documentation, from that record. Only legacy JSON/configured init without a catalog project still answers the family directly (default `PM5`). The family is stored in committed `.agent-1c/project.json` as `baseConfigurationVersion`.
 - Whether the source uses 1C configuration repository storage, unless that answer was inferred from an accepted file-infobase parameter file.
 - Repository path/user/password only when source storage is enabled.
 - 1C platform executable. First inspect standard `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` version folders and offer installed versions.

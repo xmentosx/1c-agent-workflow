@@ -370,7 +370,7 @@ exit 0
             $productDocsSkillText | Should -Match ([regex]::Escape($marker))
         }
 
-        $guardIndex = $productDocsSkillText.IndexOf("Evaluate the PM4/PM5 guard", [StringComparison]::Ordinal)
+        $guardIndex = $productDocsSkillText.IndexOf("Evaluate the availability guard", [StringComparison]::Ordinal)
         $reuseIndex = $productDocsSkillText.IndexOf("For the same OpenSpec change", [StringComparison]::Ordinal)
         $guardIndex | Should -BeGreaterOrEqual 0
         $guardIndex | Should -BeLessThan $reuseIndex
@@ -397,6 +397,33 @@ exit 0
         $installText | Should -Match "USER-RULES.md"
     }
 
+    It "decides product documentation by the registry productDocs role and keeps the PM5 rule for unbound projects: <Name>" -TestCases @(
+        @{ Name = 'PM5 with a disabled role'; Family = 'PM5'; Bound = $true; Resolution = 'disabled'; Expected = $false },
+        @{ Name = 'PM4 with a resolved role'; Family = 'PM4'; Bound = $true; Resolution = 'resolved'; Expected = $true },
+        @{ Name = 'PM5 with a deferred role'; Family = 'PM5'; Bound = $true; Resolution = 'deferred'; Expected = $true },
+        @{ Name = 'PM5 bound before apply'; Family = 'PM5'; Bound = $true; Resolution = ''; Expected = $true },
+        @{ Name = 'unbound PM5'; Family = 'PM5'; Bound = $false; Resolution = 'disabled'; Expected = $true },
+        @{ Name = 'unbound PM4'; Family = 'PM4'; Bound = $false; Resolution = 'resolved'; Expected = $false }
+    ) {
+        param($Name, $Family, $Bound, $Resolution, $Expected)
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-product-docs-role " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\mcp") | Out-Null
+            $project = [ordered]@{ schemaVersion = 1; baseConfigurationVersion = $Family }
+            if ($Bound) { $project.productProject = [ordered]@{ schemaVersion = 1; requiredCapability = 'product-project-registry-v1'; projectId = 'demo'; productId = 'pm5-corp' } }
+            [IO.File]::WriteAllText((Join-Path $tempRoot ".agent-1c\project.json"), ($project | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+            if ($Resolution) {
+                # An applied record left for a binding that no longer exists is not authority.
+                $applied = @{ schemaVersion = 1; projectRoot = $tempRoot; context = @{ roles = @{ productDocs = @{ resolution = $Resolution } } } }
+                [IO.File]::WriteAllText((Join-Path $tempRoot ".agent-1c\mcp\product-context-applied.json"), ($applied | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+            }
+            $allowed = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Test-ProductDocsMcpAllowed }
+            $allowed | Should -Be $Expected
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "installs BookStack routing only for PM5 and keeps fresh/update overlay behavior identical" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-product-docs-routing-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -415,7 +442,8 @@ exit 0
                 [pscustomobject]@{ pm4 = $pm4; pm5 = $pm5 }
             }
 
-            $result.pm4 | Should -Match "For PM4 projects"
+            $result.pm4 | Should -Match "This project has no product documentation MCP"
+            $result.pm4 | Should -Not -Match "(?m)^For product logic"
             $result.pm4 | Should -Match "technical or implementation architecture"
             $result.pm4 | Should -Not -Match "BookStack-product-docs-mcp"
             $result.pm4 | Should -Not -Match "reuse current/proposal"

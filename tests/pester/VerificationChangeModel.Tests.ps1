@@ -167,17 +167,35 @@ Describe 'Change mode recovery and reuse boundaries' {
         }
     }
 
-    It 'preserves mandatory retained coverage for <kind>' -TestCases @(@{kind='always'},@{kind='full'}) {
+    It 'keeps the always policy and only reports shared test support: <kind>' -TestCases @(@{kind='always'},@{kind='full'},@{kind='feature'}) {
         param($kind)
         & {
             . (Join-Path (Split-Path -Parent $helperPath) 'lib/agent-1c.verification-change.ps1')
-            function Read-VerificationChange { [pscustomobject]@{retainedDispositions=@([pscustomobject]@{suiteId='existing';decision='unaffected';reason='Unrelated change'})} }
+            function Get-VerificationCatalogValue { param($Value,$Name,$Default) $p=$Value.PSObject.Properties[$Name]; if($null -eq $p){$Default}else{$p.Value} }
+            function Read-VerificationChange { [pscustomobject]@{baseTree='base';checks=@();retainedDispositions=@([pscustomobject]@{suiteId='existing';decision='unaffected';reason='Unrelated change'})} }
             function Assert-VerificationChangeCurrent { param($Change) }
             function Get-VanessaVerificationFeaturesPath { 'tests/features' }
+            function Get-VanessaFeaturesPath { 'tests/features' }
             function Get-VanessaApplicationFeatureFiles { param($FeaturePath) @() }
-            function Read-VerificationSuiteCatalog { param($ApplicationFeatureFiles) [pscustomobject]@{suites=@([pscustomobject]@{id='existing';always=($kind -eq 'always')})} }
-            $plan=[pscustomobject]@{mode=$(if($kind -eq 'full'){'full'}else{'incremental'});selectedSuiteIds=@('existing');acceptanceSuiteIds=@('existing')}
-            { Get-VerificationChangeSelectionPlan -Plan $plan } | Should -Throw ('*VERIFICATION_CHANGE_'+$(if($kind -eq 'full'){'FULL'}else{'ALWAYS'})+'_REQUIRED*')
+            function Read-VerificationSuiteCatalog { param($ApplicationFeatureFiles) [pscustomobject]@{suites=@([pscustomobject]@{id='existing';purpose='acceptance';always=($kind -eq 'always')});assignments=@([pscustomobject]@{suiteId='existing';purpose='acceptance';path='tests/features/Existing.feature'});catalogPaths=@()} }
+            # 'full': a shared Vanessa step changed; 'feature': the suite's own feature file changed.
+            function Get-VerificationSelectionChangedPaths { param($BaseTree,$CurrentTree) switch($kind){'full'{@('tests/features/Libraries/Steps.feature')}'feature'{@('tests/features/Existing.feature')}default{@('src/cf/current.bsl')}} }
+            function Get-VerificationAcceptedMasterInput { param($ChangedPaths,$CurrentTree) [pscustomobject]@{importedPaths=@()} }
+            function Get-VerificationOwnerPaths { @() }
+            function Get-VerificationRelevantDependencyLockFingerprint { param($Treeish) 'same' }
+            function Get-VerificationRepoRelativePath { param($Path) $Path }
+            $plan=[pscustomobject]@{mode='incremental';reason='';selectedSuiteIds=@('existing');acceptanceSuiteIds=@('existing');currentTree='tree'}
+            if ($kind -eq 'always') {
+                { Get-VerificationChangeSelectionPlan -Plan $plan } | Should -Throw '*VERIFICATION_CHANGE_ALWAYS_REQUIRED*'
+            } else {
+                # A changed shared step is reported; accepted results stay valid
+                # and the agent's exclusion stands.
+                $required=Get-VerificationChangeRequiredSuites -Change (Read-VerificationChange) -Catalog (Read-VerificationSuiteCatalog -ApplicationFeatureFiles @()) -CurrentTree 'tree'
+                @($required.suiteIds).Count | Should -Be 0
+                @($required.unaffectedSuiteIds) | Should -Be @('existing')
+                if ($kind -eq 'full') { ($required.infrastructureReasons -join ' ') | Should -Match "Shared Vanessa support changed at 'tests/features/Libraries/Steps.feature'" }
+                else { @($required.infrastructureReasons).Count | Should -Be 0 }
+            }
         }
     }
 
@@ -217,6 +235,60 @@ Describe 'Change mode recovery and reuse boundaries' {
             (Get-VerificationState -State $script:ChangeTestState).isFreshPassed | Should -BeTrue
         }
     }
+    It 'runs a covering suite by default, refuses its silent omission and honours an explicit exclusion in a fresh branch' {
+        $root=Join-Path $TestDrive 'Покрывающий набор с пробелами'; New-ChangeFixture $root -Retained
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $file=Write-CurrentPlan
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_SUITE_UNDECIDED: retained suites cover changed paths: 'existing' (src/cf/current.bsl)*"
+            # Excluded with a reason and no prior pass: nothing runs, and readiness
+            # does not demand the suite's receipt.
+            $plan=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $plan.retainedDispositions=@([pscustomobject]@{suiteId='existing';decision='unaffected';reason='Only a message text changed; the UI suite observes no text.'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            $selection=Get-ItlVanessaVerificationSelectionPlan
+            $selection.mode | Should -BeExactly 'reuse'
+            @($selection.selectedSuiteIds).Count | Should -Be 0
+            $selection.reason | Should -Match 'Excluded by the agent: existing'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Set-CurrentObservation first; Set-CurrentEventEvidence
+            (Complete-VerificationChange).changeStatus | Should -BeExactly 'accepted'
+        }
+        $kept=Join-Path $TestDrive 'Покрывающий набор оставлен'; New-ChangeFixture $kept -Retained
+        Enter-ChangeFixture $kept {
+            # Kept: the suite has no receipt in this fresh branch, so it runs.
+            Write-Utf8TextAtomic -Path (Join-Path $kept 'src/cf/current.bsl') -Value 'Current fix'
+            $file=Write-CurrentPlan
+            $plan=Read-Utf8Text -Path (Join-Path $kept $file)|ConvertFrom-Json
+            $plan.checks+=@([pscustomobject]@{suiteId='existing'})
+            Write-Utf8TextAtomic -Path (Join-Path $kept $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            @((Get-ItlVanessaVerificationSelectionPlan).selectedSuiteIds) | Should -Be @('existing')
+        }
+    }
+
+    It 'accepts a loaded-target check from the load and event log without an observation' {
+        $root=Join-Path $TestDrive 'Без наблюдения в базе'; New-ChangeFixture $root -WithoutCatalog
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Message text fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            $file=Write-CurrentPlan -Finish
+            $plan=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $plan.checks[0].admissibleProof=@('loaded-target')
+            $plan.paths[0].reason='Only the message text changed; loading the module is sufficient proof.'
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            { Start-VerificationOneOffProof -ObligationId first } | Should -Throw '*VERIFICATION_ONE_OFF_LOADED_TARGET*'
+            # Without the check's own event-log evidence the load alone is not enough.
+            { Complete-VerificationChange } | Should -Throw '*VERIFICATION_COMPONENT_PROOF_PENDING*'
+            Set-CurrentEventEvidence
+            $result=Complete-VerificationChange
+            $result.changeStatus | Should -BeExactly 'accepted'
+            $result.taskAccepted | Should -BeTrue
+        }
+    }
+
     It 'drafts covering retained checks for review and refuses an unreviewed draft' {
         $root=Join-Path $TestDrive 'Черновик плана с пробелами'; New-ChangeFixture $root -Retained
         Enter-ChangeFixture $root {

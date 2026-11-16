@@ -11744,11 +11744,11 @@ function Update-UserRules {
     $marker = "## 1C Project Lifecycle"
     $templateBlock = (Read-Utf8Text -Path $templatePath).Trim()
     if (-not (Test-ProductDocsMcpAllowed)) {
-        $productDocsRulePattern = '(?m)^For PM5 product logic,.*$'
+        $productDocsRulePattern = '(?m)^For product logic,.*$'
         if (-not [regex]::IsMatch($templateBlock, $productDocsRulePattern)) {
-            throw "PM5 product-docs rule was not found in USER-RULES overlay; refusing to install PM5 BookStack routing into a PM4 project."
+            throw "Product-docs rule was not found in USER-RULES overlay; refusing to install BookStack routing into a project without product documentation."
         }
-        $pm4Rule = 'For PM4 projects, PM5 product documentation MCP is disabled. Before answering, exploring, planning, proposing, or changing product logic, technical or implementation architecture, internal subsystem design, technical decisions/constraints/rationale, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
+        $pm4Rule = 'This project has no product documentation MCP (its registry productDocs role is disabled, or it is a legacy PM4 project). Before answering, exploring, planning, proposing, or changing product logic, technical or implementation architecture, internal subsystem design, technical decisions/constraints/rationale, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
         $templateBlock = [regex]::Replace($templateBlock, $productDocsRulePattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $pm4Rule }, 1)
     }
     $block = ($startMarker + [Environment]::NewLine + $templateBlock + [Environment]::NewLine + $endMarker)
@@ -12582,7 +12582,30 @@ function Write-DevBranchVerificationRunUserReport {
         $reportPath = [string](Get-StateValue -State $State -Name 'lastVerifiedReportPath' -Default '')
         if ($reportPath) { Add-RunUserReportLine -Lines $lines -Label 'Отчёт проверки' -Value $reportPath }
     }
+    $timing = Get-ItlCheckTimingSnapshot
+    $duration = Format-DevBranchCheckDurationText -Timing $timing
+    if ($duration) { Add-RunUserReportLine -Lines $lines -Label 'Длительность' -Value $duration }
+    if ($null -ne $timing -and $timing.selectionReason) { Add-RunUserReportLine -Lines $lines -Label 'Выбор наборов Vanessa' -Value $timing.selectionReason }
     Write-AndSetRunUserReport -Lines $lines -PlatformPreparation $PlatformPreparation
+}
+
+function Format-DevBranchCheckDurationText {
+    param([AllowNull()][object]$Timing)
+    if ($null -eq $Timing) { return '' }
+    $format = {
+        param($Milliseconds)
+        $seconds = [int][Math]::Round(([double]$Milliseconds) / 1000)
+        if ($seconds -lt 60) { "$seconds с" } else { "$([int][Math]::Floor($seconds / 60)) мин $($seconds % 60) с" }
+    }
+    $parts = @()
+    foreach ($item in @(@('загрузка', 'platformMs'), @('YAxUnit', 'yaxunitMs'), @('Vanessa', 'vanessaMs'))) {
+        $value = $Timing.PSObject.Properties[$item[1]].Value
+        if ($null -ne $value) { $parts += "$($item[0]) $(& $format $value)" }
+    }
+    $text = & $format $Timing.totalMs
+    if ($parts.Count -gt 0) { $text += " ($($parts -join ', '))" }
+    if ($Timing.selectionMode) { $text += "; наборы Vanessa: $($Timing.selectionMode)" }
+    return $text
 }
 
 function Write-AndSetRunUserReport {
@@ -21869,6 +21892,7 @@ function Show-WorkflowStatus {
     if ($verification.reason) {
         Write-Host "Last verification reason: $($verification.reason)"
     }
+    Write-ItlCheckHistoryStatusLines -State $state
     Write-Host "Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
     Write-Host "Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
     $override = Get-StateValue -State $state -Name "lastUnverifiedOverrideAt" -Default ""
@@ -21901,6 +21925,7 @@ function Invoke-DevBranchCheck {
     $repairPhase = 'preflight'
     $canonicalRepair = $false
     $verification = $null
+    Start-ItlCheckTiming
     try {
     Assert-ItlVerificationRepairScope -Trigger $trigger
     # Reject an unknown diagnostic module before any load or 1C process.
@@ -21955,7 +21980,9 @@ function Invoke-DevBranchCheck {
     $repairPhase = 'platform-preparation'
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
-    $platformPreparation = Update-DevBranchBase -PassThruPlatformPreparation
+    $platformStarted = Get-Date
+    try { $platformPreparation = Update-DevBranchBase -PassThruPlatformPreparation }
+    finally { Set-ItlCheckTimingValue -Name platformMs -Value ([int64]((Get-Date) - $platformStarted).TotalMilliseconds) }
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
     $repairPhase = 'verification'
     Invoke-ItlVerificationCycle `
@@ -22011,6 +22038,9 @@ function Invoke-DevBranchCheck {
     }
     Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
     Write-DevBranchMemoryUsageNote
+    $historyVerification = Get-VerificationState -State $verifiedState
+    $historyStatus = if ($historyVerification.isFreshPassed -or [bool](Get-StateValue $historyVerification 'changeFreshPassed' $false)) { 'passed' } else { 'partial' }
+    Add-ItlCheckHistoryRecord -State $verifiedState -Status $historyStatus -Trigger $trigger
     if ($canonicalRepair) {
         $repairResult = Get-ItlVerificationRepairRunResult -Phase $repairPhase -State $verifiedState -Verification $verification -StartedAt $repairStartedAt
         Publish-ItlVerificationRepairRun -Ticket $repairAttemptTicket -Result $repairResult -SessionPassed $repairVerificationPassed -StartedAt $repairStartedAt
@@ -22024,6 +22054,8 @@ function Invoke-DevBranchCheck {
                 Write-Warning "Could not render the verification failure report: $($_.Exception.Message)" -WarningAction Continue
             }
         }
+        # A run stopped before the base load measured nothing worth comparing.
+        if ($null -ne $platformPreparation) { Add-ItlCheckHistoryRecord -State $state -Status 'failed' -Trigger $trigger }
         if ($trigger -eq 'repair' -and (-not $repairAttemptConsumed -or $canonicalRepair)) {
             Set-RunFailureContextFromMessage -Message $checkFailure.Exception.Message -RequestedAction 'check-dev-branch'
             try {
@@ -22226,6 +22258,12 @@ function Export-DevBranchResult {
     Add-RunUserReportLine -Lines $reportLines -Label "Ветка" -Value $state.devBranch
     Add-RunUserReportLine -Lines $reportLines -Label "Проверка" -Value $(if ($verificationDecision -eq "warn-unverified") { "ВНИМАНИЕ: fresh passed отсутствует; выгружено по политике warn" } else { "fresh passed" })
     Add-RunUserReportLine -Lines $reportLines -Label 'Назначение' -Value $(if ($platformPreparation.purpose -eq 'production') { 'Подготовка к рабочей ИБ' } else { 'Промежуточный результат' })
+    if ((Get-VerificationModel) -eq 'change') {
+        # Information for the person accepting the result; it never blocks export.
+        $coverage = Get-ItlBranchSuiteCoverageSummary -State $state
+        if (@($coverage.neverRan).Count -gt 0) { Add-RunUserReportLine -Lines $reportLines -Label 'Наборы Vanessa без прогона в ветке' -Value (@($coverage.neverRan) -join ', ') }
+        Add-RunUserReportLine -Lines $reportLines -Label 'Полный приёмочный набор в ветке' -Value $(if ($coverage.lastFullAt) { "последний раз пройден $($coverage.lastFullAt)" } else { 'не запускался' })
+    }
     Add-ConfigRepositoryTransferPlanRunUserReportLines -Lines $reportLines -Plan $repositoryTransferPlan
     Write-AndSetRunUserReport -Lines $reportLines -PlatformPreparation $platformPreparation
     Write-Host "Branch: $($state.devBranch)"

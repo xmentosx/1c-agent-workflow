@@ -4019,7 +4019,7 @@ function Remove-Vibecoding1cMcpDisallowedProductDocsClientConfig {
     }
     $removed = @($removed | Select-Object -Unique)
     if ($removed.Count -gt 0) {
-        Write-Host "Removed PM5-only vibecoding1c MCP client entries for PM4 project: $($removed -join ', ')."
+        Write-Host "Removed product documentation MCP client entries for a project without product docs: $($removed -join ', ')."
     }
 }
 

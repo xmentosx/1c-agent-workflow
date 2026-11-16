@@ -731,6 +731,26 @@ to the shared runtime needs authorization covering that scope. No arbitrary
 runtime-source switch or automatic patch reapplication is introduced. See the
 installed [incident procedure](../.agents/skills/1c-workflow/references/workflow-incidents.md).
 
+Architecture checkpoint approved on 2026-11-16: in the `change` model the agent
+chooses the proof and the helper executes it. A passed check proves the loaded,
+updated branch infobase with a clean event log and every check the current plan
+selects (plus `always` suites and suites of changed branch feature files). A
+retained suite covering a branch change runs unless the plan declares it
+`unaffected` with a reason; the branch start, master input, `Configuration.xml`,
+shared Vanessa support, the verification owner and the pinned runtime select
+nothing by themselves (the owner amended this on the same day: earlier accepted
+results stay valid after a test-support change), and readiness needs current
+receipts only for the required suites. Overlaps with master (paths
+changed on both sides, suites whose area both changed) are proposed in the draft
+plan, computed from Git without new state. A path that needs no runtime
+observation uses a one-off `loaded-target` check. Export keeps
+`VERIFICATION_POLICY` and only reports suites never run in the branch and the
+last full pass. The owner stays the existing verification-change/selection pair;
+no coordinator, lock, migration or client-surface growth. `cumulative` is
+unchanged. Rollback reverts the commits; plans using the new decisions are then
+refused by the old helper and re-planned. Accepted risk: master regressions are
+no longer found automatically by every branch after refresh.
+
 ## 1C source byte-preservation policy
 
 Git is transport for platform-generated `src/cf/**`, `src/cfe/**`, and optional auxiliary `src/configs/**` files, not their line-ending formatter. Installed projects carry a managed `.gitattributes` block with `-text` for these trees, so checkout, worktree creation, branch transfer, and result assembly preserve the bytes emitted by 1C even when global `core.autocrlf=true`.
