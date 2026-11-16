@@ -45,7 +45,7 @@
         }
         "claude-code" = [ordered]@{
             id = "claude-code"
-            rulesPath = ".claude/rules"
+            rulesPath = ".claude/rules-1c"
             agentsPath = ".claude/agents"
             commandsPath = ".claude/commands"
             skillsPath = ".claude/skills"
