@@ -51,7 +51,7 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 - Reuse a passed Targeted/Full Pester shard only when owner inputs, inventory, locks, checker/runtime versions, controlled-fork identity, and Vanessa build identity match; unknown ownership disables reuse.
 - Follow delivery timeout/recovery and UTF-8 rules in `docs/local-quality-gate.md`; never bypass locks.
 - Do not ask which gate to run unless the user overrides this model. The same stage failure twice requires diagnosis before an explicit `-RetryBlockedStage`.
-- Do not weaken the completion gate (a fresh passed `/itl-check` after the last relevant edit; a selected Vanessa or YAxUnit run that failed, did not start or returned no result is never accepted; a skip stays `partial/skipped`), checked-load rollback, or artifact SHA checks.
+- Do not weaken the completion gate (fresh passed `/itl-check` after the final edit; failed or missing selected runs never pass; skips stay `partial/skipped`), checked-load rollback, or artifact SHA checks.
 - Tests must leave tracked state unchanged. A passing gate with a dirty worktree is not a release qualification.
 
 ## Routing
