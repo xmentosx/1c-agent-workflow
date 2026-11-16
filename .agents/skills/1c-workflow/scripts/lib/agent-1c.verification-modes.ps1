@@ -1105,7 +1105,7 @@ function Get-ItlCheckTimingSnapshot {
     return [pscustomobject]@{
         totalMs = [int64]((Get-Date) - [datetime]$timing.startedAt).TotalMilliseconds
         platformMs = $timing.platformMs; yaxunitMs = $timing.yaxunitMs; vanessaMs = $timing.vanessaMs
-        selectionMode = [string]$timing.selectionMode
+        selectionMode = [string]$timing.selectionMode; selectionReason = [string]$timing.selectionReason
     }
 }
 
@@ -1155,6 +1155,29 @@ function Add-ItlCheckHistoryRecord {
     } catch {
         Write-Warning "Could not record the check duration: $($_.Exception.Message)" -WarningAction Continue
     }
+}
+
+function Get-ItlBranchSuiteCoverageSummary {
+    # Information only: acceptance suites with no passed receipt in this branch
+    # and the last passed full selection of this branch from the journal.
+    param([AllowNull()][object]$State)
+    $summary = [ordered]@{ neverRan = @(); lastFullAt = '' }
+    try {
+        $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+        $acceptance = @($catalog.assignments | Where-Object purpose -eq 'acceptance' | Select-Object -ExpandProperty suiteId -Unique)
+        $passed = @(Get-VerificationCatalogValue -Value (Read-VerificationSelectionProof) -Name 'suiteEvidence' -Default @() | Where-Object { [string]$_.status -ceq 'passed' } | ForEach-Object { [string]$_.id })
+        $summary.neverRan = @($acceptance | Where-Object { $_ -cnotin $passed })
+    } catch { }
+    try {
+        $path = Get-ItlCheckHistoryPath -State $State
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $branch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
+            $full = @(Get-Content -LiteralPath $path -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } |
+                Where-Object { $null -ne $_ -and [string]$_.branch -ceq $branch -and [string]$_.status -ceq 'passed' -and [string]$_.selectionMode -ceq 'full' })
+            if ($full.Count -gt 0) { $summary.lastFullAt = [string]$full[-1].at }
+        }
+    } catch { }
+    return [pscustomobject]$summary
 }
 
 function Write-ItlCheckHistoryStatusLines {

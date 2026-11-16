@@ -167,6 +167,8 @@ complete. A normal
 An unknown changed verification-relevant product path owned by this branch is
 also a classification error, not permission to run everything.
 
+In the default `change` model the helper runs only the suites the current change requires (`verification-change.md`): suites the plan names, `always` suites and suites of changed branch feature files. The branch start, master input, `Configuration.xml`, a shared Vanessa support file, the verification owner and the pinned runtime do not select suites there (the last three are reported), and readiness needs current receipts only for the required suites. The full-set rules below describe the `cumulative` model.
+
 During delta selection in `itldev/*`, the helper pins the branch HEAD and local
 master tip, resolves their unique common ancestor, and compares changed CF/CFE
 paths with that accepted commit in the effective tree. Matching imported paths

@@ -12582,8 +12582,10 @@ function Write-DevBranchVerificationRunUserReport {
         $reportPath = [string](Get-StateValue -State $State -Name 'lastVerifiedReportPath' -Default '')
         if ($reportPath) { Add-RunUserReportLine -Lines $lines -Label 'Отчёт проверки' -Value $reportPath }
     }
-    $duration = Format-DevBranchCheckDurationText -Timing (Get-ItlCheckTimingSnapshot)
+    $timing = Get-ItlCheckTimingSnapshot
+    $duration = Format-DevBranchCheckDurationText -Timing $timing
     if ($duration) { Add-RunUserReportLine -Lines $lines -Label 'Длительность' -Value $duration }
+    if ($null -ne $timing -and $timing.selectionReason) { Add-RunUserReportLine -Lines $lines -Label 'Выбор наборов Vanessa' -Value $timing.selectionReason }
     Write-AndSetRunUserReport -Lines $lines -PlatformPreparation $PlatformPreparation
 }
 
@@ -22256,6 +22258,12 @@ function Export-DevBranchResult {
     Add-RunUserReportLine -Lines $reportLines -Label "Ветка" -Value $state.devBranch
     Add-RunUserReportLine -Lines $reportLines -Label "Проверка" -Value $(if ($verificationDecision -eq "warn-unverified") { "ВНИМАНИЕ: fresh passed отсутствует; выгружено по политике warn" } else { "fresh passed" })
     Add-RunUserReportLine -Lines $reportLines -Label 'Назначение' -Value $(if ($platformPreparation.purpose -eq 'production') { 'Подготовка к рабочей ИБ' } else { 'Промежуточный результат' })
+    if ((Get-VerificationModel) -eq 'change') {
+        # Information for the person accepting the result; it never blocks export.
+        $coverage = Get-ItlBranchSuiteCoverageSummary -State $state
+        if (@($coverage.neverRan).Count -gt 0) { Add-RunUserReportLine -Lines $reportLines -Label 'Наборы Vanessa без прогона в ветке' -Value (@($coverage.neverRan) -join ', ') }
+        Add-RunUserReportLine -Lines $reportLines -Label 'Полный приёмочный набор в ветке' -Value $(if ($coverage.lastFullAt) { "последний раз пройден $($coverage.lastFullAt)" } else { 'не запускался' })
+    }
     Add-ConfigRepositoryTransferPlanRunUserReportLines -Lines $reportLines -Plan $repositoryTransferPlan
     Write-AndSetRunUserReport -Lines $reportLines -PlatformPreparation $platformPreparation
     Write-Host "Branch: $($state.devBranch)"
