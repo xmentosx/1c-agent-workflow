@@ -70,26 +70,16 @@ function Start-ItlExecutionGuardHost {
     . (Join-Path $PSScriptRoot 'PythonRuntime.ps1')
     $Python = Resolve-ItlPythonExecutable -Python $Python
 
-    $start = [Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = $Python
-    $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-B','-X','utf8','-u','-m','itl_remote.execution_guard_host')
+    $start = New-ItlPythonProcessStartInfo -Executable $Python -Arguments @('-u','-m','itl_remote.execution_guard_host') -PythonPath $PSScriptRoot
     # The host lives as long as the guarded execution. Its working directory
     # must stay outside the package so update-workflow can rename it meanwhile;
-    # PYTHONPATH below already resolves the module.
+    # PYTHONPATH already resolves the module.
     $start.WorkingDirectory = Split-Path -Parent $Python
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $true
     $start.RedirectStandardInput = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
     $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
     $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
-    $start.EnvironmentVariables['PYTHONPATH'] = $PSScriptRoot
-    $start.EnvironmentVariables['PYTHONUTF8'] = '1'
-    $start.EnvironmentVariables['PYTHONIOENCODING'] = 'utf-8'
-    $start.EnvironmentVariables['PYTHONDONTWRITEBYTECODE'] = '1'
-    $start.EnvironmentVariables['PYTHONNOUSERSITE'] = '1'
-    $start.EnvironmentVariables.Remove('PYTHONHOME')
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $start
     $owner = [pscustomobject]@{process=$process;closed=$false;stderr=$null;executionId='';resources=@();proof=$null}
@@ -175,23 +165,13 @@ function Get-ItlExecutionGuardHolders {
     }
     . (Join-Path $PSScriptRoot 'PythonRuntime.ps1')
     $Python = Resolve-ItlPythonExecutable -Python $Python
-    $start = [Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = $Python
-    $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-B','-X','utf8','-m','itl_remote.execution_guard_holders')
+    $start = New-ItlPythonProcessStartInfo -Executable $Python -Arguments @('-m','itl_remote.execution_guard_holders') -PythonPath $PSScriptRoot
     $start.WorkingDirectory = Split-Path -Parent $Python
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $true
     $start.RedirectStandardInput = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
     $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
     $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
-    $start.EnvironmentVariables['PYTHONPATH'] = $PSScriptRoot
-    $start.EnvironmentVariables['PYTHONUTF8'] = '1'
-    $start.EnvironmentVariables['PYTHONIOENCODING'] = 'utf-8'
-    $start.EnvironmentVariables['PYTHONDONTWRITEBYTECODE'] = '1'
-    $start.EnvironmentVariables['PYTHONNOUSERSITE'] = '1'
-    $start.EnvironmentVariables.Remove('PYTHONHOME')
     $process = [Diagnostics.Process]::Start($start)
     try {
         $stdout = $process.StandardOutput.ReadToEndAsync()

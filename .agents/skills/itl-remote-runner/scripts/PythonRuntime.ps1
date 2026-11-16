@@ -59,14 +59,31 @@ function Test-ItlPythonRuntimePayload {
     return $true
 }
 
-function Get-ItlPythonRuntimeProbe {
-    param([Parameter(Mandatory = $true)][string]$Executable)
+function New-ItlPythonProcessStartInfo {
+    # One launch contract for every workflow-owned Python process. The managed
+    # runtime generation is verified file-for-file, so bytecode written into
+    # its Lib tree fails verification and forces a fresh extraction. Flags do
+    # not reach grandchildren; the environment does, so both are applied.
+    # itl_remote/common.py mirrors this contract for Python-started children.
+    param([Parameter(Mandatory = $true)][string]$Executable, [string[]]$Arguments = @(), [string]$PythonPath = '')
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $Executable
-    $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-B', '-I', '-X', 'utf8', '-c',
-        'import ctypes,hashlib,json,socket,ssl,sys,threading; print(json.dumps({"version":".".join(map(str,sys.version_info[:3])),"executable":sys.executable}))')
+    $start.Arguments = Join-NativeCommandLineArguments -Arguments (@('-B', '-X', 'utf8') + $Arguments)
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
+    if ($PythonPath) { $start.EnvironmentVariables['PYTHONPATH'] = $PythonPath }
+    $start.EnvironmentVariables['PYTHONUTF8'] = '1'
+    $start.EnvironmentVariables['PYTHONIOENCODING'] = 'utf-8'
+    $start.EnvironmentVariables['PYTHONDONTWRITEBYTECODE'] = '1'
+    $start.EnvironmentVariables['PYTHONNOUSERSITE'] = '1'
+    $start.EnvironmentVariables.Remove('PYTHONHOME')
+    return $start
+}
+
+function Get-ItlPythonRuntimeProbe {
+    param([Parameter(Mandatory = $true)][string]$Executable)
+    $start = New-ItlPythonProcessStartInfo -Executable $Executable -Arguments @('-I', '-c',
+        'import ctypes,hashlib,json,socket,ssl,sys,threading; print(json.dumps({"version":".".join(map(str,sys.version_info[:3])),"executable":sys.executable}))')
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
     $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
@@ -243,19 +260,10 @@ function Resolve-ItlPythonExecutable {
 function Invoke-ItlPythonCommand {
     param([string]$Python = '', [string[]]$Arguments = @(), [switch]$Offline)
     $executable = Resolve-ItlPythonExecutable -Python $Python -Offline:$Offline
-    $start = [Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = $executable
-    $start.Arguments = Join-NativeCommandLineArguments -Arguments (@('-B', '-X', 'utf8') + $Arguments)
+    $start = New-ItlPythonProcessStartInfo -Executable $executable -Arguments $Arguments
     $start.WorkingDirectory = (Get-Location).ProviderPath
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
-    $start.EnvironmentVariables['PYTHONDONTWRITEBYTECODE'] = '1'
-    $start.EnvironmentVariables['PYTHONNOUSERSITE'] = '1'
-    $start.EnvironmentVariables['PYTHONUTF8'] = '1'
-    $start.EnvironmentVariables['PYTHONIOENCODING'] = 'utf-8'
-    $start.EnvironmentVariables.Remove('PYTHONHOME')
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $start
     try {
