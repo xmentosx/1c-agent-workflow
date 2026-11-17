@@ -3,48 +3,6 @@
     . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
     . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
 
-    $script:ProofOwnershipAsts = @{}
-    function Get-ProofOwnershipAst([string]$Relative) {
-        if (-not $script:ProofOwnershipAsts.ContainsKey($Relative)) {
-            $tokens = $null; $errors = $null
-            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot $Relative), [ref]$tokens, [ref]$errors)
-            @($errors) | Should -BeNullOrEmpty -Because "$Relative must parse"
-            $script:ProofOwnershipAsts[$Relative] = $ast
-        }
-        return $script:ProofOwnershipAsts[$Relative]
-    }
-
-    # Static `. (Join-Path $PSScriptRoot 'x')` loads, relative to the loading file.
-    $script:ProofOwnershipLoads = @{}
-    function Get-ProofOwnershipStaticLoads([string]$Relative) {
-        if ($script:ProofOwnershipLoads.ContainsKey($Relative)) { return $script:ProofOwnershipLoads[$Relative] }
-        $directory = (Split-Path -Parent $Relative).Replace('\', '/')
-        $ast = Get-ProofOwnershipAst $Relative
-        $script:ProofOwnershipLoads[$Relative] = @(foreach ($command in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.InvocationOperator -eq 'Dot' }, $true)) {
-            $text = $command.CommandElements[0].Extent.Text
-            if ($text -match '^\(Join-Path \$PSScriptRoot [''"]([^''"$]+)[''"]\)$') {
-                ($directory + '/' + $Matches[1]).Replace('\', '/')
-            } elseif ($text -match '^\(Join-Path \(Split-Path -Parent \$PSScriptRoot\) [''"]([^''"$]+)[''"]\)$') {
-                $parent = (Split-Path -Parent $directory).Replace('\', '/')
-                $(if ($parent) { $parent + '/' + $Matches[1] } else { $Matches[1] }).Replace('\', '/')
-            }
-        })
-        return $script:ProofOwnershipLoads[$Relative]
-    }
-
-    function Get-ProofOwnershipClosure([string[]]$Roots) {
-        $seen = New-Object 'System.Collections.Generic.HashSet[string]'
-        $pending = New-Object System.Collections.Generic.Queue[string]
-        foreach ($root in $Roots) { $pending.Enqueue($root) }
-        while ($pending.Count) {
-            $relative = $pending.Dequeue()
-            if (-not $seen.Add($relative)) { continue }
-            if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $relative) -PathType Leaf)) { throw "Statically loaded file is missing: $relative" }
-            foreach ($loaded in @(Get-ProofOwnershipStaticLoads $relative)) { $pending.Enqueue($loaded) }
-        }
-        return @($seen | Sort-Object)
-    }
-
     function Get-ProofOwnershipStrings([Management.Automation.Language.Ast]$Ast) {
         @($Ast.FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object Value)
     }
@@ -57,12 +15,12 @@
         $sourceFiles = @($DeliverySourcePaths | ForEach-Object { 'scripts/' + (Split-Path -Leaf $_) })
         $definingFile = @{}
         foreach ($source in $sourceFiles) {
-            foreach ($definition in (Get-ProofOwnershipAst $source).FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+            foreach ($definition in (Get-DeliverySourceAst $source).FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
                 $definingFile[$definition.Name] = $source
             }
         }
         # The entrypoint starts the supervisor as a child; both load their modules statically.
-        $entrypoint = Get-ProofOwnershipClosure @('scripts/source-delivery.ps1', 'scripts/source-delivery-supervisor.ps1')
+        $entrypoint = Get-DeliveryStaticLoadClosure @('scripts/source-delivery.ps1', 'scripts/source-delivery-supervisor.ps1')
         $support = 'tests/pester/SourceDelivery.TestSupport.ps1'
         $unitFiles = @{}
         # Reaching the delivery support requires a static load other than the
@@ -71,14 +29,14 @@
         $script:DeliverySourceConsumers = @(foreach ($testFile in @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'tests/pester') -Filter '*.Tests.ps1' | Sort-Object Name)) {
             if ([IO.File]::ReadAllText($testFile.FullName) -notmatch $loadsSupport) { continue }
             $test = 'tests/pester/' + $testFile.Name
-            $units = @(Get-ProofOwnershipClosure @($test) | Where-Object { $_ -like 'tests/pester/*' })
+            $units = @(Get-DeliveryStaticLoadClosure @($test) | Where-Object { $_ -like 'tests/pester/*' })
             if ($support -notin $units) { continue }
             $files = New-Object System.Collections.Generic.List[string]
             foreach ($unit in $units) {
                 if ($unit -ne 'tests/pester/TestSupport.ps1') { $files.Add($unit) }
                 if ($unitFiles.ContainsKey($unit)) { foreach ($file in $unitFiles[$unit]) { $files.Add($file) }; continue }
                 $unitStart = $files.Count
-                $ast = Get-ProofOwnershipAst $unit
+                $ast = Get-DeliverySourceAst $unit
                 $commands = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] }, $true))
                 $variables = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.VariableExpressionAst] }, $true) | ForEach-Object { $_.VariablePath.UserPath })
                 foreach ($call in @($commands | Where-Object { $_.GetCommandName() -eq 'Get-DeliveryFunctionDefinitions' })) {
@@ -133,7 +91,7 @@
 
 Describe 'Delivery test source proof ownership' {
     It 'declares every delivery source text read at its assertion site' {
-        $support = Get-ProofOwnershipAst 'tests/pester/SourceDelivery.TestSupport.ps1'
+        $support = Get-DeliverySourceAst 'tests/pester/SourceDelivery.TestSupport.ps1'
         @($support.FindAll({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$DeliverySourceText' }, $true)) |
             Should -BeNullOrEmpty -Because 'an aggregate of every delivery module hides which file an assertion reads'
         $consumers = @(Get-DeliverySourceConsumers)
@@ -160,7 +118,7 @@ Describe 'Delivery test source proof ownership' {
         $consumers = @(Get-DeliverySourceConsumers)
         $actualCatalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
         $tracked = @(Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @('ls-files', '-z', '--cached'))
-        $shardAst = Get-ProofOwnershipAst 'scripts/invoke-pester-shards.ps1'
+        $shardAst = Get-DeliverySourceAst 'scripts/invoke-pester-shards.ps1'
         & {
             foreach ($name in @('Get-ShardRelativeTestPath', 'Get-ShardExternalProfiles', 'Get-ShardInputDigest', 'Get-TextSha256')) {
                 $definition = $shardAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)

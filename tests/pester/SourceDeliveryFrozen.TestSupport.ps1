@@ -4,16 +4,14 @@
         param([object]$Fixture)
         $fixture=$Fixture
         # Resume requires an actual published supervisor, including its imports.
-        $scripts=Join-Path $fixture.root 'scripts'
-        New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-        # Custom-gate children return before artifact discovery; keep that unused
-        # module out of the fixture so its edits cannot invalidate publication proof.
-        $paths=@($DeliverySourcePaths)+@('release-artifact-paths.ps1','git-path-list.ps1','release-qualification.ps1','quality-contracts.ps1','stand-env-identity.ps1','source-proof-json.ps1','invoke-pester-runtime.ps1','develop-e2e-cleanup.ps1' | ForEach-Object {Join-Path $RepoRoot "scripts/$_"})
-        foreach($path in @($paths|Sort-Object -Unique)){Copy-Item -LiteralPath $path -Destination $scripts}
-        $relative='.agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1'
-        $target=Join-Path $fixture.root $relative
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
-        Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target
+        # The static load closure of entrypoint and supervisor, so a new delivery
+        # module needs no fixture edit. Custom-gate children return before
+        # artifact discovery, which is loaded dynamically and stays out.
+        foreach($relative in @(Get-DeliveryStaticLoadClosure @('scripts/source-delivery.ps1','scripts/source-delivery-supervisor.ps1'))){
+            $target=Join-Path $fixture.root $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target
+        }
     }
     function New-FrozenFixture {
         $fixture=New-DeliveryFixture
