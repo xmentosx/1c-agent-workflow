@@ -312,12 +312,79 @@ function Export-SourceE2EFixtureCapsule {
     return [pscustomobject]@{path=$manifestPath;sha256=$sha;workflowCommit=$workflow;phase=$Phase}
 }
 
+# Architecture checkpoint approved 2026-11-17 (docs/package-architecture.md):
+# hashes of retained completed update-workflow backups survive between Capture
+# and Verify processes, one file per stand root in its common Git directory.
+# Callers hold the stand lifecycle lease of that root. A row is reused only
+# while length, last-write and creation time are unchanged; live managed files
+# are never persisted. An unreadable file means a full rehash.
+$script:SourceFixtureChainProofHashHeader='itl-chain-proof-hashes 1'
+
+function Get-SourceFixtureChainProofHashPath {
+    param([string]$Root)
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {$key=([BitConverter]::ToString($sha.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes($Root.ToLowerInvariant())))).Replace('-','').ToLowerInvariant()}
+    finally {$sha.Dispose()}
+    return Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $Root) ('itl/qualification-fixtures/chain-proof-hashes/'+$key+'.tsv')
+}
+
+function Get-SourceFixtureChainProofBackupPrefix {
+    param([string]$Root)
+    return ($Root+'\.agent-1c\snapshots\workflow-update\itl-workflow-update-completed-').ToLowerInvariant()
+}
+
+function Import-SourceFixtureChainProofHashes {
+    # Seeds the owner's path hash cache; returns the creation time of each reused row.
+    param([string]$Root,[hashtable]$Cache)
+    $reused=@{}
+    try {$lines=[IO.File]::ReadAllLines((Get-SourceFixtureChainProofHashPath -Root $Root),[Text.UTF8Encoding]::new($false))} catch {return $reused}
+    if($lines.Count -lt 1 -or $lines[0] -cne $script:SourceFixtureChainProofHashHeader){return $reused}
+    $prefix=Get-SourceFixtureChainProofBackupPrefix -Root $Root
+    for($index=1;$index -lt $lines.Count;$index++){
+        $fields=$lines[$index].Split("`t")
+        if($fields.Count -ne 5 -or $fields[0] -cnotmatch '^[a-f0-9]{64}$'){continue}
+        try {$item=[IO.FileInfo]::new([IO.Path]::Combine($Root,$fields[4]))} catch {continue}
+        $key=$item.FullName.ToLowerInvariant()
+        if(-not $key.StartsWith($prefix,[StringComparison]::Ordinal) -or -not $item.Exists -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){continue}
+        if([string]$item.Length -cne $fields[1] -or [string]$item.LastWriteTimeUtc.Ticks -cne $fields[2] -or [string]$item.CreationTimeUtc.Ticks -cne $fields[3]){continue}
+        $Cache[$key]=@{length=[int64]$item.Length;ticks=[int64]$item.LastWriteTimeUtc.Ticks;hash=$fields[0]}
+        $reused[$key]=@{length=[int64]$item.Length;ticks=[int64]$item.LastWriteTimeUtc.Ticks;creation=$fields[3]}
+    }
+    return $reused
+}
+
+function Save-SourceFixtureChainProofHashes {
+    # Rewritten only after a successful proof: exactly the retained backups seen now.
+    param([string]$Root,[hashtable]$Cache,[hashtable]$Reused)
+    $prefix=Get-SourceFixtureChainProofBackupPrefix -Root $Root
+    $keys=[string[]]@($Cache.Keys|Where-Object {([string]$_).StartsWith($prefix,[StringComparison]::Ordinal)})
+    [Array]::Sort($keys,[StringComparer]::Ordinal)
+    $lines=New-Object Collections.Generic.List[string];$lines.Add($script:SourceFixtureChainProofHashHeader)
+    foreach($key in $keys){
+        $entry=$Cache[$key]
+        $prior=$Reused[$key]
+        if($null -ne $prior -and [int64]$prior.length -eq [int64]$entry.length -and [int64]$prior.ticks -eq [int64]$entry.ticks){$creation=[string]$prior.creation}
+        else {
+            $item=[IO.FileInfo]::new($key)
+            if(-not $item.Exists -or [int64]$item.Length -ne [int64]$entry.length -or [int64]$item.LastWriteTimeUtc.Ticks -ne [int64]$entry.ticks){continue}
+            $creation=[string]$item.CreationTimeUtc.Ticks
+        }
+        $lines.Add(([string]$entry.hash)+"`t"+([string][int64]$entry.length)+"`t"+([string][int64]$entry.ticks)+"`t"+$creation+"`t"+$key.Substring($Root.Length+1))
+    }
+    Write-Utf8TextAtomic -Path (Get-SourceFixtureChainProofHashPath -Root $Root) -Value (($lines -join "`n")+"`n")
+}
+
 function Get-SourceFixtureWorkflowUpdateProof {
     param([string]$Root,[string]$OriginalCommit,[string]$OriginalEnvPath,[string]$ExpectedBranchRef)
     $previousRoot=Get-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue
     $hadRoot=$null -ne $previousRoot;$previousRootValue=if($hadRoot){$previousRoot.Value}else{$null}
+    # The owner's in-memory hash and real-directory caches, unless an enclosing
+    # update-workflow operation already provides them.
+    $hashScope=$null -eq (Get-Variable -Name ItlWorkflowUpdatePathHashCache -Scope Script -ErrorAction SilentlyContinue)
+    if($hashScope){$script:ItlWorkflowUpdatePathHashCache=@{};$script:ItlWorkflowUpdateRealDirectoryCache=@{}}
     try {
         $script:ProjectRoot=[IO.Path]::GetFullPath($Root).TrimEnd('\','/')
+        $reusedHashes=Import-SourceFixtureChainProofHashes -Root $script:ProjectRoot -Cache $script:ItlWorkflowUpdatePathHashCache
         Assert-SourceFixtureGitClean -Root $Root
         $head=(Invoke-RepositoryGit -RepositoryRoot $Root -Arguments @('rev-parse','HEAD')).stdout.Trim()
         $branchRef=(Invoke-RepositoryGit -RepositoryRoot $Root -Arguments @('symbolic-ref','--quiet','HEAD')).stdout.Trim()
@@ -331,11 +398,15 @@ function Get-SourceFixtureWorkflowUpdateProof {
         }
         $cursor=$head;$seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $expected=@{};$proof=New-Object Collections.Generic.List[object];$originalEnv=Join-Path $Root '.dev.env'
-        # Every retained hop is re-proven byte for byte, so a long-lived stand
-        # takes minutes per root (41 hops: 267 s on 2026-11-17). Each verified
-        # hop reports itself; callers' no-progress watchdogs then stop only a
-        # proof that has really stalled.
+        # Every retained hop is re-proven, so a long-lived stand takes minutes
+        # per root (41 hops: 267 s uncached on 2026-11-17). Each verified hop
+        # reports itself; callers' no-progress watchdogs then stop only a proof
+        # that has really stalled.
         $hopWatch=[Diagnostics.Stopwatch]::StartNew()
+        # A commit's managed path specs are a function of its blobs; each commit
+        # is both the old side of one hop and the new side of the next.
+        $specsByCommit=@{}
+        $static=New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
         while($cursor -cne $OriginalCommit){
             if(-not $seen.Add($cursor)){throw 'FIXTURE_WORKFLOW_UPDATE_CHAIN_INVALID: cyclic history'}
             $selected=@($saved|Where-Object {[string]$_.receipt.completedHead -ceq $cursor -and [string]$_.receipt.preUpdateHead -cne $cursor})
@@ -349,11 +420,11 @@ function Get-SourceFixtureWorkflowUpdateProof {
             if($old -cnotmatch '^[a-f0-9]{40}$' -or [string]$receipt.branchRef -cne $branchRef -or $parents -cne ($cursor+' '+$old)){
                 throw 'FIXTURE_WORKFLOW_UPDATE_CHAIN_INVALID: branch or exact single-parent transition mismatch'
             }
-            $oldOwned=@(Get-WorkflowUpdateManagedPathSpecs -AtCommit $old)
-            $owned=$oldOwned+@(Get-WorkflowUpdateManagedPathSpecs -AtCommit $cursor)+@(Get-AiRulesOpenSpecScaffoldPaths)
+            foreach($commit in @($old,$cursor)){if(-not $specsByCommit.ContainsKey($commit)){$specsByCommit[$commit]=@(Get-WorkflowUpdateManagedPathSpecs -AtCommit $commit)}}
+            $oldOwned=@($specsByCommit[$old])
+            $owned=$oldOwned+@($specsByCommit[$cursor])+@(Get-AiRulesOpenSpecScaffoldPaths)
             $matcher=New-WorkflowUpdatePathMatcher -ManagedPathSpecs $owned
             $oldMatcher=New-WorkflowUpdatePathMatcher -ManagedPathSpecs $oldOwned
-            $static=New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
             $changedPaths=@(Get-RepositoryGitPathList -RepositoryRoot $Root -Arguments @('diff','--name-only','-z',$old,$cursor))
             $existing=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             if($changedPaths.Count){foreach($path in @(Get-RepositoryGitPathList -RepositoryRoot $Root -Arguments (@('ls-tree','-r','--name-only','-z',$old,'--')+@($changedPaths|ForEach-Object {':(literal)'+$_})))){[void]$existing.Add($path)}}
@@ -382,9 +453,12 @@ function Get-SourceFixtureWorkflowUpdateProof {
             $cursor=$old
         }
         if((Get-DeliveryStableDotEnvSha256 -Path $originalEnv) -cne (Get-DeliveryStableDotEnvSha256 -Path $OriginalEnvPath)){throw 'FIXTURE_WORKFLOW_UPDATE_ENV_UNPROVEN: first backup differs from the immutable seed'}
-        return [ordered]@{root=$Root;head=$head;branchRef=$branchRef;receipts=$proof.ToArray();stableEnvSha256=(Get-DeliveryStableDotEnvSha256 -Path (Join-Path $Root '.dev.env'))}
+        $result=[ordered]@{root=$Root;head=$head;branchRef=$branchRef;receipts=$proof.ToArray();stableEnvSha256=(Get-DeliveryStableDotEnvSha256 -Path (Join-Path $Root '.dev.env'))}
+        Save-SourceFixtureChainProofHashes -Root $script:ProjectRoot -Cache $script:ItlWorkflowUpdatePathHashCache -Reused $reusedHashes
+        return $result
     } finally {
         if($hadRoot){$script:ProjectRoot=$previousRootValue}else{Remove-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue}
+        if($hashScope){foreach($name in @('ItlWorkflowUpdatePathHashCache','ItlWorkflowUpdateRealDirectoryCache')){Remove-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue}}
     }
 }
 
