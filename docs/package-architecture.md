@@ -130,6 +130,14 @@ master/develop fixture proving routing and resume before the normal Targeted
 registration; rollback is to the previous published develop controller for an
 existing plan, never a manual queue or checkpoint rewrite.
 
+Architecture checkpoint approved on 2026-11-17: the long-plan approval barrier
+(`-ApproveLongPlan`, `itl.delivery.approvedBudgetSeconds`) is retired. The user
+asks for publication; the hard-limit sum gave no information that could change
+that decision, and binding approval to a planId stopped publication whenever
+other sessions registered during the ~30-minute preparation. Per-stage hard
+limits still stop a runaway run, and the plan still reports `timeEstimate`.
+Rollback is to restore the check in `Assert-DeliveryQualityPlanMayRun`.
+
 Client routine files are generated from `.agents/skills/1c-workflow/kilo-command-templates`. The capability registry maps them to native commands for Kilo, Claude Code, Cursor, OpenCode, Qwen, and Command Code; to skills for Kimi and Cline; and to prompts for Pi. Generated client surfaces are installed-project runtime state, not source files.
 
 The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the managed ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL provisions the exact project-pinned OpenSpec CLI in its local cache separately from the optional global installation. It does not generate client bundles or run `openspec update`; compatible bundle rendering remains with the fork installer. See `ai-rules-fork-upgrades.md` for the release boundary.

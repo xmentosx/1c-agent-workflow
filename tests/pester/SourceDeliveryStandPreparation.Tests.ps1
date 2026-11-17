@@ -231,7 +231,7 @@ if(-not(Test-Path -LiteralPath (Join-Path $ProjectRoot 'installed.txt'))){throw 
         [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/source-e2e-fixture.ps1'),$capture,[Text.UTF8Encoding]::new($true))
         function Get-DeliveryStandPreparation { $script:standPreparation }
         function Assert-DeliveryReleaseStandReady { Add-Content -LiteralPath $script:order -Value 'readiness' -Encoding UTF8 }
-        $script:AgentTarget='codex';$script:ResumePlan='';$script:ApproveLongPlan='';$script:Action='PublishDevelop'
+        $script:AgentTarget='codex';$script:ResumePlan='';$script:Action='PublishDevelop'
     }
     It 'warms the gate shard cache with the same candidate and fork only while stand owners run, on success and failure' {
         $runner=@'

@@ -27,7 +27,6 @@ param(
     [ValidateSet('Current', 'Frozen')]
     [string]$ReplanQueueScope = 'Current',
     [string[]]$FrozenRepair = @(),
-    [string]$ApproveLongPlan = "",
     [switch]$RetryBlockedStage,
     [switch]$RequireRelease,
     [string[]]$DeferEntry = @(),

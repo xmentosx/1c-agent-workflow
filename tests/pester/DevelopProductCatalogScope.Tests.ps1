@@ -43,7 +43,7 @@ Describe 'Disabled product catalog native scope' {
         $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment
         $script:DeliverySupervisorCommit='1111111111111111111111111111111111111111'
         $script:DeliverySupervisorChannel='master';$script:DeliverySupervisorBootstrap=$false
-        $script:ResumePlan='';$script:ApproveLongPlan=''
+        $script:ResumePlan=''
         $script:DeliveryRequestedAiRulesSource='';$script:developAncestorRoutes=@{};$script:developJourneyInputs=@{}
         $script:developCurrentStaticProof=$null;$script:sourceE2EArtifactBinding=$null;$script:sourceE2EArtifactBindingPath=''
         Mock Get-DevelopE2EStandStateSha256 {'c'*64}

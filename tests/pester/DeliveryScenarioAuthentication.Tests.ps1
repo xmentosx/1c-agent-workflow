@@ -10,7 +10,6 @@ BeforeEach {
         $script:DeliverySupervisorChannel = 'master'
         $script:DeliverySupervisorBootstrap = $false
         $script:ResumePlan = ''
-        $script:ApproveLongPlan = ''
         $script:E2EProjectRoot = ''
         $script:AiRulesSource = ''
         $script:DeliveryRequestedAiRulesSource = ''

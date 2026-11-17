@@ -12,8 +12,7 @@ param(
     [switch]$Unproven,
     [ValidateRange(1, 4)][int]$PesterWorkers = 3,
     [string]$QueueId = '',
-    [string[]]$CoverageContract = @(),
-    [string]$ApproveLongPlan = ''
+    [string[]]$CoverageContract = @()
 )
 
 # Repair loop for a failed frozen develop publication. It owns no state: the
@@ -364,11 +363,10 @@ function Invoke-RepairFinish {
         '-Replan', $replan, '-ReplanQueueScope', 'Frozen', '-FrozenRepair', $pin)
     if ($AgentTarget) { $arguments += @('-AgentTarget', $AgentTarget) }
     if ($attempt.PSObject.Properties['fullReleaseRequested'] -and [bool]$attempt.fullReleaseRequested) { $arguments += '-RequireRelease' }
-    if ($ApproveLongPlan) { $arguments += @('-ApproveLongPlan', $ApproveLongPlan) }
     $result = Invoke-RepairChild -Root $repair.root -ScriptPath $delivery -Arguments $arguments -LogName 'publish'
     if ($result.exitCode -ne 0) {
         Write-RepairChildFailure -Result $result -Label 'PublishDevelop'
-        Write-Host 'If the plan needs long-plan approval, repeat Finish with -ApproveLongPlan <planId>. After another gate failure, repeat Start for the new candidate.'
+        Write-Host 'After another gate failure, repeat Start for the new candidate.'
     }
     return [pscustomobject]@{ status = $(if ($result.exitCode -eq 0) { 'published' } else { 'failed' }); stage = 'publish'; pin = $pin; replan = $replan; stdout = $result.stdout }
 }

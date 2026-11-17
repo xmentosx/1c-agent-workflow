@@ -70,7 +70,7 @@ Describe 'Native fork input scope and authenticated transition' {
         Mock Get-DevelopE2EStandStateSha256 {'c'*64}
         $script:DeliverySupervisorCommit='1111111111111111111111111111111111111111'
         $script:DeliverySupervisorChannel='master';$script:DeliverySupervisorBootstrap=$false
-        $script:DeliveryRequestedAiRulesSource='';$script:ResumePlan='';$script:ApproveLongPlan=''
+        $script:DeliveryRequestedAiRulesSource='';$script:ResumePlan=''
         Mock Get-AiRulesAuditedGuidanceInstaller {$script:ForkInstallerBlob}
         $script:ForkScopeGo=(Get-Command go.exe -CommandType Application).Source
         Mock Get-Command {[pscustomobject]@{Source=$script:ForkScopeGo}} -ParameterFilter {$Name -contains 'go.exe'}

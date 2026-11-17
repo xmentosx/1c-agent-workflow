@@ -456,7 +456,7 @@
         $agentsText | Should -Match "not installed-project guidance"
         $agentsText | Should -Match ([regex]::Escape('Never add this root `AGENTS.md` to bootstrap or `update-workflow` managed-copy lists'))
         $qualityText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8
-        foreach ($marker in @('до получения plan', '-ApproveLongPlan', 'Invoke-TestPowerShellFile')) {
+        foreach ($marker in @('до получения plan', 'Invoke-TestPowerShellFile')) {
             $qualityText | Should -Match ([regex]::Escape($marker))
         }
         Assert-DeliveryOrphanGateWaitAnchor -Text $qualityText
