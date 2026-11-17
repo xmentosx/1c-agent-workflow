@@ -221,6 +221,86 @@
         }
     }
 
+    It "lets the agent acknowledge intentionally provoked 2026-11-03 errors so the debt clears without a repair run" {
+        $root = New-DiagnosticsProjectRoot
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $state = New-EventLogFixtureState -Root $root
+                $boundary = [datetime]::Parse('2026-11-02T23:11:46.1128728Z', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToLocalTime()
+                $check = {
+                    param([object]$CheckState, [string]$RunId)
+                    $directory = Join-Path $root ".agent-1c\event-log-checks\$RunId"
+                    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+                    Test-DevBranchEventLogAfterVanessa -State $CheckState -RunStartedAt ([datetime]'2026-11-03T09:38:54.827') `
+                        -RunFinishedAt ([datetime]'2026-11-03T09:38:54.827') -RunDirectory $directory -BoundaryStartedAt $boundary -CursorScope 'lifecycle-pending' 6>$null
+                }
+                $failed = & $check $state 'run-20261103-093854-827'
+                $signatures = @(@((Read-Utf8Text -Path $failed.reportPath | ConvertFrom-Json).errors) | ForEach-Object { [string]$_.signature })
+                $debt = Resolve-DevBranchEventLogDebt -State $state -Verification $failed -Fingerprint 'fingerprint-1' -Trigger 'command'
+                foreach ($key in $debt.updates.Keys) { $state | Add-Member -NotePropertyName $key -NotePropertyValue $debt.updates[$key] -Force }
+                $state | Add-Member -NotePropertyName 'lastEventLogOnlyReportPath' -NotePropertyValue $failed.reportPath -Force
+
+                # The helper action reads and saves the branch state; keep both in memory.
+                $script:AcknowledgeState = $state
+                function Read-DevBranchState { param($Name) $script:AcknowledgeState }
+                function Assert-DevelopmentBranchWorktreeContext { param($State, $Operation) }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) { $script:AcknowledgeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
+                }
+                $missingReason = try { Add-DevBranchEventLogAcknowledgement -Signatures @($signatures[0]) -Reason ' ' 6>$null; '' } catch { $_.Exception.Message }
+                $unknown = try { Add-DevBranchEventLogAcknowledgement -Signatures @(('0' * 64)) -Reason 'Проверка отказа' 6>$null; '' } catch { $_.Exception.Message }
+                # The real report repeats one signature for two errors.
+                $unique = @($signatures | Select-Object -Unique)
+                # One comma-separated value, as the compact runner passes it.
+                $partial = Add-DevBranchEventLogAcknowledgement -Signatures @("$($unique[0]),$($unique[0].ToUpperInvariant())") -Reason 'Агент проверял отказ "Проект A"' 6>$null
+                $debtAfterPartial = [string]$script:AcknowledgeState.eventLogDebtStatus
+                $complete = Add-DevBranchEventLogAcknowledgement -Signatures @($unique[1], $unique[0]) -Reason 'Агент проверял отказ "Проект A"' 6>$null
+                $retry = Resolve-DevBranchEventLogDebt -State $script:AcknowledgeState -Verification ([pscustomobject]@{ status = 'passed'; newErrorCount = 0 }) -Fingerprint 'fingerprint-1' -Trigger 'command'
+                $passed = & $check $script:AcknowledgeState 'run-20261103-100000-000'
+                [pscustomobject]@{
+                    failed = $failed; signatures = $signatures; unique = $unique; missingReason = $missingReason; unknown = $unknown
+                    partial = $partial; debtAfterPartial = $debtAfterPartial; complete = $complete; retry = $retry
+                    state = $script:AcknowledgeState; passed = $passed
+                    report = Read-Utf8Text -Path $passed.reportPath | ConvertFrom-Json
+                    route = Get-VanessaVerificationFailureRoute -Verification ([pscustomobject]@{ status = 'failed'; reason = 'JUnit passed. Event log: new errors' }) -EventLogVerification $failed -ScenariosPassed $true
+                    failedScenarioRoute = Get-VanessaVerificationFailureRoute -Verification ([pscustomobject]@{ status = 'failed'; reason = 'Expected 2, got 3' }) -EventLogVerification $failed
+                }
+            }
+
+            $result.failed.status | Should -Be 'failed'
+            $result.failed.reason | Should -Match 'acknowledge-event-log-errors'
+            $result.signatures | Should -HaveCount 3
+            $result.unique | Should -HaveCount 2
+            $result.missingReason | Should -Match '^EVENT_LOG_ACKNOWLEDGE_INVALID'
+            $result.unknown | Should -Match '^EVENT_LOG_ACKNOWLEDGE_SIGNATURE_UNKNOWN'
+            $result.partial.added | Should -Be 1
+            $result.partial.debtCleared | Should -BeFalse
+            @($result.partial.remainingSignatures) | Should -Be @($result.unique[1])
+            $result.debtAfterPartial | Should -BeExactly 'failed'
+            $result.complete.added | Should -Be 1
+            $result.complete.debtCleared | Should -BeTrue
+            $result.complete.branchAcknowledgedCount | Should -Be 2
+            [string]$result.state.eventLogDebtStatus | Should -BeExactly ''
+            @($result.state.eventLogAcknowledgements) | Should -HaveCount 2
+            @($result.state.eventLogAcknowledgements)[0].reason | Should -BeExactly 'Агент проверял отказ "Проект A"'
+            $result.retry.verification.status | Should -Be 'passed'
+            # The same errors no longer block this branch and stay visible as acknowledged.
+            $result.passed.status | Should -Be 'passed'
+            $result.passed.newErrorCount | Should -Be 0
+            $result.passed.acknowledgedErrorCount | Should -Be 3
+            $result.passed.reason | Should -Match 'Acknowledged intentional errors: 3'
+            @($result.report.acknowledged.signature) | Should -Be @($result.signatures)
+            @($result.report.acknowledged)[0].reason | Should -BeExactly 'Агент проверял отказ "Проект A"'
+            $result.route.category | Should -BeExactly 'event-log'
+            $result.route.requiredAction | Should -BeExactly 'fix-or-acknowledge-event-log-errors'
+            $result.failedScenarioRoute.requiredAction | Should -BeExactly '/itl-verify-fix'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "uses recorded run windows and never marks errors from proof runs" {
         $root = New-DiagnosticsProjectRoot
         try {

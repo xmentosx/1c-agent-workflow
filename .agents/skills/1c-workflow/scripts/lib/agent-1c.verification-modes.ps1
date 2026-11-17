@@ -205,7 +205,7 @@ function Test-ItlEventLogCurrent {
     Update-DevBranchState -State $stateWithBaseline -Updates $updates
     Write-Host "Event-log verification: $($verification.status). $($verification.reason)"
     if ($verification.status -ne "passed") {
-        Set-RunFailureContext -Category "event-log" -RequiredAction "/itl-verify-fix"
+        Set-RunFailureContext -Category "event-log" -RequiredAction "fix-or-acknowledge-event-log-errors"
         throw $verification.reason
     }
 }
