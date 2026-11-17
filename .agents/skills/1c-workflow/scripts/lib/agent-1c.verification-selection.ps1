@@ -321,7 +321,7 @@ function Get-VerificationOneOffCheckerIdentity {
             'Read-DevBranchEventLogCursorInfo', 'Get-DevBranchEventLogDeltaSelection',
             'Read-OneCEventLogDirect', 'Read-OneCEventLogViaFallback',
             'ConvertFrom-OneCEventLogRecord', 'ConvertFrom-OneCEventLogDate',
-            'Resolve-DevBranchEventLogDebt', 'Assert-VerificationComponentEvidence',
+            'Resolve-DevBranchEventLogDebt', 'Get-DevBranchEventLogAcknowledgements', 'Get-DevBranchEventLogObjectList', 'Assert-VerificationComponentEvidence',
             'Assert-VerificationArtifactReferences')
     }
     $parts = @('one-off-checker-v1', "proofType=$ProofType")

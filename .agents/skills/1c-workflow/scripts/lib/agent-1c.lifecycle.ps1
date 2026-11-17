@@ -22521,6 +22521,12 @@ function Export-DevBranchResult {
         if (@($coverage.neverRan).Count -gt 0) { Add-RunUserReportLine -Lines $reportLines -Label 'Наборы Vanessa без прогона в ветке' -Value (@($coverage.neverRan) -join ', ') }
         Add-RunUserReportLine -Lines $reportLines -Label 'Полный приёмочный набор в ветке' -Value $(if ($coverage.lastFullAt) { "последний раз пройден $($coverage.lastFullAt)" } else { 'не запускался' })
     }
+    $acknowledgedEventLog = @((Get-DevBranchEventLogAcknowledgements -State $state).Values)
+    if ($acknowledgedEventLog.Count -gt 0) {
+        # The agent's own decision, shown to the person accepting the result; it never blocks export.
+        $acknowledgedReasons = @($acknowledgedEventLog | ForEach-Object { [string](Get-StateValue -State $_ -Name 'reason' -Default '') } | Where-Object { $_ } | Select-Object -Unique)
+        Add-RunUserReportLine -Lines $reportLines -Label 'Намеренные ошибки журнала регистрации' -Value "$($acknowledgedEventLog.Count), подтверждены агентом: $($acknowledgedReasons -join '; ')"
+    }
     Add-ConfigRepositoryTransferPlanRunUserReportLines -Lines $reportLines -Plan $repositoryTransferPlan
     Write-AndSetRunUserReport -Lines $reportLines -PlatformPreparation $platformPreparation
     Write-Host "Branch: $($state.devBranch)"

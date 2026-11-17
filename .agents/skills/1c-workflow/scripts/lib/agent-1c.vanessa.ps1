@@ -2493,7 +2493,7 @@ function Resolve-DevBranchEventLogDebt {
             $reportPath = [string](Get-StateValue -State $State -Name "eventLogDebtReportPath" -Default "")
             $Verification = [pscustomobject]@{
                 status = "failed"
-                reason = "A previous event-log failure remains unresolved for the same verification fingerprint. Change the verification scope or use /itl-verify-fix before accepting a clean retry. Previous evidence: $reportPath"
+                reason = "A previous event-log failure remains unresolved for the same verification fingerprint. Fix the cause, acknowledge errors the agent provoked intentionally with acknowledge-event-log-errors, or use /itl-verify-fix before accepting a clean retry. Previous evidence: $reportPath"
                 reader = [string](Get-StateValue -State $Verification -Name "reader" -Default "")
                 baselinePath = [string](Get-StateValue -State $Verification -Name "baselinePath" -Default "")
                 reportPath = $reportPath
@@ -2514,6 +2514,129 @@ function Resolve-DevBranchEventLogDebt {
         }
     }
     return [pscustomobject]@{ verification = $Verification; updates = $updates }
+}
+
+function Get-DevBranchEventLogObjectList {
+    # Get-StateValue treats an array of objects as blank (objects stringify to
+    # empty text), so object lists are read from the property directly.
+    param([AllowNull()][object]$Object, [string]$Name)
+
+    if ($null -eq $Object) { return @() }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) { return @() }
+    return @($property.Value | Where-Object { $null -ne $_ })
+}
+
+function Get-DevBranchEventLogAcknowledgements {
+    # Error signatures the agent confirmed as provoked intentionally, such as a
+    # tested business refusal. They live in branch state, apart from the
+    # baseline file whose signature list fork restore compares byte for byte.
+    param([object]$State)
+
+    $result = @{}
+    foreach ($entry in @(Get-DevBranchEventLogObjectList -Object $State -Name "eventLogAcknowledgements")) {
+        if ($null -eq $entry) { continue }
+        $signature = [string](Get-StateValue -State $entry -Name "signature" -Default "")
+        if ($signature) { $result[$signature] = $entry }
+    }
+    return $result
+}
+
+function Add-DevBranchEventLogAcknowledgement {
+    # The agent's own decision that new event-log errors it observed were
+    # provoked on purpose. It accepts only signatures from the last failed
+    # report, keeps them for the rest of the branch and clears the event-log
+    # debt once every error of the debt report is acknowledged.
+    param([string[]]$Signatures = @(), [string]$Reason = "")
+
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "acknowledge-event-log-errors"
+    $requested = @($Signatures | ForEach-Object { ([string]$_) -split '[,;\s]+' } |
+        ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ } | Sort-Object -Unique)
+    if ($requested.Count -eq 0 -or [string]::IsNullOrWhiteSpace($Reason)) {
+        throw "EVENT_LOG_ACKNOWLEDGE_INVALID: pass -EventLogSignatures with signature values from the failed event-log report and -EventLogAcknowledgeReason explaining why the errors were provoked intentionally."
+    }
+
+    $reportPaths = @(@("eventLogDebtReportPath", "lastEventLogOnlyReportPath", "lastVanessaEventLogNewErrorsPath") |
+        ForEach-Object { [string](Get-StateValue -State $state -Name $_ -Default "") } | Where-Object { $_ } | Select-Object -Unique)
+    $observed = @{}
+    $reportSignatures = @{}
+    foreach ($path in $reportPaths) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) { continue }
+        $report = Read-Utf8Text -Path $path | ConvertFrom-Json -ErrorAction Stop
+        $signatures = @()
+        foreach ($item in @(Get-DevBranchEventLogObjectList -Object $report -Name "errors")) {
+            $signature = [string](Get-StateValue -State $item -Name "signature" -Default "")
+            if (-not $signature) { continue }
+            $signatures += $signature
+            if (-not $observed.ContainsKey($signature)) { $observed[$signature] = [pscustomobject]@{ item = $item; reportPath = $path } }
+        }
+        $reportSignatures[$path] = @($signatures)
+    }
+    $unknown = @($requested | Where-Object { -not $observed.ContainsKey($_) })
+    if ($unknown.Count -gt 0) {
+        $searched = if ($reportPaths.Count -gt 0) { $reportPaths -join "; " } else { "<none>" }
+        throw "EVENT_LOG_ACKNOWLEDGE_SIGNATURE_UNKNOWN: $($unknown -join ', ') is not a new error of the last event-log reports ($searched). Acknowledge only signatures the gate reported."
+    }
+
+    $existing = @(Get-DevBranchEventLogObjectList -Object $state -Name "eventLogAcknowledgements")
+    $known = Get-DevBranchEventLogAcknowledgements -State $state
+    $now = (Get-Date).ToString("o")
+    $added = @()
+    foreach ($signature in $requested) {
+        if ($known.ContainsKey($signature)) { continue }
+        $source = $observed[$signature]
+        $comment = [string](Get-StateValue -State $source.item -Name "comment" -Default "")
+        $message = [string](@(($comment -split "`r?`n") | Where-Object { $_.Trim() }) | Select-Object -First 1)
+        $entry = [pscustomobject][ordered]@{
+            signature = $signature
+            reason = $Reason.Trim()
+            acknowledgedAt = $now
+            reportPath = $source.reportPath
+            event = [string](Get-StateValue -State $source.item -Name "event" -Default "")
+            message = $message.Substring(0, [Math]::Min($message.Length, 300))
+        }
+        $added += $entry
+        $known[$signature] = $entry
+    }
+
+    $updates = @{ eventLogAcknowledgements = @($existing + $added) }
+    $debtCleared = $false
+    $remaining = @()
+    if ([string](Get-StateValue -State $state -Name "eventLogDebtStatus" -Default "") -eq "failed") {
+        $debtReport = [string](Get-StateValue -State $state -Name "eventLogDebtReportPath" -Default "")
+        if ($debtReport -and $reportSignatures.ContainsKey($debtReport)) {
+            $remaining = @($reportSignatures[$debtReport] | Where-Object { -not $known.ContainsKey($_) } | Sort-Object -Unique)
+            if ($remaining.Count -eq 0) {
+                $updates["eventLogDebtStatus"] = ""
+                $updates["eventLogDebtFingerprint"] = ""
+                $updates["eventLogDebtReportPath"] = ""
+                $updates["eventLogDebtDetectedAt"] = ""
+                $debtCleared = $true
+            }
+        }
+    }
+    Update-DevBranchState -State $state -Updates $updates
+
+    $debtOpen = [string](Get-StateValue -State $state -Name "eventLogDebtStatus" -Default "") -eq "failed" -and -not $debtCleared
+    Write-Host "Event-log acknowledgement: $($added.Count) new, $($requested.Count - $added.Count) already acknowledged; branch total $($known.Count). Reason: $($Reason.Trim())"
+    $nextAction = if ($debtOpen -and $remaining.Count -gt 0) {
+        "Fix or acknowledge the remaining new error signature(s) ($($remaining -join ', ')), then repeat the original check. A source change also starts a new verification fingerprint."
+    } elseif ($debtOpen) {
+        "The event-log debt report is unavailable; fix the cause and repeat the original check, or use /itl-verify-fix."
+    } else {
+        "Repeat the original check; acknowledged signatures no longer block this branch."
+    }
+    Write-Host "Next: $nextAction"
+    return [pscustomobject][ordered]@{
+        status = "acknowledged"
+        acknowledged = @($requested)
+        added = $added.Count
+        branchAcknowledgedCount = $known.Count
+        debtCleared = $debtCleared
+        remainingSignatures = @($remaining)
+        nextAction = $nextAction
+    }
 }
 
 function Test-OneCEventLogSegmentMayOverlapFallbackWindow {
@@ -3777,12 +3900,17 @@ function Test-DevBranchEventLogAfterVanessa {
     $readResult = Read-DevBranchEventLogErrors -State $stateWithBaseline -StartTime $effectiveStartTime -EndTime $endTime -CursorPath $CursorPath
     $checkedUntil = Get-Date
 
+    $acknowledgements = Get-DevBranchEventLogAcknowledgements -State $stateWithBaseline
+
     $newErrors = @()
     $warnings = @()
+    $acknowledged = @()
     $legacyCount = 0
     foreach ($event in @($readResult.events)) {
         if ($known.ContainsKey([string]$event.signature)) {
             $legacyCount++
+        } elseif ($acknowledgements.ContainsKey([string]$event.signature)) {
+            $acknowledged += [pscustomobject]@{ source = $event; entry = $acknowledgements[[string]$event.signature] }
         } else {
             $classification = Get-OneCEventLogNonBlockingClassification -Event $event
             if ($classification) {
@@ -3806,7 +3934,7 @@ function Test-DevBranchEventLogAfterVanessa {
     }
 
     $reportPath = ""
-    if ($newErrors.Count -gt 0 -or $warnings.Count -gt 0) {
+    if ($newErrors.Count -gt 0 -or $warnings.Count -gt 0 -or $acknowledged.Count -gt 0) {
         $reportPath = Join-Path $RunDirectory $ReportFileName
         $payload = [ordered]@{
             schemaVersion = 2
@@ -3824,6 +3952,7 @@ function Test-DevBranchEventLogAfterVanessa {
             }
             newErrorCount = $newErrors.Count
             warningCount = $warnings.Count
+            acknowledgedErrorCount = $acknowledged.Count
             legacyErrorCount = $legacyCount
             errors = @(for ($errorIndex = 0; $errorIndex -lt $newErrors.Count; $errorIndex++) {
                 $item = $newErrors[$errorIndex]
@@ -3864,13 +3993,26 @@ function Test-DevBranchEventLogAfterVanessa {
                     signature = $source.signature
                 }
             })
+            acknowledged = @($acknowledged | ForEach-Object {
+                $source = $_.source
+                [ordered]@{
+                    date = $source.date.ToString("o")
+                    event = $source.event
+                    comment = $source.comment
+                    signature = $source.signature
+                    reason = [string](Get-StateValue -State $_.entry -Name "reason" -Default "")
+                    acknowledgedAt = [string](Get-StateValue -State $_.entry -Name "acknowledgedAt" -Default "")
+                }
+            })
         }
         Write-Utf8Text -Path $reportPath -Value (($payload | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     }
 
     $status = if ($newErrors.Count -gt 0) { "failed" } else { "passed" }
     $reason = if ($newErrors.Count -gt 0) {
-        "1C event log contains $($newErrors.Count) new error signature(s) not present in the branch baseline. Non-blocking warnings: $($warnings.Count). Scope: $CursorScope; scan mode: $($readResult.scanMode)."
+        "1C event log contains $($newErrors.Count) new error signature(s) not present in the branch baseline. Non-blocking warnings: $($warnings.Count). Scope: $CursorScope; scan mode: $($readResult.scanMode). Fix every defect. If the agent provoked an error on purpose, acknowledge its signature from $reportPath with -Action acknowledge-event-log-errors -EventLogSignatures <signature,...> -EventLogAcknowledgeReason <why>, then repeat the original check (verification-result.md)."
+    } elseif ($acknowledged.Count -gt 0) {
+        "1C event log contains no blocking new error signatures in scope '$CursorScope' from '$($effectiveStartTime.ToString("o"))'. Acknowledged intentional errors: $($acknowledged.Count); non-blocking warnings: $($warnings.Count); report: $reportPath. Legacy suppressed errors: $legacyCount; scan mode: $($readResult.scanMode)."
     } elseif ($warnings.Count -gt 0) {
         "1C event log contains no blocking new error signatures in scope '$CursorScope' from '$($effectiveStartTime.ToString("o"))'. Non-blocking warnings: $($warnings.Count); report: $reportPath. Legacy suppressed errors: $legacyCount; scan mode: $($readResult.scanMode)."
     } else {
@@ -3881,7 +4023,7 @@ function Test-DevBranchEventLogAfterVanessa {
     if ($diagnosticRunErrorCount -gt 0) {
         $reason += " Of these, $diagnosticRunErrorCount occurred inside diagnostic Vanessa run window(s): " +
             ((@($attribution.runs | ForEach-Object { "$($_.runId)=$($_.errorCount)" })) -join ", ") +
-            "; they remain event-log evidence and close only through the existing continuation. Report: $reportPath."
+            "; they remain event-log evidence and close through a fix or an acknowledgement of intentional errors. Report: $reportPath."
         foreach ($run in @($attribution.runs)) {
             Write-Host "Event-log errors during diagnostic Vanessa run $($run.runId): $($run.errorCount); window $($run.startedAt.ToString("o"))..$($run.finishedAt.ToString("o")); first: $($run.firstLine); run=$($run.runDirectory)"
         }
@@ -3897,6 +4039,7 @@ function Test-DevBranchEventLogAfterVanessa {
         reportPath = $reportPath
         newErrorCount = $newErrors.Count
         warningCount = $warnings.Count
+        acknowledgedErrorCount = $acknowledged.Count
         legacyErrorCount = $legacyCount
         checkedUntil = $checkedUntil
         checkedFrom = $effectiveStartTime
@@ -5205,7 +5348,9 @@ function Get-VanessaVerificationFailureRoute {
     param(
         [Parameter(Mandatory = $true)][object]$Verification,
         [Parameter(Mandatory = $true)][object]$EventLogVerification,
-        [bool]$EventLogConfirmsPrimaryFailure = $false
+        [bool]$EventLogConfirmsPrimaryFailure = $false,
+        # The scenarios themselves passed and only the event-log check failed.
+        [bool]$ScenariosPassed = $false
     )
 
     $verificationStatus = [string](Get-StateValue -State $Verification -Name "status" -Default "")
@@ -5243,6 +5388,8 @@ function Get-VanessaVerificationFailureRoute {
         }
     } elseif (Test-ItlDiagnosticVerificationScope) {
         $requiredAction = "fix-and-repeat-original-check"
+    } elseif ($category -eq "event-log" -and $ScenariosPassed) {
+        $requiredAction = "fix-or-acknowledge-event-log-errors"
     } else {
         $requiredAction = "/itl-verify-fix"
     }
@@ -6185,6 +6332,7 @@ function Run-DevBranchTests {
         # with its own measured duration and never alters this verification.
         Write-VanessaRunEventLogPreview -State $state -RunDirectory $runDirectory -CursorPath $eventLogPreviewCursorPath -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt
     }
+    $scenariosPassed = [string]$verification.status -eq "passed"
     if ($eventLogVerification.status -eq "failed") {
         $verification.status = "failed"
         $verification.reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
@@ -6192,6 +6340,7 @@ function Run-DevBranchTests {
         $verification.reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
     }
     if ($diagnosticInputManifest -and -not (Test-VerificationDiagnosticInputsCurrent -ManifestPath $diagnosticInputManifest -State $runtimeState)) {
+        $scenariosPassed = $false
         $verification.status = 'failed'
         $verification.reason = 'ITL_VANESSA_DIAGNOSTIC_INPUT_CHANGED: preserve this run and repeat the original diagnostic against stable feature files.'
     }
@@ -6270,7 +6419,8 @@ function Run-DevBranchTests {
         $failureRoute = Get-VanessaVerificationFailureRoute `
             -Verification $verification `
             -EventLogVerification $eventLogVerification `
-            -EventLogConfirmsPrimaryFailure:$eventLogConfirmsPrimaryFailure
+            -EventLogConfirmsPrimaryFailure:$eventLogConfirmsPrimaryFailure `
+            -ScenariosPassed:$scenariosPassed
         Set-RunFailureContext -Category $failureRoute.category -RequiredAction $failureRoute.requiredAction
         if ($verification.status -eq "unknown") {
             Write-OneCVanessaProcessDiagnostics -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
@@ -6866,6 +7016,10 @@ function Write-VanessaTestStatusLines {
     if ($pendingCursor) {
         Write-Host "${Indent}Event log pending cursor: $pendingCursor"
         Write-Host "${Indent}Event log pending boundary/reason: $(Get-StateValue -State $State -Name 'eventLogPendingCursorCreatedAt' -Default '<unknown>') / $(Get-StateValue -State $State -Name 'eventLogPendingCursorReason' -Default '<unknown>')"
+    }
+    $acknowledgedCount = (Get-DevBranchEventLogAcknowledgements -State $State).Count
+    if ($acknowledgedCount -gt 0) {
+        Write-Host "${Indent}Event log acknowledged intentional error signatures: $acknowledgedCount"
     }
     if ([string](Get-StateValue -State $State -Name "eventLogDebtStatus" -Default "") -eq "failed") {
         Write-Host "${Indent}Event log debt: failed; fingerprint=$(Get-StateValue -State $State -Name 'eventLogDebtFingerprint' -Default '<unknown>'); evidence=$(Get-StateValue -State $State -Name 'eventLogDebtReportPath' -Default '<none>')"
