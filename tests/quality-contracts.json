@@ -1728,7 +1728,7 @@
       "gate": "targeted",
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/TextAssertionPolicy.Tests.ps1",
-      "paths": ["tests/pester/*.Tests.ps1"],
+      "paths": ["tests/pester/*.Tests.ps1", "tests/text-assertion-baseline.json"],
       "reuseInputPaths": ["scripts/git-path-list.ps1"],
       "tests": ["tests/pester/TextAssertionPolicy.Tests.ps1"]
     },
