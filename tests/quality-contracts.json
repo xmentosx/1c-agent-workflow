@@ -1884,6 +1884,16 @@
       "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseExtensionRecovery.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseRouting.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
     },
     {
+      "id": "fork-continuation-chain-proof",
+      "owner": "Fork continuation consumer of the stand workflow-update chain proof",
+      "gate": "develop",
+      "budgetSeconds": 600,
+      "primaryTest": "tests/pester/DevBranchForkContinuation.Tests.ps1",
+      "paths": ["tests/pester/DevBranchForkContinuation.Tests.ps1"],
+      "reuseInputPaths": ["scripts/source-e2e-fixture.ps1", "scripts/git-path-list.ps1", "scripts/source-e2e-manifest-repair.ps1", "scripts/source-e2e-workflow-update.ps1", "scripts/source-proof-json.ps1", "scripts/source-delivery-process.ps1", "scripts/stand-env-identity.ps1", "scripts/lifecycle-qualification-fixture.ps1", "scripts/source-e2e-storage.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1"],
+      "tests": ["tests/pester/DevBranchForkContinuation.Tests.ps1"]
+    },
+    {
       "id": "develop-runtime",
       "owner": "Develop journey orchestration",
       "gate": "develop",
