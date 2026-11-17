@@ -31,6 +31,7 @@ $RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
 . (Join-Path $PSScriptRoot 'release-e2e/admission.ps1')
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.package-content.ps1")
+. (Join-Path $PSScriptRoot "vanessa-source-build-archive.ps1")
 if (-not $OutputPath) { $OutputPath = Join-Path $RepositoryRoot "build\test-results\local\release-context.json" }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 $startedAt = [DateTime]::UtcNow
@@ -195,50 +196,34 @@ function Resolve-VanessaArchive {
     param([object]$Lock)
     if ($null -eq $Lock) { return $null }
     $expectedSha = [string]$Lock.sha256
-    $folderName = ([string]$Lock.compatibilityVersion) + "-" + ([string]$Lock.downstreamRevision)
-    $canonicalPath = Join-Path $RepositoryRoot ("build\third-party\vanessa-automation\" + $folderName + "\" + [string]$Lock.assetName)
-    $configuredPath = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
-    $candidates = @()
-    if (-not [string]::IsNullOrWhiteSpace($configuredPath)) {
-        try { $candidates += [System.IO.Path]::GetFullPath($configuredPath) } catch {}
-    }
-    $candidates += $canonicalPath
-    $invalidCandidates = New-Object System.Collections.Generic.List[string]
-    foreach ($candidate in @($candidates | Select-Object -Unique)) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            $actualSha = Get-FileSha256 -Path $candidate
-            if ($actualSha -ceq $expectedSha.ToLowerInvariant()) {
-                return [ordered]@{ path = $candidate; sha256 = $actualSha; source = $(if ($candidate -eq $configuredPath) { "environment" } else { "candidate-cache" }) }
-            }
-            $invalidCandidates.Add("$candidate (actual=$actualSha)") | Out-Null
-        }
-    }
-    if ($Offline) {
-        if ($invalidCandidates.Count -gt 0) {
-            Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_HASH_MISMATCH" -Category "DEPENDENCY_DRIFT" `
-                -Message "No Vanessa Automation candidate matched SHA256 '$expectedSha'. Invalid candidate(s): $($invalidCandidates -join '; ')." `
-                -Recovery "Remove invalid candidates and provide the exact immutable asset."
-        }
-        Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_MISSING" -Category "CANDIDATE_INCOMPLETE" `
-            -Message "Qualified Vanessa Automation archive is missing in offline mode: $canonicalPath" `
-            -Recovery "Place the immutable locked asset at the canonical path or set ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE."
-        return $null
-    }
     try {
-        $download = Invoke-ItlImmutableFileDownload -Uri ([string]$Lock.url) -DestinationPath $canonicalPath -ExpectedSha256 $expectedSha -Label "Release Vanessa Automation archive"
-        $downloadedSha = [string]$download.sha256
-        return [ordered]@{ path = $canonicalPath; sha256 = $downloadedSha; source = "locked-url" }
+        # One owner resolves the locked archive; an unpublished revision is
+        # satisfied by an exact build in any worktree or the shared cache.
+        $resolution = Resolve-VanessaSourceBuildArchive -RepositoryRoot $RepositoryRoot -Lock $Lock -AllowDownload:(-not $Offline)
     } catch {
-        if ($invalidCandidates.Count -gt 0) {
-            Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_HASH_MISMATCH" -Category "DEPENDENCY_DRIFT" `
-                -Message "No Vanessa Automation candidate matched SHA256 '$expectedSha'. Invalid candidate(s): $($invalidCandidates -join '; ')." `
-                -Recovery "Remove invalid candidates and acquire the immutable asset from the locked URL."
+        $message = $_.Exception.Message
+        if ($message -match '^VANESSA_ARCHIVE_(OVERRIDE_INVALID|SHARED_CACHE_CORRUPT|LOCK_INVALID):') {
+            Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_HASH_MISMATCH" -Category "DEPENDENCY_DRIFT" -Message $message `
+                -Recovery "Correct or unset ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE, or remove the corrupt shared cache entry; an explicit or SHA-addressed source never falls back to another file."
+        } else {
+            Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_ACQUIRE_FAILED" -Category "ENVIRONMENT" `
+                -Message "Unable to acquire the immutable Vanessa Automation archive: $message" `
+                -Recovery "Build the exact locked revision in a worktree of this repository, verify network access to the locked URL, or provide the exact archive through ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE."
         }
-        Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_ACQUIRE_FAILED" -Category "ENVIRONMENT" `
-            -Message "Unable to acquire the immutable Vanessa Automation archive: $($_.Exception.Message)" `
-            -Recovery "Verify network access to the locked URL or provide the exact archive through ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE."
         return $null
     }
+    if ($resolution.status -eq 'resolved') {
+        return [ordered]@{ path = [string]$resolution.path; sha256 = [string]$resolution.sha256; source = [string]$resolution.source }
+    }
+    if (@($resolution.invalidCandidates).Count -gt 0) {
+        Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_HASH_MISMATCH" -Category "DEPENDENCY_DRIFT" `
+            -Message "No Vanessa Automation candidate matched SHA256 '$expectedSha'. Invalid candidate(s): $(@($resolution.invalidCandidates) -join '; ')." `
+            -Recovery "Remove invalid candidates and provide the exact immutable asset."
+    }
+    Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_MISSING" -Category "CANDIDATE_INCOMPLETE" `
+        -Message "Qualified Vanessa Automation archive is missing in offline mode: $($resolution.canonicalPath)" `
+        -Recovery "Build the exact locked revision in a worktree of this repository, seed the shared SHA-addressed cache, or set ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE."
+    return $null
 }
 
 function Get-ZipEntrySha256 {

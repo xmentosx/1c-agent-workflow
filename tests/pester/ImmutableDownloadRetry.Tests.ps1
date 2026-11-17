@@ -306,6 +306,7 @@ Describe "Immutable asset download retry policy" {
         $readiness = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\test-release-readiness.ps1") -Raw -Encoding UTF8
         $delivery = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\source-delivery-component.ps1") -Raw -Encoding UTF8
         $shards = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
+        $archiveLookup = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\vanessa-source-build-archive.ps1") -Raw -Encoding UTF8
 
         $vanessaTokens = $null
         $vanessaErrors = $null
@@ -342,10 +343,11 @@ Describe "Immutable asset download retry policy" {
         $sourceBuildText | Should -Match ([regex]::Escape("Invoke-ItlImmutableFileAcquire -Source `$sourcePath -DestinationPath `$TargetPath -ExpectedSha256 `$expected -Label 'Vanessa UI MCP artifact clientMcp'"))
         $sourceBuildText | Should -Not -Match 'Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|Copy-Item|Move-Item|WriteAllBytes|WriteAllText|System\.Net\.WebClient'
         @([regex]::Matches($roctup, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 2
-        $readiness | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \(\[string\]\$Lock\.url\)'
+        # Readiness and shards reach the locked URL only through the shared archive owner.
+        $archiveLookup | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$layout\.url .*-ExpectedSha256 \$expected'
         $delivery | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$Url'
         $delivery | Should -Match 'Get-DeliveryRemoteAssetState.*-AvailabilityAttempts 12'
-        $shards | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$url.*-ExpectedSha256 \$expected'
+        @(@($readiness, $shards) | Where-Object { $_ -match '(?s)Resolve-VanessaSourceBuildArchive [^\r\n]*`?\s*[^\r\n]*-AllowDownload' -and $_ -notmatch 'Invoke-ItlImmutableFileDownload' }).Count | Should -Be 2
         $yaxunit = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.yaxunit.ps1") -Raw -Encoding UTF8
         $yaxunit | Should -Match 'Get-ItlSharedArtifactPath -Family "yaxunit"'
         $yaxunit | Should -Match 'Invoke-ItlImmutableFileAcquire -Source \(ConvertFrom-FileUri -Value \(\[string\]\$entry\.url\)\) -DestinationPath \$cachePath'
