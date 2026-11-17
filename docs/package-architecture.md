@@ -310,6 +310,24 @@ branch lock itself. No new lock family, state or migration; gates, capsules and
 receipts are unchanged. Rollback removes the lease and restores the unguarded
 read.
 
+On 2026-11-17 the user approved persisting the chain proof's backup hashes.
+Reproducer: the stand had 41 retained updates (~600 MB of backups per root);
+every Capture/Verify process rehashed all of them (356 s per root, two roots,
+3-4 Captures per publication), and two Release Captures exceeded the
+900-second no-progress watchdog. `Get-WorkflowUpdateFileSha256` keeps its
+metadata rule; `scripts/source-e2e-fixture.ps1` alone persists rows for files
+inside retained `itl-workflow-update-completed-*` directories of one root, in
+`<common git dir>/itl/qualification-fixtures/chain-proof-hashes/`. A row is
+reused only while length, last-write and creation time match; live managed
+files are never persisted. Reads and the atomic rewrite after a successful
+proof run under the root's existing lifecycle lease; an unreadable file means
+a full rehash. Installed projects, update-workflow, rollback and recovery keep
+byte checks; no lock, coordinator or migration is added. Residual risk: a
+backup changed without changing length or both times passes Capture, as with
+the Git index. Rollback removes the code; leftover files are ignored. Measured
+on that stand: Verify of both roots 546 s cold, 116 s in a new process with the
+cache (identical proof, ~5.6 MB per root).
+
 The 2026-10-26 branch-disk review extends this same producer handoff to explicitly
 superseded check artifacts. Its owner still receives exact individual files
 after terminal process cleanup, with a successful replacement receipt and the

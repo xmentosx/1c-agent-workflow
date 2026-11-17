@@ -399,6 +399,50 @@ foreach($root in @($ProjectRoot)+@($scope.roots)){
         {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate}|Should -Not -Throw
     }
 
+    It 'reuses proven backup hashes in a later Capture and still rejects a changed backup' {
+        # 2026-11-17: each Capture process rehashed ~600 MB of retained backups
+        # per root; the approved cache keeps only rows whose file metadata holds.
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'Кеш доказанных копий with spaces')
+        $null=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
+        $null=Add-SeedWorkflowUpdate -Root $seed.project -Value one
+        $null=Add-SeedWorkflowUpdate -Root $seed.project -Value two
+        $admitted=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate
+        $root=[IO.Path]::GetFullPath($seed.project).TrimEnd('\')
+        $cachePath=Get-SourceFixtureChainProofHashPath -Root $root
+        $rows=@([IO.File]::ReadAllLines($cachePath)|Select-Object -Skip 1)
+        $backups=@($rows|ForEach-Object {[IO.Path]::Combine($root,$_.Split("`t")[4]).ToLowerInvariant()})
+        $backups.Count|Should -BeGreaterThan 0
+        @($backups|Where-Object {-not $_.StartsWith((Get-SourceFixtureChainProofBackupPrefix -Root $root),[StringComparison]::Ordinal)})|Should -BeNullOrEmpty
+        # Each proof starts with an empty in-memory cache, as a new process does.
+        # Exclusive handles make any read of a backup byte fail; metadata stays
+        # readable. The proof reads .dev.env backups for their content by contract.
+        $envBackups=@(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-completed-*'|ForEach-Object {
+            @((Read-WorkflowUpdateSnapshot -SnapshotRoot $_.FullName -Completed).snapshot.records|Where-Object relativePath -CEQ '.dev.env')|ForEach-Object {[IO.Path]::GetFullPath([string]$_.backupPath).ToLowerInvariant()}})
+        $envBackups.Count|Should -Be 2
+        $locked=@($backups|Where-Object {$_ -cnotin $envBackups})
+        $locked.Count|Should -BeGreaterThan 0
+        $handles=@($locked|ForEach-Object {[IO.File]::Open($_,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)})
+        try {(Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop).sha256|Should -BeExactly $admitted.sha256}
+        finally {$handles|ForEach-Object {$_.Dispose()}}
+        $target=$locked[0];$bytes=[IO.File]::ReadAllBytes($target)
+        $cacheBytes=[IO.File]::ReadAllBytes($cachePath)
+        [IO.File]::WriteAllBytes($target,[byte[]]($bytes+[byte]0x23))
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop}|Should -Throw '*WORKFLOW_UPDATE_ROLLBACK_BACKUP_INVALID*'
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($cachePath))|Should -BeExactly ([Convert]::ToBase64String($cacheBytes))
+        # The original bytes under a new write time are hashed again and admitted.
+        [IO.File]::WriteAllBytes($target,$bytes)
+        (Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop).sha256|Should -BeExactly $admitted.sha256
+        $targetRow=@([IO.File]::ReadAllLines($cachePath)|Select-Object -Skip 1|Where-Object {[IO.Path]::Combine($root,$_.Split("`t")[4]).ToLowerInvariant() -ceq $target})
+        $targetRow.Count|Should -Be 1
+        $targetRow[0].Split("`t")[2]|Should -BeExactly ([string][IO.FileInfo]::new($target).LastWriteTimeUtc.Ticks)
+        # An unreadable cache is a full rehash, then a complete rewrite.
+        [IO.File]::WriteAllText($cachePath,'not a cache')
+        (Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop).sha256|Should -BeExactly $admitted.sha256
+        $rewritten=@([IO.File]::ReadAllLines($cachePath))
+        $rewritten[0]|Should -BeExactly 'itl-chain-proof-hashes 1'
+        @($rewritten|Select-Object -Skip 1).Count|Should -Be $rows.Count
+    }
+
     It 'waits for an in-flight stand update under its lifecycle locks instead of proving a half-retained chain' {
         $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'Стенд занят обновлением')
         $null=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
