@@ -5520,6 +5520,7 @@ function Get-VerificationState {
 
     $oneOffIssues = @()
     $assessmentIssues = @()
+    $attestedSuiteIds = @()
     $hasComponentReceipts = $null -ne (Get-StateValue -State $State -Name 'lastVerificationComponentEvidence' -Default $null)
     $hasCurrentProofReceipts = $hasComponentReceipts -or @(
         Get-VerificationCatalogValue -Value (Read-VerificationSelectionProof) -Name 'suiteEvidence' -Default @()
@@ -5532,6 +5533,7 @@ function Get-VerificationState {
         $oneOffIssues = @($assessment.oneOffIssues)
         $assessmentIssues = @($assessment.issues)
         $isFresh = [bool]$assessment.passed
+        $attestedSuiteIds = @(Get-StateValue -State $assessment -Name 'attestedSuiteIds' -Default @())
         $taskAccepted = [bool]$assessment.taskAccepted
         $acceptanceRemaining = @($assessment.acceptanceRemaining)
         if ($isFresh) { $status = 'passed' }
@@ -5540,6 +5542,7 @@ function Get-VerificationState {
         $oneOffIssues = @($assessment.oneOffIssues)
         $assessmentIssues = @($assessment.issues)
         $isFresh = [bool]$assessment.passed
+        $attestedSuiteIds = @(Get-StateValue -State $assessment -Name 'attestedSuiteIds' -Default @())
         if ($isFresh) { $status = 'passed' }
     } elseif ($isFresh) {
         try {
@@ -5590,6 +5593,8 @@ function Get-VerificationState {
         reason = ((@([string](Get-StateValue -State $State -Name "lastVerificationReason" -Default "")) + @($oneOffIssues) + @($assessmentIssues) | Where-Object { $_ }) -join '; ')
         oneOffIssues = @($oneOffIssues)
         assessmentIssues = @($assessmentIssues)
+        # Retained suites counted by the user's attestation instead of a run.
+        attestedSuiteIds = @($attestedSuiteIds)
         assessmentKind = $(if ($verificationModel -eq 'change') { 'current-change' } elseif ($hasCurrentProofReceipts) { 'current-obligations' } else { 'legacy-full' })
     }
 }

@@ -789,6 +789,21 @@ its plan; suites with a failed or partial receipt stay required until they pass
 and cannot be declared `unaffected`. Same owner pair and proof file; the old
 helper rejects such receipts' mixed reports and reruns the complete set.
 
+Architecture checkpoint approved by the owner on 2026-11-17: a retained suite is
+settled only by an observed run, except by the user's attestation. On the user's
+explicit request the agent runs `attest-verification-suites`; the existing
+verification-selection owner writes an `attested` receipt into the same proof
+file, bound like an observed receipt to the obligation, the suite's inputs at
+the current tree, runtime, loaded target and checker, with the reason, the
+user's quoted request and the previous status. Both models skip a suite
+attested at the current tree; any later change returns it to ordinary
+selection and the next observed run replaces it. Attested suites count toward
+a passed check and export under every policy (the owner chose this over
+`warn`-only) and are listed in status and the check report. Event log, YAxUnit,
+one-off and load proof are unaffected; no coordinator, lock or migration; one
+on-demand helper action. Rollback: the old helper treats `attested` as
+unsettled and runs the suite.
+
 ## 1C source byte-preservation policy
 
 Git is transport for platform-generated `src/cf/**`, `src/cfe/**`, and optional auxiliary `src/configs/**` files, not their line-ending formatter. Installed projects carry a managed `.gitattributes` block with `-text` for these trees, so checkout, worktree creation, branch transfer, and result assembly preserve the bytes emitted by 1C even when global `core.autocrlf=true`.

@@ -96,6 +96,7 @@ begin-one-off-proof
 complete-one-off-proof
 begin-verification-change
 complete-verification-change
+attest-verification-suites
 vibecoding1c-mcp-setup
 vibecoding1c-mcp-update
 vibecoding1c-mcp-status

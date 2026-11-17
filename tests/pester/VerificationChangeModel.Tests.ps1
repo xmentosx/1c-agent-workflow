@@ -186,6 +186,7 @@ Describe 'Change mode recovery and reuse boundaries' {
             function Get-VerificationRepoRelativePath { param($Path) $Path }
             # 'unsettled': the suite failed at the adopted base or in this change.
             function Read-VerificationSelectionProof { [pscustomobject]@{suiteEvidence=@([pscustomobject]@{id='existing';status=$(if($kind -eq 'unsettled'){'failed'}else{'passed'})})} }
+            function Test-VerificationSuiteReceiptSettled { param($Receipt) [string]$Receipt.status -cin @('passed','attested') }
             $plan=[pscustomobject]@{mode='incremental';reason='';selectedSuiteIds=@('existing');acceptanceSuiteIds=@('existing');currentTree='tree'}
             if ($kind -eq 'always') {
                 { Get-VerificationChangeSelectionPlan -Plan $plan } | Should -Throw '*VERIFICATION_CHANGE_ALWAYS_REQUIRED*'

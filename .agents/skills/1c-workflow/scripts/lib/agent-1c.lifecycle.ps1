@@ -12780,6 +12780,8 @@ function Write-DevBranchVerificationRunUserReport {
         }
         $skipped = @(Get-StateValue -State $State -Name 'lastVerificationSkippedComponents' -Default @())
         if ($skipped.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Пропущенные компоненты' -Value ($skipped -join ', ') }
+        $attested = @(Get-StateValue -State $verification -Name 'attestedSuiteIds' -Default @())
+        if ($attested.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Засчитано по подтверждению пользователя, без прогона' -Value ($attested -join ', ') }
         $issues = @(Get-StateValue -State $verification -Name 'assessmentIssues' -Default @()) + @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
         if ($issues.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Незавершённые проверки' -Value ($issues -join '; ') }
         $reportPath = [string](Get-StateValue -State $State -Name 'lastVerifiedReportPath' -Default '')
@@ -22078,6 +22080,8 @@ function Show-WorkflowStatus {
     Write-Host "Last refresh: $(Get-StateValue -State $state -Name 'lastRefreshAt' -Default '<never>')"
     Write-Host "Verification status: $($verification.effectiveStatus)"
     Write-Host "Verification fresh passed: $($verification.isFreshPassed)"
+    $attestedSuites = @(Get-StateValue -State $verification -Name 'attestedSuiteIds' -Default @())
+    if ($attestedSuites.Count -gt 0) { Write-Host "Suites attested by the user, not run: $($attestedSuites -join ', ')" }
     Write-Host "Verification model: $(Get-VerificationModel)"
     if ((Get-VerificationModel) -eq 'change') {
         Write-Host "Whole task accepted: $([bool](Get-StateValue -State $verification -Name 'taskAccepted' -Default $false))"

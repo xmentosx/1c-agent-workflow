@@ -409,6 +409,26 @@ Describe 'Canonical assessment of current component and obligation receipts' {
                 $negativeChecks += [pscustomobject]@{ boundary='failed retained rerun'; assessment=(Get-VerificationState -State $script:AggregateState) }
                 $settledReceipts = @((Read-VerificationSelectionProof).suiteEvidence)
                 $unsettledPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $files -RequireObservedReceipts
+                # The user's attestation settles the failed suite without a run,
+                # only for the exact current inputs.
+                $attestationChecks = [ordered]@{}
+                foreach ($case in @(@{name='unknown';value=@{suiteIds=@('missing-suite');reason='Проверено вручную';userRequest='Засчитай без прогона'}},@{name='unquoted';value=@{suiteIds=@('integration');reason='Проверено вручную'}})) {
+                    Write-Utf8TextAtomic -Path (Join-Path $root "evidence/attest-$($case.name).json") -Value ($case.value | ConvertTo-Json)
+                    try { Add-VerificationSuiteAttestation -EvidencePath "evidence/attest-$($case.name).json" | Out-Null; $attestationChecks[$case.name] = '' } catch { $attestationChecks[$case.name] = $_.Exception.Message }
+                }
+                Write-Utf8TextAtomic -Path (Join-Path $root 'evidence/attest.json') -Value (@{suiteIds=@('integration');reason='Сценарий проверен вручную через UI';userRequest='Засчитай integration без прогона'} | ConvertTo-Json)
+                $attestation = Add-VerificationSuiteAttestation -EvidencePath 'evidence/attest.json'
+                $attestedAssessment = Get-VerificationState -State $script:AggregateState
+                $attestedPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $files -RequireObservedReceipts
+                $integrationPath = Join-Path $root 'src/cf/Integration/metadata.xml'
+                $originalIntegration = Read-Utf8Text -Path $integrationPath
+                $loadedSource = $script:AggregateState.lastConfigDesignerFingerprint
+                Write-Utf8TextAtomic -Path $integrationPath -Value '<metadata changed="after attestation" />'
+                $script:AggregateState.lastConfigDesignerFingerprint = (Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+                $negativeChecks += [pscustomobject]@{ boundary='attested suite input changed'; assessment=(Get-VerificationState -State $script:AggregateState) }
+                $changedAttestedPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $files -RequireObservedReceipts
+                Write-Utf8TextAtomic -Path $integrationPath -Value $originalIntegration
+                $script:AggregateState.lastConfigDesignerFingerprint = $loadedSource
                 $failedPlan = [pscustomobject]@{ catalogAvailable=$true;currentTree=(Get-VerificationSelectionEffectiveTree);catalogFingerprint=$catalog.fingerprint;acceptanceSuiteIds=@($catalog.suiteFingerprints.id);acceptanceSuites=$catalog.suiteFingerprints;selectedSuiteIds=@('integration');mode='selected' }
                 $nativeRun = Join-Path $root 'evidence/integration-native-run'
                 New-Item -ItemType Directory -Force -Path $nativeRun | Out-Null
@@ -421,7 +441,7 @@ Describe 'Canonical assessment of current component and obligation receipts' {
             $tampered = Get-VerificationState -State $script:AggregateState
             $blocked = ''
             try { Confirm-UnverifiedProceed -State $script:AggregateState -Operation 'export-dev-branch-result' -VerificationState $tampered|Out-Null } catch { $blocked=$_.Exception.Message }
-            [pscustomobject]@{ready=$ready;allowed=$allowed;tampered=$tampered;blocked=$blocked;negativeChecks=$negativeChecks;protection=$protection;writerAssessment=$writerAssessment;recoveredWriterAssessment=$(if($Retained){$recoveredWriterAssessment}else{$writerAssessment});settledReceipts=$(if($Retained){$settledReceipts}else{@()});unsettledPlan=$(if($Retained){$unsettledPlan}else{$null});legacyReceiptPlan=$(if($Retained){$legacyReceiptPlan}else{$null});scopedReuse=$scopedReuse;featurePlan=$(if($Retained){$featurePlan}else{$null});runnerPlan=$(if($Retained){$runnerPlan}else{$null});auxiliaryPlan=$(if($Retained){$auxiliaryPlan}else{$null});unexpectedRunnerCalls=$script:UnexpectedRunnerCalls;state=$script:AggregateState}
+            [pscustomobject]@{ready=$ready;allowed=$allowed;tampered=$tampered;blocked=$blocked;negativeChecks=$negativeChecks;protection=$protection;writerAssessment=$writerAssessment;recoveredWriterAssessment=$(if($Retained){$recoveredWriterAssessment}else{$writerAssessment});settledReceipts=$(if($Retained){$settledReceipts}else{@()});attestation=$(if($Retained){[pscustomobject]@{result=$attestation;checks=$attestationChecks;assessment=$attestedAssessment;plan=$attestedPlan;changedPlan=$changedAttestedPlan}}else{$null});unsettledPlan=$(if($Retained){$unsettledPlan}else{$null});legacyReceiptPlan=$(if($Retained){$legacyReceiptPlan}else{$null});scopedReuse=$scopedReuse;featurePlan=$(if($Retained){$featurePlan}else{$null});runnerPlan=$(if($Retained){$runnerPlan}else{$null});auxiliaryPlan=$(if($Retained){$auxiliaryPlan}else{$null});unexpectedRunnerCalls=$script:UnexpectedRunnerCalls;state=$script:AggregateState}
         }
         $actual.ready.isFreshPassed | Should -BeTrue
         $actual.allowed | Should -BeNullOrEmpty
@@ -433,6 +453,13 @@ Describe 'Canonical assessment of current component and obligation receipts' {
             @($actual.settledReceipts | Where-Object id -eq 'integration')[0].status | Should -Be 'failed'
             @($actual.settledReceipts | Where-Object id -eq 'integration')[0].coverageIssue | Should -Match 'failed, errored or skipped'
             $actual.unsettledPlan.mode | Should -Be 'incremental'
+            $actual.attestation.checks['unknown'] | Should -Match 'VERIFICATION_ATTESTATION_SUITE_UNKNOWN'
+            $actual.attestation.checks['unquoted'] | Should -Match 'VERIFICATION_ATTESTATION_INVALID'
+            $actual.attestation.result.status | Should -Be 'attested'
+            $actual.attestation.assessment.isFreshPassed | Should -BeTrue
+            @($actual.attestation.assessment.attestedSuiteIds) | Should -Be @('integration')
+            $actual.attestation.plan.mode | Should -Be 'reuse'
+            @($actual.attestation.changedPlan.selectedSuiteIds) | Should -Be @('integration')
             @($actual.unsettledPlan.selectedSuiteIds) | Should -Be @('integration')
             @($actual.legacyReceiptPlan.selectedSuiteIds).Count | Should -Be 2
             $actual.scopedReuse.plan.mode | Should -Be 'incremental'

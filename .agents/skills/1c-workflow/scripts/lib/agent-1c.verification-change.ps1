@@ -154,6 +154,7 @@ function Get-VerificationChangeBaseTree {
         foreach ($receipt in @($receipts | Where-Object { [string]$_.status -ceq 'passed' })) {
             Assert-VerificationArtifactReferences -Artifacts @($receipt.artifacts)
         }
+        foreach ($receipt in @($receipts | Where-Object { [string]$_.status -ceq 'attested' })) { Assert-VerificationSuiteAttestation -Receipt $receipt }
         return [string]$proof.tree
     }
     $base = Get-DevBranchResultTransferBaseCommit -State $State
@@ -523,7 +524,7 @@ function Get-VerificationChangeUnsettledSuites {
     param([string[]]$AcceptanceSuiteIds = @())
     $proof = Read-VerificationSelectionProof
     return @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @() |
-        Where-Object { [string]$_.status -cne 'passed' -and [string]$_.id -cin $AcceptanceSuiteIds } | ForEach-Object { [string]$_.id } | Sort-Object -Unique)
+        Where-Object { -not (Test-VerificationSuiteReceiptSettled -Receipt $_) -and [string]$_.id -cin $AcceptanceSuiteIds } | ForEach-Object { [string]$_.id } | Sort-Object -Unique)
 }
 
 function Get-VerificationChangeRequiredSuites {
@@ -600,7 +601,7 @@ function Get-VerificationChangeSelectionPlan {
     # A required suite runs when the cumulative selector found its inputs
     # changed since the last proof or when no passed receipt exists for it.
     $proof = Read-VerificationSelectionProof
-    $passed = @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @() | Where-Object { [string]$_.status -ceq 'passed' } | ForEach-Object { [string]$_.id })
+    $passed = @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @() | Where-Object { Test-VerificationSuiteReceiptSettled -Receipt $_ } | ForEach-Object { [string]$_.id })
     $run = @($required.suiteIds | Where-Object { $_ -cin @($Plan.selectedSuiteIds) -or $_ -cnotin $passed })
     $Plan.selectedSuiteIds = $run
     $Plan.selectedFeatureFiles = @($catalog.assignments | Where-Object { $_.suiteId -in $run } | Select-Object -ExpandProperty fullPath -Unique)
