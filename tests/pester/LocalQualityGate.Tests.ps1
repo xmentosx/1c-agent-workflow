@@ -76,6 +76,17 @@ Describe "Local quality gate contract" {
         $developJourney | Should -Match 'tests\\features\\ITLDevelopJourney\.feature.*stale verification boundary'
     }
 
+    It "starts quick and untimed Pester files before the longest-first lane" {
+        # The first failed file stops admission; a cheap failure must not wait behind the heavy tail.
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"), [ref]$tokens, [ref]$errors)
+        . ([scriptblock]::Create($ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-PesterFileScheduleOrder' }, $true).Extent.Text))
+        $files = @('heavy', 'quick', 'new', 'pre', 'serial', 'mid') | ForEach-Object { [pscustomobject]@{ Name = "$_.Tests.ps1"; FullName = "C:\fixture\$_.Tests.ps1" } }
+        $weights = @{ 'heavy.Tests.ps1' = 300; 'quick.Tests.ps1' = 12; 'pre.Tests.ps1' = 5; 'serial.Tests.ps1' = 40; 'mid.Tests.ps1' = 90 }
+        $order = Get-PesterFileScheduleOrder -Files $files -Weights $weights -DefaultSeconds 1 -SerialNames @('serial.Tests.ps1') -PreflightNames @('pre.Tests.ps1')
+        @($order | ForEach-Object { $_.name }) | Should -Be @('pre.Tests.ps1', 'new.Tests.ps1', 'quick.Tests.ps1', 'heavy.Tests.ps1', 'mid.Tests.ps1', 'serial.Tests.ps1')
+    }
+
     It "runs complete Pester as individually checkpointed files with bounded workers" {
         $runner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8; $worker = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\run-pester-shard.ps1") -Raw -Encoding UTF8
         $localRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\test.ps1") -Raw -Encoding UTF8

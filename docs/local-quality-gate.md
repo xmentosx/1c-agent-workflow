@@ -271,7 +271,10 @@ The October 27 incident exceeded the remote runner's commit guard even with free
 physical RAM; physical-only admission was insufficient. Neither guard is waived.
 Private manifest continuation fixtures run alongside independent
 files; real console/global boundaries remain serial. Ordering weights use observed
-native file times, separately from hard deadlines. Plan reads its timing samples
+native file times, separately from hard deadlines. After preflight, files without
+a weight or with at most 30 seconds start first, untimed ones before timed; the
+rest run longest-first. The first failed file stops new admission, so a cheap
+failure surfaces within the first minutes instead of after the heavy tail. Plan reads its timing samples
 from the existing bounded run index before filtering each stage; Targeted bursts
 cannot displace qualification observations. Native scenario execution survives
 the check-summary/raw-record/index boundary, so partial and composed coverage

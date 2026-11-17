@@ -87,6 +87,27 @@ function Get-PesterWorkloadEstimate {
 }
 
 
+function Get-PesterFileScheduleOrder {
+    # Quick and untimed files start before the longest-first lane. Scheduling
+    # stops at the first failed file, so a cheap failing test must not wait
+    # behind the heavy tail; untimed files are mostly new or recently changed
+    # tests. The quick wave adds well under a minute when every file passes.
+    param([object[]]$Files, [hashtable]$Weights, [double]$DefaultSeconds, [string[]]$SerialNames = @(), [string[]]$PreflightNames = @(), [double]$QuickSeconds = 30)
+    return @($Files | ForEach-Object {
+        $timed = $Weights.ContainsKey([string]$_.Name)
+        $weight = $(if ($timed) { [double]$Weights[[string]$_.Name] } else { $DefaultSeconds })
+        [pscustomobject]@{
+            name = [string]$_.Name
+            path = [string]$_.FullName
+            weight = $weight
+            timed = $timed
+            quick = (-not $timed) -or $weight -le $QuickSeconds
+            serial = $SerialNames -contains [string]$_.Name
+            preflight = $PreflightNames -contains [string]$_.Name
+        }
+    } | Sort-Object @{ Expression = "serial"; Descending = $false }, @{ Expression = "preflight"; Descending = $true }, @{ Expression = "quick"; Descending = $true }, @{ Expression = "timed"; Descending = $false }, @{ Expression = "weight"; Descending = $true }, @{ Expression = "name"; Descending = $false })
+}
+
 function ConvertTo-NativeArgument {
     param([string]$Value)
     if ($null -eq $Value) { return '""' }
@@ -819,16 +840,7 @@ $preflightTestNames = @("SourceDeliveryAdmission.Tests.ps1", "ReleaseRouting.Tes
 $weights = @{}
 foreach ($property in $timings.files.PSObject.Properties) { $weights[$property.Name] = [double]$property.Value }
 $defaultSeconds = [double]$timings.defaultSeconds
-
-$items = @($testFiles | ForEach-Object {
-    [pscustomobject]@{
-        name = $_.Name
-        path = $_.FullName
-        weight = $(if ($weights.ContainsKey($_.Name)) { [double]$weights[$_.Name] } else { $defaultSeconds })
-        serial = $serialTestNames -contains $_.Name
-        preflight = $preflightTestNames -contains $_.Name
-    }
-} | Sort-Object @{ Expression = "serial"; Descending = $false }, @{ Expression = "preflight"; Descending = $true }, @{ Expression = "weight"; Descending = $true }, @{ Expression = "name"; Descending = $false })
+$items = @(Get-PesterFileScheduleOrder -Files $testFiles -Weights $weights -DefaultSeconds $defaultSeconds -SerialNames $serialTestNames -PreflightNames $preflightTestNames)
 
 $workerScript = Join-Path $PSScriptRoot "run-pester-shard.ps1"
 $script:pesterRuntimeReceipt = Get-PesterWorkerRuntimeReceipt
