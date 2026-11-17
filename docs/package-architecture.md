@@ -773,6 +773,13 @@ no coordinator, lock, migration or client-surface growth. `cumulative` is
 unchanged. Rollback reverts the commits; plans using the new decisions are then
 refused by the old helper and re-planned. Accepted risk: master regressions are
 no longer found automatically by every branch after refresh.
+Amended by the owner on 2026-11-17: a run settles each selected suite from its
+own JUnit cases, so a failed run keeps the suites that fully passed and both
+models rerun only unsettled suites. Without an accepted increment or a
+successful check, the change base is the last run that recorded every suite of
+its plan; suites with a failed or partial receipt stay required until they pass
+and cannot be declared `unaffected`. Same owner pair and proof file; the old
+helper rejects such receipts' mixed reports and reruns the complete set.
 
 ## 1C source byte-preservation policy
 

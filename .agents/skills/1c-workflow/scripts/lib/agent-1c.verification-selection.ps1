@@ -1215,6 +1215,10 @@ function New-VerificationCumulativeSelectionPlan {
         return (& $newFullPlan "No compatible complete suite proof exists yet.")
     }
     $provedSuites = @(Get-VerificationCatalogValue -Value $proof -Name "acceptanceSuites" -Default @())
+    # A suite without a current passed receipt (failed, unobserved, stale or
+    # with changed evidence) reruns by itself; settled suites keep their proof.
+    # Only when no suite is settled does the complete acceptance set run.
+    $pendingReceipts = [ordered]@{}
     if ($RequireObservedReceipts) {
         $state = Read-DevBranchState -Name $DevBranchName
         try { $targetIdentity = Get-VerificationRetainedTargetIdentity -State $state }
@@ -1229,10 +1233,13 @@ function New-VerificationCumulativeSelectionPlan {
                 [string]$receipt[0].checkerIdentity -cne (Get-VerificationRetainedCheckerIdentity) -or
                 [string]$receipt[0].obligationHash -cne (Get-VerificationOneOffObligationHash -Obligation $obligation) -or
                 [string]$receipt[0].runtimeIdentity -cne (Get-VerificationRelevantDependencyLockFingerprint -Treeish $currentTree)) {
-                return (& $newFullPlan "Retained suite '$id' needs current observed receipt identity; the permitted unfiltered runner supplies it.")
+                $pendingReceipts[$id] = "Retained suite '$id' needs current observed receipt identity; the permitted unfiltered runner supplies it."
+                continue
             }
             try {
-                Assert-VerificationArtifactReferences -Artifacts @($receipt[0].artifacts) -JUnit
+                # The suite's own cases are checked below; other suites' failed
+                # cases in the same run report do not unsettle this suite.
+                Assert-VerificationArtifactReferences -Artifacts @($receipt[0].artifacts)
                 Assert-VerificationRecordedSuiteCoverage -Receipt $receipt[0]
                 $provedSuite = @($provedSuites | Where-Object id -eq $id)
                 $currentSuite = @($acceptanceSuites | Where-Object id -eq $id)
@@ -1246,7 +1253,10 @@ function New-VerificationCumulativeSelectionPlan {
                     Assert-VerificationRetainedSuiteCoverage -Receipt $receipt[0] -Catalog $catalog
                 }
             }
-            catch { return (& $newFullPlan $_.Exception.Message) }
+            catch { $pendingReceipts[$id] = $_.Exception.Message }
+        }
+        if ($pendingReceipts.Count -gt 0 -and $pendingReceipts.Count -ge $acceptanceSuiteIds.Count) {
+            return (& $newFullPlan ([string]@($pendingReceipts.Values)[0]))
         }
     }
     if ($provedSuites.Count -eq 0) {
@@ -1262,7 +1272,7 @@ function New-VerificationCumulativeSelectionPlan {
     } catch {
         return (& $newFullPlan $_.Exception.Message)
     }
-    if ($changedPaths.Count -eq 0) {
+    if ($changedPaths.Count -eq 0 -and $pendingReceipts.Count -eq 0) {
         return [pscustomobject]@{
             mode = "reuse"
             reason = "No verification-relevant changes were found; complete acceptance proof is reusable."
@@ -1290,6 +1300,7 @@ function New-VerificationCumulativeSelectionPlan {
     $classificationReasons = [Collections.Generic.List[string]]::new()
     $legacyPathCount = 0
     $selectedIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($id in @($pendingReceipts.Keys)) { [void]$selectedIds.Add([string]$id) }
     foreach ($suiteProof in $acceptanceSuites) {
         $prior = @($provedSuites | Where-Object { [string](Get-VerificationCatalogValue -Value $_ -Name "id" -Default "") -eq [string]$suiteProof.id })
         if ($prior.Count -ne 1 -or [string](Get-VerificationCatalogValue -Value $prior[0] -Name "fingerprint" -Default "") -cne [string]$suiteProof.fingerprint) {
@@ -1402,7 +1413,8 @@ function New-VerificationCumulativeSelectionPlan {
     }
     return [pscustomobject]@{
         mode = "incremental"
-        reason = "Reused complete proof for unchanged suites; changed paths selected: $($changedPaths.Count)."
+        reason = "Reused complete proof for unchanged suites; changed paths selected: $($changedPaths.Count)." +
+            $(if ($pendingReceipts.Count -gt 0) { " Unsettled suites rerun: $(@($pendingReceipts.Keys) -join ', ')." } else { '' })
         selectedFeatureFiles = $selectedFiles
         selectedSuiteIds = @($selectedIds | Sort-Object)
         acceptanceSuiteIds = $acceptanceSuiteIds
@@ -1475,7 +1487,7 @@ function Get-VerificationSuiteJUnitCoverage {
             foreach ($name in $names) {
                 $key = "$($assignment.path)`n$($scenario.sourceLine)`n$name"
                 if (-not $bindings.ContainsKey($key)) {
-                    $bindings[$key] = [pscustomobject]@{suiteId=[string]$assignment.suiteId;path=[string]$assignment.path;line=[int]$scenario.sourceLine;featureName=$featureName;qualifiedName=$qualifiedName;name=[string]$name;expected=0;observed=0;ambiguous=$false}
+                    $bindings[$key] = [pscustomobject]@{suiteId=[string]$assignment.suiteId;path=[string]$assignment.path;line=[int]$scenario.sourceLine;featureName=$featureName;qualifiedName=$qualifiedName;name=[string]$name;expected=0;observed=0;unclean=0;ambiguous=$false}
                 }
                 $bindings[$key].expected++
             }
@@ -1489,7 +1501,12 @@ function Get-VerificationSuiteJUnitCoverage {
             ([string]$case.className -ceq $_.featureName -or [string]$case.className -ceq $_.qualifiedName)
         })
         if ($matches.Count -eq 1) {
-            if ($matches[0].suiteId -in $SelectedSuiteIds) { $matches[0].observed++ }
+            if ($matches[0].suiteId -in $SelectedSuiteIds) {
+                $matches[0].observed++
+                # A suite is settled per scenario, so one run may prove some
+                # suites while another suite's case failed, errored or skipped.
+                if (@('failure', 'error', 'skipped' | Where-Object { [bool](Get-VerificationCatalogValue -Value $case -Name $_ -Default $false) }).Count -gt 0) { $matches[0].unclean++ }
+            }
             elseif (-not $IgnoreUnselectedCases) { $unmapped++ }
         }
         elseif ($matches.Count -gt 1) { foreach ($match in $matches) { $match.ambiguous=$true } }
@@ -1512,6 +1529,7 @@ function Get-VerificationSuiteJUnitCoverage {
             $expected += $item.expected; $observed += $item.observed
             if ($item.ambiguous) { $issues += "ambiguous scenario '$($item.path):$($item.line)'" }
             elseif ($item.observed -ne $item.expected) { $issues += "missing or duplicate scenario '$($item.path):$($item.line)' expected=$($item.expected) observed=$($item.observed)" }
+            elseif ($item.unclean -gt 0) { $issues += "failed, errored or skipped scenario '$($item.path):$($item.line)'" }
         }
         if ($expected -eq 0) { $issues += 'unobserved selected suite has no native scenario identity' }
         if ($unmapped -gt 0) { $issues += "$unmapped unmapped JUnit testcase(s)" }
@@ -1689,7 +1707,7 @@ function Get-VerificationCumulativeProofAssessment {
                 [string]$receipt[0].checkerIdentity -cne (Get-VerificationRetainedCheckerIdentity)) {
                 throw "VERIFICATION_RETAINED_PROOF_PENDING: suite '$($suite.id)' needs a current unfiltered observed JUnit result."
             }
-            Assert-VerificationArtifactReferences -Artifacts @($receipt[0].artifacts) -JUnit
+            Assert-VerificationArtifactReferences -Artifacts @($receipt[0].artifacts)
             Assert-VerificationRetainedSuiteCoverage -Receipt $receipt[0] -Catalog $catalog
         }
         if (@($yaxCatalog.groups | Where-Object purpose -eq 'default-fast').Count -gt 0 -or
@@ -1716,17 +1734,26 @@ function Complete-VerificationSelectionProof {
     $suiteEvidence = @(Get-VerificationCatalogValue -Value $old -Name 'suiteEvidence' -Default @())
     if ($null -ne $State -and $RunDirectory -and $Plan.mode -ne 'reuse') {
         $junit = Get-VanessaJunitSummary -RunDirectory $RunDirectory
-        $artifacts = @(if ($Status -eq 'passed') { New-VerificationArtifactReferences -Paths @($junit.files | ForEach-Object { [string]$_.path }) })
-        if ($Status -eq 'passed') { Assert-VerificationArtifactReferences -Artifacts $artifacts -JUnit }
         $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
-        if ($Status -eq 'passed' -and [string]$catalog.fingerprint -cne [string]$Plan.catalogFingerprint) {
+        $catalogCurrent = [string]$catalog.fingerprint -ceq [string]$Plan.catalogFingerprint
+        if ($Status -eq 'passed' -and -not $catalogCurrent) {
             throw 'VERIFICATION_CATALOG_CHANGED_DURING_RUN: preserve the JUnit result and repeat the original check against the current declared obligations.'
         }
-        $coverage = @(if ($Status -eq 'passed') { Get-VerificationSuiteJUnitCoverage -Catalog $catalog -SelectedSuiteIds @($Plan.selectedSuiteIds) -JUnit $junit })
+        # Settlement is per suite: a failed run still proves every selected
+        # suite whose scenarios were all observed exactly once and passed, so
+        # the next cumulative plan reruns only the unsettled suites. The run
+        # itself stays failed and never becomes a passed check.
+        $coverage = @(if ($catalogCurrent -and @($junit.files).Count -gt 0) { Get-VerificationSuiteJUnitCoverage -Catalog $catalog -SelectedSuiteIds @($Plan.selectedSuiteIds) -JUnit $junit })
+        $artifacts = @()
+        if ($Status -eq 'passed' -or @($coverage | Where-Object status -eq 'passed').Count -gt 0) {
+            $artifacts = @(New-VerificationArtifactReferences -Paths @($junit.files | ForEach-Object { [string]$_.path }))
+            if ($Status -eq 'passed') { Assert-VerificationArtifactReferences -Artifacts $artifacts -JUnit }
+        }
         foreach ($id in @($Plan.selectedSuiteIds)) {
             $obligation = @($catalog.obligations | Where-Object suiteId -eq $id)[0]
             $suiteCoverage = @($coverage | Where-Object id -eq $id)
-            $suiteStatus = if ($Status -eq 'passed' -and ($suiteCoverage.Count -ne 1 -or $suiteCoverage[0].status -ne 'passed')) { 'partial' } else { $Status }
+            $suitePassed = $suiteCoverage.Count -eq 1 -and $suiteCoverage[0].status -eq 'passed'
+            $suiteStatus = if ($suitePassed) { 'passed' } elseif ($Status -eq 'passed') { 'partial' } else { $Status }
             $suiteEvidence = @($suiteEvidence | Where-Object id -ne $id) + @([pscustomobject]@{
                 schemaVersion = 1; id = $id; status = $suiteStatus
                 coverage = $(if ($suiteCoverage.Count -eq 1) { $suiteCoverage[0] } else { $null })
@@ -1737,7 +1764,7 @@ function Complete-VerificationSelectionProof {
                 loadedBaseIdentity = Get-VerificationLoadedBaseIdentity -State $State
                 targetIdentity = Get-VerificationRetainedTargetIdentity -State $State
                 checkerIdentity = Get-VerificationRetainedCheckerIdentity
-                artifacts = $artifacts
+                artifacts = $(if ($suitePassed -or $Status -eq 'passed') { $artifacts } else { @() })
             })
         }
     }

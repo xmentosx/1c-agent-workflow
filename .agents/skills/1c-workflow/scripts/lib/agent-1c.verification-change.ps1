@@ -138,14 +138,21 @@ function Get-VerificationChangeBaseTree {
         }
         return [string]$Previous.baseTree
     }
-    # Adopt only an existing successful owner boundary, never the caller's HEAD.
+    # Adopt only an existing owner boundary, never the caller's HEAD: the last
+    # successful check, or the last observed run that recorded a passed or
+    # failed receipt for every acceptance suite of its plan. Suites unsettled
+    # there are not proved at the base; Get-VerificationChangeRequiredSuites
+    # requires them until they pass.
     $proof = Read-VerificationSelectionProof
-    if ([string](Get-StateValue -State $State -Name 'lastVerificationStatus' -Default '') -ceq 'passed' -and
-        [string](Get-StateValue -State $State -Name 'lastVerifiedFingerprint' -Default '') -and $null -ne $proof -and
-        [string]$proof.tree -match '^[a-f0-9]{40}$') {
-        foreach ($receipt in @($proof.suiteEvidence)) {
-            if ([string]$receipt.status -cne 'passed') { throw 'VERIFICATION_CHANGE_BASE_UNVERIFIED: prior suite failed; resolve its existing continuation first.' }
-            Assert-VerificationArtifactReferences -Artifacts @($receipt.artifacts) -JUnit
+    $receipts = @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @())
+    $lastPassed = [string](Get-StateValue -State $State -Name 'lastVerificationStatus' -Default '') -ceq 'passed' -and
+        [string](Get-StateValue -State $State -Name 'lastVerifiedFingerprint' -Default '')
+    $recordedIds = @(Get-VerificationCatalogValue -Value $proof -Name 'acceptanceSuiteIds' -Default @() | ForEach-Object { [string]$_ })
+    $settledRun = $recordedIds.Count -gt 0 -and
+        @($recordedIds | Where-Object { $id = $_; @($receipts | Where-Object { [string]$_.id -ceq $id }).Count -ne 1 }).Count -eq 0
+    if ($null -ne $proof -and [string]$proof.tree -match '^[a-f0-9]{40}$' -and ($lastPassed -or $settledRun)) {
+        foreach ($receipt in @($receipts | Where-Object { [string]$_.status -ceq 'passed' })) {
+            Assert-VerificationArtifactReferences -Artifacts @($receipt.artifacts)
         }
         return [string]$proof.tree
     }
@@ -295,6 +302,7 @@ function Start-VerificationChange {
         return [pscustomobject]@{
             model='change';status='planning';baseTree=$base;tree=$tree
             changedPaths=$decide
+            unsettledSuiteIds=@(try { Get-VerificationChangeUnsettledSuites -AcceptanceSuiteIds @((Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))).assignments | Where-Object purpose -eq 'acceptance' | ForEach-Object { [string]$_.suiteId }) } catch { @() })
             draftPlanPath=$draft.path
             draftUncoveredPaths=$draft.uncoveredPaths
             draftMasterOverlapPaths=@(Get-VerificationCatalogValue -Value $draft -Name masterOverlapPaths -Default @())
@@ -511,6 +519,13 @@ function Update-VerificationChangeForCurrentTree {
     return $updated
 }
 
+function Get-VerificationChangeUnsettledSuites {
+    param([string[]]$AcceptanceSuiteIds = @())
+    $proof = Read-VerificationSelectionProof
+    return @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @() |
+        Where-Object { [string]$_.status -cne 'passed' -and [string]$_.id -cin $AcceptanceSuiteIds } | ForEach-Object { [string]$_.id } | Sort-Object -Unique)
+}
+
 function Get-VerificationChangeRequiredSuites {
     # The acceptance suites the current change must observe. The agent's plan
     # names them (checks by suiteId, run dispositions); the catalog's always
@@ -552,6 +567,13 @@ function Get-VerificationChangeRequiredSuites {
     $unaffected = @($Change.retainedDispositions | Where-Object decision -eq 'unaffected' | ForEach-Object { [string]$_.suiteId })
     foreach ($id in $unaffected) {
         if ($id -cin $always) { throw 'VERIFICATION_CHANGE_ALWAYS_REQUIRED: preserve the suite always policy; run its existing coverage before completing this change.' }
+    }
+    # A recorded failed or partial suite stays required until it passes: an
+    # unsettled base suite or a failed change run cannot be planned away.
+    $unsettled = @(Get-VerificationChangeUnsettledSuites -AcceptanceSuiteIds $acceptance)
+    foreach ($id in $unsettled) {
+        if ($id -cin $unaffected) { throw "VERIFICATION_CHANGE_UNSETTLED_REQUIRED: suite '$id' has no passed result; run it in this change instead of declaring it unaffected." }
+        $ids.Add($id)
     }
     $required = @($ids | Where-Object { $_ -cin $acceptance -and $_ -cnotin $unaffected } | Sort-Object -Unique)
     return [pscustomobject]@{ suiteIds = $required; unaffectedSuiteIds = $unaffected; infrastructureReasons = $infrastructure }

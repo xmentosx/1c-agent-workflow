@@ -192,10 +192,16 @@ acceptance set once. After that set passes, the ignored proof matrix
 lets a later check run only acceptance suites owned by changed paths and carries
 the unchanged suite proof to the new exact Git tree. If every changed path
 belongs only to `explicit` suites, the helper carries the acceptance proof after
-the event-log check and does not start Vanessa. A failed run never advances the
-matrix. A new or changed suite has its own semantic fingerprint, so it remains
-the only selected suite on every failed fix-and-retry iteration instead of
-restarting the previously proved acceptance set.
+the event-log check and does not start Vanessa. A failed run stays failed, but
+it settles each selected suite separately: a suite whose scenarios were all
+observed exactly once and passed in the run's JUnit gets a passed receipt; a
+failed, errored, skipped, missing or ambiguous scenario leaves its suite
+unsettled. Another suite's failed case in the same report does not unsettle a
+suite. The next check reruns only unsettled suites plus suites selected by
+changed paths; the complete set runs again only when no suite is settled. A new
+or changed suite has its own semantic fingerprint, so it remains the only
+selected suite on every failed fix-and-retry iteration instead of restarting
+the previously proved acceptance set.
 
 When an old proof predates workflow adoption, an unowned CF/CFE path whose
 current content exactly matches the legacy adoption baseline (including an old

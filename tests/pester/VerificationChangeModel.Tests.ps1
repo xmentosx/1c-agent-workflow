@@ -167,7 +167,7 @@ Describe 'Change mode recovery and reuse boundaries' {
         }
     }
 
-    It 'keeps the always policy and only reports shared test support: <kind>' -TestCases @(@{kind='always'},@{kind='full'},@{kind='feature'}) {
+    It 'keeps the always policy and only reports shared test support: <kind>' -TestCases @(@{kind='always'},@{kind='full'},@{kind='feature'},@{kind='unsettled'}) {
         param($kind)
         & {
             . (Join-Path (Split-Path -Parent $helperPath) 'lib/agent-1c.verification-change.ps1')
@@ -184,9 +184,13 @@ Describe 'Change mode recovery and reuse boundaries' {
             function Get-VerificationOwnerPaths { @() }
             function Get-VerificationRelevantDependencyLockFingerprint { param($Treeish) 'same' }
             function Get-VerificationRepoRelativePath { param($Path) $Path }
+            # 'unsettled': the suite failed at the adopted base or in this change.
+            function Read-VerificationSelectionProof { [pscustomobject]@{suiteEvidence=@([pscustomobject]@{id='existing';status=$(if($kind -eq 'unsettled'){'failed'}else{'passed'})})} }
             $plan=[pscustomobject]@{mode='incremental';reason='';selectedSuiteIds=@('existing');acceptanceSuiteIds=@('existing');currentTree='tree'}
             if ($kind -eq 'always') {
                 { Get-VerificationChangeSelectionPlan -Plan $plan } | Should -Throw '*VERIFICATION_CHANGE_ALWAYS_REQUIRED*'
+            } elseif ($kind -eq 'unsettled') {
+                { Get-VerificationChangeSelectionPlan -Plan $plan } | Should -Throw '*VERIFICATION_CHANGE_UNSETTLED_REQUIRED*'
             } else {
                 # A changed shared step is reported; accepted results stay valid
                 # and the agent's exclusion stands.
@@ -233,6 +237,29 @@ Describe 'Change mode recovery and reuse boundaries' {
             Set-CurrentObservation first; Set-CurrentEventEvidence
             (Complete-VerificationChange).taskAccepted | Should -BeTrue
             (Get-VerificationState -State $script:ChangeTestState).isFreshPassed | Should -BeTrue
+        }
+    }
+    It 'adopts the last recorded failed run as base and carries only its unsettled suites' {
+        $root=Join-Path $TestDrive 'Упавший прогон как база'; New-ChangeFixture $root -Retained
+        Enter-ChangeFixture $root {
+            # Earlier branch work was observed by a full cumulative run that
+            # failed in the only suite; a later edit is the change to plan.
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Procedure Current() Verified EndProcedure'
+            & git -C $root add -- src/cf/current.bsl; & git -C $root commit -qm 'verified branch work'
+            $runTree = Get-VerificationSelectionEffectiveTree
+            New-Item -ItemType Directory -Force -Path (Get-VerificationSelectionStateRoot) | Out-Null
+            $proofPath = Join-Path (Get-VerificationSelectionStateRoot) 'proof.json'
+            $branchStart = Start-VerificationChange
+            @($branchStart.changedPaths) | Should -Contain 'src/cf/current.bsl'
+            Write-Utf8TextAtomic -Path $proofPath -Value (@{schemaVersion=1;tree=$runTree;acceptanceSuiteIds=@('existing');suiteEvidence=@(@{schemaVersion=1;id='existing';status='failed';artifacts=@()})}|ConvertTo-Json -Depth 6)
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/other.bsl') -Value 'Procedure Other() Changed EndProcedure'
+            $preview = Start-VerificationChange
+            $preview.baseTree | Should -BeExactly $runTree
+            @($preview.changedPaths) | Should -Be @('src/cf/other.bsl')
+            @($preview.unsettledSuiteIds) | Should -Be @('existing')
+            # A run that did not record every planned suite is no boundary.
+            Write-Utf8TextAtomic -Path $proofPath -Value (@{schemaVersion=1;tree=$runTree;acceptanceSuiteIds=@('existing','removed');suiteEvidence=@(@{schemaVersion=1;id='existing';status='failed';artifacts=@()})}|ConvertTo-Json -Depth 6)
+            @((Start-VerificationChange).changedPaths) | Should -Contain 'src/cf/current.bsl'
         }
     }
     It 'runs a covering suite by default, refuses its silent omission and honours an explicit exclusion in a fresh branch' {

@@ -399,9 +399,17 @@ Describe 'Canonical assessment of current component and obligation receipts' {
                 $negativeChecks += [pscustomobject]@{ boundary='zero-tests with matching artifact SHA'; assessment=(Get-VerificationState -State $script:AggregateState) }
                 Write-Utf8TextAtomic -Path $badPath -Value $originalJunit
                 Write-Utf8TextAtomic -Path $proofPath -Value $originalProof
-                $failedPlan = [pscustomobject]@{ catalogAvailable=$true;currentTree=(Get-VerificationSelectionEffectiveTree);catalogFingerprint=$catalog.fingerprint;acceptanceSuiteIds=@($catalog.suiteFingerprints.id);acceptanceSuites=$catalog.suiteFingerprints;selectedSuiteIds=@('integration');mode='selected' }
-                Complete-VerificationSelectionProof -Plan $failedPlan -State $script:AggregateState -RunDirectory (Join-Path $root 'evidence') -Status failed
+                # One failed run settles per suite: orders passed in it, the
+                # integration scenario failed, so only integration reruns.
+                $failedRun = Join-Path $root 'evidence/failed-run'
+                New-Item -ItemType Directory -Force -Path $failedRun | Out-Null
+                Write-Utf8TextAtomic -Path (Join-Path $failedRun 'junit.xml') -Value '<testsuites><testsuite tests="1" failures="0" errors="0" skipped="0"><testcase classname="orders" name="Результат сохранён"/></testsuite><testsuite tests="1" failures="1" errors="0" skipped="0"><testcase classname="integration" name="Результат сохранён"><failure message="Ожидалось сохранение"/></testcase></testsuite></testsuites>'
+                $failedRunPlan = [pscustomobject]@{ catalogAvailable=$true;currentTree=(Get-VerificationSelectionEffectiveTree);catalogFingerprint=$catalog.fingerprint;acceptanceSuiteIds=@($catalog.suiteFingerprints.id);acceptanceSuites=$catalog.suiteFingerprints;selectedSuiteIds=@('orders','integration');mode='full' }
+                Complete-VerificationSelectionProof -Plan $failedRunPlan -State $script:AggregateState -RunDirectory $failedRun -Status failed
                 $negativeChecks += [pscustomobject]@{ boundary='failed retained rerun'; assessment=(Get-VerificationState -State $script:AggregateState) }
+                $settledReceipts = @((Read-VerificationSelectionProof).suiteEvidence)
+                $unsettledPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $files -RequireObservedReceipts
+                $failedPlan = [pscustomobject]@{ catalogAvailable=$true;currentTree=(Get-VerificationSelectionEffectiveTree);catalogFingerprint=$catalog.fingerprint;acceptanceSuiteIds=@($catalog.suiteFingerprints.id);acceptanceSuites=$catalog.suiteFingerprints;selectedSuiteIds=@('integration');mode='selected' }
                 $nativeRun = Join-Path $root 'evidence/integration-native-run'
                 New-Item -ItemType Directory -Force -Path $nativeRun | Out-Null
                 Write-Utf8TextAtomic -Path (Join-Path $nativeRun 'junit.xml') -Value '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase classname="integration" name="Результат сохранён"/></testsuite>'
@@ -413,7 +421,7 @@ Describe 'Canonical assessment of current component and obligation receipts' {
             $tampered = Get-VerificationState -State $script:AggregateState
             $blocked = ''
             try { Confirm-UnverifiedProceed -State $script:AggregateState -Operation 'export-dev-branch-result' -VerificationState $tampered|Out-Null } catch { $blocked=$_.Exception.Message }
-            [pscustomobject]@{ready=$ready;allowed=$allowed;tampered=$tampered;blocked=$blocked;negativeChecks=$negativeChecks;protection=$protection;writerAssessment=$writerAssessment;recoveredWriterAssessment=$(if($Retained){$recoveredWriterAssessment}else{$writerAssessment});legacyReceiptPlan=$(if($Retained){$legacyReceiptPlan}else{$null});scopedReuse=$scopedReuse;featurePlan=$(if($Retained){$featurePlan}else{$null});runnerPlan=$(if($Retained){$runnerPlan}else{$null});auxiliaryPlan=$(if($Retained){$auxiliaryPlan}else{$null});unexpectedRunnerCalls=$script:UnexpectedRunnerCalls;state=$script:AggregateState}
+            [pscustomobject]@{ready=$ready;allowed=$allowed;tampered=$tampered;blocked=$blocked;negativeChecks=$negativeChecks;protection=$protection;writerAssessment=$writerAssessment;recoveredWriterAssessment=$(if($Retained){$recoveredWriterAssessment}else{$writerAssessment});settledReceipts=$(if($Retained){$settledReceipts}else{@()});unsettledPlan=$(if($Retained){$unsettledPlan}else{$null});legacyReceiptPlan=$(if($Retained){$legacyReceiptPlan}else{$null});scopedReuse=$scopedReuse;featurePlan=$(if($Retained){$featurePlan}else{$null});runnerPlan=$(if($Retained){$runnerPlan}else{$null});auxiliaryPlan=$(if($Retained){$auxiliaryPlan}else{$null});unexpectedRunnerCalls=$script:UnexpectedRunnerCalls;state=$script:AggregateState}
         }
         $actual.ready.isFreshPassed | Should -BeTrue
         $actual.allowed | Should -BeNullOrEmpty
@@ -421,6 +429,11 @@ Describe 'Canonical assessment of current component and obligation receipts' {
         $actual.recoveredWriterAssessment.isFreshPassed | Should -BeTrue
         if ($Retained) {
             $actual.legacyReceiptPlan.mode | Should -Be 'full'
+            @($actual.settledReceipts | Where-Object id -eq 'orders')[0].status | Should -Be 'passed'
+            @($actual.settledReceipts | Where-Object id -eq 'integration')[0].status | Should -Be 'failed'
+            @($actual.settledReceipts | Where-Object id -eq 'integration')[0].coverageIssue | Should -Match 'failed, errored or skipped'
+            $actual.unsettledPlan.mode | Should -Be 'incremental'
+            @($actual.unsettledPlan.selectedSuiteIds) | Should -Be @('integration')
             @($actual.legacyReceiptPlan.selectedSuiteIds).Count | Should -Be 2
             $actual.scopedReuse.plan.mode | Should -Be 'incremental'
             $actual.scopedReuse.plan.selectedSuiteIds | Should -Contain 'integration'
