@@ -110,6 +110,7 @@
                 $logPath = $Arguments[[Array]::IndexOf($Arguments, '/Out') + 1]
                 $outputIndex = [Array]::IndexOf($Arguments, '/DumpCfg')
                 if ($outputIndex -lt 0) { $outputIndex = [Array]::IndexOf($Arguments, '/DumpIB') }
+                if ($outputIndex -lt 0) { $outputIndex = [Array]::IndexOf($Arguments, '/DumpResult') }
                 $script:OutputPath = $Arguments[$outputIndex + 1]
                 New-Item -ItemType Directory -Path (Split-Path $script:OutputPath) -Force | Out-Null
                 $text = if ($script:CaseFailure -eq 'empty-output') { '' } else { 'compiled fixture output' }
@@ -152,8 +153,15 @@
                         $state = [pscustomobject]@{ safeDevBranchName = 'Ветка теста' }
                         $path = Export-DevBranchResultFile -State $state -InfoBasePath $Base -InfoBaseKind file -ContentKind $Kind 6>$null
                     } else {
+                        $resultPath = Join-Path $Root 'Результат проверки.result'
                         $arguments = if ($Operation -eq 'dump-ib') {
                             @('/DumpIB', (Join-Path $Root 'snapshot.dt'))
+                        } elseif ($Operation -eq 'check-can-apply') {
+                            @('/CheckCanApplyConfigurationExtensions', '-Extension', 'ТестовоеРасширение', '/DumpResult', $resultPath)
+                        } elseif ($Operation -eq 'check-modules') {
+                            @('/CheckModules', '-ThinClient', '-Server', '-Extension', 'ТестовоеРасширение', '/DumpResult', $resultPath)
+                        } elseif ($Operation -eq 'mixed-check-and-load') {
+                            @('/CheckModules', '-ThinClient', '/DumpResult', $resultPath, '/LoadCfg', (Join-Path $Root 'mixed.cf'))
                         } else {
                             @('/DumpCfg', (Join-Path $Root 'mixed.cf'), '/UpdateDBCfg')
                         }
@@ -251,8 +259,23 @@ Describe 'Designer exports with another infobase session' {
         $result.holderOpen | Should -BeTrue
     }
 
+    It 'completes read-only <Operation> while the other session keeps the infobase open' -TestCases @(
+        @{ Operation = 'check-can-apply' }, @{ Operation = 'check-modules' }
+    ) {
+        param($Operation)
+        $result = Invoke-SharedBaseExportFixture -Operation $Operation
+        $result.error | Should -Be ''
+        $result.probePassed | Should -BeTrue
+        $result.nativeArguments | Should -Contain '/DumpResult'
+        $result.lockedBefore | Should -BeTrue
+        $result.lockedAfter | Should -BeTrue
+        $result.holderOpen | Should -BeTrue
+        $result.releaseProbeRequests | Should -Be 0
+        $result.nativeReleased | Should -BeTrue
+    }
+
     It 'preserves exclusive-release evidence for <Operation>' -TestCases @(
-        @{ Operation = 'dump-ib' }, @{ Operation = 'mixed-dump-and-update' }
+        @{ Operation = 'dump-ib' }, @{ Operation = 'mixed-dump-and-update' }, @{ Operation = 'mixed-check-and-load' }
     ) {
         param($Operation)
         $result = Invoke-SharedBaseExportFixture -Operation $Operation

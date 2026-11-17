@@ -717,6 +717,14 @@ function Set-RunFailureContextFromMessage {
         Set-RunFailureContext -Category 'execution-conflict' -RequiredAction 'repair-dev-branch-tooling'
         return
     }
+    if ($Message -match '^(?i:DESIGNER_INFOBASE_RELEASE_BLOCKED)\b') {
+        # The named holder is outside this operation; product and test fixes cannot release it.
+        Set-RunFailureContext -Category 'execution-conflict' -RequiredAction 'release-the-named-infobase-holder-then-repeat-original-command'
+        $script:RunBlockerClassification = 'infobase-holder'
+        $script:RunBlockerRequiresUserDecision = $false
+        $script:RunBlockerRetryOriginal = $true
+        return
+    }
     if ($Message -match '^(?i:EXECUTION_GUARD_(?:EXTERNAL_CONFLICT|WAIT_TIMEOUT))\b') {
         Set-RunFailureContext -Category 'execution-conflict' -RequiredAction 'wait-for-exact-base-activity-or-cancel-the-current-operation'
         return
@@ -6890,6 +6898,9 @@ function New-DesignerInvocationProbeState {
         stallWarningSeconds = $StallWarningSeconds
         stallTimeoutSeconds = $StallTimeoutSeconds
         stallTimeoutExceeded = $false
+        stallTimeoutExceededAtUtc = $null
+        stallConfirmationSeconds = 30
+        stallTermination = $null
         stallCleanup = $null
         startedAtUtc = [DateTime]::UtcNow
         lastObservedAtUtc = $null
@@ -7350,6 +7361,34 @@ function Update-DesignerInvocationLiveness {
     return $observation
 }
 
+function Get-DesignerInfoBaseHolderSummary {
+    # Diagnostic only: names live 1C processes of the exact file base and marks
+    # a registered on-demand backend. It never stops or admits anything.
+    param([string]$InfoBaseKind, [string]$InfoBasePath)
+
+    try {
+        $ondemand = @{}
+        if (Get-Command Get-ItlOnDemandRuntimeInstances -CommandType Function -ErrorAction SilentlyContinue) {
+            foreach ($item in @(Get-ItlOnDemandRuntimeInstances)) {
+                if (-not (Test-ItlOnDemandInfoBaseMatch -First ([string]$item.infoBasePath) -Second $InfoBasePath)) { continue }
+                foreach ($field in @("pid", "testClientPid")) {
+                    $holderPid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $item -Name $field -Default 0) -Default 0
+                    if ($holderPid -gt 0) { $ondemand[$holderPid] = "ondemand-$([string]$item.family) instance=$([string]$item.instanceId)" }
+                }
+            }
+        }
+        $holders = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath | ForEach-Object {
+            $text = "pid=$($_.pid) role=$($_.role)"
+            if ($ondemand.ContainsKey([int]$_.pid)) { $text += " owner=$($ondemand[[int]$_.pid])" }
+            $text
+        })
+        if ($holders.Count -eq 0) { return "none identified by command line" }
+        return ($holders -join " | ")
+    } catch {
+        return "holder inspection failed: $(([string]$_.Exception.Message) -replace '[\r\n]+', ' ')"
+    }
+}
+
 function Test-DesignerInvocationReleased {
     param(
         [Parameter(Mandatory = $true)][object]$ProbeState,
@@ -7447,7 +7486,28 @@ function Test-DesignerInvocationReleased {
 
     if ($livenessObservation.liveness -eq "stalled-timeout" -and -not [bool]$ProbeState.stallTimeoutExceeded) {
         $ProbeState.stallTimeoutExceeded = $true
+        $ProbeState.stallTimeoutExceededAtUtc = [DateTime]::UtcNow
         $ProbeState.stallCleanup = Stop-DesignerInvocationOwnedProcesses -ProbeState $ProbeState -LogPath $LogPath
+    } elseif ([bool]$ProbeState.stallTimeoutExceeded -and $null -ne $ProbeState.stallCleanup -and
+        -not [bool]$ProbeState.stallCleanup.attempted -and $processState.querySucceeded) {
+        # The first cleanup met a pending scan; repeat it on a completed one.
+        $ProbeState.stallCleanup = Stop-DesignerInvocationOwnedProcesses -ProbeState $ProbeState -LogPath $LogPath
+    }
+
+    # After the stall timeout only a short confirmation window remains. Waiting
+    # for the operation timeout cannot change an unrelated holder of the base.
+    if ([bool]$ProbeState.stallTimeoutExceeded -and $waitingDetail) {
+        $infoBaseHeld = $launcherExited -and $processState.querySucceeded -and -not $processState.active -and
+            [bool]$ProbeState.processesReleaseConfirmed -and $infoBaseRelease.status -eq "completed" -and -not $infoBaseReleased
+        $windowElapsed = ([DateTime]::UtcNow - [DateTime]$ProbeState.stallTimeoutExceededAtUtc).TotalSeconds -ge [int]$ProbeState.stallConfirmationSeconds
+        if ($infoBaseHeld -or $windowElapsed) {
+            $ProbeState.stallTermination = [pscustomobject]@{
+                reason = $(if ($infoBaseHeld) { "infobase-held" } else { "release-unconfirmed" })
+                waitingDetail = $waitingDetail
+                holders = $(if ($infoBaseHeld) { Get-DesignerInfoBaseHolderSummary -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath } else { "" })
+            }
+            throw "DESIGNER_STALL_TERMINATED"
+        }
     }
 
     if (-not $launcherExited) {
@@ -8237,6 +8297,29 @@ function Test-DesignerLicenseRefusal {
     return $true
 }
 
+function Test-DesignerReadOnlyBatchCheck {
+    # A standalone batch check reads the configuration and reports through
+    # /DumpResult. Like a standalone CF/CFE export, its own Designer must
+    # finish, but an unrelated Enterprise/ROCTUP session of the same file base
+    # may stay open. Combined or unknown commands keep the release requirement.
+    param([AllowEmptyCollection()][string[]]$DesignerArgs)
+
+    $values = @($DesignerArgs)
+    if ($values.Count -eq 0 -or [string]$values[0] -cnotin @('/CheckCanApplyConfigurationExtensions', '/CheckModules', '/CheckConfig')) {
+        return $false
+    }
+    for ($index = 1; $index -lt $values.Count; $index++) {
+        $value = [string]$values[$index]
+        if ($value -ceq '/DumpResult') {
+            if (($index + 1) -ge $values.Count -or [string]::IsNullOrWhiteSpace([string]$values[$index + 1])) { return $false }
+            $index++
+        } elseif ($value.StartsWith('/', [StringComparison]::Ordinal)) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Invoke-Designer {
     param(
         [string]$InfoBasePath,
@@ -8451,6 +8534,7 @@ function Invoke-DesignerAttempt {
         }
     } else {
         $operationKind = $(if ($updateDbIndex -ge 0) { "configuration-update" } else { "designer-command" })
+        $readOnlyBatchCheck = Test-DesignerReadOnlyBatchCheck -DesignerArgs $DesignerArgs
         $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
         $stabilitySeconds = Get-DesignerDumpStabilitySeconds
         $initialLogState = Get-DesignerFileArtifactState -Path $logPath -AllowEmpty
@@ -8468,7 +8552,8 @@ function Invoke-DesignerAttempt {
                 -LogPath $logPath `
                 -InfoBaseKind $InfoBaseKind `
                 -InfoBasePath $InfoBasePath `
-                -OperationKind $operationKind)) {
+                -OperationKind $operationKind `
+                -RequireInfoBaseRelease:(-not $readOnlyBatchCheck))) {
                 return $false
             }
             # A failed invocation needs release evidence, not a successful artifact.
@@ -8585,7 +8670,10 @@ function Invoke-DesignerAttempt {
         $terminationDetail = if ($result.terminationError) { " terminationError='$(([string]$result.terminationError) -replace '[\r\n]+', ' ')'" } else { "" }
         throw "DESIGNER_MEMORY_LIMIT_EXCEEDED pid=$($result.processId) limitMb=$maxWorkingSetMb peakWorkingSetMb=$($result.peakWorkingSetMb) terminationConfirmed=$($result.terminationConfirmed) log=$logPath$terminationDetail"
     }
-    if ([bool](Get-StateValue -State $result -Name "completionProbeFailed" -Default $false)) {
+    $stallTerminated = $null -ne $invocationProbeState -and [bool]$invocationProbeState.stallTimeoutExceeded -and
+        $null -ne $invocationProbeState.stallTermination -and
+        [string](Get-StateValue -State $result -Name "completionProbeErrorMessage" -Default "") -match '^DESIGNER_STALL_TERMINATED\b'
+    if ([bool](Get-StateValue -State $result -Name "completionProbeFailed" -Default $false) -and -not $stallTerminated) {
         $probeErrorType = [string](Get-StateValue -State $result -Name "completionProbeErrorType" -Default "")
         $probeErrorMessage = [string](Get-StateValue -State $result -Name "completionProbeErrorMessage" -Default "")
         $cleanupError = if ($timeoutCleanupState.error) { " cleanupError='$(([string]$timeoutCleanupState.error) -replace '[\r\n]+', ' ')'" } else { "" }
@@ -8602,7 +8690,12 @@ function Invoke-DesignerAttempt {
         $cleanupAttempted = $null -ne $stallCleanup -and [bool]$stallCleanup.attempted
         $cleanupConfirmed = $null -ne $stallCleanup -and [bool]$stallCleanup.confirmed
         $cleanupProcessIds = if ($null -ne $stallCleanup) { @($stallCleanup.processIds) -join "," } else { "" }
-        throw "DESIGNER_STALL_TIMEOUT operation=$operationKind stallTimeoutSeconds=$($invocationProbeState.stallTimeoutSeconds) noProgressSeconds=$($script:RunNoProgressSeconds) pid=$($result.processId) log=$logPath$targetDetail ownedCleanupAttempted=$cleanupAttempted ownedCleanupConfirmed=$cleanupConfirmed ownedProcessIds=$cleanupProcessIds$cleanupError"
+        $termination = $invocationProbeState.stallTermination
+        if ($null -ne $termination -and [string]$termination.reason -eq "infobase-held") {
+            throw "DESIGNER_INFOBASE_RELEASE_BLOCKED operation=$operationKind stallTimeoutSeconds=$($invocationProbeState.stallTimeoutSeconds) pid=$($result.processId) log=$logPath$targetDetail ownedProcessesReleased=True holders='$($termination.holders)'. The Designer's own processes exited, but another 1C session keeps the file infobase open. Release that holder (for this project's on-demand ROCTUP session call close_1c_session through the facade), then repeat the original command; no foreign process was stopped."
+        }
+        $confirmationDetail = if ($null -ne $termination) { " releaseConfirmationSeconds=$($invocationProbeState.stallConfirmationSeconds) waiting='$(([string]$termination.waitingDetail) -replace '[\r\n]+', ' ')'" } else { "" }
+        throw "DESIGNER_STALL_TIMEOUT operation=$operationKind stallTimeoutSeconds=$($invocationProbeState.stallTimeoutSeconds) noProgressSeconds=$($script:RunNoProgressSeconds) pid=$($result.processId) log=$logPath$targetDetail ownedCleanupAttempted=$cleanupAttempted ownedCleanupConfirmed=$cleanupConfirmed ownedProcessIds=$cleanupProcessIds$cleanupError$confirmationDetail"
     }
     if ($result.timedOut) {
         $targetDetail = if ($operationTarget) { " target='$operationTarget'" } else { "" }
