@@ -1486,11 +1486,26 @@ orchestration закрыто выбирает обе journey; неизвестн
 Новый fork lock сначала имеет `compatibilityStatus=pending`. Его может
 квалифицировать только `Full`/`Develop` с явным clean annotated-tag checkout:
 
-Targeted Pester shards that include bootstrap update coverage resolve the
-locked Vanessa source-build archive automatically: first from any worktree in
-the common Git directory, then from a shared SHA-addressed cache, and finally
-from the immutable locked URL. Every source is accepted only after the lock
-SHA-256 matches; an invalid explicit environment path fails closed.
+The locked Vanessa source-build archive has one owner,
+`scripts/vanessa-source-build-archive.ps1` (`Resolve-VanessaSourceBuildArchive`).
+Release readiness, the component finalizer and Targeted Pester shards with
+bootstrap update coverage all use the same lookup order:
+
+1. an explicit `ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE`;
+2. the canonical `build/third-party/vanessa-automation/<ver>-<rev>/<asset>` in
+   the candidate root and then in any worktree of the common Git directory;
+3. the shared SHA-addressed cache
+   `.git/itl/dependencies/vanessa-automation/<ver>-<rev>/<sha256>-<asset>`;
+4. the immutable locked URL (readiness and shards only; the finalizer never
+   downloads).
+
+Every source is accepted only after its SHA-256 equals the lock. A same-named
+file with other bytes is skipped, an invalid explicit environment path or a
+corrupt SHA-addressed cache entry fails closed without fallback. Shards seed the
+shared cache from an exact local build and hand workers that durable copy, so a
+queue that bumps `vanessaAutomation.downstreamRevision` reaches Release
+readiness and finalization before the locked URL exists without a manual
+override.
 
 ```powershell
 .\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic

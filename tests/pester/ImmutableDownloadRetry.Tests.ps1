@@ -306,6 +306,7 @@ Describe "Immutable asset download retry policy" {
         $readiness = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\test-release-readiness.ps1") -Raw -Encoding UTF8
         $delivery = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\source-delivery-component.ps1") -Raw -Encoding UTF8
         $shards = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
+        $archiveLookup = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\vanessa-source-build-archive.ps1") -Raw -Encoding UTF8
 
         $vanessaTokens = $null
         $vanessaErrors = $null
@@ -360,12 +361,17 @@ Describe "Immutable asset download retry policy" {
         }
         function Get-RouteOwner([Management.Automation.Language.Ast]$Node) { $owner = $Node.Parent; while ($owner -and $owner -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $owner = $owner.Parent }; if ($owner) { $owner.Name } }
         @(Get-ImmutableRouteCalls $roctup 'Invoke-ItlImmutableFileAcquire').Count | Should -Be 2
-        @(Get-ImmutableRouteCalls $readiness 'Invoke-ItlImmutableFileDownload' | Where-Object { Test-RouteFromLockUrl (Get-RouteArgument $_ 'Uri') }).Count | Should -BeGreaterThan 0
         $deliveryDownloads = @(Get-ImmutableRouteCalls $delivery 'Invoke-ItlImmutableFileDownload')
         @($deliveryDownloads | Where-Object { (Get-RouteOwner $_) -ceq 'Get-DeliveryRemoteAssetState' }).Count | Should -BeGreaterThan 0
         @($deliveryDownloads | Where-Object { Test-RouteFromLockUrl (Get-RouteArgument $_ 'Uri') }).Count | Should -BeGreaterThan 0
         @(Get-ImmutableRouteCalls $delivery 'Get-DeliveryRemoteAssetState' | Where-Object { $attempts = Get-RouteArgument $_ 'AvailabilityAttempts'; $attempts -and $attempts.Extent.Text -ceq '12' }).Count | Should -BeGreaterThan 0
-        @(Get-ImmutableRouteCalls $shards 'Invoke-ItlImmutableFileDownload').Count | Should -BeGreaterThan 0
+        # The locked Vanessa archive has one SHA-verified owner; readiness and shards resolve
+        # it with -AllowDownload and never download the locked URL themselves.
+        @(Get-ImmutableRouteCalls $archiveLookup 'Invoke-ItlImmutableFileDownload' | Where-Object { Test-RouteFromLockUrl (Get-RouteArgument $_ 'Uri') }).Count | Should -BeGreaterThan 0
+        foreach ($archiveConsumer in @($readiness, $shards)) {
+            @(Get-ImmutableRouteCalls $archiveConsumer 'Resolve-VanessaSourceBuildArchive' | Where-Object { @($_.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ieq 'AllowDownload' }).Count -gt 0 }).Count | Should -BeGreaterThan 0
+            @(Get-ImmutableRouteCalls $archiveConsumer 'Invoke-ItlImmutableFileDownload').Count | Should -Be 0
+        }
         $yaxunit = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.yaxunit.ps1") -Raw -Encoding UTF8
         $yaxunit | Should -Match 'Get-ItlSharedArtifactPath -Family "yaxunit"'
         @(Get-ImmutableRouteCalls $yaxunit 'Invoke-ItlImmutableFileAcquire' | Where-Object { Test-RouteFromLockUrl (Get-RouteArgument $_ 'Source') }).Count | Should -BeGreaterThan 0

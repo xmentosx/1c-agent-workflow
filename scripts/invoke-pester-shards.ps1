@@ -111,6 +111,7 @@ New-Item -ItemType Directory -Force -Path $workerRoot | Out-Null
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
+. (Join-Path $PSScriptRoot "vanessa-source-build-archive.ps1")
 $catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot
 $trackedPaths = @()
 $commonGitDir = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
@@ -299,117 +300,13 @@ function Initialize-VanessaSourceBuildArchiveForPester {
         throw "Pester Vanessa source-build resolution requires the canonical dependency lock: $lockPath"
     }
     $lock = (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
-    $expected = ([string]$lock.sha256).ToLowerInvariant()
-    $assetName = [string]$lock.assetName
-    $folderName = ([string]$lock.compatibilityVersion) + "-" + ([string]$lock.downstreamRevision)
-    if ($expected -notmatch '^[a-f0-9]{64}$' -or -not $assetName -or -not $folderName) {
-        throw "Pester Vanessa source-build resolution found an incomplete dependency lock entry."
-    }
-
-    $configured = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
-    $configuredArchive = ""
-    if ($configured) {
-        try { $configured = [IO.Path]::GetFullPath($configured) } catch { throw "Configured Vanessa source-build path is invalid: $configured" }
-        if (-not (Test-Path -LiteralPath $configured -PathType Leaf)) {
-            throw "Configured Vanessa source-build archive is missing: $configured"
-        }
-        $actual = Get-PesterShardFileSha256 -Path $configured
-        if ($actual -ne $expected) {
-            throw "Configured Vanessa source-build SHA256 differs from the dependency lock: expected=$expected actual=$actual path=$configured"
-        }
-        $configuredArchive = $configured
-    }
-
-    $candidateRoots = New-Object System.Collections.Generic.List[string]
-    $candidateRoots.Add($RepositoryRoot)
-    $recentHeads = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
-    $previousPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        foreach ($head in @(& git -C $RepositoryRoot rev-list --max-count=8 HEAD 2>$null)) {
-            if ([string]$head -match '^[a-f0-9]{40}$') { [void]$recentHeads.Add([string]$head) }
-        }
-        # A registration candidate stacks every unpublished queue entry above
-        # published develop, so a pinning commit can sit deeper than the fixed
-        # window. Widen it to the whole unpublished range, bounded by the queue
-        # base rather than by a commit count; exact SHA admission is unchanged.
-        $queueBaseRefs = @($(if ($BaseRef) { $BaseRef }), 'refs/remotes/origin/develop') | Where-Object { $_ }
-        foreach ($queueBaseRef in $queueBaseRefs) {
-            $queueBase = [string](& git -C $RepositoryRoot rev-parse --verify --quiet "$queueBaseRef^{commit}" 2>$null)
-            if ($LASTEXITCODE -ne 0 -or $queueBase -notmatch '^[a-f0-9]{40}$') { continue }
-            foreach ($head in @(& git -C $RepositoryRoot rev-list --max-count=256 HEAD "^$queueBase" 2>$null)) {
-                if ([string]$head -match '^[a-f0-9]{40}$') { [void]$recentHeads.Add([string]$head) }
-            }
-            break
-        }
-        $worktreeLines = @(& git -C $RepositoryRoot worktree list --porcelain 2>$null)
-        $worktreeExitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousPreference
-    }
-    if ($worktreeExitCode -eq 0) {
-        $candidateRoot = ""
-        $recentRootByHead = @{}
-        foreach ($line in $worktreeLines) {
-            if ([string]$line -match '^worktree\s+(.+)$') {
-                try { $candidateRoot = [IO.Path]::GetFullPath($Matches[1]) } catch { $candidateRoot = "" }
-            } elseif ($candidateRoot -and [string]$line -match '^HEAD\s+([a-f0-9]{40})$' -and $recentHeads.Contains([string]$Matches[1])) {
-                $head = [string]$Matches[1]
-                try { $modifiedAt = (Get-Item -LiteralPath $candidateRoot -ErrorAction Stop).LastWriteTimeUtc } catch { continue }
-                if (-not $recentRootByHead.ContainsKey($head) -or $modifiedAt -gt $recentRootByHead[$head].modifiedAt) {
-                    $recentRootByHead[$head] = [pscustomobject]@{ path = $candidateRoot; modifiedAt = $modifiedAt }
-                }
-            }
-        }
-        foreach ($head in @($recentRootByHead.Keys | Sort-Object)) { $candidateRoots.Add([string]$recentRootByHead[$head].path) }
-    }
-    $validCandidates = New-Object System.Collections.Generic.List[string]
-    if ($configuredArchive) { $validCandidates.Add($configuredArchive) | Out-Null }
-    foreach ($root in @($candidateRoots | Select-Object -Unique)) {
-        $candidate = Join-Path $root ("build\third-party\vanessa-automation\$folderName\$assetName")
-        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
-        if ((Get-PesterShardFileSha256 -Path $candidate) -eq $expected) {
-            $validCandidates.Add([IO.Path]::GetFullPath($candidate)) | Out-Null
-        }
-    }
-
-    $sharedDirectory = Join-Path $commonGitDir "itl\dependencies\vanessa-automation\$folderName"
-    $sharedArchive = Join-Path $sharedDirectory ("$expected-$assetName")
-    if (Test-Path -LiteralPath $sharedArchive -PathType Leaf) {
-        $sharedHash = Get-PesterShardFileSha256 -Path $sharedArchive
-        if ($sharedHash -ne $expected) {
-            throw "Shared Vanessa source-build cache entry has an impossible SHA-address mismatch: expected=$expected actual=$sharedHash path=$sharedArchive"
-        }
-        $validCandidates.Add([IO.Path]::GetFullPath($sharedArchive)) | Out-Null
-    } elseif (-not $ReadOnly -and $validCandidates.Count -gt 0) {
-        # Seed the SHA-addressed cache from the exact local build so later
-        # candidates resolve it independently of queue depth or worktree
-        # lifetime. The acquire helper stages a copy, re-verifies its SHA and
-        # publishes atomically; a mismatch fails closed instead of downloading.
-        $published = Invoke-ItlImmutableFileAcquire -Source ([string]$validCandidates[0]) -DestinationPath $sharedArchive -ExpectedSha256 $expected -Label "Pester Vanessa source-build shared cache" -MaxAttempts 1
-        if ([string]$published.sha256 -cne $expected -or (Get-PesterShardFileSha256 -Path $sharedArchive) -cne $expected) {
-            throw "Shared Vanessa source-build cache publication did not preserve the locked SHA256: $sharedArchive"
-        }
-        $validCandidates.Add([IO.Path]::GetFullPath($sharedArchive)) | Out-Null
-    }
-    $script:pesterVanessaArchiveCandidates = @($validCandidates | Select-Object -Unique)
-    if ($script:pesterVanessaArchiveCandidates.Count -gt 0) {
-        # Workers read the archive long after discovery. Another queue
-        # candidate's or publication's worktree can be retired meanwhile, so
-        # hand them the durable SHA-addressed copy whenever it exists.
-        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $(if ($configuredArchive) { $configuredArchive }
-            elseif (Test-Path -LiteralPath $sharedArchive -PathType Leaf) { [IO.Path]::GetFullPath($sharedArchive) }
-            else { [string]$script:pesterVanessaArchiveCandidates[0] })
-        return
-    }
-
-    if ($ReadOnly) { return }
-    $url = [string]$lock.url
-    if (-not $url) { throw "Locked Vanessa source-build URL is missing and no exact shared candidate was found." }
-    New-Item -ItemType Directory -Force -Path $sharedDirectory | Out-Null
-    [void](Invoke-ItlImmutableFileDownload -Uri $url -DestinationPath $sharedArchive -ExpectedSha256 $expected -Label "Pester Vanessa source-build archive")
-    $script:pesterVanessaArchiveCandidates = @([IO.Path]::GetFullPath($sharedArchive))
-    $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $sharedArchive
+    # Workers read the archive long after discovery. Another queue candidate's
+    # or publication's worktree can be retired meanwhile, so the shared owner
+    # seeds the SHA-addressed cache and hands workers that durable copy.
+    $resolution = Resolve-VanessaSourceBuildArchive -RepositoryRoot $RepositoryRoot -Lock $lock -PreferDurable `
+        -PublishSharedCache:(-not $ReadOnly) -AllowDownload:(-not $ReadOnly)
+    $script:pesterVanessaArchiveCandidates = @($resolution.candidates)
+    if ($resolution.status -eq 'resolved') { $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = [string]$resolution.path }
 }
 
 function Get-ExternalInputIdentity {

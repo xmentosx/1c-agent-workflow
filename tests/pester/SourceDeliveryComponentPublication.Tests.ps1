@@ -150,6 +150,38 @@ Describe "Source develop queue and delivery" {
         }
     }
 
+    It "finalizes an unpublished Vanessa revision from the shared SHA-addressed cache without an override" {
+        $previousArchive = [Environment]::GetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', 'Process')
+        try {
+            & {
+                . (Join-Path $RepoRoot 'scripts\vanessa-source-build-archive.ps1')
+                foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryExactVanessaCandidate')) { Invoke-Expression $definition.Extent.Text }
+                [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $null, 'Process')
+                $candidate = Join-Path $TestDrive 'кандидат публикации с пробелом'
+                New-Item -ItemType Directory -Force -Path $candidate | Out-Null
+                & git -C $candidate init --quiet; $LASTEXITCODE | Should -Be 0
+                $script:Root = $candidate
+                $payload = [byte[]](80, 75, 5, 6, 1, 2, 3)
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try { $expected = ([BitConverter]::ToString($sha.ComputeHash($payload))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+                $lock = [pscustomobject]@{ compatibilityVersion = '1.2.043.42'; downstreamRevision = 'itl-r99'; assetName = 'vanessa-automation-single.1.2.043.42-itl-r99.zip'; sha256 = $expected; url = 'https://example.invalid/unpublished.zip' }
+                { Get-DeliveryExactVanessaCandidate -CandidateRoot $candidate -Lock $lock } | Should -Throw
+
+                $shared = Join-Path $candidate ".git\itl\dependencies\vanessa-automation\1.2.043.42-itl-r99\$expected-$($lock.assetName)"
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $shared) | Out-Null
+                [IO.File]::WriteAllBytes($shared, $payload)
+                Get-DeliveryExactVanessaCandidate -CandidateRoot $candidate -Lock $lock | Should -Be ([IO.Path]::GetFullPath($shared))
+
+                $foreign = Join-Path $TestDrive 'чужая сборка.zip'
+                [IO.File]::WriteAllBytes($foreign, [byte[]](1, 2, 3))
+                [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $foreign, 'Process')
+                { Get-DeliveryExactVanessaCandidate -CandidateRoot $candidate -Lock $lock } | Should -Throw 'VANESSA_ARCHIVE_OVERRIDE_INVALID:*'
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $previousArchive, 'Process')
+        }
+    }
+
     It "requires only the Vanessa Release capability when the paired extension is unpublished" {
         & {
             foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryOwnedAssetNodes', 'Get-DeliveryOwnedAssetContracts', 'Get-OwnedComponentPublicationPlan')) { Invoke-Expression $definition.Extent.Text }

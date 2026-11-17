@@ -92,11 +92,11 @@ Describe "Local quality gate contract" {
         $runner | Should -Match 'Add-Member -NotePropertyName worker -NotePropertyValue \$index -Force'
         $runner | Should -Match '\$result\.paths = @\(\$TestPath\)'
         $runner | Should -Match '\$priorResult\.paths = @\(\[string\]\$item\.path\)'
-        $runner | Should -Match 'Initialize-VanessaSourceBuildArchiveForPester'; $runner | Should -Match 'worktree list --porcelain'
-        $runner | Should -Match 'itl\\dependencies\\vanessa-automation'; $runner | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$url -DestinationPath \$sharedArchive -ExpectedSha256 \$expected'
-        $runner | Should -Match 'pesterExternalIdentityCache'; $runner | Should -Match 'pesterLegacyExternalIdentityCache'; $runner | Should -Match '\$configuredArchive'; $runner | Should -Match 'legacy scheduler or external identity normalized to exact owner inputs'
+        # The archive lookup itself is owned by vanessa-source-build-archive.ps1
+        # and proven by behavior in LocalShardCache and ReleaseReadiness.
+        $runner | Should -Match 'Initialize-VanessaSourceBuildArchiveForPester'; $runner | Should -Match 'Resolve-VanessaSourceBuildArchive'
+        $runner | Should -Match 'pesterExternalIdentityCache'; $runner | Should -Match 'pesterLegacyExternalIdentityCache'; $runner | Should -Match 'legacy scheduler or external identity normalized to exact owner inputs'
         $runner | Should -Match 'legacyInputDigests'; $runner | Should -Match 'legacyArchiveCandidates'
-        $runner | Should -Match 'rev-list --max-count=8 HEAD'; $runner | Should -Match 'recentRootByHead'
         $runner | Should -Match 'hash-object --path \$RelativePath -- \$AbsolutePath'
         $runner | Should -Match 'ls-files", "-t", "-s", "-m", "-z"'
         $runner | Should -Match 'pesterTrackedIdentityCache'
