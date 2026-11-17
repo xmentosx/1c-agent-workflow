@@ -1510,7 +1510,9 @@ commit и запускает финальный Develop. Прямой promoter �
 
 Она строит один exact candidate, выполняет `Develop` и `Release`, публикует его в
 `develop`, затем выпускает то же дерево в `master`. Перед дорогими gate проходят
-installability, owned-component plan и read-only finalizer preflight. Второй
+installability, owned-component plan и read-only finalizer preflight; для
+невыпущенной ревизии Vanessa он сразу находит её exact сборку или останавливается с
+`COMPONENT_ARCHIVE_UNAVAILABLE` до подготовки стенда. Второй
 `Develop`/`Release` перед master запрещён: reuse разрешается только при совпадении
 commit/tree и наличии двух passed run records, созданных текущей publication
 attempt. Если reconciliation с `master` меняет candidate, reuse закрывается и

@@ -387,6 +387,40 @@ Describe "Source develop queue and delivery" {
         }
     }
 
+    It "stops before preparation when an unpublished Vanessa revision has no exact local build" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Assert-ComponentPublicationFinalizerPreflight')) { Invoke-Expression $definition.Extent.Text }
+            $script:ComponentFinalizerScript = ''
+            function Get-DeliveryGitHubRepository { [pscustomobject]@{ owner='owner'; repo='repo'; slug='owner/repo' } }
+            $script:lookups = @()
+            $script:exactBuild = ''
+            function Get-DeliveryExactVanessaCandidate { param([string]$CandidateRoot, [object]$Lock)
+                $script:lookups += [string]$Lock.downstreamRevision
+                if (-not $script:exactBuild) { throw 'no exact local candidate' }
+                return $script:exactBuild
+            }
+            $candidateRoot = Join-Path $TestDrive 'кандидат с пробелом'
+            New-Item -ItemType Directory -Force -Path (Join-Path $candidateRoot 'templates') | Out-Null
+            $lock = [ordered]@{ dependencies = [ordered]@{ vanessaAutomation = [ordered]@{ compatibilityVersion='1.2.043.42'; downstreamRevision='itl-r99'; assetName='vanessa.zip'; sha256=('b' * 64) } } }
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates/dependency-lock.json'), ($lock | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+            $vanessa = [pscustomobject]@{ name='vanessaAutomation'; status='matched'; requiredReleaseCapabilities=@() }
+            $components = @(
+                [pscustomobject]@{ name='aiRules1c'; status='matched'; requiredReleaseCapabilities=@() },
+                [pscustomobject]@{ name='itlOndemandMcp'; status='matched'; requiredReleaseCapabilities=@() },
+                $vanessa
+            )
+            $plan = [pscustomobject]@{ status='planned'; requiredReleaseCapabilities=@(); components=$components; ownedAssets=@() }
+            (Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $candidateRoot -CandidateCommit ('a' * 40) -Plan $plan).status | Should -Be 'passed'
+            $script:lookups.Count | Should -Be 0
+            $vanessa.status = 'missing'; $vanessa.requiredReleaseCapabilities = @('extension-smoke'); $plan.requiredReleaseCapabilities = @('extension-smoke')
+            { Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $candidateRoot -CandidateCommit ('a' * 40) -Plan $plan } |
+                Should -Throw '*COMPONENT_ARCHIVE_UNAVAILABLE*itl-r99*'
+            $script:exactBuild = Join-Path $candidateRoot 'vanessa.zip'
+            (Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $candidateRoot -CandidateCommit ('a' * 40) -Plan $plan).status | Should -Be 'passed'
+            $script:lookups | Should -Be @('itl-r99', 'itl-r99')
+        }
+    }
+
     It "completes a previous tag by extracting only the missing CFE from the published ZIP" {
         & {
             foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Copy-DeliveryVanessaPairedExtensionFromArchive','Invoke-VanessaComponentPublicationFinalize')) { Invoke-Expression $definition.Extent.Text }
