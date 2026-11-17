@@ -326,8 +326,12 @@ scenario, non-idempotent form/template registration, failed extension TestClient
 form opening, failed extension database restore or unpinned template is a
 release failure.
 
-For the patched Vanessa Automation artifact, pre-publication qualification must
-set `ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` to the exact local candidate.
+For the patched Vanessa Automation artifact, pre-publication qualification uses
+the exact local candidate resolved by `Resolve-VanessaSourceBuildArchive`:
+`ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` when set (fails closed on any
+mismatch), otherwise the canonical build in the candidate or any worktree of the
+common Git directory, then the shared SHA-addressed cache, then the locked URL.
+Each source must match the locked SHA-256; see `docs/local-quality-gate.md`.
 The release smoke must record the canonical archive and EPF SHA-256, compatibility
 version `1.2.043.42`, downstream revision `itl-r1`, a matching live `tools/list`
 catalog, successful ordinary file and directory calls on a Windows path containing

@@ -157,6 +157,61 @@ Describe "Deterministic Release readiness" {
         }
     }
 
+    It "resolves an unpublished locked archive from another worktree or the shared cache without an override" {
+        # itl-r15/r16: the publish candidate never holds the build and the
+        # locked URL is 404 until finalization, so readiness must find the
+        # exact archive where Pester shards already find it.
+        $fixture = New-ReadinessFixture -Root (Join-Path $TestDrive 'кандидат выпуска\workflow')
+        $lock = $fixture.lock.dependencies.vanessaAutomation
+        $archiveBytes = [IO.File]::ReadAllBytes($fixture.assetPath)
+        Remove-Item -LiteralPath $fixture.assetPath -Force
+        $buildRoot = Join-Path $TestDrive 'сборка vanessa с пробелом'
+        $previousArchive = [Environment]::GetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', 'Process')
+        try {
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $null, 'Process')
+            & git -C $fixture.root worktree add --quiet --detach $buildRoot HEAD; $LASTEXITCODE | Should -Be 0
+            $builtArchive = Join-Path $buildRoot "build\third-party\vanessa-automation\$($lock.compatibilityVersion)-$($lock.downstreamRevision)\$($lock.assetName)"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $builtArchive) | Out-Null
+            [IO.File]::WriteAllBytes($builtArchive, $archiveBytes)
+            # A same-named candidate archive with foreign bytes is never admitted.
+            [IO.File]::WriteAllBytes($fixture.assetPath, [byte[]](9, 9, 9))
+
+            $worktreeOutput = Join-Path $TestDrive 'контекст worktree.json'
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $worktreeOutput | Should -Be 0
+            $context = Get-Content -LiteralPath $worktreeOutput -Raw -Encoding UTF8 | ConvertFrom-Json
+            $context.status | Should -Be 'passed'
+            $context.artifacts.vanessaAutomation.source | Should -Be 'worktree'
+            $context.artifacts.vanessaAutomation.path | Should -Be ([IO.Path]::GetFullPath($builtArchive))
+
+            # The building worktree is retired; the SHA-addressed cache remains.
+            & git -C $fixture.root worktree remove --force $buildRoot; $LASTEXITCODE | Should -Be 0
+            $sharedArchive = Join-Path $fixture.root ".git\itl\dependencies\vanessa-automation\$($lock.compatibilityVersion)-$($lock.downstreamRevision)\$($lock.sha256)-$($lock.assetName)"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sharedArchive) | Out-Null
+            [IO.File]::WriteAllBytes($sharedArchive, $archiveBytes)
+            $sharedOutput = Join-Path $TestDrive 'контекст shared.json'
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $sharedOutput | Should -Be 0
+            $context = Get-Content -LiteralPath $sharedOutput -Raw -Encoding UTF8 | ConvertFrom-Json
+            $context.status | Should -Be 'passed'
+            $context.artifacts.vanessaAutomation.source | Should -Be 'shared-cache'
+            $context.artifacts.vanessaAutomation.path | Should -Be ([IO.Path]::GetFullPath($sharedArchive))
+
+            # An explicit override with other bytes fails closed even though an
+            # exact shared copy exists.
+            $wrongOverride = Join-Path $TestDrive 'чужой архив с пробелом.zip'
+            [IO.File]::WriteAllBytes($wrongOverride, [byte[]](1, 2, 3))
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $wrongOverride, 'Process')
+            $overrideOutput = Join-Path $TestDrive 'контекст override.json'
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $overrideOutput | Should -Not -Be 0
+            $context = Get-Content -LiteralPath $overrideOutput -Raw -Encoding UTF8 | ConvertFrom-Json
+            $context.status | Should -Be 'failed'
+            @($context.issues.code) | Should -Contain 'RELEASE_VANESSA_ARCHIVE_HASH_MISMATCH'
+            $context.artifacts.vanessaAutomation | Should -BeNullOrEmpty
+        } finally {
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $previousArchive, 'Process')
+            if (Test-Path -LiteralPath $buildRoot) { & git -C $fixture.root worktree remove --force $buildRoot 2>$null }
+        }
+    }
+
     It 'checks the frozen candidate base in a support clone without inventing an origin/master dependency' {
         $fixture=New-ReadinessFixture -Root (Join-Path $TestDrive 'support clone')
         & git -C $fixture.root update-ref -d refs/remotes/origin/master

@@ -1,5 +1,6 @@
 ﻿# Immutable component verification and publication finalization.
 . (Join-Path $PSScriptRoot 'client-mcp-build.ps1')
+. (Join-Path $PSScriptRoot 'vanessa-source-build-archive.ps1')
 
 function ConvertTo-DeliveryNativeArgument {
     param([AllowNull()][string]$Value)
@@ -181,26 +182,14 @@ function Assert-DeliveryOwnedAssetsPublished {
 
 function Get-DeliveryExactVanessaCandidate {
     param([string]$CandidateRoot, [object]$Lock)
-    $expected = ([string]$Lock.sha256).ToLowerInvariant()
-    $override = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
-    if (-not [string]::IsNullOrWhiteSpace($override)) {
-        $path = [IO.Path]::GetFullPath($override)
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE does not exist: $path" }
-        $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actual -cne $expected) { throw "Vanessa source-build override SHA256 mismatch. expected='$expected'; actual='$actual'." }
-        return $path
-    }
-
-    $folder = ([string]$Lock.compatibilityVersion) + "-" + ([string]$Lock.downstreamRevision)
-    $relative = Join-Path ("build\third-party\vanessa-automation\" + $folder) ([string]$Lock.assetName)
-    foreach ($root in @($CandidateRoot, $script:Root) | Select-Object -Unique) {
-        $path = Join-Path $root $relative
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
-        $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actual -cne $expected) { throw "Canonical Vanessa candidate SHA256 mismatch. expected='$expected'; actual='$actual'; path='$path'." }
-        return $path
-    }
-    throw "The immutable Vanessa URL is absent and no exact local candidate is available. Set ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE or place the locked asset at the canonical candidate path."
+    # The locked URL is absent before this finalizer releases it; the shared
+    # owner admits only exact-SHA local builds and never downloads here.
+    $resolution = Resolve-VanessaSourceBuildArchive -RepositoryRoot $CandidateRoot -Lock $Lock -SearchRoot @($script:Root)
+    if ($resolution.status -eq 'resolved') { return [string]$resolution.path }
+    $invalid = @($resolution.invalidCandidates)
+    throw ("The immutable Vanessa URL is absent and no exact local candidate matched SHA256 '$($Lock.sha256)'. " +
+        $(if ($invalid.Count) { "Invalid candidate(s): $($invalid -join '; '). " } else { '' }) +
+        "Build the locked revision in a worktree of this repository, seed the shared SHA-addressed cache, or set ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE.")
 }
 
 function Copy-DeliveryVanessaPairedExtensionFromArchive {
