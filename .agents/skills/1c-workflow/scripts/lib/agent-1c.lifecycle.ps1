@@ -7336,6 +7336,8 @@ function Invoke-WorkflowManagedPathReplace {
     )
 
     Assert-WorkflowManagedTargetPath -Path $TargetPath
+    # A copied file can keep its source timestamp; never reuse an older hash.
+    Clear-WorkflowUpdatePathHashCache -Path $TargetPath
     $parent = Split-Path -Parent $TargetPath
     if ($parent) {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
@@ -7409,6 +7411,7 @@ function Remove-WorkflowManagedPathAtomic {
     param([Parameter(Mandatory = $true)][string]$TargetPath)
 
     Assert-WorkflowManagedTargetPath -Path $TargetPath
+    Clear-WorkflowUpdatePathHashCache -Path $TargetPath
     if (-not (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue)) { return }
     $removalRoot = New-WorkflowUpdateCopyStagingRoot
     try {
@@ -7434,15 +7437,26 @@ function Assert-WorkflowUpdateWriteSetPathNoReparse {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
 
     $relative = ConvertTo-WorkflowUpdateRepoPath -Path $RelativePath
-    $cursor = Get-FullPathNormalized $script:ProjectRoot
-    foreach ($part in $relative.Split('/')) {
-        $cursor = Join-Path $cursor $part
+    # Within one update-workflow operation an ancestor directory proven real is
+    # not re-read for each of ~1000 snapshot records; the final component is
+    # always checked. Managed replace/remove drops entries under its target.
+    $realDirectories = Get-Variable -Name ItlWorkflowUpdateRealDirectoryCache -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    $rootKey = '<root>|' + [string]$script:ProjectRoot
+    $cursor = if ($null -ne $realDirectories -and $realDirectories.ContainsKey($rootKey)) { [string]$realDirectories[$rootKey] } else { Get-FullPathNormalized $script:ProjectRoot }
+    if ($null -ne $realDirectories -and -not $realDirectories.ContainsKey($rootKey)) { $realDirectories[$rootKey] = $cursor }
+    $parts = $relative.Split('/')
+    for ($index = 0; $index -lt $parts.Count; $index++) {
+        $cursor = [IO.Path]::Combine($cursor, $parts[$index])
+        $isLeaf = $index -eq $parts.Count - 1
+        $key = $cursor.ToLowerInvariant()
+        if (-not $isLeaf -and $null -ne $realDirectories -and $realDirectories.ContainsKey($key)) { continue }
         $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue
         if ($null -eq $item) { continue }
         if (($item.PSIsContainer -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) -or
             [string]$item.LinkType -in @('SymbolicLink', 'Junction')) {
             throw "WORKFLOW_UPDATE_REPARSE_PATH: '$relative' traverses a symlink or junction at '$cursor'. Preserve it and choose a real project path before update-workflow."
         }
+        if (-not $isLeaf -and $item.PSIsContainer -and $null -ne $realDirectories) { $realDirectories[$key] = $true }
     }
 }
 
@@ -8383,6 +8397,39 @@ function Get-WorkflowUpdateSnapshotRelativePaths {
     })
 }
 
+# One update-workflow operation fingerprints the same ~1000 snapshot paths at
+# every receipt phase and check. Within that operation a file whose full path,
+# length and last-write time (100 ns) are unchanged keeps its hash, as a Git
+# index entry does. Writers that may preserve an older timestamp drop entries:
+# the managed path replace/remove owner for its target, and post-copy installers
+# for the whole cache. Outside the operation every call hashes the bytes.
+function Get-WorkflowUpdateFileSha256 {
+    param([Parameter(Mandatory = $true)][IO.FileInfo]$Item)
+    $cache = Get-Variable -Name ItlWorkflowUpdatePathHashCache -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -eq $cache) { return (Get-FileHash -LiteralPath $Item.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+    $key = $Item.FullName.ToLowerInvariant()
+    $length = [int64]$Item.Length
+    $ticks = [int64]$Item.LastWriteTimeUtc.Ticks
+    $entry = $cache[$key]
+    if ($null -ne $entry -and [int64]$entry.length -eq $length -and [int64]$entry.ticks -eq $ticks) { return [string]$entry.hash }
+    $hash = (Get-FileHash -LiteralPath $Item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $cache[$key] = @{ length = $length; ticks = $ticks; hash = $hash }
+    return $hash
+}
+
+function Clear-WorkflowUpdatePathHashCache {
+    param([string]$Path = '')
+    foreach ($name in @('ItlWorkflowUpdatePathHashCache', 'ItlWorkflowUpdateRealDirectoryCache')) {
+        $cache = Get-Variable -Name $name -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -eq $cache) { continue }
+        if (-not $Path) { $cache.Clear(); continue }
+        $prefix = [IO.Path]::GetFullPath($Path).TrimEnd('').ToLowerInvariant()
+        foreach ($key in @($cache.Keys)) {
+            if ($key -ceq $prefix -or $key.StartsWith($prefix + '', [StringComparison]::Ordinal)) { $cache.Remove($key) }
+        }
+    }
+}
+
 function Get-WorkflowUpdatePathState {
     param([Parameter(Mandatory = $true)][string]$RelativePath, [string]$PhysicalPath = '')
 
@@ -8391,13 +8438,13 @@ function Get-WorkflowUpdatePathState {
     Assert-WorkflowManagedTargetPath -Path $target
     Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relative
     $path = $(if ($PhysicalPath) { $PhysicalPath } else { $target })
-    if (-not (Test-Path -LiteralPath $path -ErrorAction SilentlyContinue)) { return 'absent' }
-    $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return 'absent' }
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
         throw "WORKFLOW_UPDATE_REPARSE_PATH: cannot fingerprint a junction or symlink in the update write-set: $relative"
     }
     if (-not $item.PSIsContainer) {
-        return ('file:' + (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant())
+        return ('file:' + (Get-WorkflowUpdateFileSha256 -Item $item))
     }
     $parts = [System.Collections.Generic.List[string]]::new()
     # Sort-Object uses the host's culture/runtime collation. The pre-copy
@@ -8413,7 +8460,7 @@ function Get-WorkflowUpdatePathState {
         }
         $childRelative = $child.FullName.Substring($path.Length).TrimStart('\', '/').Replace('\', '/')
         $parts.Add($(if ($child.PSIsContainer) { "d:$childRelative" } else {
-            "f:$childRelative`:$((Get-FileHash -LiteralPath $child.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+            "f:$childRelative`:$(Get-WorkflowUpdateFileSha256 -Item $child)"
         }))
     }
     $bytes = (Get-Utf8Encoding).GetBytes(($parts -join "`n"))
@@ -10383,6 +10430,9 @@ function Invoke-WorkflowPackageFilePostCopyCore {
             }
         }
         } | Out-Host
+        # Rules, library and artifact installers above may copy files with
+        # their source timestamps; the next receipt hashes every path again.
+        Clear-WorkflowUpdatePathHashCache
 
         # Capture refreshed client configs in the same post-copy checkpoint.
         # Ready/committed continuations must keep their already recorded bytes.

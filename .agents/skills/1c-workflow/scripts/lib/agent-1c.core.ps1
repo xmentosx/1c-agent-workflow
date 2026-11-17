@@ -513,7 +513,15 @@ function Invoke-WorkflowUpdateRunSharedInputs {
     param([Parameter(Mandatory = $true)][scriptblock]$Body)
     if (Test-WorkflowUpdateRunSharedInputsActive) { return (& $Body) }
     $script:ItlWorkflowUpdateRunInputs = @{}
-    try { & $Body } finally { Remove-Variable -Name ItlWorkflowUpdateRunInputs -Scope Script -ErrorAction SilentlyContinue }
+    # Snapshot path-state hashes of this operation, keyed by file metadata;
+    # see Get-WorkflowUpdateFileSha256 for its invalidation points.
+    $script:ItlWorkflowUpdatePathHashCache = @{}
+    $script:ItlWorkflowUpdateRealDirectoryCache = @{}
+    try { & $Body } finally {
+        Remove-Variable -Name ItlWorkflowUpdateRunInputs -Scope Script -ErrorAction SilentlyContinue
+        Remove-Variable -Name ItlWorkflowUpdatePathHashCache -Scope Script -ErrorAction SilentlyContinue
+        Remove-Variable -Name ItlWorkflowUpdateRealDirectoryCache -Scope Script -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-WorkflowUpdateRunSharedEntry {
