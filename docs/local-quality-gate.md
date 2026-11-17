@@ -1103,15 +1103,11 @@ authority, если их supervisor предок `origin/master`; иначе д�
 Старый supervisor, умеющий публиковать только Vanessa ZIP без парного CFE,
 блокируется entrypoint до запуска сохранённого плана; очередь остаётся на месте,
 и требуется новый plan от опубликованного develop-supervisor.
-Если сумма выполняемых стадий больше 60 минут, нужно явно
-передать `-ApproveLongPlan <planId>`, если только этот жёсткий бюджет не больше
-постоянного одобрения пользователя `git config itl.delivery.approvedBudgetSeconds`
-(секунды, в общем Git-каталоге клона). Его задаёт только пользователь; без
-настройки поведение прежнее. План в пределах настройки идёт без параметра,
-а checkpoint и Status (`publicationAttempt.planApproval`) показывают лимит и
-бюджет; план выше лимита по-прежнему требует `-ApproveLongPlan` и называет
-лимит. Нечисловое значение останавливает публикацию с
-`DELIVERY_PLAN_APPROVAL_LIMIT_INVALID` до запуска гейтов. `Plan` выполняет тот же read-only preflight
+Отдельного одобрения длинного плана нет: публикация, о которой попросил
+пользователь, идёт при любом суммарном бюджете. От зависшего прогона защищают
+жёсткие лимиты каждой стадии; `timeEstimate` и `hardLimitSeconds` в плане
+показывают ожидание и предел для информации. Прежняя настройка
+`itl.delivery.approvedBudgetSeconds` больше не читается. `Plan` выполняет тот же read-only preflight
 owned components, что и публикация, поэтому автоматическое повышение до Release
 из-за отсутствующего immutable asset уже входит в сохранённый `planId`.
 Исправление delivery/test harness меняет его собственный static proof, но не
@@ -1192,10 +1188,9 @@ checkout запоминается в локальном Git config `itl.aiRulesS
 `ITL_AI_RULES_SOURCE_PATH` для этого не используется: переменная перенаправляет
 также ai_rules clone в `update-workflow` установленных проектов.
 
-Команду запускают в foreground с внешним timeout, покрывающим одобренный plan и
+Команду запускают в foreground с внешним timeout, покрывающим hard budget plan и
 запас на сборку кандидата, push и удалённую сверку. Не следует выбирать timeout
-до получения plan: маршрут дороже часа всё равно остановится без явного
-`-ApproveLongPlan`.
+до получения plan: его бюджет зависит от выбранных Release-стадий.
 
 Полный Pester inventory использует hard budget из таблицы выше. Каталог
 `pester-shards` входит в progress fingerprint, поэтому
@@ -1888,9 +1883,8 @@ Selected capabilities keep their original scope and include the reserve once.
 No fake capability is added. New immutable plans pin the reserve and include
 it even when all selected runtime evidence is reusable; retained older plans
 and failed evidence are not rewritten. The corrected candidate requires a new
-immutable planId. Bind the continuation to it with `-ResumePlan` and, when the
-existing long-plan guard requires it, `-ApproveLongPlan`. The already authorized,
-unchanged workload does not require renewed user approval.
+immutable planId. Bind the continuation to it with `-ResumePlan`; the
+unchanged workload needs no renewed user approval.
 
 The original extension-smoke run on 2026-10-07 passed its UI scenario but
 exhausted the former 900-second ceiling during Cfe initialization's canonical

@@ -28,7 +28,6 @@ param(
     [string]$ReplanQueueScope = 'Current',
     [string[]]$FrozenRepair = @(),
     [string]$ReplanCheckpointSha256 = '',
-    [string]$ApproveLongPlan = "",
     [string]$SupervisorCommit = "",
     [ValidateSet("develop", "master")]
     [string]$SupervisorChannel = "",
@@ -141,7 +140,6 @@ if ($ResumePlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "Relea
 if ($Replan -and ($Action -ne 'PublishDevelop' -or $ResumePlan)) { throw '-Replan is valid only for PublishDevelop and cannot be combined with -ResumePlan.' }
 if (($ReplanQueueScope -ne 'Current' -or $ReplanCheckpointSha256) -and -not $Replan) { throw 'Frozen recovery parameters require -Replan.' }
 if($FrozenRepair.Count -and ($Action -ne 'PublishDevelop' -or -not $Replan -or $ReplanQueueScope -cne 'Frozen')){throw '-FrozenRepair requires PublishDevelop -Replan with -ReplanQueueScope Frozen.'}
-if ($ApproveLongPlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { throw "-ApproveLongPlan is valid only for a publication action." }
 if (($DeferEntry.Count -or $DeferReason) -and ($Action -ne 'PublishDevelop' -or $ResumePlan -or $ReplanQueueScope -ne 'Current')) { throw '-DeferEntry is valid only for PublishDevelop with the current queue, not with -ResumePlan or a Frozen Replan.' }
 if ($StatusDetail -ne "Summary" -and $Action -ne "Status") { throw "-StatusDetail is valid only with -Action Status." }
 if ($CleanupChannel -ne "Auto" -and $Action -ne "Cleanup") { throw "-CleanupChannel is valid only with -Action Cleanup." }
@@ -178,7 +176,7 @@ try {
                 deferredQueue = @((Get-QueueDeferrals).Values | Sort-Object id | ForEach-Object { [pscustomobject]@{ id=[string]$_.id; head=[string]$_.head; stage=[string]$_.stage; reason=[string]$_.reason; deferredAt=[string]$_.deferredAt; continuation=[string]$_.continuation } })
                 sourceCandidate = (Get-SourceCandidateStatus)
                 activeOperation = (Get-DeliveryOperationStatus)
-                publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; releaseCapabilities=$(if ($attempt.PSObject.Properties.Name -contains 'releaseCapabilities') { @($attempt.releaseCapabilities) } else { @() }); fullReleaseRequested=$(if ($attempt.PSObject.Properties.Name -contains 'fullReleaseRequested') { [bool]$attempt.fullReleaseRequested } else { $false }); planApproval=$(if ($attempt.PSObject.Properties.Name -contains 'planApproval') { $attempt.planApproval } else { $null }); failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
+                publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; releaseCapabilities=$(if ($attempt.PSObject.Properties.Name -contains 'releaseCapabilities') { @($attempt.releaseCapabilities) } else { @() }); fullReleaseRequested=$(if ($attempt.PSObject.Properties.Name -contains 'fullReleaseRequested') { [bool]$attempt.fullReleaseRequested } else { $false }); failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
                 cleanupDebt = (Get-DeliveryResourceLedgerSummary)
                 disposition = (Get-DeliveryDispositionReport)
                 recoveryArchives = $(if ($StatusDetail -eq 'Full') { Get-DeliveryRecoveryInventory -IncludeEntries } else { $null })

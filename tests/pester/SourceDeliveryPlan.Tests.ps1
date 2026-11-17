@@ -301,7 +301,6 @@ Describe 'Delivery v3 immutable selective plan' {
         $script:DeliverySupervisorChannel = 'master'
         $script:DeliverySupervisorBootstrap = $false
         $script:ResumePlan = ''
-        $script:ApproveLongPlan = ''
         $script:E2EProjectRoot = ''
         $script:AiRulesSource = ''
         $script:DeliveryRequestedAiRulesSource = ''
@@ -892,31 +891,17 @@ Describe 'Delivery v3 immutable selective plan' {
         }
     }
 
-    It 'requires exact explicit approval for a plan whose selected stages exceed sixty minutes' {
-        Mock Get-DeliveryStandingPlanApprovalSeconds { 0 }
-        $plan = [pscustomobject]@{ status='ready'; planId='long-plan'; executedBudgetSeconds=3601 }
-        { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*LONG_PLAN_APPROVAL_REQUIRED*'
-        $script:ApproveLongPlan = 'long-plan'; { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Not -Throw
-    }
-
-    It 'runs a long plan within the user standing approval and still asks above it' {
+    It 'runs a plan of any hard-limit budget without a separate approval step' {
         $repo = New-PlanRepository; $script:Root = $repo.root
         function Invoke-DeliveryGit { param([string[]]$Arguments, [switch]$AllowFailure); Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure }
-        $plan = [pscustomobject]@{ status='ready'; planId='long-plan'; executedBudgetSeconds=13200 }
-        # Without the setting the original per-plan approval is unchanged.
-        { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*LONG_PLAN_APPROVAL_REQUIRED*'
-        & git -C $repo.root config itl.delivery.approvedBudgetSeconds 21600
-        { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Not -Throw
-        $script:DeliveryPlanApproval.kind | Should -Be 'standing'
-        $script:DeliveryPlanApproval.limitSeconds | Should -Be 21600
-        $script:DeliveryPlanApproval.budgetSeconds | Should -Be 13200
-        $plan.executedBudgetSeconds = 21601
-        { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*LONG_PLAN_APPROVAL_REQUIRED*approvedBudgetSeconds=21600 is lower*'
-        $script:DeliveryPlanApproval | Should -BeNullOrEmpty
-        $script:ApproveLongPlan = 'long-plan'; { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Not -Throw
+        # Stage hard limits stop a runaway run; a retired standing setting is ignored.
         & git -C $repo.root config itl.delivery.approvedBudgetSeconds 'six hours'
-        $script:ApproveLongPlan = ''
-        { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*DELIVERY_PLAN_APPROVAL_LIMIT_INVALID*six hours*'
+        foreach ($budget in @(3601, 22740, 86400)) {
+            $plan = [pscustomobject]@{ status='ready'; planId='long-plan'; executedBudgetSeconds=$budget }
+            { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Not -Throw
+        }
+        (Get-Command -Name Get-DeliveryStandingPlanApprovalSeconds -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
+        (Get-Command -Name (Join-Path $RepoRoot 'scripts\source-delivery.ps1')).Parameters.ContainsKey('ApproveLongPlan') | Should -BeFalse
     }
 
     It 'selects the Release stages whose specific inputs the queued ranges change' {
