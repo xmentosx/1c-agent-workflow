@@ -270,11 +270,12 @@
             }
 
             $result.failed.status | Should -Be 'failed'
-            $result.failed.reason | Should -Match 'acknowledge-event-log-errors'
+            # The failure names the action the agent runs, not a phrase.
+            @([regex]::Matches([string]$result.failed.reason, '-Action (\S+)') | ForEach-Object { $_.Groups[1].Value }) | Should -Contain 'acknowledge-event-log-errors'
             $result.signatures | Should -HaveCount 3
             $result.unique | Should -HaveCount 2
-            $result.missingReason | Should -Match '^EVENT_LOG_ACKNOWLEDGE_INVALID'
-            $result.unknown | Should -Match '^EVENT_LOG_ACKNOWLEDGE_SIGNATURE_UNKNOWN'
+            ([string]$result.missingReason -split ':', 2)[0] | Should -BeExactly 'EVENT_LOG_ACKNOWLEDGE_INVALID'
+            ([string]$result.unknown -split ':', 2)[0] | Should -BeExactly 'EVENT_LOG_ACKNOWLEDGE_SIGNATURE_UNKNOWN'
             $result.partial.added | Should -Be 1
             $result.partial.debtCleared | Should -BeFalse
             @($result.partial.remainingSignatures) | Should -Be @($result.unique[1])
