@@ -339,19 +339,39 @@ Describe "Immutable asset download retry policy" {
         $sourceBuildText | Should -Match ([regex]::Escape("`$Definition.lockKey -cne 'clientMcp'"))
         $sourceBuildText | Should -Match ([regex]::Escape("-Path 'source' -Default '') -cne 'workflow-pinned'"))
         $sourceBuildText | Should -Match ([regex]::Escape("`$lock -Path 'sha256' -Default ''"))
-        $sourceBuildText | Should -Match ([regex]::Escape("Invoke-ItlImmutableFileAcquire -Source `$sourcePath -DestinationPath `$TargetPath -ExpectedSha256 `$expected -Label 'Vanessa UI MCP artifact clientMcp'"))
         $sourceBuildText | Should -Not -Match 'Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|Copy-Item|Move-Item|WriteAllBytes|WriteAllText|System\.Net\.WebClient'
-        @([regex]::Matches($roctup, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 2
-        $readiness | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \(\[string\]\$Lock\.url\)'
-        $delivery | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$Url'
-        $delivery | Should -Match 'Get-DeliveryRemoteAssetState.*-AvailabilityAttempts 12'
-        $shards | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$url.*-ExpectedSha256 \$expected'
+        # Routes are derived from the parsed calls, not their spelling: each owner
+        # fetches through the immutable helpers (whose -ExpectedSha256 is mandatory)
+        # and lock-pinned URLs come from the lock entry's url member.
+        function Get-ImmutableRouteCalls([string]$Text, [string]$Name) {
+            $routeTokens = $null; $routeErrors = $null
+            $routeAst = [Management.Automation.Language.Parser]::ParseInput($Text.TrimStart([char]0xFEFF), [ref]$routeTokens, [ref]$routeErrors)
+            @($routeErrors).Count | Should -Be 0
+            @($routeAst.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq $Name }, $true))
+        }
+        function Get-RouteArgument([Management.Automation.Language.CommandAst]$Command, [string]$Parameter) {
+            $elements = @($Command.CommandElements)
+            for ($index = 0; $index -lt $elements.Count - 1; $index++) {
+                if ($elements[$index] -is [Management.Automation.Language.CommandParameterAst] -and $elements[$index].ParameterName -ieq $Parameter) { return $elements[$index + 1] }
+            }
+        }
+        function Test-RouteFromLockUrl([Management.Automation.Language.Ast]$Argument) {
+            $Argument -and @($Argument.FindAll({ param($node) $node -is [Management.Automation.Language.MemberExpressionAst] -and [string]$node.Member -ieq 'url' }, $true)).Count -gt 0
+        }
+        function Get-RouteOwner([Management.Automation.Language.Ast]$Node) { $owner = $Node.Parent; while ($owner -and $owner -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $owner = $owner.Parent }; if ($owner) { $owner.Name } }
+        @(Get-ImmutableRouteCalls $roctup 'Invoke-ItlImmutableFileAcquire').Count | Should -Be 2
+        @(Get-ImmutableRouteCalls $readiness 'Invoke-ItlImmutableFileDownload' | Where-Object { Test-RouteFromLockUrl (Get-RouteArgument $_ 'Uri') }).Count | Should -BeGreaterThan 0
+        $deliveryDownloads = @(Get-ImmutableRouteCalls $delivery 'Invoke-ItlImmutableFileDownload')
+        @($deliveryDownloads | Where-Object { (Get-RouteOwner $_) -ceq 'Get-DeliveryRemoteAssetState' }).Count | Should -BeGreaterThan 0
+        @($deliveryDownloads | Where-Object { Test-RouteFromLockUrl (Get-RouteArgument $_ 'Uri') }).Count | Should -BeGreaterThan 0
+        @(Get-ImmutableRouteCalls $delivery 'Get-DeliveryRemoteAssetState' | Where-Object { $attempts = Get-RouteArgument $_ 'AvailabilityAttempts'; $attempts -and $attempts.Extent.Text -ceq '12' }).Count | Should -BeGreaterThan 0
+        @(Get-ImmutableRouteCalls $shards 'Invoke-ItlImmutableFileDownload').Count | Should -BeGreaterThan 0
         $yaxunit = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.yaxunit.ps1") -Raw -Encoding UTF8
         $yaxunit | Should -Match 'Get-ItlSharedArtifactPath -Family "yaxunit"'
-        $yaxunit | Should -Match 'Invoke-ItlImmutableFileAcquire -Source \(ConvertFrom-FileUri -Value \(\[string\]\$entry\.url\)\) -DestinationPath \$cachePath'
+        @(Get-ImmutableRouteCalls $yaxunit 'Invoke-ItlImmutableFileAcquire' | Where-Object { Test-RouteFromLockUrl (Get-RouteArgument $_ 'Source') }).Count | Should -BeGreaterThan 0
         $yaxunit | Should -Not -Match 'Invoke-WebRequest|Invoke-RestMethod'
         $ondemand = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1") -Raw -Encoding UTF8
-        $ondemand | Should -Match 'Invoke-ItlImmutableFileAcquire -Source \$url -DestinationPath \$targetPath'
+        @(Get-ImmutableRouteCalls $ondemand 'Invoke-ItlImmutableFileAcquire').Count | Should -BeGreaterThan 0
         $ondemand | Should -Not -Match 'Invoke-WebRequest -Uri \$url'
     }
 

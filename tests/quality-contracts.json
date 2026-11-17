@@ -1704,12 +1704,23 @@
       "tests": ["tests/pester/SourceDeliveryProofOwnership.Tests.ps1"]
     },
     {
+      "id": "powershell-encoding-output",
+      "owner": "Unicode round trip of the PowerShell encoding preflight through the child-process boundary",
+      "gate": "targeted",
+      "budgetSeconds": 60,
+      "primaryTest": "tests/pester/PowerShellEncodingOutput.Tests.ps1",
+      "paths": ["tests/pester/PowerShellEncodingOutput.Tests.ps1", "scripts/test-powershell-encoding.ps1", "scripts/release-e2e/test-powershell51-decoding.ps1"],
+      "reuseInputPaths": ["scripts/git-path-list.ps1", "tests/pester/TestSupport.ps1"],
+      "tests": ["tests/pester/PowerShellEncodingOutput.Tests.ps1"]
+    },
+    {
       "id": "text-assertion-policy",
-      "owner": "per-file count of assertions over prose wording (source-check-derivation)",
+      "owner": "no net assertions over prose wording relative to the registration base (source-check-derivation)",
       "gate": "targeted",
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/TextAssertionPolicy.Tests.ps1",
-      "paths": ["tests/pester/*.Tests.ps1", "tests/text-assertion-baseline.json"],
+      "paths": ["tests/pester/*.Tests.ps1"],
+      "reuseInputPaths": ["scripts/git-path-list.ps1"],
       "tests": ["tests/pester/TextAssertionPolicy.Tests.ps1"]
     },
     {
