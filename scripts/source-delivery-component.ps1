@@ -964,6 +964,16 @@ function Assert-ComponentPublicationFinalizerPreflight {
             throw "Component publication repository identity lacks '$property'."
         }
     }
+    # The finalizer uploads an unpublished Vanessa revision from an exact local
+    # build. Find it now, before preparation and gates, rather than after them.
+    $vanessaComponent = @($components | Where-Object { [string]$_.name -ceq 'vanessaAutomation' })
+    if ($vanessaComponent.Count -eq 1 -and [string]$vanessaComponent[0].status -ceq 'missing') {
+        $vanessaLock = (Get-Content -LiteralPath (Join-Path $CandidateRoot 'templates\dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
+        try { [void](Get-DeliveryExactVanessaCandidate -CandidateRoot $CandidateRoot -Lock $vanessaLock) }
+        catch {
+            throw "COMPONENT_ARCHIVE_UNAVAILABLE: Vanessa Automation $([string]$vanessaLock.compatibilityVersion)-$([string]$vanessaLock.downstreamRevision) is not published and its exact build was not found: $($_.Exception.Message) Build that revision in a worktree of this repository or set ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE, then repeat the same command; nothing was prepared and the queue is unchanged."
+        }
+    }
     return [pscustomobject]@{ status = "passed"; candidateCommit = $CandidateCommit; githubRepository = [string]$repository.slug }
 }
 
