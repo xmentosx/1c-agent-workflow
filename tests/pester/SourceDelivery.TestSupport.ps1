@@ -7,6 +7,50 @@
         $path = Join-Path $RepoRoot ("scripts\" + $name)
         if (Test-Path -LiteralPath $path -PathType Leaf) { $DeliverySourcePaths += $path }
     }
+    # Shared by proof ownership and the frozen supervisor fixture: the files a
+    # script loads statically, so a new delivery module needs no manual list.
+    $script:DeliverySourceAsts = @{}
+    function Get-DeliverySourceAst([string]$Relative) {
+        if (-not $script:DeliverySourceAsts.ContainsKey($Relative)) {
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot $Relative), [ref]$tokens, [ref]$errors)
+            @($errors) | Should -BeNullOrEmpty -Because "$Relative must parse"
+            $script:DeliverySourceAsts[$Relative] = $ast
+        }
+        return $script:DeliverySourceAsts[$Relative]
+    }
+
+    # Static `. (Join-Path $PSScriptRoot 'x')` loads, relative to the loading file.
+    $script:DeliveryStaticLoads = @{}
+    function Get-DeliveryStaticLoads([string]$Relative) {
+        if ($script:DeliveryStaticLoads.ContainsKey($Relative)) { return $script:DeliveryStaticLoads[$Relative] }
+        $directory = (Split-Path -Parent $Relative).Replace('\', '/')
+        $ast = Get-DeliverySourceAst $Relative
+        $script:DeliveryStaticLoads[$Relative] = @(foreach ($command in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.InvocationOperator -eq 'Dot' }, $true)) {
+            $text = $command.CommandElements[0].Extent.Text
+            if ($text -match '^\(Join-Path \$PSScriptRoot [''"]([^''"$]+)[''"]\)$') {
+                ($directory + '/' + $Matches[1]).Replace('\', '/')
+            } elseif ($text -match '^\(Join-Path \(Split-Path -Parent \$PSScriptRoot\) [''"]([^''"$]+)[''"]\)$') {
+                $parent = (Split-Path -Parent $directory).Replace('\', '/')
+                $(if ($parent) { $parent + '/' + $Matches[1] } else { $Matches[1] }).Replace('\', '/')
+            }
+        })
+        return $script:DeliveryStaticLoads[$Relative]
+    }
+
+    function Get-DeliveryStaticLoadClosure([string[]]$Roots) {
+        $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+        $pending = New-Object System.Collections.Generic.Queue[string]
+        foreach ($root in $Roots) { $pending.Enqueue($root) }
+        while ($pending.Count) {
+            $relative = $pending.Dequeue()
+            if (-not $seen.Add($relative)) { continue }
+            if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $relative) -PathType Leaf)) { throw "Statically loaded file is missing: $relative" }
+            foreach ($loaded in @(Get-DeliveryStaticLoads $relative)) { $pending.Enqueue($loaded) }
+        }
+        return @($seen | Sort-Object)
+    }
+
     # A text assertion names the exact module it reads; -All is reserved for
     # whole-implementation negatives. SourceDeliveryProofOwnership proves each
     # named file is a Pester proof input of the consuming test.
