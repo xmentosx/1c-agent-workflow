@@ -992,6 +992,15 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 	r.mu.Unlock()
 	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, nil, unlock)
 	if err != nil {
+		// Another holder kept the base for this callback's admission budget.
+		// The idle backend still holds its file infobase: retry after the next
+		// idle interval rather than leave it running until the facade exits.
+		r.mu.Lock()
+		if !r.closed && r.backend != nil && r.active == 0 && r.generation == generation {
+			r.armIdleLocked()
+			r.logger.Warn("idle backend cleanup deferred", "reason", "database admission", "error", err, "retryAfter", r.idle)
+		}
+		r.mu.Unlock()
 		return err
 	}
 	r.mu.Lock()

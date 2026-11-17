@@ -1755,6 +1755,127 @@ function Get-DesignerOwnedProcessInventory {
         @($result.stopped) | Should -Be @(8260, 8261)
     }
 
+    It "ends a stalled Designer wait promptly and names an unrelated holder of the file base" {
+        $fixtureRoot = Join-Path $TestDrive "designer-stall-held base"
+        $basePath = Join-Path $fixtureRoot "База ветки"
+        $platformPath = Join-Path $fixtureRoot "1cv8.exe"
+        New-Item -ItemType Directory -Force -Path $basePath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath | Out-Null
+        New-Item -ItemType File -Force -Path (Join-Path $basePath "1Cv8.1CD") | Out-Null
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{
+                platformPath = $platformPath
+                logsPath = "logs"
+                designerStallWarningSeconds = 30
+                designerStallTimeoutSeconds = 60
+            }
+            $script:ProbeCalls = 0
+            # The Designer exited at once; a ROCTUP client of this project keeps
+            # the file base open, so exclusive release never comes.
+            function Get-DesignerInvocationProcessState {
+                return [pscustomobject]@{
+                    querySucceeded = $true; active = $false; processIds = @()
+                    cpuSampleAvailable = $false; cpuTime100ns = [int64]0
+                    workingSetSampleAvailable = $false; workingSetMb = 0
+                    infoBaseReleaseChecked = $true; infoBaseReleased = $false; detail = ""
+                }
+            }
+            function Get-OneCInfoBaseSessionProcesses {
+                return @([pscustomobject]@{ pid = 40812; role = "enterprise"; processStartTime = "" })
+            }
+            function Get-ItlOnDemandRuntimeInstances {
+                return @([pscustomobject]@{ family = "roctup"; instanceId = "0123456789abcdef0123456789abcdef"; pid = 40812; infoBasePath = $basePath })
+            }
+            function Invoke-NativeProcessAndWaitResult {
+                param(
+                    [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
+                    [scriptblock]$OnTimeout = $null, [scriptblock]$CompletionProbe = $null,
+                    [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
+                    [int]$MaxWorkingSetMb = 0
+                )
+                $startedAt = [DateTime]::UtcNow
+                $failure = ""
+                foreach ($second in @(0) + @(61..80)) {
+                    try {
+                        $script:ProbeCalls++
+                        & $CompletionProbe ([pscustomobject]@{
+                            launcherExited = $true; launcherExitCode = 0; observedAtUtc = $startedAt.AddSeconds($second)
+                            timeoutRemainingSeconds = ($TimeoutSeconds - $second); processId = 8270; postExitElapsedSeconds = $second
+                        }) | Out-Null
+                    } catch {
+                        $failure = $_.Exception.Message
+                        break
+                    }
+                    Start-Sleep -Milliseconds 200
+                }
+                return [pscustomobject]@{
+                    processId = 8270; exitCode = 0; timedOut = $false
+                    memoryLimitExceeded = $false; memoryMonitorFailed = $false
+                    memoryMonitorError = ""; peakWorkingSetMb = 0
+                    terminationConfirmed = $true; terminationError = ""
+                    postExitProbeTimedOut = $false
+                    completionProbeFailed = [bool]$failure; completionProbeErrorType = "System.Management.Automation.RuntimeException"
+                    completionProbeErrorMessage = $failure
+                }
+            }
+
+            $message = try {
+                Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @("/LoadCfg", (Join-Path $fixtureRoot "fixture.cf")) 6>$null | Out-Null
+                ""
+            } catch {
+                $_.Exception.Message
+            }
+            $script:RunErrorCategory = ""
+            Set-RunFailureContextFromMessage -Message $message
+            [pscustomobject]@{
+                message = $message; probeCalls = $script:ProbeCalls; category = $script:RunErrorCategory
+                action = $script:RunRequiredAction; retry = [bool]$script:RunBlockerRetryOriginal
+            }
+        }
+
+        ($result.message -split ' ')[0] | Should -BeExactly 'DESIGNER_INFOBASE_RELEASE_BLOCKED'
+        $result.message | Should -Match 'ownedProcessesReleased=True'
+        foreach ($marker in @('pid=40812', 'role=enterprise', 'owner=ondemand-roctup', 'instance=0123456789abcdef0123456789abcdef')) {
+            $result.message | Should -Match ([regex]::Escape($marker))
+        }
+        $result.message | Should -Match 'close_1c_session'
+        $result.probeCalls | Should -BeLessThan 21
+        $result.category | Should -Be 'execution-conflict'
+        $result.action | Should -Be 'release-the-named-infobase-holder-then-repeat-original-command'
+        $result.retry | Should -BeTrue
+    }
+
+    It "ends the post-stall confirmation window when owned release stays unconfirmed" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-DesignerInvocationProcessState {
+                return [pscustomobject]@{
+                    observationStatus = "pending"; querySucceeded = $false; active = $true; processIds = @()
+                    cpuSampleAvailable = $false; cpuTime100ns = [int64]0
+                    workingSetSampleAvailable = $false; workingSetMb = 0
+                    infoBaseReleaseChecked = $false; infoBaseReleased = $false; detail = "owned process enumeration is pending"
+                }
+            }
+            $probeState = New-DesignerInvocationProbeState -LauncherProcessId 0 -StallWarningSeconds 30 -StallTimeoutSeconds 60
+            $probeState.stallTimeoutExceeded = $true
+            $probeState.stallTimeoutExceededAtUtc = [DateTime]::UtcNow.AddSeconds(-31)
+            $probeState.stallCleanup = [pscustomobject]@{ attempted = $false; confirmed = $false; processIds = @(); error = "pending" }
+            $context = [pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; observedAtUtc = [DateTime]::UtcNow; processId = 8280; postExitElapsedSeconds = 700 }
+            $message = try {
+                Test-DesignerInvocationReleased -ProbeState $probeState -ProbeContext $context -InfoBaseKind file `
+                    -InfoBasePath (Join-Path $TestDrive "base") -OperationKind "designer-command" 6>$null | Out-Null
+                ""
+            } catch { $_.Exception.Message }
+            [pscustomobject]@{ message = $message; termination = $probeState.stallTermination }
+        }
+
+        $result.message | Should -Be 'DESIGNER_STALL_TERMINATED'
+        $result.termination.reason | Should -Be 'release-unconfirmed'
+        $result.termination.waitingDetail | Should -Match 'pending'
+    }
+
     It "stops only tracked Designer processes during the hard-timeout cleanup" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

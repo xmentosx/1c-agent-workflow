@@ -178,3 +178,7 @@ call supersedes its generation. It must not request database admission with an
 expired context after waiting for recovery, or discard pending cleanup evidence.
 The explicit owned-stop path still owns native cleanup and its confirmation;
 guarded idle cleanup retains admission and its post-admission generation check.
+When another holder keeps the base for the callback's whole admission budget,
+the still-current callback is armed again for the next idle interval: a warm
+backend never survives until stdio EOF merely because one cleanup attempt met a
+helper's guard.

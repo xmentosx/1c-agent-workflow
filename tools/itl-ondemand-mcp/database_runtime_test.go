@@ -166,6 +166,50 @@ func TestSupersededIdleCleanupDoesNotWaitForAnotherFacadeGuard(t *testing.T) {
 	}
 }
 
+func TestIdleCleanupRetriesAfterAnotherHolderKeptTheBase(t *testing.T) {
+	rt, broker := newExecutionRuntimeFixture(t)
+	foreignPlan := *broker.plan
+	foreignPlan.InstanceID = "fedcba9876543210fedcba9876543210"
+	foreignBroker := &executionFixtureBroker{plan: &foreignPlan, runtimeRoot: broker.runtimeRoot}
+	foreign := &runtime{broker: foreignBroker, projectRoot: rt.projectRoot, family: rt.family,
+		instanceID: foreignPlan.InstanceID, logger: rt.logger}
+	_, finishForeign, err := foreign.beginDatabaseCall(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A helper's Designer guard kept the base for the idle callback's whole
+	// admission budget. The warm backend still holds its file infobase, so the
+	// callback must be armed again instead of leaving it alive until EOF.
+	rt.idle = time.Hour
+	rt.backend = &backendInfo{Status: "running", PID: os.Getpid(), URL: "http://fixture"}
+	rt.idleDeadline = time.Now().Add(-time.Second)
+	defer func() {
+		if rt.timer != nil {
+			rt.timer.Stop()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := rt.stopIdle(ctx, rt.generation); err == nil {
+		t.Fatal("idle cleanup was admitted while another holder kept the base")
+	}
+	if rt.timer == nil || rt.backend == nil || broker.stops != 0 || rt.executionOwner != nil {
+		t.Fatal("blocked idle cleanup was not rearmed or changed the backend")
+	}
+	if err := finishForeign("succeeded", ""); err != nil {
+		t.Fatal(err)
+	}
+	rt.timer.Stop()
+	rt.timer = nil
+	rt.idleDeadline = time.Now().Add(-time.Second)
+	if err := rt.stopIdle(context.Background(), rt.generation); err != nil {
+		t.Fatalf("retried idle cleanup failed after the holder released the base: %v", err)
+	}
+	if rt.backend != nil || broker.stops != 1 || rt.executionOwner != nil {
+		t.Fatal("retried idle cleanup did not stop the owned backend and release its guard")
+	}
+}
+
 func TestOnDemandRevalidatesPlanAfterAdmission(t *testing.T) {
 	rt, broker := newExecutionRuntimeFixture(t)
 	broker.changePlan = true
