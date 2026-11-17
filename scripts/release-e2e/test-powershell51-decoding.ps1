@@ -6,6 +6,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+# Logs and run records read this output as UTF-8; the console code page garbles Cyrillic.
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
 
 if ($PSVersionTable.PSEdition -ne "Desktop" -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
     throw "RELEASE_POWERSHELL_51_REQUIRED: actual=$($PSVersionTable.PSEdition)-$($PSVersionTable.PSVersion)"

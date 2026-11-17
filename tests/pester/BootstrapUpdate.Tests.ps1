@@ -2413,12 +2413,22 @@ exit 0
             Where-Object { (Get-Content -Encoding UTF8 -Raw $_.FullName) -match '<!-- ITL_LONG_RUN -->' })
         $longTemplateNames = [string[]]@($longTemplates.Name)
         [Array]::Sort($longTemplateNames, [StringComparer]::Ordinal)
-        @($longTemplateNames) | Should -Be @(
-            "itl-check.md.template", "itl-fork-branch.md.template", "itl-lock-objects.md.template",
-            "itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-refresh-all.md.template",
-            "itl-refresh-lite.md.template", "itl-refresh.md.template", "itl-reset-branch.md.template",
-            "itl-result.md.template", "itl-sync-branches.md.template", "itl-sync-master.md.template",
-            "itl-update-workflow.md.template", "itl-verify-fix.md.template")
+        # The renderer's limit table owns which commands are long; derive the marker
+        # set from it instead of keeping a second copy of the list here.
+        $adapterTokens = $null; $adapterErrors = $null
+        $adapterAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.client-adapters.ps1"), [ref]$adapterTokens, [ref]$adapterErrors)
+        @($adapterErrors).Count | Should -Be 0
+        $longRunLimits = & {
+            foreach ($name in @('Get-ItlRoutineLongCommandNames', 'Get-ItlLongRunCommandLimits')) {
+                . ([scriptblock]::Create(($adapterAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)).Extent.Text))
+            }
+            Get-ItlLongRunCommandLimits
+        }
+        $templateNames = @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md.template" | ForEach-Object { $_.Name })
+        $expectedLongTemplates = [string[]]@($longRunLimits.Keys | ForEach-Object { "$_.template" } | Where-Object { $_ -in $templateNames } | Sort-Object -Unique)
+        [Array]::Sort($expectedLongTemplates, [StringComparer]::Ordinal)
+        $expectedLongTemplates.Count | Should -BeGreaterThan 0
+        @($longTemplateNames) | Should -Be @($expectedLongTemplates)
         foreach ($template in @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md.template")) {
             $text = Get-Content -Encoding UTF8 -Raw $template.FullName
             $text | Should -Not -Match "timeout_ms" -Because $template.Name

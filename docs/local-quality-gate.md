@@ -370,8 +370,9 @@ legacy names or secrets. Use stable identifiers such as error codes, flags,
 action names or anchors for documentation contracts. If a behavior-preserving
 refactor breaks a text assertion, replace it with an executable or derived check.
 `TextAssertionPolicy.Tests.ps1` counts `Should -Match` patterns of four or more
-words per test file against `tests/text-assertion-baseline.json`. A count may
-only go down: lower it when you replace one, and never raise it. It is a Pester
+words in changed test files at the merge base with published develop and now;
+a change may not add them on net. Moving one between files is neutral, and no
+shared recorded count exists that parallel queue entries could make stale. It is a Pester
 preflight file: it runs before costly files start, so a violation stops
 registration within seconds and the retry reuses every already passed file.
 
