@@ -331,6 +331,11 @@ function Get-SourceFixtureWorkflowUpdateProof {
         }
         $cursor=$head;$seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $expected=@{};$proof=New-Object Collections.Generic.List[object];$originalEnv=Join-Path $Root '.dev.env'
+        # Every retained hop is re-proven byte for byte, so a long-lived stand
+        # takes minutes per root (41 hops: 267 s on 2026-11-17). Each verified
+        # hop reports itself; callers' no-progress watchdogs then stop only a
+        # proof that has really stalled.
+        $hopWatch=[Diagnostics.Stopwatch]::StartNew()
         while($cursor -cne $OriginalCommit){
             if(-not $seen.Add($cursor)){throw 'FIXTURE_WORKFLOW_UPDATE_CHAIN_INVALID: cyclic history'}
             $selected=@($saved|Where-Object {[string]$_.receipt.completedHead -ceq $cursor -and [string]$_.receipt.preUpdateHead -cne $cursor})
@@ -372,6 +377,8 @@ function Get-SourceFixtureWorkflowUpdateProof {
             if($envRecord.Count -ne 1 -or -not $envRecord[0].existed){throw 'FIXTURE_WORKFLOW_UPDATE_ENV_UNPROVEN'}
             $originalEnv=[string]$envRecord[0].backupPath
             $proof.Add([ordered]@{id=$selected[0].id;sha256=(Get-FileHash -LiteralPath $completed.receiptPath -Algorithm SHA256).Hash.ToLowerInvariant()})
+            Write-Host ("FIXTURE_CHAIN_PROOF_PROGRESS root={0} hop={1} snapshot={2} elapsedMs={3}" -f $script:ProjectRoot,$proof.Count,$selected[0].id,$hopWatch.ElapsedMilliseconds)
+            $hopWatch.Restart()
             $cursor=$old
         }
         if((Get-DeliveryStableDotEnvSha256 -Path $originalEnv) -cne (Get-DeliveryStableDotEnvSha256 -Path $OriginalEnvPath)){throw 'FIXTURE_WORKFLOW_UPDATE_ENV_UNPROVEN: first backup differs from the immutable seed'}

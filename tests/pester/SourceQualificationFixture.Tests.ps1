@@ -324,6 +324,13 @@ foreach($root in @($ProjectRoot)+@($scope.roots)){
                 $admission.branch.head|Should -Be (Invoke-RepositoryGit -RepositoryRoot $seed.branch -Arguments @('rev-parse','HEAD')).stdout.Trim()
                 @($admission.master.receipts).Count|Should -Be 1
                 @($admission.branch.receipts).Count|Should -Be 1
+                # 2026-11-17: a silent 41-hop proof outlived the 900-second
+                # no-progress watchdog twice. Each verified hop reports itself.
+                $progress=@(Get-Content -LiteralPath (Join-Path $candidate 'build/test-results/delivery/stand-capture-Develop.stdout.log') -Encoding UTF8|
+                    ForEach-Object {[regex]::Match($_,'^FIXTURE_CHAIN_PROOF_PROGRESS root=(.+) hop=(\d+) snapshot=([a-f0-9]{32}) elapsedMs=\d+$')}|Where-Object {$_.Success})
+                @($progress|ForEach-Object {$_.Groups[1].Value+'|'+$_.Groups[2].Value+'|'+$_.Groups[3].Value})|Should -Be @(
+                    ([IO.Path]::GetFullPath($seed.project)+'|1|'+$admission.master.receipts[0].id),
+                    ([IO.Path]::GetFullPath($seed.branch)+'|1|'+$admission.branch.receipts[0].id))
                 (Get-FileHash -LiteralPath $descriptor.path -Algorithm SHA256).Hash|Should -Be $descriptor.sha256
                 $configSha=(Get-FileHash -LiteralPath $configPath).Hash
                 # A later preparation finds nothing to update or admit; Capture
