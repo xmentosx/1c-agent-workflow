@@ -1386,6 +1386,8 @@ function Get-VanessaAuthoringLintWarnings {
     $metadataManagerPattern = "\b(?:" + (($metadataManagers | ForEach-Object { [regex]::Escape($_) }) -join "|") + ")\s*\."
     $clientModuleSuffix = ConvertFrom-Utf8Base64 "0JrQu9C40LXQvdGC"
     $clientModulePattern = "\b[\p{L}\p{Nd}_]*" + [regex]::Escape($clientModuleSuffix) + "\s*\."
+    $visibleConsoleExecPattern = "(?i)\.Exec\s*\("
+    $hiddenCommandRunner = ConvertFrom-Utf8Base64 "0JLQsNC90LXRgdGB0LAu0JLRi9C/0L7Qu9C90LjRgtGM0JrQvtC80LDQvdC00YPQntCh0JHQtdC30J/QvtC60LDQt9Cw0KfQtdGA0L3QvtCz0L7QntC60L3QsA=="
 
     foreach ($feature in @($FeatureRecords)) {
         if ($warnings.Count -ge $MaxWarnings) { break }
@@ -1400,6 +1402,7 @@ function Get-VanessaAuthoringLintWarnings {
         $docStringCodeContext = ""
         $docStringWarnedState = $false
         $docStringWarnedContext = $false
+        $docStringWarnedConsole = $false
         $positionPending = $false
         $positionTableRows = 0
         $hasReliablePosition = $false
@@ -1435,6 +1438,19 @@ function Get-VanessaAuthoringLintWarnings {
                 }
             }
             if ($insideDocString) {
+                # WScript.Shell.Exec cannot hide a console: on Windows 11 every call opens a
+                # Windows Terminal window that takes the user's focus, whatever the code context.
+                if ($docStringMarkers -eq 0 -and -not $docStringWarnedConsole -and
+                    $line -match $visibleConsoleExecPattern -and -not $trimmed.StartsWith("//")) {
+                    $warnings.Add([pscustomobject][ordered]@{
+                        code = "ITL_VANESSA_LINT_VISIBLE_CONSOLE"
+                        path = $relativePath
+                        line = $index + 1
+                        message = "WScript.Shell.Exec always shows a console window that takes the user's focus; run the command through $hiddenCommandRunner with output to a file."
+                    })
+                    $docStringWarnedConsole = $true
+                    if ($warnings.Count -ge $MaxWarnings) { break }
+                }
                 if ($docStringMarkers -eq 0 -and $docStringCodeContext) {
                     if (-not $docStringWarnedState) {
                         foreach ($callName in $unsupportedStateCalls) {
@@ -1489,6 +1505,7 @@ function Get-VanessaAuthoringLintWarnings {
                     $docStringCodeContext = $pendingCodeContext
                     $docStringWarnedState = $false
                     $docStringWarnedContext = $false
+                    $docStringWarnedConsole = $false
                 }
                 continue
             }
