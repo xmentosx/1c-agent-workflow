@@ -219,4 +219,67 @@ param([string]$Command, [string]$ProjectRoot, [string]$Source, [string]$Tools, [
             { Get-WorkflowUpdatePendingSnapshot } | Should -Throw '*outside project root*'
         }
     }
+
+    It 'reuses snapshot path hashes within one update while file metadata is unchanged and drops them on managed or installer writes' {
+        # Every receipt phase fingerprints the same ~1000 snapshot paths; within
+        # one operation an unchanged file (path, length, write time) keeps its hash.
+        $root = Join-Path $TestDrive 'Проект хешей с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root 'каталог с пробелом') | Out-Null
+        $file = Join-Path $root 'файл с пробелом.md'
+        $inner = Join-Path $root 'каталог с пробелом/вложенный.md'
+        [IO.File]::WriteAllText($file, 'первое', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($inner, 'внутри', [Text.UTF8Encoding]::new($false))
+        & {
+            . $HelperPath -ProjectRoot $root -Action help -AgentTarget codex *> $null
+            $hashes = @{ count = 0 }
+            function Get-FileHash { param([string]$LiteralPath, [string]$Algorithm) $hashes.count++; Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $LiteralPath -Algorithm $Algorithm }
+            $expected = { param([string]$Path) 'file:' + (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+            $restoreTime = { param([string]$Path, [DateTime]$Time) [IO.File]::SetLastWriteTimeUtc($Path, $Time) }
+
+            # Outside an update operation every call reads the bytes.
+            Get-WorkflowUpdatePathState -RelativePath 'файл с пробелом.md' | Out-Null
+            Get-WorkflowUpdatePathState -RelativePath 'файл с пробелом.md' | Out-Null
+            $hashes.count | Should -Be 2
+
+            Invoke-WorkflowUpdateRunSharedInputs {
+                $hashes.count = 0
+                $first = Get-WorkflowUpdatePathState -RelativePath 'файл с пробелом.md'
+                $directory = Get-WorkflowUpdatePathState -RelativePath 'каталог с пробелом'
+                Get-WorkflowUpdatePathState -RelativePath 'файл с пробелом.md' | Should -BeExactly $first
+                Get-WorkflowUpdatePathState -RelativePath 'каталог с пробелом' | Should -BeExactly $directory
+                $hashes.count | Should -Be 2
+
+                # An ordinary edit gets a new write time and is hashed again.
+                Start-Sleep -Milliseconds 20
+                [IO.File]::WriteAllText($file, 'второе', [Text.UTF8Encoding]::new($false))
+                Get-WorkflowUpdatePathState -RelativePath 'файл с пробелом.md' | Should -BeExactly (& $expected $file)
+
+                # A managed replace may keep the source timestamp: same length,
+                # same write time, other bytes. Its target hash is never reused.
+                $time = [IO.File]::GetLastWriteTimeUtc($file)
+                $source = Join-Path $TestDrive 'источник с пробелом.md'
+                [IO.File]::WriteAllText($source, 'третье', [Text.UTF8Encoding]::new($false))
+                Invoke-WorkflowManagedPathReplace -SourcePath $source -TargetPath $file
+                & $restoreTime $file $time
+                Get-WorkflowUpdatePathState -RelativePath 'файл с пробелом.md' | Should -BeExactly (& $expected $file)
+
+                # Installers in post-copy can write the same way; the whole
+                # cache is dropped after them.
+                Get-WorkflowUpdatePathState -RelativePath 'каталог с пробелом' | Out-Null
+                $innerTime = [IO.File]::GetLastWriteTimeUtc($inner)
+                [IO.File]::WriteAllText($inner, 'снаружи', [Text.UTF8Encoding]::new($false))
+                & $restoreTime $inner $innerTime
+                Clear-WorkflowUpdatePathHashCache
+                Get-WorkflowUpdatePathState -RelativePath 'каталог с пробелом' | Should -Not -BeExactly $directory
+
+                # A junction is still refused after its ancestors were proven real.
+                $junction = Join-Path $root 'каталог с пробелом/ссылка'
+                New-Item -ItemType Junction -Path $junction -Target (Join-Path $TestDrive 'Цель ссылки') -Force -ErrorAction SilentlyContinue | Out-Null
+                if (-not (Test-Path -LiteralPath $junction)) { New-Item -ItemType Directory -Force -Path (Join-Path $TestDrive 'Цель ссылки') | Out-Null; New-Item -ItemType Junction -Path $junction -Target (Join-Path $TestDrive 'Цель ссылки') | Out-Null }
+                { Get-WorkflowUpdatePathState -RelativePath 'каталог с пробелом/ссылка' } | Should -Throw '*WORKFLOW_UPDATE_REPARSE_PATH*'
+                { Get-WorkflowUpdatePathState -RelativePath 'каталог с пробелом/ссылка/файл.md' } | Should -Throw '*WORKFLOW_UPDATE_REPARSE_PATH*'
+            }
+            Test-Path Variable:script:ItlWorkflowUpdatePathHashCache | Should -BeFalse
+        }
+    }
 }
