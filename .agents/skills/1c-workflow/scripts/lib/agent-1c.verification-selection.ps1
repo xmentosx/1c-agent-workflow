@@ -1131,6 +1131,50 @@ function New-VerificationSelectionPlan {
 }
 
 function New-VerificationCumulativeSelectionPlan {
+    param([string[]]$ApplicationFeatureFiles, [switch]$YAxUnitVerificationPlanned, [switch]$RequireObservedReceipts)
+    return (Remove-VerificationAttestedSuitesFromPlan -Plan (New-VerificationCumulativeSelectionPlanCore @PSBoundParameters))
+}
+
+function Test-VerificationSuiteReceiptSettled {
+    param([AllowNull()][object]$Receipt)
+    return ($null -ne $Receipt -and [string]$Receipt.status -cin @('passed', 'attested'))
+}
+
+function Assert-VerificationSuiteAttestation {
+    param([Parameter(Mandatory = $true)][object]$Receipt)
+    $record = Get-VerificationCatalogValue -Value $Receipt -Name 'attestation' -Default $null
+    foreach ($name in @('reason', 'userRequest', 'attestedAt', 'tree')) {
+        if ([string]::IsNullOrWhiteSpace([string](Get-VerificationCatalogValue -Value $record -Name $name -Default ''))) {
+            throw "VERIFICATION_ATTESTATION_INVALID: suite '$($Receipt.id)' has no complete user attestation record."
+        }
+    }
+}
+
+function Get-VerificationAttestedSuiteIds {
+    param([AllowNull()][object]$Proof, [string]$Tree = '')
+    return @(Get-VerificationCatalogValue -Value $Proof -Name 'suiteEvidence' -Default @() | Where-Object {
+        [string]$_.status -ceq 'attested' -and (-not $Tree -or [string](Get-VerificationCatalogValue -Value (Get-VerificationCatalogValue -Value $_ -Name 'attestation' -Default $null) -Name 'tree' -Default '') -ceq $Tree)
+    } | ForEach-Object { [string]$_.id } | Sort-Object -Unique)
+}
+
+function Remove-VerificationAttestedSuitesFromPlan {
+    # A suite the user attested at this exact tree is not run again; any later
+    # change returns it to ordinary selection.
+    param([object]$Plan)
+    if ($null -eq $Plan -or [string]$Plan.mode -notin @('full', 'incremental') -or -not $Plan.catalogAvailable -or -not $Plan.currentTree) { return $Plan }
+    $attested = @(Get-VerificationAttestedSuiteIds -Proof (Read-VerificationSelectionProof) -Tree ([string]$Plan.currentTree))
+    $drop = @($Plan.selectedSuiteIds | Where-Object { [string]$_ -cin $attested })
+    if ($drop.Count -eq 0) { return $Plan }
+    $keep = @($Plan.selectedSuiteIds | Where-Object { [string]$_ -cnotin $drop })
+    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+    $Plan.selectedSuiteIds = $keep
+    $Plan.selectedFeatureFiles = @($catalog.assignments | Where-Object { $_.purpose -eq 'acceptance' -and [string]$_.suiteId -cin $keep } | Select-Object -ExpandProperty fullPath -Unique)
+    $Plan.mode = if ($keep.Count -eq 0) { 'reuse' } else { 'incremental' }
+    $Plan.reason = "$($Plan.reason) Attested by the user at this exact tree, not run: $($drop -join ', ')."
+    return $Plan
+}
+
+function New-VerificationCumulativeSelectionPlanCore {
     param(
         [string[]]$ApplicationFeatureFiles,
         [switch]$YAxUnitVerificationPlanned,
@@ -1227,7 +1271,7 @@ function New-VerificationCumulativeSelectionPlan {
         foreach ($id in $acceptanceSuiteIds) {
             $receipt = @($receipts | Where-Object id -eq $id)
             $obligation = @($catalog.obligations | Where-Object suiteId -eq $id)[0]
-            if ($receipt.Count -ne 1 -or [string]$receipt[0].status -cne 'passed' -or
+            if ($receipt.Count -ne 1 -or -not (Test-VerificationSuiteReceiptSettled -Receipt $receipt[0]) -or
                 [string]::IsNullOrWhiteSpace([string]$receipt[0].loadedBaseIdentity) -or
                 [string]$receipt[0].targetIdentity -cne $targetIdentity -or
                 [string]$receipt[0].checkerIdentity -cne (Get-VerificationRetainedCheckerIdentity) -or
@@ -1237,6 +1281,7 @@ function New-VerificationCumulativeSelectionPlan {
                 continue
             }
             try {
+                if ([string]$receipt[0].status -ceq 'attested') { Assert-VerificationSuiteAttestation -Receipt $receipt[0]; continue }
                 # The suite's own cases are checked below; other suites' failed
                 # cases in the same run report do not unsettle this suite.
                 Assert-VerificationArtifactReferences -Artifacts @($receipt[0].artifacts)
@@ -1462,7 +1507,7 @@ function Get-VerificationRetainedCheckerIdentity {
     $parts = @('retained-checker-v1', (Get-VerificationOneOffCheckerIdentity -ProofType 'vanessa-junit'))
     foreach ($name in @('Get-VerificationRetainedTargetIdentity', 'Get-VerificationCurrentProofAssessment', 'Get-VerificationCumulativeProofAssessment',
         'Get-VerificationSuiteJUnitCoverage', 'Assert-VerificationRecordedSuiteCoverage', 'Assert-VerificationRetainedSuiteCoverage',
-        'Get-VanessaFeatureScenarioDefinitions', 'Get-VanessaJunitSummary')) {
+        'Get-VanessaFeatureScenarioDefinitions', 'Get-VanessaJunitSummary', 'Test-VerificationSuiteReceiptSettled', 'Assert-VerificationSuiteAttestation')) {
         $command = Get-Command -Name $name -CommandType Function -ErrorAction Stop
         $parts += "$name=$($command.ScriptBlock.ToString().Replace("`r`n", "`n"))"
     }
@@ -1656,6 +1701,7 @@ function Get-VerificationCumulativeProofAssessment {
 
     $issues = [Collections.Generic.List[string]]::new()
     $oneOffIssues = [Collections.Generic.List[string]]::new()
+    $attestedIds = [Collections.Generic.List[string]]::new()
     try {
         $currentTree = Get-VerificationSelectionEffectiveTree
         # Pure assessment: never initialize a baseline, load an infobase or start a runner.
@@ -1698,7 +1744,7 @@ function Get-VerificationCumulativeProofAssessment {
             $receipt = @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @() | Where-Object id -eq $suite.id)
             $unaffected = [string]$suite.id -in $UnaffectedSuiteIds
             if ($oldSuite.Count -ne 1 -or (-not $unaffected -and [string]$oldSuite[0].fingerprint -cne [string]$suite.fingerprint) -or
-                $receipt.Count -ne 1 -or [int]$receipt[0].schemaVersion -ne 1 -or [string]$receipt[0].status -cne 'passed' -or
+                $receipt.Count -ne 1 -or [int]$receipt[0].schemaVersion -ne 1 -or -not (Test-VerificationSuiteReceiptSettled -Receipt $receipt[0]) -or
                 [string]$receipt[0].obligationHash -cne (Get-VerificationOneOffObligationHash -Obligation $obligation) -or
                 (-not $unaffected -and [string]$receipt[0].inputIdentity -cne (Get-VerificationObligationInputIdentity -Obligation $obligation -Treeish $currentTree)) -or
                 [string]$receipt[0].runtimeIdentity -cne (Get-VerificationRelevantDependencyLockFingerprint -Treeish $currentTree) -or
@@ -1706,6 +1752,11 @@ function Get-VerificationCumulativeProofAssessment {
                 [string]$receipt[0].targetIdentity -cne (Get-VerificationRetainedTargetIdentity -State $State) -or
                 [string]$receipt[0].checkerIdentity -cne (Get-VerificationRetainedCheckerIdentity)) {
                 throw "VERIFICATION_RETAINED_PROOF_PENDING: suite '$($suite.id)' needs a current unfiltered observed JUnit result."
+            }
+            if ([string]$receipt[0].status -ceq 'attested') {
+                Assert-VerificationSuiteAttestation -Receipt $receipt[0]
+                $attestedIds.Add([string]$suite.id)
+                continue
             }
             Assert-VerificationArtifactReferences -Artifacts @($receipt[0].artifacts)
             Assert-VerificationRetainedSuiteCoverage -Receipt $receipt[0] -Catalog $catalog
@@ -1721,7 +1772,61 @@ function Get-VerificationCumulativeProofAssessment {
             throw 'VERIFICATION_OBLIGATIONS_MISSING: no observed obligation establishes whole result readiness.'
         }
     } catch { $issues.Add($_.Exception.Message) }
-    return [pscustomobject]@{ passed = ($issues.Count -eq 0 -and $oneOffIssues.Count -eq 0); issues = @($issues.ToArray()); oneOffIssues = @($oneOffIssues.ToArray()) }
+    return [pscustomobject]@{ passed = ($issues.Count -eq 0 -and $oneOffIssues.Count -eq 0); issues = @($issues.ToArray()); oneOffIssues = @($oneOffIssues.ToArray()); attestedSuiteIds = @($attestedIds.ToArray()) }
+}
+
+function Add-VerificationSuiteAttestation {
+    # Records the user's explicit decision: the named retained suites count as
+    # settled for their current exact inputs without a run. The agent invokes
+    # it only on the user's own request in the current conversation.
+    param([string]$EvidencePath = '')
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'attest-verification-suites'
+    if (-not $EvidencePath) { throw 'VERIFICATION_ATTESTATION_INVALID: pass -VerificationEvidencePath <attestation.json> with suiteIds, reason and userRequest.' }
+    $request = Read-Utf8Text -Path (Resolve-ProjectPath $EvidencePath) | ConvertFrom-Json -ErrorAction Stop
+    $suiteIds = @(Get-VerificationCatalogValue -Value $request -Name 'suiteIds' -Default @() | ForEach-Object { [string]$_ } | Where-Object { $_ } | Sort-Object -Unique)
+    $reason = [string](Get-VerificationCatalogValue -Value $request -Name 'reason' -Default '')
+    $userRequest = [string](Get-VerificationCatalogValue -Value $request -Name 'userRequest' -Default '')
+    if ($suiteIds.Count -eq 0 -or [string]::IsNullOrWhiteSpace($reason) -or [string]::IsNullOrWhiteSpace($userRequest)) {
+        throw "VERIFICATION_ATTESTATION_INVALID: name suiteIds, the reason and userRequest quoting the user's own request in this conversation."
+    }
+    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+    if (-not $catalog.valid -or -not $catalog.classificationComplete) { throw "VERIFICATION_CLASSIFICATION_REQUIRED: $(@($catalog.issues) -join '; ')" }
+    $acceptance = @($catalog.suiteFingerprints | Where-Object purpose -eq 'acceptance')
+    $unknown = @($suiteIds | Where-Object { $_ -cnotin @($acceptance | ForEach-Object { [string]$_.id }) })
+    if ($unknown.Count -gt 0) { throw "VERIFICATION_ATTESTATION_SUITE_UNKNOWN: $($unknown -join ', ') is not a retained acceptance suite of the current catalog." }
+    $loaded = Get-VerificationLoadedBaseIdentity -State $state
+    if ([string]::IsNullOrWhiteSpace([string]$loaded)) { throw 'VERIFICATION_ATTESTATION_TARGET_MISSING: load the current source through the normal update first; an attestation binds the exact loaded target.' }
+    $tree = Get-VerificationSelectionEffectiveTree
+    $target = Get-VerificationRetainedTargetIdentity -State $state
+    $proof = Read-VerificationSelectionProof
+    $evidence = @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @())
+    $now = (Get-Date).ToString('o')
+    foreach ($id in $suiteIds) {
+        $obligation = @($catalog.obligations | Where-Object suiteId -eq $id)[0]
+        $previous = @($evidence | Where-Object { [string]$_.id -ceq $id })
+        $evidence = @($evidence | Where-Object { [string]$_.id -cne $id }) + @([pscustomobject][ordered]@{
+            schemaVersion = 1; id = $id; status = 'attested'
+            attestation = [pscustomobject][ordered]@{ reason = $reason; userRequest = $userRequest; attestedAt = $now; tree = $tree; previousStatus = $(if ($previous.Count -eq 1) { [string]$previous[0].status } else { 'missing' }) }
+            coverage = $null; coverageIssue = ''
+            obligationHash = Get-VerificationOneOffObligationHash -Obligation $obligation
+            inputIdentity = Get-VerificationObligationInputIdentity -Obligation $obligation -Treeish $tree
+            runtimeIdentity = Get-VerificationRelevantDependencyLockFingerprint -Treeish $tree
+            loadedBaseIdentity = $loaded; targetIdentity = $target
+            checkerIdentity = Get-VerificationRetainedCheckerIdentity
+            artifacts = @()
+        })
+    }
+    # Without an earlier proof the attested tree becomes the first boundary:
+    # every other suite has no receipt there and is selected to run.
+    $value = if ($null -ne $proof) { $proof } else {
+        [pscustomobject][ordered]@{ schemaVersion = 1; tree = $tree; catalogFingerprint = [string]$catalog.fingerprint; acceptanceSuiteIds = @($acceptance | ForEach-Object { [string]$_.id }); acceptanceSuites = $acceptance; suiteEvidence = @(); lastSelectedSuiteIds = @(); lastMode = 'attestation'; verifiedAt = $now }
+    }
+    $value | Add-Member -NotePropertyName suiteEvidence -NotePropertyValue $evidence -Force
+    $root = Get-VerificationSelectionStateRoot
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    Write-Utf8TextAtomic -Path (Join-Path $root 'proof.json') -Value (($value | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+    return [pscustomobject]@{ status = 'attested'; suiteIds = $suiteIds; tree = $tree; note = "Recorded as the user's attestation, not as an observed run. A change of these suites' inputs, runner or target returns them to ordinary selection; the next /itl-check runs only the remaining suites." }
 }
 
 function Complete-VerificationSelectionProof {
