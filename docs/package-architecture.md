@@ -835,6 +835,20 @@ one-off and load proof are unaffected; no coordinator, lock or migration; one
 on-demand helper action. Rollback: the old helper treats `attested` as
 unsettled and runs the suite.
 
+Architecture checkpoint approved by the user on 2026-11-19: the check duration
+journal, which until then never changed a check, now also sets the default
+Vanessa run budget. Green PM5 runs of 2700-3500 s (itldev/branch4,
+2026-11-16/17) failed the fixed 1800 s default and agents raised it per
+process. Each journal record keeps the run's JUnit seconds per feature title;
+without `VANESSA_TEST_TIMEOUT_SECONDS` the next run gets 120 s plus 1.5 x the
+90th percentile of each selected feature's last 10 runs, never below 1800 s nor
+above 7200 s, and prints the source. An explicit setting always wins, so the
+template leaves it unset. The stall monitor and the runner deadline contracts
+are unchanged: the runner still extends only by the published phase budget
+(the planned extra owner grace was dropped because it would change that
+contract for every phase). Rollback: the budget function returns the setting
+or 1800 s; the extra journal field is ignored.
+
 ## 1C source byte-preservation policy
 
 Git is transport for platform-generated `src/cf/**`, `src/cfe/**`, and optional auxiliary `src/configs/**` files, not their line-ending formatter. Installed projects carry a managed `.gitattributes` block with `-text` for these trees, so checkout, worktree creation, branch transfer, and result assembly preserve the bytes emitted by 1C even when global `core.autocrlf=true`.

@@ -1092,7 +1092,9 @@ function Invoke-ItlVerificationCycle {
 }
 
 # Check duration diagnostics. A bounded project journal keeps the cost of
-# check-dev-branch visible across branches; it never changes or blocks a check.
+# check-dev-branch visible across branches; it never blocks a check. Since the
+# 2026-11-19 checkpoint its per-feature Vanessa durations also set the default
+# budget of the next Vanessa run (Get-VanessaRunTimeoutBudget).
 function Start-ItlCheckTiming {
     $script:ItlCheckTiming = [ordered]@{
         startedAt = Get-Date; platformMs = $null; yaxunitMs = $null; vanessaMs = $null
@@ -1139,6 +1141,11 @@ function Add-ItlCheckHistoryRecord {
             selectionMode = [string]$timing.selectionMode
             selectionReason = $reason.Substring(0, [Math]::Min(240, $reason.Length))
         }
+        $vanessaRun = [string]$timing['vanessaRunDirectory']
+        if ($vanessaRun) {
+            $features = Get-VanessaJUnitFeatureSeconds -Path (Join-Path $vanessaRun 'junit.xml')
+            if ($features.Count -gt 0) { $record['vanessaFeatureSeconds'] = $features }
+        }
         $line = ($record | ConvertTo-Json -Compress -Depth 4)
         $path = Get-ItlCheckHistoryPath -State $State
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
@@ -1162,6 +1169,31 @@ function Add-ItlCheckHistoryRecord {
     } catch {
         Write-Warning "Could not record the check duration: $($_.Exception.Message)" -WarningAction Continue
     }
+}
+
+# Recorded seconds per Vanessa feature title across the project, newest last,
+# at most the last 10 runs of each feature. Unreadable lines are skipped.
+function Get-ItlCheckFeatureDurations {
+    param([AllowNull()][object]$State)
+    $durations = @{}
+    try {
+        $path = Get-ItlCheckHistoryPath -State $State
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $durations }
+        foreach ($line in @(Get-Content -LiteralPath $path -Encoding UTF8 | Where-Object { $_.Trim() })) {
+            $record = $null
+            try { $record = $line | ConvertFrom-Json } catch { continue }
+            $features = if ($null -ne $record) { $record.PSObject.Properties['vanessaFeatureSeconds'] } else { $null }
+            if ($null -eq $features -or $null -eq $features.Value) { continue }
+            foreach ($feature in $features.Value.PSObject.Properties) {
+                $seconds = 0.0
+                if (-not [double]::TryParse([string]$feature.Value, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$seconds) -or $seconds -le 0) { continue }
+                if (-not $durations.ContainsKey($feature.Name)) { $durations[$feature.Name] = [Collections.Generic.List[double]]::new() }
+                $durations[$feature.Name].Add($seconds)
+                if ($durations[$feature.Name].Count -gt 10) { $durations[$feature.Name].RemoveAt(0) }
+            }
+        }
+    } catch { }
+    return $durations
 }
 
 function Get-ItlBranchSuiteCoverageSummary {
