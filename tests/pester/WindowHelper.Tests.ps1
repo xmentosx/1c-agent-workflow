@@ -672,6 +672,113 @@ static class FakeClient {
         }
     }
 
+    It 'returns the foreground from a hidden client form before it captures the form for the journal' {
+        # PM5 itldev/branch4, 2026-11-17: a 1C form took the foreground while it was shown,
+        # the helper first waited for its capture, and a letter typed by the user reached the
+        # form. A stand-in TestClient opens an off-screen form, takes the foreground the way
+        # 1C does and keeps its UI thread busy on WM_PRINT.
+        Add-Type -Namespace WhTest -Name Desk -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+[DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+[DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr desk);
+'@ -ErrorAction SilentlyContinue
+        $desk = [WhTest.Desk]::OpenInputDesktop(0, $false, 1)
+        if ($desk -eq [IntPtr]::Zero -or [WhTest.Desk]::GetForegroundWindow() -eq [IntPtr]::Zero) {
+            if ($desk -ne [IntPtr]::Zero) { [void][WhTest.Desk]::CloseDesktop($desk) }
+            Set-ItResult -Skipped -Because 'a foreground return needs an interactive desktop with a foreground window'
+            return
+        }
+        [void][WhTest.Desk]::CloseDesktop($desk)
+        $fakeDir = Join-Path $TestDrive 'Клиент с формой и пробелом'
+        [void][IO.Directory]::CreateDirectory($fakeDir)
+        $fakeSource = Join-Path $fakeDir 'fake form client.cs'
+        [IO.File]::WriteAllText($fakeSource, @'
+using System; using System.IO; using System.Runtime.InteropServices; using System.Threading;
+static class FakeFormClient {
+    delegate IntPtr WndProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct WNDCLASS { public uint style; public WndProc proc; public int a; public int b; public IntPtr inst; public IntPtr icon; public IntPtr cursor; public IntPtr brush; public string menu; public string name; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w; public IntPtr l; public uint t; public int x; public int y; }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern ushort RegisterClass(ref WNDCLASS c);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string title, uint style, int x, int y, int w, int h, IntPtr p, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr h, uint a, uint b);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr SetTimer(IntPtr h, IntPtr id, uint ms, IntPtr proc);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
+    static WndProc proc = Proc; static string flag; static bool opened;
+    static IntPtr Proc(IntPtr h, uint m, IntPtr w, IntPtr l) {
+        if (m == 0x0113 && !opened && File.Exists(flag)) { opened = true; Activate(Open("V8TopLevelFrameSDIsec", "ITL fake settings form")); }
+        // A busy 1C thread answers WM_PRINT late.
+        if (m == 0x0317 || m == 0x0318) Thread.Sleep(400);
+        return DefWindowProc(h, m, w, l);
+    }
+    static IntPtr Open(string cls, string title) {
+        var c = new WNDCLASS { proc = proc, name = cls, inst = GetModuleHandle(null) };
+        RegisterClass(ref c);
+        IntPtr h = CreateWindowEx(0, cls, title, 0x00CF0000, -32000, -32000, 320, 240, IntPtr.Zero, IntPtr.Zero, c.inst, IntPtr.Zero);
+        ShowWindow(h, 5);
+        return h;
+    }
+    static void Activate(IntPtr h) {
+        uint fg = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero), me = GetCurrentThreadId();
+        bool attached = fg != 0 && fg != me && AttachThreadInput(me, fg, true);
+        BringWindowToTop(h);
+        SetForegroundWindow(h);
+        if (attached) AttachThreadInput(me, fg, false);
+    }
+    [STAThread] static void Main(string[] args) {
+        flag = args[0];
+        IntPtr main = Open("V8TopLevelFrameSDI", "ITL fake form TestClient");
+        SetTimer(main, new IntPtr(1), 50, IntPtr.Zero);
+        MSG m; while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref m); DispatchMessage(ref m); }
+    }
+}
+'@, [Text.UTF8Encoding]::new($false))
+        $fakeExe = Join-Path $fakeDir '1cv8c.exe'
+        $build = Invoke-ItlNativeProcessCapture -FilePath (Get-ItlWindowHelperCompilerPath) -WorkingDirectory $fakeDir -TimeoutSeconds 120 -Arguments @('/nologo', '/target:winexe', "/out:$fakeExe", $fakeSource)
+        $build.exitCode | Should -Be 0 -Because ([string]$build.stdout)
+        $flag = Join-Path $fakeDir 'открыть форму.flag'
+        $start = [Diagnostics.ProcessStartInfo]::new($fakeExe, ('"' + $flag + '" ENTERPRISE /TESTCLIENT -TPort 48178'))
+        $start.UseShellExecute = $false
+        $client = [Diagnostics.Process]::Start($start)
+        try {
+            $group = New-WhGroup 'возврат фокуса до снимка' -Roots @($client.Id)
+            Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+            $log = Join-Path $group.directory 'journal\hidden.jsonl'
+            # The helper may hold the journal open for an append while it is polled.
+            $read = { try { @(Read-ItlWindowHelperJournal -Path $log) } catch [IO.IOException] { @() } }
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            while ([DateTime]::UtcNow -lt $deadline -and -not (@(& $read | Where-Object { $_.title -eq 'ITL fake form TestClient' }).Count)) { Start-Sleep -Milliseconds 100 }
+            [IO.File]::WriteAllText($flag, 'open')
+            $form = { @(& $read | Where-Object { [string]$_.title -eq 'ITL fake settings form' }) }
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            while ([DateTime]::UtcNow -lt $deadline -and -not (@(& $form | Where-Object { $_.event -eq 'hidden' }).Count -and @(& $form | Where-Object { $_.event -eq 'foreground-returned' }).Count)) { Start-Sleep -Milliseconds 100 }
+            $entries = @(& $form)
+            $events = @($entries | ForEach-Object { [string]$_.event })
+            $events | Should -Contain 'foreground-returned' -Because 'the stand-in form takes the foreground the way 1C does'
+            $events | Should -Contain 'hidden'
+            [array]::IndexOf($events, 'foreground-returned') | Should -BeLessThan ([array]::IndexOf($events, 'hidden')) -Because 'the focus returns before the capture of the form'
+            $returned = $entries[[array]::IndexOf($events, 'foreground-returned')]
+            [string]$returned.role | Should -Be 'testclient'
+            [int64]$returned.exposureMs | Should -BeLessThan 400 -Because 'the return does not wait for the busy WM_PRINT'
+            $foreground = [WhTest.Desk]::GetForegroundWindow()
+            $foreground | Should -Not -Be ([WhTest.Desk]::FindWindow('V8TopLevelFrameSDIsec', 'ITL fake settings form'))
+        } finally {
+            if (-not $client.HasExited) { $client.Kill(); $client.WaitForExit(5000) | Out-Null }
+            $client.Dispose()
+        }
+    }
+
     It 'answers window-show and window-hide in visible mode without a helper' {
         $saved = $script:ProjectRoot
         $script:ProjectRoot = Join-Path $TestDrive 'проект без помощника'
