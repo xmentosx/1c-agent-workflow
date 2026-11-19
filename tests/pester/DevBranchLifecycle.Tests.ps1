@@ -2432,6 +2432,105 @@ try {
         }
     }
 
+    It "merges the next master after a reset against the copied master commit instead of the old branch base" {
+        # PM5 itldev/branch2, 2026-11-16: the first refresh after a reset merged
+        # against the pre-reset base and reported 30 conflicted files, 6 of them
+        # really touched by the branch. The branch and master both changed the
+        # same line before the reset; master changes it again afterwards.
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-reset-ancestry с пробелом-" + [guid]::NewGuid().ToString("N"))
+        $ancestryModulePath = Join-Path $tempRoot "src\cf\Общий модуль.bsl"
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot "docs") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.name "ITL Test"
+            & git -C $tempRoot config user.email "itl@example.invalid"
+            & git -C $tempRoot config core.autocrlf false
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8 -Value ".agent-1c/"
+            [IO.File]::WriteAllText($ancestryModulePath, "Строка1`nСтрока2`nСтрока3`n", [Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add --all
+            & git -C $tempRoot commit -m "master" *> $null
+            & git -C $tempRoot branch -M master
+            & git -C $tempRoot checkout --quiet -b itldev/reset
+            [IO.File]::WriteAllText($ancestryModulePath, "Строка1`nСтрока2 ветка`nСтрока3`n", [Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot commit -am "previous task" *> $null
+            & git -C $tempRoot checkout --quiet master
+            [IO.File]::WriteAllText($ancestryModulePath, "Строка1`nСтрока2 master 1`nСтрока3`n", [Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot commit -am "master fix" *> $null
+            $resetMaster = (& git -C $tempRoot rev-parse HEAD).Trim()
+            & git -C $tempRoot checkout --quiet itldev/reset
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                # Dot-sourcing the helper defines its own script variables; bind
+                # the fixture path again so no helper name can redirect a write.
+                $ancestryModulePath = Join-Path $tempRoot "src\cf\Общий модуль.bsl"
+                $resetHead = Set-DevBranchTreeToMasterCommit -MasterCommit $resetMaster
+                Set-Content -LiteralPath (Join-Path $tempRoot "docs\задача.txt") -Encoding UTF8 -Value "new task"
+                Invoke-Git @("add", "--all")
+                Invoke-Git @("commit", "--quiet", "-m", "new task work")
+                $workHead = Get-CurrentCommit
+                Invoke-Git @("checkout", "--quiet", "master")
+                [IO.File]::WriteAllText($ancestryModulePath, "Строка1`nСтрока2 master 2`nСтрока3`n", [Text.UTF8Encoding]::new($false))
+                Invoke-Git @("commit", "--quiet", "-am", "master moves on")
+                $nextMaster = Get-CurrentCommit
+                Invoke-Git @("checkout", "--quiet", "itldev/reset")
+
+                # Without the recorded ancestry git merges against the old base.
+                # Direct git calls report progress on stderr; the helper's Stop
+                # preference would turn that into an exception.
+                $ErrorActionPreference = 'Continue'
+                & git -C $tempRoot merge --no-commit --no-ff $nextMaster *> $null
+                $legacyExit = $LASTEXITCODE
+                $legacyConflicts = @(Get-GitPathList -Arguments @("diff", "--name-only", "--diff-filter=U", "-z"))
+                & git -C $tempRoot merge --abort *> $null
+                $ErrorActionPreference = 'Stop'
+
+                $state = [pscustomobject]@{ resetMasterCommit = $resetMaster }
+                $recorded = Add-DevBranchResetMasterAncestry -State $state
+                $ancestryHead = Get-CurrentCommit
+                $again = Add-DevBranchResetMasterAncestry -State $state
+                $mergeBase = (Get-GitOutput @("merge-base", "HEAD", $nextMaster)).Trim()
+                $ErrorActionPreference = 'Continue'
+                & git -C $tempRoot merge --no-commit --no-ff $nextMaster *> $null
+                $mergeExit = $LASTEXITCODE
+                $ErrorActionPreference = 'Stop'
+                [pscustomobject]@{
+                    resetHead = $resetHead; workHead = $workHead; legacyExit = $legacyExit; legacyConflicts = $legacyConflicts
+                    recorded = $recorded; again = $again; ancestryHead = $ancestryHead
+                    parents = @(Get-GitCommitParents -Commit $ancestryHead)
+                    ancestryTree = (Get-GitOutput @("rev-parse", "$ancestryHead^{tree}")).Trim()
+                    workTree = (Get-GitOutput @("rev-parse", "$workHead^{tree}")).Trim()
+                    mergeBase = $mergeBase; mergeExit = $mergeExit
+                    module = [IO.File]::ReadAllText($ancestryModulePath, [Text.Encoding]::UTF8)
+                    task = (Test-Path -LiteralPath (Join-Path $tempRoot "docs\задача.txt"))
+                }
+            }
+
+            $result.legacyExit | Should -Not -Be 0
+            @($result.legacyConflicts) | Should -Be @('src/cf/Общий модуль.bsl')
+            $result.recorded | Should -BeTrue
+            $result.again | Should -BeFalse
+            @($result.parents) | Should -Be @($result.workHead, $resetMaster)
+            $result.ancestryTree | Should -Be $result.workTree
+            $result.mergeBase | Should -Be $resetMaster
+            $result.mergeExit | Should -Be 0
+            $result.module | Should -BeExactly "Строка1`nСтрока2 master 2`nСтрока3`n"
+            $result.task | Should -BeTrue
+            (& git -C $tempRoot log -1 --format=%s $result.ancestryHead).Trim() | Should -BeExactly 'chore: record the master commit copied by the last reset'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "records the reset ancestry before the lifecycle merge pins the branch commit" {
+        $merge = [regex]::Match($HelperText, "(?s)function\s+Invoke-NewDevBranchLifecycleMerge\s*\{(?<body>.*?)\r?\n\}")
+        $merge.Success | Should -BeTrue
+        $body = $merge.Groups["body"].Value
+        $ancestry = $body.IndexOf("Add-DevBranchResetMasterAncestry")
+        $ancestry | Should -BeGreaterOrEqual 0
+        $body.IndexOf('$branchCommit = Get-CurrentCommit') | Should -BeGreaterThan $ancestry
+    }
+
     It "resumes a reset journaled at <Phase> at the Git step without any archive" -ForEach @(
         @{ Phase = "checkpointed" }, @{ Phase = "archive-pending" }, @{ Phase = "archive-complete" }
     ) {
