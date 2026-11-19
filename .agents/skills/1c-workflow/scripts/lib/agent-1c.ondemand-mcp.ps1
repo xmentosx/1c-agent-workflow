@@ -1769,6 +1769,29 @@ function Write-ItlRoctupStartupFailureDiagnostic {
     }
 }
 
+# A Vanessa backend that exited before opening its port is named as such, with
+# its exit code and the 1C refusal it logged, instead of a generic port timeout.
+# ROCTUP keeps its message; its startup observation already records the exit.
+function Get-ItlOnDemandBackendNotReadyMessage {
+    param(
+        [string]$Family,
+        [int]$Port,
+        [AllowNull()][object]$Process,
+        [AllowEmptyString()][string]$LogPath,
+        [AllowEmptyString()][string]$InfoBasePath
+    )
+
+    $exited = $Family -eq 'vanessa-ui' -and (Test-VanessaLaunchedProcessExited -Process $Process)
+    if (-not $exited) { return "$Family on-demand MCP did not open port $Port. Log: $LogPath" }
+    $exitCode = 'unknown'
+    try { $exitCode = [string]$Process.ExitCode } catch { }
+    $message = "ITL_ONDEMAND_BACKEND_EXITED: $Family backend PID $($Process.Id) exited with code $exitCode before opening port $Port. Log: $LogPath"
+    if (Test-OneCConfigurationSignatureFailureLog -LogPath $LogPath) {
+        $message += ' ' + (Get-OneCConfigurationSignatureFailureMessage -InfoBasePath $InfoBasePath -LogPath $LogPath -Attempts 1)
+    }
+    return $message
+}
+
 function Start-ItlOnDemandBackendInstance {
     param([string]$Family, [string]$InstanceId, [string]$CatalogSha256, [string]$AuxiliaryContour = "", [object]$ServiceAdmissionPlan = $null)
     Invoke-WithItlOnDemandRuntimeMutation -Family $Family -InstanceIds @($InstanceId) -OwnerFunction 'Start-ItlOnDemandBackendInstanceCore' -OwnerArguments $PSBoundParameters
@@ -1940,8 +1963,8 @@ function Start-ItlOnDemandBackendInstanceCore {
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
         Set-ItlOnDemandManagedPortLeaseStatus -Family $portFamily -Key $key -LeaseToken $portLeaseToken -Status "process-started" -ProcessId $result.process.Id
         $startupStage = 'port-readiness'
-        $ready = $(if ($Family -eq "roctup") { Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) } else { Wait-VanessaMcpPort -Port $port -TimeoutSeconds 120 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) })
-        if (-not $ready) { throw "$Family on-demand MCP did not open port $port. Log: $($result.logPath)" }
+        $ready = $(if ($Family -eq "roctup") { Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) } else { Wait-VanessaMcpPort -Port $port -TimeoutSeconds 120 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) -Process $result.process })
+        if (-not $ready) { throw (Get-ItlOnDemandBackendNotReadyMessage -Family $Family -Port $port -Process $result.process -LogPath ([string]$result.logPath) -InfoBasePath ([string]$runtimeState.managerInfoBasePath)) }
         $startupStage = 'port-owner'
         $portOwnership = Get-ItlOnDemandPortOwnership -Port $port -ProcessId $result.process.Id -RetryUntil (New-ItlPortOwnershipDeadline)
         if ($portOwnership.decision -ne 'owned') {

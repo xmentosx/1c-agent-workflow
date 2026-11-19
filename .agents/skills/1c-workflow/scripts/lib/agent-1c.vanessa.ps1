@@ -6139,7 +6139,9 @@ function Run-DevBranchTests {
     $sessionWait = Get-OneCSessionWaitParameters -DefaultTimeoutSeconds ([math]::Min(300, $timeoutSeconds))
     try {
         Set-RunStage -Stage "vanessa.run" -Detail "Running TESTMANAGER and TESTCLIENT."
-        $logPath = Invoke-Enterprise `
+        # A repeated TESTMANAGER is a new process: let the window helper adopt it.
+        $logPath = Invoke-VanessaManagerLaunchWithSignatureRetry -InfoBasePath ([string]$serviceInfoBase.path) -BeforeRetry { $windowGroupRoot.adopted = $false } -Launch {
+            Invoke-Enterprise `
             -InfoBasePath $serviceInfoBase.path `
             -InfoBaseKind $serviceInfoBase.kind `
             -User $serviceInfoBase.user `
@@ -6169,6 +6171,7 @@ function Run-DevBranchTests {
                 Write-Host "[WARN] Vanessa verify exceeded timeout; stopping own TESTMANAGER/TESTCLIENT processes."
                 Stop-OwnHungVanessaTestClients -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
             }
+        }
         if ($null -ne $testClientStartupMonitor.failure) {
             $startupFailure = $testClientStartupMonitor.failure
             if ([string]$startupFailure.code -ceq 'ITL_VANESSA_TESTCLIENT_NOT_STARTED') {
@@ -9248,7 +9251,10 @@ function Wait-VanessaMcpPort {
     param(
         [int]$Port,
         [int]$TimeoutSeconds = 30,
-        [AllowNull()][object]$FocusGuard = $null
+        [AllowNull()][object]$FocusGuard = $null,
+        # The launched backend. Once it has exited nothing can open the port,
+        # so the wait ends instead of spending the rest of its budget.
+        [AllowNull()][object]$Process = $null
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -9258,10 +9264,73 @@ function Wait-VanessaMcpPort {
             Invoke-OneCLaunchFocusReturn -Guard $FocusGuard | Out-Null
             return $true
         }
+        if (Test-VanessaLaunchedProcessExited -Process $Process) { return $false }
         Start-Sleep -Milliseconds $(if ($null -ne $FocusGuard) { 200 } else { 500 })
     }
 
     return $false
+}
+
+# Only a confirmed exit counts; a missing or unreadable process stays "running"
+# so callers keep their existing wait.
+function Test-VanessaLaunchedProcessExited {
+    param([AllowNull()][object]$Process)
+
+    if ($null -eq $Process) { return $false }
+    try {
+        if ($Process -is [Diagnostics.Process]) { $Process.Refresh() }
+        return [bool]$Process.HasExited
+    } catch { return $false }
+}
+
+# 1C writes this line to /Out and exits when it cannot verify the configuration
+# of the infobase it is opening, before any configuration code runs. PM5 saw it
+# on 2026-11-07..18; a repeated launch usually opened the same infobase.
+function Test-OneCConfigurationSignatureFailureLog {
+    param([AllowEmptyString()][string]$LogPath)
+
+    if ([string]::IsNullOrWhiteSpace($LogPath) -or -not (Test-Path -LiteralPath $LogPath -PathType Leaf)) { return $false }
+    try { $text = Read-Utf8Text -Path $LogPath } catch { return $false }
+    $first = @(([string]$text) -split "`r?`n" | ForEach-Object { $_.Trim().TrimStart([char]0xFEFF).Trim() } | Where-Object { $_ }) | Select-Object -First 1
+    return ($null -ne $first -and $first.StartsWith('Цифровая подпись конфигурации неверна', [StringComparison]::OrdinalIgnoreCase))
+}
+
+function Get-OneCConfigurationSignatureFailureMessage {
+    param([string]$InfoBasePath, [string]$LogPath, [int]$Attempts)
+
+    return "ONEC_CONFIGURATION_SIGNATURE_INVALID: 1C could not open infobase '$InfoBasePath': the configuration digital signature is invalid (log '$LogPath'; attempts=$Attempts). Nothing ran in that infobase. If its files were copied or replaced while a 1C process held them, recreate the infobase through its owner; then repeat the original command."
+}
+
+# One automatic repeat of a TESTMANAGER launch that 1C refused with an invalid
+# configuration signature. The refusal precedes all configuration code, so the
+# repeat cannot duplicate work; any other failure is returned unchanged.
+function Invoke-VanessaManagerLaunchWithSignatureRetry {
+    param(
+        [Parameter(Mandatory = $true)][string]$InfoBasePath,
+        [Parameter(Mandatory = $true)][scriptblock]$Launch,
+        [scriptblock]$BeforeRetry = $null,
+        [ValidateRange(0, 60)][int]$RetryDelaySeconds = 5
+    )
+
+    for ($attempt = 1; ; $attempt++) {
+        $previousLog = [string]$script:LastLogPath
+        $failure = $null
+        $launchResult = $null
+        try { $launchResult = & $Launch } catch { $failure = $_ }
+        $attemptLog = [string]$script:LastLogPath
+        $signatureFailure = $attemptLog -cne $previousLog -and (Test-OneCConfigurationSignatureFailureLog -LogPath $attemptLog)
+        if (-not $signatureFailure) {
+            if ($null -ne $failure) { throw $failure }
+            return $launchResult
+        }
+        if ($attempt -ge 2) {
+            Set-RunFailureContext -Category 'infobase-readiness'
+            throw (Get-OneCConfigurationSignatureFailureMessage -InfoBasePath $InfoBasePath -LogPath $attemptLog -Attempts $attempt)
+        }
+        Write-Host "[WARN] ONEC_CONFIGURATION_SIGNATURE_INVALID: 1C refused infobase '$InfoBasePath' before running anything (log '$attemptLog'); repeating the launch once in ${RetryDelaySeconds}s."
+        if ($null -ne $BeforeRetry) { & $BeforeRetry }
+        if ($RetryDelaySeconds -gt 0) { Start-Sleep -Seconds $RetryDelaySeconds }
+    }
 }
 
 function Write-VanessaMcpKiloConfig {

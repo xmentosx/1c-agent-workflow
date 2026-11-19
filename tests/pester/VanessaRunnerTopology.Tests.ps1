@@ -1094,4 +1094,98 @@ Describe "Vanessa verification failure classification" {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It 'repeats a TESTMANAGER launch once when 1C refuses the configuration signature: <case>' -ForEach @(
+        @{ case = 'refused then opened'; outcomes = @('signature-throw', 'ok'); launches = 2; retries = 1; expectedError = '' },
+        @{ case = 'refused with exit code zero then opened'; outcomes = @('signature-return', 'ok'); launches = 2; retries = 1; expectedError = '' },
+        @{ case = 'refused twice'; outcomes = @('signature-throw', 'signature-throw'); launches = 2; retries = 1; expectedError = 'ONEC_CONFIGURATION_SIGNATURE_INVALID' },
+        @{ case = 'other failure'; outcomes = @('other-throw', 'ok'); launches = 1; retries = 0; expectedError = '1C Enterprise failed with exit code 1' },
+        @{ case = 'opened'; outcomes = @('ok'); launches = 1; retries = 0; expectedError = '' }
+    ) {
+        # PM5 2026-11-07: two TESTMANAGER launches logged only "Цифровая подпись
+        # конфигурации неверна"; the agent's third, manual launch passed.
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl vanessa $nonAscii " + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $serviceBase = Join-Path $tempRoot "service base $nonAscii"
+                $script:fixtureOutcomes = [Collections.Generic.Queue[string]]::new([string[]]$outcomes)
+                $script:fixtureLaunches = 0
+                $script:fixtureRetries = 0
+                $script:LastLogPath = Join-Path $tempRoot 'earlier.log'
+                $launch = {
+                    $script:fixtureLaunches++
+                    $outcome = $script:fixtureOutcomes.Dequeue()
+                    $log = Join-Path $tempRoot ("1c-enterprise-$($script:fixtureLaunches).log")
+                    $script:LastLogPath = $log
+                    $text = if ($outcome -like 'signature-*') { "Цифровая подпись конфигурации неверна, Цифровая подпись конфигурации неверна`r`n" } elseif ($outcome -eq 'other-throw') { "Ошибка соединения с информационной базой`r`n" } else { "" }
+                    [IO.File]::WriteAllText($log, $text, [Text.UTF8Encoding]::new($true))
+                    if ($outcome -like '*-throw') { throw "1C Enterprise failed with exit code 1. PID: 1. Log: $log" }
+                    return $log
+                }
+                $failure = ''
+                $returned = ''
+                try {
+                    $returned = Invoke-VanessaManagerLaunchWithSignatureRetry -InfoBasePath $serviceBase -Launch $launch -BeforeRetry { $script:fixtureRetries++ } -RetryDelaySeconds 0 6>$null
+                } catch { $failure = $_.Exception.Message }
+                [pscustomobject]@{ launches = $script:fixtureLaunches; retries = $script:fixtureRetries; failure = $failure; returned = $returned
+                    category = [string]$script:RunErrorCategory; serviceBase = $serviceBase; lastLog = $script:LastLogPath }
+            }
+
+            $result.launches | Should -Be $launches
+            $result.retries | Should -Be $retries
+            if ($expectedError) {
+                $result.failure | Should -Match ([regex]::Escape($expectedError))
+                $result.returned | Should -BeNullOrEmpty
+            } else {
+                $result.failure | Should -BeNullOrEmpty
+                $result.returned | Should -BeExactly $result.lastLog
+            }
+            if ($expectedError -eq 'ONEC_CONFIGURATION_SIGNATURE_INVALID') {
+                $result.failure | Should -Match ([regex]::Escape("infobase '$($result.serviceBase)'"))
+                $result.failure | Should -Match 'attempts=2'
+                $result.category | Should -Be 'infobase-readiness'
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'stops waiting for the Vanessa MCP port once its backend exited and names the refusal' {
+        # PM5 2026-11-08: a backend that died after about a second still cost the
+        # whole port wait before ITL_ONDEMAND_START_FAILED phase=broker-start.
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl vanessa $nonAscii " + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $log = Join-Path $tempRoot '1c-enterprise-mcp.log'
+                [IO.File]::WriteAllText($log, "Цифровая подпись конфигурации неверна`r`n", [Text.UTF8Encoding]::new($true))
+                $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+                $listener.Start()
+                $closedPort = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
+                $listener.Stop()
+                $process = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoProfile', '-Command', 'exit 3') -WindowStyle Hidden -PassThru
+                $watch = [Diagnostics.Stopwatch]::StartNew()
+                $ready = Wait-VanessaMcpPort -Port $closedPort -TimeoutSeconds 60 -Process $process
+                $watch.Stop()
+                $process.WaitForExit()
+                $serviceBase = Join-Path $tempRoot "service $nonAscii"
+                [pscustomobject]@{ ready = $ready; seconds = $watch.Elapsed.TotalSeconds; serviceBase = $serviceBase
+                    message = Get-ItlOnDemandBackendNotReadyMessage -Family 'vanessa-ui' -Port $closedPort -Process $process -LogPath $log -InfoBasePath $serviceBase
+                    alive = Get-ItlOnDemandBackendNotReadyMessage -Family 'vanessa-ui' -Port $closedPort -Process $null -LogPath $log -InfoBasePath $serviceBase }
+            }
+
+            $result.ready | Should -BeFalse
+            $result.seconds | Should -BeLessThan 15
+            $result.message | Should -Match '^ITL_ONDEMAND_BACKEND_EXITED: vanessa-ui backend PID \d+ exited with code 3 before opening port'
+            $result.message | Should -Match ([regex]::Escape("ONEC_CONFIGURATION_SIGNATURE_INVALID: 1C could not open infobase '$($result.serviceBase)'"))
+            $result.alive | Should -Match '^vanessa-ui on-demand MCP did not open port \d+\. Log: '
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
