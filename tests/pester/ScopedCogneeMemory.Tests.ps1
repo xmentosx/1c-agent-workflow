@@ -93,18 +93,25 @@
             }finally{$Server.process.Dispose()}
         }
         function Install-MemoryPolicyFixture {
-            param([string]$Root)
-            $relative='.cursor/rules/project-memory.mdc'
-            $policy=Join-Path $Root $relative
-            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $policy))
-            Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/fixtures/scoped-memory/project-memory.md') -Destination $policy
+            # Installs the owner rule for each client; returns the first one.
+            param([string]$Root,[string[]]$Clients=@('cursor'))
             $contract=Read-ItlMemoryJson (Join-Path $RepoRoot '.agents/skills/1c-workflow/assets/scoped-memory-policy.json')
             [void][IO.Directory]::CreateDirectory((Join-Path $Root '.agent-1c'))
-            $manifest=@{tools=@('cursor');files=@{}}
-            $manifest.files[$relative]=@{source='content/rules/project-memory.md';installedHash=(Get-FileHash -LiteralPath $policy -Algorithm SHA256).Hash.ToLowerInvariant();userModified=$false}
+            $manifest=@{tools=@($Clients);files=@{}};$installed=@()
+            foreach($client in $Clients){
+                $relative=if($client -eq 'cursor'){'.cursor/rules/project-memory.mdc'}else{
+                    if(-not (Test-Path -LiteralPath 'Function:\Get-ItlClientAdapter')){. (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1')}
+                    ([string](Get-ItlClientAdapter -Client $client).rulesPath).TrimEnd('/')+'/project-memory.md'
+                }
+                $policy=Join-Path $Root $relative
+                [void][IO.Directory]::CreateDirectory((Split-Path -Parent $policy))
+                Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/fixtures/scoped-memory/project-memory.md') -Destination $policy
+                $manifest.files[$relative]=@{source='content/rules/project-memory.md';installedHash=(Get-FileHash -LiteralPath $policy -Algorithm SHA256).Hash.ToLowerInvariant();userModified=$false}
+                $installed+=$policy
+            }
             Write-Utf8TextAtomic (Join-Path $Root '.ai-rules.json') ($manifest|ConvertTo-Json -Depth 12)
             Write-Utf8TextAtomic (Join-Path $Root '.agent-1c/dependency-lock.json') (@{schemaVersion=1;dependencies=@{aiRules1c=@{commit=$contract.rulesCandidateCommit}}}|ConvertTo-Json -Depth 10)
-            return $policy
+            return $installed[0]
         }
         function Mock-IndexedFixtureNotes {
             Mock Invoke-ItlMemoryHttp {
@@ -566,6 +573,36 @@
         (Read-ItlMemoryJson (Get-ItlMemoryPath binding $b.projectRoot)).mode | Should -Be disabled
         Get-ItlMemoryClientEndpoint cursor | Should -BeNullOrEmpty
         (Read-ItlMemoryJson (Get-ItlMemoryPath binding $b.projectRoot)).provider.datasets.Count | Should -Be 7
+    }
+    It 'contributes the endpoint to a client installed after memory setup without a new binding' {
+        foreach($leaf in @('client-adapters','client-opencode','jsonc')){. (Join-Path $RepoRoot ".agents/skills/1c-workflow/scripts/lib/agent-1c.$leaf.ps1")}
+        # Setup ran in Cursor; Claude Code was installed in the same copy later.
+        $policy=Install-MemoryPolicyFixture $b.projectRoot -Clients @('cursor','claude-code')
+        $b.policyProofs=@{cursor=(Get-ItlMemoryPolicyProof $policy $b.projectRoot cursor)}
+        $script:Agent1cScriptRoot=Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts'
+        $script:Config=[pscustomobject]@{};$script:ItlMcpRegistryOperation=@{error=$null}
+        $path=Get-ItlMemoryPath binding $b.projectRoot
+        $null=Update-ItlMemoryJson $path {param($old) return $b}
+        # A plan shows the endpoint without recording the client.
+        (Get-ItlMemoryClientEndpoint claude-code -NoEnroll).args | Should -Contain 'claude-code'
+        @((Read-ItlMemoryJson $path).policyProofs.Keys) | Should -Be @('cursor')
+        # The owner rewrite records the proof in place and contributes the endpoint.
+        $requests=Write-Vibecoding1cMcpClientConfig -Client claude-code -ReturnRequests -EndpointSet @{allEndpoints=@()}
+        $memory=@($requests|Where-Object owner -EQ scoped-memory)
+        $memory.Count | Should -Be 1
+        $memory[0].endpoints[0].args | Should -Contain 'claude-code'
+        $after=Read-ItlMemoryJson $path
+        $after.bindingId | Should -BeExactly 'b1'
+        @($after.policyProofs.Keys|Sort-Object) | Should -Be @('claude-code','cursor')
+        $after.policyProofs['claude-code'].path | Should -BeExactly (Join-Path $b.projectRoot '.claude/rules-1c/project-memory.md')
+        # A client without the installed owner rule gets nothing.
+        Get-ItlMemoryClientEndpoint kilocode | Should -BeNullOrEmpty
+        (Read-ItlMemoryJson $path).policyProofs.Contains('kilocode') | Should -BeFalse
+        # Explicit disable stays authoritative for every client.
+        Mock Write-Vibecoding1cMcpClientConfig {}
+        $null=Invoke-ItlMemorySetup disable -Client cursor
+        Get-ItlMemoryClientEndpoint claude-code | Should -BeNullOrEmpty
+        Get-ItlMemoryClientEndpoint codex | Should -BeNullOrEmpty
     }
     It 'blocks old package copy and accepts the same compatibility request after owned disable' {
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1')

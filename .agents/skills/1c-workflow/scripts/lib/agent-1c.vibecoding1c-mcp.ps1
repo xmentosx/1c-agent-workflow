@@ -4156,7 +4156,7 @@ function Write-Vibecoding1cMcpClientConfig {
     if(Test-Path -LiteralPath $memoryRoot -PathType Container){
         . Import-ItlMemory
         foreach($selectedClient in $selectedClients){
-            $memoryEndpoint=Get-ItlMemoryClientEndpoint -Client $selectedClient
+            $memoryEndpoint=Get-ItlMemoryClientEndpoint -Client $selectedClient -NoEnroll:$PlanOnly
             $memoryEndpoints=@(if($memoryEndpoint){$memoryEndpoint})
             if($memoryEndpoint -or @(Get-ItlManagedMcpOwnerKeys -Owner 'scoped-memory' -Client $selectedClient).Count){
                 $requests += [pscustomobject]@{client=$selectedClient;owner='scoped-memory';endpoints=$memoryEndpoints;replaceAiRulesServerIds=@()}

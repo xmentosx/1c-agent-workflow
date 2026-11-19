@@ -24,7 +24,11 @@ initialization, without another memory prompt. Common qualified settings live
 at user-local MCP home/memory/provider.json; explicit enable establishes this
 connection. Missing prerequisites mean unavailable/unconfigured and do not block
 the catalog. Explicit off/disabled persists, including before the first binding.
-Startup/package update never enrolls old working projects. The old memoryOptIn
+Startup/package update never enrolls old working projects. Memory is enabled per
+working copy, not per client: in a copy with an enabled binding, every owner
+rewrite of a client configuration, update-workflow included, records the proof
+and adds the endpoint for a client installed later whose own installed policy
+qualifies; a plan only shows it. The old memoryOptIn
 flag can be an automatic default: ambiguous provenance requires explicit setup.
 `-MemoryAction auto` retries this setup after prerequisites are supplied;
 explicit enable can override disable. Enable uses the applied pinned context,

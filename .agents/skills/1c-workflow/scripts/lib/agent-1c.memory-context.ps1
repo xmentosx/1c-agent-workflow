@@ -164,18 +164,39 @@ function Resolve-ItlMemoryLiveBinding {
 }
 
 function Get-ItlMemoryClientEndpoint {
-    param([string]$Client)
-    $binding=Read-ItlMemoryJson (Get-ItlMemoryPath binding $script:ProjectRoot)
+    param([string]$Client,[switch]$NoEnroll)
+    $bindingPath=Get-ItlMemoryPath binding $script:ProjectRoot
+    $binding=Read-ItlMemoryJson $bindingPath
     if($binding -and $binding.mode -eq 'enabled' -and -not (Test-ItlMemoryIdentityComplete $binding.identity)){
         # Every owner rewrite of the client configuration, update-workflow
         # included, extends a binding of the previous workflow once.
-        try{Sync-ItlMemoryContext -Context $null;$binding=Read-ItlMemoryJson (Get-ItlMemoryPath binding $script:ProjectRoot)}catch{}
+        try{Sync-ItlMemoryContext -Context $null;$binding=Read-ItlMemoryJson $bindingPath}catch{}
     }
-    # A binding without an acknowledged policy for this client contributes no
-    # endpoint; a missing key is that case, not a failure under strict mode.
+    if(-not $binding -or $binding.mode -ne 'enabled'){return $null}
+    # A missing key is the no-proof case, not a failure under strict mode.
     $proof=Get-ItlCatalogField (Get-ItlCatalogField $binding 'policyProofs') $Client
-    if(-not $binding -or $binding.mode -ne 'enabled' -or -not $proof){return $null}
-    try{$null=Get-ItlMemoryPolicyProof (Get-ItlCatalogField $proof 'path' '') $script:ProjectRoot $Client}catch{return $null}
+    if($proof){
+        try{$null=Get-ItlMemoryPolicyProof (Get-ItlCatalogField $proof 'path' '') $script:ProjectRoot $Client}catch{return $null}
+    }else{
+        # Memory is enabled for the working copy, not for the client that ran
+        # its setup: a client installed later gets the endpoint on the next
+        # owner rewrite once its own installed policy qualifies. A missing or
+        # disabled binding and an unqualified policy still contribute nothing.
+        try{$proof=Get-ItlMemoryPolicyProof (Join-Path $script:ProjectRoot (Get-ItlMemoryPolicyRelativePath -Client $Client)) $script:ProjectRoot $Client}catch{return $null}
+        if(-not $NoEnroll){
+            # The server admits a client only by its proof in the binding. The
+            # bindingId is kept, so a running server of another client follows
+            # this in-place update without a context change.
+            $held=[string]$binding.bindingId
+            try{
+                $null=Update-ItlMemoryJson $bindingPath {param($current)
+                    if(-not $current -or $current.mode -ne 'enabled' -or [string]$current.bindingId -cne $held){throw 'MEMORY_BINDING_CONFLICT'}
+                    $proofs=ConvertTo-ItlCatalogCanonicalValue (Get-ItlCatalogField $current 'policyProofs' ([ordered]@{}))
+                    $proofs[$Client]=$proof;$current['policyProofs']=$proofs;return $current
+                }
+            }catch{return $null}
+        }
+    }
     return [ordered]@{name='itl-scoped-cognee';transport='stdio';command='powershell.exe';args=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $script:Agent1cScriptRoot 'cognee-memory-mcp.ps1'),'-BindingPath',(Get-ItlMemoryPath binding $script:ProjectRoot),'-Client',$Client);env=@{};startupTimeoutSeconds=20;toolTimeoutSeconds=65;owner='itl'}
 }
 
