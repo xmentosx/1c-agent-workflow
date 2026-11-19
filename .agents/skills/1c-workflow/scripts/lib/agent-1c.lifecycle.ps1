@@ -8092,6 +8092,73 @@ function Get-WorkflowActiveDevBranchStates {
     return @($states)
 }
 
+function Get-WorkflowFixedDefectHandoffMatches {
+    # Informational only: fixed known-defects keys still declared by an
+    # unclosed handoff report. Closure is per handoffs directory.
+    param(
+        [string]$RegistryPath,
+        [string[]]$Roots
+    )
+
+    if (-not (Test-Path -LiteralPath $RegistryPath -PathType Leaf)) { return @() }
+    $registry = Read-Utf8Text -Path $RegistryPath | ConvertFrom-Json -ErrorAction Stop
+    $fixedIn = @{}
+    foreach ($entry in @($registry.entries)) {
+        if ([string]$entry.status -ceq 'fixed' -and [string]$entry.incidentKey) {
+            $fixedIn[[string]$entry.incidentKey] = [string]$entry.fixedIn
+        }
+    }
+    if ($fixedIn.Count -eq 0) { return @() }
+
+    $pattern = '(?im)^[\s>*_`\-0-9.]*incident(Key|Closed)[*_`]*\s*:\s*[*_`]*([A-Za-z0-9_.\-]+@[A-Za-z0-9_.\-]+)'
+    $unclosed = [System.Collections.Generic.List[object]]::new()
+    foreach ($root in @($Roots | Where-Object { $_ } | Select-Object -Unique)) {
+        $directory = Join-Path $root 'handoffs'
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
+        $opened = [ordered]@{}
+        $closed = @{}
+        foreach ($file in @(Get-ChildItem -LiteralPath $directory -Filter '*.md' -File -ErrorAction Stop | Sort-Object Name)) {
+            foreach ($match in [regex]::Matches((Read-Utf8Text -Path $file.FullName), $pattern)) {
+                $key = $match.Groups[2].Value
+                if (-not $fixedIn.ContainsKey($key)) { continue }
+                if ($match.Groups[1].Value -ieq 'Closed') {
+                    $closed[$key] = $true
+                } else {
+                    if (-not $opened.Contains($key)) { $opened[$key] = [System.Collections.Generic.List[string]]::new() }
+                    if (-not $opened[$key].Contains($file.FullName)) { $opened[$key].Add($file.FullName) }
+                }
+            }
+        }
+        foreach ($key in @($opened.Keys)) {
+            if ($closed.ContainsKey($key)) { continue }
+            $unclosed.Add([pscustomobject]@{ incidentKey = $key; fixedIn = $fixedIn[$key]; reports = @($opened[$key]) })
+        }
+    }
+    return @($unclosed)
+}
+
+function Add-WorkflowFixedDefectHandoffReportLines {
+    param(
+        [System.Collections.Generic.List[string]]$Lines,
+        [object]$BranchReport
+    )
+
+    $roots = @($script:ProjectRoot) + @(@($BranchReport.roots) | ForEach-Object { [string](Get-ConfigValueFromObject $_ 'root' '') })
+    try {
+        $registryPath = Join-Path $script:ProjectRoot '.agents/skills/1c-workflow/references/known-defects.json'
+        $found = @(Get-WorkflowFixedDefectHandoffMatches -RegistryPath $registryPath -Roots $roots)
+    } catch {
+        $Lines.Add("- Сверка handoffs с реестром известных дефектов ITL пропущена: $($_.Exception.Message)")
+        return
+    }
+    if ($found.Count -eq 0) { return }
+    $Lines.Add('- Исправлены известные дефекты ITL, по которым в проекте есть незакрытые handoff-отчёты (информационно, обновление завершено):')
+    foreach ($item in $found) {
+        $Lines.Add("  - $($item.incidentKey) (fixedIn: $($item.fixedIn)): $(@($item.reports) -join '; ')")
+    }
+    $Lines.Add('  Закройте каждый отчёт supplement-ом со строкой `incidentClosed: <incidentKey>` после проверки, что обход больше не нужен.')
+}
+
 function Write-WorkflowUpdateFollowUp {
     param(
         [object]$Source,
@@ -8172,6 +8239,7 @@ function Write-WorkflowUpdateFollowUp {
     } else {
         $reportLines.Add("- Зарегистрированных рабочих веток для обновления нет.")
     }
+    Add-WorkflowFixedDefectHandoffReportLines -Lines $reportLines -BranchReport $BranchReport
     Write-AndSetRunUserReport -Lines $reportLines
 }
 
