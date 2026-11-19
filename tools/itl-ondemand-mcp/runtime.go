@@ -1403,6 +1403,9 @@ func (r *runtime) validateVanessaResult(ctx context.Context, name string, argume
 	if marker := vanessaSemanticFailureMarker(name, resultText(result)); marker != "" {
 		return toolError("ITL_VANESSA_TOOL_RESULT_FAILED", "Vanessa returned a runtime/editor failure", map[string]any{"tool": name, "marker": marker})
 	}
+	if failed := vanessaStepOutcomeFailure(name, resultText(result)); failed != nil {
+		return failed
+	}
 	if classifyVanessaTool(name, arguments) != vanessaToolConnect {
 		return result
 	}
@@ -1509,6 +1512,26 @@ func vanessaSemanticFailureMarker(name, text string) string {
 		}
 	}
 	return ""
+}
+
+// Vanessa itl-r17 answers a failed or unproven execute_feature_step through a
+// successful MCP completion that starts with one of these codes: a JSON-RPC
+// error would make this facade stop the backend and its TestClient after an
+// ordinary failed step. The step ran, so the error is not a pre-action rejection.
+func vanessaStepOutcomeFailure(name, text string) *mcp.CallToolResult {
+	if name != "execute_feature_step" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(text)
+	for _, code := range []string{"ITL_VANESSA_STEP_FAILED", "ITL_VANESSA_STEP_NOT_PROVEN"} {
+		if rest, ok := strings.CutPrefix(trimmed, code+":"); ok {
+			return toolError(code, strings.TrimSpace(rest), map[string]any{
+				"tool": name, "stepExecuted": true, "automaticRetryPerformed": false,
+				"action": "fix-the-step-or-product-and-repeat",
+			})
+		}
+	}
+	return nil
 }
 
 func isVanessaAuthoringTool(name string) bool {

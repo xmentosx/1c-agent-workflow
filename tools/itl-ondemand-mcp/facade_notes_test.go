@@ -88,7 +88,7 @@ func TestExecuteFeatureStepSuccessIsMarkedAsUnproven(t *testing.T) {
 	rt := &runtime{family: "vanessa-ui"}
 	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Шаг в строке фича файла успешно выполнен"}}}
 	rt.appendFacadeNotes("execute_feature_step", result)
-	if !strings.Contains(resultText(result), "not that it succeeded") {
+	if !strings.Contains(resultText(result), "without its scenario context") {
 		t.Fatalf("execute_feature_step success was not marked: %q", resultText(result))
 	}
 	failed := toolError("ITL_VANESSA_TOOL_RESULT_FAILED", "failed", nil)
@@ -96,6 +96,41 @@ func TestExecuteFeatureStepSuccessIsMarkedAsUnproven(t *testing.T) {
 	rt.appendFacadeNotes("execute_feature_step", failed)
 	if resultText(failed) != before {
 		t.Fatalf("a failed step received the success note: %q", resultText(failed))
+	}
+}
+
+// Vanessa itl-r17 answers a failed or unproven step through a successful MCP
+// completion, because a JSON-RPC error stops the backend; the facade owns the
+// conversion into a tool error (PM5 2026-11-10).
+func TestExecuteFeatureStepFailureCodesBecomeToolErrors(t *testing.T) {
+	rt := &runtime{family: "vanessa-ui"}
+	for _, tc := range []struct{ code, text string }{
+		{"ITL_VANESSA_STEP_FAILED", "ITL_VANESSA_STEP_FAILED: Ошибка калибровки\nАктивное окно: Настройки канбана"},
+		{"ITL_VANESSA_STEP_NOT_PROVEN", "ITL_VANESSA_STEP_NOT_PROVEN: Шаг завершился, но его строка имеет статус <>, а не Success."},
+	} {
+		upstream := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: tc.text}}}
+		result := rt.validateVanessaResult(context.Background(), "execute_feature_step", map[string]any{"lineNumber": 12}, upstream, nil)
+		assertToolErrorCode(t, result, tc.code)
+		details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
+		if details["stepExecuted"] != true || details["automaticRetryPerformed"] != false {
+			t.Fatalf("%s: the executed step lost its outcome details: %#v", tc.code, details)
+		}
+		if !strings.Contains(resultText(result), strings.TrimPrefix(tc.text, tc.code+": ")) {
+			t.Fatalf("%s: the Vanessa text was not kept: %q", tc.code, resultText(result))
+		}
+		rt.appendFacadeNotes("execute_feature_step", result)
+		if strings.Contains(resultText(result), "ITL note: execute_feature_step") {
+			t.Fatalf("%s: a failed step received the success note", tc.code)
+		}
+	}
+	success := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Шаг в строке фича файла успешно выполнен"}}}
+	if got := rt.validateVanessaResult(context.Background(), "execute_feature_step", nil, success, nil); got != success || got.IsError {
+		t.Fatalf("a successful step was changed: %#v", got)
+	}
+	// Only execute_feature_step owns these codes; another tool keeps its text.
+	other := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ITL_VANESSA_STEP_FAILED: quoted in a form value"}}}
+	if got := rt.validateVanessaResult(context.Background(), "get_active_window_data", nil, other, nil); got != other || got.IsError {
+		t.Fatalf("another tool was converted: %#v", got)
 	}
 }
 

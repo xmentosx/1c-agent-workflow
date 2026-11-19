@@ -48,9 +48,12 @@ its result carries the same code as a note. The notice is reported once.
 
 A `run_scenario` or `get_test_results` answer that contains Vanessa's scenario
 report is returned as that report even when a failed step quotes a runtime
-marker; the markers still classify editor answers. A successful
-`execute_feature_step` gets a note that Vanessa accepted the step without its
-outcome. When the project's `compatibility.json` pins another facade version
+marker; the markers still classify editor answers. Vanessa itl-r17 answers a
+failed `execute_feature_step` with `ITL_VANESSA_STEP_FAILED` and a line whose
+status is not Success with `ITL_VANESSA_STEP_NOT_PROVEN` inside a successful MCP
+completion, because a JSON-RPC error stops the backend; the facade returns both
+as tool errors with `stepExecuted: true`. A successful step gets a note that it
+ran without its scenario context. When the project's `compatibility.json` pins another facade version
 than the running process, every result gets `ITL_ONDEMAND_FACADE_SUPERSEDED`
 as a note; the call itself is handled normally.
 
