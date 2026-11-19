@@ -275,7 +275,10 @@ function Get-ReviewScopeCommitPicker {
         $fields = ([string]$record).Trim("`n") -split [char]0x1f, 5
         if ($fields.Count -lt 5) { continue }
         $parents = @($fields[1] -split ' ' | Where-Object { $_ })
-        $anchor = if ($parents.Count -gt 1) { 'merge' } elseif ($fields[0] -ceq $resetHead -or $fields[4] -ceq 'chore: reset branch for next change') { 'reset' } else { '' }
+        # The ancestry record of a reset (before the next refresh) has two parents
+        # but changes no file; it is not an import from master.
+        $anchor = if ($fields[4] -ceq 'chore: record the master commit copied by the last reset') { '' }
+            elseif ($parents.Count -gt 1) { 'merge' } elseif ($fields[0] -ceq $resetHead -or $fields[4] -ceq 'chore: reset branch for next change') { 'reset' } else { '' }
         $commits.Add([pscustomobject]@{ commit = $fields[0]; parent = $(if ($parents.Count -gt 0) { $parents[0] } else { '' }); author = $fields[2]; date = $fields[3]; subject = $fields[4]; anchor = $anchor; crossed = $crossed })
         if ($anchor -ceq 'merge') { $crossed = $true }
         # Work before a reset is not this branch's current work.

@@ -15827,6 +15827,8 @@ function Invoke-NewDevBranchLifecycleMerge {
     )
 
     $branch = [string](Get-StateValue -State $State -Name "devBranch" -Default "")
+    # Before the transaction pins the branch commit, so a resume sees the same head.
+    Add-DevBranchResetMasterAncestry -State $State | Out-Null
     $branchCommit = Get-CurrentCommit
     Set-PendingDevBranchMergeTransaction `
         -State $State `
@@ -20660,6 +20662,45 @@ function Set-DevBranchTreeToMasterCommit {
     Invoke-Git @("commit", "--quiet", "-m", "chore: reset branch for next change")
     Assert-CleanGit
     return (Get-CurrentCommit)
+}
+
+# Records a commit of an already staged tree and moves the current branch to it
+# only from the expected head, so an interruption leaves either the old or the
+# new head and never a pending merge.
+function New-DevBranchRecordedCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tree,
+        [Parameter(Mandatory = $true)][string[]]$Parents,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    $arguments = @("commit-tree", $Tree)
+    foreach ($parent in $Parents) { $arguments += @("-p", $parent) }
+    $arguments += @("-m", $Message)
+    $commit = ([string](Get-GitOutput $arguments)).Trim()
+    if ($commit -notmatch '^[a-f0-9]{40}$') { throw "DEV_BRANCH_RECORDED_COMMIT_INVALID: $commit" }
+    Invoke-Git @("update-ref", "-m", $Message, "HEAD", $commit, $Parents[0])
+    return $commit
+}
+
+# A reset copies the master tree but keeps the old branch head as its only
+# parent, so git would merge the next master against the branch's previous base
+# and report master's own changes as conflicts or merge them wrongly (PM5
+# itldev/branch2, 2026-11-16: 30 conflicted files, 6 really touched). Before the
+# first merge after a reset, record the copied master commit as a parent
+# without changing any file. Once a later merge contains it this is a no-op.
+function Add-DevBranchResetMasterAncestry {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    $resetMaster = [string](Get-StateValue -State $State -Name "resetMasterCommit" -Default "")
+    if ($resetMaster -notmatch '^[a-f0-9]{40}$' -or -not (Test-GitCommitExists $resetMaster)) { return $false }
+    $headCommit = Get-CurrentCommit
+    if (Test-GitCommitIsAncestor -Ancestor $resetMaster -Descendant $headCommit) { return $false }
+    Assert-CleanGit
+    $tree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
+    $commit = New-DevBranchRecordedCommit -Tree $tree -Parents @($headCommit, $resetMaster) -Message "chore: record the master commit copied by the last reset"
+    Write-Host "Recorded master commit $resetMaster, copied by the last branch reset, as a parent ($commit); the refresh now merges against it."
+    return $true
 }
 
 function Restore-ExistingDevBranchFromSeed {

@@ -276,6 +276,19 @@ evidence: reset integration runs keep prior work in history, remove planted
 leftovers and resume legacy phases; Release E2E file and server resets assert
 the same. Rollback restores archive creation; nothing needs migration.
 
+Architecture checkpoint approved on 2026-11-19: a reset copies the master tree
+but keeps the old branch head as its only parent, so the next refresh merged
+against the pre-reset base (PM5 itldev/branch2, 2026-11-16: 30 conflicted
+files, 6 really touched by the branch, and silent mis-merges). Before the first
+lifecycle merge after a reset (refresh, refresh-lite, close), the existing merge
+owner records the master commit that the reset copied as the second parent of a
+tree-identical commit; git then merges against it. This is the installed
+migration: branches reset earlier get the record on their next merge, and a
+later merge makes it a no-op. The reset, its journal and every merge contract
+are unchanged; no state, lock, prompt or barrier is added. `commit-tree` plus a
+compare-and-swap `update-ref` leave the old or the new head, never a pending
+merge. Rollback removes the call; recorded commits stay harmless history.
+
 The user approved concurrent gate stand stages on 2026-10-28. The invariant
 stays one state machine: the existing gate owner starts upgrade/fresh scenario
 executions before static and, for a Release-requiring PublishDevelop, the
