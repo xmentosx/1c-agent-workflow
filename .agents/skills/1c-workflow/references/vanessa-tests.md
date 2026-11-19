@@ -123,6 +123,7 @@ prove the changed behavior.
 
 - Create minimal test data in the scenario or library step; use only agreed database fixtures.
 - Make test object names unique, for example with the change id plus date or UUID.
+- Vanessa stops at the first failed step, so final cleanup may not run. A scenario persisting data must be rerunnable: first idempotently remove its own leftovers, found by a stable scenario-owned marker, and continue instead of failing. Never touch data without that marker.
 - Assert observable results: value, record, movement, table row, command availability, not just absence of errors.
 - After opening a form, check warnings and `ErrorWindow` when the next step assumes a successful open.
 - Use explicit waits such as `я жду закрытия окна ... в течение 20 секунд`. Use blind pauses only when no stable event exists, and comment why.
