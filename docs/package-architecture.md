@@ -843,11 +843,15 @@ process. Each journal record keeps the run's JUnit seconds per feature title;
 without `VANESSA_TEST_TIMEOUT_SECONDS` the next run gets 120 s plus 1.5 x the
 90th percentile of each selected feature's last 10 runs, never below 1800 s nor
 above 7200 s, and prints the source. An explicit setting always wins, so the
-template leaves it unset. The stall monitor and the runner deadline contracts
-are unchanged: the runner still extends only by the published phase budget
-(the planned extra owner grace was dropped because it would change that
-contract for every phase). Rollback: the budget function returns the setting
-or 1800 s; the extra journal field is ignored.
+template leaves it unset. The stall monitor and the runner deadline contract
+are unchanged: the runner still extends exactly to the published phase budget.
+A larger budget usually passes the 3600 s operation limit, so the runner's
+deadline would equal the Vanessa deadline and kill the helper before it stops
+its processes and records the timeout, JUnit and journal (PM5
+compact-20261117-013607). The Vanessa run therefore publishes its budget plus
+180 s of its own post-timeout work; its 1C processes still stop at the
+timeout. Rollback: the budget function returns the setting or 1800 s, the
+published budget drops the 180 s, and the extra journal field is ignored.
 
 ## 1C source byte-preservation policy
 
