@@ -158,7 +158,7 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `VANESSA_TEST_FOREIGN_WAIT_MODE` | Реакция на чужие процессы | `warn`/`wait`, default `warn` | user |
 | `VANESSA_TEST_FOREIGN_QUIET_SECONDS` | Quiet period в `wait` | default `60` | user |
 | `VANESSA_TEST_FOREIGN_WAIT_TIMEOUT_SECONDS` | Timeout ожидания | default `600` | user |
-| `VANESSA_TEST_TIMEOUT_SECONDS` | Timeout прогона | default `1800` | user |
+| `VANESSA_TEST_TIMEOUT_SECONDS` | Timeout прогона; если не задан — `1800` или оценка по журналу проверок: 120 с + 1,5 × p90 выбранных feature, не больше `7200` | не задан | user |
 | `VANESSA_TEST_CLIENT_STARTUP_TIMEOUT_SECONDS` | Timeout TestClient | default `300` | user |
 | `VANESSA_TESTCLIENT_CONNECT_TIMEOUT_SECONDS` | Прогон падает `ITL_VANESSA_TESTCLIENT_NOT_STARTED`, если TESTMANAGER за это время не запустил ни одного своего TestClient (например, окно ошибки платформы); `0` отключает | default `300` | user |
 | `VANESSA_TEST_WINDOW_SEARCH_TIMEOUT_SECONDS` | Timeout поиска окна | default `60` | user |

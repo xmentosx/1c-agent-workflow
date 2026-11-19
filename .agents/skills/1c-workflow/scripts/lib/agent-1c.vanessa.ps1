@@ -1788,6 +1788,66 @@ function Get-VanessaTestTimeoutSeconds {
     return $value
 }
 
+# Seconds per feature (JUnit testsuite name = the feature title) of one run.
+function Get-VanessaJUnitFeatureSeconds {
+    param([string]$Path)
+    $features = [ordered]@{}
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $features }
+    try {
+        [xml]$xml = Read-Utf8Text -Path $Path
+        foreach ($suite in @($xml.SelectNodes('//*[local-name()="testsuite" and not(ancestor::*[local-name()="testsuite"])]'))) {
+            $name = ([string]$suite.GetAttribute('name')).Trim()
+            $seconds = 0.0
+            if (-not $name -or -not [double]::TryParse([string]$suite.GetAttribute('time'), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$seconds) -or $seconds -le 0) { continue }
+            if ($features.Count -ge 200) { break }
+            $features[$name] = [int][Math]::Ceiling([double]$features[$name] + $seconds)
+        }
+    } catch { }
+    return $features
+}
+
+function Get-VanessaFeatureTitle {
+    param([string]$Path)
+    try {
+        foreach ($line in [IO.File]::ReadLines($Path, [Text.Encoding]::UTF8)) {
+            $match = [regex]::Match($line, '^\s*(?:Функционал|Функциональность|Feature)\s*:\s*(?<title>.+?)\s*$')
+            if ($match.Success) { return $match.Groups['title'].Value }
+        }
+    } catch { }
+    return ''
+}
+
+# The run budget follows recorded durations of the selected features (PM5
+# itldev/branch4, 2026-11-16/17: green runs of 2700-3500 s failed the fixed
+# 1800 s default). An explicit VANESSA_TEST_TIMEOUT_SECONDS always wins. The
+# estimate is the startup allowance plus 1.5 x the 90th percentile of each
+# selected feature's last runs, never below the default nor above 4 x it.
+function Get-VanessaRunTimeoutBudget {
+    param([string[]]$FeatureFiles = @(), [AllowNull()][object]$State = $null)
+
+    $default = 1800
+    if ($null -ne (Get-EnvValue -Name "VANESSA_TEST_TIMEOUT_SECONDS")) {
+        return [pscustomobject]@{ seconds = Get-VanessaTestTimeoutSeconds; source = 'setting VANESSA_TEST_TIMEOUT_SECONDS' }
+    }
+    $history = @{}
+    if (Get-Command Get-ItlCheckFeatureDurations -CommandType Function -ErrorAction SilentlyContinue) {
+        $history = Get-ItlCheckFeatureDurations -State $State
+    }
+    $titles = @($FeatureFiles | ForEach-Object { Get-VanessaFeatureTitle -Path $_ } | Where-Object { $_ } | Select-Object -Unique)
+    $estimate = 120.0
+    $known = 0
+    foreach ($title in $titles) {
+        if (-not $history.ContainsKey($title)) { continue }
+        $values = @($history[$title] | Sort-Object)
+        $rank = [int][Math]::Ceiling(0.9 * $values.Count) - 1
+        $estimate += 1.5 * [double]$values[[Math]::Max(0, $rank)]
+        $known++
+    }
+    $seconds = [int][Math]::Min(4 * $default, [Math]::Max($default, [Math]::Ceiling($estimate)))
+    $source = if ($seconds -gt $default) { "history of $known of $($titles.Count) selected features" } else { 'default' }
+    return [pscustomobject]@{ seconds = $seconds; source = $source }
+}
+
 function Normalize-OneCEventLogLevel {
     param([AllowNull()][string]$Value)
 
@@ -6115,7 +6175,10 @@ function Run-DevBranchTests {
     $logPath = ""
     $currentCommit = Get-CurrentCommit
     $currentFingerprint = if ($script:ActiveAuxiliaryVanessaContext) { [string]$script:ActiveAuxiliaryVanessaContext.verificationFingerprint } else { Get-VerificationFingerprint }
-    $timeoutSeconds = Get-VanessaTestTimeoutSeconds
+    $timeoutBudget = Get-VanessaRunTimeoutBudget -FeatureFiles $applicationFeatureFiles -State $state
+    $timeoutSeconds = [int]$timeoutBudget.seconds
+    # The check journal records this run's per-feature durations for later budgets.
+    Set-ItlCheckTimingValue -Name vanessaRunDirectory -Value $runDirectory
     $runLivenessMonitor = New-VanessaRunLivenessMonitor -RunDirectory $runDirectory -TimeoutSeconds $timeoutSeconds
     $runStartedAt = Get-Date
     $runFinishedAt = $null
@@ -6133,7 +6196,7 @@ function Run-DevBranchTests {
         -RunDirectory $runDirectory `
         -ProfileNames @($testClientTopology.profiles | ForEach-Object { [string]$_.name }) `
         -ConnectTimeoutSeconds $testClientConnectTimeout
-    Write-Host "Vanessa test timeout: $timeoutSeconds seconds"
+    Write-Host "Vanessa test timeout: $timeoutSeconds seconds (source: $($timeoutBudget.source))"
     $admissionTargets = @(Get-VanessaTestClientAdmissionTargets -Topology $testClientTopology -DefaultState $state)
     $runDatabaseResources = @(Get-VanessaTestClientDatabaseResources -Topology $testClientTopology -DefaultState $state)
     $sessionWait = Get-OneCSessionWaitParameters -DefaultTimeoutSeconds ([math]::Min(300, $timeoutSeconds))

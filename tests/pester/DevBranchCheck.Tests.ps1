@@ -262,4 +262,59 @@ Describe 'Check duration journal' {
         { Add-ItlCheckHistoryRecord -State ([pscustomobject]@{ devBranch = 'itldev/demo'; mainWorktreePath = $main }) -Status 'failed' -Trigger 'command' 3>$null } | Should -Not -Throw
         Test-Path -LiteralPath (Join-Path $main '.agent-1c\verification-selection') -PathType Leaf | Should -BeTrue
     }
+
+    It 'records per-feature Vanessa seconds from the run JUnit' {
+        $main = Join-Path $TestDrive 'Журнал фич с пробелом'
+        $run = Join-Path $main 'build\test-results\vanessa\run 1'
+        New-Item -ItemType Directory -Force -Path $run | Out-Null
+        [IO.File]::WriteAllText((Join-Path $run 'junit.xml'), @'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+	<testsuite name="Канбан: операции" tests="2" failures="0" time="1855.4"><testcase name="a" time="1855.4"/></testsuite>
+	<testsuite name="Закрытие доски" tests="1" failures="1" time="72.1"><testcase name="b" time="72.1"/></testsuite>
+	<testsuite name="Пустая" tests="0" time="0"/>
+</testsuites>
+'@, [Text.UTF8Encoding]::new($true))
+        $state = [pscustomobject]@{ devBranch = 'itldev/demo'; mainWorktreePath = $main }
+        Start-ItlCheckTiming
+        Set-ItlCheckTimingValue -Name vanessaRunDirectory -Value $run
+        Add-ItlCheckHistoryRecord -State $state -Status 'partial' -Trigger 'command'
+        $last = (@(Get-Content -LiteralPath (Get-ItlCheckHistoryPath -State $state) -Encoding UTF8 | Where-Object { $_.Trim() })[-1]) | ConvertFrom-Json
+        @($last.vanessaFeatureSeconds.PSObject.Properties.Name) | Should -Be @('Канбан: операции', 'Закрытие доски')
+        $last.vanessaFeatureSeconds.'Канбан: операции' | Should -Be 1856
+        $last.vanessaFeatureSeconds.'Закрытие доски' | Should -Be 73
+    }
+
+    It 'sizes the Vanessa run budget from recorded feature durations: <case>' -ForEach @(
+        @{ case = 'no history'; history = @(); setting = $null; seconds = 1800; source = 'default' },
+        @{ case = 'long selected features'; history = @(@{ 'Канбан: операции' = 2000; 'Закрытие доски' = 100 }, @{ 'Канбан: операции' = 1800 }); setting = $null; seconds = 3270; source = 'history of 2 of 3 selected features' },
+        @{ case = 'capped'; history = @(@{ 'Канбан: операции' = 20000 }); setting = $null; seconds = 7200; source = 'history of 1 of 3 selected features' },
+        @{ case = 'explicit setting'; history = @(@{ 'Канбан: операции' = 20000 }); setting = '900'; seconds = 900; source = 'setting VANESSA_TEST_TIMEOUT_SECONDS' }
+    ) {
+        # PM5 itldev/branch4, 2026-11-16/17: green Vanessa runs of 2700-3500 s
+        # failed the fixed 1800 s default; the agent raised it per process.
+        $main = Join-Path $TestDrive ('Бюджет Vanessa ' + $case)
+        $features = Join-Path $main 'tests\features'
+        New-Item -ItemType Directory -Force -Path $features | Out-Null
+        $files = @()
+        foreach ($title in @('Канбан: операции', 'Закрытие доски', 'Новая фича')) {
+            $file = Join-Path $features ($title.Replace(':', '') + '.feature')
+            [IO.File]::WriteAllText($file, "#language: ru`n`n@tree`nФункционал: $title`n`nСценарий: проверка`n", [Text.UTF8Encoding]::new($true))
+            $files += $file
+        }
+        $state = [pscustomobject]@{ devBranch = 'itldev/demo'; mainWorktreePath = $main }
+        $journal = Get-ItlCheckHistoryPath -State $state
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $journal) | Out-Null
+        $lines = @($history | ForEach-Object { [ordered]@{ at = '2026-11-17T00:00:00Z'; branch = 'itldev/other'; status = 'passed'; vanessaFeatureSeconds = $_ } | ConvertTo-Json -Compress -Depth 4 })
+        [IO.File]::WriteAllText($journal, (($lines + @('not json')) -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+        $saved = [Environment]::GetEnvironmentVariable('VANESSA_TEST_TIMEOUT_SECONDS', 'Process')
+        try {
+            [Environment]::SetEnvironmentVariable('VANESSA_TEST_TIMEOUT_SECONDS', $setting, 'Process')
+            $budget = Get-VanessaRunTimeoutBudget -FeatureFiles $files -State $state
+        } finally {
+            [Environment]::SetEnvironmentVariable('VANESSA_TEST_TIMEOUT_SECONDS', $saved, 'Process')
+        }
+        $budget.seconds | Should -Be $seconds
+        $budget.source | Should -BeExactly $source
+    }
 }
