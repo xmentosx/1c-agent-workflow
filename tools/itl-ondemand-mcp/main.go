@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.4.33"
+const version = "0.4.34"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -93,11 +93,18 @@ func run(args []string) error {
 		HelperPath:     *helperPath, ProjectRoot: root, Family: *family,
 		InstanceID: instanceID, CatalogHash: catalog.SHA256,
 	}
+	// The installed catalogs live in assets/ondemand-mcp/catalogs next to the
+	// compatibility manifest that pins this facade's version.
+	compatibilityPath := ""
+	if absoluteCatalog, err := filepath.Abs(*catalogPath); err == nil {
+		compatibilityPath = filepath.Join(filepath.Dir(filepath.Dir(absoluteCatalog)), "compatibility.json")
+	}
 	rt := &runtime{
 		catalog: catalog, broker: broker, projectRoot: root, family: *family,
 		instanceID: instanceID, idle: *idle, catalogWait: 30 * time.Second, logger: logger,
 		vanessaConnectWait: 60 * time.Second,
 		progress:           make(map[string]*progressRoute),
+		compatibilityPath:  compatibilityPath,
 	}
 	serverName := "itl-roctup-data"
 	if *family == "vanessa-ui" {
