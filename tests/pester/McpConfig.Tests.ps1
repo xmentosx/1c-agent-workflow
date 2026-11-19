@@ -2634,6 +2634,47 @@ enabled = true
         @($paths | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash }) | Should -Be $before
     }
 
+    It "names a shared or stale code index as a snapshot to confirm in src/cf" {
+        # PM5 2026-11-10: the remote code index predated master, and its stale
+        # bodies made a fix that master already had look missing.
+        $root = Join-Path $TestDrive 'Индекс кода с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root '.kilo') | Out-Null
+        Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+        Set-Content -LiteralPath (Join-Path $root '.ai-rules.json') -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
+        Set-Content -LiteralPath (Join-Path $root '.kilo/kilo.json') -Encoding UTF8 -Value '{"mcp":{"1c-code-metadata-mcp":{"type":"remote","url":"http://fixture/code"},"1c-graph-metadata-mcp":{"type":"remote","url":"http://fixture/graph"},"1C-docs-mcp":{"type":"remote","url":"http://fixture/docs"}}}'
+        $texts = & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $AgentTarget = 'kilocode'
+            function Get-InitAgentExecutionEnvironment { return @{} }
+            function Get-InitAgentExecutionProcessChain { return @() }
+            $endpoints = @(
+                [pscustomobject]@{ id = 'code'; scope = 'project'; name = 'itl-project-code'; url = 'http://fixture/code'; provider = 'remote'; family = 'vibecoding1c'; configId = 'pm5corp'; clientNames = [pscustomobject]@{ aiRules1c = '1c-code-metadata-mcp' } },
+                [pscustomobject]@{ id = 'graph'; scope = 'project'; name = 'itl-project-graph'; url = 'http://fixture/graph'; provider = 'local'; family = 'vibecoding1c'; clientNames = [pscustomobject]@{ aiRules1c = '1c-graph-metadata-mcp' } },
+                [pscustomobject]@{ id = 'docs'; scope = 'global'; name = 'itl-1c-docs'; url = 'http://fixture/docs'; provider = 'remote'; family = 'vibecoding1c'; clientNames = [pscustomobject]@{ aiRules1c = '1C-docs-mcp' } }
+            )
+            function Get-Vibecoding1cMcpClientConfigEndpointSet { [pscustomobject]@{ allEndpoints = $endpoints } }
+            function Get-Vibecoding1cMcpCurrentStateServers { @() }
+            function Select-Vibecoding1cMcpManifestServers { $endpoints }
+            function Test-Vibecoding1cMcpServerEnabled { return $true }
+            function Get-Vibecoding1cMcpSelectedProvider { param($Server) return [string]$Server.provider }
+            function Test-Vibecoding1cMcpServerNeedsRemoteConfig { return $false }
+            function Get-Vibecoding1cMcpSelectedHostId { return '' }
+            function Get-Vibecoding1cMcpEndpointFreshness { param($Endpoint) if ($Endpoint.id -eq 'graph') { 'fresh' } else { 'remote-shared' } }
+            $summary = Get-Vibecoding1cMcpStatusSummary
+            $shared = Write-Vibecoding1cMcpSummaryLines -Summary $summary 6>&1 | Out-String
+            $legacy = Write-Vibecoding1cMcpSummaryLines -Summary ([pscustomobject]@{ active = @(); skipped = @(); staleServers = @(); missingConfigId = @(); staleIndexes = @() }) 6>&1 | Out-String
+            [pscustomobject]@{ snapshots = @($summary.snapshotCodeIndexes); active = @($summary.active); shared = $shared; legacy = $legacy }
+        }
+        # The fresh graph and the shared docs index stay active but are not code snapshots.
+        @($texts.active) | Should -Contain 'itl-project-graph/local/fresh'
+        @($texts.active) | Should -Contain 'itl-1c-docs/remote/remote-shared'
+        @($texts.snapshots) | Should -Be @('itl-project-code/remote-shared')
+        $texts.shared | Should -Match 'code index snapshots: itl-project-code/remote-shared\. Such an index can predate this worktree'
+        $texts.shared | Should -Match 'read the found module in src/cf before a behaviour claim'
+        $texts.shared | Should -Not -Match 'itl-1c-docs/remote-shared\. Such'
+        $texts.legacy | Should -Not -Match 'code index snapshots'
+    }
+
     It "does not inspect MCP config when installed membership disagrees with configured membership" {
         $root = Join-Path $TestDrive 'Несогласованный MCP с пробелом'
         New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root '.kilo') | Out-Null
