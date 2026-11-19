@@ -132,7 +132,8 @@ workplace, task; inside a level verified before candidate, newest change first.
 Maxima (standing/index rows): task -/10, workspace 2/10, workplace 3/10, host
 3/10, project 5/30, product 3/20 per level, organization 5/30. The whole answer
 is bounded at 2000 tokens by the recall counter; what does not fit is counted in
-`more`. `serverCoverage` is `bounded`, `partial` (named datasets or originals
+`more`. Index titles give way first, then the local receipt list (`localTrimmed`;
+`local_only=true` keeps it), then standing notes. `serverCoverage` is `bounded`, `partial` (named datasets or originals
 not read in time) or `unavailable`: then the local part is still returned and a
 missing index is not absence of knowledge. No cache between operations.
 

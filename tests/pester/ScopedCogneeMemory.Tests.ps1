@@ -1332,6 +1332,28 @@ try {
         # Only originals of standing notes are read: at most the level maxima.
         @($script:Calls|Where-Object {$_.path -like '*/raw'}).Count | Should -Be 21
     }
+    It 'keeps later-level standing rules ahead of the local receipt list in the bounded status' {
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.memory-tokens.ps1')
+        # PM5 after a batch of writes: the four newest receipts filled the local
+        # part and the user's workplace rules, last in level order, fell into more.
+        $rule=('Постоянное правило работы с конфигурацией клиента и его стендом. '*8).Substring(0,400)
+        foreach($kind in @('project','workplace')){
+            $dataset=Get-ScopeDataset $b $kind
+            for($number=1;$number -le 3;$number++){$null=Add-FixtureNote $dataset "$kind-rule-$number" $rule -Standing -Title "Правило $kind $number"}
+        }
+        $evidence=@(@{source='user';reference='chat 2026-11-19'})
+        for($number=1;$number -le 4;$number++){$null=Invoke-ItlMemoryRemember $b ("Проверенный факт номер $number о стенде клиента и его конфигурации.") 'itl_project_customer' "fact-$number" @{} $evidence verified}
+        @((Invoke-ItlMemoryStatus $b -LocalOnly).receipts).Count | Should -Be 4
+        $status=Invoke-ItlMemoryStatus $b
+        $tokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $status -Depth 30 -Compress)
+        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 2000
+        @($status.standing|Where-Object level -EQ workplace).Count | Should -Be 3
+        @($status.standing|Where-Object level -EQ project).Count | Should -Be 3
+        # The receipts gave way and say where the full list is.
+        @($status.receipts).Count | Should -BeLessThan 4
+        $status.localTrimmed | Should -Match 'local_only=true'
+        @((Invoke-ItlMemoryStatus $b -LocalOnly).receipts).Count | Should -Be 4
+    }
     It 'cuts an overfull project index at its level limit and counts the rest' {
         $project=Get-ProjectDataset $b
         foreach($number in 1..45){$null=Add-FixtureNote $project "note-$number" 'Обычная заметка.' -Title "Заметка $number"}
