@@ -3607,17 +3607,6 @@ function Get-Vibecoding1cMcpStatusSummary {
         }
     } | Where-Object { $_ })
 
-    # Code and graph answer questions about this worktree's source. A shared or
-    # not-yet-fresh index is a snapshot that can predate it (PM5 2026-11-10: a
-    # remote index older than master made a present fix look missing).
-    $snapshotCodeIndexes = @($activeEndpoints | ForEach-Object {
-        $id = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "id" -Default "")
-        $name = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "name" -Default "")
-        if (-not $name -or $id -notin @("code", "graph")) { return }
-        $freshness = Get-Vibecoding1cMcpEndpointFreshness -Endpoint $_
-        if ($freshness -ne "fresh") { "$name/$freshness" }
-    } | Where-Object { $_ })
-
     $missingConfigId = @()
     $skipped = @()
     foreach ($server in @(Select-Vibecoding1cMcpManifestServers)) {
@@ -3679,7 +3668,6 @@ function Get-Vibecoding1cMcpStatusSummary {
         active = @($active)
         skipped = @($skipped)
         staleServers = @($staleServers)
-        snapshotCodeIndexes = @($snapshotCodeIndexes)
         missingConfigId = @($missingConfigId)
         staleIndexes = @(Select-Vibecoding1cMcpAllowedStaleIndexes -Values @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "staleIndexes" -Default @())))
     }
@@ -3699,10 +3687,6 @@ function Write-Vibecoding1cMcpSummaryLines {
     Write-Host "${Indent}vibecoding1c MCP stale servers: $(Format-Vibecoding1cMcpStatusList -Items $Summary.staleServers)"
     Write-Host "${Indent}vibecoding1c MCP missing-configId servers: $(Format-Vibecoding1cMcpStatusList -Items $Summary.missingConfigId)"
     Write-Host "${Indent}vibecoding1c MCP stale indexes: $(Format-Vibecoding1cMcpStatusList -Items $Summary.staleIndexes)"
-    $snapshots = @(if ($Summary.PSObject.Properties['snapshotCodeIndexes']) { $Summary.snapshotCodeIndexes })
-    if ($snapshots.Count -gt 0) {
-        Write-Host "${Indent}vibecoding1c MCP code index snapshots: $(Format-Vibecoding1cMcpStatusList -Items $snapshots). Such an index can predate this worktree: locate symbols through MCP, then read the found module in src/cf before a behaviour claim; check whether master has a change with git log master -S."
-    }
 }
 
 function ConvertTo-Vibecoding1cMcpTomlString {
