@@ -140,6 +140,9 @@ namespace Itl.WindowHelper
         public string Journal { get { return Path.Combine(Root, "journal"); } }
         public string HiddenLog { get { return Path.Combine(Journal, "hidden.jsonl"); } }
         public string LeaseLog { get { return Path.Combine(Journal, "leases.jsonl"); } }
+        // Lock transitions of the interactive desktop; kept apart from the trimmed
+        // hidden-window journal so a long run keeps every transition.
+        public string DesktopLog { get { return Path.Combine(Journal, "desktop.jsonl"); } }
     }
 
     internal sealed class GroupConfig
@@ -1113,6 +1116,8 @@ namespace Itl.WindowHelper
         private readonly System.Windows.Forms.Timer stateTimer = new System.Windows.Forms.Timer();
         private readonly FileSystemWatcher watcher;
         private readonly uint ownPid = (uint)Process.GetCurrentProcess().Id;
+        // Last journaled state of the interactive desktop (null before the first check).
+        private bool? desktopInteractive;
         private readonly DateTime startedUtc = DateTime.UtcNow;
         private readonly Dictionary<uint, ProcessFacts> foreignFacts = new Dictionary<uint, ProcessFacts>();
         private readonly Dictionary<IntPtr, uint> hiddenByUs = new Dictionary<IntPtr, uint>();
@@ -1237,7 +1242,7 @@ namespace Itl.WindowHelper
                 string result = ReturnFocus();
                 Journal(paths.HiddenLog, new Dictionary<string, object>
                 {
-                    { "t", Now() }, { "event", "foreground-returned" }, { "pid", pid }, { "title", title },
+                    { "t", Now() }, { "event", "foreground-returned" }, { "pid", pid }, { "role", RoleOf(pid) }, { "title", title },
                     { "result", result }, { "userTitle", userWindow == IntPtr.Zero ? "" : Native.TitleOf(userWindow) }
                 });
                 return;
@@ -1257,6 +1262,30 @@ namespace Itl.WindowHelper
             if (pid == 0 || pid == ownPid) return false;
             ProcessFacts f = Foreign(pid);
             return !(f.IsWindowHelper || f.IsTestClient || f.IsTestManager);
+        }
+
+        // A locked or disconnected session has no interactive desktop: 1C cannot
+        // activate a new window there and UI steps fail. The run classifies such
+        // failures by these transitions (PM5 itldev/branch4, 2026-11-17).
+        private void JournalDesktopState()
+        {
+            bool interactive = Native.InteractiveDesktop();
+            if (desktopInteractive.HasValue && desktopInteractive.Value == interactive) return;
+            desktopInteractive = interactive;
+            Journal(paths.DesktopLog, new Dictionary<string, object>
+            {
+                { "t", Now() }, { "event", interactive ? "desktop-unlocked" : "desktop-locked" }
+            });
+        }
+
+        // The journal names the group process, so an agent does not read the test
+        // client's own windows as a user session.
+        private string RoleOf(uint pid)
+        {
+            ProcessFacts f = Foreign(pid);
+            if (f.IsTestClient) return "testclient";
+            if (f.IsTestManager) return "testmanager";
+            return f.IsOneC ? "1c" : "other";
         }
 
         private ProcessFacts Foreign(uint pid)
@@ -1329,7 +1358,7 @@ namespace Itl.WindowHelper
             {
                 Journal(paths.HiddenLog, new Dictionary<string, object>
                 {
-                    { "t", Now() }, { "event", "hidden" }, { "reason", reason }, { "pid", pid }, { "hwnd", hwnd.ToInt64() },
+                    { "t", Now() }, { "event", "hidden" }, { "reason", reason }, { "pid", pid }, { "role", RoleOf(pid) }, { "hwnd", hwnd.ToInt64() },
                     { "class", cls }, { "title", title }, { "image", image }
                 });
                 TrimJournal();
@@ -1406,6 +1435,7 @@ namespace Itl.WindowHelper
         private void Reconcile()
         {
             ScanRequests();
+            JournalDesktopState();
             // Children appear early: full snapshots every 2 s for the first minute after a
             // start or an adopt, then every 60 s; status requests and a foreground TestClient
             // refresh at once.

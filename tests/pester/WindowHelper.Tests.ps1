@@ -414,6 +414,20 @@ Describe 'Window helper build, group and channel' {
         $manual.dopparams.Contains('ITLWindowChannelRoot') | Should -BeFalse
     }
 
+    It 'journals the interactive desktop state once when the helper starts and not again while it stays the same' {
+        $group = New-WhGroup 'рабочий стол'
+        Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+        $log = Join-Path $group.directory 'journal\desktop.jsonl'
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        while (-not (Test-Path -LiteralPath $log) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        # Two more reconcile periods with an unchanged desktop add no entry.
+        Start-Sleep -Seconds 5
+        $entries = @(Read-ItlWindowHelperJournal -Path $log)
+        $entries | Should -HaveCount 1
+        # The run may execute with the screen locked; either state is a valid first record.
+        [string]$entries[0].event | Should -BeIn @('desktop-unlocked', 'desktop-locked')
+    }
+
     It 'answers status, adopt, lease and lease-end through the file channel and rejects a foreign protocol' {
         $group = New-WhGroup 'протокол'
         # A request written before the helper starts is picked up by its first scan.
@@ -687,6 +701,30 @@ static class FakeClient {
         Format-ItlWindowHelperLeaseSummary -Summary $summary | Should -Be 'Agent UI control: mode=hidden modeSource=project leases=2 leaseSeconds=2.2 consentWaitSeconds=14.0 queueWaitSeconds=0.2 declined=1'
         (Write-ItlWindowHelperFailureDiagnostics -Group $group 6>&1) -join "`n" | Should -Match "Hidden TestClient window: .*title='Предупреждение'.*image='C:\\img.png'"
         (Get-ItlWindowHelperLeaseSummary -Group ([pscustomobject]@{ ready = $false; mode = 'hidden'; warning = 'ITL_WINDOW_HELPER_UNAVAILABLE: x' })).warning | Should -Be 'ITL_WINDOW_HELPER_UNAVAILABLE: x'
+    }
+
+    It 'names the process role of a hidden window and reads desktop lock intervals' {
+        # PM5 2026-11-17: an agent read the test client's own windows in this
+        # journal as a user session, and a locked screen failed UI steps.
+        $dir = Join-Path $TestDrive 'Журнал рабочего стола'
+        [void][IO.Directory]::CreateDirectory((Join-Path $dir 'journal'))
+        '{"t":"2026-11-17T20:14:48Z","event":"hidden","pid":5096,"role":"testclient","title":"Настройки канбана","class":"V8TopLevelFrameSDIsec","image":""}' | Set-Content -LiteralPath (Join-Path $dir 'journal\hidden.jsonl') -Encoding UTF8
+        @(
+            '{"t":"2026-11-17T02:00:00.0000000Z","event":"desktop-unlocked"}',
+            '{"t":"2026-11-17T02:10:00.0000000Z","event":"desktop-locked"}',
+            'not json',
+            '{"t":"2026-11-17T02:40:00.0000000Z","event":"desktop-unlocked"}',
+            '{"t":"2026-11-17T03:00:00.0000000Z","event":"desktop-locked"}'
+        ) | Set-Content -LiteralPath (Join-Path $dir 'journal\desktop.jsonl') -Encoding UTF8
+        $group = [pscustomobject]@{ ready = $true; directory = $dir; mode = 'hidden'; warning = '' }
+        (Write-ItlWindowHelperFailureDiagnostics -Group $group 6>&1) -join "`n" | Should -Match "Hidden TestClient window: t=\S+ role=testclient title='Настройки канбана'"
+        $until = [datetime]::new(2026, 11, 17, 3, 30, 0, [DateTimeKind]::Utc)
+        $intervals = @(Get-ItlWindowHelperDesktopLockIntervals -Group $group -UntilUtc $until)
+        $intervals | Should -HaveCount 2
+        $intervals[0].fromUtc | Should -Be ([datetime]::new(2026, 11, 17, 2, 10, 0, [DateTimeKind]::Utc))
+        $intervals[0].toUtc | Should -Be ([datetime]::new(2026, 11, 17, 2, 40, 0, [DateTimeKind]::Utc))
+        $intervals[1].toUtc | Should -Be $until
+        @(Get-ItlWindowHelperDesktopLockIntervals -Group ([pscustomobject]@{ ready = $false })) | Should -HaveCount 0
     }
 }
 

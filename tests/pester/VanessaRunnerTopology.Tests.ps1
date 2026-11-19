@@ -1188,4 +1188,54 @@ Describe "Vanessa verification failure classification" {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It 'routes a UI failure inside a desktop lock interval to the runner and keeps other failures with the product' {
+        # PM5 itldev/branch4, 2026-11-17: with the screen locked a VAExtension form
+        # could not activate and SettingsMapping failed as product-assertion.
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl vanessa $nonAscii " + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                # Vanessa writes local timestamps; the helper journal is UTC.
+                $failedLocal = [datetime]::new(2026, 11, 17, 5, 30, 0, [DateTimeKind]::Local)
+                $passedLocal = $failedLocal.AddMinutes(-20)
+                $junit = Join-Path $tempRoot 'junit.xml'
+                [IO.File]::WriteAllText($junit, @"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="Сопоставление настроек" tests="2" failures="1" time="120">
+    <testcase name="Колонка выбирается по новому названию" timestamp="$($failedLocal.ToString('yyyy-MM-ddTHH:mm:ss'))" time="60"><failure message="Форма не найдена"/></testcase>
+    <testcase name="Пройденный" timestamp="$($passedLocal.ToString('yyyy-MM-ddTHH:mm:ss'))" time="30"/>
+  </testsuite>
+</testsuites>
+"@, [Text.UTF8Encoding]::new($true))
+                $windows = @(Get-VanessaFailedTestcaseWindows -JUnitPath $junit)
+                $failedUtc = $failedLocal.ToUniversalTime()
+                $covering = [pscustomobject]@{ fromUtc = $failedUtc.AddMinutes(-5); toUtc = $failedUtc.AddMinutes(10) }
+                $before = [pscustomobject]@{ fromUtc = $failedUtc.AddMinutes(-40); toUtc = $failedUtc.AddMinutes(-30) }
+                [pscustomobject]@{
+                    windows = $windows; failedUtc = $failedUtc
+                    hit = Find-VanessaFailureSessionLock -FailedWindows $windows -LockIntervals @($before, $covering)
+                    miss = Find-VanessaFailureSessionLock -FailedWindows $windows -LockIntervals @($before)
+                    none = Find-VanessaFailureSessionLock -FailedWindows @() -LockIntervals @($covering)
+                    missing = @(Get-VanessaFailedTestcaseWindows -JUnitPath (Join-Path $tempRoot 'нет.xml'))
+                }
+            }
+            $result.windows | Should -HaveCount 1
+            $result.windows[0].fromUtc | Should -Be $result.failedUtc
+            $result.windows[0].toUtc | Should -Be $result.failedUtc.AddSeconds(65)
+            $result.hit | Should -Not -BeNullOrEmpty
+            $result.hit.fromUtc | Should -Be $result.failedUtc.AddMinutes(-5)
+            $result.miss | Should -BeNullOrEmpty
+            $result.none | Should -BeNullOrEmpty
+            $result.missing | Should -HaveCount 0
+            # The runner applies the route only to a product-assertion verdict.
+            $runner = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1') -Raw -Encoding UTF8
+            $runner | Should -Match "(?s)if \(\`$failureRoute\.category -eq 'product-assertion'\) \{\s+\`$sessionLock = Find-VanessaFailureSessionLock.*?category = 'runner'; requiredAction = 'unlock-windows-session-and-repeat-original-command'"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }

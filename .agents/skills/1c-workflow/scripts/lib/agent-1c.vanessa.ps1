@@ -5424,6 +5424,36 @@ function Test-VanessaEventLogConfirmsPrimaryFailure {
     }
 }
 
+# UTC windows of failed JUnit testcases; Vanessa writes local timestamps.
+function Get-VanessaFailedTestcaseWindows {
+    param([string]$JUnitPath)
+    $windows = @()
+    if ([string]::IsNullOrWhiteSpace($JUnitPath) -or -not (Test-Path -LiteralPath $JUnitPath -PathType Leaf)) { return $windows }
+    try {
+        [xml]$xml = Read-Utf8Text -Path $JUnitPath
+        foreach ($case in @($xml.SelectNodes('//*[local-name()="testcase"][*[local-name()="failure" or local-name()="error"]]'))) {
+            $start = [datetime]::MinValue
+            if (-not [datetime]::TryParseExact([string]$case.GetAttribute('timestamp'), 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeLocal, [ref]$start)) { continue }
+            $seconds = 0.0
+            [void][double]::TryParse([string]$case.GetAttribute('time'), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$seconds)
+            $fromUtc = $start.ToUniversalTime()
+            $windows += [pscustomobject]@{ fromUtc = $fromUtc; toUtc = $fromUtc.AddSeconds([Math]::Max(0, $seconds) + 5) }
+        }
+    } catch { }
+    return $windows
+}
+
+# The first desktop-lock interval that overlaps a failed testcase, or $null.
+function Find-VanessaFailureSessionLock {
+    param([object[]]$FailedWindows = @(), [object[]]$LockIntervals = @())
+    foreach ($failed in @($FailedWindows)) {
+        foreach ($lock in @($LockIntervals)) {
+            if ([datetime]$failed.fromUtc -le [datetime]$lock.toUtc -and [datetime]$lock.fromUtc -le [datetime]$failed.toUtc) { return $lock }
+        }
+    }
+    return $null
+}
+
 function Get-VanessaVerificationFailureRoute {
     param(
         [Parameter(Mandatory = $true)][object]$Verification,
@@ -6507,6 +6537,17 @@ function Run-DevBranchTests {
             -EventLogVerification $eventLogVerification `
             -EventLogConfirmsPrimaryFailure:$eventLogConfirmsPrimaryFailure `
             -ScenariosPassed:$scenariosPassed
+        # A locked Windows session cannot activate 1C windows: a UI step failing
+        # meanwhile says nothing about the product (PM5 itldev/branch4, 2026-11-17).
+        if ($failureRoute.category -eq 'product-assertion') {
+            $sessionLock = Find-VanessaFailureSessionLock `
+                -FailedWindows @(Get-VanessaFailedTestcaseWindows -JUnitPath (Join-Path $runDirectory 'junit.xml')) `
+                -LockIntervals @(Get-ItlWindowHelperDesktopLockIntervals -Group $windowGroup)
+            if ($null -ne $sessionLock) {
+                Write-Host "[WARN] ITL_UI_SESSION_LOCKED: the Windows session was locked from $(([datetime]$sessionLock.fromUtc).ToString('o')) to $(([datetime]$sessionLock.toUtc).ToString('o')) while a failed UI scenario ran; a locked session cannot activate 1C windows, so the product was not judged. Keep the session unlocked and repeat the original command."
+                $failureRoute = [pscustomobject]@{ category = 'runner'; requiredAction = 'unlock-windows-session-and-repeat-original-command' }
+            }
+        }
         Set-RunFailureContext -Category $failureRoute.category -RequiredAction $failureRoute.requiredAction
         if ($verification.status -eq "unknown") {
             Write-OneCVanessaProcessDiagnostics -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
