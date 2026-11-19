@@ -8,15 +8,19 @@
     $script:CheckAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
     @($errors).Count | Should -Be 0
     $script:RerunDefinition = $script:CheckAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Invoke-PesterIsolatedRerun' }, $true)
-    function New-RerunFixture([string[]]$FailedFiles) {
+    function New-RerunFixture([string[]]$FailedFiles, [hashtable]$ObservedSeconds = @{}) {
         $root = Join-Path $TestDrive ('Кандидат с пробелом ' + [guid]::NewGuid().ToString('N').Substring(0, 6))
         foreach ($relative in @('scripts', 'tests/pester', 'build/test-results/local')) { [void][IO.Directory]::CreateDirectory((Join-Path $root $relative)) }
         Copy-Item -LiteralPath (Join-Path $RepoRoot 'scripts/pester-timings.json') -Destination (Join-Path $root 'scripts/pester-timings.json')
-        $cases = @($FailedFiles | ForEach-Object { '<testcase name="fails" classname="' + [Security.SecurityElement]::Escape((Join-Path $root $_)) + '"><failure message="boom"/></testcase>' }) -join ''
-        [IO.File]::WriteAllText((Join-Path $root 'build/test-results/local/pester.xml'), ('<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="x">' + $cases + '</testsuite></testsuites>'), [Text.UTF8Encoding]::new($false))
+        $suites = @($FailedFiles | ForEach-Object {
+            $path = [Security.SecurityElement]::Escape((Join-Path $root $_))
+            $time = if ($ObservedSeconds.ContainsKey($_)) { ' time="' + ([double]$ObservedSeconds[$_]).ToString([Globalization.CultureInfo]::InvariantCulture) + '"' } else { '' }
+            '<testsuite name="' + $path + '"' + $time + '><testcase name="fails" classname="' + $path + '"><failure message="boom"/></testcase></testsuite>'
+        }) -join ''
+        [IO.File]::WriteAllText((Join-Path $root 'build/test-results/local/pester.xml'), ('<?xml version="1.0" encoding="utf-8"?><testsuites>' + $suites + '</testsuites>'), [Text.UTF8Encoding]::new($false))
         return $root
     }
-    function Invoke-RerunFixture([string]$Root, [string[]]$PassingAlone, [int]$BudgetSeconds = 3600) {
+    function Invoke-RerunFixture([string]$Root, [string[]]$PassingAlone, [int]$BudgetSeconds = 3600, [string[]]$Unfinished = @()) {
         $repoRoot = $Root
         $outputRoot = Join-Path $Root 'build/test-results/local'
         $junitPath = Join-Path $outputRoot 'pester.xml'
@@ -28,6 +32,8 @@
             param([string]$ScriptPath, [string[]]$Arguments, [int]$TimeoutSeconds, [int]$NoProgressSeconds, [string]$LogName)
             $plan = Get-Content -LiteralPath $Arguments[1] -Raw -Encoding UTF8 | ConvertFrom-Json
             $script:rerunCalls += @([pscustomobject]@{ script = (Split-Path -Leaf $ScriptPath); paths = @($plan.paths); timeout = $TimeoutSeconds })
+            # The real wait kills a child at its deadline before the worker writes a result.
+            if (@($plan.paths)[0] -in $Unfinished) { throw "PowerShell child timed out after $TimeoutSeconds seconds" }
             $status = if (@($plan.paths)[0] -in $PassingAlone) { 'passed' } else { 'failed' }
             [IO.File]::WriteAllText($Arguments[5], (@{ status = $status } | ConvertTo-Json))
             if ($status -ne 'passed') { throw "worker failed" }
@@ -81,6 +87,29 @@ Describe 'Diagnostic isolated rerun of failed Pester files' {
         $summary = Get-DeliveryFailureSummary -ErrorMessage 'gate failed' -Summary $null -WorkingRoot $root -StartedAt ([DateTime]::UtcNow.AddMinutes(-1))
         @($summary.tests | Where-Object file -eq 'tests/pester/Flaky.Tests.ps1').isolatedRerun | Should -Be 'passed'
         @($summary.tests | Where-Object file -eq 'tests/pester/Broken.Tests.ps1').isolatedRerun | Should -Be 'failed'
+    }
+
+    It 'sizes the rerun deadline from the file time observed in this run and never reports an unfinished rerun as reproduced' {
+        # The tracked weight of a real file can lag far behind its current duration.
+        $file = 'tests/pester/AiRulesClients.Tests.ps1'
+        $tracked = [double](Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/pester-timings.json') -Raw -Encoding UTF8 | ConvertFrom-Json).files.'AiRulesClients.Tests.ps1'
+        $observed = [Math]::Max(80.987, $tracked + 50)
+        $root = New-RerunFixture @($file) -ObservedSeconds @{ $file = $observed }
+        # A stale result from an earlier rerun must not become this rerun's verdict.
+        [void][IO.Directory]::CreateDirectory((Join-Path $root 'build/test-results/local/pester-isolated-rerun'))
+        [IO.File]::WriteAllText((Join-Path $root 'build/test-results/local/pester-isolated-rerun/AiRulesClients.Tests.result.json'), '{"status":"passed"}')
+        $result = Invoke-RerunFixture $root -PassingAlone @() -Unfinished @($file)
+        @($script:rerunCalls.timeout) | Should -Be @(60 + [int][Math]::Ceiling(2 * $observed))
+        $result.report.status | Should -Be 'inconclusive'
+        @($result.report.files).isolatedRerun | Should -Be 'skipped'
+        $result.text | Should -Match 'Isolated rerun inconclusive: tests/pester/AiRulesClients\.Tests\.ps1 ended without a worker result'
+        $result.text | Should -Not -Match 'failed again|passed alone'
+        # An inconclusive rerun neither downgrades nor excuses the original failure.
+        Get-DeliveryFailureClass -Message ("Pester did not pass." + $result.text) -Stage 'pester' | Should -Be 'product'
+        # A file without an observed time keeps its tracked or default weight.
+        $plain = New-RerunFixture @('tests/pester/Unlisted.Tests.ps1')
+        $null = Invoke-RerunFixture $plain -PassingAlone @() -Unfinished @('tests/pester/Unlisted.Tests.ps1')
+        @($script:rerunCalls.timeout) | Should -Be @(180)
     }
 
     It 'skips without a rerun when the budget is short or the failure is systematic' {
