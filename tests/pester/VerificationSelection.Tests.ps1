@@ -918,6 +918,10 @@ Describe 'Classification before infobase preparation' {
             }
         }
         function Write-DevBranchVerificationRunUserReport { $script:PreflightEvents.Add('report') }
+        # Run-status liveness belongs to agent-1c.core.ps1, which this fixture
+        # does not load; keep the real owner's body invocation semantics.
+        function Set-RunStage { param($Stage, $Detail) }
+        function Invoke-WithRunStatusHeartbeat { param([scriptblock]$Body) & $Body }
     }
 
     It 'rejects stale source classification without load, runtime release, baseline or repair-attempt consumption' {

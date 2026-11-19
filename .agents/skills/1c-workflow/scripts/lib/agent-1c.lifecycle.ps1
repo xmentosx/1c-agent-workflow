@@ -22349,9 +22349,14 @@ function Invoke-DevBranchCheck {
     # may recovery/repair be completed and a successful user report be emitted.
     $verifiedState = Read-DevBranchState -Name $DevBranchName
     Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $verifiedState -RecoveryOperation "check-dev-branch" | Out-Null
+    # Assessment and the user report can each stay silent for over a minute
+    # after the runners finished. Keep the owner's liveness published so the
+    # runner watchdog does not discard a completed check; locals that later
+    # recovery reads stay outside the heartbeat body.
+    Set-RunStage -Stage 'verification.report' -Detail 'Writing the verification report and check history.'
     if ($trigger -eq "repair") {
         $verifiedState = Read-DevBranchState -Name $DevBranchName
-        $verification = Get-VerificationState -State $verifiedState
+        $verification = Invoke-WithRunStatusHeartbeat { Get-VerificationState -State $verifiedState }
         $evidenceKind = [string](Get-StateValue -State $verifiedState -Name "lastVerificationEvidenceKind" -Default "")
         if (($verification.isFreshPassed -and $evidenceKind -in @('full', 'complete/current-obligations', 'complete/current-change')) -or
             ((Get-VerificationModel) -eq 'change' -and [bool](Get-StateValue $verification 'changeFreshPassed' $false) -and $evidenceKind -eq 'change/task-pending')) {
@@ -22361,11 +22366,13 @@ function Invoke-DevBranchCheck {
             throw 'ITL_VERIFICATION_SCENARIO_FULL_PROOF_INCOMPLETE: the named scenario passed but the unfiltered assessment did not produce fresh full proof. Diagnose the due component and resume the same repair session.'
         }
     }
-    Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
-    Write-DevBranchMemoryUsageNote
-    $historyVerification = Get-VerificationState -State $verifiedState
-    $historyStatus = if ($historyVerification.isFreshPassed -or [bool](Get-StateValue $historyVerification 'changeFreshPassed' $false)) { 'passed' } else { 'partial' }
-    Add-ItlCheckHistoryRecord -State $verifiedState -Status $historyStatus -Trigger $trigger
+    Invoke-WithRunStatusHeartbeat {
+        Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
+        Write-DevBranchMemoryUsageNote
+        $historyVerification = Get-VerificationState -State $verifiedState
+        $historyStatus = if ($historyVerification.isFreshPassed -or [bool](Get-StateValue $historyVerification 'changeFreshPassed' $false)) { 'passed' } else { 'partial' }
+        Add-ItlCheckHistoryRecord -State $verifiedState -Status $historyStatus -Trigger $trigger
+    }
     if ($canonicalRepair) {
         $repairResult = Get-ItlVerificationRepairRunResult -Phase $repairPhase -State $verifiedState -Verification $verification -StartedAt $repairStartedAt
         Publish-ItlVerificationRepairRun -Ticket $repairAttemptTicket -Result $repairResult -SessionPassed $repairVerificationPassed -StartedAt $repairStartedAt
@@ -22374,7 +22381,7 @@ function Invoke-DevBranchCheck {
         $checkFailure = $_
         if ($null -ne $platformPreparation) {
             try {
-                Write-DevBranchVerificationRunUserReport -State $state -PlatformPreparation $platformPreparation -Failure $checkFailure
+                Invoke-WithRunStatusHeartbeat { Write-DevBranchVerificationRunUserReport -State $state -PlatformPreparation $platformPreparation -Failure $checkFailure }
             } catch {
                 Write-Warning "Could not render the verification failure report: $($_.Exception.Message)" -WarningAction Continue
             }
