@@ -14,9 +14,17 @@ For Kilo behavior that disagrees with the Intent Map, run `status`, compare the
 reported expected skill contract/SHA, and ask for `/reload` before treating it as
 a source defect. ITL cannot inspect or clear Kilo's internal cache/worktrees.
 
-After classifying the failure, consult the shared fix archive below before
-investigating a known workflow incident again. A matching message is a lead,
-not proof that its cause or remedy applies to this project.
+After classifying the failure, search the exact error code or message in
+`references/known-defects.json` and consult the shared fix archive below before
+investigating a known workflow incident again. A matching entry or message is a
+lead, not proof that its cause or remedy applies to this project. A `fixed`
+entry names the version that removed the defect; a recurrence there is new.
+
+An ITL defect workaround is not project or product knowledge. Do not save it
+in `remember` at any scope or in the AI client's own memory. Apply the
+workaround in the current task, write a handoff report under the boundaries
+below, and tell the user in one line:
+`это дефект ITL, отчёт для разработчика: <path>`.
 
 ## Choose a concrete continuation
 
@@ -199,6 +207,11 @@ and its files remain protected. Keep durable handoff reports outside managed fil
 
 The agent writes one Markdown report; no generator is required. Include:
 
+0. A line `incidentKey: <CODE>@<owner>`: the exact error code plus the owning
+   component, for example `RUNNER_STATUS_STALE@verification-tail`. Reuse the
+   key of a matching known-defects entry. A supplement repeats the original key;
+   after the fix is installed, close it with a supplement line
+   `incidentClosed: <key>`.
 1. Original project task, project/branch, workflow revision and executing runtime.
 2. Reproduction command and prerequisites; expected and actual result.
 3. Exact error and selected log/artifact paths; omit secrets and irrelevant logs.

@@ -340,6 +340,12 @@
           "Write-WorkflowUpdateFollowUp": [
             "upgrade.update"
           ],
+          "Get-WorkflowFixedDefectHandoffMatches": [
+            "upgrade.update"
+          ],
+          "Add-WorkflowFixedDefectHandoffReportLines": [
+            "upgrade.update"
+          ],
           "Get-WorkflowUpdateRecoveryStatus": [
             "upgrade.update"
           ],
