@@ -2,7 +2,7 @@
     $script:WhRepo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
     $script:WhLib = Join-Path $script:WhRepo '.agents/skills/1c-workflow/scripts/lib'
     $script:WhAssets = Join-Path $script:WhRepo '.agents/skills/1c-workflow/assets/window-helper'
-    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r16'
+    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r17'
     foreach ($module in 'agent-1c.runtime-values.ps1', 'agent-1c.core.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1', 'agent-1c.window-helper.ps1') {
         . (Join-Path $script:WhLib $module)
     }
@@ -1013,8 +1013,8 @@ ITLЗапросПомощникуОкон("status", Новый Структур�
         }
         $patch | Should -Not -Match '(?m)^\+.*<WindowOpeningMode>(LockOwnerWindow|LockWholeInterface)</WindowOpeningMode>'
         $manifest = Get-Content -LiteralPath (Join-Path $script:WhRevision 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.downstreamRevision | Should -Be 'itl-r16'
-        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r16.cfe'
+        $manifest.downstreamRevision | Should -Be 'itl-r17'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r17.cfe'
         foreach ($form in $forms) { $manifest.patch.expectedChangedPaths | Should -Contain "lib/VAExtension/DataProcessors/$form/Forms/Форма/Ext/Form.xml" }
     }
     It 'calls no server-only date function from the added thin-client channel code' {

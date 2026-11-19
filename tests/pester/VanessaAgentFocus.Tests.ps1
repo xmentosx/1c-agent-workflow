@@ -623,3 +623,61 @@ Describe 'Vanessa 1.2.043.42-itl-r11 agent diagnostics' {
         $xml | Should -Match '(?s)<Attribute name="НайденныеСсылки" id="8">.*?<v8:Type>xs:string</v8:Type>'
     }
 }
+
+Describe 'Vanessa 1.2.043.42-itl-r17 execute_feature_step outcome' {
+    BeforeAll {
+        $script:R17Recipe = Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r17'
+        $script:R17Prior = Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r16'
+        $script:R17Patch = [IO.File]::ReadAllText((Join-Path $script:R17Recipe 'file-operations.patch'), [Text.Encoding]::UTF8)
+        $script:R16Patch = [IO.File]::ReadAllText((Join-Path $script:R17Prior 'file-operations.patch'), [Text.Encoding]::UTF8)
+        $script:R17Mcp = 'VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl'
+    }
+
+    It 'pins a cumulative r17 recipe that changes only the MCPVA module of r16' {
+        $manifest = Get-Content -LiteralPath (Join-Path $script:R17Recipe 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $prior = Get-Content -LiteralPath (Join-Path $script:R17Prior 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.downstreamRevision | Should -Be 'itl-r17'
+        $manifest.upstream.commit | Should -Be $prior.upstream.commit
+        (Get-FileHash -LiteralPath (Join-Path $script:R17Recipe 'file-operations.patch')).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r17.cfe'
+        $manifest.artifact.fileName | Should -Be 'vanessa-automation-single.1.2.043.42-itl-r17.zip'
+        @($manifest.patch.expectedChangedPaths) | Should -Be @($prior.patch.expectedChangedPaths)
+        foreach ($fix in @($prior.patch.retainedDownstreamFixes)) { @($manifest.patch.retainedDownstreamFixes) | Should -Contain $fix }
+        @($manifest.patch.retainedDownstreamFixes) | Should -HaveCount (@($prior.patch.retainedDownstreamFixes).Count + 1)
+        foreach ($oldSection in @($script:R16Patch -split '(?m)(?=^diff --git )' | Where-Object { $_ })) {
+            $header = ($oldSection -split "`n")[0]
+            if ($header -ceq ('diff --git a/' + $script:R17Mcp + ' b/' + $script:R17Mcp)) { continue }
+            $current = @($script:R17Patch -split '(?m)(?=^diff --git )' | Where-Object { ($_ -split "`n")[0] -ceq $header })
+            $current.Count | Should -Be 1
+            $current[0] | Should -BeExactly $oldSection
+        }
+        $after = (Get-FocusNewSide $script:R17Mcp $script:R17Patch) -split "`n"
+        $replaced = @('	МодульМсп_Сервер().ЗавершитьВызовИнструментаУспешно(Ванесса.ПолучитьИдентификаторЗадачиMCP(), Ванесса.ITLДобавитьИтогУправления(Ванесса._СтрСоединить(МассивСтрок, Символы.ПС)));',
+            '	ТекстСообщения = Ванесса.Локализовать("Шаг в строке фича файла успешно выполнен");')
+        $missing = @((Get-FocusNewSide $script:R17Mcp $script:R16Patch) -split "`n" | Where-Object { $_.Trim() -and $_ -ne '// HUNK' -and $replaced -notcontains $_ -and $after -notcontains $_ })
+        $missing | Should -BeNullOrEmpty
+        $added = @($script:R17Patch -split "`n" | Where-Object { $_ -match '^\+[^+]' })
+        @($added | Where-Object { $_ -match 'Новый\s+[\p{L}\p{Nd}_]+\([^()]*\)\s*\.' }) | Should -BeNullOrEmpty
+    }
+
+    It 'answers execute_feature_step by the status of the executed line: <case>' -TestCases @(
+        @{ case = 'success' }, @{ case = 'failed-status' }, @{ case = 'missing-row' }, @{ case = 'step-error' }
+    ) {
+        param($case)
+        $newSide = Get-FocusNewSide $script:R17Mcp $script:R17Patch
+        $methods = @('ЗавершитьУспешноеВыполнениеШагаВРедакторе', 'ITLСтатусВыполненнойСтрокиФичи', 'ЗавершитьВыполнениеШагаВРедактореСОшибкой') |
+            ForEach-Object { Get-FocusMethod $newSide $_ }
+        $prefix = @(
+            'Перем Ванесса;', 'Перем СерверMCP;',
+            'Функция МодульМсп_Сервер()', '    Возврат СерверMCP;', 'КонецФункции',
+            'Функция ТекстОшибкиИзОписанияОшибки(Знач Стр)', '    Возврат Стр;', 'КонецФункции',
+            'Процедура ДобавитьВМассивСтрокДанныеОбАктивномОкне(МассивСтрок)', '    МассивСтрок.Добавить("Активное окно: Настройки канбана");', 'КонецПроцедуры',
+            'Процедура Проверить(Условие, Код)', '    Если НЕ Условие Тогда ВызватьИсключение Код; КонецЕсли;', 'КонецПроцедуры'
+        ) -join "`n"
+        $body = [IO.File]::ReadAllText((Join-Path $script:FocusFixture 'r17-step-outcome.os'), [Text.Encoding]::UTF8)
+        $body = 'КаталогФикстуры = "' + $script:FocusFixture.Replace('"', '""') + '";' + "`n" + $body
+        $result = Invoke-FocusProbe -Source ($prefix + "`n" + ($methods -join "`n") + "`n" + $body) -Arguments @($case)
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match ('R17_CASE_PASSED: ' + [regex]::Escape($case))
+    }
+}

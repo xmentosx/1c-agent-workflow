@@ -50,9 +50,10 @@ func (r *runtime) appendFacadeNotes(toolName string, result *mcp.CallToolResult)
 		return
 	}
 	// PM5 2026-11-10: execute_feature_step reported a step with ВызватьИсключение
-	// as executed. The backend answers before the step outcome is known.
+	// as executed. Since itl-r17 a success means the line has the status Success,
+	// but one line runs without its scenario context.
 	if r.family == "vanessa-ui" && toolName == "execute_feature_step" && !result.IsError {
-		appendResultNote(result, "ITL note: execute_feature_step reports that Vanessa accepted the step, not that it succeeded; prove the behaviour with run_scenario or form data.")
+		appendResultNote(result, "ITL note: execute_feature_step success means Vanessa marked this one line Success without its scenario context; prove the behaviour with run_scenario or form data.")
 	}
 	if note := r.facadeSupersededNote(); note != "" {
 		appendResultNote(result, note)

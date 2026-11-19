@@ -46,10 +46,11 @@ When an interaction fails twice without new evidence, change the route (recordin
 
 ## Step Notes
 
-These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r16` backend.
+These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r17` backend.
 
 - `run_scenario` with `filePath` in modes `all`, `reloadAndRun` and `reloadAndRunFromLine` reloads the file from disk and returns `featureSha256` of the executed bytes; compare it with the file you just wrote. Without `filePath`, and in `selected` or `fromCurrentStep`, the previously loaded text with its selected scenario or step runs. `ITL_FEATURE_INVALID_XML_CHARACTER` names `file:line:column` of a control character, such as `\f` produced by an unescaped Windows path; `ITL_FEATURE_CHANGED_DURING_LOAD` means the file was still being written.
 - In ITL runs every built-in code step `(Расширение)`, including the `через буфер обмена` variants, runs through the file-code channel and fails with the original exception or compilation error. `ITL_CLIENT_CODE_CHANNEL_UNAVAILABLE` rejects a clipboard variant that could not report its result; use the plain step.
+- `execute_feature_step` runs one line without its scenario context. `ITL_VANESSA_STEP_FAILED` carries the step error; `ITL_VANESSA_STEP_NOT_PROVEN` means the line did not end with the status Success. Prove behaviour with `run_scenario`.
 - `manage_form_elements` `navigate_to_row` succeeds only when the current row stays on the criteria row after the form's activation handlers. `ITL_ROW_NAVIGATION_NOT_CONFIRMED` reports the actual row: the form moved the cursor, so change the route instead of repeating the call.
 - For an HTML document field, both `И в поле HTML документа ... я нажимаю гиперссылку '<текст>'` and `click_hyperlink` with `hyperlink_title` also reach anchors inside collapsed `<details>`; `ITL_HTML_HYPERLINK_NOT_FOUND` lists the anchors found as `text -> href`.
 - A window title gets ` *` while its form is modified. `И Я активизирую окно` matches the title as a pattern where `*` stands for any characters, so use `'Администрирование рабочего стола*'` for a form that may be modified.
