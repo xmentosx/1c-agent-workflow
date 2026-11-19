@@ -61,6 +61,7 @@
             mcpApprovalPath = ".claude/settings.local.json"
             mcpApprovalKey = "enabledMcpjsonServers"
             mcpApprovalDenyKey = "disabledMcpjsonServers"
+            autoMemorySettingKey = "autoMemoryEnabled"
             longRunMode = "background-notification"
             reload = "Restart Claude Code."
             reloadUserReport = "Перезапустите Claude Code."
@@ -1051,7 +1052,14 @@ function Sync-ItlClientMcpApproval {
     $owners = ConvertTo-Vibecoding1cMcpHashtable -Object (Get-Vibecoding1cMcpObjectValue -Object $State -Name "owners" -Default ([ordered]@{}))
     $desired = @($owners.Keys | Where-Object { ([string]$_).StartsWith("$Client/", [StringComparison]::Ordinal) } |
         ForEach-Object { @($owners[$_]) } | ForEach-Object { [string]$_ } | Where-Object { $_ } | Sort-Object -Unique)
-    if ($desired.Count -eq 0 -and $previous.Count -eq 0) { return }
+    # With scoped memory connected, the client's built-in auto memory would be a
+    # second, unshared knowledge store. ITL sets it off only where the key is
+    # absent and records that write; it later removes only its own unchanged value.
+    $memoryKey = [string](Get-StateValue -State $adapter -Name "autoMemorySettingKey" -Default "")
+    $memoryClients = @(@(Get-Vibecoding1cMcpObjectValue -Object $State -Name "autoMemoryDisabled" -Default @()) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    $memoryOwned = [bool]$memoryKey -and $memoryClients -ccontains $Client
+    $memoryWanted = [bool]$memoryKey -and @(@($owners["$Client/scoped-memory"]) | Where-Object { $_ }).Count -gt 0
+    if ($desired.Count -eq 0 -and $previous.Count -eq 0 -and -not $memoryWanted -and -not $memoryOwned) { return }
     if (Test-ItlGitPathTracked -RelativePath $relativePath) {
         Write-Warning "CLIENT_MCP_APPROVAL_TRACKED: '$relativePath' is tracked, so ITL did not approve its MCP servers there. Untrack it or approve the ITL servers in the client (Claude Code: /mcp), then restart the client."
         return
@@ -1070,8 +1078,22 @@ function Sync-ItlClientMcpApproval {
     # Withdraw only what ITL granted before; keep the user's order and entries.
     $next = @($current | Where-Object { $_ -cnotin $previous -or $_ -cin $granted })
     $next += @($granted | Where-Object { $_ -cnotin $next })
-    if (($next -join "`n") -cne ($current -join "`n")) {
-        if ($next.Count -gt 0) { $settings[$key] = @($next) } else { $settings.Remove($key) }
+    $changed = ($next -join "`n") -cne ($current -join "`n")
+    if ($changed) { if ($next.Count -gt 0) { $settings[$key] = @($next) } else { $settings.Remove($key) } }
+    if ($memoryKey) {
+        $itlValue = $settings.Contains($memoryKey) -and $settings[$memoryKey] -is [bool] -and -not $settings[$memoryKey]
+        if ($memoryWanted -and -not $settings.Contains($memoryKey)) {
+            $settings[$memoryKey] = $false; $memoryOwned = $true; $itlValue = $true; $changed = $true
+        } elseif (-not $memoryWanted -and $memoryOwned -and $itlValue) {
+            $settings.Remove($memoryKey); $changed = $true
+        }
+        # A value the user changed after the ITL write becomes theirs.
+        $memoryOwned = $memoryWanted -and $memoryOwned -and $itlValue
+        $memoryClients = @($memoryClients | Where-Object { $_ -cne $Client })
+        if ($memoryOwned) { $memoryClients += $Client }
+        if ($memoryClients.Count -gt 0) { $State["autoMemoryDisabled"] = @($memoryClients) } elseif ($State.Contains("autoMemoryDisabled")) { $State.Remove("autoMemoryDisabled") }
+    }
+    if ($changed) {
         if ($settings.Count -gt 0) {
             Write-Vibecoding1cMcpJsonFile -Path $path -Value $settings
         } elseif (Test-Path -LiteralPath $path -PathType Leaf) {

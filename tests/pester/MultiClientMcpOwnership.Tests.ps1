@@ -651,6 +651,61 @@ Describe 'Shared client MCP ownership' {
         Test-Path -LiteralPath (Join-Path $fresh '.claude/settings.local.json') | Should -BeFalse
     }
 
+    It 'turns off Claude auto memory only while scoped memory is connected and never takes over a user value' {
+        $root = Join-Path $TestDrive ('Автопамять Claude ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root '.claude') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["claude-code"]}}', [Text.UTF8Encoding]::new($false))
+        $settingsPath = Join-Path $root '.claude/settings.local.json'
+        [IO.File]::WriteAllText($settingsPath, '{"permissions":{"allow":["Bash(git status)"]}}', [Text.UTF8Encoding]::new($false))
+        $result = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $memory = @([pscustomobject]@{ name='itl-scoped-cognee'; command='powershell.exe'; transport='stdio' })
+            $read = { Read-Utf8Text -Path $settingsPath | ConvertFrom-Json }
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner vibecoding1c -Endpoints @([pscustomobject]@{ name='itl-remote'; url='https://itl.invalid/mcp'; transport='remote' }) | Out-Null
+            $catalogOnly = & $read
+            $before = Get-ItlMcpFileState $settingsPath
+            $null = Write-ItlClientMcpEndpointSet @(@{client='claude-code';owner='scoped-memory';endpoints=$memory}) -PlanOnly
+            $planned = [pscustomobject]@{ unchanged = ((Get-ItlMcpFileState $settingsPath) -ceq $before); state = (Read-ItlManagedMcpState) }
+            Write-ItlClientMcpEndpointSet @(@{client='claude-code';owner='scoped-memory';endpoints=$memory}) *> $null
+            $enabled = & $read; $enabledState = Read-ItlManagedMcpState
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints @() | Out-Null
+            $disabled = & $read; $disabledState = Read-ItlManagedMcpState
+            # A user value equal to the ITL value is still the user's.
+            $userFalse = & $read; $userFalse | Add-Member autoMemoryEnabled $false
+            Write-Utf8TextAtomic $settingsPath ($userFalse | ConvertTo-Json -Depth 6)
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints $memory | Out-Null
+            $userFalseState = Read-ItlManagedMcpState
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints @() | Out-Null
+            $userFalseKept = & $read
+            # A value the user changes after the ITL write becomes theirs.
+            $cleared = & $read; $cleared.PSObject.Properties.Remove('autoMemoryEnabled')
+            Write-Utf8TextAtomic $settingsPath ($cleared | ConvertTo-Json -Depth 6)
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints $memory | Out-Null
+            $takenOver = & $read; $takenOver.autoMemoryEnabled = $true
+            Write-Utf8TextAtomic $settingsPath ($takenOver | ConvertTo-Json -Depth 6)
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints $memory | Out-Null
+            $takenOverState = Read-ItlManagedMcpState
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints @() | Out-Null
+            [pscustomobject]@{ catalogOnly=$catalogOnly; planned=$planned; enabled=$enabled; enabledState=$enabledState; disabled=$disabled; disabledState=$disabledState
+                userFalseState=$userFalseState; userFalseKept=$userFalseKept; takenOverState=$takenOverState; final=(& $read) }
+        }
+        $result.catalogOnly.PSObject.Properties.Name | Should -Not -Contain 'autoMemoryEnabled'
+        $result.planned.unchanged | Should -BeTrue
+        $result.planned.state.Contains('autoMemoryDisabled') | Should -BeFalse
+        $result.enabled.autoMemoryEnabled | Should -BeExactly $false
+        @($result.enabled.permissions.allow) | Should -Be @('Bash(git status)')
+        @($result.enabled.enabledMcpjsonServers) | Should -Be @('itl-remote','itl-scoped-cognee')
+        @($result.enabledState.autoMemoryDisabled) | Should -Be @('claude-code')
+        $result.disabled.PSObject.Properties.Name | Should -Not -Contain 'autoMemoryEnabled'
+        @($result.disabled.permissions.allow) | Should -Be @('Bash(git status)')
+        $result.disabledState.Contains('autoMemoryDisabled') | Should -BeFalse
+        $result.userFalseState.Contains('autoMemoryDisabled') | Should -BeFalse
+        $result.userFalseKept.autoMemoryEnabled | Should -BeExactly $false
+        $result.takenOverState.Contains('autoMemoryDisabled') | Should -BeFalse
+        $result.final.autoMemoryEnabled | Should -BeExactly $true
+        @($result.final.enabledMcpjsonServers) | Should -Be @('itl-remote')
+    }
+
     It 'syncs and approves an explicit Claude client when the executor cannot be identified' {
         $root = Join-Path $TestDrive ('Неизвестный исполнитель ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
