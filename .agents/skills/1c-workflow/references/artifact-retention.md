@@ -174,3 +174,9 @@ Unknown completion, unknown ownership or a missing original means retain, not a
 new approval gate on the original development task. Reports must distinguish
 eligible logical bytes, compressed storage, actual deletions and filesystem
 free-space changes.
+
+### Auxiliary contour inventory
+
+Explicit `/itl-clean` and its preview show a separate inventory of unregistered or unidentified local file bases, contour state, MCP wrappers and client entries, and connection key names in `.dev.env`. The inventory preserves its findings. It excludes recognized active bases, avoids links, and reports when a directory size or part of the inventory could not be established within the local scan budget.
+
+Confirmed auxiliary archives use the existing keep count for each branch and contour, even after deregistration. The default is two and the minimum is one. Cleanup reports retained archives separately from releasable bytes. The automatic cleanup uses the same retention policy and skips the inventory.

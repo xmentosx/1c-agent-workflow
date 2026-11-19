@@ -1,4 +1,4 @@
-# The existing registry operation owns this pinned view. No background worker.
+﻿# The existing registry operation owns this pinned view. No background worker.
 function Get-ItlProductProjectBinding {
     $binding=Get-ConfigValue -Path 'productProject' -Default $null
     if($null -eq $binding){return $null}
@@ -88,6 +88,7 @@ function Get-ItlProductProjectStartupDisposition {
     # recorded before/after path state: pre-copy before the snapshot, and the
     # fresh child before validating it.
     if($RequestedAction -in @('update-workflow','update-workflow-branch')){return 'inherited-update'}
+    if($RequestedAction -eq 'remove-auxiliary-contour'){return 'inherited-runtime'}
     if($RequestedAction -eq 'init-project'){return 'bootstrap'}
     # These runtime owners intentionally do not acquire a new lifecycle guard.
     if($RequestedAction -in @('start-vanessa-profile','stop-vanessa-profile')){return 'inherited-runtime'}

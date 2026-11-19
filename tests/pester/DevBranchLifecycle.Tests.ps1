@@ -4079,7 +4079,7 @@ try {
             }
         }
 
-        @($emittedPhases | Sort-Object) | Should -Be @("main-helper", "post-copy", "post-merge")
+        @($emittedPhases | Sort-Object) | Should -Be @("main-helper", "post-copy", "post-merge", "reset-auxiliary-retirement")
         foreach ($phase in $emittedPhases) {
             $allowedPhases | Should -Contain $phase
         }
