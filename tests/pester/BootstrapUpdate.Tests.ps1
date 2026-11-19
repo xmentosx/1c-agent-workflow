@@ -1437,6 +1437,87 @@ local after
         }
     }
 
+    It 'keeps the known-defects registry well formed for on-demand diagnosis' {
+        $registryPath = Join-Path $RepoRoot '.agents/skills/1c-workflow/references/known-defects.json'
+        $registry = [IO.File]::ReadAllText($registryPath, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json -ErrorAction Stop
+        $entries = @($registry.entries)
+        $entries.Count | Should -BeGreaterThan 0
+        @($entries.incidentKey | Sort-Object -Unique).Count | Should -Be $entries.Count
+        foreach ($entry in $entries) {
+            [string]$entry.incidentKey | Should -Match '^[A-Za-z0-9_.\-]+@[A-Za-z0-9_.\-]+$'
+            @($entry.codes).Count | Should -BeGreaterThan 0 -Because $entry.incidentKey
+            [string]$entry.symptom | Should -Not -BeNullOrEmpty -Because $entry.incidentKey
+            [string]$entry.workaround | Should -Not -BeNullOrEmpty -Because $entry.incidentKey
+            [string]$entry.status | Should -BeIn @('open', 'fixed') -Because $entry.incidentKey
+            if ([string]$entry.status -ceq 'fixed') {
+                [string]$entry.fixedIn | Should -Not -BeNullOrEmpty -Because $entry.incidentKey
+                [string]$entry.regression | Should -Not -BeNullOrEmpty -Because $entry.incidentKey
+            } else {
+                $entry.fixedIn | Should -BeNullOrEmpty -Because $entry.incidentKey
+            }
+        }
+        $alwaysOn = [IO.File]::ReadAllText((Join-Path $RepoRoot '.agents/skills/1c-workflow/SKILL.md'), [Text.UTF8Encoding]::new($false))
+        $alwaysOn | Should -Not -Match 'known-defects'
+    }
+
+    It 'reports fixed known defects that still have unclosed handoff reports without blocking the update' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl update дефекты " + [guid]::NewGuid().ToString("N"))
+        try {
+            $branchRoot = Join-Path $tempRoot 'ветка 1'
+            $registryDir = Join-Path $tempRoot '.agents/skills/1c-workflow/references'
+            foreach ($dir in @($registryDir, (Join-Path $tempRoot 'handoffs'), (Join-Path $branchRoot 'handoffs'))) {
+                New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            }
+            $utf8 = [Text.UTF8Encoding]::new($false)
+            [IO.File]::WriteAllText((Join-Path $registryDir 'known-defects.json'), (@{
+                schemaVersion = 1
+                entries = @(
+                    @{ incidentKey = 'FIXED_ONE@owner-a'; codes = @('FIXED_ONE'); symptom = 's'; workaround = 'w'; status = 'fixed'; fixedIn = 'develop abc1234'; regression = 't' },
+                    @{ incidentKey = 'FIXED_TWO@owner-b'; codes = @('FIXED_TWO'); symptom = 's'; workaround = 'w'; status = 'fixed'; fixedIn = 'develop def5678'; regression = 't' },
+                    @{ incidentKey = 'STILL_OPEN@owner-c'; codes = @('STILL_OPEN'); symptom = 's'; workaround = 'w'; status = 'open'; fixedIn = $null; regression = $null }
+                )
+            } | ConvertTo-Json -Depth 5), $utf8)
+            $openReport = Join-Path $tempRoot 'handoffs/handoff-20261119-100000-сбой.md'
+            [IO.File]::WriteAllText($openReport, "# Отчёт`n`n0. incidentKey: ``FIXED_ONE@owner-a```n1. Задача`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $tempRoot 'handoffs/handoff-20261119-110000-open.md'), "- **incidentKey:** STILL_OPEN@owner-c`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $branchRoot 'handoffs/handoff-20261119-120000-two.md'), "incidentKey: FIXED_TWO@owner-b`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $branchRoot 'handoffs/handoff-20261119-130000-two-closed.md'), "incidentKey: FIXED_TWO@owner-b`nincidentClosed: FIXED_TWO@owner-b`n", $utf8)
+            & git -C $tempRoot init -b master *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            [IO.File]::WriteAllText((Join-Path $tempRoot 'AGENT-INSTALL.md'), 'current', $utf8)
+            & git -C $tempRoot add AGENT-INSTALL.md
+            & git -C $tempRoot commit -m init *> $null
+
+            $execution = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $source = [pscustomobject]@{ ref = "master"; commit = "1234567890abcdef1234567890abcdef12345678"; source = "path" }
+                $result = [pscustomobject]@{ created = $false; commit = 'abc' }
+                $branches = [pscustomobject]@{ roots = @([pscustomobject]@{ branch = 'b1'; status = 'completed'; root = $branchRoot }) }
+                Write-WorkflowUpdateFollowUp -Source $source -CommitResult $result -BranchReport $branches *> $null
+                $script:RunUserReport
+            }
+
+            $execution | Should -Match ([regex]::Escape('FIXED_ONE@owner-a (fixedIn: develop abc1234): ' + (Get-Item -LiteralPath $openReport).FullName))
+            $execution | Should -Match 'информационно, обновление завершено'
+            $execution | Should -Match 'incidentClosed: <incidentKey>'
+            $execution | Should -Not -Match 'FIXED_TWO@owner-b'
+            $execution | Should -Not -Match 'STILL_OPEN@owner-c'
+            $execution | Should -Match 'Push из проекта не выполнялся'
+
+            Remove-Item -LiteralPath $openReport -Force
+            $quiet = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $source = [pscustomobject]@{ ref = "master"; commit = "1234567890abcdef1234567890abcdef12345678"; source = "path" }
+                Write-WorkflowUpdateFollowUp -Source $source -CommitResult ([pscustomobject]@{ created = $false; commit = 'abc' }) -BranchReport ([pscustomobject]@{ roots = @() }) *> $null
+                $script:RunUserReport
+            }
+            $quiet | Should -Not -Match 'известные дефекты'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
     It 'untracks legacy execution runtime during the master workflow commit without deleting evidence' {
         $root = Join-Path ([System.IO.Path]::GetTempPath()) ('itl-runtime-index-' + [guid]::NewGuid().ToString('N'))
         try {
