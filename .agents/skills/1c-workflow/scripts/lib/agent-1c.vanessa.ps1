@@ -4838,6 +4838,12 @@ function New-VanessaRunLivenessMonitor {
         logPath = Join-Path (Resolve-Agent1cFullPath -Path $RunDirectory) 'vanessa.log'
         stallWarningSeconds = $stallWarning
         stallTimeoutSeconds = $stallTimeout
+        # After its own timeout the run still stops its processes, reads JUnit and
+        # the event log, records the result and the check journal. The published
+        # phase budget includes this time so the runner, which extends exactly to
+        # it, does not kill the helper at the same instant (PM5 2026-11-17,
+        # compact-20261117-013607). The 1C processes still stop at the timeout.
+        ownerGraceSeconds = 180
         lastProbeAtUtc = [DateTime]::MinValue
         lastPublishedAtUtc = [DateTime]::MinValue
         lastEvidenceAtUtc = [DateTime]::UtcNow
@@ -4922,7 +4928,9 @@ function Update-VanessaRunLiveness {
     $script:RunLiveness = $liveness
     $script:RunNoProgressSeconds = $noProgressSeconds
     $script:RunStallTimeoutRemainingSeconds = $stallRemaining
-    $script:RunTimeoutRemainingSeconds = $timeoutRemaining
+    $script:RunTimeoutRemainingSeconds = $(if ($timeoutRemaining -gt 0) {
+        $timeoutRemaining + [int](Get-StateValue -State $Monitor -Name 'ownerGraceSeconds' -Default 0)
+    } else { 0 })
     $script:RunOwnedProcessIds = @($ownedIds)
     $script:RunCpuDeltaMilliseconds = $cpuDeltaMilliseconds
     $script:RunWorkingSetMb = $workingSetMb

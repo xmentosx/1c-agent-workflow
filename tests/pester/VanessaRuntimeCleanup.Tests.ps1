@@ -453,7 +453,8 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 [IO.File]::AppendAllText($log, "progress", [Text.UTF8Encoding]::new($false))
                 $probe = [pscustomobject]@{timeoutRemainingSeconds=1700}
                 Update-VanessaRunLiveness -Monitor $monitor -ProbeContext $probe -State ([pscustomobject]@{}) -TestPorts @(48051) -RunParamsPath (Join-Path $run "VAParams.json")
-                $active = [pscustomobject]@{liveness=$script:RunLiveness;growth=$script:RunLogGrowthBytes;writes=$script:StatusWrites;stall=$script:RunStallTimeoutRemainingSeconds}
+                $active = [pscustomobject]@{liveness=$script:RunLiveness;growth=$script:RunLogGrowthBytes;writes=$script:StatusWrites;stall=$script:RunStallTimeoutRemainingSeconds
+                    published=$script:RunTimeoutRemainingSeconds;grace=$monitor.ownerGraceSeconds}
                 $monitor.lastLogLength = (Get-Item -LiteralPath $log).Length
                 $monitor.lastEvidenceAtUtc = [DateTime]::UtcNow.AddSeconds(-3)
                 $monitor.lastProbeAtUtc = [DateTime]::MinValue
@@ -470,6 +471,12 @@ Describe "Branch-safe Vanessa runtime cleanup" {
             $result.active.growth | Should -BeGreaterThan 0
             $result.active.writes | Should -BeGreaterThan 0
             $result.active.stall | Should -BeGreaterThan 0
+            # PM5 2026-11-17: the runner extended exactly to the Vanessa deadline
+            # and killed the helper before it could report its own timeout. The
+            # published budget keeps the run's post-timeout work; the 1C stop
+            # still uses Vanessa's own remaining time (1700 s here).
+            $result.active.grace | Should -Be 180
+            $result.active.published | Should -Be 1880
             $result.stalled | Should -Match '^ITL_VANESSA_STALL_TIMEOUT\b'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
