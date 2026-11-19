@@ -210,9 +210,16 @@
         [Text.Encoding]::UTF8.GetByteCount(($local|ConvertTo-Json -Depth 20 -Compress)) | Should -BeLessThan 8192
         (Get-FileHash -LiteralPath $b.appliedPath -Algorithm SHA256).Hash | Should -BeExactly $appliedHash
         $destinations=@($local.destinations)
-        @($destinations|Where-Object {-not $_.label -or -not $_.scopeKind -or -not $_.scopeId}).Count | Should -Be 0
-        @($destinations|Where-Object scopeKind -EQ project)[0].label | Should -BeExactly 'itl_project_customer'
-        @($destinations|Where-Object scopeKind -EQ organization)[0].label | Should -BeExactly 'itl_org_org'
+        # A row names the scope kind that dataset_name accepts; the server keeps
+        # the copy-specific label and IDs.
+        @($destinations|Where-Object {-not $_.scopeKind -or $_.Contains('label') -or $_.Contains('scopeId')}).Count | Should -Be 0
+        Resolve-ItlMemoryDatasetName $persisted project | Should -BeExactly 'itl_project_customer'
+        Resolve-ItlMemoryDatasetName $persisted organization | Should -BeExactly 'itl_org_org'
+        Resolve-ItlMemoryDatasetName $persisted task | Should -BeExactly ('itl_task_'+$persisted.cycleId)
+        Resolve-ItlMemoryDatasetName $persisted 'itl_org_org' | Should -BeExactly 'itl_org_org'
+        $products=@(Get-ItlMemoryScopes $persisted read|Where-Object scopeKind -EQ product)
+        $products.Count | Should -Be 1
+        Resolve-ItlMemoryDatasetName $persisted product | Should -BeExactly $products[0].label
         $local.Contains('writeGuidance') | Should -BeFalse
         {Get-ItlMemoryScopes $b write} | Should -Throw '*MEMORY_DESTINATION_REQUIRED*'
         {Get-ItlMemoryScopes $b write 'itl_product_corp' 'planning'} | Should -Throw '*MEMORY_DESTINATION_REQUIRED*'
@@ -1074,10 +1081,13 @@ try {
             $other=ConvertTo-ItlCatalogCanonicalValue (Read-ItlMemoryJson $path).context;$other.projectId='other-customer'
             Write-Utf8TextAtomic $b.appliedPath (@{context=$other;contextHash=(Get-ItlCatalogHash $other)}|ConvertTo-Json -Depth 20)
             Sync-ItlMemoryContext -Context $other
-            $moved=Invoke-MemoryServerCall $server remember @{data='Факт прежнего проекта';note_id='moved';dataset_name='itl_org_org'}
+            # The destination kind is resolved at the server entry: the held
+            # draft keeps this copy's exact organization label.
+            $moved=Invoke-MemoryServerCall $server remember @{data='Факт прежнего проекта';note_id='moved';dataset_name='organization'}
             $moved.message | Should -BeExactly 'MEMORY_CONTEXT_CHANGED'
             $moved.data.contextChanged.reason | Should -BeExactly project
             (Invoke-MemoryServerCall $server memory_status @{local_only=$true}).contextChanged.reason | Should -BeExactly project
+            @((Invoke-MemoryServerCall $server memory_status @{local_only=$true;note_id='moved'}).pending)[0].datasetName | Should -BeExactly 'itl_org_org'
             $null=Update-ItlMemoryJson $path {param($current) $current['mode']='disabled';$current['bindingId']='disabled-binding';return $current}
             (Invoke-MemoryServerCall $server memory_status @{local_only=$true}).message | Should -BeExactly 'MEMORY_DISABLED'
         }finally{$serverErrors=Stop-MemoryServer $server}
@@ -1086,7 +1096,7 @@ try {
         # One journal session per server process; codes only, no fact text.
         $usagePath=Get-ItlMemoryPath usage $b.identity.workspaceId
         $journal=Read-ItlMemoryJson $usagePath
-        @($journal.entries).Count | Should -Be 11
+        @($journal.entries).Count | Should -Be 12
         @($journal.entries|ForEach-Object {$_.session}|Select-Object -Unique).Count | Should -Be 1
         @($journal.entries|Where-Object {$_.outcome -ceq 'MEMORY_CONTEXT_CHANGED'}).Count | Should -Be 3
         @($journal.entries|Where-Object {$_.tool -ceq 'retire_note' -and (Get-ItlCatalogField $_ 'retired')}).Count | Should -Be 1
@@ -1262,10 +1272,11 @@ try {
         $status.serverCoverage | Should -BeExactly bounded
         $status.bindingState | Should -BeExactly current
         @($status.standing).Count | Should -Be 1
-        $status.standing[0].noteId | Should -BeExactly rule
+        # The level names the dataset and data_id reads the original with its
+        # note ID; neither repeats in the start answer.
+        @($status.standing[0].Keys) | Should -Be @('level','dataId','fact')
         $status.standing[0].dataId | Should -BeExactly $rule
         $status.standing[0].level | Should -BeExactly project
-        $status.standing[0].dataset | Should -BeExactly 'itl_project_customer'
         $status.standing[0].fact | Should -BeExactly 'В этом проекте никогда не меняй режим на клиенте.'
         # Verified before candidate, newest first; a candidate is marked.
         @($status.index|Where-Object level -EQ project)[0].notes | Should -Be @('Бывшее правило','Заметка, обновлённая прежней версией.','Заполнение регистра','Возможно, причина в индексе. [candidate]')
@@ -1337,22 +1348,57 @@ try {
         # PM5 after a batch of writes: the four newest receipts filled the local
         # part and the user's workplace rules, last in level order, fell into more.
         $rule=('Постоянное правило работы с конфигурацией клиента и его стендом. '*8).Substring(0,400)
+        # Eight rules fit the bound alone, not together with four receipts.
         foreach($kind in @('project','workplace')){
             $dataset=Get-ScopeDataset $b $kind
-            for($number=1;$number -le 3;$number++){$null=Add-FixtureNote $dataset "$kind-rule-$number" $rule -Standing -Title "Правило $kind $number"}
+            for($number=1;$number -le (Get-ItlMemoryLevelLimits)[$kind].standing;$number++){$null=Add-FixtureNote $dataset "$kind-rule-$number" $rule -Standing -Title "Правило $kind $number"}
         }
         $evidence=@(@{source='user';reference='chat 2026-11-19'})
         for($number=1;$number -le 4;$number++){$null=Invoke-ItlMemoryRemember $b ("Проверенный факт номер $number о стенде клиента и его конфигурации.") 'itl_project_customer' "fact-$number" @{} $evidence verified}
         @((Invoke-ItlMemoryStatus $b -LocalOnly).receipts).Count | Should -Be 4
+        # Confirmed writes need no action at session start.
+        $status=Invoke-ItlMemoryStatus $b
+        @($status.receipts).Count | Should -Be 0
+        $status.confirmedReceipts | Should -Match 'local_only=true'
+        @($status.standing).Count | Should -Be 8
+        # Writes still to reconcile are listed, but give way to the rules.
+        foreach($file in @(Get-ChildItem -LiteralPath (Join-Path (Get-ItlMemoryHome) 'receipt') -File -Filter '*.json')){
+            $null=Update-ItlMemoryJson $file.FullName {param($old) $old.state='unconfirmed';return $old}
+        }
         $status=Invoke-ItlMemoryStatus $b
         $tokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $status -Depth 30 -Compress)
         [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 2000
         @($status.standing|Where-Object level -EQ workplace).Count | Should -Be 3
-        @($status.standing|Where-Object level -EQ project).Count | Should -Be 3
-        # The receipts gave way and say where the full list is.
+        @($status.standing|Where-Object level -EQ project).Count | Should -Be 5
+        @($status.receipts).Count | Should -BeGreaterThan 0
         @($status.receipts).Count | Should -BeLessThan 4
         $status.localTrimmed | Should -Match 'local_only=true'
         @((Invoke-ItlMemoryStatus $b -LocalOnly).receipts).Count | Should -Be 4
+    }
+    It 'lists a whole PM5-sized index beside five standing rules within the bound' {
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.memory-tokens.ps1')
+        # The shape PM5 reached on 2026-11-19: five standing rules, about forty
+        # other notes and a batch of confirmed writes. Start once showed three
+        # titles of forty; the whole index now fits.
+        $b.memoryProjection.knowledgeAreas=@{planning=@{availableIn=@('prof');memoryHomeProductId='corp'}}
+        $rule=('Требование пользователя к данным редактора планов и тяжёлым формам. '*6).Substring(0,360)
+        $shape=[ordered]@{project=@(2,2);product=@(1,17);organization=@(0,14);workplace=@(2,0);host=@(0,1);taskCycle=@(0,3)}
+        foreach($kind in $shape.Keys){
+            $dataset=Get-ScopeDataset $b $kind;$area=if($kind -eq 'product'){'planning'}else{''}
+            for($number=1;$number -le $shape[$kind][0];$number++){$null=Add-FixtureNote $dataset "$kind-rule-$number" $rule -Standing -Title "Правило $kind $number" -Area $area}
+            for($number=1;$number -le $shape[$kind][1];$number++){$null=Add-FixtureNote $dataset "$kind-note-$number" 'Обычная заметка.' -Title "Особенность PM5 уровня ${kind}, случай $number" -Area $area}
+        }
+        $evidence=@(@{source='user';reference='chat 2026-11-19'})
+        for($number=1;$number -le 4;$number++){$null=Invoke-ItlMemoryRemember $b ("Проверенный факт номер $number о стенде клиента.") (Resolve-ItlMemoryDatasetName $b project) "fact-$number" @{} $evidence verified}
+        $status=Invoke-ItlMemoryStatus $b
+        $tokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $status -Depth 30 -Compress)
+        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 2000
+        @($status.standing).Count | Should -Be 5
+        # A product rule keeps its dataset: the product level may hold several.
+        @($status.standing|Where-Object level -EQ product)[0].dataset | Should -BeExactly (Get-ScopeDataset $b product).label
+        @($status.standing|Where-Object level -NE product|Where-Object {$_.Contains('dataset')}).Count | Should -Be 0
+        (@($status.index|ForEach-Object {$_.more})|Measure-Object -Sum).Sum | Should -Be 0
+        (@($status.index|ForEach-Object {@($_.notes).Count})|Measure-Object -Sum).Sum | Should -Be 41
     }
     It 'cuts an overfull project index at its level limit and counts the rest' {
         $project=Get-ProjectDataset $b
@@ -1379,7 +1425,7 @@ try {
         $project=@($destinations|Where-Object scopeKind -EQ project)
         $project.Count | Should -Be 1
         @($project[0].knowledgeAreas).Count | Should -Be 20
-        @($destinations|Group-Object {$_.label}|Where-Object Count -GT 1).Count | Should -Be 0
+        @($destinations|Group-Object {$_.scopeKind}|Where-Object Count -GT 1).Count | Should -Be 0
         @($destinations|ForEach-Object {$_.scopeKind}|Sort-Object) | Should -Be @('host','organization','project','taskCycle','workplace')
         $status.writeGuidance | Should -Match 'project destination.*applicability\.knowledgeArea.*routedTo'
         $status.writeGuidance | Should -Match 'applicability\.independentOfCustomization=true'
@@ -1406,7 +1452,7 @@ try {
         $status.writeGuidance | Should -Not -Match 'independentOfCustomization'
         $projectDestination=@($status.destinations|Where-Object {$_.scopeKind -ceq 'project' -and $_.knowledgeAreas -ccontains 'planning'})
         $projectDestination.Count | Should -Be 1
-        $projectDestination[0].label | Should -BeExactly $localProject.label
+        Resolve-ItlMemoryDatasetName $writer project | Should -BeExactly $localProject.label
         $evidence=@(@{source='user';reference='chat 2026-11-12'})
         # The agent names its project; base-product behaviour with one confirmed
         # home in an uncustomized project is routed to that product.
@@ -1740,7 +1786,8 @@ try {
         @(Get-ItlMemoryScopes $other read|ForEach-Object {$_.scopeKind}) | Should -Not -Contain host
         $status=Invoke-ItlMemoryStatus $other
         @($status.index|Where-Object level -EQ host)[0].notes | Should -Be @('Платформа 8.3.27 установлена в D: 1cv8.')
-        @($status.destinations|Where-Object scopeKind -EQ host)[0].label | Should -BeExactly $hostDataset.label
+        @($status.destinations|Where-Object scopeKind -EQ host).Count | Should -Be 1
+        Resolve-ItlMemoryDatasetName $other host | Should -BeExactly $hostDataset.label
         # recall of the other project reads the same host dataset.
         $fresh=New-MemoryFixture -ProjectId 'third-customer' -KeepBackend -LazyShared
         Mock Invoke-ItlMemoryHttp {

@@ -204,7 +204,7 @@ function Get-ItlMemoryScopes {
         if([string]$entry.datasetId -cnotmatch '^[a-fA-F0-9-]{36}$' -or -not $entry.ownerId){throw 'MEMORY_DATASET_UNVERIFIED: supply the native exact ID and owner, not a label lookup.'}
         $allowed+=,$entry
     }
-    if($Access -eq 'write' -and (-not $DatasetName -or $allowed.Count -ne 1)){throw 'MEMORY_DESTINATION_REQUIRED: select one dataset_name from memory_status destinations. A kept pending source is completed by remember with its note_id and that dataset_name, or discarded by retire_note(note_id).'}
+    if($Access -eq 'write' -and (-not $DatasetName -or $allowed.Count -ne 1)){throw 'MEMORY_DESTINATION_REQUIRED: select one dataset_name: a scopeKind from memory_status destinations or an exact label. A kept pending source is completed by remember with its note_id and that dataset_name, or discarded by retire_note(note_id).'}
     return $allowed
 }
 
@@ -220,6 +220,21 @@ function Get-ItlMemoryPrivateScopes {
     $hostId=[string](Get-ItlCatalogField $identity 'hostId' '')
     if($hostId){$scopes+=@{scopeKind='host';scopeId=$hostId;label=('itl_host_'+$hostId)}}
     return $scopes
+}
+
+function Resolve-ItlMemoryDatasetName {
+    param([object]$Binding,[string]$Name)
+    # Destinations offer a scope kind instead of the copy-specific label; the
+    # exact label stays accepted. A kind that names no single dataset of this
+    # binding passes through, so the owner of the call reports it as before.
+    $kind=if($Name -ceq 'task'){'taskCycle'}else{$Name}
+    if($kind -cnotin @('taskCycle','workspace','workplace','host','project','organization','product')){return $Name}
+    $labels=@(Get-ItlMemoryPrivateScopes $Binding|Where-Object {$_.scopeKind -ceq $kind}|ForEach-Object {[string]$_.label})
+    if(-not $labels.Count){
+        try{$labels=@(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -ceq $kind}|ForEach-Object {[string]$_.label})}catch{return $Name}
+    }
+    if(@($labels|Select-Object -Unique).Count -eq 1){return $labels[0]}
+    return $Name
 }
 
 function Find-ItlMemoryNativeDataset {
@@ -662,7 +677,7 @@ function Invoke-ItlMemoryRemember {
     try{$datasets=@(Get-ItlMemoryScopes $Binding write $DatasetName ([string](Get-ItlCatalogField $Applicability 'knowledgeArea')))}
     catch{
         if($_.Exception.Message -notlike 'MEMORY_DESTINATION_REQUIRED*'){throw}
-        throw "MEMORY_DESTINATION_REQUIRED: select one dataset_name from memory_status destinations. $kept`: repeat remember with that note_id and the dataset_name, or discard it with retire_note(note_id)."
+        throw "MEMORY_DESTINATION_REQUIRED: select one dataset_name: a scopeKind from memory_status destinations or an exact label. $kept`: repeat remember with that note_id and the dataset_name, or discard it with retire_note(note_id)."
     }
     $dataset=$datasets[0];$route=$null
     if($dataset.scopeKind -eq 'project' -and -not $DataId){
@@ -1043,16 +1058,17 @@ function Get-ItlMemoryRecallCards {
 }
 
 function Set-ItlMemoryDestinationReadStates {
-    param([object[]]$Destinations,[object[]]$ReadScopes,[string[]]$NotCreated=@())
+    param([object]$Binding,[object[]]$Destinations,[object[]]$ReadScopes,[string[]]$NotCreated=@())
     foreach($destination in $Destinations){
-        $destination['readState']=if(@($ReadScopes|Where-Object label -CEQ $destination.label).Count -eq 1){'admitted'}
-            elseif($NotCreated -ccontains $destination.label){'not_created'}
+        $label=Resolve-ItlMemoryDatasetName $Binding $destination.scopeKind
+        $destination['readState']=if(@($ReadScopes|Where-Object label -CEQ $label).Count -eq 1){'admitted'}
+            elseif($NotCreated -ccontains $label){'not_created'}
             else{'unknown'}
     }
 }
 
 function Get-ItlMemoryLocalContext {
-    param([object]$Binding,[string]$NoteId='',[switch]$History)
+    param([object]$Binding,[string]$NoteId='',[switch]$History,[switch]$UnsettledReceipts)
     $directory=Join-Path (Join-Path (Get-ItlMemoryHome) 'pending') $Binding.identity.workspaceId
     $pending=@();$cycle=Read-ItlMemoryJson $Binding.cycleStatePath -Kind 'branch-state'
     $currentCycle=[string](Get-ItlCatalogField (Get-ItlCatalogField $cycle 'memoryCycle') 'current' '')
@@ -1086,15 +1102,17 @@ function Get-ItlMemoryLocalContext {
     # Offered write choices: project (routing base-product areas to their home),
     # organization, workplace, host and task. The local-project workspace stays
     # readable and an explicit label is still accepted, but it is not offered.
+    # A row names the scope kind that dataset_name accepts; the copy-specific
+    # label and IDs stay with the server.
     $destinations=@(Get-ItlMemoryPrivateScopes $Binding|Where-Object {
         $privateLabel=$_.label;$mapped=@($Binding.provider.datasets|Where-Object label -CEQ $privateLabel)
         $_.scopeKind -ne 'workspace' -and (-not $mapped.Count -or ($mapped.Count -eq 1 -and $mapped[0].admitted -and @($mapped[0].permissions) -ccontains 'write'))
-    })
+    }|ForEach-Object {[ordered]@{scopeKind=$_.scopeKind}})
     $writableProducts=@(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -eq 'product' -and @($_.permissions) -contains 'write'}|ForEach-Object {[string]$_.scopeId})
     $allAreas=Get-ItlCatalogField (Get-ItlCatalogField $Binding.context 'knowledgeContext') 'knowledgeAreas' @()
     $routedAreas=@(@($allAreas)|Where-Object {$_ -and (Get-ItlCatalogField $_ 'status') -eq 'applicable' -and $writableProducts -ccontains [string](Get-ItlCatalogField $_ 'memoryHomeProductId' '')}|ForEach-Object {[string](Get-ItlCatalogField $_ 'areaId' '')}|Select-Object -Unique)
     foreach($shared in @(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -notin @('taskCycle','workspace','workplace','host','product') -and @($_.permissions) -contains 'write'})){
-        $row=@{label=$shared.label;scopeKind=$shared.scopeKind;scopeId=$shared.scopeId}
+        $row=[ordered]@{scopeKind=$shared.scopeKind}
         if($shared.scopeKind -eq 'project' -and $routedAreas.Count){$row['knowledgeAreas']=$routedAreas}
         $destinations+=$row
     }
@@ -1102,9 +1120,9 @@ function Get-ItlMemoryLocalContext {
     try{Assert-ItlMemoryBindingCurrent $Binding}catch{$bindingState='stale-or-disabled';$destinations=@()}
     if($bindingState -eq 'current'){
         $readScopes=@(Get-ItlMemoryScopes $Binding read)
-        Set-ItlMemoryDestinationReadStates $destinations $readScopes
+        Set-ItlMemoryDestinationReadStates $Binding $destinations $readScopes
     }
-    $receipts=@();$candidates=@();$receiptRoot=Join-Path (Get-ItlMemoryHome) 'receipt'
+    $receipts=@();$candidates=@();$settled=$false;$receiptRoot=Join-Path (Get-ItlMemoryHome) 'receipt'
     if($bindingState -eq 'current' -and (Test-Path -LiteralPath $receiptRoot -PathType Container)){
         $readIds=@($readScopes|ForEach-Object {$_.datasetId})
         foreach($file in @(Get-ChildItem -LiteralPath $receiptRoot -File -Filter '*.json'|Sort-Object LastWriteTimeUtc -Descending|Select-Object -First 24)){
@@ -1121,7 +1139,10 @@ function Get-ItlMemoryLocalContext {
                 if($source -and $source.noteId -cne $record.noteId){$source=$null}
                 if(-not $noteStatus -and $source){$noteStatus=[string](Get-ItlCatalogField $source.intent 'status' '')}
             }
-            if($receipts.Count -lt 4){$receipts+=@{noteId=$record.noteId;datasetId=$record.datasetId;dataId=(Get-ItlCatalogField $record 'dataId' '');state=$record.state;status=$(if($noteStatus){$noteStatus}else{'unknown'});searchState=(Get-ItlCatalogField $record 'searchState' 'unverified');currentness='local receipt only'}}
+            # Session start lists only writes still to reconcile; a confirmed
+            # one needs no action and local_only=true lists it.
+            if($UnsettledReceipts -and $record.state -eq 'durable'){$settled=$true}
+            elseif($receipts.Count -lt 4){$receipts+=@{noteId=$record.noteId;datasetId=$record.datasetId;dataId=(Get-ItlCatalogField $record 'dataId' '');state=$record.state;status=$(if($noteStatus){$noteStatus}else{'unknown'});searchState=(Get-ItlCatalogField $record 'searchState' 'unverified');currentness='local receipt only'}}
             if($noteStatus -ceq 'candidate' -and $record.state -eq 'durable' -and $candidates.Count -lt 4){
                 $fact=if($source){[string]$source.intent.data}else{''}
                 if($fact.Length -gt 400){$fact=$fact.Substring(0,400)+'...'}
@@ -1131,6 +1152,7 @@ function Get-ItlMemoryLocalContext {
         }
     }
     $output=[ordered]@{pending=$pending;receipts=$receipts;candidates=$candidates;preservedSource=$preservedSource;continuation=$continuation;coverage='bounded-local; old task pending is history, not current';destinations=$destinations;currentCycleId=$currentCycle;bindingState=$bindingState}
+    if($settled){$output['confirmedReceipts']='local_only=true lists them'}
     if(@($destinations|Where-Object {$_.Contains('knowledgeAreas')}).Count){
         $output.writeGuidance='Write shared knowledge to the project destination. For confirmed base-product behaviour add applicability.knowledgeArea from its knowledgeAreas: remember routes it to the product home and reports routedTo and routeReason. Without an area the note stays in the project.'
         if(Get-ItlCatalogField $Binding.context.projectContext 'customized' $false){
@@ -1233,7 +1255,12 @@ function Get-ItlMemoryOverview {
             if(-not (Get-ItlCatalogField $row.note 'standing' $false)){$row.parsed.status=[string]$row.note.status;$row.parsed.title=Get-ItlMemoryNoteTitle $row.note;continue}
             if(-not (Test-ItlMemoryNoteApplicable $Binding $row.note)){$dropped+=,$row;continue}
             $confirmed+=,$row
-            $standing+=,[ordered]@{level=$kind;dataset=$row.dataset.label;noteId=$row.note.noteId;dataId=$row.dataId;fact=$row.note.fact}
+            # The level names the dataset (dataset_name accepts it); only a
+            # product level may hold several. memory_status(dataset_name,
+            # data_id) returns the note ID for a correction.
+            $entry=[ordered]@{level=$kind;dataId=$row.dataId;fact=$row.note.fact}
+            if($kind -eq 'product'){$entry.Insert(1,'dataset',$row.dataset.label)}
+            $standing+=,$entry
         }
         $rest=@(& $order @($level.rows|Where-Object {$confirmed -notcontains $_ -and $dropped -notcontains $_}))
         $shown=@($rest|Select-Object -First $limits[$kind].index)
@@ -1249,14 +1276,14 @@ function Get-ItlMemoryStatusOverview {
     param([object]$Binding)
     # Session start: the local part always, then the server part within one
     # bounded deadline. The task never depends on the server part.
-    $output=Get-ItlMemoryLocalContext $Binding
+    $output=Get-ItlMemoryLocalContext $Binding -UnsettledReceipts
     $output['standing']=@();$output['index']=@()
     if($output.bindingState -ne 'current'){$output['serverCoverage']='unavailable: the binding is stale or disabled; local part only';return $output}
     $deadline=[DateTime]::UtcNow.AddSeconds(15)
     try{
         Assert-ItlMemoryPrincipal $Binding $deadline
         $discovery=Sync-ItlMemorySharedPrivateDatasets $Binding $deadline -IncludeTask
-        Set-ItlMemoryDestinationReadStates $output.destinations @(Get-ItlMemoryScopes $Binding read) $discovery.notCreated
+        Set-ItlMemoryDestinationReadStates $Binding $output.destinations @(Get-ItlMemoryScopes $Binding read) $discovery.notCreated
         if([DateTime]::UtcNow -ge $deadline){throw 'MEMORY_DEADLINE'}
         $overview=Get-ItlMemoryOverview $Binding $deadline
     }catch{
