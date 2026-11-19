@@ -38,6 +38,22 @@ A Vanessa `ACTION_FAILED` that names a disconnected TestClient returns
 `ITL_VANESSA_TESTCLIENT_NOT_CONNECTED` with `action: itl_recover_connection`;
 the facade does not recover or replay it automatically.
 
+When a TestClient this facade already used is replaced and the agent did not
+close it, the next call that acts on open forms (form tools and `run_scenario`
+in `selected`, `fromCurrentStep` or `reloadAndRunFromLine`) is not sent: it
+returns `ITL_VANESSA_TESTCLIENT_REPLACED` with `callOutcome: not-started` and
+the continuation to rebuild the state in one self-contained scenario. A
+self-contained `run_scenario` (`all`, the default, or `reloadAndRun`) runs and
+its result carries the same code as a note. The notice is reported once.
+
+A `run_scenario` or `get_test_results` answer that contains Vanessa's scenario
+report is returned as that report even when a failed step quotes a runtime
+marker; the markers still classify editor answers. A successful
+`execute_feature_step` gets a note that Vanessa accepted the step without its
+outcome. When the project's `compatibility.json` pins another facade version
+than the running process, every result gets `ITL_ONDEMAND_FACADE_SUPERSEDED`
+as a note; the call itself is handled normally.
+
 The guard never outlives its call. An owned stop is retried briefly within the
 call; if it stays unconfirmed, the execution still ends: the facade releases
 the guard, forgets that backend (its registration stays for the lifecycle drain

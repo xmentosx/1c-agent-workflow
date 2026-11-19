@@ -60,6 +60,13 @@ type runtime struct {
 	testClientPID     int
 	testClientPort    int
 	suppressEvidence  bool
+	// The agent closed its TestClient itself; a new one is then expected.
+	testClientClosedByAgent bool
+	// PID of a TestClient this facade used that was replaced unexpectedly; the
+	// next UI call reports it once.
+	testClientReplacedPID int
+	// Installed compatibility manifest of this project; empty when unknown.
+	compatibilityPath string
 }
 
 type progressRoute struct {
@@ -98,6 +105,7 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 }
 
 func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolName string, arguments any) (callResult *mcp.CallToolResult, callError error) {
+	defer func() { r.appendFacadeNotes(toolName, callResult) }()
 	ctx, cancel, budgetErr := phaseRequestContext(ctx, req.Params.Meta)
 	if budgetErr != nil {
 		return toolError("ITL_ONDEMAND_PHASE_BUDGET_INVALID", budgetErr.Error(), nil), nil
@@ -271,6 +279,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	r.active--
 	r.applyVanessaTestClientResultLocked(toolName, arguments, result)
 	r.attachVanessaTestClientMetaLocked(result)
+	r.attachTestClientReplacementNoticeLocked(result)
 	outcome, resultCode := callOutcome(result, err)
 	if forwardedProtocolCode != "" {
 		resultCode = forwardedProtocolCode
@@ -723,6 +732,11 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 		return errors.Join(err, r.stopBrokerAfterFailure(ctx))
 	}
 	if r.family == "vanessa-ui" {
+		// A replacement backend brings its own TestClient; the forms of the one
+		// this facade used are gone unless the agent closed it.
+		if r.testClientPID > 0 && info.TestClientPID != r.testClientPID && !r.testClientClosedByAgent {
+			r.testClientReplacedPID = r.testClientPID
+		}
 		r.testClientState = testClientNotStarted
 		r.testClientPID = info.TestClientPID
 		r.testClientPort = info.TestClientPort
@@ -1207,6 +1221,16 @@ func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName
 		})
 	}
 	r.applyTestClientBackendInfoLocked(info, toolName)
+	if r.testClientReplacedPID > 0 && vanessaToolNeedsLiveUIState(toolName, arguments) {
+		previous := r.testClientReplacedPID
+		r.testClientReplacedPID = 0
+		return toolError("ITL_VANESSA_TESTCLIENT_REPLACED",
+			fmt.Sprintf("The TestClient was replaced since the previous call (PID %d exited; the new TestClient is PID %d): its open forms and unsaved UI state are gone, so this call was not sent. Recreate the needed state with one self-contained run_scenario (mode all or reloadAndRun) that opens, enters and asserts, then continue.", previous, r.testClientPID),
+			map[string]any{
+				"tool": toolName, "previousTestClientPid": previous, "testClientPid": r.testClientPID,
+				"callOutcome": "not-started", "automaticRetryPerformed": false, "action": "rerun-self-contained-scenario",
+			})
+	}
 	if class == vanessaToolConnect {
 		return nil
 	}
@@ -1251,6 +1275,14 @@ func (r *runtime) applyTestClientBackendInfoLocked(info *backendInfo, toolName s
 		return
 	}
 	previousPID := r.testClientPID
+	// A client this facade already used is gone and the agent did not close it:
+	// its forms and unsaved UI state are lost (PM5 2026-11-16/17).
+	if previousPID > 0 && info.TestClientPID > 0 && info.TestClientPID != previousPID && !r.testClientClosedByAgent {
+		r.testClientReplacedPID = previousPID
+	}
+	if info.TestClientPID != previousPID {
+		r.testClientClosedByAgent = false
+	}
 	if info.PreviousTestClientState == testClientExited && info.PreviousTestClientPID > 0 {
 		r.testClientPID = info.PreviousTestClientPID
 		r.setTestClientStateLocked(testClientExited, toolName, "ITL_VANESSA_TESTCLIENT_EXITED", "previous owned TestClient process exited")
@@ -1276,12 +1308,14 @@ func (r *runtime) applyVanessaTestClientResultLocked(toolName string, arguments 
 	switch classifyVanessaTool(toolName, arguments) {
 	case vanessaToolConnect:
 		if code == "" {
+			r.testClientClosedByAgent = false
 			r.setTestClientStateLocked(testClientManagerConnected, toolName, "ITL_OK", "connection postcondition proved")
 		} else {
 			r.setTestClientStateLocked(testClientConnectionFailed, toolName, code, resultText(result))
 		}
 	case vanessaToolDisconnect:
 		if code == "" {
+			r.testClientClosedByAgent = true
 			r.setTestClientStateLocked(testClientDisconnected, toolName, "ITL_OK", "manager disconnected from TestClient")
 		}
 	default:
@@ -1452,6 +1486,13 @@ func reportsTestClientDisconnected(text string) bool {
 
 func vanessaSemanticFailureMarker(name, text string) string {
 	if !isVanessaAuthoringTool(name) {
+		return ""
+	}
+	// A run that reached Vanessa's own scenario report returns that report: its
+	// failed step quotes any platform or product error, including the markers
+	// below (PM5 2026-11-17: a product error in a cell check became a tool
+	// failure and the failed step was lost).
+	if (name == "run_scenario" || name == "get_test_results") && reportsVanessaScenarioResult(text) {
 		return ""
 	}
 	normalized := strings.ToLower(text)
