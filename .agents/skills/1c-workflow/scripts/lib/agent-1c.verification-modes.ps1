@@ -1049,36 +1049,43 @@ function Invoke-ItlVerificationCycle {
         return
     }
     $skipped = @($decisions | Where-Object { -not $_.run })
-    $verification = Get-VerificationState -State $state
-    if ($verification.isFreshPassed) {
-        Update-DevBranchState -State $state -Updates @{
-            lastVerificationEvidenceKind = $(if ([string](Get-StateValue -State $verification -Name 'assessmentKind' -Default '') -eq 'current-obligations') { 'complete/current-obligations' } elseif ((Get-VerificationModel) -eq 'change') { 'complete/current-change' } else { 'full' })
-            lastVerificationTrigger = $Trigger
-            lastVerificationSkippedComponents = @($skipped | ForEach-Object component)
-        }
-        Write-Host 'Canonical verification passed: current observed obligations and exact loaded target are complete; skipped runners were not started.'
-    } elseif ((Get-VerificationModel) -eq 'change' -and [bool](Get-StateValue -State $verification -Name 'changeFreshPassed' -Default $false)) {
-        Update-DevBranchState -State $state -Updates @{
-            lastVerificationEvidenceKind = 'change/task-pending'
-            lastVerificationTrigger = $Trigger
-            lastVerificationSkippedComponents = @($skipped | ForEach-Object component)
-        }
-        Write-Host "Current change checks passed; whole-task acceptance remains pending: $(@(Get-StateValue -State $verification -Name 'acceptanceRemaining' -Default @()) -join ', '). Complete the change record without repeating successful observations; keep the remaining criteria open."
-    } elseif ($skipped.Count -gt 0) {
-        Set-ItlPartialVerificationEvidence -State $state -Decisions $decisions -Trigger $Trigger
-    } else {
-        $assessmentIssues = @(Get-StateValue -State $verification -Name 'assessmentIssues' -Default @())
-        if ($assessmentIssues.Count -gt 0) {
-            Write-Host "[WARN] Current observed verification remains partial: $($assessmentIssues -join '; '). Preserve the reports and satisfy only the missing obligation through its existing owner."
-        } elseif ($verification.status -eq "passed") {
+    # The assessment reads every retained and one-off receipt after the runners
+    # finished; on a large branch it can stay silent longer than the runner
+    # watchdog (PM5 2026-11-16/17: killed as RUNNER_STATUS_STALE after passed
+    # tests). The block ends this function, so its locals need not escape.
+    Set-RunStage -Stage 'verification.assess' -Detail 'Assessing verification obligations and evidence.'
+    Invoke-WithRunStatusHeartbeat {
+        $verification = Get-VerificationState -State $state
+        if ($verification.isFreshPassed) {
             Update-DevBranchState -State $state -Updates @{
-                lastVerificationEvidenceKind = "full"
+                lastVerificationEvidenceKind = $(if ([string](Get-StateValue -State $verification -Name 'assessmentKind' -Default '') -eq 'current-obligations') { 'complete/current-obligations' } elseif ((Get-VerificationModel) -eq 'change') { 'complete/current-change' } else { 'full' })
                 lastVerificationTrigger = $Trigger
-                lastVerificationSkippedComponents = @()
+                lastVerificationSkippedComponents = @($skipped | ForEach-Object component)
             }
-            $oneOffIssues = @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
-            if ($oneOffIssues.Count -gt 0) {
-                Write-Host "[WARN] Retained verification completed, but one-off proof is still pending: $($oneOffIssues -join '; '). Result readiness remains partial until the agent performs each named one-off check on this loaded infobase; it is the next step, not a final result."
+            Write-Host 'Canonical verification passed: current observed obligations and exact loaded target are complete; skipped runners were not started.'
+        } elseif ((Get-VerificationModel) -eq 'change' -and [bool](Get-StateValue -State $verification -Name 'changeFreshPassed' -Default $false)) {
+            Update-DevBranchState -State $state -Updates @{
+                lastVerificationEvidenceKind = 'change/task-pending'
+                lastVerificationTrigger = $Trigger
+                lastVerificationSkippedComponents = @($skipped | ForEach-Object component)
+            }
+            Write-Host "Current change checks passed; whole-task acceptance remains pending: $(@(Get-StateValue -State $verification -Name 'acceptanceRemaining' -Default @()) -join ', '). Complete the change record without repeating successful observations; keep the remaining criteria open."
+        } elseif ($skipped.Count -gt 0) {
+            Set-ItlPartialVerificationEvidence -State $state -Decisions $decisions -Trigger $Trigger
+        } else {
+            $assessmentIssues = @(Get-StateValue -State $verification -Name 'assessmentIssues' -Default @())
+            if ($assessmentIssues.Count -gt 0) {
+                Write-Host "[WARN] Current observed verification remains partial: $($assessmentIssues -join '; '). Preserve the reports and satisfy only the missing obligation through its existing owner."
+            } elseif ($verification.status -eq "passed") {
+                Update-DevBranchState -State $state -Updates @{
+                    lastVerificationEvidenceKind = "full"
+                    lastVerificationTrigger = $Trigger
+                    lastVerificationSkippedComponents = @()
+                }
+                $oneOffIssues = @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
+                if ($oneOffIssues.Count -gt 0) {
+                    Write-Host "[WARN] Retained verification completed, but one-off proof is still pending: $($oneOffIssues -join '; '). Result readiness remains partial until the agent performs each named one-off check on this loaded infobase; it is the next step, not a final result."
+                }
             }
         }
     }
