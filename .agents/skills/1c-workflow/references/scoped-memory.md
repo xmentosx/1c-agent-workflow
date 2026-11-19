@@ -162,6 +162,12 @@ proofs go by reference in `evidence` and conditions in `applicability`, outside
 that limit. A longer `data` is refused with `MEMORY_NOTE_TOO_LONG` before any
 backend call; the pending source is kept and `remember` with the same `note_id`
 and shortened data completes it. Notes stored before the limit are read as before.
+While scoped memory is connected to Claude Code in an ITL project, ITL turns off
+Claude's built-in auto memory (`autoMemoryEnabled: false` in
+`.claude/settings.local.json`, unless the user set that key), so knowledge goes
+only to scoped memory. A workaround for an ITL defect is not project or
+organization knowledge: write it neither to `remember` nor to client memory, but
+hand it off as described in `references/workflow-incidents.md`.
 
 | Choice | When to use it |
 | --- | --- |
