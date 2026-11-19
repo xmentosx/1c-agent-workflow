@@ -930,15 +930,11 @@ function Get-VanessaTestClientSecretValue {
     return $value
 }
 
-function Read-VanessaTestClientManifest {
-    $path = Get-VanessaTestClientManifestPath
-    if (-not $path) { return $null }
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
-        throw "ITL_VANESSA_TESTCLIENT_MANIFEST_NOT_FOUND: $path"
-    }
+function ConvertFrom-VanessaTestClientManifestDeclaration {
+    param([string]$Path, [string]$Text)
 
     try {
-        $manifest = Read-Utf8Text -Path $path | ConvertFrom-Json
+        $manifest = $Text | ConvertFrom-Json
     } catch {
         throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: '$path' is not valid JSON. $($_.Exception.Message)"
     }
@@ -986,14 +982,11 @@ function Read-VanessaTestClientManifest {
         if ($user -and $userEnv) {
             throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: profile '$name' cannot define both user and userEnv."
         }
-        if ($userEnv) {
-            $user = Get-VanessaTestClientSecretValue -EnvironmentName $userEnv -ProfileName $name
-        }
-
-        $password = ""
         $passwordEnv = [string](Get-StateValue -State $profile -Name "passwordEnv" -Default "")
-        if ($passwordEnv) {
-            $password = Get-VanessaTestClientSecretValue -EnvironmentName $passwordEnv -ProfileName $name
+        foreach ($environmentName in @($userEnv, $passwordEnv) | Where-Object { $_ }) {
+            if ($environmentName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+                throw "ITL_VANESSA_TESTCLIENT_SECRET_SOURCE_INVALID: profile='$name' environment='$environmentName'."
+            }
         }
         $clientType = ([string](Get-StateValue -State $profile -Name "clientType" -Default "Thin")).Trim()
         if ($clientType -notin @("Thin", "Thick")) {
@@ -1003,12 +996,12 @@ function Read-VanessaTestClientManifest {
         $contour = ([string](Get-StateValue -State $profile -Name "contour" -Default "primary")).Trim().ToLowerInvariant()
         if ($contour -ne "primary") {
             $contour = ConvertTo-AuxiliaryContourId -Name $contour
-            Get-AuxiliaryContour -Name $contour | Out-Null
         }
         $profiles.Add([pscustomobject][ordered]@{
             name = $name
             user = $user
-            password = $password
+            userEnv = $userEnv
+            passwordEnv = $passwordEnv
             synonym = [string](Get-StateValue -State $profile -Name "synonym" -Default "")
             clientType = $clientType
             contour = $contour
@@ -1030,6 +1023,25 @@ function Read-VanessaTestClientManifest {
         maxConcurrency = $maxConcurrency
         profiles = @($profiles.ToArray())
     }
+}
+
+function Read-VanessaTestClientManifest {
+    $path = Get-VanessaTestClientManifestPath
+    if (-not $path) { return $null }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "ITL_VANESSA_TESTCLIENT_MANIFEST_NOT_FOUND: $path"
+    }
+    $topology = ConvertFrom-VanessaTestClientManifestDeclaration -Path $path -Text (Read-Utf8Text -Path $path)
+    $topology.profiles = @(foreach ($profile in $topology.profiles) {
+        $user = if ($profile.userEnv) { Get-VanessaTestClientSecretValue -EnvironmentName $profile.userEnv -ProfileName $profile.name } else { $profile.user }
+        $password = if ($profile.passwordEnv) { Get-VanessaTestClientSecretValue -EnvironmentName $profile.passwordEnv -ProfileName $profile.name } else { '' }
+        if ($profile.contour -ne 'primary') { Get-AuxiliaryContour -Name $profile.contour | Out-Null }
+        [pscustomobject][ordered]@{
+            name = $profile.name; user = $user; password = $password
+            synonym = $profile.synonym; clientType = $profile.clientType; contour = $profile.contour
+        }
+    })
+    return $topology
 }
 
 function Get-VanessaTestClientTopology {

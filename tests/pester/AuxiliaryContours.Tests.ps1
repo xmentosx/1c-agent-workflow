@@ -685,4 +685,426 @@
         $reference | Should -Match 'Never ask the user to paste a password into chat'
         $reference | Should -Match 'configure-auxiliary-contour'
     }
+
+    Context 'Retiring auxiliary registrations' {
+        BeforeAll {
+            function Initialize-AuxiliaryRetirementFixture {
+                param([string]$Root, [switch]$Database)
+                $state = Join-Path $Root '.agent-1c/dev-branches/auxiliary-fixture.json'
+                $base = Join-Path $Root '.agent-1c/infobases/auxiliary/itldev-auxiliary-fixture/exchange'
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state) | Out-Null
+                @{devBranch='itldev/auxiliary-fixture'; devBranchName='auxiliary-fixture'; safeDevBranchName='auxiliary-fixture'; devBranchKind='configuration'; initializationStatus='ready'; createdWithWorktree=$true; worktreePath=$Root; devBranchInfoBasePath=(Join-Path $Root '.agent-1c/infobases/primary'); infoBaseKind='file'} |
+                    ConvertTo-Json | Set-Content -LiteralPath $state -Encoding UTF8
+                if ($Database) {
+                    New-Item -ItemType Directory -Force -Path $base | Out-Null
+                    Set-Content -LiteralPath (Join-Path $base '1Cv8.1CD') -Value 'retirement-test' -Encoding ASCII
+                }
+                return $base
+            }
+
+            function Set-AuxiliaryRetirementFixtureManifest {
+                param([string]$Root, [object]$Profile)
+                $path = Join-Path $Root '.agent-1c/project.json'
+                $config = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+                $config | Add-Member -NotePropertyName vanessaAutomation -NotePropertyValue @{testClientManifestPath='tests/Профили ветки.json'} -Force
+                $config | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $path -Encoding UTF8
+                $manifest = Join-Path $Root 'tests/Профили ветки.json'
+                @{schemaVersion=2; maxConcurrency=1; profiles=@($Profile)} | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifest -Encoding UTF8
+                return $manifest
+            }
+        }
+
+        It 'requires the exact name and removes a managed contour with an archive retained by ordinary cleanup' {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file'}}
+            try {
+                $base = Initialize-AuxiliaryRetirementFixture $root -Database
+                $envPath = Join-Path $root '.dev.env'
+                $statePath = Join-Path $root '.agent-1c/auxiliary-contours/itldev-auxiliary-fixture/exchange.json'
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $statePath) | Out-Null
+                Set-Content -LiteralPath $statePath -Value '{"contour":"exchange"}' -Encoding UTF8
+                Set-Content -LiteralPath $envPath -Value @('# local comment','ITL_AUX_EXCHANGE_PASSWORD = retirement-secret','ITL_AUX_EXCHANGE_PASSWORD_OTHER=keep','OTHER=keep') -Encoding UTF8
+                $missing = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-name-required' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour
+                $missing.exitCode | Should -Be 1
+                $missing.combinedText | Should -Match 'ITL_AUXILIARY_CONTOUR_REQUIRED'
+                $wrong = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-name-exact' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='EXCHANGE'}
+                $wrong.exitCode | Should -Be 1
+                $wrong.combinedText | Should -Match 'ITL_AUXILIARY_CONTOUR_NAME_INVALID'
+                $result = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-managed' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='exchange'}
+                $result.combinedText | Should -Not -Match 'retirement-secret'
+                $result.combinedText | Should -Match 'archived.*itldev-auxiliary-fixture[/\\]exchange'
+                $result.exitCode | Should -Be 0
+                Test-Path -LiteralPath $base | Should -BeFalse
+                Test-Path -LiteralPath $statePath | Should -BeFalse
+                (Get-Content -LiteralPath $envPath -Raw -Encoding UTF8) | Should -Not -Match 'retirement-secret'
+                @(Get-Content -LiteralPath $envPath -Encoding UTF8) | Should -Be @('# local comment','ITL_AUX_EXCHANGE_PASSWORD_OTHER=keep','OTHER=keep')
+                $policies = & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    $plan = Get-ItlArtifactCleanupPlan -MainRoot $root
+                    $archives = @($plan.entries | Where-Object category -EQ 'auxiliary-archive')
+                    $archives.Count | Should -Be 1
+                    $archivePath = $archives[0].path
+                    $archives[0].delete | Should -BeFalse
+                    $archives[0].reason | Should -Be 'newest'
+                    $archives[0].group | Should -Be 'itldev-auxiliary-fixture/exchange'
+                    foreach ($preview in @($true,$false,$false)) {
+                        $clean = Invoke-ItlArtifactCleanup -DryRun:$preview 6>$null
+                        $clean.removedBytes | Should -Be 0
+                        Test-Path -LiteralPath (Join-Path $archivePath '1Cv8.1CD') | Should -BeTrue
+                    }
+                    $policy = Get-ItlArtifactRetentionPolicy
+                    $policy.archiveKeepCount
+                }
+                $policies | Should -Be 2
+            } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'blocks a directly referenced contour before writing and resumes after reassigning the same profile' {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file'}}
+            try {
+                $base = Initialize-AuxiliaryRetirementFixture $root -Database
+                $manifest = Set-AuxiliaryRetirementFixtureManifest -Root $root -Profile @{name='Branch User'; contour='exchange'}
+                $config = Join-Path $root '.agent-1c/project.json'
+                $before = (Get-FileHash -LiteralPath $config).Hash
+                $result = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-profile-block' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='exchange'}
+                $result.exitCode | Should -Be 1
+                $result.combinedText | Should -Match "ITL_AUXILIARY_RETIREMENT_PROFILE_REFERENCE.*Branch User"
+                $result.combinedText | Should -Match ([regex]::Escape($manifest))
+                (Get-FileHash -LiteralPath $config).Hash | Should -Be $before
+                Test-Path -LiteralPath $base | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $root '.agent-1c/auxiliary-archives') | Should -BeFalse
+                Set-AuxiliaryRetirementFixtureManifest -Root $root -Profile @{name='Branch User'; contour='primary'} | Out-Null
+                $retry = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-profile-continue' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='exchange'}
+                $retry.combinedText | Should -Match 'archived'
+                $retry.exitCode | Should -Be 0
+            } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'preserves the TestClient <Reference> key and resolves the same profile through the runner' -ForEach @(
+            @{Reference='userEnv'; Kept='USER'; Removed='PASSWORD'},
+            @{Reference='passwordEnv'; Kept='PASSWORD'; Removed='USER'}
+        ) {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file';connectionRef='EXCHANGE_PROFILE_FIXTURE'}}
+            try {
+                Initialize-AuxiliaryRetirementFixture $root | Out-Null
+                $keptName = "ITL_AUX_EXCHANGE_PROFILE_FIXTURE_$Kept"
+                $removedName = "ITL_AUX_EXCHANGE_PROFILE_FIXTURE_$Removed"
+                Set-AuxiliaryRetirementFixtureManifest -Root $root -Profile @{name='Primary User'; contour='primary'; $Reference=$keptName} | Out-Null
+                $envPath = Join-Path $root '.dev.env'
+                Set-Content -LiteralPath $envPath -Value @("$keptName=kept-secret", "$removedName=removed-secret") -Encoding UTF8
+                $result = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-profile-env' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='exchange'}
+                $result.exitCode | Should -Be 0
+                $result.combinedText | Should -Match "$keptName.*Primary User"
+                $result.combinedText | Should -Not -Match 'kept-secret|removed-secret'
+                @(Get-Content -LiteralPath $envPath -Encoding UTF8) | Should -Be @("$keptName=kept-secret")
+                & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    $profile = (Read-VanessaTestClientManifest).profiles[0]
+                    $profile.(($Reference -replace 'Env$','')) -ceq 'kept-secret'
+                } | Should -BeTrue
+            } finally {
+                [Environment]::SetEnvironmentVariable("ITL_AUX_EXCHANGE_PROFILE_FIXTURE_$Kept", $null, 'Process')
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'resumes the same name after the move succeeds and the archive marker fails' {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file';connectionRef='COMMON'}; retained=@{baseMode='managed-file';connectionRef='COMMON'}}
+            try {
+                $base = Initialize-AuxiliaryRetirementFixture $root -Database
+                Set-Content -LiteralPath (Join-Path $root '.dev.env') -Encoding UTF8 -Value 'ITL_AUX_COMMON_USER=shared'
+                & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    $AuxiliaryContourName = 'exchange'
+                    function Write-AuxiliaryContourArchiveMarker { throw 'fixture interrupted after archive move' }
+                    { Remove-AuxiliaryContour } | Should -Throw '*fixture interrupted after archive move*'
+                }
+                Test-Path -LiteralPath $base | Should -BeFalse
+                $rootArchives = Join-Path $root '.agent-1c/auxiliary-archives/itldev-auxiliary-fixture'
+                $archives = @(Get-ChildItem -LiteralPath $rootArchives -Directory)
+                $archives.Count | Should -Be 1
+                Test-Path -LiteralPath (Join-Path $archives[0].FullName 'itl-archive.json') | Should -BeFalse
+                Add-Content -LiteralPath (Join-Path $root '.dev.env') -Value 'LATE_EDIT=preserved' -Encoding UTF8
+                $result = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-resume' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='exchange'}
+                $result.combinedText | Should -Match 'archived'
+                $result.exitCode | Should -Be 0
+                @(Get-ChildItem -LiteralPath $rootArchives -Directory).Count | Should -Be 1
+                Test-Path -LiteralPath (Join-Path $archives[0].FullName 'itl-archive.json') | Should -BeTrue
+                @(Get-Content -LiteralPath (Join-Path $root '.dev.env') -Encoding UTF8) | Should -Be @('ITL_AUX_COMMON_USER=shared','LATE_EDIT=preserved')
+            } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'plans one preserved base for disappearing attached <Mode> and managed contours with <Attached> order' -ForEach @(
+            @{Mode='attached-readonly';Attached='aaa'}, @{Mode='attached-readonly';Attached='zzz'},
+            @{Mode='attached-disposable';Attached='aaa'}, @{Mode='attached-disposable';Attached='zzz'}
+        ) {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file'}; $Attached=@{baseMode=$Mode;connectionRef='SHARED_LOCAL'}}
+            try {
+                $base = Initialize-AuxiliaryRetirementFixture $root -Database
+                & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    $env:ITL_AUX_SHARED_LOCAL_INFOBASE_KIND = 'file'
+                    $env:ITL_AUX_SHARED_LOCAL_INFOBASE_PATH = "$base\"
+                    $source = @(Get-AuxiliaryContourDefinitions | Sort-Object name)
+                    $plan = New-AuxiliaryRetirementPlan -Source $source -Target @() -Names @('exchange',$Attached) -TargetCommit 'fixture'
+                    @($plan.bases).Count | Should -Be 1
+                    $plan.bases[0].reason | Should -Be 'attached-registration'
+                    @(Get-AuxiliaryRetirementAdmissions -Plan $plan).Count | Should -Be 0
+                    $plan.entries[0].base | Should -Be $plan.entries[1].base
+                    Invoke-AuxiliaryRetirement -Plan $plan -Remaining @() -SaveProgress {}
+                    $plan.result | Should -Not -BeNullOrEmpty
+                }
+                Test-Path -LiteralPath $base | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $root '.agent-1c/auxiliary-archives') | Should -BeFalse
+            } finally {
+                Remove-Item Env:ITL_AUX_SHARED_LOCAL_INFOBASE_KIND,Env:ITL_AUX_SHARED_LOCAL_INFOBASE_PATH -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'reconciles two clients through MCP ownership and preserves modified or unowned names' {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file';mcp=@{roctup=$true;vanessaUi=$true}}}
+            try {
+                Initialize-AuxiliaryRetirementFixture $root | Out-Null
+                & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    $AuxiliaryContourName = 'exchange'
+                    $wrapper = Write-ItlOnDemandAuxiliaryHelperWrapper -Contour (Get-AuxiliaryContour -Name exchange)
+                    $endpoint = [pscustomobject]@{name='itl-roctup-aux-exchange';command='fixture-mcp.exe';transport='stdio';args=@('--helper',$wrapper)}
+                    $edited = [pscustomobject]@{name='itl-vanessa-ui-aux-exchange';command='fixture-mcp.exe';transport='stdio';args=@('--helper',$wrapper)}
+                    $requests = @(
+                        [pscustomobject]@{client='cursor';owner='ondemand-facade';endpoints=@($endpoint,$edited)}
+                        [pscustomobject]@{client='claude-code';owner='ondemand-facade';endpoints=@($endpoint)}
+                    )
+                    Write-ItlClientMcpEndpointSet -Requests $requests | Out-Null
+                    Write-ItlClientMcpEndpoints -Endpoints @($endpoint) -Owner 'fixture-foreign' -Client codex | Out-Null
+                    $cursor = @(Get-ItlClientMcpConfigPaths -Client cursor)[0]
+                    $text = Read-Utf8Text -Path $cursor
+                    $text = Set-ItlJsoncObjectProperty -Text $text -PropertyPath @('mcpServers',$edited.name,'command') -Value 'user-owned.exe'
+                    Write-Utf8TextAtomic -Path $cursor -Value $text
+                    $result = Remove-AuxiliaryContour *>&1 | Out-String
+                    $result | Should -Match 'codex/itl-roctup-aux-exchange.*unowned'
+                    $result | Should -Match 'cursor/itl-vanessa-ui-aux-exchange.*user change conflict'
+                    $result | Should -Match 'Перечитайте.*claude.*cursor'
+                    (Read-ItlClientMcpEntries -Client cursor).Contains($endpoint.name) | Should -BeFalse
+                    (Read-ItlClientMcpEntries -Client claude-code).Contains($endpoint.name) | Should -BeFalse
+                    (Read-ItlClientMcpEntries -Client cursor)[$edited.name].command | Should -Be 'user-owned.exe'
+                    (Read-ItlClientMcpEntries -Client codex).Contains($endpoint.name) | Should -BeTrue
+                    Test-Path -LiteralPath $wrapper | Should -BeTrue
+                }
+            } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'inventories only unknown local resources and leaves them through preview, cleanup and automatic cleanup' {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file'}}
+            $junction = Join-Path $root '.agent-1c/infobases/linked'
+            try {
+                $active = Initialize-AuxiliaryRetirementFixture $root -Database
+                & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    $paths = @{
+                        orphan=(Join-Path $root '.agent-1c/infobases/auxiliary/itldev-auxiliary-fixture/md-fresh-085')
+                        disposable=(Join-Path $root '.agent-1c/infobases/mdperf-ab-copy')
+                        reference=(Join-Path $root '.agent-1c/infobases/Ручной эталон')
+                        primary=(Join-Path $root '.agent-1c/infobases/primary')
+                        service=(Join-Path $root '.agent-1c/infobases/vanessa-service-fixture')
+                    }
+                    foreach ($path in $paths.Values) {
+                        New-Item -ItemType Directory -Force -Path $path | Out-Null
+                        [IO.File]::WriteAllBytes((Join-Path $path '1Cv8.1CD'), [byte[]](1,2,3))
+                    }
+                    $state = Read-DevBranchState
+                    Update-DevBranchState -State $state -Updates @{vanessaServiceInfoBasePath=$paths.service}
+                    $statePath = Get-AuxiliaryContourStatePath -Contour @{name='md-fresh-085'}
+                    Write-Utf8TextAtomic -Path $statePath -Value '{"contour":"md-fresh-085"}'
+                    $wrapper = Write-ItlOnDemandAuxiliaryHelperWrapper -Contour @{name='md-fresh-085'}
+                    Write-Utf8TextAtomic -Path (Join-Path $root '.dev.env') -Value "ITL_AUX_MD_FRESH_085_PASSWORD=orphan-secret"
+                    $endpoint = [pscustomobject]@{name='itl-roctup-aux-md-fresh-085';command='fixture-mcp.exe';transport='stdio';args=@('--helper',$wrapper)}
+                    Write-ItlClientMcpEndpoints -Endpoints @($endpoint) -Owner 'ondemand-facade' -Client cursor | Out-Null
+                    New-Item -ItemType Junction -Path $junction -Target $paths.reference | Out-Null
+                    foreach ($preview in @($true,$false)) {
+                        $output = Invoke-ItlArtifactCleanup -DryRun:$preview -IncludeAuxiliaryInventory *>&1 | Out-String
+                        $output | Should -Match 'md-fresh-085'
+                        $output | Should -Match 'mdperf-ab-copy.*3 bytes'
+                        $output | Should -Match 'Ручной эталон.*3 bytes'
+                        $output | Should -Match 'linked.*reparse-or-unavailable'
+                        $output | Should -Match 'ITL_AUX_MD_FRESH_085_PASSWORD'
+                        $output | Should -Match 'cursor/itl-roctup-aux-md-fresh-085'
+                        $output | Should -Not -Match 'orphan-secret|vanessa-service-fixture|infobases\\primary|itldev-auxiliary-fixture\\exchange'
+                    }
+                    (Invoke-ItlArtifactCleanup -Automatic *>&1 | Out-String) | Should -Not -Match 'md-fresh-085|ITL_AUX_MD_FRESH_085_PASSWORD'
+                    foreach ($path in @($paths.Values) + @($statePath,$wrapper,$junction,$active,(Join-Path $root '.dev.env'))) {
+                        Test-Path -LiteralPath $path | Should -BeTrue
+                    }
+                }
+            } finally {
+                if (Test-Path -LiteralPath $junction) { [IO.Directory]::Delete($junction) }
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'continues reset after a foreign-session conflict and an interrupted archive while using the target profile' {
+            $root = New-AuxiliaryFixture @{retained=@{baseMode='managed-file'}}
+            try {
+                $fixtureBaseDir = Initialize-AuxiliaryRetirementFixture $root -Database
+                $targetManifest = Set-AuxiliaryRetirementFixtureManifest -Root $root -Profile @{
+                    name='Target Primary'; contour='primary'; passwordEnv='ITL_AUX_EXCHANGE_PASSWORD'
+                }
+                $markerPath = '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+                $marker = Join-Path $root $markerPath
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $marker) | Out-Null
+                Set-Content -LiteralPath $marker -Value '# ITL_RESET_AUXILIARY_RETIREMENT_SCHEMA=1' -Encoding ASCII
+                Copy-Item -LiteralPath (Join-Path $RepoRoot 'templates/gitignore.append') -Destination (Join-Path $root '.gitignore')
+                & git -C $root add -- .gitignore .agent-1c/project.json tests $markerPath
+                & git -C $root commit -qm target
+                $target = (& git -C $root rev-parse HEAD).Trim()
+                $targetTree = (& git -C $root rev-parse 'HEAD^{tree}').Trim()
+                & git -C $root branch master
+                $configPath = Join-Path $root '.agent-1c/project.json'
+                $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $config.auxiliaryContours | Add-Member exchange @{baseMode='managed-file'}
+                $config | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $configPath -Encoding UTF8
+                @{schemaVersion=2;maxConcurrency=1;profiles=@(@{name='Disappears with source';contour='exchange'})} |
+                    ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $targetManifest -Encoding UTF8
+                & git -C $root add -- .agent-1c/project.json tests
+                & git -C $root commit -qm source
+                $before = (& git -C $root rev-parse HEAD).Trim()
+                $envPath = Join-Path $root '.dev.env'
+                Set-Content -LiteralPath $envPath -Encoding UTF8 -Value @('ITL_AUX_EXCHANGE_USER=fixture-unused','ITL_AUX_EXCHANGE_PASSWORD=fixture-kept')
+                & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    # Git, seed pinning and retirement are exercised through the
+                    # reset entrypoint. The primary 1C runtime is a test double.
+                    function Get-DevBranchResetMasterSource { [pscustomobject]@{commit=$target;tree=$targetTree;fingerprint='fixture-fingerprint';configTreeObjectId='fixture-tree'} }
+                    function Open-DevBranchResetSourceInputs {
+                        [pscustomobject]@{
+                            lease=[IO.MemoryStream]::new(); seedIdentity=[pscustomobject]@{syncId='fixture-seed'}
+                            seed=[pscustomobject]@{baselinePath='unused';sourceKey='fixture';syncId='fixture-seed';artifactKind='file-1cd';configurationFingerprint='fixture-fingerprint';baselineHash='';baselineCount=0}
+                        }
+                    }
+                    function Restore-ExistingDevBranchRuntimeFromSeed { param($State, $ExpectedConfigurationFingerprint, $CapturedSeed, $ExistingLease); [pscustomobject]@{seed=$CapturedSeed;repositoryUnbound=$false} }
+                    function Initialize-DevBranchEventLogBaseline { param($State); $State }
+                    function Ensure-DevBranchEventLogPendingCursor {}
+                    function Ensure-DevBranchEnterpriseNormalized {}
+                    function Sync-AiRules1cManagedIgnoredFilesFromMain {}
+                    function Invoke-DevBranchDefaultMcpSetup { param($State, [switch]$PreserveAuxiliaryResources); $State }
+                    function Sync-KiloItlCommandSurface {}
+                    function Invoke-AiRules1cManagedMcpConfigReconcile {}
+                    function Sync-DevBranchContextToDotEnv {}
+                    function Archive-VerificationChangeForReset {}
+                    function Archive-VerificationSelectionEvidenceForReset {}
+                    function Stop-ItlOnDemandBackends {
+                        param([string]$InfoBasePath,[switch]$Strict)
+                        $InfoBasePath | Should -Be $fixtureBaseDir
+                    }
+                    $testState = @{foreign=$true; crash=$true}
+                    function Get-OneCInfoBaseSessionProcesses {
+                        param($InfoBaseKind,$InfoBasePath)
+                        if ($testState.foreign -and $InfoBasePath -eq $fixtureBaseDir) { [pscustomobject]@{pid=$PID} }
+                    }
+                    $originalMoveMarker = (Get-Command Write-AuxiliaryContourArchiveMarker).ScriptBlock
+                    function Write-AuxiliaryContourArchiveMarker {
+                        param($Path,$Name)
+                        if ($testState.crash) { throw 'fixture crash after move' }
+                        & $originalMoveMarker -Path $Path -Name $Name
+                    }
+                    { Reset-DevBranch } | Should -Throw '*EXECUTION_GUARD_EXTERNAL_CONFLICT*'
+                    Get-CurrentCommit | Should -Be $before
+                    (Get-StateValue (Read-DevBranchState) 'resetStatus' '') | Should -Be ''
+                    Test-Path -LiteralPath $fixtureBaseDir | Should -BeTrue
+                    $testState.foreign = $false
+                    { Reset-DevBranch } | Should -Throw '*fixture crash after move*'
+                    (Get-GitOutput @('rev-parse','HEAD^{tree}')).Trim() | Should -Be $targetTree
+                    Test-Path -LiteralPath $fixtureBaseDir | Should -BeFalse
+                    (Read-DevBranchState).resetPhase | Should -Be 'git-reset-complete'
+                    $testState.crash = $false
+                    $result = Reset-DevBranch *>&1 | Out-String
+                    $result | Should -Match 'exchange.*archived'
+                    $result | Should -Match 'ITL_AUX_EXCHANGE_PASSWORD.*Target Primary'
+                    $result | Should -Not -Match 'fixture-kept|fixture-unused'
+                    (Read-DevBranchState).resetStatus | Should -Be 'complete'
+                    (Get-GitOutput @('rev-parse','HEAD^{tree}')).Trim() | Should -Be $targetTree
+                    @(Get-ItlAuxiliaryArchiveArtifactCandidates -ProjectRoot $root).Count | Should -Be 1
+                    @(Get-Content -LiteralPath $envPath -Encoding UTF8) | Should -Be @('ITL_AUX_EXCHANGE_PASSWORD=fixture-kept')
+                }
+            } finally {
+                [Environment]::SetEnvironmentVariable('ITL_AUX_EXCHANGE_PASSWORD', $null, 'Process')
+                [Environment]::SetEnvironmentVariable('ITL_AUX_EXCHANGE_USER', $null, 'Process')
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'recovers a client file written before its ownership receipt and confirms the reload client' {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file';mcp=@{roctup=$true}}}
+            try {
+                Initialize-AuxiliaryRetirementFixture $root | Out-Null
+                $key = 'itl-roctup-aux-exchange'
+                $wrapper = & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    $AuxiliaryContourName = 'exchange'
+                    $path = Write-ItlOnDemandAuxiliaryHelperWrapper -Contour (Get-AuxiliaryContour -Name exchange)
+                    $endpoint = [pscustomobject]@{name=$key;command='fixture-mcp.exe';transport='stdio';args=@('--helper',$path)}
+                    $request = [pscustomobject]@{client='cursor';owner='ondemand-facade';endpoints=@($endpoint)}
+                    Write-ItlClientMcpEndpointSet -Requests @($request) | Out-Null
+                    function Write-ItlManagedMcpState { throw 'fixture interruption before MCP owner receipt' }
+                    { Remove-AuxiliaryContour } | Should -Throw '*fixture interruption before MCP owner receipt*'
+                    (Read-ItlClientMcpEntries -Client cursor).Contains($key) | Should -BeFalse
+                    @(Get-ItlManagedMcpOwnerKeys -Client cursor -Owner 'ondemand-facade') | Should -Contain $key
+                    Test-Path -LiteralPath $path | Should -BeTrue
+                    $path
+                }
+                $result = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-mcp-resume' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='exchange'}
+                $result.combinedText | Should -Match 'Перечитайте.*cursor'
+                $result.exitCode | Should -Be 0
+                Test-Path -LiteralPath $wrapper | Should -BeFalse
+                & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    @(Get-ItlManagedMcpOwnerKeys -Client cursor -Owner 'ondemand-facade') | Should -Not -Contain $key
+                }
+            } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'preserves a managed path that is a junction and leaves its target untouched' {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file'}}
+            $managed = Initialize-AuxiliaryRetirementFixture $root
+            $other = Join-Path $root '.agent-1c/infobases/Каталог с данными'
+            try {
+                New-Item -ItemType Directory -Force -Path $other,(Split-Path -Parent $managed) | Out-Null
+                $db = Join-Path $other '1Cv8.1CD'
+                [IO.File]::WriteAllText($db, 'external bytes')
+                New-Item -ItemType Junction -Path $managed -Target $other | Out-Null
+                $result = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-junction' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='exchange'}
+                $result.combinedText | Should -Match 'preserved.*path-or-archive-ownership-unproved'
+                $result.exitCode | Should -Be 0
+                [IO.File]::ReadAllText($db) | Should -Be 'external bytes'
+                Test-Path -LiteralPath $managed | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $root '.agent-1c/auxiliary-archives') | Should -BeFalse
+            } finally {
+                if (Test-Path -LiteralPath $managed) { [IO.Directory]::Delete($managed) }
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'narrows the saved plan when a different database appears at the recorded path' {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file'}}
+            try {
+                $managed = Initialize-AuxiliaryRetirementFixture $root -Database
+                & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    $retirement = New-AuxiliaryRetirementPlan -Source @(Get-AuxiliaryContourDefinitions) -Target @() -Names @('exchange')
+                    @(Get-AuxiliaryRetirementAdmissions -Plan $retirement).Count | Should -Be 1
+                    [IO.Directory]::Move($managed, (Join-Path $root '.agent-1c/infobases/prior-base'))
+                    New-Item -ItemType Directory -Path $managed | Out-Null
+                    [IO.File]::WriteAllText((Join-Path $managed '1Cv8.1CD'), 'different base contents')
+                    Update-AuxiliaryRetirementBaseEvidence -Plan $retirement -Remaining @()
+                    $retirement.bases[0].reason | Should -Be 'base-identity-changed'
+                    @(Get-AuxiliaryRetirementAdmissions -Plan $retirement).Count | Should -Be 0
+                    Invoke-AuxiliaryRetirement -Plan $retirement -Remaining @() -SaveProgress {}
+                    [IO.File]::ReadAllText((Join-Path $managed '1Cv8.1CD')) | Should -Be 'different base contents'
+                    Test-Path -LiteralPath (Join-Path $root '.agent-1c/infobases/prior-base/1Cv8.1CD') | Should -BeTrue
+                    Test-Path -LiteralPath (Join-Path $root '.agent-1c/auxiliary-archives') | Should -BeFalse
+                }
+            } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
 }

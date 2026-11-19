@@ -1,4 +1,4 @@
-. (Join-Path $PSScriptRoot 'agent-1c.diagnostic-retention.ps1')
+﻿. (Join-Path $PSScriptRoot 'agent-1c.diagnostic-retention.ps1')
 
 function Get-ItlArtifactRetentionPolicy {
     $enabledText = ([string](Get-EnvValue -Name 'ITL_ARTIFACT_CLEANUP_ENABLED' -Default 'true')).Trim().ToLowerInvariant()
@@ -596,7 +596,7 @@ function Invoke-ItlArtifactCleanup {
     # Automatic cleanup is optional after the action: it stops removing at its
     # deadline and leaves the rest to /itl-clean instead of delaying the result.
     # The heartbeat keeps the finished action from looking stalled to the runner.
-    param([switch]$DryRun, [switch]$Automatic, [object]$DeadlineUtc = $null)
+    param([switch]$DryRun, [switch]$Automatic, [object]$DeadlineUtc = $null, [switch]$IncludeAuxiliaryInventory)
     if ($Automatic -and -not (Get-ItlArtifactRetentionPolicy).enabled) { return }
     if ($Automatic -and $null -eq $DeadlineUtc) { $DeadlineUtc = [datetime]::UtcNow.AddSeconds(30) }
     $plan = if ($Automatic) { Invoke-WithRunStatusHeartbeat { Get-ItlArtifactCleanupPlan } } else { Get-ItlArtifactCleanupPlan }
@@ -630,6 +630,23 @@ function Invoke-ItlArtifactCleanup {
     if (-not $Automatic) {
         Write-Host "ITL artifact cleanup: candidates=$($plan.entries.Count), eligible=$($eligible.Count), bytes=$bytes, removedBytes=$removed, dryRun=$([bool]$DryRun)."
         foreach ($entry in $eligible) { Write-Host "  $(if ($DryRun) { 'would remove' } elseif ($removedPaths.Contains([string]$entry.path)) { 'removed' } else { 'left' }): $($entry.path)" }
+    }
+    if (-not $Automatic) {
+        foreach ($entry in @($plan.entries | Where-Object { $_.category -eq 'auxiliary-archive' -and -not $_.delete })) {
+            $reason = if ($entry.reason -eq 'newest') { "среди $($plan.policy.archiveKeepCount) последних архивов группы $($entry.group)" } else { $entry.reason }
+            Write-Host "Сохранён архив $($entry.path) ($reason)."
+        }
+    }
+    if ($IncludeAuxiliaryInventory -and -not $Automatic) {
+        $inventory = Get-AuxiliaryRetirementInventory
+        if ($inventory.items.Count -gt 0 -or $inventory.incomplete.Count -gt 0) {
+            Write-Host 'Инвентаризация локальных остатков вспомогательных контуров'
+            foreach ($item in $inventory.items) {
+                $size = if ($null -ne $item.bytes) { ", $($item.bytes) bytes" } else { '' }
+                Write-Host "  $($item.kind) $($item.location) (сохранено, $($item.reason)$size)"
+            }
+            foreach ($reason in $inventory.incomplete) { Write-Host "  Инвентаризация неполна. $reason" }
+        }
     }
     foreach ($issue in $failed) { Write-Warning "ITL artifact cleanup left: $issue" }
     if ($deferred -gt 0) { Write-Warning "ITL artifact cleanup deferred $deferred eligible artifact(s) at its time budget; /itl-clean removes them." }

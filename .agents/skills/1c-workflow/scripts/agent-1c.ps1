@@ -1,6 +1,6 @@
 ﻿[CmdletBinding(PositionalBinding = $false)]
 param(
-    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "provision-openspec-cli", "openspec-context", "openspec-new-change", "openspec-archive-change", "install-ui-tools", "ui-tools-status", "window-helper-status", "window-helper-stop", "window-helper-restart", "window-show", "window-hide", "begin-verification-repair", "extend-verification-repair", "begin-one-off-proof", "complete-one-off-proof", "begin-verification-change", "complete-verification-change", "attest-verification-suites", "acknowledge-event-log-errors", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-workflow-branch", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "clean-artifacts", "delete-dev-branch", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "get-review-scope", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "provision-openspec-cli", "openspec-context", "openspec-new-change", "openspec-archive-change", "install-ui-tools", "ui-tools-status", "window-helper-status", "window-helper-stop", "window-helper-restart", "window-show", "window-hide", "begin-verification-repair", "extend-verification-repair", "begin-one-off-proof", "complete-one-off-proof", "begin-verification-change", "complete-verification-change", "attest-verification-suites", "acknowledge-event-log-errors", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-workflow-branch", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "clean-artifacts", "delete-dev-branch", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "remove-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "get-review-scope", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -162,7 +162,7 @@ param(
     [string]$RunStatusPath,
     [string]$RunLogPath,
     [switch]$PauseOnFailure,
-    [ValidateSet("", "pre-copy", "post-copy", "post-merge", "main-helper")]
+    [ValidateSet("", "pre-copy", "post-copy", "post-merge", "main-helper", "reset-auxiliary-retirement")]
     [string]$LifecyclePhase = "",
     [string]$OperationId = "",
     [int]$OperationOwnerPid = 0,
@@ -513,6 +513,7 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.context-diagnostics.ps1",
     "agent-1c.ondemand-mcp.ps1",
     "agent-1c.auxiliary.ps1",
+    "agent-1c.auxiliary-retirement.ps1",
     "agent-1c.artifact-retention.ps1",
     "agent-1c.branch-deletion.ps1",
     "agent-1c.review-scope.ps1",
@@ -577,15 +578,18 @@ try {
     # database execution is admitted only at the native phase boundary.
     Read-ProjectConfig
     Initialize-GitIndexLockTracking
-    if(-not $InternalOnDemandOperation -and -not $CatalogAction -and -not $WorkflowUpdateRecovery -and
-        ((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/mcp/product-context-operation.json')))){
-        . Import-ItlProductProject
-        if((Get-ItlProductProjectStartupDisposition $Action $CatalogAction $InternalOnDemandOperation $WorkflowUpdateRecovery $LifecyclePhase) -eq 'project-operation'){
-            if(-not (Get-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue)){$script:ItlMcpRegistryOperation=@{attempted=$false;snapshot=$null;error=$null};$script:CatalogRegistryOperationOwned=$true}
-            Initialize-ItlProductProjectContext -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces:($Action -eq 'sync-client-mcp')
-            Read-ProjectConfig
+    $initializeProductProjectForAction = {
+        if(-not $InternalOnDemandOperation -and -not $CatalogAction -and -not $WorkflowUpdateRecovery -and
+            ((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/mcp/product-context-operation.json')))){
+            . Import-ItlProductProject
+            if((Get-ItlProductProjectStartupDisposition $Action $CatalogAction $InternalOnDemandOperation $WorkflowUpdateRecovery $LifecyclePhase) -eq 'project-operation'){
+                if(-not (Get-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue)){$script:ItlMcpRegistryOperation=@{attempted=$false;snapshot=$null;error=$null};$script:CatalogRegistryOperationOwned=$true}
+                Initialize-ItlProductProjectContext -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces:($Action -eq 'sync-client-mcp')
+                Read-ProjectConfig
+            }
         }
     }
+    if ($Action -ne 'reset-dev-branch') { . $initializeProductProjectForAction }
     Set-RunStage -Stage "start" -Detail "Starting helper action '$requestedLifecycleAction'"
 
     if ($InternalOnDemandOperation) {
@@ -664,7 +668,7 @@ try {
                     Write-Host "ITL disposable diagnostics: candidates=$($cleanup.entries.Count), removedBytes=$($cleanup.removedBytes), retainedErrors=$($cleanup.failed.Count), dryRun=$([bool]$CleanupDryRun)."
                     foreach ($issue in $cleanup.failed) { Write-Warning "ITL diagnostic retained: $($issue.path): $($issue.error)" }
                 }
-            } else { Invoke-ItlArtifactCleanup -DryRun:$CleanupDryRun | Out-Null }
+            } else { Invoke-ItlArtifactCleanup -DryRun:$CleanupDryRun -IncludeAuxiliaryInventory | Out-Null }
         }
         "delete-dev-branch" { Remove-ItlDevBranch -Name $DevBranchName -Confirmed:$ConfirmBranchDeletion }
         "configure-auxiliary-contour" { Configure-AuxiliaryContour }
@@ -674,6 +678,7 @@ try {
         "check-auxiliary-contour" { Check-AuxiliaryContour }
         "export-auxiliary-contour-result" { Export-AuxiliaryContourResult }
         "reset-auxiliary-contour" { Reset-AuxiliaryContour }
+        "remove-auxiliary-contour" { Remove-AuxiliaryContour }
         "cleanup-interrupted-vanessa-run" { Invoke-InterruptedDevBranchVanessaRunCleanup }
         "stop-dev-branch-test-clients" { Stop-DevBranchTestClients }
         "start-vanessa-profile" { Start-DevBranchVanessaInteractiveProfile | Out-Null }

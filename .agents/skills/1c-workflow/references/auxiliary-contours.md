@@ -61,7 +61,7 @@ ITL_AUX_EXCHANGE_PASSWORD=secret
 
 ## Operations and proof
 
-Agents route natural-language requests to `configure-auxiliary-contour`, `status-auxiliary-contours`, `update-auxiliary-contour`, `dump-auxiliary-contour`, `check-auxiliary-contour`, `export-auxiliary-contour-result`, or `reset-auxiliary-contour`. These are advanced helper actions, not a new slash-command family. Every mutating or proving action requires an exact contour name; there is no implicit active contour.
+Agents route natural-language requests to `configure-auxiliary-contour`, `status-auxiliary-contours`, `update-auxiliary-contour`, `dump-auxiliary-contour`, `check-auxiliary-contour`, `export-auxiliary-contour-result`, `reset-auxiliary-contour`, or `remove-auxiliary-contour`. Invoke these advanced actions through the local helper. Every mutating or proving action requires an exact contour name; there is no implicit active contour.
 
 Update performs a full configuration load, full declared extension loads, and Enterprise normalization. The same run-bound EPF result contract as the primary branch is required before a mutable contour becomes ready; an old ready state without that proof or a failed normalization requires an explicit `update-auxiliary-contour` and is not silently replayed by check. Equal source and connection fingerprints skip Designer only when the normalization proof is valid. Before mutation, only confirmed workflow-owned backends are stopped; other sessions are preserved and waited for. Primary refresh/check/result/reset never updates a contour.
 
@@ -94,3 +94,11 @@ Schema 1 remains primary-only. Feature paths remain the scenario registry.
 ## MCP
 
 `mcp.roctup` and `mcp.vanessaUi` add `itl-roctup-aux-<id>` and `itl-vanessa-ui-aux-<id>`. Each keeps the compact `resolve_tool`/`call_tool` surface but has its own generated helper wrapper, backend, ports, and exact infobase. Existing primary endpoint arguments remain unchanged. MCP is diagnostic; contour verification still uses Vanessa Automation `TESTMANAGER -> TESTCLIENT`.
+
+### Retire a contour
+
+Run `agent-1c.ps1 -Action remove-auxiliary-contour -AuxiliaryContourName <exact-name>` in its development worktree. The helper removes the registration, its local state, unused connection keys, and proved ITL MCP entries in that worktree. A TestClient profile that names the contour must be reassigned or removed in the reported manifest before repeating the same action. A profile that uses only a credential key retains that key, as does a remaining registration with the same connection reference.
+
+An exclusively owned `managed-file` database moves to the auxiliary archive only after exact-base admission and path revalidation. Attached bases and shared or unproved resources are reported as preserved. If another session holds the database, repeat the same action after the reported session releases it. An interrupted retirement resumes for the same name, including after the definition has disappeared. The report gives the archive path and its retention group. The latest archive in a group remains eligible for recovery even after repeated cleanup.
+
+The helper reconciles the MCP files on disk and reports user changes or unproved entries it preserved. Reload each affected client and open a new chat to use the new settings. The helper reports whether the files changed.

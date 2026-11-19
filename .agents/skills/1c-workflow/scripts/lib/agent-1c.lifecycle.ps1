@@ -678,7 +678,7 @@ function Publish-Agent1cFreshProcessRunStatus {
         # immediately, including cleanup time, and never replace it with running.
         $childStatus.pid = $PID
         $terminalText = ($childStatus | ConvertTo-Json -Depth 10) + [Environment]::NewLine
-        if ($terminalText -cne [string]$Relay.terminalText) {
+        if (-not $Relay["phaseOnly"] -and $terminalText -cne [string]$Relay.terminalText) {
             Write-Utf8TextAtomic -Path $Relay.statusPath -Value $terminalText
             $Relay.terminalText = $terminalText
         }
@@ -700,7 +700,8 @@ function Invoke-Agent1cFreshProcess {
     param(
         [string]$ScriptPath = $script:Agent1cScriptPath,
         [string[]]$AdditionalArguments = @(),
-        [switch]$ReturnExitStatus
+        [switch]$ReturnExitStatus,
+        [switch]$ResumeParentAfterSuccess
     )
 
     $reexecArguments = [System.Collections.Generic.List[string]]::new()
@@ -761,7 +762,7 @@ function Invoke-Agent1cFreshProcess {
         if ($arguments[$index] -ieq '-Action') { $launchedAction = [string]$arguments[$index + 1] }
     }
     $freshRelay = @{
-        statusPath = $statusPath; childStatusPath = $childStatusPath; terminalForwarded = $false; terminalText = ''; terminalStatus = $null
+        statusPath = $statusPath; childStatusPath = $childStatusPath; terminalForwarded = $false; terminalText = ''; terminalStatus = $null; phaseOnly = [bool]$ResumeParentAfterSuccess
         action = $launchedAction
         monitor = New-NativeWaitRunStatusMonitor -LogPaths @($RunLogPath)
         operationId = $(if ($continuesLifecycleOperation) { $script:LifecycleOperationId } else { '' })
@@ -824,6 +825,20 @@ function Invoke-Agent1cFreshProcess {
         Write-RunStatus -Status 'failed' -ExitCode 1 -ErrorMessage $message
         [Console]::Error.WriteLine($message)
         $exitCode = 1
+    }
+    if ($ResumeParentAfterSuccess -and $continuesLifecycleOperation -and $exitCode -eq 0) {
+        # A successful phase has a private child terminal. The same lock and
+        # operation ID remain active until the parent or its final child ends.
+        $terminal['status'] = 'running'
+        $terminal['finishedAt'] = $null
+        $terminal['phase'] = 'continuation'
+        $terminal['detail'] = 'Parent resumed after the guarded child phase.'
+        $terminal['updatedAt'] = (Get-Date).ToString('o')
+        [void]$terminal.Remove('exitCode')
+        [void]$terminal.Remove('continuationPid')
+        Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $terminal
+        $script:LifecycleOperationRecord = $terminal
+        $script:LifecycleOperationTerminalWrittenByContinuation = $false
     }
     if ($ReturnExitStatus) {
         if ($exitCode -eq 0) { Import-Agent1cFreshProcessTerminalResult -Terminal $freshRelay.terminalStatus }
@@ -20873,89 +20888,235 @@ function Assert-DevBranchResetPendingRefresh {
     return [string]$transaction.operation
 }
 
-function Reset-DevBranch {
-    $state = Read-DevBranchState -Name $DevBranchName
-    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "reset-dev-branch"
-    if ((Get-DevBranchKind -State $state) -ne "configuration") {
-        throw "RESET_DEV_BRANCH_EXTENSION_UNSUPPORTED: only configuration branches are supported."
-    }
-
-    $resetStatus = [string](Get-StateValue -State $state -Name "resetStatus" -Default "")
-    if ($resetStatus -ne "resetting") {
-        if ((Get-DevBranchInitializationStatus -State $state) -ne "ready") {
-            throw "RESET_DEV_BRANCH_NOT_READY: the branch must be ready before reset."
+# Wire declaration read from the pinned target blob before opening the reset journal.
+# ITL_RESET_AUXILIARY_RETIREMENT_SCHEMA=1
+function Get-DevBranchResetAuxiliaryInputs {
+    param([object[]]$Source, [string]$TargetCommit, [string[]]$RetiringNames = @())
+    $targetText = Get-GitBlobTextAtCommit -Commit $TargetCommit -RepoPath (ConvertTo-ProjectRelativePath $script:ConfigPath)
+    $previous = $script:Config
+    try {
+        $script:Config = if ($targetText) { $targetText | ConvertFrom-Json } else { [pscustomobject]@{} }
+        $remaining = @(Get-AuxiliaryContourDefinitions)
+        $remainingNames = @($remaining | ForEach-Object name)
+        $names = if ($RetiringNames.Count -gt 0) { $RetiringNames } else {
+            $Source | Where-Object { $_.name -notin $remainingNames } | ForEach-Object name
         }
-        $discardedRefresh = Assert-DevBranchResetPendingRefresh -State $state
-        Save-DevBranchCheckpoint -Operation "reset-dev-branch" -Message "chore: checkpoint before branch reset" | Out-Null
-    }
+        $manifest = if (@($names | Where-Object { $_ }).Count -gt 0) { Get-AuxiliaryRetirementProfileReferences -TargetCommit $TargetCommit }
+        Assert-AuxiliaryRetirementProfileReferences -Manifest $manifest -Names $names
+        return [pscustomobject]@{ names=@($names | Where-Object { $_ }); remaining=$remaining }
+    } finally { $script:Config = $previous }
+}
 
-    Set-RunStage -Stage "reset.source" -Detail "Capturing local master and its compatible seed under shared source protection."
-    $inputs = Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
-        $masterSource = if ($resetStatus -ne "resetting") { Get-DevBranchResetMasterSource } else { $null }
-        $expected = if ($null -ne $masterSource) { [string]$masterSource.fingerprint } else { [string]$state.resetMasterFingerprint }
+function Assert-DevBranchResetAuxiliaryCompatibility {
+    param([string]$TargetCommit)
+    $path = '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+    $targetHelper = Get-GitBlobTextAtCommit -Commit $TargetCommit -RepoPath $path
+    if ($targetHelper -cnotmatch '(?m)^# ITL_RESET_AUXILIARY_RETIREMENT_SCHEMA=1\r?$') {
+        Set-RunFailureContext -Category 'runner' -RequiredAction 'update-workflow-in-master-prepare-compatible-branch-seed-then-repeat-reset-dev-branch'
+        throw "RESET_DEV_BRANCH_AUXILIARY_TARGET_INCOMPATIBLE: master='$TargetCommit'. Update workflow in master through its normal workflow, prepare its compatible branch seed, and repeat reset-dev-branch."
+    }
+}
+
+function Get-DevBranchResetOriginalAttachedContours {
+    param([string]$Commit)
+    $config = Get-GitBlobTextAtCommit -Commit $Commit -RepoPath (ConvertTo-ProjectRelativePath $script:ConfigPath)
+    if (-not $config) { return }
+    $previous = $script:Config
+    try {
+        $script:Config = $config | ConvertFrom-Json
+        Get-AuxiliaryContourDefinitions | Where-Object { $_.baseMode -like 'attached-*' }
+    } finally { $script:Config = $previous }
+}
+
+function Complete-DevBranchResetAuxiliaryRetirement {
+    param([object]$State, [object]$Plan)
+    Read-ProjectConfig
+    $remaining = @(Get-AuxiliaryContourDefinitions)
+    $manifest = Get-AuxiliaryRetirementProfileReferences
+    Assert-AuxiliaryRetirementProfileReferences -Manifest $manifest -Names @($Plan.entries.name)
+    if (@($remaining | Where-Object { $_.name -in $Plan.entries.name }).Count -gt 0) {
+        throw 'RESET_DEV_BRANCH_AUXILIARY_TARGET_CHANGED: preserve the journal and restore the pinned reset tree before repeating reset-dev-branch.'
+    }
+    Set-RunStage -Stage 'reset.auxiliary-retirement' -Detail 'Retiring disappeared auxiliary registrations from the pinned reset plan.'
+    $stillLinked = $remaining + @(Get-DevBranchResetOriginalAttachedContours -Commit $Plan.sourceHead)
+    Update-AuxiliaryRetirementBaseEvidence -Plan $Plan -Remaining $stillLinked
+    Assert-AuxiliaryRetirementExclusiveUse -Plan $Plan
+    $resetBranchSnapshot = $State
+    $resetRetirementPlan = $Plan
+    $save = { Update-DevBranchState -State $resetBranchSnapshot -Updates @{ resetAuxiliaryRetirement=$resetRetirementPlan } }
+    Invoke-AuxiliaryRetirement -Plan $Plan -Remaining $remaining -Manifest $manifest -SaveProgress $save
+}
+
+function Invoke-DevBranchResetAuxiliaryContinuation {
+    param([object]$State)
+    if (-not $script:LifecycleOperationIsContinuation -or $State.resetStatus -cne 'resetting' -or
+        $State.resetPhase -cne 'git-reset-complete' -or (Get-CurrentCommit) -cne $State.resetNewHead) {
+        throw 'RESET_DEV_BRANCH_AUXILIARY_CONTINUATION_INVALID: repeat reset-dev-branch from its worktree.'
+    }
+    $plan = $State.resetAuxiliaryRetirement
+    Assert-AuxiliaryRetirementPlan -Plan $plan -TargetCommit $State.resetMasterCommit
+    if ($null -ne $plan.result) { return }
+    if (@(Get-AuxiliaryRetirementAdmissions -Plan $plan).Count -gt 0 -and -not $env:ITL_EXECUTION_CONTEXT) {
+        throw 'RESET_DEV_BRANCH_AUXILIARY_ADMISSION_REQUIRED: repeat reset-dev-branch to obtain the recorded exact-base admission.'
+    }
+    Invoke-WithAuxiliaryRetirementGuard -Plan $plan -Purpose 'reset-dev-branch' -ScriptBlock {
+        Complete-DevBranchResetAuxiliaryRetirement -State $State -Plan $plan
+    }
+}
+
+function Open-DevBranchResetSourceInputs {
+    param([object]$State, [object]$MasterSource)
+    $expected = if ($null -ne $MasterSource) { [string]$MasterSource.fingerprint } else { [string]$State.resetMasterFingerprint }
+    Set-RunStage -Stage 'reset.source' -Detail 'Capturing the compatible branch seed under shared source protection.'
+    Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
         $lease = Open-BranchSeedLease -Mode read
         try {
             $seed = Assert-BranchSeedReady -ExpectedConfigurationFingerprint $expected
-            $seedIdentity = Get-DevBranchResetSeedIdentity -Seed $seed
-            return [pscustomobject]@{ masterSource = $masterSource; seed = $seed; seedIdentity = $seedIdentity; lease = $lease }
+            return [pscustomobject]@{ seed=$seed; seedIdentity=(Get-DevBranchResetSeedIdentity -Seed $seed); lease=$lease }
         } catch {
             $lease.Dispose()
             throw
         }
     }
-    $seedLease = $inputs.lease
-    try {
-        if ($resetStatus -ne "resetting") {
-            $masterSource = $inputs.masterSource
-            $oldHead = Get-CurrentCommit
-            $memoryCycleUpdate=Get-ItlMemoryCycleUpdates $state reserve
-            $resetStart=@{
-                resetStatus = "resetting"; resetPhase = "checkpointed"; resetStartedAt = (Get-Date).ToString("o")
-                resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
-                resetMasterFingerprint = [string]$masterSource.fingerprint
-                resetSeedIdentity = $inputs.seedIdentity
-                resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
-                resetArchivePath = ""; resetArchiveDtPath = ""; resetArchiveManifestPath = ""; resetNewHead = ""
-                resetLeftoverCleanup = $null
-                resetDiscardedRefreshOperation = $discardedRefresh
-            }
-            foreach($field in $memoryCycleUpdate.Keys){$resetStart[$field]=$memoryCycleUpdate[$field]}
-            Update-DevBranchState -State $state -Updates $resetStart
-            $state = Read-DevBranchState -Name $DevBranchName
-        } else {
-            Assert-DevBranchResetResumeInputs -State $state -SeedIdentity $inputs.seedIdentity
-        }
+}
 
-        $masterCommit = [string](Get-StateValue -State $state -Name "resetMasterCommit" -Default "")
-        if (-not (Test-GitCommitExists $masterCommit)) {
-            throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit"
+function Reset-DevBranch {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'reset-dev-branch'
+    if ((Get-DevBranchKind -State $state) -ne 'configuration') {
+        throw 'RESET_DEV_BRANCH_EXTENSION_UNSUPPORTED: only configuration branches are supported.'
+    }
+    if ($LifecyclePhase -eq 'reset-auxiliary-retirement') {
+        Invoke-DevBranchResetAuxiliaryContinuation -State $state
+        return
+    }
+
+    $resuming = (Get-StateValue $state 'resetStatus' '') -eq 'resetting'
+    $masterSource = $null
+    $auxiliaryPlan = $null
+    $discardedRefresh = ''
+    $statePath = [string](Get-StateValue $state 'statePath' '')
+    $stateInput = if ($statePath) { Get-ItlMcpFileState -Path $statePath }
+    $configInput = Get-ItlMcpFileState -Path $script:ConfigPath
+    if ($resuming) {
+        $auxiliaryPlan = Get-StateValue $state 'resetAuxiliaryRetirement' $null
+        if ($null -ne $auxiliaryPlan) {
+            Assert-AuxiliaryRetirementPlan -Plan $auxiliaryPlan -TargetCommit $state.resetMasterCommit
+            if ($auxiliaryPlan.sourceHead -cne $state.resetOldHead) { throw 'RESET_DEV_BRANCH_AUXILIARY_JOURNAL_MISMATCH: repeat the reset from its original worktree.' }
         }
-        $phase = [string](Get-StateValue -State $state -Name "resetPhase" -Default "checkpointed")
-        if ($phase -in @(Get-DevBranchResetGitPendingPhases)) {
-            Set-RunStage -Stage "reset.git" -Detail "Replacing the branch tree with the exact local master tree."
-            $currentHeadTree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
-            if ($currentHeadTree -ceq [string]$state.resetMasterTree) {
-                Assert-CleanGit
-                $newHead = Get-CurrentCommit
+    } else {
+        if ((Get-DevBranchInitializationStatus -State $state) -ne 'ready') {
+            throw 'RESET_DEV_BRANCH_NOT_READY: the branch must be ready before reset.'
+        }
+        $discardedRefresh = Assert-DevBranchResetPendingRefresh -State $state
+        Assert-DevBranchCheckpointGitState -Operation 'reset-dev-branch'
+        $masterSource = Invoke-Agent1cMainWorktreeReadScope -ScriptBlock { Get-DevBranchResetMasterSource }
+        $auxiliary = @(Get-AuxiliaryContourDefinitions)
+        if ($auxiliary.Count -gt 0) {
+            $targetInputs = Get-DevBranchResetAuxiliaryInputs -Source $auxiliary -TargetCommit $masterSource.commit
+            if ($targetInputs.names.Count -gt 0) {
+                Assert-DevBranchResetAuxiliaryCompatibility -TargetCommit $masterSource.commit
+                $auxiliaryPlan = New-AuxiliaryRetirementPlan -Source $auxiliary -Target $targetInputs.remaining `
+                    -Names $targetInputs.names -State $state -TargetCommit $masterSource.commit
+            }
+        }
+    }
+
+    $productProjectStartup = Get-Variable -Name initializeProductProjectForAction -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -eq $auxiliaryPlan -and $productProjectStartup) { . $productProjectStartup }
+
+    $prepared = @{ inputs=$null; fresh=$false }
+    $branchHelper = Join-Path $script:ProjectRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    $seedLease = $null
+    try {
+        $gitAndRetirement = {
+            if ($null -ne $auxiliaryPlan -and $null -eq $auxiliaryPlan.result) {
+                if ((Get-ItlMcpFileState -Path $script:ConfigPath) -cne $configInput -or
+                    ($statePath -and (Get-ItlMcpFileState -Path $statePath) -cne $stateInput)) {
+                    throw 'RESET_DEV_BRANCH_AUXILIARY_INPUT_CHANGED: repeat reset-dev-branch with the current worktree and journal.'
+                }
+                $targetInputs = Get-DevBranchResetAuxiliaryInputs -TargetCommit $auxiliaryPlan.targetCommit -RetiringNames @($auxiliaryPlan.entries.name)
+                $oldAttached = if ($resuming) { @(Get-DevBranchResetOriginalAttachedContours -Commit $auxiliaryPlan.sourceHead) } else {
+                    @(Get-AuxiliaryContourDefinitions | Where-Object { $_.baseMode -like 'attached-*' })
+                }
+                Update-AuxiliaryRetirementBaseEvidence -Plan $auxiliaryPlan -Remaining ($targetInputs.remaining + @($oldAttached | Where-Object { $_ }))
+                Assert-AuxiliaryRetirementExclusiveUse -Plan $auxiliaryPlan
+            }
+            if (-not $resuming) {
+                Save-DevBranchCheckpoint -Operation 'reset-dev-branch' -Message 'chore: checkpoint before branch reset' | Out-Null
+            }
+            $prepared.inputs = Open-DevBranchResetSourceInputs -State $state -MasterSource $masterSource
+            $localState = $state
+            if (-not $resuming) {
+                $oldHead = Get-CurrentCommit
+                if ($null -ne $auxiliaryPlan) { $auxiliaryPlan.sourceHead = $oldHead }
+                $memoryCycleUpdate = Get-ItlMemoryCycleUpdates $localState reserve
+                $resetStart = @{
+                    resetStatus = 'resetting'; resetPhase = 'checkpointed'; resetStartedAt = (Get-Date).ToString('o')
+                    resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
+                    resetMasterFingerprint = [string]$masterSource.fingerprint; resetSeedIdentity = $prepared.inputs.seedIdentity
+                    resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
+                    resetArchivePath = ''; resetArchiveDtPath = ''; resetArchiveManifestPath = ''; resetNewHead = ''
+                    resetLeftoverCleanup = $null; resetDiscardedRefreshOperation = $discardedRefresh
+                    resetAuxiliaryRetirement = $auxiliaryPlan
+                }
+                foreach ($field in $memoryCycleUpdate.Keys) { $resetStart[$field] = $memoryCycleUpdate[$field] }
+                Update-DevBranchState -State $localState -Updates $resetStart
+                $localState = Read-DevBranchState -Name $DevBranchName
             } else {
-                $newHead = Set-DevBranchTreeToMasterCommit -MasterCommit $masterCommit
+                Assert-DevBranchResetResumeInputs -State $localState -SeedIdentity $prepared.inputs.seedIdentity
             }
-            Update-DevBranchState -State $state -Updates @{ resetPhase = "git-reset-complete"; resetNewHead = $newHead }
-            $state = Read-DevBranchState -Name $DevBranchName
-            $phase = "git-reset-complete"
-            $changedRuntime = @(Get-GitPathList -Arguments @('diff', '--name-only', '-z', [string]$state.resetOldHead, 'HEAD', '--',
-                '.agents/skills/1c-workflow/scripts', '.agents/skills/1c-workflow/assets/vanessa-service', '.agents/skills/itl-remote-runner/scripts'))
-            if ($changedRuntime.Count -gt 0) {
-                $branchHelperPath = Join-Path $script:ProjectRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
-                if (-not (Test-Path -LiteralPath $branchHelperPath -PathType Leaf)) { throw 'RESET_DEV_BRANCH_HELPER_MISSING' }
-                # The saved phase pins master/archive. A fresh process must
-                # load the reset tree's helper and service template before any
-                # restore. It revalidates that same seed; retaining this parent
-                # reader across the child would prevent later seed writers.
-                $seedLease.Dispose()
-                $seedLease = $null
-                Invoke-Agent1cFreshProcess -ScriptPath $branchHelperPath
+
+            $masterCommit = [string]$localState.resetMasterCommit
+            if (-not (Test-GitCommitExists $masterCommit)) { throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit" }
+            $phase = [string](Get-StateValue $localState 'resetPhase' 'checkpointed')
+            if ($phase -in @(Get-DevBranchResetGitPendingPhases)) {
+                Set-RunStage -Stage 'reset.git' -Detail 'Replacing the branch tree with the exact local master tree.'
+                $currentHeadTree = (Get-GitOutput @('rev-parse', 'HEAD^{tree}')).Trim()
+                if ($currentHeadTree -ceq [string]$localState.resetMasterTree) {
+                    Assert-CleanGit
+                    $newHead = Get-CurrentCommit
+                } else {
+                    $newHead = Set-DevBranchTreeToMasterCommit -MasterCommit $masterCommit
+                }
+                $gitUpdate = @{ resetPhase='git-reset-complete'; resetNewHead=$newHead }
+                if ($null -ne $auxiliaryPlan) { $gitUpdate['resetAuxiliaryRetirement'] = $auxiliaryPlan }
+                Update-DevBranchState -State $localState -Updates $gitUpdate
+                $localState = Read-DevBranchState -Name $DevBranchName
+                $changedRuntime = @(Get-GitPathList -Arguments @('diff', '--name-only', '-z', [string]$localState.resetOldHead, 'HEAD', '--',
+                    '.agents/skills/1c-workflow/scripts', '.agents/skills/1c-workflow/assets/vanessa-service', '.agents/skills/itl-remote-runner/scripts'))
+                $prepared.fresh = $changedRuntime.Count -gt 0
             }
+            if ($null -ne $auxiliaryPlan -and $null -eq $auxiliaryPlan.result) {
+                if ($prepared.fresh) {
+                    $prepared.inputs.lease.Dispose()
+                    $prepared.inputs = $null
+                    $child = Invoke-Agent1cFreshProcess -ScriptPath $branchHelper -AdditionalArguments @('-LifecyclePhase','reset-auxiliary-retirement') -ReturnExitStatus -ResumeParentAfterSuccess
+                    if ($child.exitCode -ne 0) { throw (Import-Agent1cFreshProcessFailure -Result $child -Operation 'Fresh reset contour retirement') }
+                } else {
+                    Complete-DevBranchResetAuxiliaryRetirement -State $localState -Plan $auxiliaryPlan
+                }
+            }
+        }
+        if ($null -eq $auxiliaryPlan -or $null -ne $auxiliaryPlan.result) { & $gitAndRetirement }
+        else { Invoke-WithAuxiliaryRetirementGuard -Plan $auxiliaryPlan -Purpose 'reset-dev-branch' -ScriptBlock $gitAndRetirement }
+        if ($prepared.fresh) {
+            # The new helper restores runtime outside the auxiliary admission.
+            if ($null -ne $prepared.inputs) { $prepared.inputs.lease.Dispose(); $prepared.inputs = $null }
+            if (-not (Test-Path -LiteralPath $branchHelper -PathType Leaf)) { throw 'RESET_DEV_BRANCH_HELPER_MISSING' }
+            Invoke-Agent1cFreshProcess -ScriptPath $branchHelper
+        }
+        Read-ProjectConfig
+        $inputs = $prepared.inputs
+        $seedLease = $inputs.lease
+        $prepared.inputs = $null
+        $state = Read-DevBranchState -Name $DevBranchName
+        $masterCommit = [string]$state.resetMasterCommit
+        $phase = [string]$state.resetPhase
+        $completedRetirement = Get-StateValue $state 'resetAuxiliaryRetirement' $null
+        if ($null -ne $completedRetirement -and $productProjectStartup) { . $productProjectStartup }
+        if ($null -ne $completedRetirement -and $null -eq $completedRetirement.result) {
+            throw 'RESET_DEV_BRANCH_AUXILIARY_INCOMPLETE: repeat reset-dev-branch to complete the recorded retirement.'
         }
         if ($phase -in @("git-reset-complete", "runtime-initializing")) {
             Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "reset-dev-branch"
@@ -20994,7 +21155,7 @@ function Reset-DevBranch {
             Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
                 Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
             }
-            $state = Invoke-DevBranchDefaultMcpSetup -State $state
+            $state = Invoke-DevBranchDefaultMcpSetup -State $state -PreserveAuxiliaryResources:($null -ne $completedRetirement)
             Sync-KiloItlCommandSurface
             Invoke-AiRules1cManagedMcpConfigReconcile -Operation "reset-dev-branch MCP reconcile" | Out-Null
             Sync-DevBranchContextToDotEnv -State $state
@@ -21035,10 +21196,18 @@ function Reset-DevBranch {
             foreach ($left in @($cleanup.leftovers)) { Add-RunUserReportLine -Lines $report -Label "Не удалено" -Value ([string]$left) }
         }
         $report.Add("")
+        if ($null -ne $completedRetirement) {
+            $report.Add('### Снятые регистрации вспомогательных контуров')
+            Add-AuxiliaryRetirementReport -Lines $report -Plan $completedRetirement
+            $report.Add('')
+        } elseif ($resuming -and -not $completed.PSObject.Properties['resetAuxiliaryRetirement']) {
+            $report.Add('Журнал прежней версии. Для инвентаризации локальных остатков используйте /itl-clean.')
+        }
         $report.Add("Прежняя работа ветки сохранена в истории Git до коммита «Предыдущий HEAD»; архив DT не создаётся.")
         Write-AndSetRunUserReport -Lines $report
     } finally {
         if ($null -ne $seedLease) { $seedLease.Dispose() }
+        elseif ($null -ne $prepared.inputs) { $prepared.inputs.lease.Dispose() }
     }
 }
 

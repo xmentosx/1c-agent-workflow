@@ -283,6 +283,7 @@ function Install-ItlOnDemandMcp {
 }
 
 function Get-ItlOnDemandMcpEndpointDescriptors {
+    param([switch]$PreserveExistingAuxiliaryWrappers)
     $executable = Get-ItlOnDemandMcpExecutablePath
     $workflowRoot = Get-ItlOnDemandMcpWorkflowRoot
     $helper = Resolve-Agent1cFullPath -Path (Join-Path $workflowRoot "scripts\agent-1c.ps1")
@@ -301,19 +302,13 @@ function Get-ItlOnDemandMcpEndpointDescriptors {
     }
     foreach ($contour in @(Get-AuxiliaryContourDefinitions)) {
         if (-not $contour.mcpRoctup -and -not $contour.mcpVanessaUi) { continue }
-        $contourHelper = Write-ItlOnDemandAuxiliaryHelperWrapper -Contour $contour
+        $contourHelper = Join-Path $root ".agent-1c/mcp/ondemand/helpers/$($contour.name).ps1"
+        if (-not $PreserveExistingAuxiliaryWrappers -or -not (Test-Path -LiteralPath $contourHelper)) {
+            $contourHelper = Write-ItlOnDemandAuxiliaryHelperWrapper -Contour $contour
+        }
         foreach ($family in @("roctup", "vanessa-ui")) {
             if (($family -eq "roctup" -and -not $contour.mcpRoctup) -or ($family -eq "vanessa-ui" -and -not $contour.mcpVanessaUi)) { continue }
-            $definition = Get-ItlOnDemandMcpFamilyDefinition -Family $family
-            $suffix = if ($family -eq "roctup") { "roctup" } else { "vanessa-ui" }
-            $endpoints += [pscustomobject]@{
-                name = "itl-$suffix-aux-$($contour.name)"
-                transport = "stdio"
-                command = $executable
-                args = @("serve", "--family", $family, "--project-root", $root, "--catalog", $definition.catalogPath, "--helper", $contourHelper, "--surface", "gateway", "--idle-timeout", "10m")
-                startupTimeoutSeconds = 20
-                toolTimeoutSeconds = 600
-            }
+            $endpoints += New-ItlOnDemandAuxiliaryEndpointDescriptor -Family $family -Name $contour.name -Executable $executable -Wrapper $contourHelper
         }
     }
     return @($endpoints)
@@ -324,6 +319,12 @@ function Write-ItlOnDemandAuxiliaryHelperWrapper {
     $directory = Join-Path $script:ProjectRoot ".agent-1c\mcp\ondemand\helpers"
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     $path = Join-Path $directory "$($Contour.name).ps1"
+    Write-Utf8TextAtomic -Path $path -Value (Get-ItlOnDemandAuxiliaryHelperContent -Name $Contour.name)
+    return $path
+}
+
+function Get-ItlOnDemandAuxiliaryHelperContent {
+    param([string]$Name)
     $content = @'
 [CmdletBinding()]
 param(
@@ -342,23 +343,187 @@ foreach ($entry in $PSBoundParameters.GetEnumerator()) { $forward[$entry.Key] = 
 $forward["InternalOnDemandAuxiliaryContour"] = "__ITL_AUXILIARY_CONTOUR__"
 & $helper @forward
 exit $LASTEXITCODE
-'@.Replace("__ITL_AUXILIARY_CONTOUR__", [string]$Contour.name)
-    Write-Utf8TextAtomic -Path $path -Value ($content + [Environment]::NewLine)
-    return $path
+'@.Replace("__ITL_AUXILIARY_CONTOUR__", $Name)
+    return ($content + [Environment]::NewLine)
 }
 
+function New-ItlOnDemandAuxiliaryEndpointDescriptor {
+    param([string]$Family, [string]$Name, [string]$Executable, [string]$Wrapper)
+    $definition = Get-ItlOnDemandMcpFamilyDefinition -Family $Family
+    return [pscustomobject]@{
+        name = "itl-$Family-aux-$Name"
+        transport = 'stdio'
+        command = $Executable
+        args = @('serve', '--family', $Family, '--project-root', (Resolve-Agent1cFullPath $script:ProjectRoot), '--catalog', $definition.catalogPath, '--helper', $Wrapper, '--surface', 'gateway', '--idle-timeout', '10m')
+        env = [ordered]@{}
+        enabled = $true
+        startupTimeoutSeconds = 20
+        toolTimeoutSeconds = 600
+    }
+}
+
+function Test-ItlOnDemandLegacyAuxiliaryEntry {
+    param([string]$Client, [string]$Name, [string]$Family, [System.Collections.IDictionary]$Entries)
+    $key = ConvertTo-ItlClientMcpKey -Name "itl-$Family-aux-$Name" -Client $Client
+    if (-not $Entries.Contains($key)) { return $false }
+    try { $exe = Get-ItlOnDemandMcpExecutablePath -AllowMissing } catch { return $false }
+    $wrapper = Join-Path $script:ProjectRoot ".agent-1c/mcp/ondemand/helpers/$Name.ps1"
+    $endpoint = New-ItlOnDemandAuxiliaryEndpointDescriptor -Family $Family -Name $Name -Executable $exe -Wrapper $wrapper
+    if ((Get-ItlClientAdapter -Client $Client).mcpFormat -eq 'toml') {
+        $expected = [ordered]@{command=$endpoint.command; args=$endpoint.args; enabled=$true; startup_timeout_sec=20; tool_timeout_sec=600}
+    } else {
+        $expected = ConvertTo-ItlClientMcpEntry -Endpoint $endpoint -Owner 'ondemand-facade' -Client $Client
+    }
+    $projection = @{}; $projection[$key] = $expected
+    return (Get-ItlMcpOwnedSemanticSignature -Container $Entries -Names @($key)) -ceq
+        (Get-ItlMcpOwnedSemanticSignature -Container $projection -Names @($key))
+}
+
+
+function Remove-ItlOnDemandAuxiliaryClientEntries {
+    param([object]$Plan, [scriptblock]$SaveProgress)
+    $retirementJournal = $Plan
+    $names = @($retirementJournal.entries.name)
+    $owner = 'ondemand-facade'
+    $clients = @((Get-ItlClientAdapterRegistry).Keys)
+    if (-not (Test-AuxiliaryRetirementLocalPath (Get-ItlManagedMcpStatePath))) {
+        throw 'ITL_AUXILIARY_RETIREMENT_MCP_UNSAFE: restore the local MCP ownership file and repeat the original command.'
+    }
+    if ($null -ne $retirementJournal.mcpIntent) {
+        $confirmed = Confirm-ItlClientMcpPreparedWrite -Intent $retirementJournal.mcpIntent
+        $beforeFiles = ConvertTo-Vibecoding1cMcpHashtable $retirementJournal.mcpIntent.beforeFiles
+        $afterFiles = ConvertTo-Vibecoding1cMcpHashtable $retirementJournal.mcpIntent.plan.afterFiles
+        if (@($confirmed.writtenPaths | Where-Object { $afterFiles.Contains($_) -and $afterFiles[$_] -cne $beforeFiles[$_] }).Count -gt 0) {
+            $retirementJournal.mcpChangedClients = @(@($retirementJournal.mcpChangedClients) + $confirmed.client | Sort-Object -Unique)
+        }
+        $retirementJournal.mcpIntent = $null
+        & $SaveProgress
+    }
+
+    $ownership = Read-ItlManagedMcpState
+    $baselines = ConvertTo-Vibecoding1cMcpHashtable (Get-Vibecoding1cMcpObjectValue $ownership 'lastWritten' @{})
+    $requests = @()
+    $preserved = @()
+    $wrapperScanComplete = $true
+    foreach ($client in $clients) {
+        $paths = @(Get-ItlClientMcpConfigPaths -Client $client)
+        if (@($paths | Where-Object { -not (Test-AuxiliaryRetirementLocalPath $_) }).Count -gt 0) {
+            $preserved += "$client (unsafe configuration path)"
+            $wrapperScanComplete = $false
+            continue
+        }
+        $retiredKeys = @(foreach ($name in $names) {
+            foreach ($family in @('roctup','vanessa-ui')) {
+                ConvertTo-ItlClientMcpKey -Name "itl-$family-aux-$name" -Client $client
+            }
+        })
+        try {
+            $entries = Read-ItlClientMcpEntries -Client $client
+            $owned = @(Get-ItlManagedMcpOwnerKeys -Client $client -Owner $owner)
+        } catch {
+            $preserved += "$client (configuration ownership could not be read)"
+            $wrapperScanComplete = $false
+            continue
+        }
+        foreach ($key in $retiredKeys) {
+            if ($entries.Contains($key) -and $key -notin $owned) { $preserved += "$client/$key (unowned)" }
+        }
+        if (@($owned | Where-Object { $_ -in $retiredKeys }).Count -gt 0) {
+            $baseline = ConvertTo-Vibecoding1cMcpHashtable $baselines["$client/$owner"]
+            $openCodeView = if ($client -eq 'opencode') { Get-ItlOpenCodeMcpView }
+            $legacyProved = @()
+            $ambiguous = @()
+            foreach ($name in $names) {
+                foreach ($family in @('roctup','vanessa-ui')) {
+                    $key = ConvertTo-ItlClientMcpKey -Name "itl-$family-aux-$name" -Client $client
+                    if ($key -notin $owned) { continue }
+                    if ($openCodeView -and @($openCodeView.provenance[$key] | Where-Object { $_ }).Count -gt 1) {
+                        $ambiguous += $key
+                        continue
+                    }
+                    if (-not $baseline.Contains($key) -and (Test-ItlOnDemandLegacyAuxiliaryEntry -Client $client -Name $name -Family $family -Entries $entries)) {
+                        $legacyProved += $key
+                    }
+                }
+            }
+            $requests += [pscustomobject]@{
+                client=$client; owner=$owner; endpoints=@()
+                preserveOwnedKeys=@($owned | Where-Object { $_ -notin $retiredKeys -or $_ -in $ambiguous }); acceptedOwnedKeys=$legacyProved
+            }
+        }
+    }
+
+    if ($requests.Count -gt 0) {
+        # Store only the owning writer's hashes and bindings. Its expanded
+        # projection may contain launch arguments from arbitrary user entries.
+        Write-ItlClientMcpEndpointSet -Requests $requests -PreserveUserChanges -OnBeforeWrite {
+            param($intent)
+            $retirementJournal.mcpIntent = [pscustomobject]@{
+                client=$intent.client; owner=$intent.owner
+                plan=[pscustomobject]@{ path=$intent.plan.path; afterFiles=$intent.plan.afterFiles; afterOwnership=$intent.plan.afterOwnership }
+                beforeOwnership=$intent.beforeOwnership; beforeFiles=$intent.beforeFiles
+            }
+            & $SaveProgress
+        } -OnReceipt {
+            param($receipt)
+            $retirementJournal.mcpIntent = $null
+            if (Get-ItlClientMcpSemanticChanges -Owner $owner | Where-Object client -EQ $receipt.client) {
+                $retirementJournal.mcpChangedClients = @(@($retirementJournal.mcpChangedClients) + $receipt.client | Sort-Object -Unique)
+            }
+            & $SaveProgress
+        } | Out-Null
+    }
+
+    $remainingEntries = @()
+    foreach ($client in $clients) {
+        $paths = @(Get-ItlClientMcpConfigPaths -Client $client)
+        if (@($paths | Where-Object { -not (Test-AuxiliaryRetirementLocalPath $_) }).Count -gt 0) { continue }
+        try { $entries = Read-ItlClientMcpEntries -Client $client } catch { $wrapperScanComplete = $false; continue }
+        $remainingEntries += $entries
+        foreach ($name in $names) {
+            foreach ($family in @('roctup','vanessa-ui')) {
+                $key = ConvertTo-ItlClientMcpKey -Name "itl-$family-aux-$name" -Client $client
+                if ($entries.Contains($key) -and "$client/$key (unowned)" -notin $preserved) {
+                    $preserved += "$client/$key (ownership or user change conflict)"
+                }
+            }
+        }
+    }
+    $wrappersPreserved = @(foreach ($name in $names) {
+        $relative = ".agent-1c/mcp/ondemand/helpers/$name.ps1"
+        $path = Join-Path $script:ProjectRoot $relative
+        if (-not (Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue)) { continue }
+        $safe = Test-AuxiliaryRetirementLocalPath $path
+        $references = $remainingEntries | Where-Object {
+            (($_ | ConvertTo-Json -Depth 64 -Compress).Replace('\\','/').Replace('\','/')) -match [regex]::Escape($relative)
+        }
+        if ($wrapperScanComplete -and $safe -and -not $references -and (Read-Utf8Text -Path $path) -ceq (Get-ItlOnDemandAuxiliaryHelperContent -Name $name)) {
+            [IO.File]::Delete($path)
+        } else { $path }
+    })
+    return [pscustomobject]@{
+        preserved=@($preserved); wrappersPreserved=$wrappersPreserved; reloadClients=@($retirementJournal.mcpChangedClients)
+    }
+}
+
+
 function Write-ItlOnDemandMcpClientConfig {
-    param([string]$Client = "", [switch]$PlanOnly)
+    param([string]$Client = "", [switch]$PlanOnly, [switch]$PreserveUserChanges)
     $executable = Get-ItlOnDemandMcpExecutablePath -AllowMissing
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         if ($PlanOnly) { return }
         Write-Warning "ITL on-demand MCP executable is missing; client facade entries were not written: $executable"
         return ""
     }
-    $endpoints = Get-ItlOnDemandMcpEndpointDescriptors
+    $endpoints = Get-ItlOnDemandMcpEndpointDescriptors -PreserveExistingAuxiliaryWrappers:$PreserveUserChanges
     if ($PlanOnly) {
         if (-not $Client) { $Client = Get-ItlActiveClient }
         return [pscustomobject]@{client=$Client;owner='ondemand-facade';endpoints=@($endpoints)}
+    }
+    if ($PreserveUserChanges) {
+        if (-not $Client) { $Client = Get-ItlActiveClient }
+        $request = [pscustomobject]@{client=$Client;owner='ondemand-facade';endpoints=@($endpoints)}
+        return (Write-ItlClientMcpEndpointSet -Requests @($request) -PreserveUserChanges)
     }
     return (Write-ItlClientMcpEndpoints -Endpoints $endpoints -Owner "ondemand-facade" -Client $Client)
 }

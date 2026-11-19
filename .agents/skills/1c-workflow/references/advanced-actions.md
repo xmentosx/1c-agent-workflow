@@ -170,6 +170,7 @@ dump-auxiliary-contour
 check-auxiliary-contour
 export-auxiliary-contour-result
 reset-auxiliary-contour
+remove-auxiliary-contour
 release-e2e-snapshot
 release-e2e-restore
 release-e2e-prepare-ondemand

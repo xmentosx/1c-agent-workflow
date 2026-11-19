@@ -704,6 +704,15 @@ function Export-AuxiliaryContourResult {
     Write-Host "Result purpose: $($preparation.purpose); CheckConfig: $($preparation.status)"
 }
 
+function Write-AuxiliaryContourArchiveMarker {
+    param([string]$Path, [string]$Name)
+    $manifest = [ordered]@{
+        schemaVersion = 1; kind = 'auxiliary-reset'; status = 'ready'
+        branchKey = (Get-AuxiliaryContourBranchKey); contour = $Name; archivedAt = (Get-Date).ToString('o')
+    }
+    Write-Utf8TextAtomic -Path (Join-Path $Path 'itl-archive.json') -Value (($manifest | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+}
+
 function Reset-AuxiliaryContour {
     $contour = Get-AuxiliaryContour
     if ($contour.baseMode -ne "managed-file") { throw "ITL_AUXILIARY_RESET_MANAGED_ONLY: contour='$($contour.name)'." }
@@ -719,8 +728,7 @@ function Reset-AuxiliaryContour {
         New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
         $archivePath = Join-Path $archiveRoot ("$($contour.name)-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
         Move-Item -LiteralPath $resolved -Destination $archivePath
-        $archiveManifest = [ordered]@{ schemaVersion = 1; kind = 'auxiliary-reset'; status = 'ready'; branchKey = (Get-AuxiliaryContourBranchKey); contour = $contour.name; archivedAt = (Get-Date).ToString('o') }
-        try { Write-Utf8TextAtomic -Path (Join-Path $archivePath 'itl-archive.json') -Value (($archiveManifest | ConvertTo-Json -Depth 4) + [Environment]::NewLine) }
+        try { Write-AuxiliaryContourArchiveMarker -Path $archivePath -Name $contour.name }
         catch { Write-Warning "Auxiliary archive retention marker unavailable; archive will be retained: $archivePath. $($_.Exception.Message)" }
     }
     $statePath = Get-AuxiliaryContourStatePath -Contour $contour

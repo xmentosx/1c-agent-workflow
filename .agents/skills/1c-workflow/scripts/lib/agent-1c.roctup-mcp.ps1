@@ -898,22 +898,23 @@ function Write-ItlBranchMcpKiloConfig {
 }
 
 function Write-ItlBranchMcpClientConfig {
-    param([object]$State)
+    param([object]$State, [switch]$PreserveAuxiliaryResources)
 
     Ensure-GitIgnore
     # Remove only legacy ITL-owned remote entries, then materialize the two
     # stable stdio facades. Backend ports never enter client configuration.
     Remove-ItlLegacyBranchMcpEntries
-    $path = Write-ItlOnDemandMcpClientConfig
+    $path = Write-ItlOnDemandMcpClientConfig -PreserveUserChanges:$PreserveAuxiliaryResources
     if ($path) { Write-Host "ITL on-demand MCP client config: $path" }
 }
 
 function Invoke-DevBranchDefaultMcpSetup {
-    param([object]$State)
+    param([object]$State, [switch]$PreserveAuxiliaryResources)
 
     $state = $State
     Write-Section "Prepare branch-local MCP"
-    Stop-ItlOnDemandBackends
+    if ($PreserveAuxiliaryResources) { Stop-ItlOnDemandBackends -InfoBasePath $State.devBranchInfoBasePath }
+    else { Stop-ItlOnDemandBackends }
     $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $state
     if ($roctupRuntime.processAlive) {
         try {
@@ -949,7 +950,7 @@ function Invoke-DevBranchDefaultMcpSetup {
     }
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
-    Write-ItlBranchMcpClientConfig -State $state
+    Write-ItlBranchMcpClientConfig -State $state -PreserveAuxiliaryResources:$PreserveAuxiliaryResources
     Write-Host "ROCTUP tools are available through itl-roctup-data resolve_tool/call_tool; each inner call has its own execution guard."
     Write-Host "Vanessa UI tools are available through itl-vanessa-ui resolve_tool/call_tool; each inner call has its own execution guard."
     return (Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default ""))
