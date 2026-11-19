@@ -1218,14 +1218,16 @@ namespace Itl.WindowHelper
         private void OnWinEvent(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
         {
             if (idObject != 0 || hwnd == IntPtr.Zero) return;
-            if (eventType == Native.EVENT_SYSTEM_FOREGROUND) { OnForeground(hwnd); return; }
+            if (eventType == Native.EVENT_SYSTEM_FOREGROUND) { OnForeground(hwnd, time); return; }
             if (eventType != Native.EVENT_OBJECT_SHOW || Native.GetAncestor(hwnd, 2) != hwnd) return;
             uint pid = Native.PidOf(hwnd);
             if (!members.Clients.Contains(pid) || Exposed(pid)) return;
+            // 1C activates a form while showing it; the foreground event waits behind this one.
+            ReturnFocusFromClient(hwnd, pid, time, false);
             HideOutside(hwnd, pid, "shown");
         }
 
-        private void OnForeground(IntPtr hwnd)
+        private void OnForeground(IntPtr hwnd, uint eventTime)
         {
             uint pid = Native.PidOf(hwnd);
             if (pid == ownPid) return;
@@ -1237,14 +1239,8 @@ namespace Itl.WindowHelper
                 if (state == LeaseState.Leased && pid == leasedPid) return;
                 // The user may click into a client the agent showed on request.
                 if (revealed.Contains(pid)) return;
-                string title = Native.TitleOf(hwnd);
+                ReturnFocusFromClient(hwnd, pid, eventTime, true);
                 if (!Exposed(pid)) HideOutside(hwnd, pid, "foreground");
-                string result = ReturnFocus();
-                Journal(paths.HiddenLog, new Dictionary<string, object>
-                {
-                    { "t", Now() }, { "event", "foreground-returned" }, { "pid", pid }, { "role", RoleOf(pid) }, { "title", title },
-                    { "result", result }, { "userTitle", userWindow == IntPtr.Zero ? "" : Native.TitleOf(userWindow) }
-                });
                 return;
             }
             if (UserEligible(hwnd)) userWindow = hwnd;
@@ -1296,6 +1292,25 @@ namespace Itl.WindowHelper
             if (foreignFacts.Count > 512) foreignFacts.Clear();
             foreignFacts[pid] = f;
             return f;
+        }
+
+        // Until the focus returns, a hidden client receives the user's keystrokes, so the
+        // return never waits for a window capture (a typed letter opened a 1C drop-down over
+        // a test step, PM5 itldev/branch4, 2026-11-17). A foreground that has already left
+        // the client is not taken back: the user may have moved on. exposureMs counts from
+        // the event that reported the client window.
+        private void ReturnFocusFromClient(IntPtr hwnd, uint pid, uint eventTime, bool whenNoForeground)
+        {
+            IntPtr fg = Native.GetForegroundWindow();
+            if (fg == IntPtr.Zero ? !whenNoForeground : Native.PidOf(fg) != pid) return;
+            string title = Native.TitleOf(hwnd);
+            string result = ReturnFocus();
+            uint exposure = unchecked((uint)Environment.TickCount - eventTime);
+            Journal(paths.HiddenLog, new Dictionary<string, object>
+            {
+                { "t", Now() }, { "event", "foreground-returned" }, { "pid", pid }, { "role", RoleOf(pid) }, { "title", title },
+                { "result", result }, { "exposureMs", exposure }, { "userTitle", userWindow == IntPtr.Zero ? "" : Native.TitleOf(userWindow) }
+            });
         }
 
         private string ReturnFocus()
