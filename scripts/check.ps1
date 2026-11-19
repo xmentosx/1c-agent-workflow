@@ -173,8 +173,18 @@ function Invoke-PesterIsolatedRerun {
     try {
         $root = $repoRoot.TrimEnd('\') + '\'
         $failed = @()
+        $observed = @{}
         if (Test-Path -LiteralPath $junitPath -PathType Leaf) {
             $document = New-Object Xml.XmlDocument; $document.XmlResolver = $null; $document.Load($junitPath)
+            # Tracked timings only order admission; the failed file's own time in
+            # this run is the evidence of how long its isolated rerun needs.
+            foreach ($suite in @($document.SelectNodes('//testsuite[@name and @time]'))) {
+                $file = [string]$suite.GetAttribute('name')
+                $seconds = 0.0
+                if ([IO.Path]::IsPathRooted($file) -and [double]::TryParse([string]$suite.GetAttribute('time'), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$seconds)) {
+                    $observed[(Split-Path -Leaf $file)] = $seconds
+                }
+            }
             $failed = @(@(foreach ($case in @($document.SelectNodes('//testcase[failure or error]'))) {
                 $file = [string]$case.GetAttribute('classname')
                 if (-not $file) { $file = [string]$case.ParentNode.GetAttribute('name') }
@@ -187,7 +197,11 @@ function Invoke-PesterIsolatedRerun {
         else {
             $timings = (Get-Content -LiteralPath (Join-Path $repoRoot "scripts\pester-timings.json") -Raw -Encoding UTF8 | ConvertFrom-Json).files
             $estimate = 60
-            foreach ($file in $failed) { $leaf = Split-Path -Leaf $file; $estimate += $(if ($timings.PSObject.Properties[$leaf]) { [int][Math]::Ceiling(2 * [double]$timings.$leaf) } else { 120 }) }
+            foreach ($file in $failed) {
+                $leaf = Split-Path -Leaf $file
+                $seconds = [Math]::Max($(if ($timings.PSObject.Properties[$leaf]) { [double]$timings.$leaf } else { 60 }), $(if ($observed.ContainsKey($leaf)) { [double]$observed[$leaf] } else { 0 }))
+                $estimate += [int][Math]::Ceiling(2 * $seconds)
+            }
             $remaining = $modeHardBudgetSeconds - [int][Math]::Ceiling($overallStopwatch.Elapsed.TotalSeconds)
             if ($remaining -lt $estimate) { $report.reason = "remaining budget ${remaining}s is below the ${estimate}s estimate" }
             else {
@@ -197,24 +211,31 @@ function Invoke-PesterIsolatedRerun {
                     $name = [IO.Path]::GetFileNameWithoutExtension($file)
                     $planPath = Join-Path $rerunRoot "$name.plan.json"; $resultPath = Join-Path $rerunRoot "$name.result.json"
                     [IO.File]::WriteAllText($planPath, (([ordered]@{ schemaVersion = 1; worker = 0; paths = @($file) } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-                    $outcome = "failed"
+                    if (Test-Path -LiteralPath $resultPath) { Remove-Item -LiteralPath $resultPath -Force }
                     try {
                         Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot "scripts\run-pester-shard.ps1") -Arguments @("-PlanPath", $planPath, "-JunitPath", (Join-Path $rerunRoot "$name.xml"), "-ResultPath", $resultPath) -TimeoutSeconds $estimate -NoProgressSeconds $estimate -LogName "pester-isolated-$name"
-                        if ((Test-Path -LiteralPath $resultPath -PathType Leaf) -and [string](Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status -eq "passed") { $outcome = "passed" }
-                    } catch { $outcome = "failed" }
+                    } catch { }
+                    # Only a worker result is a verdict. A rerun stopped before its
+                    # result (deadline, crash) reproduced nothing: it stays skipped.
+                    $outcome = "skipped"
+                    if (Test-Path -LiteralPath $resultPath -PathType Leaf) {
+                        try { $outcome = if ([string](Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status -eq "passed") { "passed" } else { "failed" } } catch { $outcome = "skipped" }
+                    }
                     [pscustomobject][ordered]@{ path = $file; isolatedRerun = $outcome }
                 })
-                $report.status = if (@($report.files | Where-Object { $_.isolatedRerun -eq "passed" }).Count) { "passed-in-isolation" } else { "reproduced" }
+                $report.status = if (@($report.files | Where-Object { $_.isolatedRerun -eq "passed" }).Count) { "passed-in-isolation" } elseif (@($report.files | Where-Object { $_.isolatedRerun -eq "failed" }).Count) { "reproduced" } else { "inconclusive" }
             }
         }
     } catch { $report.status = "skipped"; $report.reason = "isolated rerun was not possible: $($_.Exception.Message)" }
     [IO.File]::WriteAllText($reportPath, (($report | ConvertTo-Json -Depth 5) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     $passed = @($report.files | Where-Object { $_.isolatedRerun -eq "passed" } | ForEach-Object { $_.path })
-    $reproduced = @($report.files | Where-Object { $_.isolatedRerun -ne "passed" } | ForEach-Object { $_.path })
+    $reproduced = @($report.files | Where-Object { $_.isolatedRerun -eq "failed" } | ForEach-Object { $_.path })
+    $unfinished = @($report.files | Where-Object { $_.isolatedRerun -eq "skipped" } | ForEach-Object { $_.path })
     if ($report.status -eq "skipped") { return " Isolated rerun skipped: $($report.reason)." }
     $text = ""
     if ($passed.Count) { $text += " Isolated rerun: $($passed -join ', ') passed alone (nondeterministic; diagnose the unstable test, not the product)." }
     if ($reproduced.Count) { $text += " Isolated rerun: $($reproduced -join ', ') failed again." }
+    if ($unfinished.Count) { $text += " Isolated rerun inconclusive: $($unfinished -join ', ') ended without a worker result; see its pester-isolated log." }
     return $text
 }
 
