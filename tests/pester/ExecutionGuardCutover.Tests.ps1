@@ -66,6 +66,19 @@
         }
     }
 
+    # 2026-11-20 stand update: the relay launch descriptor was read as a backend
+    # record and the cutover failed on testClientOwnershipMarkers (StrictMode).
+    It 'treats relay launch descriptors as receipts, not runtime records' {
+        $root = Join-Path $TestDrive ('Проект с дескриптором ретранслятора ' + [guid]::NewGuid().ToString('N'))
+        $launch = Join-Path $root '.agent-1c/mcp/ondemand/launch'
+        New-Item -ItemType Directory -Path $launch -Force | Out-Null
+        foreach ($server in @('itl-vanessa-ui', 'itl-probe-roctup')) {
+            [IO.File]::WriteAllText((Join-Path $launch "$server.json"), ('{"schemaVersion":1,"server":"' + $server + '","family":"vanessa-ui","facadePath":"C:\\facade.exe","facadeSha256":"' + ('a' * 64) + '","facadeVersion":"0.4.37","args":["serve"]}'), [Text.UTF8Encoding]::new($false))
+        }
+        { & $cutover -ProjectRoot $root } | Should -Not -Throw
+        Test-Path -LiteralPath (Join-Path $root '.agent-1c/execution-guard-generation.json') | Should -BeTrue
+    }
+
     It 'preserves an unreadable runtime record and refuses to enable a new generation' {
         $root = Join-Path $TestDrive 'Проект с повреждённым runtime'
         $runtime = Join-Path $root '.agent-1c/mcp/ondemand/roctup'
