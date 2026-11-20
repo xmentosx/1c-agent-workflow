@@ -291,12 +291,119 @@
             $result.passed.status | Should -Be 'passed'
             $result.passed.newErrorCount | Should -Be 0
             $result.passed.acknowledgedErrorCount | Should -Be 3
-            $result.passed.reason | Should -Match 'Acknowledged intentional errors: 3'
+            $result.passed.reason | Should -Match 'Acknowledged errors: 3'
             @($result.report.acknowledged.signature) | Should -Be @($result.signatures)
             @($result.report.acknowledged)[0].reason | Should -BeExactly 'Агент проверял отказ "Проект A"'
             $result.route.category | Should -BeExactly 'event-log'
             $result.route.requiredAction | Should -BeExactly 'fix-or-acknowledge-event-log-errors'
             $result.failedScenarioRoute.requiredAction | Should -BeExactly '/itl-verify-fix'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "gives the agent the origin and branch relation of each error so it decides without the user" {
+        # 2026-11-20 PM5 branch4: errors from manual work a day before the
+        # check stopped it, and the only route named intentional errors.
+        $root = New-DiagnosticsProjectRoot
+        try {
+            $git = { param([string[]]$GitArgs) & git -C $root -c core.quotepath=false -c core.autocrlf=false -c user.name=itl -c user.email=itl@example.invalid @GitArgs 2>&1 | Out-Null; if ($LASTEXITCODE -ne 0) { throw "git $($GitArgs -join ' ') failed" } }
+            $write = { param([string]$Relative, [string[]]$Lines) $path = Join-Path $root $Relative; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null; [IO.File]::WriteAllText($path, (($Lines -join "`r`n") + "`r`n"), [Text.UTF8Encoding]::new($false)) }
+            $testModule = 'src\cfe\tests\CommonModules\ТестПоддержкаЗаписатьПланыКак\Ext\Module.bsl'
+            $formModule = 'src\cf\DataProcessors\упо_РедакторПланов\Forms\РедакторПланов\Ext\Form\Module.bsl'
+            $moduleLines = @(1..3100 | ForEach-Object { "// строка $_" })
+            & $git @('init', '-q', '-b', 'master')
+            & $write $testModule $moduleLines
+            & $write $formModule @(1..10 | ForEach-Object { "// форма $_" })
+            & $write 'src\cf\Catalogs\Проекты.xml' @('<Catalog/>')
+            & $write 'src\cf\CommonModules\Другой\Ext\Module.bsl' @('// другой')
+            & $git @('add', '-A'); & $git @('commit', '-q', '-m', 'master')
+            & $git @('checkout', '-q', '-b', 'itldev/branch10')
+            $moduleLines[3084] = '// изменено веткой'
+            & $write $testModule $moduleLines
+            & $write $formModule @(1..10 | ForEach-Object { if ($_ -eq 3) { '// изменено в форме' } else { "// форма $_" } })
+            & $write 'src\cf\Catalogs\Проекты.xml' @('<Catalog name="Проекты"/>')
+            & $git @('add', '-A'); & $git @('commit', '-q', '-m', 'branch')
+            $master = ([string](& git -C $root rev-parse master)).Trim()
+
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $state = New-EventLogFixtureState -Root $root
+                $boundary = [datetime]::Parse('2026-11-02T23:11:46.1128728Z', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToLocalTime()
+                $directory = Join-Path $root '.agent-1c\event-log-checks\run-20261103-093854-827'
+                New-Item -ItemType Directory -Force -Path $directory | Out-Null
+                # The check started between the second and the third error.
+                Start-ItlCheckTiming
+                Set-ItlCheckTimingValue -Name startedAt -Value ([datetime]'2026-11-03T09:30:00')
+                $failed = Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt ([datetime]'2026-11-03T09:38:54.827') `
+                    -RunFinishedAt ([datetime]'2026-11-03T09:38:54.827') -RunDirectory $directory -BoundaryStartedAt $boundary -CursorScope 'lifecycle-pending' 6>$null
+                $report = Read-Utf8Text -Path $failed.reportPath | ConvertFrom-Json
+                $state | Add-Member -NotePropertyName 'lastEventLogOnlyReportPath' -NotePropertyValue $failed.reportPath -Force
+                $script:AcknowledgeState = $state
+                function Read-DevBranchState { param($Name) $script:AcknowledgeState }
+                function Assert-DevelopmentBranchWorktreeContext { param($State, $Operation) }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) { $script:AcknowledgeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
+                }
+                Add-DevBranchEventLogAcknowledgement -Signatures @(@($report.errors)[2].signature) -Reason 'Строка 3060 не менялась веткой: ожидаемый отказ теста' 6>$null | Out-Null
+
+                # An uncommitted edit and a module not yet added to Git belong to the branch as well.
+                $moduleLines[140] = '// правка без коммита'
+                & $write $testModule $moduleLines
+                & $write 'src\cf\CommonModules\Новый\Ext\Module.bsl' @('// новый', '// модуль')
+                $synthetic = @(
+                    [pscustomobject]@{ date = [datetime]'2026-11-03T09:40:00'; comment = "Ошибка`n{tests ОбщийМодуль.ТестПоддержкаЗаписатьПланыКак.Модуль(141)}:Вызов();" }
+                    [pscustomobject]@{ date = [datetime]'2026-11-03T09:40:00'; comment = "Ошибка`n{Обработка.упо_РедакторПланов.Форма.РедакторПланов.Форма(3)}:Вызов();" }
+                    [pscustomobject]@{ date = [datetime]'2026-11-03T09:40:00'; comment = "Отказ`n{Справочник.Проекты.МодульОбъекта(2)}:ВызватьИсключение;" }
+                    [pscustomobject]@{ date = [datetime]'2026-11-03T09:40:00'; comment = "Ошибка`n{ОбщийМодуль.Другой.Модуль(1)}:Вызов();`n{(1)}:Вычислить" }
+                    [pscustomobject]@{ date = [datetime]'2026-11-03T09:40:00'; comment = 'Сеанс отсутствует' }
+                    [pscustomobject]@{ date = [datetime]'2026-11-03T09:40:00'; comment = "Ошибка`n{ОбщийМодуль.Новый.Модуль(2)}:Вызов();" }
+                )
+                $direct = Get-DevBranchEventLogErrorRelations -Errors $synthetic -CheckStartedAt ([datetime]'2026-11-03T09:30:00')
+                [pscustomobject]@{ failed = $failed; report = $report; state = $script:AcknowledgeState; direct = $direct }
+            }
+
+            $result.failed.status | Should -Be 'failed'
+            @($result.report.errors.origin) | Should -Be @('before-check', 'before-check', 'check')
+            @($result.report.errors.relation) | Should -Be @('changed-lines', 'changed-lines', 'changed-objects')
+            @(@($result.report.errors)[0].branchChangedFrames) | Should -Be @('ОбщийМодуль.ТестПоддержкаЗаписатьПланыКак.Модуль(3085)')
+            @(@($result.report.errors)[2].branchChangedObjects) | Should -Be @('ОбщийМодуль.ТестПоддержкаЗаписатьПланыКак')
+            $result.report.relationBase | Should -BeExactly $master
+            $result.report.relationFailure | Should -BeExactly ''
+            $result.failed.reason | Should -Match ([regex]::Escape('Before this check started: 2; stack reaches lines the branch changed: 2; only objects the branch changed: 1'))
+            $result.failed.reason | Should -Match 'Decide each error yourself without waiting for the user'
+            @([regex]::Matches([string]$result.failed.reason, '-Action (\S+)') | ForEach-Object { $_.Groups[1].Value }) | Should -Contain 'acknowledge-event-log-errors'
+            $entry = @($result.state.eventLogAcknowledgements)[0]
+            $entry.reason | Should -BeExactly 'Строка 3060 не менялась веткой: ожидаемый отказ теста'
+            $entry.origin | Should -BeExactly 'check'
+            $entry.relation | Should -BeExactly 'changed-objects'
+            @(0..5 | ForEach-Object { $result.direct.relations[$_].relation }) | Should -Be @('changed-lines', 'changed-lines', 'changed-objects', 'unchanged', 'no-stack', 'changed-lines')
+            @($result.direct.relations[1].changedFrames) | Should -Be @('Обработка.упо_РедакторПланов.Форма.РедакторПланов.Форма(3)')
+            $result.direct.relations[0].origin | Should -BeExactly 'check'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps the event-log verdict when the branch relation is unavailable" {
+        $root = New-DiagnosticsProjectRoot
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $state = New-EventLogFixtureState -Root $root
+                $directory = Join-Path $root '.agent-1c\event-log-checks\run-20261103-093854-827'
+                New-Item -ItemType Directory -Force -Path $directory | Out-Null
+                $failed = Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt ([datetime]'2026-11-03T09:38:54.827') `
+                    -RunFinishedAt ([datetime]'2026-11-03T09:38:54.827') -RunDirectory $directory -CursorScope 'lifecycle-pending' `
+                    -BoundaryStartedAt ([datetime]::Parse('2026-11-02T23:11:46.1128728Z', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToLocalTime()) 6>$null
+                [pscustomobject]@{ failed = $failed; report = Read-Utf8Text -Path $failed.reportPath | ConvertFrom-Json }
+            }
+            $result.failed.status | Should -Be 'failed'
+            $result.failed.newErrorCount | Should -Be 3
+            $result.failed.reason | Should -Match 'Origin and branch relation are unavailable'
+            $result.report.relationFailure | Should -Not -BeNullOrEmpty
+            @($result.report.errors | Where-Object { $null -ne $_.PSObject.Properties['relation'] }) | Should -HaveCount 0
         } finally {
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
         }
