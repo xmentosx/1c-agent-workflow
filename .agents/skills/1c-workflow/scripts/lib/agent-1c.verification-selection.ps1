@@ -62,14 +62,50 @@ function Get-VerificationSuiteCatalogPaths {
 }
 
 function Get-VerificationDeclaredInputScopes {
-    $catalogPaths = @(Get-VerificationSuiteCatalogPaths)
+    $catalogs = @(Get-VerificationSuiteCatalogPaths | ForEach-Object { [pscustomobject]@{ path = $_; runner = 'vanessa'; entries = 'suites' } })
     if (Get-Command Get-YAxUnitSuiteCatalogPaths -ErrorAction SilentlyContinue) {
-        $catalogPaths += @(Get-YAxUnitSuiteCatalogPaths)
+        $catalogs += @(Get-YAxUnitSuiteCatalogPaths | ForEach-Object { [pscustomobject]@{ path = $_; runner = 'yaxunit'; entries = 'groups' } })
     }
     $scopes = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($catalogPath in @($catalogPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
+    $baseScopes = @(Get-VerificationFingerprintBaseScopePaths | ForEach-Object { ([string]$_ -replace '\\', '/').Trim('/') } | Where-Object { $_ })
+    foreach ($item in @($catalogs | Where-Object { Test-Path -LiteralPath $_.path -PathType Leaf })) {
+        $catalogPath = $item.path
         $catalog = Read-Utf8Text -Path $catalogPath | ConvertFrom-Json -ErrorAction Stop
-        if ([int](Get-VerificationCatalogValue -Value $catalog -Name 'schemaVersion' -Default 0) -ne 2) { continue }
+        $schema = [int](Get-VerificationCatalogValue -Value $catalog -Name 'schemaVersion' -Default 0)
+        if ($schema -eq 1) {
+            # Schema-1 entries are retained obligations whose inputs the
+            # obligation owner derives from ownerPaths and test sources. An input
+            # inside a base scope is already fingerprinted there; only one
+            # outside needs its own bounded scope, so every other fingerprint and
+            # its earlier proof stay unchanged.
+            $testSources = if ($item.runner -eq 'vanessa') { 'featurePaths' } else { 'modulePaths' }
+            $entries = @(Get-VerificationCatalogValue -Value $catalog -Name $item.entries -Default @() | ForEach-Object {
+                [pscustomobject]@{
+                    id = [string](Get-VerificationCatalogValue -Value $_ -Name 'id' -Default '')
+                    purpose = [string](Get-VerificationCatalogValue -Value $_ -Name 'purpose' -Default '')
+                    ownerPaths = @(Get-VerificationCatalogValue -Value $_ -Name 'ownerPaths' -Default @())
+                    $testSources = @(Get-VerificationCatalogValue -Value $_ -Name $testSources -Default @())
+                }
+            })
+            foreach ($obligation in @(Read-VerificationObligationDecisions -Catalog $catalog -CatalogPath $catalogPath -Runner $item.runner -RetainedEntries $entries)) {
+                foreach ($inputPath in @($obligation.inputPaths)) {
+                    $prefix = ([string]$inputPath -replace '\\', '/').Trim().TrimStart('/')
+                    $wildcardAt = $prefix.IndexOfAny([char[]]@('*', '?', '['))
+                    if ($wildcardAt -ge 0) {
+                        $slash = $prefix.Substring(0, $wildcardAt).LastIndexOf('/')
+                        # Unbounded or unsafe inputs stay outside: a change plan refuses them.
+                        if ($slash -lt 1) { continue }
+                        $prefix = $prefix.Substring(0, $slash)
+                    }
+                    $prefix = $prefix.TrimEnd('/')
+                    if (-not $prefix -or [IO.Path]::IsPathRooted($prefix) -or $prefix -match '(^|/)\.\.(/|$)|:') { continue }
+                    if (@($baseScopes | Where-Object { $prefix -ieq $_ -or $prefix.StartsWith("$_/", [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) { continue }
+                    [void]$scopes.Add($prefix)
+                }
+            }
+            continue
+        }
+        if ($schema -ne 2) { continue }
         foreach ($obligation in @(Get-VerificationCatalogValue -Value $catalog -Name 'obligations' -Default @())) {
             foreach ($input in @(Get-VerificationCatalogValue -Value $obligation -Name 'inputPaths' -Default @())) {
                 $normalized = ([string]$input -replace '\\', '/').Trim()

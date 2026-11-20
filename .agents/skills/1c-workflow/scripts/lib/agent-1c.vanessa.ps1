@@ -5561,7 +5561,11 @@ function Get-GitObjectIdForTreePath {
 }
 
 function Get-VerificationFingerprintScopePaths {
-    return @(@(
+    return @(@(Get-VerificationFingerprintBaseScopePaths) + @(Get-VerificationDeclaredInputScopes) | Select-Object -Unique)
+}
+
+function Get-VerificationFingerprintBaseScopePaths {
+    return @(
         (Get-ExportPath),
         (Get-ExtensionsPath),
         (Get-VanessaVerificationFeaturesPath),
@@ -5576,7 +5580,7 @@ function Get-VerificationFingerprintScopePaths {
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1"
-    ) + @(Get-VerificationDeclaredInputScopes) | Select-Object -Unique)
+    )
 }
 
 function Get-VerificationRelevantDependencyLockFingerprint {
