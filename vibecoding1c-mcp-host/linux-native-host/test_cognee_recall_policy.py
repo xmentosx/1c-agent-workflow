@@ -158,6 +158,22 @@ class RecallPolicyTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(await asyncio.create_task(query_request(endpoint)), native)
         self.assertFalse(policy._query_vector_request.get())
 
+    def test_embedding_client_keeps_sdk_limits_with_longer_keepalive(self):
+        import sys
+        import types
+
+        captured = {}
+        httpx = types.ModuleType("httpx")
+        httpx.Limits = lambda **kwargs: ("limits", kwargs)
+        openai = types.ModuleType("openai")
+        openai.DefaultAsyncHttpxClient = lambda **kwargs: captured.setdefault("client", kwargs)
+        with patch.dict(sys.modules, {"httpx": httpx, "openai": openai}):
+            policy.embedding_http_client()
+        self.assertEqual(
+            captured["client"],
+            {"limits": ("limits", {"max_connections": 1000, "max_keepalive_connections": 100, "keepalive_expiry": 240.0})},
+        )
+
     async def test_provider_timeout_keeps_its_own_error(self):
         async def search():
             raise TimeoutError("provider")
