@@ -60,6 +60,13 @@ type runtime struct {
 	testClientPID     int
 	testClientPort    int
 	suppressEvidence  bool
+	// The agent closed its TestClient itself; a new one is then expected.
+	testClientClosedByAgent bool
+	// PID of a TestClient this facade used that was replaced unexpectedly; the
+	// next UI call reports it once.
+	testClientReplacedPID int
+	// Installed compatibility manifest of this project; empty when unknown.
+	compatibilityPath string
 }
 
 type progressRoute struct {
@@ -98,6 +105,7 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 }
 
 func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolName string, arguments any) (callResult *mcp.CallToolResult, callError error) {
+	defer func() { r.appendFacadeNotes(toolName, callResult) }()
 	ctx, cancel, budgetErr := phaseRequestContext(ctx, req.Params.Meta)
 	if budgetErr != nil {
 		return toolError("ITL_ONDEMAND_PHASE_BUDGET_INVALID", budgetErr.Error(), nil), nil
@@ -271,6 +279,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	r.active--
 	r.applyVanessaTestClientResultLocked(toolName, arguments, result)
 	r.attachVanessaTestClientMetaLocked(result)
+	r.attachTestClientReplacementNoticeLocked(result)
 	outcome, resultCode := callOutcome(result, err)
 	if forwardedProtocolCode != "" {
 		resultCode = forwardedProtocolCode
@@ -592,12 +601,43 @@ func qualifiedVanessaCommandRejection(family, tool string, err error) *mcp.CallT
 	return result
 }
 
+// A Vanessa tool handler raises ACTION_FAILED or INVALID_PARAMS only after it
+// has stopped: MCPVA handlers return synchronously, and the asynchronous error
+// completions return or unwind right after answering. The answer therefore
+// leaves nothing running, exactly like a successful call, and stopping the
+// backend would only discard the forms the agent must inspect (PM5 13a). The
+// outcome may include partial effects and is never replayed. A disconnected
+// TestClient, an uncoded error, a transport failure and a deadline still stop
+// the owned backend.
+func answeredVanessaHandlerFailure(family, tool string, err error) *mcp.CallToolResult {
+	if family != "vanessa-ui" || protocolErrorReportsTestClientDisconnected(err) {
+		return nil
+	}
+	var rpcError *jsonrpc.Error
+	if !errors.As(err, &rpcError) {
+		return nil
+	}
+	message := strings.TrimSpace(rpcError.Message)
+	code, _, found := strings.Cut(message, ":")
+	if !found || (code != "ACTION_FAILED" && code != "INVALID_PARAMS") {
+		return nil
+	}
+	return toolError(code, message, map[string]any{
+		"backendJSONRPCCode": rpcError.Code, "tool": tool, "callOutcome": "failed",
+		"partialEffectsPossible": true, "automaticRetryPerformed": false, "backendKept": true,
+		"action": "inspect-form-state-before-retry",
+	})
+}
+
 func (r *runtime) callUpstream(ctx context.Context, session *mcp.ClientSession, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
 	deadline := time.Now().Add(r.vanessaConnectWait)
 	for {
 		result, err := session.CallTool(ctx, params)
 		if rejected := qualifiedVanessaCommandRejection(r.family, params.Name, err); rejected != nil {
 			return rejected, nil
+		}
+		if failed := answeredVanessaHandlerFailure(r.family, params.Name, err); failed != nil {
+			return failed, nil
 		}
 		if err != nil || result == nil || result.IsError {
 			return result, err
@@ -723,6 +763,11 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 		return errors.Join(err, r.stopBrokerAfterFailure(ctx))
 	}
 	if r.family == "vanessa-ui" {
+		// A replacement backend brings its own TestClient; the forms of the one
+		// this facade used are gone unless the agent closed it.
+		if r.testClientPID > 0 && info.TestClientPID != r.testClientPID && !r.testClientClosedByAgent {
+			r.testClientReplacedPID = r.testClientPID
+		}
 		r.testClientState = testClientNotStarted
 		r.testClientPID = info.TestClientPID
 		r.testClientPort = info.TestClientPort
@@ -1207,6 +1252,16 @@ func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName
 		})
 	}
 	r.applyTestClientBackendInfoLocked(info, toolName)
+	if r.testClientReplacedPID > 0 && vanessaToolNeedsLiveUIState(toolName, arguments) {
+		previous := r.testClientReplacedPID
+		r.testClientReplacedPID = 0
+		return toolError("ITL_VANESSA_TESTCLIENT_REPLACED",
+			fmt.Sprintf("The TestClient was replaced since the previous call (PID %d exited; the new TestClient is PID %d): its open forms and unsaved UI state are gone, so this call was not sent. Recreate the needed state with one self-contained run_scenario (mode all or reloadAndRun) that opens, enters and asserts, then continue.", previous, r.testClientPID),
+			map[string]any{
+				"tool": toolName, "previousTestClientPid": previous, "testClientPid": r.testClientPID,
+				"callOutcome": "not-started", "automaticRetryPerformed": false, "action": "rerun-self-contained-scenario",
+			})
+	}
 	if class == vanessaToolConnect {
 		return nil
 	}
@@ -1251,6 +1306,14 @@ func (r *runtime) applyTestClientBackendInfoLocked(info *backendInfo, toolName s
 		return
 	}
 	previousPID := r.testClientPID
+	// A client this facade already used is gone and the agent did not close it:
+	// its forms and unsaved UI state are lost (PM5 2026-11-16/17).
+	if previousPID > 0 && info.TestClientPID > 0 && info.TestClientPID != previousPID && !r.testClientClosedByAgent {
+		r.testClientReplacedPID = previousPID
+	}
+	if info.TestClientPID != previousPID {
+		r.testClientClosedByAgent = false
+	}
 	if info.PreviousTestClientState == testClientExited && info.PreviousTestClientPID > 0 {
 		r.testClientPID = info.PreviousTestClientPID
 		r.setTestClientStateLocked(testClientExited, toolName, "ITL_VANESSA_TESTCLIENT_EXITED", "previous owned TestClient process exited")
@@ -1276,12 +1339,14 @@ func (r *runtime) applyVanessaTestClientResultLocked(toolName string, arguments 
 	switch classifyVanessaTool(toolName, arguments) {
 	case vanessaToolConnect:
 		if code == "" {
+			r.testClientClosedByAgent = false
 			r.setTestClientStateLocked(testClientManagerConnected, toolName, "ITL_OK", "connection postcondition proved")
 		} else {
 			r.setTestClientStateLocked(testClientConnectionFailed, toolName, code, resultText(result))
 		}
 	case vanessaToolDisconnect:
 		if code == "" {
+			r.testClientClosedByAgent = true
 			r.setTestClientStateLocked(testClientDisconnected, toolName, "ITL_OK", "manager disconnected from TestClient")
 		}
 	default:
@@ -1369,6 +1434,9 @@ func (r *runtime) validateVanessaResult(ctx context.Context, name string, argume
 	if marker := vanessaSemanticFailureMarker(name, resultText(result)); marker != "" {
 		return toolError("ITL_VANESSA_TOOL_RESULT_FAILED", "Vanessa returned a runtime/editor failure", map[string]any{"tool": name, "marker": marker})
 	}
+	if failed := vanessaStepOutcomeFailure(name, resultText(result)); failed != nil {
+		return failed
+	}
 	if classifyVanessaTool(name, arguments) != vanessaToolConnect {
 		return result
 	}
@@ -1454,6 +1522,13 @@ func vanessaSemanticFailureMarker(name, text string) string {
 	if !isVanessaAuthoringTool(name) {
 		return ""
 	}
+	// A run that reached Vanessa's own scenario report returns that report: its
+	// failed step quotes any platform or product error, including the markers
+	// below (PM5 2026-11-17: a product error in a cell check became a tool
+	// failure and the failed step was lost).
+	if (name == "run_scenario" || name == "get_test_results") && reportsVanessaScenarioResult(text) {
+		return ""
+	}
 	normalized := strings.ToLower(text)
 	markers := []string{
 		"ошибка при вызове конструктора (файл)",
@@ -1468,6 +1543,26 @@ func vanessaSemanticFailureMarker(name, text string) string {
 		}
 	}
 	return ""
+}
+
+// Vanessa itl-r17 answers a failed or unproven execute_feature_step through a
+// successful MCP completion that starts with one of these codes: a JSON-RPC
+// error would make this facade stop the backend and its TestClient after an
+// ordinary failed step. The step ran, so the error is not a pre-action rejection.
+func vanessaStepOutcomeFailure(name, text string) *mcp.CallToolResult {
+	if name != "execute_feature_step" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(text)
+	for _, code := range []string{"ITL_VANESSA_STEP_FAILED", "ITL_VANESSA_STEP_NOT_PROVEN"} {
+		if rest, ok := strings.CutPrefix(trimmed, code+":"); ok {
+			return toolError(code, strings.TrimSpace(rest), map[string]any{
+				"tool": name, "stepExecuted": true, "automaticRetryPerformed": false,
+				"action": "fix-the-step-or-product-and-repeat",
+			})
+		}
+	}
+	return nil
 }
 
 func isVanessaAuthoringTool(name string) bool {

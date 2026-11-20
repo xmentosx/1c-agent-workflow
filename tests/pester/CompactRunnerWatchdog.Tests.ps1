@@ -375,6 +375,105 @@ exit $payload.exitCode
         }
     }
 
+    It 'keeps a real check-dev-branch live while its post-run assessment and report outlast the watchdog' {
+        # PM5 2026-11-16/17 (itldev/branch2): YAxUnit and the event log passed,
+        # then the assessment (39 s) and the user report (71 s) ran without a
+        # stage update or heartbeat and the runner killed the finished check as
+        # RUNNER_STATUS_STALE. Runners are already done here; only the slow
+        # assessment remains, and each silent window exceeds the 20 s watchdog.
+        $tempRoot = Join-Path $TestDrive 'check tail путь'
+        $savedEnvironment = @{}
+        foreach ($name in @('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS','ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS','ITL_RUNNER_OPERATION_TIMEOUT_SECONDS')) {
+            $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        }
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            [void][IO.Directory]::CreateDirectory($scriptRoot)
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            $helperPath = Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+            $body = @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$fixtureStatusPath=$RunStatusPath
+. '__HELPER__' -ProjectRoot $ProjectRoot -Action help *> $null
+$script:RunStatusPath=$fixtureStatusPath
+$script:fixtureState=[pscustomobject]@{lastVerificationEvidenceKind=''}
+$script:assessments=0
+# Keep the real check, verification cycle tail, stages and heartbeat. Only the
+# load, the already finished runners and persistence owners are fixtures.
+function Get-VerificationModel { 'cumulative' }
+function Assert-ItlVerificationRepairScope {}
+function Get-YAxUnitModuleFilter {}
+function Read-DevBranchState { $script:fixtureState }
+function Get-DevBranchKind { 'configuration' }
+function Get-ExportPath { 'src/cf' }
+function Assert-ExportPathInsideProject { param($ExportPath) $ExportPath }
+function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+function Restore-ConfigDumpInfoLoadSnapshot {}
+function Remove-ConfigDumpInfoLoadSnapshot {}
+function Get-ItlVerificationExecutionDecision { param($Component) [pscustomobject]@{component=$Component;run=$false;reason='fixture runners finished'} }
+function Invoke-DevBranchVanessaRuntimeRelease {}
+function Assert-VanessaVerificationPreflight {}
+function Test-ItlFullVerificationProofEligible { $true }
+function Test-ItlDiagnosticVerificationScope { $false }
+function Ensure-DevBranchEventLogBaseline { $script:fixtureState }
+function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{path='cursor';capturedAt=[datetime]::UtcNow} }
+function Update-DevBranchBase { [pscustomobject]@{} }
+function Set-ItlPartialVerificationEvidence {}
+function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
+function Get-VerificationState {
+    $script:assessments++
+    Start-Sleep -Seconds 25
+    [pscustomobject]@{status='partial';isFreshPassed=$false;changeFreshPassed=$false}
+}
+function Write-DevBranchVerificationRunUserReport { param($State,$PlatformPreparation,$Failure) [IO.File]::WriteAllText((Join-Path $ProjectRoot 'report-written.txt'),'report') }
+function Write-DevBranchMemoryUsageNote {}
+function Add-ItlCheckHistoryRecord { param($State,$Status,$Trigger) [IO.File]::WriteAllText((Join-Path $ProjectRoot 'history.txt'),"$Status/$($script:assessments)") }
+$now=[DateTimeOffset]::Now.ToString('o')
+$payload=[ordered]@{schemaVersion=1;projectRoot=$ProjectRoot;pid=$PID;action='check-dev-branch';status='running';stage='yaxunit.postprocess';stageDetail='fixture finished runners';startedAt=$now;updatedAt=$now;exitCode=$null;errorMessage=''}
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+try {
+    Invoke-DevBranchCheck
+    $payload.status='succeeded';$payload.stage='complete';$payload.exitCode=0
+} catch {
+    $payload.status='failed';$payload.stage='check-failed';$payload.exitCode=1;$payload.errorMessage=$_.Exception.Message
+}
+$payload.updatedAt=[DateTimeOffset]::Now.ToString('o')
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+exit $payload.exitCode
+'@
+            $body = $body.Replace('__HELPER__', $helperPath.Replace("'", "''"))
+            [IO.File]::WriteAllText((Join-Path $scriptRoot 'agent-1c.ps1'), $body, [Text.UTF8Encoding]::new($true))
+            $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS = '1'
+            $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS = '20'
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = '180'
+            Push-Location $tempRoot
+            try {
+                $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--','-Action','check-dev-branch')
+            } finally { Pop-Location }
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            if ($summary.stage -ne 'complete') {
+                Write-Host ($result.stderr -join "`n")
+                $fixtureLog = Join-Path (Split-Path -Parent $summary.statusPath) 'console.log'
+                if (Test-Path -LiteralPath $fixtureLog) { Write-Host (Get-Content -LiteralPath $fixtureLog -Raw -Encoding UTF8) }
+            }
+            $summary.error | Should -Not -Match 'RUNNER_STATUS_STALE'
+            $summary.stage | Should -BeExactly 'complete'
+            $summary.status | Should -Be 'succeeded'
+            $result.exitCode | Should -Be 0
+            [IO.File]::ReadAllText((Join-Path $tempRoot 'report-written.txt')) | Should -BeExactly 'report'
+            [IO.File]::ReadAllText((Join-Path $tempRoot 'history.txt')) | Should -BeExactly 'partial/2'
+            # Each silent window is 25 s against a 20 s watchdog, so the success
+            # above proves the heartbeat; the progress text only names the stages
+            # (its liveness label depends on when the runner samples under load).
+            $stderr = $result.stderr -join "`n"
+            $stderr | Should -Match 'stage=verification\.assess;'
+            $stderr | Should -Match 'stage=verification\.report;'
+            Test-Path -LiteralPath ($summary.statusPath + '.heartbeat') | Should -BeFalse
+        } finally {
+            foreach ($name in @($savedEnvironment.Keys)) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+        }
+    }
+
     It 'keeps a real update-workflow-branch child live through a contended heartbeat tick beyond the watchdog' {
         # PM5 2026-11-15: the branch child's rules/MCP phase never republished
         # status.json; a concurrent sidecar read made one heartbeat touch fail,

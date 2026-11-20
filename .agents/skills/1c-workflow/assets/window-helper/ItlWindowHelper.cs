@@ -140,6 +140,9 @@ namespace Itl.WindowHelper
         public string Journal { get { return Path.Combine(Root, "journal"); } }
         public string HiddenLog { get { return Path.Combine(Journal, "hidden.jsonl"); } }
         public string LeaseLog { get { return Path.Combine(Journal, "leases.jsonl"); } }
+        // Lock transitions of the interactive desktop; kept apart from the trimmed
+        // hidden-window journal so a long run keeps every transition.
+        public string DesktopLog { get { return Path.Combine(Journal, "desktop.jsonl"); } }
     }
 
     internal sealed class GroupConfig
@@ -1113,6 +1116,8 @@ namespace Itl.WindowHelper
         private readonly System.Windows.Forms.Timer stateTimer = new System.Windows.Forms.Timer();
         private readonly FileSystemWatcher watcher;
         private readonly uint ownPid = (uint)Process.GetCurrentProcess().Id;
+        // Last journaled state of the interactive desktop (null before the first check).
+        private bool? desktopInteractive;
         private readonly DateTime startedUtc = DateTime.UtcNow;
         private readonly Dictionary<uint, ProcessFacts> foreignFacts = new Dictionary<uint, ProcessFacts>();
         private readonly Dictionary<IntPtr, uint> hiddenByUs = new Dictionary<IntPtr, uint>();
@@ -1213,14 +1218,16 @@ namespace Itl.WindowHelper
         private void OnWinEvent(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
         {
             if (idObject != 0 || hwnd == IntPtr.Zero) return;
-            if (eventType == Native.EVENT_SYSTEM_FOREGROUND) { OnForeground(hwnd); return; }
+            if (eventType == Native.EVENT_SYSTEM_FOREGROUND) { OnForeground(hwnd, time); return; }
             if (eventType != Native.EVENT_OBJECT_SHOW || Native.GetAncestor(hwnd, 2) != hwnd) return;
             uint pid = Native.PidOf(hwnd);
             if (!members.Clients.Contains(pid) || Exposed(pid)) return;
+            // 1C activates a form while showing it; the foreground event waits behind this one.
+            ReturnFocusFromClient(hwnd, pid, time, false);
             HideOutside(hwnd, pid, "shown");
         }
 
-        private void OnForeground(IntPtr hwnd)
+        private void OnForeground(IntPtr hwnd, uint eventTime)
         {
             uint pid = Native.PidOf(hwnd);
             if (pid == ownPid) return;
@@ -1232,14 +1239,8 @@ namespace Itl.WindowHelper
                 if (state == LeaseState.Leased && pid == leasedPid) return;
                 // The user may click into a client the agent showed on request.
                 if (revealed.Contains(pid)) return;
-                string title = Native.TitleOf(hwnd);
+                ReturnFocusFromClient(hwnd, pid, eventTime, true);
                 if (!Exposed(pid)) HideOutside(hwnd, pid, "foreground");
-                string result = ReturnFocus();
-                Journal(paths.HiddenLog, new Dictionary<string, object>
-                {
-                    { "t", Now() }, { "event", "foreground-returned" }, { "pid", pid }, { "title", title },
-                    { "result", result }, { "userTitle", userWindow == IntPtr.Zero ? "" : Native.TitleOf(userWindow) }
-                });
                 return;
             }
             if (UserEligible(hwnd)) userWindow = hwnd;
@@ -1259,6 +1260,30 @@ namespace Itl.WindowHelper
             return !(f.IsWindowHelper || f.IsTestClient || f.IsTestManager);
         }
 
+        // A locked or disconnected session has no interactive desktop: 1C cannot
+        // activate a new window there and UI steps fail. The run classifies such
+        // failures by these transitions (PM5 itldev/branch4, 2026-11-17).
+        private void JournalDesktopState()
+        {
+            bool interactive = Native.InteractiveDesktop();
+            if (desktopInteractive.HasValue && desktopInteractive.Value == interactive) return;
+            desktopInteractive = interactive;
+            Journal(paths.DesktopLog, new Dictionary<string, object>
+            {
+                { "t", Now() }, { "event", interactive ? "desktop-unlocked" : "desktop-locked" }
+            });
+        }
+
+        // The journal names the group process, so an agent does not read the test
+        // client's own windows as a user session.
+        private string RoleOf(uint pid)
+        {
+            ProcessFacts f = Foreign(pid);
+            if (f.IsTestClient) return "testclient";
+            if (f.IsTestManager) return "testmanager";
+            return f.IsOneC ? "1c" : "other";
+        }
+
         private ProcessFacts Foreign(uint pid)
         {
             ProcessFacts f;
@@ -1267,6 +1292,25 @@ namespace Itl.WindowHelper
             if (foreignFacts.Count > 512) foreignFacts.Clear();
             foreignFacts[pid] = f;
             return f;
+        }
+
+        // Until the focus returns, a hidden client receives the user's keystrokes, so the
+        // return never waits for a window capture (a typed letter opened a 1C drop-down over
+        // a test step, PM5 itldev/branch4, 2026-11-17). A foreground that has already left
+        // the client is not taken back: the user may have moved on. exposureMs counts from
+        // the event that reported the client window.
+        private void ReturnFocusFromClient(IntPtr hwnd, uint pid, uint eventTime, bool whenNoForeground)
+        {
+            IntPtr fg = Native.GetForegroundWindow();
+            if (fg == IntPtr.Zero ? !whenNoForeground : Native.PidOf(fg) != pid) return;
+            string title = Native.TitleOf(hwnd);
+            string result = ReturnFocus();
+            uint exposure = unchecked((uint)Environment.TickCount - eventTime);
+            Journal(paths.HiddenLog, new Dictionary<string, object>
+            {
+                { "t", Now() }, { "event", "foreground-returned" }, { "pid", pid }, { "role", RoleOf(pid) }, { "title", title },
+                { "result", result }, { "exposureMs", exposure }, { "userTitle", userWindow == IntPtr.Zero ? "" : Native.TitleOf(userWindow) }
+            });
         }
 
         private string ReturnFocus()
@@ -1329,7 +1373,7 @@ namespace Itl.WindowHelper
             {
                 Journal(paths.HiddenLog, new Dictionary<string, object>
                 {
-                    { "t", Now() }, { "event", "hidden" }, { "reason", reason }, { "pid", pid }, { "hwnd", hwnd.ToInt64() },
+                    { "t", Now() }, { "event", "hidden" }, { "reason", reason }, { "pid", pid }, { "role", RoleOf(pid) }, { "hwnd", hwnd.ToInt64() },
                     { "class", cls }, { "title", title }, { "image", image }
                 });
                 TrimJournal();
@@ -1406,6 +1450,7 @@ namespace Itl.WindowHelper
         private void Reconcile()
         {
             ScanRequests();
+            JournalDesktopState();
             // Children appear early: full snapshots every 2 s for the first minute after a
             // start or an adopt, then every 60 s; status requests and a foreground TestClient
             // refresh at once.

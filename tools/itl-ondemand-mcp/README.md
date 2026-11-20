@@ -38,6 +38,58 @@ A Vanessa `ACTION_FAILED` that names a disconnected TestClient returns
 `ITL_VANESSA_TESTCLIENT_NOT_CONNECTED` with `action: itl_recover_connection`;
 the facade does not recover or replay it automatically.
 
+Any other Vanessa `ACTION_FAILED` or `INVALID_PARAMS` protocol error is an
+answer from a tool handler that has already stopped, so the facade keeps the
+backend and its TestClient, as after a successful call, and returns the code as
+a tool error with `callOutcome: failed`, `partialEffectsPossible: true`,
+`automaticRetryPerformed: false` and `action: inspect-form-state-before-retry`.
+An uncoded protocol error, a transport failure and a deadline still stop the
+owned backend.
+
+When a TestClient this facade already used is replaced and the agent did not
+close it, the next call that acts on open forms (form tools and `run_scenario`
+in `selected`, `fromCurrentStep` or `reloadAndRunFromLine`) is not sent: it
+returns `ITL_VANESSA_TESTCLIENT_REPLACED` with `callOutcome: not-started` and
+the continuation to rebuild the state in one self-contained scenario. A
+self-contained `run_scenario` (`all`, the default, or `reloadAndRun`) runs and
+its result carries the same code as a note. The notice is reported once.
+
+A `run_scenario` or `get_test_results` answer that contains Vanessa's scenario
+report is returned as that report even when a failed step quotes a runtime
+marker; the markers still classify editor answers. Vanessa itl-r17 answers a
+failed `execute_feature_step` with `ITL_VANESSA_STEP_FAILED` and a line whose
+status is not Success with `ITL_VANESSA_STEP_NOT_PROVEN` inside a successful MCP
+completion, because facades before 0.4.36 stop the backend on any JSON-RPC
+error; the facade returns both
+as tool errors with `stepExecuted: true`. A successful step gets a note that it
+ran without its scenario context. When the project's `compatibility.json` pins another facade version
+than the running process, every result gets `ITL_ONDEMAND_FACADE_SUPERSEDED`
+as a note; the call itself is handled normally. Under the relay
+(`ITL_ONDEMAND_RELAY=1`) the note asks to repeat `update-workflow` instead of
+reconnecting the client.
+
+## Relay
+
+`cmd/itl-ondemand-relay` is the stable client command once the dependency lock
+pins `itlOndemandRelay` (OpenSpec `ondemand-facade-relay`). The client entry is
+`<relay> --project-root <root> --server <name>`; the workflow writes the
+resolved facade launch (path, SHA-256, version, `serve` arguments) to
+`.agent-1c/mcp/ondemand/launch/<server>.json`. The relay forwards MCP lines
+unchanged and, before a request with nothing in flight, replaces the facade
+when that descriptor changed: it closes the old facade's input (its owned
+backend stop), starts the new one, replays `initialize`, sends
+`notifications/tools/list_changed` and notes `ITL_ONDEMAND_FACADE_REPLACED` on
+the next tool result. A missing or mismatched new facade keeps the current one
+with `ITL_ONDEMAND_RELAY_FACADE_KEPT`; with none it answers
+`ITL_ONDEMAND_RELAY_FACADE_UNAVAILABLE`. A facade that exits answers its
+in-flight calls with `ITL_ONDEMAND_FACADE_EXITED` (`callOutcome: unknown`, never
+replayed) and is restarted on the next call (`ITL_ONDEMAND_FACADE_RESTARTED`),
+at most 3 times in 5 minutes, then `ITL_ONDEMAND_RELAY_RESTART_LIMIT`. Lifecycle
+evidence, without payloads, is `.agent-1c/mcp/ondemand/<family>/relay-<server>.jsonl`.
+`scripts/Build-ItlOnDemandMcp.ps1` builds the relay next to the facade. The
+first switch to the relay changes the client entries once and needs one client
+restart; later facade updates do not.
+
 The guard never outlives its call. An owned stop is retried briefly within the
 call; if it stays unconfirmed, the execution still ends: the facade releases
 the guard, forgets that backend (its registration stays for the lifecycle drain

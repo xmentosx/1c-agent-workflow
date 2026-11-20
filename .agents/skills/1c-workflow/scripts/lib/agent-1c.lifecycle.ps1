@@ -15827,6 +15827,8 @@ function Invoke-NewDevBranchLifecycleMerge {
     )
 
     $branch = [string](Get-StateValue -State $State -Name "devBranch" -Default "")
+    # Before the transaction pins the branch commit, so a resume sees the same head.
+    Add-DevBranchResetMasterAncestry -State $State | Out-Null
     $branchCommit = Get-CurrentCommit
     Set-PendingDevBranchMergeTransaction `
         -State $State `
@@ -20662,6 +20664,45 @@ function Set-DevBranchTreeToMasterCommit {
     return (Get-CurrentCommit)
 }
 
+# Records a commit of an already staged tree and moves the current branch to it
+# only from the expected head, so an interruption leaves either the old or the
+# new head and never a pending merge.
+function New-DevBranchRecordedCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tree,
+        [Parameter(Mandatory = $true)][string[]]$Parents,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    $arguments = @("commit-tree", $Tree)
+    foreach ($parent in $Parents) { $arguments += @("-p", $parent) }
+    $arguments += @("-m", $Message)
+    $commit = ([string](Get-GitOutput $arguments)).Trim()
+    if ($commit -notmatch '^[a-f0-9]{40}$') { throw "DEV_BRANCH_RECORDED_COMMIT_INVALID: $commit" }
+    Invoke-Git @("update-ref", "-m", $Message, "HEAD", $commit, $Parents[0])
+    return $commit
+}
+
+# A reset copies the master tree but keeps the old branch head as its only
+# parent, so git would merge the next master against the branch's previous base
+# and report master's own changes as conflicts or merge them wrongly (PM5
+# itldev/branch2, 2026-11-16: 30 conflicted files, 6 really touched). Before the
+# first merge after a reset, record the copied master commit as a parent
+# without changing any file. Once a later merge contains it this is a no-op.
+function Add-DevBranchResetMasterAncestry {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    $resetMaster = [string](Get-StateValue -State $State -Name "resetMasterCommit" -Default "")
+    if ($resetMaster -notmatch '^[a-f0-9]{40}$' -or -not (Test-GitCommitExists $resetMaster)) { return $false }
+    $headCommit = Get-CurrentCommit
+    if (Test-GitCommitIsAncestor -Ancestor $resetMaster -Descendant $headCommit) { return $false }
+    Assert-CleanGit
+    $tree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
+    $commit = New-DevBranchRecordedCommit -Tree $tree -Parents @($headCommit, $resetMaster) -Message "chore: record the master commit copied by the last reset"
+    Write-Host "Recorded master commit $resetMaster, copied by the last branch reset, as a parent ($commit); the refresh now merges against it."
+    return $true
+}
+
 function Restore-ExistingDevBranchFromSeed {
     param(
         [Parameter(Mandatory = $true)][object]$State,
@@ -22281,9 +22322,14 @@ function Invoke-DevBranchCheck {
     # may recovery/repair be completed and a successful user report be emitted.
     $verifiedState = Read-DevBranchState -Name $DevBranchName
     Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $verifiedState -RecoveryOperation "check-dev-branch" | Out-Null
+    # Assessment and the user report can each stay silent for over a minute
+    # after the runners finished. Keep the owner's liveness published so the
+    # runner watchdog does not discard a completed check; locals that later
+    # recovery reads stay outside the heartbeat body.
+    Set-RunStage -Stage 'verification.report' -Detail 'Writing the verification report and check history.'
     if ($trigger -eq "repair") {
         $verifiedState = Read-DevBranchState -Name $DevBranchName
-        $verification = Get-VerificationState -State $verifiedState
+        $verification = Invoke-WithRunStatusHeartbeat { Get-VerificationState -State $verifiedState }
         $evidenceKind = [string](Get-StateValue -State $verifiedState -Name "lastVerificationEvidenceKind" -Default "")
         if (($verification.isFreshPassed -and $evidenceKind -in @('full', 'complete/current-obligations', 'complete/current-change')) -or
             ((Get-VerificationModel) -eq 'change' -and [bool](Get-StateValue $verification 'changeFreshPassed' $false) -and $evidenceKind -eq 'change/task-pending')) {
@@ -22293,11 +22339,13 @@ function Invoke-DevBranchCheck {
             throw 'ITL_VERIFICATION_SCENARIO_FULL_PROOF_INCOMPLETE: the named scenario passed but the unfiltered assessment did not produce fresh full proof. Diagnose the due component and resume the same repair session.'
         }
     }
-    Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
-    Write-DevBranchMemoryUsageNote
-    $historyVerification = Get-VerificationState -State $verifiedState
-    $historyStatus = if ($historyVerification.isFreshPassed -or [bool](Get-StateValue $historyVerification 'changeFreshPassed' $false)) { 'passed' } else { 'partial' }
-    Add-ItlCheckHistoryRecord -State $verifiedState -Status $historyStatus -Trigger $trigger
+    Invoke-WithRunStatusHeartbeat {
+        Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
+        Write-DevBranchMemoryUsageNote
+        $historyVerification = Get-VerificationState -State $verifiedState
+        $historyStatus = if ($historyVerification.isFreshPassed -or [bool](Get-StateValue $historyVerification 'changeFreshPassed' $false)) { 'passed' } else { 'partial' }
+        Add-ItlCheckHistoryRecord -State $verifiedState -Status $historyStatus -Trigger $trigger
+    }
     if ($canonicalRepair) {
         $repairResult = Get-ItlVerificationRepairRunResult -Phase $repairPhase -State $verifiedState -Verification $verification -StartedAt $repairStartedAt
         Publish-ItlVerificationRepairRun -Ticket $repairAttemptTicket -Result $repairResult -SessionPassed $repairVerificationPassed -StartedAt $repairStartedAt
@@ -22306,7 +22354,7 @@ function Invoke-DevBranchCheck {
         $checkFailure = $_
         if ($null -ne $platformPreparation) {
             try {
-                Write-DevBranchVerificationRunUserReport -State $state -PlatformPreparation $platformPreparation -Failure $checkFailure
+                Invoke-WithRunStatusHeartbeat { Write-DevBranchVerificationRunUserReport -State $state -PlatformPreparation $platformPreparation -Failure $checkFailure }
             } catch {
                 Write-Warning "Could not render the verification failure report: $($_.Exception.Message)" -WarningAction Continue
             }

@@ -1788,6 +1788,66 @@ function Get-VanessaTestTimeoutSeconds {
     return $value
 }
 
+# Seconds per feature (JUnit testsuite name = the feature title) of one run.
+function Get-VanessaJUnitFeatureSeconds {
+    param([string]$Path)
+    $features = [ordered]@{}
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $features }
+    try {
+        [xml]$xml = Read-Utf8Text -Path $Path
+        foreach ($suite in @($xml.SelectNodes('//*[local-name()="testsuite" and not(ancestor::*[local-name()="testsuite"])]'))) {
+            $name = ([string]$suite.GetAttribute('name')).Trim()
+            $seconds = 0.0
+            if (-not $name -or -not [double]::TryParse([string]$suite.GetAttribute('time'), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$seconds) -or $seconds -le 0) { continue }
+            if ($features.Count -ge 200) { break }
+            $features[$name] = [int][Math]::Ceiling([double]$features[$name] + $seconds)
+        }
+    } catch { }
+    return $features
+}
+
+function Get-VanessaFeatureTitle {
+    param([string]$Path)
+    try {
+        foreach ($line in [IO.File]::ReadLines($Path, [Text.Encoding]::UTF8)) {
+            $match = [regex]::Match($line, '^\s*(?:Функционал|Функциональность|Feature)\s*:\s*(?<title>.+?)\s*$')
+            if ($match.Success) { return $match.Groups['title'].Value }
+        }
+    } catch { }
+    return ''
+}
+
+# The run budget follows recorded durations of the selected features (PM5
+# itldev/branch4, 2026-11-16/17: green runs of 2700-3500 s failed the fixed
+# 1800 s default). An explicit VANESSA_TEST_TIMEOUT_SECONDS always wins. The
+# estimate is the startup allowance plus 1.5 x the 90th percentile of each
+# selected feature's last runs, never below the default nor above 4 x it.
+function Get-VanessaRunTimeoutBudget {
+    param([string[]]$FeatureFiles = @(), [AllowNull()][object]$State = $null)
+
+    $default = 1800
+    if ($null -ne (Get-EnvValue -Name "VANESSA_TEST_TIMEOUT_SECONDS")) {
+        return [pscustomobject]@{ seconds = Get-VanessaTestTimeoutSeconds; source = 'setting VANESSA_TEST_TIMEOUT_SECONDS' }
+    }
+    $history = @{}
+    if (Get-Command Get-ItlCheckFeatureDurations -CommandType Function -ErrorAction SilentlyContinue) {
+        $history = Get-ItlCheckFeatureDurations -State $State
+    }
+    $titles = @($FeatureFiles | ForEach-Object { Get-VanessaFeatureTitle -Path $_ } | Where-Object { $_ } | Select-Object -Unique)
+    $estimate = 120.0
+    $known = 0
+    foreach ($title in $titles) {
+        if (-not $history.ContainsKey($title)) { continue }
+        $values = @($history[$title] | Sort-Object)
+        $rank = [int][Math]::Ceiling(0.9 * $values.Count) - 1
+        $estimate += 1.5 * [double]$values[[Math]::Max(0, $rank)]
+        $known++
+    }
+    $seconds = [int][Math]::Min(4 * $default, [Math]::Max($default, [Math]::Ceiling($estimate)))
+    $source = if ($seconds -gt $default) { "history of $known of $($titles.Count) selected features" } else { 'default' }
+    return [pscustomobject]@{ seconds = $seconds; source = $source }
+}
+
 function Normalize-OneCEventLogLevel {
     param([AllowNull()][string]$Value)
 
@@ -4766,6 +4826,12 @@ function New-VanessaRunLivenessMonitor {
         logPath = Join-Path (Resolve-Agent1cFullPath -Path $RunDirectory) 'vanessa.log'
         stallWarningSeconds = $stallWarning
         stallTimeoutSeconds = $stallTimeout
+        # After its own timeout the run still stops its processes, reads JUnit and
+        # the event log, records the result and the check journal. The published
+        # phase budget includes this time so the runner, which extends exactly to
+        # it, does not kill the helper at the same instant (PM5 2026-11-17,
+        # compact-20261117-013607). The 1C processes still stop at the timeout.
+        ownerGraceSeconds = 180
         lastProbeAtUtc = [DateTime]::MinValue
         lastPublishedAtUtc = [DateTime]::MinValue
         lastEvidenceAtUtc = [DateTime]::UtcNow
@@ -4850,7 +4916,9 @@ function Update-VanessaRunLiveness {
     $script:RunLiveness = $liveness
     $script:RunNoProgressSeconds = $noProgressSeconds
     $script:RunStallTimeoutRemainingSeconds = $stallRemaining
-    $script:RunTimeoutRemainingSeconds = $timeoutRemaining
+    $script:RunTimeoutRemainingSeconds = $(if ($timeoutRemaining -gt 0) {
+        $timeoutRemaining + [int](Get-StateValue -State $Monitor -Name 'ownerGraceSeconds' -Default 0)
+    } else { 0 })
     $script:RunOwnedProcessIds = @($ownedIds)
     $script:RunCpuDeltaMilliseconds = $cpuDeltaMilliseconds
     $script:RunWorkingSetMb = $workingSetMb
@@ -5342,6 +5410,36 @@ function Test-VanessaEventLogConfirmsPrimaryFailure {
     } catch {
         return $false
     }
+}
+
+# UTC windows of failed JUnit testcases; Vanessa writes local timestamps.
+function Get-VanessaFailedTestcaseWindows {
+    param([string]$JUnitPath)
+    $windows = @()
+    if ([string]::IsNullOrWhiteSpace($JUnitPath) -or -not (Test-Path -LiteralPath $JUnitPath -PathType Leaf)) { return $windows }
+    try {
+        [xml]$xml = Read-Utf8Text -Path $JUnitPath
+        foreach ($case in @($xml.SelectNodes('//*[local-name()="testcase"][*[local-name()="failure" or local-name()="error"]]'))) {
+            $start = [datetime]::MinValue
+            if (-not [datetime]::TryParseExact([string]$case.GetAttribute('timestamp'), 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeLocal, [ref]$start)) { continue }
+            $seconds = 0.0
+            [void][double]::TryParse([string]$case.GetAttribute('time'), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$seconds)
+            $fromUtc = $start.ToUniversalTime()
+            $windows += [pscustomobject]@{ fromUtc = $fromUtc; toUtc = $fromUtc.AddSeconds([Math]::Max(0, $seconds) + 5) }
+        }
+    } catch { }
+    return $windows
+}
+
+# The first desktop-lock interval that overlaps a failed testcase, or $null.
+function Find-VanessaFailureSessionLock {
+    param([object[]]$FailedWindows = @(), [object[]]$LockIntervals = @())
+    foreach ($failed in @($FailedWindows)) {
+        foreach ($lock in @($LockIntervals)) {
+            if ([datetime]$failed.fromUtc -le [datetime]$lock.toUtc -and [datetime]$lock.fromUtc -le [datetime]$failed.toUtc) { return $lock }
+        }
+    }
+    return $null
 }
 
 function Get-VanessaVerificationFailureRoute {
@@ -6115,7 +6213,10 @@ function Run-DevBranchTests {
     $logPath = ""
     $currentCommit = Get-CurrentCommit
     $currentFingerprint = if ($script:ActiveAuxiliaryVanessaContext) { [string]$script:ActiveAuxiliaryVanessaContext.verificationFingerprint } else { Get-VerificationFingerprint }
-    $timeoutSeconds = Get-VanessaTestTimeoutSeconds
+    $timeoutBudget = Get-VanessaRunTimeoutBudget -FeatureFiles $applicationFeatureFiles -State $state
+    $timeoutSeconds = [int]$timeoutBudget.seconds
+    # The check journal records this run's per-feature durations for later budgets.
+    Set-ItlCheckTimingValue -Name vanessaRunDirectory -Value $runDirectory
     $runLivenessMonitor = New-VanessaRunLivenessMonitor -RunDirectory $runDirectory -TimeoutSeconds $timeoutSeconds
     $runStartedAt = Get-Date
     $runFinishedAt = $null
@@ -6133,13 +6234,15 @@ function Run-DevBranchTests {
         -RunDirectory $runDirectory `
         -ProfileNames @($testClientTopology.profiles | ForEach-Object { [string]$_.name }) `
         -ConnectTimeoutSeconds $testClientConnectTimeout
-    Write-Host "Vanessa test timeout: $timeoutSeconds seconds"
+    Write-Host "Vanessa test timeout: $timeoutSeconds seconds (source: $($timeoutBudget.source))"
     $admissionTargets = @(Get-VanessaTestClientAdmissionTargets -Topology $testClientTopology -DefaultState $state)
     $runDatabaseResources = @(Get-VanessaTestClientDatabaseResources -Topology $testClientTopology -DefaultState $state)
     $sessionWait = Get-OneCSessionWaitParameters -DefaultTimeoutSeconds ([math]::Min(300, $timeoutSeconds))
     try {
         Set-RunStage -Stage "vanessa.run" -Detail "Running TESTMANAGER and TESTCLIENT."
-        $logPath = Invoke-Enterprise `
+        # A repeated TESTMANAGER is a new process: let the window helper adopt it.
+        $logPath = Invoke-VanessaManagerLaunchWithSignatureRetry -InfoBasePath ([string]$serviceInfoBase.path) -BeforeRetry { $windowGroupRoot.adopted = $false } -Launch {
+            Invoke-Enterprise `
             -InfoBasePath $serviceInfoBase.path `
             -InfoBaseKind $serviceInfoBase.kind `
             -User $serviceInfoBase.user `
@@ -6169,6 +6272,7 @@ function Run-DevBranchTests {
                 Write-Host "[WARN] Vanessa verify exceeded timeout; stopping own TESTMANAGER/TESTCLIENT processes."
                 Stop-OwnHungVanessaTestClients -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
             }
+        }
         if ($null -ne $testClientStartupMonitor.failure) {
             $startupFailure = $testClientStartupMonitor.failure
             if ([string]$startupFailure.code -ceq 'ITL_VANESSA_TESTCLIENT_NOT_STARTED') {
@@ -6421,6 +6525,17 @@ function Run-DevBranchTests {
             -EventLogVerification $eventLogVerification `
             -EventLogConfirmsPrimaryFailure:$eventLogConfirmsPrimaryFailure `
             -ScenariosPassed:$scenariosPassed
+        # A locked Windows session cannot activate 1C windows: a UI step failing
+        # meanwhile says nothing about the product (PM5 itldev/branch4, 2026-11-17).
+        if ($failureRoute.category -eq 'product-assertion') {
+            $sessionLock = Find-VanessaFailureSessionLock `
+                -FailedWindows @(Get-VanessaFailedTestcaseWindows -JUnitPath (Join-Path $runDirectory 'junit.xml')) `
+                -LockIntervals @(Get-ItlWindowHelperDesktopLockIntervals -Group $windowGroup)
+            if ($null -ne $sessionLock) {
+                Write-Host "[WARN] ITL_UI_SESSION_LOCKED: the Windows session was locked from $(([datetime]$sessionLock.fromUtc).ToString('o')) to $(([datetime]$sessionLock.toUtc).ToString('o')) while a failed UI scenario ran; a locked session cannot activate 1C windows, so the product was not judged. Keep the session unlocked and repeat the original command."
+                $failureRoute = [pscustomobject]@{ category = 'runner'; requiredAction = 'unlock-windows-session-and-repeat-original-command' }
+            }
+        }
         Set-RunFailureContext -Category $failureRoute.category -RequiredAction $failureRoute.requiredAction
         if ($verification.status -eq "unknown") {
             Write-OneCVanessaProcessDiagnostics -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
@@ -9248,7 +9363,10 @@ function Wait-VanessaMcpPort {
     param(
         [int]$Port,
         [int]$TimeoutSeconds = 30,
-        [AllowNull()][object]$FocusGuard = $null
+        [AllowNull()][object]$FocusGuard = $null,
+        # The launched backend. Once it has exited nothing can open the port,
+        # so the wait ends instead of spending the rest of its budget.
+        [AllowNull()][object]$Process = $null
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -9258,10 +9376,73 @@ function Wait-VanessaMcpPort {
             Invoke-OneCLaunchFocusReturn -Guard $FocusGuard | Out-Null
             return $true
         }
+        if (Test-VanessaLaunchedProcessExited -Process $Process) { return $false }
         Start-Sleep -Milliseconds $(if ($null -ne $FocusGuard) { 200 } else { 500 })
     }
 
     return $false
+}
+
+# Only a confirmed exit counts; a missing or unreadable process stays "running"
+# so callers keep their existing wait.
+function Test-VanessaLaunchedProcessExited {
+    param([AllowNull()][object]$Process)
+
+    if ($null -eq $Process) { return $false }
+    try {
+        if ($Process -is [Diagnostics.Process]) { $Process.Refresh() }
+        return [bool]$Process.HasExited
+    } catch { return $false }
+}
+
+# 1C writes this line to /Out and exits when it cannot verify the configuration
+# of the infobase it is opening, before any configuration code runs. PM5 saw it
+# on 2026-11-07..18; a repeated launch usually opened the same infobase.
+function Test-OneCConfigurationSignatureFailureLog {
+    param([AllowEmptyString()][string]$LogPath)
+
+    if ([string]::IsNullOrWhiteSpace($LogPath) -or -not (Test-Path -LiteralPath $LogPath -PathType Leaf)) { return $false }
+    try { $text = Read-Utf8Text -Path $LogPath } catch { return $false }
+    $first = @(([string]$text) -split "`r?`n" | ForEach-Object { $_.Trim().TrimStart([char]0xFEFF).Trim() } | Where-Object { $_ }) | Select-Object -First 1
+    return ($null -ne $first -and $first.StartsWith('Цифровая подпись конфигурации неверна', [StringComparison]::OrdinalIgnoreCase))
+}
+
+function Get-OneCConfigurationSignatureFailureMessage {
+    param([string]$InfoBasePath, [string]$LogPath, [int]$Attempts)
+
+    return "ONEC_CONFIGURATION_SIGNATURE_INVALID: 1C could not open infobase '$InfoBasePath': the configuration digital signature is invalid (log '$LogPath'; attempts=$Attempts). Nothing ran in that infobase. If its files were copied or replaced while a 1C process held them, recreate the infobase through its owner; then repeat the original command."
+}
+
+# One automatic repeat of a TESTMANAGER launch that 1C refused with an invalid
+# configuration signature. The refusal precedes all configuration code, so the
+# repeat cannot duplicate work; any other failure is returned unchanged.
+function Invoke-VanessaManagerLaunchWithSignatureRetry {
+    param(
+        [Parameter(Mandatory = $true)][string]$InfoBasePath,
+        [Parameter(Mandatory = $true)][scriptblock]$Launch,
+        [scriptblock]$BeforeRetry = $null,
+        [ValidateRange(0, 60)][int]$RetryDelaySeconds = 5
+    )
+
+    for ($attempt = 1; ; $attempt++) {
+        $previousLog = [string]$script:LastLogPath
+        $failure = $null
+        $launchResult = $null
+        try { $launchResult = & $Launch } catch { $failure = $_ }
+        $attemptLog = [string]$script:LastLogPath
+        $signatureFailure = $attemptLog -cne $previousLog -and (Test-OneCConfigurationSignatureFailureLog -LogPath $attemptLog)
+        if (-not $signatureFailure) {
+            if ($null -ne $failure) { throw $failure }
+            return $launchResult
+        }
+        if ($attempt -ge 2) {
+            Set-RunFailureContext -Category 'infobase-readiness'
+            throw (Get-OneCConfigurationSignatureFailureMessage -InfoBasePath $InfoBasePath -LogPath $attemptLog -Attempts $attempt)
+        }
+        Write-Host "[WARN] ONEC_CONFIGURATION_SIGNATURE_INVALID: 1C refused infobase '$InfoBasePath' before running anything (log '$attemptLog'); repeating the launch once in ${RetryDelaySeconds}s."
+        if ($null -ne $BeforeRetry) { & $BeforeRetry }
+        if ($RetryDelaySeconds -gt 0) { Start-Sleep -Seconds $RetryDelaySeconds }
+    }
 }
 
 function Write-VanessaMcpKiloConfig {

@@ -279,7 +279,87 @@ function Install-ItlOnDemandMcp {
     Write-Host "ITL on-demand MCP SHA256: $actual"
     $installed = [pscustomobject]@{ path = $targetPath; version = $version; sha256 = $actual }
     if ($null -ne $runEntry) { $runEntry['value'] = $installed }
+    # The relay is the client command of every facade entry; a failed relay
+    # install fails this step, so no second (direct) configuration mode exists.
+    [void](Install-ItlOnDemandRelay)
     return $installed
+}
+
+function Get-ItlOnDemandRelayContract {
+    # The relay mode starts when the selected dependency lock pins the relay.
+    $entry = Get-WorkflowDependencyEntry -Name "itlOndemandRelay"
+    if ($null -eq $entry) { return $null }
+    $version = [string](Get-ConfigValueFromObject -Object $entry -Path "version" -Default "")
+    $assetName = [string](Get-ConfigValueFromObject -Object $entry -Path "assetName" -Default "")
+    $sha256 = [string](Get-ConfigValueFromObject -Object $entry -Path "sha256" -Default "")
+    if ($version -notmatch '^(\d+)\.\d+\.\d+$') { throw "ITL_ONDEMAND_RELAY_VERSION_INVALID: '$version'." }
+    $major = $Matches[1]
+    if ($assetName -cne "itl-ondemand-relay-windows-amd64.exe") {
+        throw "ITL_ONDEMAND_RELAY_ASSET_INVALID: expected='itl-ondemand-relay-windows-amd64.exe' actual='$assetName'."
+    }
+    if ($sha256 -notmatch '^[a-fA-F0-9]{64}$') { throw "ITL_ONDEMAND_RELAY_SHA256_INVALID: dependency lock must contain a 64-character SHA256." }
+    $sha256 = $sha256.ToLowerInvariant()
+    # The major segment changes only with an incompatible relay; the SHA
+    # segment with any relay release (a rare, accepted client reconnect).
+    $root = Join-Path (Split-Path -Parent (Get-ItlOnDemandMcpInstallRoot)) "relay"
+    $path = Join-Path (Join-Path (Join-Path $root "v$major") $sha256) $assetName
+    return [pscustomobject]@{
+        entry = $entry; version = $version; assetName = $assetName; sha256 = $sha256; path = $path
+        url = [string](Get-ConfigValueFromObject -Object $entry -Path "url" -Default "")
+    }
+}
+
+function Install-ItlOnDemandRelay {
+    $contract = Get-ItlOnDemandRelayContract
+    if ($null -eq $contract) { return $null }
+    $runEntry = Get-WorkflowUpdateRunSharedEntry -Kind 'itl-ondemand-relay' -Identity ([ordered]@{ entry = $contract.entry; path = $contract.path
+        sourceBuild = [string][Environment]::GetEnvironmentVariable('ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE', 'Process') })
+    if ($null -ne $runEntry -and $runEntry.ContainsKey('value')) { return $runEntry['value'] }
+    $target = $contract.path
+    $hasPinnedBytes = { param($Path) (Test-Path -LiteralPath $Path -PathType Leaf) -and (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $contract.sha256 }
+    if (-not (& $hasPinnedBytes $target)) {
+        # Source development and unpublished candidates may use an exact local
+        # build; any other bytes are acquired from the pinned immutable URL.
+        $sourceBuild = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE", "Process")
+        if ([string]::IsNullOrWhiteSpace($sourceBuild)) {
+            $sourceBuild = Join-Path ([System.IO.Path]::GetFullPath((Join-Path $script:Agent1cScriptRoot "..\..\..\.."))) "tools\itl-ondemand-mcp\build\$($contract.assetName)"
+        }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        if (& $hasPinnedBytes $sourceBuild) {
+            Copy-Item -LiteralPath $sourceBuild -Destination $target -Force
+        } else {
+            if (-not $contract.url) { throw "ITL_ONDEMAND_RELAY_URL_MISSING: itlOndemandRelay.url is required in .agent-1c/dependency-lock.json." }
+            [void](Invoke-ItlImmutableFileAcquire -Source $contract.url -DestinationPath $target -ExpectedSha256 $contract.sha256 -Label "ITL on-demand MCP relay")
+        }
+        if (-not (& $hasPinnedBytes $target)) { throw "ITL_ONDEMAND_RELAY_SHA256_MISMATCH: expected='$($contract.sha256)' path='$target'. Repeat update-workflow." }
+    }
+    Write-Host "ITL on-demand MCP relay: $target"
+    $installed = [pscustomobject]@{ path = $target; version = $contract.version; sha256 = $contract.sha256 }
+    if ($null -ne $runEntry) { $runEntry['value'] = $installed }
+    return $installed
+}
+
+function Get-ItlOnDemandLaunchDescriptorPath {
+    param([Parameter(Mandatory = $true)][string]$Server)
+    return (Join-Path (Join-Path (Get-ItlOnDemandRuntimeRoot) "launch") "$Server.json")
+}
+
+function Write-ItlOnDemandLaunchDescriptor {
+    # The relay serves exactly this resolved selection; it never resolves
+    # facades, hotfix catalogs or overrides itself. Content without timestamps
+    # keeps an unchanged selection from looking like a replacement.
+    param([Parameter(Mandatory = $true)][object]$Endpoint, [Parameter(Mandatory = $true)][string]$Family, [Parameter(Mandatory = $true)][object]$Facade)
+    $descriptor = [ordered]@{
+        schemaVersion = 1; server = [string]$Endpoint.name; family = $Family
+        facadePath = [string]$Endpoint.command; facadeSha256 = [string]$Facade.sha256; facadeVersion = [string]$Facade.version
+        args = @($Endpoint.args | ForEach-Object { [string]$_ })
+    }
+    $path = Get-ItlOnDemandLaunchDescriptorPath -Server ([string]$Endpoint.name)
+    $text = ($descriptor | ConvertTo-Json -Depth 4) + [Environment]::NewLine
+    if ((Test-Path -LiteralPath $path -PathType Leaf) -and (Read-Utf8Text -Path $path) -ceq $text) { return $path }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    Write-Utf8TextAtomic -Path $path -Value $text
+    return $path
 }
 
 function Get-ItlOnDemandMcpEndpointDescriptors {
@@ -316,7 +396,28 @@ function Get-ItlOnDemandMcpEndpointDescriptors {
             }
         }
     }
-    return @($endpoints)
+    return @(ConvertTo-ItlOnDemandRelayEndpoints -Endpoints $endpoints)
+}
+
+function ConvertTo-ItlOnDemandRelayEndpoints {
+    # With a pinned relay the client entry names only the relay, the project
+    # and the server; the resolved facade launch moves to the descriptor, so a
+    # facade, catalog or hotfix change no longer changes the client entry.
+    param([object[]]$Endpoints)
+    $relay = Get-ItlOnDemandRelayContract
+    if ($null -eq $relay) { return @($Endpoints) }
+    $facade = Get-ItlOnDemandMcpFacadeContract
+    $root = Resolve-Agent1cFullPath -Path $script:ProjectRoot
+    foreach ($endpoint in $Endpoints) {
+        $arguments = @($endpoint.args)
+        $family = [string]$arguments[[array]::IndexOf($arguments, "--family") + 1]
+        [void](Write-ItlOnDemandLaunchDescriptor -Endpoint $endpoint -Family $family -Facade $facade)
+        # Keep every other endpoint property (timeouts, env, enablement).
+        $relayed = $endpoint.PSObject.Copy()
+        $relayed.command = $relay.path
+        $relayed.args = @("--project-root", $root, "--server", [string]$endpoint.name)
+        $relayed
+    }
 }
 
 function Write-ItlOnDemandAuxiliaryHelperWrapper {
@@ -350,6 +451,13 @@ exit $LASTEXITCODE
 function Write-ItlOnDemandMcpClientConfig {
     param([string]$Client = "", [switch]$PlanOnly)
     $executable = Get-ItlOnDemandMcpExecutablePath -AllowMissing
+    $relay = Get-ItlOnDemandRelayContract
+    if ($null -ne $relay -and -not (Test-Path -LiteralPath $relay.path -PathType Leaf)) {
+        # Never fall back to direct facade entries: one configuration mode.
+        if ($PlanOnly) { return }
+        Write-Warning "ITL on-demand MCP relay is missing; client facade entries were not written: $($relay.path). Repeat update-workflow."
+        return ""
+    }
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         if ($PlanOnly) { return }
         Write-Warning "ITL on-demand MCP executable is missing; client facade entries were not written: $executable"
@@ -1769,6 +1877,29 @@ function Write-ItlRoctupStartupFailureDiagnostic {
     }
 }
 
+# A Vanessa backend that exited before opening its port is named as such, with
+# its exit code and the 1C refusal it logged, instead of a generic port timeout.
+# ROCTUP keeps its message; its startup observation already records the exit.
+function Get-ItlOnDemandBackendNotReadyMessage {
+    param(
+        [string]$Family,
+        [int]$Port,
+        [AllowNull()][object]$Process,
+        [AllowEmptyString()][string]$LogPath,
+        [AllowEmptyString()][string]$InfoBasePath
+    )
+
+    $exited = $Family -eq 'vanessa-ui' -and (Test-VanessaLaunchedProcessExited -Process $Process)
+    if (-not $exited) { return "$Family on-demand MCP did not open port $Port. Log: $LogPath" }
+    $exitCode = 'unknown'
+    try { $exitCode = [string]$Process.ExitCode } catch { }
+    $message = "ITL_ONDEMAND_BACKEND_EXITED: $Family backend PID $($Process.Id) exited with code $exitCode before opening port $Port. Log: $LogPath"
+    if (Test-OneCConfigurationSignatureFailureLog -LogPath $LogPath) {
+        $message += ' ' + (Get-OneCConfigurationSignatureFailureMessage -InfoBasePath $InfoBasePath -LogPath $LogPath -Attempts 1)
+    }
+    return $message
+}
+
 function Start-ItlOnDemandBackendInstance {
     param([string]$Family, [string]$InstanceId, [string]$CatalogSha256, [string]$AuxiliaryContour = "", [object]$ServiceAdmissionPlan = $null)
     Invoke-WithItlOnDemandRuntimeMutation -Family $Family -InstanceIds @($InstanceId) -OwnerFunction 'Start-ItlOnDemandBackendInstanceCore' -OwnerArguments $PSBoundParameters
@@ -1940,8 +2071,8 @@ function Start-ItlOnDemandBackendInstanceCore {
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
         Set-ItlOnDemandManagedPortLeaseStatus -Family $portFamily -Key $key -LeaseToken $portLeaseToken -Status "process-started" -ProcessId $result.process.Id
         $startupStage = 'port-readiness'
-        $ready = $(if ($Family -eq "roctup") { Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) } else { Wait-VanessaMcpPort -Port $port -TimeoutSeconds 120 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) })
-        if (-not $ready) { throw "$Family on-demand MCP did not open port $port. Log: $($result.logPath)" }
+        $ready = $(if ($Family -eq "roctup") { Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) } else { Wait-VanessaMcpPort -Port $port -TimeoutSeconds 120 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) -Process $result.process })
+        if (-not $ready) { throw (Get-ItlOnDemandBackendNotReadyMessage -Family $Family -Port $port -Process $result.process -LogPath ([string]$result.logPath) -InfoBasePath ([string]$runtimeState.managerInfoBasePath)) }
         $startupStage = 'port-owner'
         $portOwnership = Get-ItlOnDemandPortOwnership -Port $port -ProcessId $result.process.Id -RetryUntil (New-ItlPortOwnershipDeadline)
         if ($portOwnership.decision -ne 'owned') {

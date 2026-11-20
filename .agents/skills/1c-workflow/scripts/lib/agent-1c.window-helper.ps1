@@ -308,8 +308,32 @@ function Get-ItlWindowHelperHiddenTail {
 function Write-ItlWindowHelperFailureDiagnostics {
     param([AllowNull()][object]$Group)
     foreach ($entry in (Get-ItlWindowHelperHiddenTail -Group $Group -Count 5)) {
-        Write-Host "Hidden TestClient window: t=$($entry.t) title='$($entry.title)' class=$($entry.class) image='$($entry.image)'"
+        $role = $entry.PSObject.Properties['role']
+        $roleText = if ($null -ne $role -and [string]$role.Value) { " role=$($role.Value)" } else { '' }
+        Write-Host "Hidden TestClient window: t=$($entry.t)$roleText title='$($entry.title)' class=$($entry.class) image='$($entry.image)'"
     }
+}
+
+# UTC intervals in which the session had no interactive desktop (locked or
+# disconnected), from the group's desktop journal. An interval still open at the
+# end lasts until -UntilUtc.
+function Get-ItlWindowHelperDesktopLockIntervals {
+    param([AllowNull()][object]$Group, [datetime]$UntilUtc = [datetime]::UtcNow)
+    $intervals = @()
+    if ($null -eq $Group -or -not $Group.ready) { return $intervals }
+    $lockedAt = $null
+    foreach ($entry in (Read-ItlWindowHelperJournal -Path (Join-Path $Group.directory 'journal\desktop.jsonl'))) {
+        $at = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParse([string]$entry.t, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$at)) { continue }
+        if ([string]$entry.event -ceq 'desktop-locked') {
+            if ($null -eq $lockedAt) { $lockedAt = $at.UtcDateTime }
+        } elseif ([string]$entry.event -ceq 'desktop-unlocked' -and $null -ne $lockedAt) {
+            $intervals += [pscustomobject]@{ fromUtc = $lockedAt; toUtc = $at.UtcDateTime }
+            $lockedAt = $null
+        }
+    }
+    if ($null -ne $lockedAt) { $intervals += [pscustomobject]@{ fromUtc = $lockedAt; toUtc = $UntilUtc } }
+    return $intervals
 }
 
 # ------------------------------------------------------------------ actions
