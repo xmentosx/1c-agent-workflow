@@ -1566,6 +1566,16 @@
       "tests": ["tests/pester/SourceDeliveryResourceLedger.Tests.ps1", "tests/pester/SourceDeliveryCleanup.Tests.ps1"]
     },
     {
+      "id": "delivery-metrics",
+      "owner": "read-only weekly delivery target report over existing gate run records",
+      "gate": "targeted",
+      "budgetSeconds": 30,
+      "primaryTest": "tests/pester/DeliveryMetrics.Tests.ps1",
+      "paths": ["scripts/delivery-metrics.ps1", "tests/pester/DeliveryMetrics.Tests.ps1"],
+      "reuseInputPaths": ["scripts/git-path-list.ps1", "tests/pester/TestSupport.ps1"],
+      "tests": ["tests/pester/DeliveryMetrics.Tests.ps1"]
+    },
+    {
       "id": "source-delivery-evidence-retention",
       "owner": "manual retention of source-owned recovery payloads",
       "gate": "targeted",
