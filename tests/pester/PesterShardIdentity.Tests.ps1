@@ -386,3 +386,108 @@ Describe 'Pester shard selected-test identity' {
         {Get-QualityContractReuseInputPaths -Contract $contract} | Should -Throw '*reuseInputPaths*'
     }
 }
+
+Describe 'Static script loads in Pester shard identity' {
+    BeforeAll {
+        function New-StaticLoadFixture([string]$Name) {
+            $root = Join-Path $TestDrive "Кэш с пробелом $Name"
+            $utf8 = [Text.UTF8Encoding]::new($true)
+            foreach ($test in @('Alpha', 'Beta')) {
+                $path = Join-Path $root "tests/pester/$test.Tests.ps1"
+                [void][IO.Directory]::CreateDirectory((Split-Path $path))
+                [IO.File]::WriteAllText($path, "Describe '$test fixture' { It 'passes' { `$true | Should -BeTrue } }", $utf8)
+            }
+            $library = Join-Path $root 'scripts/библиотека с пробелом/помощник.ps1'
+            [void][IO.Directory]::CreateDirectory((Split-Path $library))
+            [IO.File]::WriteAllText($library, "function Get-FixtureValue { 1 }`n", $utf8)
+            # The agent-1c.ps1 shape: a library root and a literal module list.
+            [IO.File]::WriteAllText((Join-Path $root 'scripts/entry.ps1'), "`$script:LibRoot = Join-Path `$PSScriptRoot 'библиотека с пробелом'`n`$script:Modules = @('помощник.ps1')`nforeach (`$module in `$script:Modules) { . (Join-Path `$script:LibRoot `$module) }`n", $utf8)
+            $tests = @('tests/pester/Alpha.Tests.ps1', 'tests/pester/Beta.Tests.ps1')
+            # The library is deliberately not declared in paths or reuseInputPaths.
+            $catalog = [ordered]@{ schemaVersion = 1; contracts = @([ordered]@{
+                id = 'static-load'; owner = 'fixture'; primaryTest = $tests[0]; gate = 'full'; budgetSeconds = 30
+                paths = @($tests + 'scripts/entry.ps1'); tests = $tests
+            }) }
+            [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'selection.json'), (@{ tests = $tests } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root '.gitignore'), "out*/`n", [Text.UTF8Encoding]::new($false))
+            Save-StaticLoadFixture $root 'fixture'
+            return $root
+        }
+        function Save-StaticLoadFixture([string]$Root, [string]$Message) {
+            if (-not (Test-Path -LiteralPath (Join-Path $Root '.git'))) {
+                & git -C $Root init -q
+                & git -C $Root config user.name 'ITL Test'
+                & git -C $Root config user.email 'itl-test@example.invalid'
+            }
+            & git -C $Root add --all
+            & git -C $Root commit -qm $Message
+            $LASTEXITCODE | Should -Be 0
+        }
+        function Invoke-StaticLoadShards([string]$Root, [string]$OutputName) {
+            $output = Join-Path $Root $OutputName
+            $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @(
+                '-RepositoryRoot', $Root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'),
+                '-WorkerCount', '1', '-SelectionPath', (Join-Path $Root 'selection.json'))
+            $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
+            return (($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json)
+        }
+    }
+
+    It 'invalidates shards when an undeclared dot-sourced library changes and refuses reuse for a dynamic module list' {
+        $root = New-StaticLoadFixture 'загрузки'
+        $first = Invoke-StaticLoadShards $root 'out-static-first'
+        $first.executedWorkerCount | Should -Be 2
+        $warm = Invoke-StaticLoadShards $root 'out-static-warm'
+        $warm.reusedWorkerCount | Should -Be 2
+        [IO.File]::AppendAllText((Join-Path $root 'scripts/библиотека с пробелом/помощник.ps1'), "function Get-FixtureValue { 2 }`n")
+        Save-StaticLoadFixture $root 'library change'
+        $changed = Invoke-StaticLoadShards $root 'out-static-changed'
+        $changed.executedWorkerCount | Should -Be 2
+        $changed.reusedWorkerCount | Should -Be 0
+        @($changed.workers.inputDigest | Where-Object { $_ -in @($first.workers.inputDigest) }) | Should -BeNullOrEmpty
+        # A module list that cannot be read statically is fail-closed: no reuse key.
+        [IO.File]::WriteAllText((Join-Path $root 'scripts/entry.ps1'), "`$script:LibRoot = Join-Path `$PSScriptRoot 'библиотека с пробелом'`nforeach (`$module in (Get-ChildItem -LiteralPath `$script:LibRoot)) { . (Join-Path `$script:LibRoot `$module.Name) }`n", [Text.UTF8Encoding]::new($true))
+        Save-StaticLoadFixture $root 'dynamic module list'
+        $dynamic = Invoke-StaticLoadShards $root 'out-static-dynamic'
+        $dynamic.executedWorkerCount | Should -Be 2
+        @($dynamic.workers | Where-Object { $_.inputDigest }) | Should -BeNullOrEmpty
+    }
+
+    It 'no longer reuses the <Test> shard of 2026-11-20 after its loaded <Changed> changes' -TestCases @(
+        @{ Test = 'ExecutionGuardCutover'; Changed = '.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1' },
+        @{ Test = 'AuxiliaryContours'; Changed = '.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1' }
+    ) {
+        param($Test, $Changed)
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $root = Join-Path $TestDrive "Повтор публикации с пробелом $Test"
+        $testPath = "tests/pester/$Test.Tests.ps1"
+        $catalog = Get-QualityContractCatalog $RepoRoot
+        $patterns = @($catalog.contracts | Where-Object { $testPath -in @($_.tests) } | ForEach-Object { @($_.paths); Get-QualityContractReuseInputPaths $_ })
+        $tracked = @(Get-RepositoryGitPathList $RepoRoot @('ls-files', '-z', '--'))
+        foreach ($relative in @(@(Select-QualityPaths $tracked $patterns) + $Changed | Sort-Object -Unique)) {
+            $target = Join-Path $root $relative
+            [void][IO.Directory]::CreateDirectory((Split-Path $target))
+            Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target -Force
+        }
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json') -Force
+        # The real catalog and production sources bind the shard; the test body
+        # itself is replaced so the fixture measures identity, not the suite.
+        [IO.File]::WriteAllText((Join-Path $root $testPath), "Describe 'Publication replay' { It 'passed' { `$true | Should -BeTrue } }")
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'), (@{ tests = @($testPath) } | ConvertTo-Json))
+        [IO.File]::WriteAllText((Join-Path $root '.gitignore'), "out*/`n", [Text.UTF8Encoding]::new($false))
+        Save-StaticLoadFixture $root 'publication replay'
+        $first = Invoke-StaticLoadShards $root 'out-replay-first'
+        $first.executedWorkerCount | Should -Be 1
+        $first.workers[0].inputDigest | Should -Not -BeNullOrEmpty
+        $warm = Invoke-StaticLoadShards $root 'out-replay-warm'
+        $warm.reusedWorkerCount | Should -Be 1
+        [IO.File]::AppendAllText((Join-Path $root $Changed), "`n# loaded dependency change")
+        Save-StaticLoadFixture $root 'loaded dependency change'
+        $changed = Invoke-StaticLoadShards $root 'out-replay-changed'
+        $changed.executedWorkerCount | Should -Be 1
+        $changed.reusedWorkerCount | Should -Be 0
+        $changed.workers[0].inputDigest | Should -Not -Be $first.workers[0].inputDigest
+    }
+}

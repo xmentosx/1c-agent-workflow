@@ -184,9 +184,7 @@ if ($pesterExternalInputsProperty) {
         $pesterExternalInputsByTest[([string]$property.Name).Replace('\', '/')] = @($property.Value | ForEach-Object { [string]$_ })
     }
 }
-$sharedInputs = @(
-    "tests/pester/TestSupport.ps1", "scripts/run-pester-shard.ps1", "scripts/invoke-pester-runtime.ps1"
-)
+$sharedInputs = @(Get-QualityPesterSharedInputPaths)
 $powerShellCommand = Get-Command powershell.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 $script:pesterPowerShellExecutable = $(if ($powerShellCommand) { [string]$powerShellCommand.Source } else { 'powershell.exe' })
 $script:pesterRuntimeReceipt = [pscustomobject]@{status='unknown';identity=$null;reason='Runtime has not been observed.';durationMs=0}
@@ -505,6 +503,8 @@ function Get-ShardInputDigest {
             }
         }
         $script:pesterSemanticBindings=Get-QualityPesterSemanticInputBindings -Catalog $catalog
+        # Static script loads of every shard come from the single catalog owner.
+        $script:pesterStaticInputIndex=New-QualityTrackedScriptIndex -Paths $trackedPaths
     }
     if(-not $script:pesterSemanticBindings.complete){return ''}
     # One local reference per item holds only paths resolved from the same
@@ -562,6 +562,15 @@ function Get-ShardInputDigest {
         }
         $ownerPaths = @($resolved.paths | Where-Object { $_ -notin $foreignTests })
         $inputs = @($relativeTests + $sharedInputs + $supplemental + $semanticInputs + $ownerPaths | Sort-Object -Unique)
+        # Bind every tracked script these inputs statically load (dot-source,
+        # call, powershell -File). Another contract's test file matched by a
+        # broad pattern is data here, not executed. A contract may exclude a
+        # conditional load its tests never reach. An anchored load that cannot
+        # be resolved leaves the identity unknown, so the shard is not reused.
+        $exclusions = @($contracts | ForEach-Object { Get-QualityContractStaticInputExclusions -Contract $_ } | Sort-Object -Unique)
+        $closure = Get-QualityStaticInputClosure -RepositoryRoot $RepositoryRoot -Index $script:pesterStaticInputIndex -Exclusions $exclusions -Roots @($inputs | Where-Object { $_ -notlike 'tests/pester/*.Tests.ps1' -or $_ -in $relativeTests })
+        if (-not $closure.complete) { return '' }
+        $inputs = @($inputs + @($closure.paths) | Sort-Object -Unique)
         if ($PreparedInputs) { $PreparedInputs.Value = [pscustomobject]@{ selectionKey=$selectionKey; paths=$inputs } }
     }
     $lines = New-Object System.Collections.Generic.List[string]
