@@ -120,7 +120,9 @@ homes: product writes remain unavailable until explicitly confirmed in registry.
 
 `memory_status()` at session start returns the local part below and, within one
 15-second deadline, the server part: `standing` notes of the admitted scopes in
-full (`noteId`, `dataId`, dataset, fact) and `index`, per level the titles of the
+full (`level`, `dataId`, fact; a product rule also names its dataset, since
+that level may hold several; `memory_status(dataset_name, data_id)` returns the
+note ID for a correction) and `index`, per level the titles of the
 other notes, verified unless marked `[candidate]`, plus `more` for what is not
 shown. It replaces a separate standing query; topical `recall` stays required.
 The index comes from one listing per dataset (one page, up to 1000 documents,
@@ -131,8 +133,11 @@ product row is checked. Order: project, workspace, organization, product, host,
 workplace, task; inside a level verified before candidate, newest change first.
 Maxima (standing/index rows): task -/10, workspace 2/10, workplace 3/10, host
 3/10, project 5/30, product 3/20 per level, organization 5/30. The whole answer
-is bounded at 2000 tokens by the recall counter; what does not fit is counted in
-`more`. `serverCoverage` is `bounded`, `partial` (named datasets or originals
+is bounded at 3000 tokens by the recall counter; what does not fit is counted in
+`more`. At session start `receipts` lists only writes still to reconcile;
+confirmed ones are noted in `confirmedReceipts` and `local_only=true` lists them.
+Index titles give way first, then those receipts (`localTrimmed`), then standing
+notes. `serverCoverage` is `bounded`, `partial` (named datasets or originals
 not read in time) or `unavailable`: then the local part is still returned and a
 missing index is not absence of knowledge. No cache between operations.
 
@@ -140,7 +145,11 @@ missing index is not absence of knowledge. No cache between operations.
 without a backend; `note_id` reads the exact pending source. It never scans 1C
 state, transcripts or arbitrary logs. The local scan is capped at 24 recent records
 and eight summaries; an exact known ID bypasses that listing cap. `destinations`
-offers the write choices project, organization, workplace, host and task. The
+offers the write choices project, organization, workplace, host and task. A row
+names its `scopeKind`; `dataset_name` and recall `datasets` accept that kind
+(`task` too) and the server resolves this copy's exact label, which stays
+accepted. A kind naming no single dataset, such as several product homes, needs
+the exact label. The
 project row lists the `knowledgeAreas` that route to a writable product home;
 product rows are not offered. The local-project workspace stays readable and an
 explicit workspace or product label is still accepted, but neither is offered.
@@ -208,7 +217,9 @@ stored as `status: verified` plus `standing: true`, so a copy on the previous
 workflow reads an ordinary verified note; `verified` and `standing` are switched
 by updating the same note. A user statement uses evidence
 `{source:"user", reference:"chat <date>"}`. Optional `title` (80 characters)
-names the note in the index, else its first sentence does.
+names the note in the index, else its first sentence does. Either states the
+claim, not its topic: `Date() takes three or six parts` lets an agent act on
+the index line; `Date() parameters` sends it to recall.
 Each note is one uploaded file, on creation and on update. Its document name is
 `<status>~<knowledge area>~<title>~<id8>.txt`: derived from the original, unique
 per note, without path separators, at most 200 UTF-8 bytes, replaced on every
@@ -278,9 +289,14 @@ datasets; coverage is `empty` when discovery has no outstanding issues. A
 temporary recall failure leaves coverage unknown for that call. If the fact is
 needed in the current turn, use exact status for a known original or make one
 more recall with the same admitted set. After another failure, continue with
-available sources and report the gap. Recall once per topic; search again for
-a new area or object, missing context or after such a failure, not merely
-because a new turn started. Reconcile uncertain writes by exact IDs.
+available sources and report the gap. Recall once per topic before designing a
+change, and by tool and action before writing a test or setting up a stand.
+Search again for a new area or object, missing context, after such a failure,
+or by symptom before retrying an unexpected failure (the exact error text with
+`CHUNKS_LEXICAL`), not merely because a new turn started. Pitfalls are rarely
+found by task topic: on PM5 memory (2026-11-20) topic queries returned 2 of 12
+known pitfall notes, symptom queries 12 of 12. Reconcile uncertain writes by
+exact IDs.
 
 `memory_status(dataset_name, note_id|data_id)` reconciles the exact source and
 updates its local receipt/pending. Dataset
