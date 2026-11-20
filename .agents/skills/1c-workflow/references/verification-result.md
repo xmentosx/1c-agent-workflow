@@ -66,6 +66,11 @@ name modules while the expected case count remains unknown. Keep missing
 coverage and remaining acceptance criteria open. A green subset applies only
 to its observed inputs. Use the existing freshness and task assessment.
 
+An unfiltered check does not start YAxUnit again while its passed result still
+matches the verification inputs, the loaded infobase and the checker; the check
+reports it as reused, not skipped. Any change of these inputs runs it. A named
+`-ExplicitVerificationComponent yaxunit|all` or a module filter always runs it.
+
 For future canonical sessions, remove a legacy `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS=5`
 from `.dev.env` and remove any corresponding process or `AGENT_1C_` override
 if the project wants the new default. A recorded numeric limit and extension

@@ -755,6 +755,79 @@ Describe "Branch-first verification suite selection" {
         $result.reuseUpdateCount | Should -Be 1
     }
 
+    It 'reuses a passed YAxUnit receipt only for the same inputs, loaded infobase and an unnamed request' {
+        # PM5 2026-11-20: after an event-log acknowledgement the repeated check
+        # reran 419 unchanged YAxUnit tests while Vanessa proof was reused.
+        $root = Join-Path $TestDrive 'Проект YAxUnit с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root 'build/yaxunit') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{}', [Text.UTF8Encoding]::new($false))
+        $junit = Join-Path $root 'build/yaxunit/junit.xml'
+        [IO.File]::WriteAllText($junit, '<testsuites><testsuite name="ОМ_Расчёт" tests="1" failures="0" errors="0" skipped="0"><testcase classname="ОМ_Расчёт" name="Сумма"/></testsuite></testsuites>', [Text.UTF8Encoding]::new($false))
+        $result = & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $script:ActiveAuxiliaryVanessaContext = $null
+            $VanessaFeaturePath = ''
+            $VanessaFilterTags = ''
+            $YAxUnitModule = ''
+            $DevBranchName = 'branch'
+            $script:Fingerprint = 'inputs-1'
+            $script:State = [pscustomobject]@{
+                devBranchName = 'branch'; stateProjectRoot = $root; infoBaseKind = 'file'; devBranchInfoBasePath = (Join-Path $root 'База 1С')
+                lastConfigDesignerFingerprint = 'loaded-1'; configLoadStatus = 'passed'
+            }
+            function Read-DevBranchState { $script:State }
+            function Update-DevBranchState { param([object]$State, [hashtable]$Updates) foreach ($name in $Updates.Keys) { $script:State | Add-Member -NotePropertyName $name -NotePropertyValue $Updates[$name] -Force } }
+            function Get-VerificationFingerprint { $script:Fingerprint }
+            function Get-ItlVerificationExecutionDecision { param([string]$Component) [pscustomobject]@{ component = $Component; run = ($Component -eq 'yaxunit'); reason = 'test' } }
+            function Test-ItlFullVerificationProofEligible { $false }
+            function Assert-VerificationClassificationReady {}
+            function Invoke-YAxUnitVerification { param($State) $script:YAxUnitRuns++ }
+            function Run-DevBranchTests { throw 'Vanessa is outside this fixture' }
+            function Get-VerificationState { [pscustomobject]@{ status = 'passed'; isFreshPassed = $true } }
+            $updates = @{}
+            Add-VerificationComponentEvidenceUpdates -Updates $updates -State $script:State -Component 'yaxunit' -Status 'passed' -ArtifactPaths @($junit)
+            Update-DevBranchState -State $script:State -Updates $updates
+            $passedReceipt = $script:State.lastVerificationComponentEvidence.yaxunit
+            $runs = [ordered]@{}
+            $run = {
+                param([string]$Case, [string[]]$Explicit = @())
+                $script:YAxUnitRuns = 0
+                Start-ItlCheckTiming
+                Invoke-ItlVerificationCycle -Trigger command -ExplicitComponents $Explicit 6>$null
+                $runs[$Case] = [pscustomobject]@{
+                    runs = $script:YAxUnitRuns
+                    reused = [bool](Get-StateValue -State (Get-ItlCheckTimingSnapshot) -Name 'yaxunitReused' -Default $false)
+                    skipped = @($script:State.lastVerificationSkippedComponents)
+                    duration = Format-DevBranchCheckDurationText -Timing (Get-ItlCheckTimingSnapshot)
+                }
+            }
+            & $run 'unchanged'
+            & $run 'named' @('yaxunit')
+            $script:Fingerprint = 'inputs-2'
+            & $run 'changed inputs'
+            $script:Fingerprint = 'inputs-1'
+            $script:State.lastConfigDesignerFingerprint = 'loaded-2'
+            & $run 'other loaded infobase'
+            $script:State.lastConfigDesignerFingerprint = 'loaded-1'
+            $failed = $passedReceipt.PSObject.Copy(); $failed.status = 'failed'
+            $script:State.lastVerificationComponentEvidence = [pscustomobject]@{ yaxunit = $failed }
+            & $run 'failed receipt'
+            $script:State.lastVerificationComponentEvidence = [pscustomobject]@{ yaxunit = $passedReceipt }
+            [IO.File]::AppendAllText($junit, ' ')
+            & $run 'changed report'
+            $runs
+        }
+
+        $result['unchanged'].runs | Should -Be 0
+        $result['unchanged'].reused | Should -BeTrue
+        $result['unchanged'].skipped | Should -Not -Contain 'yaxunit'
+        $result['unchanged'].duration | Should -Match 'YAxUnit переиспользован без прогона'
+        foreach ($case in @('named', 'changed inputs', 'other loaded infobase', 'failed receipt', 'changed report')) {
+            $result[$case].runs | Should -Be 1 -Because $case
+            $result[$case].reused | Should -BeFalse -Because $case
+        }
+    }
+
     It 'assesses a one-off-only branch without inventing a Vanessa test run' {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

@@ -128,7 +128,7 @@ function Set-ItlPartialVerificationEvidence {
         [string]$Trigger
     )
 
-    $skipped = @($Decisions | Where-Object { -not $_.run })
+    $skipped = @($Decisions | Where-Object { -not $_.run -and -not [bool](Get-StateValue -State $_ -Name 'reused' -Default $false) })
     if ($skipped.Count -eq 0) { return }
     # An explicit, complete run can satisfy the same current input even when
     # persistent auto-run switches remain off. A later ordinary check must not
@@ -984,6 +984,18 @@ function Invoke-ItlVerificationCycle {
         Set-ItlCheckTimingValue -Name selectionReason -Value ([string](Get-StateValue -State $selectionPlan -Name reason -Default ''))
     }
 
+    # Unchanged inputs and loaded target make a passed YAxUnit result current;
+    # a named or filtered request still runs it. The assessment below accepts
+    # the same receipt, so a reused component is not a skipped one.
+    $yaxunitNamed = $ExplicitComponents -contains 'yaxunit' -or $ExplicitComponents -contains 'all'
+    if ($yaxunit.run -and -not $yaxunitNamed -and -not (Test-ItlYAxUnitDiagnosticScope) -and
+        (Test-VerificationComponentEvidenceReusable -State $state -Component 'yaxunit')) {
+        $yaxunit.run = $false
+        $yaxunit | Add-Member -NotePropertyName reused -NotePropertyValue $true -Force
+        $yaxunit.reason = 'the passed YAxUnit result covers the same inputs, loaded infobase and checker'
+        Set-ItlCheckTimingValue -Name yaxunitReused -Value $true
+        Write-Host "Verification component yaxunit: REUSE ($($yaxunit.reason)); YAxUnit was not started."
+    }
     if ($yaxunit.run) {
         $componentStarted = Get-Date
         try { Invoke-YAxUnitVerification -State $state | Out-Null }
@@ -1048,7 +1060,7 @@ function Invoke-ItlVerificationCycle {
     if (Test-ItlDiagnosticVerificationScope) {
         return
     }
-    $skipped = @($decisions | Where-Object { -not $_.run })
+    $skipped = @($decisions | Where-Object { -not $_.run -and -not [bool](Get-StateValue -State $_ -Name 'reused' -Default $false) })
     # The assessment reads every retained and one-off receipt after the runners
     # finished; on a large branch it can stay silent longer than the runner
     # watchdog (PM5 2026-11-16/17: killed as RUNNER_STATUS_STALE after passed
@@ -1098,7 +1110,7 @@ function Invoke-ItlVerificationCycle {
 function Start-ItlCheckTiming {
     $script:ItlCheckTiming = [ordered]@{
         startedAt = Get-Date; platformMs = $null; yaxunitMs = $null; vanessaMs = $null
-        selectionMode = ''; selectionReason = ''
+        selectionMode = ''; selectionReason = ''; yaxunitReused = $false
     }
 }
 
@@ -1115,6 +1127,7 @@ function Get-ItlCheckTimingSnapshot {
         totalMs = [int64]((Get-Date) - [datetime]$timing.startedAt).TotalMilliseconds
         platformMs = $timing.platformMs; yaxunitMs = $timing.yaxunitMs; vanessaMs = $timing.vanessaMs
         selectionMode = [string]$timing.selectionMode; selectionReason = [string]$timing.selectionReason
+        yaxunitReused = [bool]$timing['yaxunitReused']
     }
 }
 
@@ -1141,6 +1154,7 @@ function Add-ItlCheckHistoryRecord {
             selectionMode = [string]$timing.selectionMode
             selectionReason = $reason.Substring(0, [Math]::Min(240, $reason.Length))
         }
+        if ([bool]$timing['yaxunitReused']) { $record['yaxunitReused'] = $true }
         $vanessaRun = [string]$timing['vanessaRunDirectory']
         if ($vanessaRun) {
             $features = Get-VanessaJUnitFeatureSeconds -Path (Join-Path $vanessaRun 'junit.xml')
@@ -1234,6 +1248,7 @@ function Write-ItlCheckHistoryStatusLines {
                 $value = $item.PSObject.Properties[$part[1]].Value
                 if ($null -ne $value) { $detail += "$($part[0]) $([int][Math]::Round([double]$value / 1000))s" }
             }
+            if ($null -ne $item.PSObject.Properties['yaxunitReused'] -and [bool]$item.yaxunitReused) { $detail += 'YAxUnit reused' }
             $mode = if ($item.selectionMode) { "; Vanessa suites $($item.selectionMode)" } else { '' }
             Write-Host "${Indent}Check $($item.at): $($item.status), $([int][Math]::Round([double]$item.totalMs / 1000))s ($($detail -join ', '))$mode"
         }
