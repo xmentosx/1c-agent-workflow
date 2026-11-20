@@ -296,6 +296,56 @@ Describe 'Change mode recovery and reuse boundaries' {
         }
     }
 
+    It 'decides only acceptance suites and admits schema-1 owner inputs outside the base scopes' {
+        # Reproduces the PM5 deadlock: an explicit diagnostic suite covering a
+        # changed path, and an acceptance suite owning a probe outside src/tests.
+        $root=Join-Path $TestDrive 'Каталог схемы 1 с пробой'
+        $probe='tests/probes/kanban html/src/Проба.bsl'
+        $files=@{
+            'tests/features/Existing.feature'="Функционал: Existing UI`nСценарий: Existing result`nКогда Данные готовы`n"
+            'tests/features/Diagnostic.feature'="Функционал: Diagnostic UI`nСценарий: Diagnostic result`nКогда Данные готовы`n"
+            'tests/features/Probe.feature'="Функционал: Probe UI`nСценарий: Probe result`nКогда Данные готовы`n"
+            $probe='Procedure Probe() EndProcedure'
+            'tests/verification-suites.branch.json'=(@{schemaVersion=1;suites=@(
+                @{id='existing';purpose='acceptance';featurePaths=@('tests/features/Existing.feature');ownerPaths=@('src/cf/current.bsl')},
+                @{id='diagnostic';purpose='explicit';featurePaths=@('tests/features/Diagnostic.feature');ownerPaths=@('src/cf/current.bsl','tests/probes/kanban html/src/**')},
+                @{id='probe';purpose='acceptance';featurePaths=@('tests/features/Probe.feature');ownerPaths=@('src/cf/other.bsl','tests/probes/kanban html/src/**')})}|ConvertTo-Json -Depth 8)
+        }
+        foreach($relative in $files.Keys){
+            $path=Join-Path $root $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+            [IO.File]::WriteAllText($path,$files[$relative],[Text.UTF8Encoding]::new($false))
+        }
+        New-ChangeFixture $root -WithoutCatalog
+        Enter-ChangeFixture $root {
+            # Only the probe needs its own scope; inputs inside base scopes keep
+            # every existing fingerprint part unchanged.
+            @(Get-VerificationDeclaredInputScopes) | Should -Be @('tests/probes/kanban html/src')
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $file=Write-CurrentPlan
+            $message=try { Start-VerificationChange -EvidencePath $file | Out-Null; '' } catch { $_.Exception.Message }
+            $message | Should -BeLike "*VERIFICATION_CHANGE_SUITE_UNDECIDED: retained suites cover changed paths: 'existing' (src/cf/current.bsl).*"
+            $message | Should -Not -Match 'diagnostic'
+            $plan=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $plan.retainedDispositions=@(
+                [pscustomobject]@{suiteId='existing';decision='unaffected';reason='Only a message text changed; the UI suite observes no text.'},
+                [pscustomobject]@{suiteId='diagnostic';decision='unaffected';reason='Diagnostic only.'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_SUITE_INVALID: retainedDispositions name 'diagnostic'*"
+            $plan.retainedDispositions=@($plan.retainedDispositions|Where-Object suiteId -ne 'diagnostic')
+            $plan.checks+=@([pscustomobject]@{suiteId='probe'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            $selection=Get-ItlVanessaVerificationSelectionPlan
+            @($selection.selectedSuiteIds) | Should -Be @('probe')
+            $selection.reason | Should -Match 'Excluded by the agent: existing'
+            # A probe edit is now a verification input in every model.
+            $base=Get-VerificationSelectionEffectiveTree
+            Write-Utf8TextAtomic -Path (Join-Path $root $probe) -Value 'Procedure Probe() Changed EndProcedure'
+            @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree (Get-VerificationSelectionEffectiveTree)) | Should -Be @($probe)
+        }
+    }
+
     It 'accepts a loaded-target check from the load and event log without an observation' {
         $root=Join-Path $TestDrive 'Без наблюдения в базе'; New-ChangeFixture $root -WithoutCatalog
         Enter-ChangeFixture $root {

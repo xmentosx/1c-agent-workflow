@@ -163,6 +163,16 @@ function Get-VerificationChangeBaseTree {
     return $tree
 }
 
+function Get-VerificationChangeAcceptanceSuiteIds {
+    # The one set of retained Vanessa suites a change plan decides (a suiteId
+    # check or a retainedDispositions entry) and a check can select. Explicit
+    # diagnostic suites are never selected by a check and cannot accept the
+    # task, so registration and execution need no decision for them.
+    param([Parameter(Mandatory = $true)][object]$Catalog)
+    return @((Get-VerificationCatalogValue -Value $Catalog -Name assignments -Default @()) | Where-Object purpose -eq 'acceptance' |
+        ForEach-Object { [string]$_.suiteId } | Select-Object -Unique)
+}
+
 function Get-VerificationChangeChecks {
     param([Parameter(Mandatory = $true)][object]$Plan)
     $checks = @($Plan.checks)
@@ -223,10 +233,10 @@ function New-VerificationChangeDraftPlan {
     $yax = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
     $retained = @()
     $valid = [bool](Get-VerificationCatalogValue -Value $catalog -Name valid -Default $false)
+    $acceptance = @(if ($valid) { Get-VerificationChangeAcceptanceSuiteIds -Catalog $catalog })
     foreach ($obligation in @(if ($valid) { Get-VerificationCatalogValue -Value $catalog -Name obligations -Default @() })) {
         $suiteId = [string](Get-VerificationCatalogValue -Value $obligation -Name suiteId -Default '')
-        $suite = @(Get-VerificationCatalogValue -Value $catalog -Name suites -Default @() | Where-Object { [string]$_.id -ceq $suiteId })
-        if ($suiteId -and [string]$obligation.retention -ceq 'retained' -and $suite.Count -eq 1 -and [string]$suite[0].purpose -ceq 'acceptance') {
+        if ($suiteId -and [string]$obligation.retention -ceq 'retained' -and $suiteId -cin $acceptance) {
             $retained += [pscustomobject]@{ id = [string]$obligation.id; kind = 'suiteId'; owner = $suiteId; inputPaths = @($obligation.inputPaths) }
         }
     }
@@ -303,7 +313,7 @@ function Start-VerificationChange {
         return [pscustomobject]@{
             model='change';status='planning';baseTree=$base;tree=$tree
             changedPaths=$decide
-            unsettledSuiteIds=@(try { Get-VerificationChangeUnsettledSuites -AcceptanceSuiteIds @((Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))).assignments | Where-Object purpose -eq 'acceptance' | ForEach-Object { [string]$_.suiteId }) } catch { @() })
+            unsettledSuiteIds=@(try { Get-VerificationChangeUnsettledSuites -AcceptanceSuiteIds @(Get-VerificationChangeAcceptanceSuiteIds -Catalog (Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath)))) } catch { @() })
             draftPlanPath=$draft.path
             draftUncoveredPaths=$draft.uncoveredPaths
             draftMasterOverlapPaths=@(Get-VerificationCatalogValue -Value $draft -Name masterOverlapPaths -Default @())
@@ -367,15 +377,24 @@ function Start-VerificationChange {
     if (@($coverage | Where-Object { [string]$_.path -cnotin $changed }).Count -gt 0) {
         throw 'VERIFICATION_CHANGE_SCOPE_CHANGED: path decisions must describe exactly the helper-owned unaccepted delta, including deletions and uncommitted edits.'
     }
-    # A retained suite covering a branch change runs by default; leaving it out
-    # needs the agent's explicit unaffected decision and reason.
+    # A retained acceptance suite covering a branch change runs by default;
+    # leaving it out needs the agent's explicit unaffected decision and reason.
+    # Registration and execution decide the same acceptance set.
     $suiteCatalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+    $acceptance = @(Get-VerificationChangeAcceptanceSuiteIds -Catalog $suiteCatalog)
+    $dispositions = @(Get-VerificationCatalogValue -Value $plan -Name 'retainedDispositions' -Default @())
+    $notAcceptance = @($dispositions | ForEach-Object { [string]$_.suiteId } | Where-Object { $_ -and $_ -cnotin $acceptance } | Sort-Object -Unique)
+    if ($notAcceptance.Count -gt 0) {
+        throw "VERIFICATION_CHANGE_SUITE_INVALID: retainedDispositions name $((@($notAcceptance) | ForEach-Object { "'$_'" }) -join ', '), which are not retained acceptance suites. Remove them: a check never selects an explicit diagnostic suite, so it needs no decision."
+    }
     $decidedSuites = @(@($checks | ForEach-Object { [string](Get-VerificationCatalogValue -Value $_ -Name 'suiteId' -Default '') }) +
-        @(Get-VerificationCatalogValue -Value $plan -Name 'retainedDispositions' -Default @() | ForEach-Object { [string]$_.suiteId }) | Where-Object { $_ })
+        @($dispositions | ForEach-Object { [string]$_.suiteId }) | Where-Object { $_ })
     $undecided = @()
-    foreach ($obligation in @(Get-VerificationCatalogValue -Value $suiteCatalog -Name 'obligations' -Default @() | Where-Object { $_.retention -ceq 'retained' -and (Get-VerificationCatalogValue -Value $_ -Name 'suiteId' -Default '') })) {
+    foreach ($obligation in @(Get-VerificationCatalogValue -Value $suiteCatalog -Name 'obligations' -Default @() | Where-Object { $_.retention -ceq 'retained' -and [string](Get-VerificationCatalogValue -Value $_ -Name 'suiteId' -Default '') -cin $acceptance })) {
         $covers = @($changed | Where-Object { $p = $_; $p -cnotin $system.paths -and @($obligation.inputPaths | Where-Object { Test-VerificationRepoPathPattern -Path $p -Pattern $_ }).Count -gt 0 })
-        if ($covers.Count -gt 0 -and [string]$obligation.suiteId -cnotin $decidedSuites) { $undecided += "'$($obligation.suiteId)' ($($covers -join ', '))" }
+        if ($covers.Count -gt 0 -and [string]$obligation.suiteId -cnotin $decidedSuites) {
+            $undecided += "'$($obligation.suiteId)' ($($covers[0])$(if ($covers.Count -gt 1) { " and $($covers.Count - 1) more" }))"
+        }
     }
     if ($undecided.Count -gt 0) {
         throw "VERIFICATION_CHANGE_SUITE_UNDECIDED: retained suites cover changed paths: $(($undecided | Sort-Object -Unique) -join '; '). Keep each as a check (suiteId) or declare retainedDispositions run|unaffected with your reason."
@@ -534,7 +553,7 @@ function Get-VerificationChangeRequiredSuites {
     # master input, shared Vanessa support, the verification owner and the
     # pinned runtime are reported, not selected.
     param([Parameter(Mandatory = $true)][object]$Change, [Parameter(Mandatory = $true)][object]$Catalog, [string]$CurrentTree = '')
-    $acceptance = @((Get-VerificationCatalogValue -Value $Catalog -Name assignments -Default @()) | Where-Object purpose -eq 'acceptance' | Select-Object -ExpandProperty suiteId -Unique)
+    $acceptance = @(Get-VerificationChangeAcceptanceSuiteIds -Catalog $Catalog)
     $ids = [Collections.Generic.List[string]]::new()
     foreach ($check in @($Change.checks)) {
         $suiteId = [string](Get-VerificationCatalogValue -Value $check -Name 'suiteId' -Default '')
@@ -587,9 +606,10 @@ function Get-VerificationChangeSelectionPlan {
     Assert-VerificationChangeCurrent -Change $change
     if ($Plan.mode -eq 'classification-required') { return $Plan }
     $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+    $acceptance = @(Get-VerificationChangeAcceptanceSuiteIds -Catalog $catalog)
     foreach ($decision in @($change.retainedDispositions)) {
-        if ($decision.suiteId -notin @($Plan.acceptanceSuiteIds) -or $decision.decision -notin @('run','unaffected') -or -not $decision.reason) {
-            throw 'VERIFICATION_CHANGE_SUITE_INVALID: declare an existing retained suite, run|unaffected and impact rationale.'
+        if ([string]$decision.suiteId -cnotin $acceptance -or $decision.decision -notin @('run','unaffected') -or -not $decision.reason) {
+            throw "VERIFICATION_CHANGE_SUITE_INVALID: disposition '$([string]$decision.suiteId)' needs a retained acceptance suite, run|unaffected and impact rationale; update the plan with begin-verification-change -VerificationEvidencePath."
         }
     }
     $required = Get-VerificationChangeRequiredSuites -Change $change -Catalog $catalog -CurrentTree ([string](Get-VerificationCatalogValue -Value $Plan -Name currentTree -Default ''))
