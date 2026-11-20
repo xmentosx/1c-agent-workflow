@@ -36,10 +36,36 @@
 
 Describe 'Shared source candidate registration' {
     BeforeAll {
+        $script:SourceGateSlotFunctions = @('Get-SourceGateSlotCount','Get-SourceGateSlotWaitSeconds','Get-SourceGateSlotRoot','Get-SourceGateSlotStatus',
+            'Format-SourceGateSlotHolders','Enter-SourceGateSlot','Exit-SourceGateSlot','Test-DeliveryProcessIdentity','ConvertTo-DeliveryUtcDateTime')
+        # A separate process holds slot 0 like a supervising gate, then dies
+        # abruptly without releasing it.
+        function Start-GateSlotHolder {
+            param([string]$CommonGit, [string]$Mode, [int]$LifeMilliseconds)
+            $slotRoot = Join-Path $CommonGit 'itl\gate-slots'
+            New-Item -ItemType Directory -Force -Path $slotRoot | Out-Null
+            $ready = Join-Path $CommonGit ("holder-" + [guid]::NewGuid().ToString('N') + '.ready')
+            $code = @"
+`$s=[IO.File]::Open('$((Join-Path $slotRoot 'slot-0.lock').Replace("'","''"))',[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::Read)
+`$me=Get-Process -Id `$PID
+`$r=[ordered]@{schemaVersion=1;slot=0;mode='$Mode';pid=`$PID;processStartedAt=`$me.StartTime.ToUniversalTime().ToString('o');acquiredAt=[DateTime]::UtcNow.ToString('o');waitedSeconds=0;workingRoot='C:\holder'}
+`$b=[Text.UTF8Encoding]::new(`$false).GetBytes((`$r|ConvertTo-Json -Compress))
+`$s.SetLength(0);`$s.Write(`$b,0,`$b.Length);`$s.Flush()
+[IO.File]::WriteAllText('$($ready.Replace("'","''"))','ready')
+Start-Sleep -Milliseconds $LifeMilliseconds
+[Diagnostics.Process]::GetCurrentProcess().Kill()
+"@
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
+            $process = Start-Process powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-EncodedCommand',$encoded) -WindowStyle Hidden -PassThru
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            while (-not (Test-Path -LiteralPath $ready) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+            if (-not (Test-Path -LiteralPath $ready)) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue; throw 'Gate slot holder did not start' }
+            return $process
+        }
         # Every composed check loses CAS; each gate call advances the injected
         # clock by its next duration (the last one repeats).
         function Invoke-RegistrationDeadlineFixture {
-            param([int[]]$GateMilliseconds)
+            param([int[]]$GateMilliseconds, [int]$SlotWaitMilliseconds = 0)
             foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names @('Register-SourceChange','Assert-SourceRegistrationTransitionReady'))) {
                 Invoke-Expression $definition.Extent.Text
             }
@@ -70,6 +96,7 @@ Describe 'Shared source candidate registration' {
                 $script:gateDeadlines+=$DeadlineUtc
                 $index=[Math]::Min($script:gateDeadlines.Count, $script:gateDurations.Count)-1
                 $script:registrationNow=$script:registrationNow.AddMilliseconds($script:gateDurations[$index])
+                $script:DeliveryLastGateSlotWaitSeconds=$SlotWaitMilliseconds/1000.0
             }
             function Save-SourceRegistrationEvidence { param($CandidateRoot,$Candidate,$RunRecordPath); return [pscustomobject]@{ path='fixture-evidence' } }
             function Try-AcceptSourceRegistration { param($Snapshot,$Id,$Base,$Head,$Candidate,$Tree,$Entries); $script:casAttempts++; return $false }
@@ -120,9 +147,10 @@ Describe 'Shared source candidate registration' {
 
     It 'reports a gate cut by the caller deadline separately from its own hard budget' {
         & {
-            foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names @('Invoke-SourceGate','Get-DeliveryFailureClass'))) {
+            foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names (@('Invoke-SourceGate','Get-DeliveryFailureClass') + $script:SourceGateSlotFunctions))) {
                 Invoke-Expression $definition.Extent.Text
             }
+            function Get-DeliveryCommonGitDirectory { return (Join-Path $TestDrive 'common git') }
             $script:Root=$TestDrive; $script:GateScript=Join-Path $TestDrive 'гейт с пробелами.ps1'
             [IO.File]::WriteAllText($script:GateScript, 'exit 0', [Text.UTF8Encoding]::new($false))
             $CoverageContract=@(); $AiRulesSource=''; $E2EProjectRoot=''
@@ -153,6 +181,106 @@ Describe 'Shared source candidate registration' {
                 Should -Throw 'Targeted source gate exceeded its hard/no-progress budget.*'
             $script:records[-1].error | Should -Not -BeLike '*SOURCE_GATE_OPERATION_DEADLINE*'
             Get-DeliveryFailureClass -Message $script:records[-1].error | Should -Be 'environment'
+        }
+    }
+
+    It 'extends the registration deadline by gate-slot admission and excludes the wait from the measured check' {
+        # Each 400 ms gate call spent 300 ms waiting for a slot: the original
+        # 550 ms budget alone would stop after the first call.
+        $result=Invoke-RegistrationDeadlineFixture -GateMilliseconds @(400) -SlotWaitMilliseconds 300
+        $result.failure | Should -BeLike "SOURCE_REGISTRATION_RACE_BUDGET: the develop queue moved during Targeted attempt 5*The previous check took 1 seconds*"
+        $result.gateDeadlines.Count | Should -Be 5
+        @($result.gateDeadlines | Select-Object -Unique) | Should -HaveCount 5
+        $result.elapsedMs | Should -Be 2000
+    }
+
+    It 'admits a gate only after a killed slot holder exits and moves the caller deadline by the wait' {
+        $previousSlots=$env:ITL_SOURCE_GATE_SLOTS; $state=@{ holder=$null }
+        try {
+            $env:ITL_SOURCE_GATE_SLOTS='1'
+            & {
+                foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names (@('Invoke-SourceGate','Get-DeliveryFailureClass') + $script:SourceGateSlotFunctions))) {
+                    Invoke-Expression $definition.Extent.Text
+                }
+                $commonGit=Join-Path $TestDrive 'общий git admit'
+                function Get-DeliveryCommonGitDirectory { return $commonGit }
+                $script:SourceGateSlotPollMilliseconds=100
+                $script:Root=$TestDrive; $script:GateScript=Join-Path $TestDrive 'гейт с пробелами.ps1'
+                [IO.File]::WriteAllText($script:GateScript, 'exit 0', [Text.UTF8Encoding]::new($false))
+                $CoverageContract=@(); $AiRulesSource=''; $E2EProjectRoot=''
+                $script:records=@(); $script:holderExitedAtStart=$null; $script:waitCalls=0
+                function Start-DeliveryProcess {
+                    param($ArgumentList,$WorkingDirectory,$StandardOutputPath,$StandardErrorPath)
+                    $script:holderExitedAtStart=$state.holder.HasExited
+                    $fake=[pscustomobject]@{ Id=4243; StartTime=[DateTime]::Now; HasExited=$false; ExitCode=0 }
+                    # The gate itself runs for about 200 ms of its own budget.
+                    $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($Milliseconds) Start-Sleep -Milliseconds 20; $script:waitCalls++; return ($script:waitCalls -ge 10) }
+                    $fake | Add-Member -MemberType ScriptMethod -Name Refresh -Value { }
+                    return [pscustomobject]@{ process=$fake; jobHandle=[IntPtr]::Zero }
+                }
+                function Update-DeliveryOperation { param($Values) }
+                function Get-SourceGateSupervisionBudgetSeconds { param($Mode,$WorkingRoot,$PlanBudgetSeconds,[switch]$InjectedGate); return 3600 }
+                function Stop-DeliveryProcessTree { param($Process) }
+                function Close-DeliveryProcessJob { param($JobHandle,$Process,$PriorErrorMessage) }
+                function Write-DeliveryRunRecord { param($Mode,$Status,$ErrorMessage,$WorkingRoot,$StartedAt,$FinishedAt,$ExitCode,$ReleaseCapability); $script:records+=[pscustomobject]@{ status=$Status; error=$ErrorMessage }; return 'fixture-record' }
+
+                $holder=Start-GateSlotHolder -CommonGit $commonGit -Mode 'Develop' -LifeMilliseconds 2500; $state.holder=$holder
+                $status=Get-SourceGateSlotStatus
+                $status.capacity | Should -Be 1
+                @($status.holders).Count | Should -Be 1
+                $status.holders[0].pid | Should -Be $holder.Id
+                # Unshifted, this 1500 ms caller deadline would cut the gate.
+                Invoke-SourceGate -Mode Targeted -WorkingRoot $TestDrive -DeadlineUtc ([DateTime]::UtcNow.AddMilliseconds(1500))
+                $script:holderExitedAtStart | Should -BeTrue
+                $script:DeliveryLastGateSlotWaitSeconds | Should -BeGreaterOrEqual 1
+                $script:records.Count | Should -Be 1
+                $script:records[-1].status | Should -Be 'passed'
+                # Released by the finished gate; nothing is reported as held.
+                @((Get-SourceGateSlotStatus).holders).Count | Should -Be 0
+            }
+        } finally {
+            if ($state.holder -and -not $state.holder.HasExited) { Stop-Process -Id $state.holder.Id -Force -ErrorAction SilentlyContinue }
+            $env:ITL_SOURCE_GATE_SLOTS=$previousSlots
+        }
+    }
+
+    It 'stops waiting at the slot limit with the live holders and an unspent continuation' {
+        $previousSlots=$env:ITL_SOURCE_GATE_SLOTS; $previousWait=$env:ITL_SOURCE_GATE_SLOT_WAIT_SECONDS; $state=@{ holder=$null }
+        try {
+            $env:ITL_SOURCE_GATE_SLOTS='1'; $env:ITL_SOURCE_GATE_SLOT_WAIT_SECONDS='1'
+            & {
+                foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names (@('Invoke-SourceGate') + $script:SourceGateSlotFunctions))) {
+                    Invoke-Expression $definition.Extent.Text
+                }
+                $commonGit=Join-Path $TestDrive 'общий git limit'
+                function Get-DeliveryCommonGitDirectory { return $commonGit }
+                $script:SourceGateSlotPollMilliseconds=100
+                $script:Root=$TestDrive; $script:GateScript=Join-Path $TestDrive 'гейт с пробелами.ps1'
+                [IO.File]::WriteAllText($script:GateScript, 'exit 0', [Text.UTF8Encoding]::new($false))
+                $CoverageContract=@(); $AiRulesSource=''; $E2EProjectRoot=''
+                $script:started=0; $script:records=0
+                function Start-DeliveryProcess { param($ArgumentList,$WorkingDirectory,$StandardOutputPath,$StandardErrorPath); $script:started++; throw 'must not start' }
+                function Write-DeliveryRunRecord { param($Mode,$Status,$ErrorMessage,$WorkingRoot,$StartedAt,$FinishedAt,$ExitCode,$ReleaseCapability); $script:records++ }
+
+                $holder=Start-GateSlotHolder -CommonGit $commonGit -Mode 'Develop' -LifeMilliseconds 60000; $state.holder=$holder
+                { Invoke-SourceGate -Mode Targeted -WorkingRoot $TestDrive -DeadlineUtc ([DateTime]::UtcNow.AddHours(1)) } |
+                    Should -Throw "SOURCE_GATE_SLOT_WAIT_TIMEOUT: Targeted waited *for one of 1 source gate slots*held by: Develop PID $($holder.Id) since *gate was not started*Repeat the same command*"
+                $script:started | Should -Be 0
+                $script:records | Should -Be 0
+
+                # A holder killed without release frees the slot; its stale
+                # record stays in the file but is not reported as live.
+                Stop-Process -Id $holder.Id -Force; [void]$holder.WaitForExit(10000)
+                (Get-Content -LiteralPath (Join-Path $commonGit 'itl\gate-slots\slot-0.lock') -Raw -Encoding UTF8) | Should -Match ('"pid":' + $holder.Id + ',')
+                @((Get-SourceGateSlotStatus).holders).Count | Should -Be 0
+                $slot=Enter-SourceGateSlot -Mode Targeted -WorkingRoot $TestDrive
+                $slot.waitedSeconds | Should -BeLessThan 1
+                @((Get-SourceGateSlotStatus).holders).Count | Should -Be 1
+                Exit-SourceGateSlot -Slot $slot
+            }
+        } finally {
+            if ($state.holder -and -not $state.holder.HasExited) { Stop-Process -Id $state.holder.Id -Force -ErrorAction SilentlyContinue }
+            $env:ITL_SOURCE_GATE_SLOTS=$previousSlots; $env:ITL_SOURCE_GATE_SLOT_WAIT_SECONDS=$previousWait
         }
     }
 

@@ -239,6 +239,18 @@ legacy TEMP checkouts are removed after seven days. `ITL_WORKFLOW_SOURCE_PATH`
 stays user-owned and is never verified as a cache or cleaned. No lock,
 coordinator or installed-state migration is introduced.
 
+On 2026-11-20 the user approved source gate admission. Invariant: at most
+`ITL_SOURCE_GATE_SLOTS` (default 2) Targeted/Full/Develop/Release gates of one
+repository (common Git directory) run at once, and gate budgets start at
+admission. Owner: `Invoke-SourceGate`, the only gate launcher. Reproducer: 43
+November Targeted timeouts ran beside a median of four gates; per-run memory
+admission sees only its own run. A slot is a file held exclusively by the
+supervising process, so process exit releases it: no state machine, recovery,
+service or elevation. Waiting is bounded (`ITL_SOURCE_GATE_SLOT_WAIT_SECONDS`),
+reported in `Status.gateSlots` and continues by repeating the same command.
+Installed projects, `/itl*`, the per-infobase guard, `scripts/test.ps1` and
+publication stand preparation are unaffected. Rollback reverts the change.
+
 The user approved producer-marked diagnostic retention on 2026-10-22. The
 existing artifact-retention owner consumes immutable completion receipts for
 individual native temporary files and derived XML/ETLX, preserving original

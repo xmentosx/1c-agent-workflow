@@ -182,6 +182,7 @@ function Update-DeliveryOperation {
     }
 }
 function Write-DeliveryRunRecord { return 'test-run.json' }
+function Get-DeliveryCommonGitDirectory { return (Join-Path $script:TestRoot 'common git') }
 '@
                 "`$script:Root = '$escapedRoot'"
                 "`$script:GateScript = '$escapedGate'"
@@ -216,6 +217,12 @@ function Write-DeliveryRunRecord { return 'test-run.json' }
             } while ([DateTime]::UtcNow -lt $exitDeadline)
             $gateAlive | Should -BeFalse
             $childAlive | Should -BeFalse
+            # The killed supervisor's gate slot is free without any recovery
+            # step; its stale holder record is not reported as live.
+            $slotPath = Join-Path $tempRoot 'common git\itl\gate-slots\slot-0.lock'
+            (Get-Content -LiteralPath $slotPath -Raw -Encoding UTF8) | Should -Match ('"pid":' + $wrapper.Id + ',')
+            $slot = [IO.File]::Open($slotPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+            $slot.Dispose()
         } finally {
             if ($wrapper -and -not $wrapper.HasExited) { Stop-Process -Id $wrapper.Id -Force -ErrorAction SilentlyContinue }
             foreach ($processId in @($gatePid, $childPid)) { if ($processId -gt 0) { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue } }

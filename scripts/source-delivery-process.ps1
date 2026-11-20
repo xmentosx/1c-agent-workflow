@@ -692,6 +692,105 @@ function Close-DeliveryProcessJob {
     }
 }
 
+# Source gate admission (architecture checkpoint 2026-11-20): at most
+# ITL_SOURCE_GATE_SLOTS gates of one repository run at once. A slot is a file
+# in the common Git directory held open exclusively by the supervising process;
+# Windows closes it when that process exits, so a dead holder needs no recovery.
+# The holder record inside is for Status only and never grants admission.
+function Get-SourceGateSlotCount {
+    $value = [Environment]::GetEnvironmentVariable('ITL_SOURCE_GATE_SLOTS', 'Process')
+    $count = 0
+    if ($value -and [int]::TryParse($value, [ref]$count) -and $count -ge 1 -and $count -le 8) { return $count }
+    return 2
+}
+
+function Get-SourceGateSlotWaitSeconds {
+    $value = [Environment]::GetEnvironmentVariable('ITL_SOURCE_GATE_SLOT_WAIT_SECONDS', 'Process')
+    $seconds = 0
+    if ($value -and [int]::TryParse($value, [ref]$seconds) -and $seconds -ge 0) { return $seconds }
+    return 7200
+}
+
+function Get-SourceGateSlotRoot { return Join-Path (Get-DeliveryCommonGitDirectory) 'itl\gate-slots' }
+
+function Get-SourceGateSlotStatus {
+    $root = Get-SourceGateSlotRoot
+    $holders = @()
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter 'slot-*.lock' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        $text = ''
+        try {
+            $stream = [IO.File]::Open($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            try { $text = (New-Object IO.StreamReader($stream, [Text.UTF8Encoding]::new($false))).ReadToEnd() } finally { $stream.Dispose() }
+        } catch { continue }
+        if (-not $text.Trim()) { continue }
+        try { $holder = $text | ConvertFrom-Json } catch { continue }
+        # A record left by a killed holder stays in the file; only a live
+        # process with the recorded creation time still holds the slot.
+        if (-not (Test-DeliveryProcessIdentity -ProcessId ([int]$holder.pid) -StartedAt $holder.processStartedAt)) { continue }
+        $holders += [pscustomobject]@{ slot=[int]$holder.slot; mode=[string]$holder.mode; pid=[int]$holder.pid; acquiredAt=[string]$holder.acquiredAt; workingRoot=[string]$holder.workingRoot }
+    }
+    return [pscustomobject]@{ capacity = (Get-SourceGateSlotCount); holders = @($holders) }
+}
+
+function Format-SourceGateSlotHolders {
+    $holders = @((Get-SourceGateSlotStatus).holders)
+    if ($holders.Count -eq 0) { return 'holders are starting or exiting' }
+    return (@($holders | ForEach-Object { "$($_.mode) PID $($_.pid) since $($_.acquiredAt) in '$($_.workingRoot)'" }) -join '; ')
+}
+
+function Enter-SourceGateSlot {
+    param([Parameter(Mandatory = $true)][string]$Mode, [Parameter(Mandatory = $true)][string]$WorkingRoot)
+    $root = Get-SourceGateSlotRoot
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $count = Get-SourceGateSlotCount
+    $limitSeconds = Get-SourceGateSlotWaitSeconds
+    $pollMilliseconds = [int](Get-Variable -Name SourceGateSlotPollMilliseconds -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    if ($pollMilliseconds -le 0) { $pollMilliseconds = 3000 }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $reportedAt = -1.0
+    while ($true) {
+        for ($index = 0; $index -lt $count; $index++) {
+            $path = Join-Path $root "slot-$index.lock"
+            $stream = $null
+            try { $stream = [IO.File]::Open($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read) }
+            catch {
+                # A sharing violation means a live holder; anything else is a real fault.
+                # Windows PowerShell wraps a .NET method fault in MethodInvocationException.
+                $fault = $_.Exception
+                if ($fault -is [Management.Automation.MethodInvocationException] -and $fault.InnerException) { $fault = $fault.InnerException }
+                if ($fault -is [IO.IOException] -and -not ($fault -is [IO.FileNotFoundException] -or $fault -is [IO.DirectoryNotFoundException])) { continue }
+                throw
+            }
+            $waited = [Math]::Round($watch.Elapsed.TotalSeconds, 3)
+            $self = Get-Process -Id $PID
+            $holder = [ordered]@{
+                schemaVersion=1; slot=$index; mode=$Mode; pid=$PID; processStartedAt=$self.StartTime.ToUniversalTime().ToString('o')
+                acquiredAt=[DateTime]::UtcNow.ToString('o'); waitedSeconds=$waited; workingRoot=[IO.Path]::GetFullPath($WorkingRoot)
+            }
+            $bytes = [Text.UTF8Encoding]::new($false).GetBytes((($holder | ConvertTo-Json -Compress) + [Environment]::NewLine))
+            try { $stream.SetLength(0); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush() } catch { $stream.Dispose(); throw }
+            if ($waited -ge 1) { [Console]::Error.WriteLine("ITL source gate slot $index of $count acquired for $Mode after $([int]$waited)s; gate budgets start now.") }
+            return [pscustomobject]@{ stream=$stream; slot=$index; waitedSeconds=$waited }
+        }
+        $elapsed = $watch.Elapsed.TotalSeconds
+        if ($elapsed + ($pollMilliseconds / 1000.0) -gt $limitSeconds) {
+            throw "SOURCE_GATE_SLOT_WAIT_TIMEOUT: $Mode waited $([int]$elapsed)s of $($limitSeconds)s (ITL_SOURCE_GATE_SLOT_WAIT_SECONDS) for one of $count source gate slots (ITL_SOURCE_GATE_SLOTS); held by: $(Format-SourceGateSlotHolders). The gate was not started and no budget was spent; preserved candidates and the shard cache stay valid. Repeat the same command after a holder finishes; source-delivery Status lists gateSlots."
+        }
+        if ($reportedAt -lt 0 -or $elapsed - $reportedAt -ge 60) {
+            [Console]::Error.WriteLine("ITL source gate slot: $Mode waiting $([int]$elapsed)s of $($limitSeconds)s for one of $count slots; held by: $(Format-SourceGateSlotHolders)")
+            $reportedAt = $elapsed
+        }
+        Start-Sleep -Milliseconds $pollMilliseconds
+    }
+}
+
+function Exit-SourceGateSlot {
+    param([object]$Slot)
+    if (-not $Slot -or -not $Slot.stream) { return }
+    try { $Slot.stream.SetLength(0) } catch { }
+    $Slot.stream.Dispose()
+}
+
 function Invoke-SourceGate {
     param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "", [int]$HardBudgetSeconds = 0, [string[]]$ReleaseCapability = @(), [string[]]$PrerunReleaseCapability = @(), [datetime]$DeadlineUtc = [DateTime]::MaxValue, [switch]$PassThru)
     $script:DeliveryLastRunFailure = $null
@@ -728,6 +827,11 @@ function Invoke-SourceGate {
     New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
     $stdout = Join-Path $logRoot ("gate-$($Mode.ToLowerInvariant()).stdout.log")
     $stderr = Join-Path $logRoot ("gate-$($Mode.ToLowerInvariant()).stderr.log")
+    # Waiting for admission is not gate time: the caller deadline moves by the
+    # wait and the gate's own budgets start only after the slot is held.
+    $gateSlot = Enter-SourceGateSlot -Mode $Mode -WorkingRoot $WorkingRoot
+    $script:DeliveryLastGateSlotWaitSeconds = [double]$gateSlot.waitedSeconds
+    if ($DeadlineUtc -ne [DateTime]::MaxValue) { $DeadlineUtc = $DeadlineUtc.AddSeconds([double]$gateSlot.waitedSeconds) }
     $gateStartedAt = [DateTime]::UtcNow
     $gateStatus = "failed"; $gateError = ""; $process = $null; $processJob = [IntPtr]::Zero
     try {
@@ -772,7 +876,8 @@ function Invoke-SourceGate {
     } catch { $gateError = $_.Exception.Message; throw } finally {
         $jobCloseError = $null
         try { Close-DeliveryProcessJob -JobHandle $processJob -Process $process -PriorErrorMessage $gateError } catch { $jobCloseError = $_ }
-        Stop-DeliveryProcessTree -Process $process
+        # The next admitted gate may start only after this gate's tree is gone.
+        try { Stop-DeliveryProcessTree -Process $process } finally { Exit-SourceGateSlot -Slot $gateSlot }
         $finishedAt = [DateTime]::UtcNow
         $historyError = $null
         try {

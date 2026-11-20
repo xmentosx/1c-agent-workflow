@@ -468,8 +468,13 @@ function Register-SourceChange {
             # No shared operation lease is held during composition or checking.
             # The existing shard cache admits unchanged input proofs on a retry.
             $gateStartedAt = Get-SourceRegistrationUtcNow
+            $script:DeliveryLastGateSlotWaitSeconds = 0.0
             $runRecordPath = Invoke-SourceGate -Mode "Targeted" -WorkingRoot $worktree.path -TargetBaseRef $startPoint -DeadlineUtc $deadline -PassThru
-            $lastGateSeconds = ((Get-SourceRegistrationUtcNow) - $gateStartedAt).TotalSeconds
+            # Gate-slot admission time is not registration work: it extends
+            # the original deadline and is not part of the measured check.
+            $slotWaitSeconds = [double]$script:DeliveryLastGateSlotWaitSeconds
+            $deadline = $deadline.AddSeconds($slotWaitSeconds)
+            $lastGateSeconds = ((Get-SourceRegistrationUtcNow) - $gateStartedAt).TotalSeconds - $slotWaitSeconds
             if ((Invoke-WorktreeGit -Root $worktree.path -Arguments @("status", "--porcelain", "--untracked-files=all")).stdout -or
                 (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim() -cne $candidate) {
                 throw "Targeted changed its candidate. Registration was not accepted; inspect the preserved worktree."
