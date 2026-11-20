@@ -297,7 +297,7 @@ Describe "controlled ai_rules_1c release overlay" {
         $core.Value | Should -Match 'Applies only when the `memory_status` tool is available'
         $core.Value | Should -Match 'Call `memory_status` once at session start and after a `contextChanged`'
         $core.Value | Should -Match 'Task progress goes to its `checkpoint`, not notes'
-        $core.Value | Should -Match '`recall` once per topic before designing a 1C change; again only for a new\s+area or object, missing context or a transient failure'
+        $core.Value | Should -Match '`recall` once per topic before designing a 1C change, and by tool and action\s+before writing a test or setting up a stand; again for a new area or object,\s+missing context, a transient failure, or by symptom before retrying an\s+unexpected failure'
         $core.Value | Should -Match '`remember` in the same turn after a user correction, a rejected approach, a\s+standing condition or a confirmed lesson for another session or branch'
         # The note is knowledge, not a work log (improve-memory-content-quality D1).
         $core.Value | Should -Match 'Never save what code, OpenSpec, evidence, Git or test results hold:\s+progress, runs, SHAs, line numbers, statuses'
@@ -328,8 +328,12 @@ Describe "controlled ai_rules_1c release overlay" {
         # R56 adds 497 UTF-8 bytes: core 1,578 -> 2,075 and appendix 4,718 -> 5,215.
         # improve-memory-content-quality rewrites the core without growth: 2,075 -> 2,058.
         # Examples and read recovery details stay on demand.
-        [Text.Encoding]::UTF8.GetByteCount($core.Value.TrimEnd("`n")) | Should -BeLessOrEqual 2100
-        [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 5250
+        # Event-triggered recall (2026-11-20): pitfalls are found by tool, action or
+        # symptom, not by task topic (PM5 probe: topic 2 of 12, symptom 12 of 12).
+        # +116 bytes, about 30 tokens per session: core 2,058 -> 2,174, appendix
+        # 5,198 -> 5,314.
+        [Text.Encoding]::UTF8.GetByteCount($core.Value.TrimEnd("`n")) | Should -BeLessOrEqual 2180
+        [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 5320
         $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
         # One qualification call for both rules: the session-start status.
         $userRules | Should -Match ([regex]::Escape('`itl-scoped-cognee` `memory_status` returns `bindingState=current`'))

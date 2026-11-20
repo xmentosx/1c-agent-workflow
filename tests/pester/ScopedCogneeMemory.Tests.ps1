@@ -862,7 +862,8 @@ try {
         $remember.description | Should -Match 'dataset_name: the project \(applicability\.knowledgeArea routes base-product behaviour to its product home; see routedTo\)'
         $remember.description | Should -Match 'task only for user decisions for this cycle'
         $recallTool=@($lines[1].result.tools|Where-Object name -EQ recall)[0]
-        $recallTool.description | Should -Match 'Search once per topic before designing a 1C change; again only for a new area or object.*Omit datasets for the admitted union'
+        $recallTool.description | Should -Match 'Search once per topic before designing a 1C change, and by tool and action before writing a test or setting up a stand; again for a new area or object, missing context, or by symptom before retrying an unexpected failure\. Omit datasets for the admitted union'
+        $remember.inputSchema.properties.title.description | Should -Match 'the claim, not its topic'
         $recallTool.description | Should -Match 'below the relevance threshold are omitted; no card is not proof of absence'
         $recallTool.description | Should -Not -Match 'next eligible turn'
         $recallTool.inputSchema.properties.project_id.type | Should -BeExactly string
@@ -876,10 +877,15 @@ try {
         # improve-memory-content-quality (checkpoint 2026-11-14, at most +0.3 KB):
         # remember/recall say what not to save, the 600-character limit, project
         # routing and once-per-topic recall: 2,184 -> 2,454 bytes (+270).
-        $alwaysOn | Should -BeLessOrEqual 2470
+        # Event-triggered recall (2026-11-20, PM5 probe: pitfalls found by topic 2
+        # of 12, by symptom 12 of 12): the recall description grows 2,468 -> 2,582
+        # bytes (+114, about 30 tokens per session).
+        $alwaysOn | Should -BeLessOrEqual 2590
         $schemaBytes=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $lines[1].result -Depth 20 -Compress))
         # The same +270 description bytes move tools/list from 3,459 to 3,729.
-        $schemaBytes | Should -BeLessOrEqual 3750
+        # Event-triggered recall plus the remember title hint (2026-11-20): +114
+        # description and +90 title-schema bytes move tools/list to 3,938.
+        $schemaBytes | Should -BeLessOrEqual 3950
     }
 
     # improve-scoped-memory-adoption
