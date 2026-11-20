@@ -102,7 +102,9 @@ Describe "Source develop queue and delivery" {
             'Invoke-ClientMcpComponentPublicationFinalize'
         )) { $DeliverySourceText | Should -Match ([regex]::Escape($name)) }
         $aggregate = (Get-DeliveryFunctionDefinitions -Names @('Invoke-ComponentPublicationFinalizer')).Extent.Text
-        @([regex]::Matches($aggregate, 'Invoke-(AiRules|Vanessa|OnDemandMcp)ComponentPublicationFinalize')).Count | Should -Be 3
+        # The on-demand finalizer runs for the facade and, when pinned, its relay.
+        @([regex]::Matches($aggregate, 'Invoke-(AiRules|Vanessa|OnDemandMcp)ComponentPublicationFinalize')).Count | Should -Be 4
+        $aggregate | Should -Match '-LockName "itlOndemandRelay"'
         foreach ($external in @('roctupMcpToolkit', 'vanessaMcp', 'agentBrowser', 'windowsMcp', 'piMcpExtension', 'opencodePlugin')) {
             $aggregate | Should -Not -Match ([regex]::Escape($external))
         }
@@ -228,6 +230,51 @@ Describe "Source develop queue and delivery" {
             $clientPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $candidateRoot -CandidateCommit ('c'*40)
             @($clientPlan.requiredReleaseCapabilities) | Should -Be @('ondemand-mcp')
             @($clientPlan.components | Where-Object name -EQ clientMcp)[0].status | Should -Be 'missing'
+        }
+    }
+
+    It "plans the pinned on-demand relay as its own component of the on-demand Release capability" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryOwnedAssetNodes', 'Get-DeliveryOwnedAssetContracts', 'Get-OwnedComponentPublicationPlan')) { Invoke-Expression $definition.Extent.Text }
+            $candidateRoot = Join-Path $TestDrive 'relay plan candidate'
+            New-Item -ItemType Directory -Force -Path (Join-Path $candidateRoot 'templates') | Out-Null
+            $lock = [ordered]@{ dependencies = [ordered]@{
+                vanessaAutomation = [ordered]@{ url = 'https://github.com/owner/repo/releases/download/tag/vanessa.zip'; releaseTag='tag'; sha256 = ('1' * 64); assetName = 'vanessa.zip' }
+                vanessaMcp = [ordered]@{ vaExtension = [ordered]@{ url = 'https://github.com/owner/repo/releases/download/tag/paired.cfe'; releaseTag='tag'; sha256 = ('2' * 64); assetName = 'paired.cfe' } }
+                itlOndemandMcp = [ordered]@{ url = 'https://github.com/owner/repo/releases/download/tag/facade.exe'; releaseTag='tag'; sha256 = ('3' * 64); assetName='facade.exe' }
+                itlOndemandRelay = [ordered]@{ version = '1.0.0'; url = 'https://github.com/owner/repo/releases/download/relay-tag/relay.exe'; releaseTag='relay-tag'; sha256 = ('4' * 64); assetName='relay.exe' }
+                aiRules1c = [ordered]@{ compatibilityStatus = 'passed' }
+            } }
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates\dependency-lock.json'), (($lock | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $script:missingAssetPattern = '*relay.exe'
+            function Get-DeliveryRemoteAssetState {
+                param([string]$Url, [string]$ExpectedSha256)
+                return [pscustomobject]@{ status = $(if ($Url -like $script:missingAssetPattern) { 'missing' } else { 'matched' }); sha256 = $ExpectedSha256 }
+            }
+            function Get-DeliveryLocalAiRulesSource { return [pscustomobject]@{ root = $candidateRoot } }
+            function Get-DeliveryAiRulesRemoteState { return [pscustomobject]@{ status = 'matched' } }
+            function Get-DeliveryGitHubRepository { return [pscustomobject]@{ slug = 'owner/repo' } }
+            function Get-DeliveryRemoteAnnotatedTagCommit { return '' }
+            function Assert-DeliveryComponentTagLockAgreement {}
+            $script:ComponentFinalizerScript = ''
+
+            $relayContract = @(Get-DeliveryOwnedAssetContracts -Lock ($lock | ConvertTo-Json -Depth 10 | ConvertFrom-Json) -RepositorySlug 'owner/repo' | Where-Object path -CEQ 'dependencies.itlOndemandRelay')
+            $relayContract.Count | Should -Be 1
+            $relayContract[0].releaseCapability | Should -Be 'ondemand-mcp'
+            $plan = Get-OwnedComponentPublicationPlan -CandidateRoot $candidateRoot -CandidateCommit ('a' * 40)
+            @($plan.requiredReleaseCapabilities) | Should -Be @('ondemand-mcp')
+            $component = @($plan.components | Where-Object { $_.name -eq 'itlOndemandRelay' })
+            $component.Count | Should -Be 1
+            $component[0].status | Should -Be 'missing'
+            @($component[0].requiredReleaseCapabilities) | Should -Be @('ondemand-mcp')
+            @($plan.components | Where-Object { $_.name -eq 'itlOndemandMcp' })[0].status | Should -Be 'matched'
+
+            # Without the pin the plan is unchanged: no relay component.
+            $lock.dependencies.Remove('itlOndemandRelay')
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates\dependency-lock.json'), (($lock | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $unpinned = Get-OwnedComponentPublicationPlan -CandidateRoot $candidateRoot -CandidateCommit ('b' * 40)
+            @($unpinned.components | Where-Object { $_.name -eq 'itlOndemandRelay' }).Count | Should -Be 0
+            @($unpinned.requiredReleaseCapabilities).Count | Should -Be 0
         }
     }
 

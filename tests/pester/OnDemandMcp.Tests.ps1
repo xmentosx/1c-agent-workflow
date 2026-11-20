@@ -290,7 +290,9 @@ Describe "ITL on-demand MCP facade" {
         $buildScript | Should -Match '\$env:CGO_ENABLED\s*=\s*"0"'
         $buildScript | Should -Match '\$env:GOAMD64\s*=\s*"v1"'
         $buildScript | Should -Match '\[guid\]::NewGuid'
-        $buildScript | Should -Match 'Move-Item\s+-LiteralPath\s+\$temporaryOutputPath\s+-Destination\s+\$OutputPath\s+-Force'
+        # The facade and its relay are each moved into place atomically.
+        $buildScript | Should -Match 'Move-Item\s+-LiteralPath\s+\$target\.temporary\s+-Destination\s+\$target\.output\s+-Force'
+        $buildScript | Should -Match 'output = \$OutputPath'
         $workflow | Should -Match 'result\.sha256'
         $workflow | Should -Match 'dependency-lock\.json'
         $workflow | Should -Match 'softprops/action-gh-release@v2'
@@ -452,6 +454,8 @@ Describe "ITL on-demand MCP facade" {
                 [IO.File]::WriteAllBytes($targetPath, $cacheBytes)
                 function Get-WorkflowDependencyEntry {
                     param([string]$Name)
+                    # The facade fixture pins no relay; other dependencies are absent.
+                    if ($Name -cne 'itlOndemandMcp') { return $null }
                     return [pscustomobject]@{
                         version = $version
                         assetName = $assetName
@@ -488,6 +492,8 @@ Describe "ITL on-demand MCP facade" {
                 $sha256 = ([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create().ComputeHash($payload)))).Replace('-', '').ToLowerInvariant()
                 function Get-WorkflowDependencyEntry {
                     param([string]$Name)
+                    # The facade fixture pins no relay; other dependencies are absent.
+                    if ($Name -cne 'itlOndemandMcp') { return $null }
                     return [pscustomobject]@{ version = $expectedFacadeVersion; assetName = "itl-ondemand-mcp-windows-amd64.exe"; url = "https://example.invalid/itl-ondemand-mcp.exe"; sha256 = $sha256 }
                 }
                 $script:OnDemandRequests = 0
@@ -539,6 +545,8 @@ Describe "ITL on-demand MCP facade" {
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
                 function Get-WorkflowDependencyEntry {
                     param([string]$Name)
+                    # The facade fixture pins no relay; other dependencies are absent.
+                    if ($Name -cne 'itlOndemandMcp') { return $null }
                     return [pscustomobject]@{
                         version = $expectedFacadeVersion
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
@@ -581,6 +589,8 @@ Describe "ITL on-demand MCP facade" {
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
                 function Get-WorkflowDependencyEntry {
                     param([string]$Name)
+                    # The facade fixture pins no relay; other dependencies are absent.
+                    if ($Name -cne 'itlOndemandMcp') { return $null }
                     return [pscustomobject]@{
                         version = $expectedFacadeVersion
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
@@ -708,6 +718,89 @@ Describe "ITL on-demand MCP facade" {
             }
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $null, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # B3-alt: with a pinned relay a facade-only change rewrites the launch
+    # descriptor, never the client entry, so the client needs no restart.
+    It "points client entries at the pinned relay and keeps them stable when only the facade changes" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl ondemand relay Проект " + [guid]::NewGuid().ToString("N"))
+        $savedInstallRoot = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", "Process")
+        $savedRelaySource = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["claude-code"]}}'
+            $facade = Join-Path $tempRoot "facade one\itl-ondemand-mcp.exe"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $facade) | Out-Null
+            Set-Content -LiteralPath $facade -Encoding Byte -Value ([byte[]](1, 2, 3))
+            $installRoot = Join-Path $tempRoot "cache\ondemand"
+            $relayBytes = [byte[]](4, 5, 6)
+            $relaySha = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($relayBytes))).Replace("-", "").ToLowerInvariant()
+            $relay = Join-Path $tempRoot "cache\relay\v1\$relaySha\itl-ondemand-relay-windows-amd64.exe"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $relay) | Out-Null
+            [IO.File]::WriteAllBytes($relay, $relayBytes)
+            Copy-Item -LiteralPath (Join-Path $RepoRoot 'templates') -Destination (Join-Path $tempRoot 'templates') -Recurse
+            $templatePath = Join-Path $tempRoot 'templates/dependency-lock.json'
+            $writeLock = {
+                param([string]$FacadePath, [string]$RelayUrl)
+                $template = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $template.dependencies.itlOndemandMcp.sha256 = (Get-FileHash -LiteralPath $FacadePath -Algorithm SHA256).Hash.ToLowerInvariant()
+                $template.dependencies | Add-Member -Force -NotePropertyName itlOndemandRelay -NotePropertyValue ([pscustomobject]@{
+                    version = "1.0.0"; releaseTag = "itl-ondemand-relay-v1.0.0"; assetName = "itl-ondemand-relay-windows-amd64.exe"
+                    url = $RelayUrl; sha256 = $relaySha; os = "windows"; arch = "amd64"; source = "workflow release asset" })
+                Set-Content -LiteralPath $templatePath -Encoding UTF8 -Value ($template | ConvertTo-Json -Depth 30)
+                [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $FacadePath, "Process")
+            }
+            & $writeLock $facade "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-relay-v1.0.0/itl-ondemand-relay-windows-amd64.exe"
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $installRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE", $null, "Process")
+            $configPath = Join-Path $tempRoot ".mcp.json"
+            $descriptorPath = Join-Path $tempRoot ".agent-1c\mcp\ondemand\launch\itl-vanessa-ui.json"
+
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Write-ItlOnDemandMcpClientConfig -Client "claude-code" | Out-Null }
+            $entry = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json).mcpServers.'itl-vanessa-ui'
+            $entry.command | Should -Be $relay
+            @($entry.args) | Should -Be @("--project-root", [IO.Path]::GetFullPath($tempRoot), "--server", "itl-vanessa-ui")
+            $descriptor = Get-Content -LiteralPath $descriptorPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $descriptor.family | Should -Be "vanessa-ui"
+            $descriptor.facadePath | Should -Be $facade
+            $descriptor.facadeSha256 | Should -Be (Get-FileHash -LiteralPath $facade -Algorithm SHA256).Hash.ToLowerInvariant()
+            @($descriptor.args) | Should -Contain "--catalog"
+            @($descriptor.args) | Should -Contain "gateway"
+            Test-Path -LiteralPath (Join-Path $tempRoot ".agent-1c\mcp\ondemand\launch\itl-roctup-data.json") | Should -BeTrue
+            $configBefore = [IO.File]::ReadAllBytes($configPath)
+
+            $nextFacade = Join-Path $tempRoot "facade two\itl-ondemand-mcp.exe"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $nextFacade) | Out-Null
+            Set-Content -LiteralPath $nextFacade -Encoding Byte -Value ([byte[]](7, 8, 9))
+            & $writeLock $nextFacade "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-relay-v1.0.0/itl-ondemand-relay-windows-amd64.exe"
+            $changes = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                # The change register is shared by this test file; count only this write.
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                Write-ItlOnDemandMcpClientConfig -Client "claude-code" | Out-Null
+                @(Get-ItlClientMcpSemanticChanges)
+            }
+            @($changes).Count | Should -Be 0
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) | Should -Be ([Convert]::ToBase64String($configBefore))
+            $descriptor = Get-Content -LiteralPath $descriptorPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $descriptor.facadePath | Should -Be $nextFacade
+            $descriptor.facadeSha256 | Should -Be (Get-FileHash -LiteralPath $nextFacade -Algorithm SHA256).Hash.ToLowerInvariant()
+
+            # One configuration mode: no relay means no entries, never direct ones.
+            Remove-Item -LiteralPath $relay -Force
+            & $writeLock $nextFacade ""
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Write-ItlOnDemandMcpClientConfig -Client "claude-code" -PlanOnly | Should -BeNullOrEmpty
+                { Install-ItlOnDemandRelay } | Should -Throw "*ITL_ONDEMAND_RELAY_URL_MISSING*"
+            }
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) | Should -Be ([Convert]::ToBase64String($configBefore))
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $null, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $savedInstallRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE", $savedRelaySource, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

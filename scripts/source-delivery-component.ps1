@@ -110,6 +110,7 @@ function Get-DeliveryOwnedAssetContracts {
         'dependencies.vanessaAutomation' = 'extension-smoke'
         'dependencies.vanessaMcp.vaExtension' = 'extension-smoke'
         'dependencies.itlOndemandMcp' = 'ondemand-mcp'
+        'dependencies.itlOndemandRelay' = 'ondemand-mcp'
         'dependencies.vanessaMcp.clientMcp' = 'ondemand-mcp'
         'dependencies.vanessaMcp.clientMcp.correspondingSource' = 'ondemand-mcp'
     }
@@ -270,7 +271,7 @@ function Assert-DeliveryComponentTagLockAgreement {
         if ($path -eq 'dependencies.vanessaAutomation') { $identityFields += @('compatibilityVersion', 'downstreamRevision') }
         if ($path -eq 'dependencies.vanessaMcp.vaExtension') { $identityFields += 'protocol' }
         if ($path -eq 'dependencies.vanessaMcp.clientMcp') { $identityFields += @('version', 'downstreamRevision', 'manifestSha256', 'upstreamCommit') }
-        if ($path -eq 'dependencies.itlOndemandMcp') { $identityFields += 'version' }
+        if ($path -in @('dependencies.itlOndemandMcp', 'dependencies.itlOndemandRelay')) { $identityFields += 'version' }
         foreach ($field in $identityFields) {
             if (-not $candidateAsset -or -not $tagAsset -or
                 -not $candidateAsset.PSObject.Properties[$field] -or -not $tagAsset.PSObject.Properties[$field] -or
@@ -641,9 +642,9 @@ function Invoke-VanessaComponentPublicationFinalize {
 }
 
 function Get-DeliveryExactOnDemandMcpCandidate {
-    param([string]$CandidateRoot, [object]$Lock)
+    param([string]$CandidateRoot, [object]$Lock, [string]$SourceBuildVariable = "ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE")
     $expected = ([string]$Lock.sha256).ToLowerInvariant()
-    $override = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE", "Process")
+    $override = [Environment]::GetEnvironmentVariable($SourceBuildVariable, "Process")
     $candidates = @()
     if (-not [string]::IsNullOrWhiteSpace($override)) { $candidates += [IO.Path]::GetFullPath($override) }
     $candidates += Join-Path $CandidateRoot ("tools\itl-ondemand-mcp\build\" + [string]$Lock.assetName)
@@ -656,10 +657,14 @@ function Get-DeliveryExactOnDemandMcpCandidate {
     throw "The immutable on-demand MCP URL is absent and no exact Release-qualified source build is available."
 }
 
+# The facade and its relay are both exact builds of tools/itl-ondemand-mcp
+# published as immutable assets of their own component tags.
 function Invoke-OnDemandMcpComponentPublicationFinalize {
-    param([string]$CandidateRoot, [string]$CandidateCommit)
+    param([string]$CandidateRoot, [string]$CandidateCommit, [string]$LockName = "itlOndemandMcp",
+        [string]$SourceBuildVariable = "ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE", [string]$EvidenceFileName = "itl-ondemand-mcp.json")
     $candidateLock = Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-    $lock = $candidateLock.dependencies.itlOndemandMcp
+    $lock = $candidateLock.dependencies.$LockName
+    if ($null -eq $lock -and $LockName -cne "itlOndemandMcp") { return }
     foreach ($field in @("releaseTag", "url", "assetName", "sha256", "version")) {
         if ($null -eq $lock.PSObject.Properties[$field] -or [string]::IsNullOrWhiteSpace([string]$lock.$field)) { throw "On-demand MCP component lock is missing '$field'." }
     }
@@ -681,10 +686,10 @@ function Invoke-OnDemandMcpComponentPublicationFinalize {
     $mutated = $false
     if ($remote.status -eq "missing") {
         if (-not $RequireRelease) { throw "The locked on-demand MCP asset is not published. Exact candidate Release qualification is mandatory." }
-        $candidatePath = Get-DeliveryExactOnDemandMcpCandidate -CandidateRoot $CandidateRoot -Lock $lock
+        $candidatePath = Get-DeliveryExactOnDemandMcpCandidate -CandidateRoot $CandidateRoot -Lock $lock -SourceBuildVariable $SourceBuildVariable
         $remoteTagCommit = Get-DeliveryRemoteAnnotatedTagCommit -CandidateRoot $CandidateRoot -Tag ([string]$lock.releaseTag)
         if ($remoteTagCommit) {
-            Assert-DeliveryComponentTagLockAgreement -CandidateRoot $CandidateRoot -TagCommit $remoteTagCommit -CandidateLock $candidateLock -AssetPaths @('dependencies.itlOndemandMcp')
+            Assert-DeliveryComponentTagLockAgreement -CandidateRoot $CandidateRoot -TagCommit $remoteTagCommit -CandidateLock $candidateLock -AssetPaths @("dependencies.$LockName")
         } else {
             $localTag = "refs/tags/$($lock.releaseTag)"
             $localTagType = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("cat-file", "-t", $localTag) -AllowFailure).stdout.Trim()
@@ -692,7 +697,7 @@ function Invoke-OnDemandMcpComponentPublicationFinalize {
                 $localTagCommit = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "$localTag^{}") -AllowFailure).stdout.Trim()
                 if ($localTagType -cne "tag" -or $localTagCommit -cne $CandidateCommit) { throw "Local component tag '$($lock.releaseTag)' is not an annotated tag for exact candidate '$CandidateCommit'." }
             } else {
-                [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("tag", "-a", [string]$lock.releaseTag, $CandidateCommit, "-m", "ITL on-demand MCP $($lock.version)"))
+                [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("tag", "-a", [string]$lock.releaseTag, $CandidateCommit, "-m", "ITL $LockName $($lock.version)"))
             }
             $tagPush = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("push", $script:Remote, $localTag) -AllowFailure
             if ($tagPush.exitCode -ne 0) {
@@ -705,7 +710,7 @@ function Invoke-OnDemandMcpComponentPublicationFinalize {
         $releaseView = Invoke-DeliveryGitHubCli -Arguments @("release", "view", [string]$lock.releaseTag, "--repo", $repository.slug, "--json", "assets") -AllowFailure
         if ($releaseView.exitCode -ne 0) {
             if ($releaseView.text -notmatch '(?i)(release not found|HTTP 404|not found)') { throw "Unable to inspect GitHub Release '$($lock.releaseTag)': $($releaseView.text)" }
-            [void](Invoke-DeliveryGitHubCli -Arguments @("release", "create", [string]$lock.releaseTag, "--repo", $repository.slug, "--verify-tag", "--title", [string]$lock.releaseTag, "--notes", "Immutable ITL on-demand MCP $($lock.version)."))
+            [void](Invoke-DeliveryGitHubCli -Arguments @("release", "create", [string]$lock.releaseTag, "--repo", $repository.slug, "--verify-tag", "--title", [string]$lock.releaseTag, "--notes", "Immutable ITL $LockName $($lock.version)."))
             $mutated = $true
             $releaseView = Invoke-DeliveryGitHubCli -Arguments @("release", "view", [string]$lock.releaseTag, "--repo", $repository.slug, "--json", "assets")
         }
@@ -719,11 +724,11 @@ function Invoke-OnDemandMcpComponentPublicationFinalize {
     }
 
     $evidence = [ordered]@{
-        schemaVersion = 1; status = "passed"; component = "itlOndemandMcp"; candidateCommit = $CandidateCommit
+        schemaVersion = 1; status = "passed"; component = $LockName; candidateCommit = $CandidateCommit
         releaseTag = [string]$lock.releaseTag; url = [string]$lock.url; assetName = [string]$lock.assetName; sha256 = $expectedSha
         githubRepository = $repository.slug; githubMutated = $mutated; verifiedAt = [DateTime]::UtcNow.ToString("o")
     }
-    Save-DeliveryComponentPublicationEvidence -CandidateCommit $CandidateCommit -FileName "itl-ondemand-mcp.json" -Evidence $evidence
+    Save-DeliveryComponentPublicationEvidence -CandidateCommit $CandidateCommit -FileName $EvidenceFileName -Evidence $evidence
     return [pscustomobject]$evidence
 }
 
@@ -863,6 +868,9 @@ function Get-OwnedComponentPublicationPlan {
     $vanessa = Get-DeliveryRemoteAssetState -Url $assetsByPath['dependencies.vanessaAutomation'].url -ExpectedSha256 $assetsByPath['dependencies.vanessaAutomation'].sha256
     $vanessaPaired = Get-DeliveryRemoteAssetState -Url $assetsByPath['dependencies.vanessaMcp.vaExtension'].url -ExpectedSha256 $assetsByPath['dependencies.vanessaMcp.vaExtension'].sha256
     $onDemand = Get-DeliveryRemoteAssetState -Url $assetsByPath['dependencies.itlOndemandMcp'].url -ExpectedSha256 $assetsByPath['dependencies.itlOndemandMcp'].sha256
+    $relay = if ($assetsByPath.ContainsKey('dependencies.itlOndemandRelay')) {
+        Get-DeliveryRemoteAssetState -Url $assetsByPath['dependencies.itlOndemandRelay'].url -ExpectedSha256 $assetsByPath['dependencies.itlOndemandRelay'].sha256
+    } else { $null }
     $clientAssets = @($ownedAssets | Where-Object { $_.path -in @('dependencies.vanessaMcp.clientMcp', 'dependencies.vanessaMcp.clientMcp.correspondingSource') })
     $clientStatus = 'external'
     if ($clientAssets.Count -gt 0) {
@@ -884,6 +892,10 @@ function Get-OwnedComponentPublicationPlan {
         $tagCommit = Get-DeliveryRemoteAnnotatedTagCommit -CandidateRoot $CandidateRoot -Tag ([string]$lock.itlOndemandMcp.releaseTag)
         Assert-DeliveryComponentTagLockAgreement -CandidateRoot $CandidateRoot -TagCommit $tagCommit -CandidateLock $candidateLock -AssetPaths @('dependencies.itlOndemandMcp')
     }
+    if ($null -ne $relay -and $relay.status -eq 'missing') {
+        $tagCommit = Get-DeliveryRemoteAnnotatedTagCommit -CandidateRoot $CandidateRoot -Tag ([string]$lock.itlOndemandRelay.releaseTag)
+        Assert-DeliveryComponentTagLockAgreement -CandidateRoot $CandidateRoot -TagCommit $tagCommit -CandidateLock $candidateLock -AssetPaths @('dependencies.itlOndemandRelay')
+    }
     $rulesSource = Get-DeliveryLocalAiRulesSource -Lock $lock.aiRules1c
     $rules = Get-DeliveryAiRulesRemoteState -SourceRoot $rulesSource.root -Lock $lock.aiRules1c
     if ($rules.status -in @("partial", "mismatch")) { throw "Remote ai_rules_1c release '$($lock.aiRules1c.ref)' is $($rules.status)." }
@@ -893,6 +905,7 @@ function Get-OwnedComponentPublicationPlan {
             if ($vanessa.status -eq "missing" -or $vanessaPaired.status -eq "missing") { "extension-smoke" }
             if ($onDemand.status -eq "missing") { "ondemand-mcp" }
             if ($clientStatus -eq 'missing' -and $onDemand.status -ne 'missing') { 'ondemand-mcp' }
+            if ($null -ne $relay -and $relay.status -eq 'missing' -and $onDemand.status -ne 'missing' -and $clientStatus -ne 'missing') { 'ondemand-mcp' }
         )
         components = @(
             [pscustomobject]@{
@@ -907,6 +920,9 @@ function Get-OwnedComponentPublicationPlan {
                 assets = @([pscustomobject]@{ name = [string]$lock.vanessaAutomation.assetName; status = $vanessa.status }, [pscustomobject]@{ name = [string]$lock.vanessaMcp.vaExtension.assetName; status = $vanessaPaired.status })
             },
             [pscustomobject]@{ name = "itlOndemandMcp"; status = $onDemand.status; requiredReleaseCapabilities = $(if ($onDemand.status -eq "missing") { @("ondemand-mcp") } else { @() }) }
+            if ($null -ne $relay) {
+                [pscustomobject]@{ name='itlOndemandRelay'; status=$relay.status; requiredReleaseCapabilities=$(if ($relay.status -eq 'missing') { @('ondemand-mcp') } else { @() }) }
+            }
             if ($clientAssets.Count -gt 0) {
                 [pscustomobject]@{ name='clientMcp'; status=$clientStatus; requiredReleaseCapabilities=$(if ($clientStatus -eq 'missing') { @('ondemand-mcp') } else { @() }) }
             }
@@ -940,6 +956,7 @@ function Assert-ComponentPublicationFinalizerPreflight {
     $components = @($Plan.components)
     $expectedNames = @("aiRules1c", "itlOndemandMcp", "vanessaAutomation")
     if (@($Plan.ownedAssets | Where-Object path -CEQ 'dependencies.vanessaMcp.clientMcp').Count -eq 1) { $expectedNames += 'clientMcp' }
+    if (@($Plan.ownedAssets | Where-Object path -CEQ 'dependencies.itlOndemandRelay').Count -eq 1) { $expectedNames += 'itlOndemandRelay' }
     $actualNames = @($components | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
     if (($actualNames -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) {
         throw "Component publication plan must contain exactly: $($expectedNames -join ', ')."
@@ -984,6 +1001,7 @@ function Invoke-ComponentPublicationFinalizer {
             Invoke-AiRulesComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
             Invoke-VanessaComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
             Invoke-OnDemandMcpComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
+            Invoke-OnDemandMcpComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit -LockName "itlOndemandRelay" -SourceBuildVariable "ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE" -EvidenceFileName "itl-ondemand-relay.json"
             Invoke-ClientMcpComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
         )
         return [pscustomobject]@{ status = "passed"; candidateCommit = $CandidateCommit; components = $components }

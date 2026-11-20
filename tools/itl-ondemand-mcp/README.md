@@ -64,7 +64,31 @@ error; the facade returns both
 as tool errors with `stepExecuted: true`. A successful step gets a note that it
 ran without its scenario context. When the project's `compatibility.json` pins another facade version
 than the running process, every result gets `ITL_ONDEMAND_FACADE_SUPERSEDED`
-as a note; the call itself is handled normally.
+as a note; the call itself is handled normally. Under the relay
+(`ITL_ONDEMAND_RELAY=1`) the note asks to repeat `update-workflow` instead of
+reconnecting the client.
+
+## Relay
+
+`cmd/itl-ondemand-relay` is the stable client command once the dependency lock
+pins `itlOndemandRelay` (OpenSpec `ondemand-facade-relay`). The client entry is
+`<relay> --project-root <root> --server <name>`; the workflow writes the
+resolved facade launch (path, SHA-256, version, `serve` arguments) to
+`.agent-1c/mcp/ondemand/launch/<server>.json`. The relay forwards MCP lines
+unchanged and, before a request with nothing in flight, replaces the facade
+when that descriptor changed: it closes the old facade's input (its owned
+backend stop), starts the new one, replays `initialize`, sends
+`notifications/tools/list_changed` and notes `ITL_ONDEMAND_FACADE_REPLACED` on
+the next tool result. A missing or mismatched new facade keeps the current one
+with `ITL_ONDEMAND_RELAY_FACADE_KEPT`; with none it answers
+`ITL_ONDEMAND_RELAY_FACADE_UNAVAILABLE`. A facade that exits answers its
+in-flight calls with `ITL_ONDEMAND_FACADE_EXITED` (`callOutcome: unknown`, never
+replayed) and is restarted on the next call (`ITL_ONDEMAND_FACADE_RESTARTED`),
+at most 3 times in 5 minutes, then `ITL_ONDEMAND_RELAY_RESTART_LIMIT`. Lifecycle
+evidence, without payloads, is `.agent-1c/mcp/ondemand/<family>/relay-<server>.jsonl`.
+`scripts/Build-ItlOnDemandMcp.ps1` builds the relay next to the facade. The
+first switch to the relay changes the client entries once and needs one client
+restart; later facade updates do not.
 
 The guard never outlives its call. An owned stop is retried briefly within the
 call; if it stays unconfirmed, the execution still ends: the facade releases
