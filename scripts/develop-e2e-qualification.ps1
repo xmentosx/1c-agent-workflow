@@ -98,7 +98,12 @@ function Get-DevelopE2EInputIdentity {
                 if ($null -ne $ArtifactBinding) {
                     $artifacts = Get-SourceE2EArtifactBindingHashes -RepositoryRoot $RepositoryRoot -Binding $ArtifactBinding
                 } else {
-                    foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
+                    $artifactNames = @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')
+                    $lockPath = Join-Path $RepositoryRoot 'templates/dependency-lock.json'
+                    $relayPinned = (Test-Path -LiteralPath $lockPath -PathType Leaf) -and
+                        $null -ne (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.PSObject.Properties['itlOndemandRelay']
+                    if ($relayPinned) { $artifactNames += 'ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE' }
+                    foreach ($name in $artifactNames) {
                         $physical = [Environment]::GetEnvironmentVariable($name,'Process')
                         if (-not $physical -or -not (Test-Path -LiteralPath $physical -PathType Leaf)) {
                             Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'ARTIFACT_BINDING_MISSING' -Inputs @($name); return $null

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -162,6 +163,7 @@ func run() error {
 	verifyMissingState := flag.Bool("verify-missing-state-recovery", false, "remove this probe's Vanessa runtime record and prove same-connection recovery")
 	vanessaFeature := flag.String("vanessa-feature", "", "release feature file for Vanessa open/check authoring smoke")
 	vanessaSecondaryFeature := flag.String("vanessa-secondary-feature", "", "second release feature file for Vanessa cold reloadAndRun smoke")
+	flag.StringVar(&relayExe, "relay", "", "itl-ondemand-relay executable; every facade session then runs through it")
 	flag.Parse()
 	if *exe == "" || *projectRoot == "" || *catalog == "" || *helper == "" || (*tool == "" && *sequencePath == "") {
 		return fmt.Errorf("--exe, --project-root, --catalog, --helper, and --tool or --sequence-json are required")
@@ -615,8 +617,57 @@ func connect(ctx context.Context, exe, family, projectRoot, catalog, helper stri
 	return &probeSession{session: session, count: count, stderr: stderr}, nil
 }
 
+// relayExe, when set, makes every probe session reach the facade through the
+// relay the client entries use, so Release qualifies the relay with the facade.
+var relayExe string
+
 func facadeCommand(exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration) *exec.Cmd {
-	return childprocess.Command(exe, "serve", "--family", family, "--project-root", projectRoot, "--catalog", catalog, "--helper", helper, "--idle-timeout", idleTimeout.String(), "--cleanup-timeout", facadeCleanupTimeout.String())
+	args := []string{"serve", "--family", family, "--project-root", projectRoot, "--catalog", catalog, "--helper", helper, "--idle-timeout", idleTimeout.String(), "--cleanup-timeout", facadeCleanupTimeout.String()}
+	if relayExe == "" {
+		return childprocess.Command(exe, args...)
+	}
+	server := "itl-probe-" + family
+	if err := writeRelayDescriptor(projectRoot, server, family, exe, args); err != nil {
+		// The relay reports the missing descriptor through its own error.
+		fmt.Fprintln(os.Stderr, "write relay descriptor:", err)
+	}
+	return childprocess.Command(relayExe, "--project-root", projectRoot, "--server", server)
+}
+
+// writeRelayDescriptor writes the launch descriptor in the relay's contract
+// (cmd/itl-ondemand-relay) under a probe-only server name, never over the
+// project's own client servers. Identical content is written atomically.
+func writeRelayDescriptor(projectRoot, server, family, exe string, args []string) error {
+	raw, err := os.ReadFile(exe)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(raw)
+	descriptor, err := json.MarshalIndent(map[string]any{
+		"schemaVersion": 1, "server": server, "family": family, "facadePath": exe,
+		"facadeSha256": fmt.Sprintf("%x", sum[:]), "facadeVersion": "probe", "args": args,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(projectRoot, ".agent-1c", "mcp", "ondemand", "launch", server+".json")
+	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, descriptor) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), server+".*.tmp")
+	if err != nil {
+		return err
+	}
+	_, writeErr := temporary.Write(descriptor)
+	closeErr := temporary.Close()
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(temporary.Name())
+		return errors.Join(writeErr, closeErr)
+	}
+	return os.Rename(temporary.Name(), path)
 }
 
 func catalogToolCount(path string) (int, error) {

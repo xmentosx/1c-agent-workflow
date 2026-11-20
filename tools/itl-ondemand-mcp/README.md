@@ -89,6 +89,11 @@ evidence, without payloads, is `.agent-1c/mcp/ondemand/<family>/relay-<server>.j
 `scripts/Build-ItlOnDemandMcp.ps1` builds the relay next to the facade. The
 first switch to the relay changes the client entries once and needs one client
 restart; later facade updates do not.
+The dependency lock pins the relay as `itlOndemandRelay`;
+`scripts/ondemand-mcp-lock.ps1 -Action Repin` repins it with the facade and
+needs `-RelayVersion` when its bytes change. The Release `ondemand-mcp` stage
+runs `itl-ondemand-probe -relay` through the exact pinned relay for both
+families.
 
 The guard never outlives its call. An owned stop is retried briefly within the
 call; if it stays unconfirmed, the execution still ends: the facade releases

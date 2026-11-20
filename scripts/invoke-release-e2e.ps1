@@ -2733,6 +2733,16 @@ try {
                 }
             } else {
                 $facadeBuild = & (Join-Path $workflowRoot "scripts\Build-ItlOnDemandMcp.ps1")
+                # A pinned relay is the client command of every on-demand entry, so the
+                # live probe reaches both families through the exact pinned relay bytes.
+                $relayLock = (Get-Content -LiteralPath (Join-Path $workflowRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.PSObject.Properties["itlOndemandRelay"]
+                $relayPath = ""
+                if ($null -ne $relayLock) {
+                    if ([string]$facadeBuild.relaySha256 -cne ([string]$relayLock.Value.sha256).ToLowerInvariant()) {
+                        throw "ITL_ONDEMAND_RELAY_SOURCE_BUILD_SHA256_MISMATCH: the relay built from this source ($([string]$facadeBuild.relaySha256)) differs from the pinned itlOndemandRelay ($([string]$relayLock.Value.sha256)); repin the relay and repeat."
+                    }
+                    $relayPath = [string]$facadeBuild.relayPath
+                }
                 $compatibilityRoot = Join-Path $workflowRoot ".agents\skills\1c-workflow\assets\ondemand-mcp"
                 $compatibility = Get-Content -LiteralPath (Join-Path $compatibilityRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
                 $probeRoot = Join-Path $workflowRoot "tools\itl-ondemand-mcp"
@@ -2759,6 +2769,7 @@ try {
                             "-verify-idle",
                             "-output", $familyEvidencePath
                         )
+                        if ($relayPath) { $probeArguments += @("-relay", $relayPath) }
                         if ([bool]$spec.vanessaSmoke) { $probeArguments += @("-vanessa-ui-smoke", "-vanessa-feature", $vanessaSmokeFeature, "-vanessa-secondary-feature", $vanessaSecondarySmokeFeature, "-verify-missing-state-recovery") }
                         & go @probeArguments
                         if ($LASTEXITCODE -ne 0) { throw "On-demand MCP live probe failed for $($spec.family)." }
@@ -2830,6 +2841,7 @@ try {
                 $onDemandMcpEvidence = [ordered]@{
                     schemaVersion = 2
                     facadeSha256 = [string]$facadeBuild.sha256
+                    relaySha256 = $(if ($relayPath) { [string]$facadeBuild.relaySha256 } else { "" })
                     testFixture = $false
                     families = $families
                     capturedAt = [DateTime]::UtcNow.ToString("o")

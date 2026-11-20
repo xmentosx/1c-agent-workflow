@@ -42,6 +42,11 @@ function ConvertTo-DevelopScenarioArtifactIdentity {
         $copy -and $copy.PSObject.Properties['ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE'] -and
         [string]$copy.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE -cmatch '^[a-f0-9]{64}$') {
         $copy.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE='opaque-broker-not-executed'
+        # The relay only launches that broker, so it is not executed either.
+        if($copy.PSObject.Properties['ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE'] -and
+            [string]$copy.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE -cmatch '^[a-f0-9]{64}$') {
+            $copy.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE='opaque-broker-not-executed'
+        }
     }
     return $copy
 }
