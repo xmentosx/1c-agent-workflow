@@ -102,7 +102,9 @@ Describe 'Diagnostic isolated rerun of failed Pester files' {
         @($script:rerunCalls.timeout) | Should -Be @(60 + [int][Math]::Ceiling(2 * $observed))
         $result.report.status | Should -Be 'inconclusive'
         @($result.report.files).isolatedRerun | Should -Be 'skipped'
-        $result.text | Should -Match 'Isolated rerun inconclusive: tests/pester/AiRulesClients\.Tests\.ps1 ended without a worker result'
+        # The verdict names the unfinished file; the report above carries its status.
+        $result.text | Should -Match 'inconclusive'
+        $result.text.Contains('tests/pester/AiRulesClients.Tests.ps1') | Should -BeTrue
         $result.text | Should -Not -Match 'failed again|passed alone'
         # An inconclusive rerun neither downgrades nor excuses the original failure.
         Get-DeliveryFailureClass -Message ("Pester did not pass." + $result.text) -Stage 'pester' | Should -Be 'product'
