@@ -412,14 +412,11 @@ function ConvertTo-ItlOnDemandRelayEndpoints {
         $arguments = @($endpoint.args)
         $family = [string]$arguments[[array]::IndexOf($arguments, "--family") + 1]
         [void](Write-ItlOnDemandLaunchDescriptor -Endpoint $endpoint -Family $family -Facade $facade)
-        [pscustomobject]@{
-            name = $endpoint.name
-            transport = "stdio"
-            command = $relay.path
-            args = @("--project-root", $root, "--server", [string]$endpoint.name)
-            startupTimeoutSeconds = $endpoint.startupTimeoutSeconds
-            toolTimeoutSeconds = $endpoint.toolTimeoutSeconds
-        }
+        # Keep every other endpoint property (timeouts, env, enablement).
+        $relayed = $endpoint.PSObject.Copy()
+        $relayed.command = $relay.path
+        $relayed.args = @("--project-root", $root, "--server", [string]$endpoint.name)
+        $relayed
     }
 }
 
@@ -454,16 +451,16 @@ exit $LASTEXITCODE
 function Write-ItlOnDemandMcpClientConfig {
     param([string]$Client = "", [switch]$PlanOnly)
     $executable = Get-ItlOnDemandMcpExecutablePath -AllowMissing
-    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
-        if ($PlanOnly) { return }
-        Write-Warning "ITL on-demand MCP executable is missing; client facade entries were not written: $executable"
-        return ""
-    }
     $relay = Get-ItlOnDemandRelayContract
     if ($null -ne $relay -and -not (Test-Path -LiteralPath $relay.path -PathType Leaf)) {
         # Never fall back to direct facade entries: one configuration mode.
         if ($PlanOnly) { return }
         Write-Warning "ITL on-demand MCP relay is missing; client facade entries were not written: $($relay.path). Repeat update-workflow."
+        return ""
+    }
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        if ($PlanOnly) { return }
+        Write-Warning "ITL on-demand MCP executable is missing; client facade entries were not written: $executable"
         return ""
     }
     $endpoints = Get-ItlOnDemandMcpEndpointDescriptors
