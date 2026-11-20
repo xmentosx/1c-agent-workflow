@@ -1280,6 +1280,36 @@ function Get-ItlMemoryOverview {
     return [ordered]@{standing=$standing;index=$index;coverage=$(if($partial){'partial'}else{'bounded'});unavailable=$missing}
 }
 
+function Get-ItlMemoryFixedDefectNotes {
+    param([object[]]$Index,[string]$RegistryPath=(Join-Path $PSScriptRoot '../../references/known-defects.json'))
+    # A workaround note for an ITL defect starts its title with the Russian word
+    # for defect, 'ITL' and the incident key <CODE>@<owner> (the regex spells
+    # the Cyrillic word as \u escapes for PowerShell 5.1), or with 'ITL defect
+    # <KEY>'. The whole key is matched: one code can name a fixed and an open
+    # defect of different owners. Once the installed known-defects registry
+    # lists that key, the note is obsolete in this copy. Informational only:
+    # the agent retires it, nothing is removed.
+    if(-not (Test-Path -LiteralPath $RegistryPath -PathType Leaf)){return ,@()}
+    try{$registry=[IO.File]::ReadAllText($RegistryPath,[Text.UTF8Encoding]::new($false))|ConvertFrom-Json -ErrorAction Stop}catch{return ,@()}
+    $fixed=@{}
+    $entries=Get-ItlCatalogField $registry 'entries' @()
+    foreach($entry in @($entries)){
+        if([string](Get-ItlCatalogField $entry 'status' 'fixed') -cne 'fixed'){continue}
+        $key=[string](Get-ItlCatalogField $entry 'incidentKey' '')
+        if($key){$fixed[$key]=[string](Get-ItlCatalogField $entry 'fixedIn' '')}
+    }
+    $found=@()
+    foreach($level in @($Index)){
+        foreach($title in @($level.notes)){
+            $match=[regex]::Match([string]$title,'^(?:\u0414\u0435\u0444\u0435\u043a\u0442 ITL|ITL defect)\s+([A-Za-z0-9_.\-]+@[A-Za-z0-9_.\-]+?)[:\s]')
+            if(-not $match.Success){continue}
+            $key=$match.Groups[1].Value
+            if($fixed.ContainsKey($key)){$found+=,([ordered]@{level=$level.level;title=[string]$title;fixedIn=$fixed[$key]})}
+        }
+    }
+    return ,$found
+}
+
 function Get-ItlMemoryStatusOverview {
     param([object]$Binding)
     # Session start: the local part always, then the server part within one
@@ -1306,6 +1336,8 @@ function Get-ItlMemoryStatusOverview {
         $output['serverCoverage']='partial: '+$missed+$suffix
     }
     $output['indexUse']='standing: rules in force. index: titles only, verified unless marked; read content with recall. more: further notes, find them with recall.'
+    $stale=Get-ItlMemoryFixedDefectNotes @($overview.index)
+    if(@($stale).Count){$output['fixedDefectNotes']=@($stale);$output['fixedDefectUse']='The installed ITL fixed these defects: recall each title for its data_id, then retire_note it.'}
     # 3000 tokens for the whole answer: standing notes first, then the local
     # receipt list, then index rows, in level order. Receipts are a local
     # convenience that local_only=true returns in full; a rule in force is not.

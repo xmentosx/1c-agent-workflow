@@ -1437,9 +1437,10 @@ local after
         }
     }
 
-    It 'keeps the known-defects registry well formed for on-demand diagnosis' {
+    It 'keeps the known-defects registry to fixed defects only' {
         $registryPath = Join-Path $RepoRoot '.agents/skills/1c-workflow/references/known-defects.json'
         $registry = [IO.File]::ReadAllText($registryPath, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json -ErrorAction Stop
+        $registry.schemaVersion | Should -Be 2
         $entries = @($registry.entries)
         $entries.Count | Should -BeGreaterThan 0
         @($entries.incidentKey | Sort-Object -Unique).Count | Should -Be $entries.Count
@@ -1447,14 +1448,11 @@ local after
             [string]$entry.incidentKey | Should -Match '^[A-Za-z0-9_.\-]+@[A-Za-z0-9_.\-]+$'
             @($entry.codes).Count | Should -BeGreaterThan 0 -Because $entry.incidentKey
             [string]$entry.symptom | Should -Not -BeNullOrEmpty -Because $entry.incidentKey
-            [string]$entry.workaround | Should -Not -BeNullOrEmpty -Because $entry.incidentKey
-            [string]$entry.status | Should -BeIn @('open', 'fixed') -Because $entry.incidentKey
-            if ([string]$entry.status -ceq 'fixed') {
-                [string]$entry.fixedIn | Should -Not -BeNullOrEmpty -Because $entry.incidentKey
-                [string]$entry.regression | Should -Not -BeNullOrEmpty -Because $entry.incidentKey
-            } else {
-                $entry.fixedIn | Should -BeNullOrEmpty -Because $entry.incidentKey
-            }
+            [string]$entry.fixedIn | Should -Not -BeNullOrEmpty -Because $entry.incidentKey
+            [string]$entry.regression | Should -Not -BeNullOrEmpty -Because $entry.incidentKey
+            # Open defects and their workarounds live in organization memory.
+            $entry.PSObject.Properties.Name | Should -Not -Contain 'workaround' -Because $entry.incidentKey
+            $entry.PSObject.Properties.Name | Should -Not -Contain 'status' -Because $entry.incidentKey
         }
         $alwaysOn = [IO.File]::ReadAllText((Join-Path $RepoRoot '.agents/skills/1c-workflow/SKILL.md'), [Text.UTF8Encoding]::new($false))
         $alwaysOn | Should -Not -Match 'known-defects'

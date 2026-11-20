@@ -174,9 +174,13 @@ and shortened data completes it. Notes stored before the limit are read as befor
 While scoped memory is connected to Claude Code in an ITL project, ITL turns off
 Claude's built-in auto memory (`autoMemoryEnabled: false` in
 `.claude/settings.local.json`, unless the user set that key), so knowledge goes
-only to scoped memory. A workaround for an ITL defect is not project or
-organization knowledge: write it neither to `remember` nor to client memory, but
-hand it off as described in `references/workflow-incidents.md`.
+only to scoped memory. A workaround for an ITL defect goes to one
+`organization` note titled `Дефект ITL <CODE>@<owner>: …` with the same
+`applicability.incidentKey`, never to project or client memory, as described in
+`references/workflow-incidents.md`. When the installed
+`references/known-defects.json` lists that key as fixed, `memory_status` names
+the note in `fixedDefectNotes` with `fixedIn`; recall it for its `data_id` and
+retire it.
 
 | Choice | When to use it |
 | --- | --- |

@@ -1,177 +1,164 @@
 {
-  "schemaVersion": 1,
-  "description": "Known ITL workflow defects. Read on demand from workflow-incidents.md while diagnosing; update-workflow matches fixed keys against project handoff reports. Maintained by ITL source developers; a fix moves its entry to fixed in the same commit.",
+  "schemaVersion": 2,
+  "description": "ITL workflow defects fixed in this version. A recurrence of a listed code is a new defect. Open defects and their workarounds live in organization memory notes titled 'Дефект ITL <CODE>: ...' (workflow-incidents.md); memory_status names such notes once their code is listed here, and update-workflow names unclosed handoff reports for these keys. Maintained by ITL source developers: a fix adds its entry in the same commit.",
   "entries": [
     {
       "incidentKey": "ITL_ONDEMAND_START_FAILED@ondemand-guard",
-      "codes": ["ITL_ONDEMAND_START_FAILED", "waiting-for-base"],
+      "codes": [
+        "ITL_ONDEMAND_START_FAILED",
+        "waiting-for-base"
+      ],
       "symptom": "After a failed on-demand MCP start the client and the per-infobase guard keep holding the infobase; the helper waits in waiting-for-base.",
-      "workaround": "None needed after the fix. Previously: call close_1c_session before helper actions.",
-      "status": "fixed",
       "fixedIn": "develop 355a3c11 + c974ffbb (facade 0.4.30)",
       "regression": "tests/pester/OnDemandMcp.Tests.ps1, tests/pester/OnDemandMissingStateRecovery.Tests.ps1, tools/itl-ondemand-mcp/facade_self_reset_test.go"
     },
     {
       "incidentKey": "LAUNCH_PROOF_REQUIRED@ondemand-facade",
-      "codes": ["LAUNCH_PROOF_REQUIRED", "RECOVERY_LEASE_CHANGED", "CLEANUP_UNCONFIRMED", "backend connection was lost"],
+      "codes": [
+        "LAUNCH_PROOF_REQUIRED",
+        "RECOVERY_LEASE_CHANGED",
+        "CLEANUP_UNCONFIRMED",
+        "backend connection was lost"
+      ],
       "symptom": "After a lost backend connection or an infobase reload the facade lease keeps holding the infobase; cleanup refuses with LAUNCH_PROOF_REQUIRED or RECOVERY_LEASE_CHANGED and check-dev-branch fails.",
-      "workaround": "None needed after the fix. A recurrence on facade 0.4.30 or later is a new incident.",
-      "status": "fixed",
       "fixedIn": "develop 4d2d0d79 + c974ffbb (facade 0.4.30)",
       "regression": "tools/itl-ondemand-mcp/facade_self_reset_test.go, tests/pester/OnDemandMcp.Tests.ps1"
     },
     {
       "incidentKey": "DESIGNER_STALL_TIMEOUT@roctup-designer-release",
-      "codes": ["DESIGNER_STALL_TIMEOUT", "DESIGNER_INFOBASE_RELEASE_BLOCKED"],
+      "codes": [
+        "DESIGNER_STALL_TIMEOUT",
+        "DESIGNER_INFOBASE_RELEASE_BLOCKED"
+      ],
       "symptom": "After a successful execute_code the ROCTUP client keeps the infobase and check-dev-branch stalls in Designer until DESIGNER_STALL_TIMEOUT.",
-      "workaround": "None needed after the fix; do not call close_1c_session before every helper action. DESIGNER_INFOBASE_RELEASE_BLOCKED remains a retryable execution conflict.",
-      "status": "fixed",
       "fixedIn": "develop e20f074b (facade 0.4.33)",
       "regression": "tests/pester/DesignerCompletion.Tests.ps1"
     },
     {
       "incidentKey": "ITL_TESTCLIENT_NO_FREE_PORT@vanessa-testclient-ports",
-      "codes": ["ITL_TESTCLIENT_NO_FREE_PORT"],
+      "codes": [
+        "ITL_TESTCLIENT_NO_FREE_PORT"
+      ],
       "symptom": "Right after TestClient shutdown its port still counts as busy (TIME_WAIT, ESTABLISHED or CLOSE_WAIT) and the next start fails.",
-      "workaround": "None needed after the fix; extra port waits added to features are unnecessary.",
-      "status": "fixed",
       "fixedIn": "develop 117c0a26 (Vanessa itl-r12)",
       "regression": "tests/pester/VanessaTestClientPorts.Tests.ps1"
     },
     {
       "incidentKey": "CLIPBOARD_STEP_SWALLOWS_EXCEPTION@vanessa-va-patch",
-      "codes": ["через буфер обмена (Расширение)"],
+      "codes": [
+        "через буфер обмена (Расширение)"
+      ],
       "symptom": "A Vanessa code step executed through the clipboard extension swallows the exception and reports success.",
-      "workaround": "None needed after the fix; trace files for clipboard steps are unnecessary.",
-      "status": "fixed",
       "fixedIn": "develop 1e99c70c (Vanessa itl-r11)",
-      "regression": "OneScript probes and native build recorded in commit 1e99c70c"
+      "regression": "OneScript probes and the native build in develop 1e99c70c"
     },
     {
       "incidentKey": "STALE_RUNNING_FACADE@itl-ondemand-mcp",
-      "codes": ["facadeVersion", "minimumFacadeVersion"],
+      "codes": [
+        "facadeVersion",
+        "minimumFacadeVersion"
+      ],
       "symptom": "After refresh or update-workflow a facade process started earlier by the client keeps running the old version; ITL does not detect it.",
-      "workaround": "Reconnect the MCP server or start one new chat (references/mcp.md).",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
-    },
-    {
-      "incidentKey": "ITL_ONDEMAND_START_FAILED@vanessa-broker-start",
-      "codes": ["ITL_ONDEMAND_START_FAILED", "phase=broker-start"],
-      "symptom": "After update-dev-branch-base the service TESTMANAGER exits about 1 s after start; the port wait still runs its full timeout.",
-      "workaround": "Repeat the same command once; do not add blind retries. The root cause is not established.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop 44c22f61 (facade 0.4.34) + 1df7efe5, b547871b, a21fc5f0 (relay itl-ondemand-relay-v1.0.0, facade 0.4.37); the first switch to the relay needs one client restart",
+      "regression": "tools/itl-ondemand-mcp/cmd/itl-ondemand-relay/relay_test.go, tools/itl-ondemand-mcp/facade_notes_test.go, tools/itl-ondemand-mcp/cmd/itl-ondemand-probe/relay_mode_test.go, tests/pester/OnDemandMcp.Tests.ps1"
     },
     {
       "incidentKey": "EXECUTE_FEATURE_STEP_FALSE_SUCCESS@vanessa-va-patch",
-      "codes": ["execute_feature_step", "успешно выполнен"],
+      "codes": [
+        "execute_feature_step",
+        "успешно выполнен"
+      ],
       "symptom": "execute_feature_step reports success for a step that raises an exception.",
-      "workaround": "Treat execute_feature_step as diagnostic only; prove the result with run_scenario or a full check.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
-    },
-    {
-      "incidentKey": "SCHEDULED_JOB_ABORTED@enterprise-launch",
-      "codes": ["_$Job$_.Error", "Сеанс отсутствует"],
-      "symptom": "Closing a workflow-owned Enterprise client (TestClient, TESTMANAGER, ROCTUP) aborts a running file-infobase scheduled job; check-dev-branch then reports event-log debt.",
-      "workaround": "Run acknowledge-event-log-errors for the reviewed entries (references/verification-result.md).",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop 8136894a (Vanessa itl-r17, facade 0.4.35: ITL_VANESSA_STEP_FAILED, ITL_VANESSA_STEP_NOT_PROVEN)",
+      "regression": "tests/pester/VanessaAgentFocus.Tests.ps1, tools/itl-ondemand-mcp/facade_notes_test.go"
     },
     {
       "incidentKey": "VANESSA_UI_SESSION_LOCKED@vanessa-result-classifier",
-      "codes": ["product-assertion", "VAExtension"],
+      "codes": [
+        "product-assertion",
+        "VAExtension"
+      ],
       "symptom": "While the Windows session is locked a UI step cannot find the VAExtension form and the run is classified as product-assertion.",
-      "workaround": "Unlock the Windows session and repeat the same command; do not treat the failure as a product defect.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop 5d991c97 (category runner, requiredAction unlock-windows-session-and-repeat-original-command)",
+      "regression": "tests/pester/VanessaRunnerTopology.Tests.ps1, tests/pester/WindowHelper.Tests.ps1"
     },
     {
       "incidentKey": "VANESSA_STRAY_KEYSTROKE@window-helper",
-      "codes": ["foreground-returned", "V8DropWindowExWnd"],
+      "codes": [
+        "foreground-returned",
+        "V8DropWindowExWnd"
+      ],
       "symptom": "A hidden TestClient form takes the foreground during a run; user keystrokes reach the 1C client.",
-      "workaround": "Avoid typing during a Vanessa UI run; repeat the run when a stray input is visible in the journal.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop 2a23759f + 2d5985db",
+      "regression": "tests/pester/WindowHelper.Tests.ps1"
     },
     {
       "incidentKey": "REFRESH_STALE_MERGE_BASE@branch-reset",
-      "codes": ["chore: reset branch for next change"],
+      "codes": [
+        "chore: reset branch for next change"
+      ],
       "symptom": "A branch reset creates a single-parent commit, so the next refresh merges against an old merge base and reports false conflicts.",
-      "workaround": "Resolve each refresh conflict against current master content; do not keep the branch side for files already in master.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop 0994460d",
+      "regression": "tests/pester/DevBranchLifecycle.Tests.ps1"
     },
     {
       "incidentKey": "RUNNER_STATUS_STALE@verification-tail",
-      "codes": ["RUNNER_STATUS_STALE", "yaxunit.postprocess"],
+      "codes": [
+        "RUNNER_STATUS_STALE",
+        "yaxunit.postprocess"
+      ],
       "symptom": "check-dev-branch is killed by the runner watchdog after tests pass, while assessment and the user report run without a heartbeat.",
-      "workaround": "Set ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS=300 and repeat the same command.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
-    },
-    {
-      "incidentKey": "REMOTE_CODE_INDEX_MASTER_SNAPSHOT@vibecoding1c-index",
-      "codes": ["remote-shared", "stale"],
-      "symptom": "Remote code/graph MCP answers describe the indexed master snapshot, not the current worktree.",
-      "workaround": "Confirm code claims by reading src/cf; decide whether a fix is in master with git log master.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop ae1ec754",
+      "regression": "tests/pester/CompactRunnerWatchdog.Tests.ps1"
     },
     {
       "incidentKey": "ITL_VANESSA_TESTCLIENT_EXITED@vanessa-form-actions",
-      "codes": ["ITL_VANESSA_TESTCLIENT_EXITED", "ACTION_FAILED"],
+      "codes": [
+        "ITL_VANESSA_TESTCLIENT_EXITED",
+        "ACTION_FAILED"
+      ],
       "symptom": "A failed execute_form_actions, a modal window or get_form_element_data for a missing element ends TestClient; the next call starts a fresh client.",
-      "workaround": "Restore the UI state with one self-contained scenario (open, input, assert).",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop d7bb8a7c (facade 0.4.36); a real TestClient process crash stays a separate incident",
+      "regression": "tools/itl-ondemand-mcp/runtime_integration_test.go, tools/itl-ondemand-mcp/facade_notes_test.go"
     },
     {
       "incidentKey": "TESTCLIENT_SILENTLY_REPLACED@itl-ondemand-mcp",
-      "codes": ["_meta.itlTestClient"],
+      "codes": [
+        "_meta.itlTestClient"
+      ],
       "symptom": "A stateful Vanessa UI call runs on a replaced, empty TestClient without a warning; input steps report success.",
-      "workaround": "Compare _meta.itlTestClient.pid between calls; restore the state with one self-contained scenario.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop 44c22f61 (facade 0.4.34: ITL_VANESSA_TESTCLIENT_REPLACED)",
+      "regression": "tools/itl-ondemand-mcp/facade_notes_test.go"
     },
     {
       "incidentKey": "ITL_VANESSA_TOOL_RESULT_FAILED@vanessa-semantic-marker",
-      "codes": ["ITL_VANESSA_TOOL_RESULT_FAILED", "значение не является значением объектного типа"],
+      "codes": [
+        "ITL_VANESSA_TOOL_RESULT_FAILED",
+        "значение не является значением объектного типа"
+      ],
       "symptom": "A run_scenario result whose failed step or product text contains a generic platform phrase is replaced by a runtime/editor failure.",
-      "workaround": "Read the scenario result in the run report or reproduce through the normal check before blaming the runtime.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop 44c22f61 (facade 0.4.34)",
+      "regression": "tools/itl-ondemand-mcp/facade_notes_test.go"
     },
     {
       "incidentKey": "VANESSA_RUN_TIMEOUT@vanessa-budget",
-      "codes": ["1C Enterprise timed out after 1800 seconds", "RUNNER_OPERATION_TIMEOUT", "phase-budget:vanessa.run"],
+      "codes": [
+        "1C Enterprise timed out after 1800 seconds",
+        "RUNNER_OPERATION_TIMEOUT",
+        "phase-budget:vanessa.run"
+      ],
       "symptom": "One fixed Vanessa budget covers the whole selected TESTMANAGER run; long suites end by timeout without test failures.",
-      "workaround": "Raise VANESSA_TEST_TIMEOUT_SECONDS in .dev.env; the runner already extends to the phase budget, so do not raise ITL_RUNNER_CHECK_DEV_BRANCH_TIMEOUT_SECONDS.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop a532d16e + 851f1408",
+      "regression": "tests/pester/DevBranchCheck.Tests.ps1, tests/pester/VanessaRuntimeCleanup.Tests.ps1"
     },
     {
       "incidentKey": "VANESSA_SERVICE_INFOBASE_SIGNATURE_INVALID@vanessa-service-start",
-      "codes": ["Цифровая подпись конфигурации неверна"],
+      "codes": [
+        "Цифровая подпись конфигурации неверна"
+      ],
       "symptom": "The Vanessa service TESTMANAGER infobase sometimes fails to start with an invalid configuration signature; no automatic retry exists.",
-      "workaround": "Repeat the same command; the service infobase is per worktree, so this is not a race with another branch.",
-      "status": "open",
-      "fixedIn": null,
-      "regression": null
+      "fixedIn": "develop 55330bf6 (a launch refused by the signature check is repeated once automatically; the root cause is not established)",
+      "regression": "tests/pester/VanessaRunnerTopology.Tests.ps1"
     }
   ]
 }

@@ -1418,6 +1418,37 @@ try {
         (@($status.index|ForEach-Object {$_.more})|Measure-Object -Sum).Sum | Should -Be 0
         (@($status.index|ForEach-Object {@($_.notes).Count})|Measure-Object -Sum).Sum | Should -Be 41
     }
+    It 'names organization notes for ITL defects the installed registry lists as fixed' {
+        $registryPath=Join-Path $RepoRoot '.agents/skills/1c-workflow/references/known-defects.json'
+        $registry=[IO.File]::ReadAllText($registryPath,[Text.UTF8Encoding]::new($false))|ConvertFrom-Json
+        $fixedEntry=@($registry.entries)[0]
+        $fixedKey=[string]$fixedEntry.incidentKey
+        $fixedCode=($fixedKey -split '@')[0]
+        $organization=Get-ScopeDataset $b organization
+        $null=Add-FixtureNote $organization 'fixed-defect' 'Обход исправленного дефекта.' -Title "Дефект ITL ${fixedKey}: старый обход"
+        # The same code of another owner is a different, still open defect.
+        $null=Add-FixtureNote $organization 'open-defect' 'Обход открытого дефекта.' -Title "Дефект ITL ${fixedCode}@other-owner: действующий обход"
+        $null=Add-FixtureNote $organization 'ordinary' 'Обычная заметка.' -Title "Платформа: $fixedCode в обычном тексте"
+        $status=Invoke-ItlMemoryStatus $b
+        $stale=@($status.fixedDefectNotes)
+        $stale.Count | Should -Be 1
+        $stale[0].level | Should -BeExactly organization
+        $stale[0].title | Should -BeExactly "Дефект ITL ${fixedKey}: старый обход"
+        $stale[0].fixedIn | Should -BeExactly ([string]$fixedEntry.fixedIn)
+        $status.Contains('fixedDefectUse') | Should -BeTrue
+        # Nothing is retired by status itself; all three titles stay listed.
+        @(@($status.index|Where-Object level -EQ organization)[0].notes).Count | Should -Be 3
+        # Without a registry, or with only legacy open entries, nothing is named.
+        $temp=Join-Path ([IO.Path]::GetTempPath()) ('itl реестр '+[guid]::NewGuid().ToString('N')+'.json')
+        try{
+            $index=@([ordered]@{level='organization';notes=@("Дефект ITL ${fixedKey}: старый обход");more=0})
+            $none=Get-ItlMemoryFixedDefectNotes $index (Join-Path ([IO.Path]::GetTempPath()) 'нет реестра.json')
+            $none.Count | Should -Be 0
+            [IO.File]::WriteAllText($temp,(@{schemaVersion=1;entries=@(@{incidentKey=$fixedKey;codes=@($fixedCode);status='open'})}|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+            $none=Get-ItlMemoryFixedDefectNotes $index $temp
+            $none.Count | Should -Be 0
+        }finally{Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue}
+    }
     It 'cuts an overfull project index at its level limit and counts the rest' {
         $project=Get-ProjectDataset $b
         foreach($number in 1..45){$null=Add-FixtureNote $project "note-$number" 'Обычная заметка.' -Title "Заметка $number"}

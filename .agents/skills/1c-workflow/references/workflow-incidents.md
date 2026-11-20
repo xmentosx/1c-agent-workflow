@@ -14,17 +14,26 @@ For Kilo behavior that disagrees with the Intent Map, run `status`, compare the
 reported expected skill contract/SHA, and ask for `/reload` before treating it as
 a source defect. ITL cannot inspect or clear Kilo's internal cache/worktrees.
 
-After classifying the failure, search the exact error code or message in
-`references/known-defects.json` and consult the shared fix archive below before
-investigating a known workflow incident again. A matching entry or message is a
-lead, not proof that its cause or remedy applies to this project. A `fixed`
-entry names the version that removed the defect; a recurrence there is new.
+After classifying the failure, look up the exact error code in
+`references/known-defects.json`: it lists only defects fixed in this installed
+version, so a matching key there means a recurrence, a new defect. One code can
+name defects of several owners; compare the whole `<CODE>@<owner>` key.
+Otherwise recall `Дефект ITL <CODE>` in memory and consult the shared fix
+archive below before investigating a known workflow incident again. A matching
+note, entry or message is a lead, not proof that its cause or remedy applies to
+this project.
 
-An ITL defect workaround is not project or product knowledge. Do not save it
-in `remember` at any scope or in the AI client's own memory. Apply the
-workaround in the current task, write a handoff report under the boundaries
-below, and tell the user in one line:
-`это дефект ITL, отчёт для разработчика: <path>`.
+An ITL defect workaround belongs to every project that uses ITL, so it lives in
+organization memory until a release fixes the defect, never in project, product
+or workplace notes or in the AI client's own memory. Reuse a recalled note.
+For a new defect, save one `organization` note: title
+`Дефект ITL <CODE>@<owner>: <the workaround in a few words>`, the workaround
+with its conditions and ITL version as the fact, `applicability.incidentKey`
+set to the same key, the handoff report as evidence. Apply the workaround in the
+current task, write the handoff report under the boundaries below, and tell the
+user in one line: `это дефект ITL, отчёт для разработчика: <path>`. After an
+update that fixes it, `memory_status` lists the note under `fixedDefectNotes`;
+retire it then.
 
 ## Choose a concrete continuation
 
@@ -209,7 +218,7 @@ The agent writes one Markdown report; no generator is required. Include:
 
 0. A line `incidentKey: <CODE>@<owner>`: the exact error code plus the owning
    component, for example `RUNNER_STATUS_STALE@verification-tail`. Reuse the
-   key of a matching known-defects entry. A supplement repeats the original key;
+   key of a matching organization note. A supplement repeats the original key;
    after the fix is installed, close it with a supplement line
    `incidentClosed: <key>`.
 1. Original project task, project/branch, workflow revision and executing runtime.

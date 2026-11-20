@@ -8119,7 +8119,9 @@ function Get-WorkflowFixedDefectHandoffMatches {
     $registry = Read-Utf8Text -Path $RegistryPath | ConvertFrom-Json -ErrorAction Stop
     $fixedIn = @{}
     foreach ($entry in @($registry.entries)) {
-        if ([string]$entry.status -ceq 'fixed' -and [string]$entry.incidentKey) {
+        # Schema 2 lists fixed defects only; a schema 1 entry names its status.
+        $status = [string](Get-ConfigValueFromObject $entry 'status' 'fixed')
+        if ($status -ceq 'fixed' -and [string]$entry.incidentKey) {
             $fixedIn[[string]$entry.incidentKey] = [string]$entry.fixedIn
         }
     }
