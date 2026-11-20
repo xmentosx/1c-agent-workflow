@@ -141,6 +141,32 @@ Describe "Local quality gate contract" {
         @($catalog.developJourneys.routes.upgrade.contracts) | Should -Contain "lifecycle"
     }
 
+    It "keeps the timeout reason when taskkill cannot terminate part of a child tree" {
+        # 2026-11 Targeted runs stopped at their 3600 s budget reported only
+        # "The process ... could not be terminated": redirected taskkill stderr
+        # was terminating under Stop in Windows PowerShell.
+        $definitions = @{}
+        foreach ($case in @(@{ path = 'scripts\check.ps1'; name = 'Stop-GateChildProcessTree' }, @{ path = 'scripts\source-repair.ps1'; name = 'Invoke-RepairChild' })) {
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot $case.path), [ref]$tokens, [ref]$errors)
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $case.name }, $true)
+            $definition | Should -Not -BeNullOrEmpty
+            $definition.Extent.Text | Should -Match '\$ErrorActionPreference = .Continue.'
+            $definitions[$case.name] = $definition.Extent.Text
+        }
+        & {
+            $ErrorActionPreference = 'Stop'
+            Invoke-Expression $definitions['Stop-GateChildProcessTree']
+            # PID 999999 never exists on Windows (PIDs are multiples of four), so
+            # taskkill writes to stderr as it does for a descendant that already exited.
+            $gone = [pscustomobject]@{ Id = 999999; HasExited = $false; waited = 0 }
+            $gone | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { $this.waited++ }
+            { Stop-GateChildProcessTree -Process $gone } | Should -Not -Throw
+            $gone.waited | Should -Be 1
+            $ErrorActionPreference | Should -Be 'Stop'
+        }
+    }
+
     It "accepts only exact or ancestor same-tree qualification commits" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-qualification-reuse-" + [guid]::NewGuid().ToString("N"))
         try {

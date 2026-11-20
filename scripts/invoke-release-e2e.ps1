@@ -2921,7 +2921,11 @@ try {
             $statusResult = Invoke-E2EHelper -Action "status" -TimeoutSeconds 120
             $statusText = Get-Content -LiteralPath $statusResult.stdoutPath -Raw -Encoding UTF8
             if ($statusText -notmatch '(?im)^Verification fresh passed:\s*True\s*$') {
-                throw "E2E /itl-check did not produce fresh passed verification."
+                # The run record keeps only this message once %TEMP% logs are
+                # gone; carry the status lines that say why (2026-11-09/10
+                # repeated this failure three times on one tree without them).
+                $verificationLines = @($statusText -split "\r?\n" | Where-Object { $_ -match '^\s*Verification' } | Select-Object -First 8 | ForEach-Object { $_.Trim() })
+                throw "E2E /itl-check did not produce fresh passed verification. Status: $(if ($verificationLines.Count) { $verificationLines -join '; ' } else { '<no verification lines>' }). See $($statusResult.stdoutPath)"
             }
 
             $stateRecord = Get-E2EState
