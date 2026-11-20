@@ -5,7 +5,10 @@
         $relative = $file.FullName.Substring($root.Length + 1).Replace('\','/')
         # These are native facade/launch receipts, not backend process records.
         # Unknown JSON remains subject to the caller's strict runtime checks.
+        # launch/<server>.json is the relay's launch descriptor, written by
+        # update-workflow; it names a facade, not a running process.
         if ($file.Name -like '*.VAParams.json' -or
+            $relative -match '^launch/[^/]+\.json$' -or
             $relative -match '^[^/]+/connections/[^/]+/owner\.json$' -or
             $relative -match '^[^/]+/connection-recovery/recovery-[a-f0-9]{32}\.json$') { continue }
         $file

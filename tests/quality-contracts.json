@@ -2074,6 +2074,7 @@
         "tests/pester/ReviewScope.Tests.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.data-mcp.ps1"
       ],
+      "reuseInputPaths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1"],
       "tests": [
         "tests/pester/LifecycleGitContinuation.Tests.ps1",
         "tests/pester/Agent1cEntrypoint.Tests.ps1",
