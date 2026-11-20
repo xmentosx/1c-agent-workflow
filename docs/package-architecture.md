@@ -642,6 +642,20 @@ own prerequisites and must not require successful acceptance of unwanted work.
 
 A runtime check may block only when continuing can lose data, mutate the wrong target, violate an explicit safety boundary, or produce false success or verification evidence. Every other diagnostic discrepancy is `WARN`, not `FAIL`.
 
+### Source delivery targets
+
+Source delivery serves changes, so its own machinery is judged by these weekly
+targets: passed `Targeted` p90 at most 10 minutes; publication p90 (every
+Develop and Release run spent on a tree that Release qualified) at most 60
+minutes; no repeated failure of one mode on an unchanged tree. On 2026-11-20 the
+user asked to stop adding delivery barriers after many iterations left the
+2026-11-16 week at 30.5, 181.6 and 3. `scripts/delivery-metrics.ps1` reports
+them read-only from the existing run records. A change to registration,
+publication, gates, selection or reuse states which target it moves and quotes
+that report before and after; a new barrier or stage is accepted only with such
+evidence. Safety, verification and evidence contracts above are not traded for
+these targets.
+
 Test classification is an executable-verification prerequisite, not a runtime
 diagnostic. A normal check stops before launching 1C when Vanessa or YAxUnit
 tests cannot be mapped to their declared cadence and production owners; silently
