@@ -22842,7 +22842,7 @@ function Export-DevBranchResult {
     if ($acknowledgedEventLog.Count -gt 0) {
         # The agent's own decision, shown to the person accepting the result; it never blocks export.
         $acknowledgedReasons = @($acknowledgedEventLog | ForEach-Object { [string](Get-StateValue -State $_ -Name 'reason' -Default '') } | Where-Object { $_ } | Select-Object -Unique)
-        Add-RunUserReportLine -Lines $reportLines -Label 'Намеренные ошибки журнала регистрации' -Value "$($acknowledgedEventLog.Count), подтверждены агентом: $($acknowledgedReasons -join '; ')"
+        Add-RunUserReportLine -Lines $reportLines -Label 'Ошибки журнала регистрации, признанные агентом' -Value "$($acknowledgedEventLog.Count); решения: $($acknowledgedReasons -join '; ')"
     }
     Add-ConfigRepositoryTransferPlanRunUserReportLines -Lines $reportLines -Plan $repositoryTransferPlan
     Write-AndSetRunUserReport -Lines $reportLines -PlatformPreparation $platformPreparation

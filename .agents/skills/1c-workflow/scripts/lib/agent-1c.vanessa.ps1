@@ -2565,7 +2565,7 @@ function Resolve-DevBranchEventLogDebt {
             $reportPath = [string](Get-StateValue -State $State -Name "eventLogDebtReportPath" -Default "")
             $Verification = [pscustomobject]@{
                 status = "failed"
-                reason = "A previous event-log failure remains unresolved for the same verification fingerprint. Fix the cause, acknowledge errors the agent provoked intentionally with acknowledge-event-log-errors, or use /itl-verify-fix before accepting a clean retry. Previous evidence: $reportPath"
+                reason = "A previous event-log failure remains unresolved for the same verification fingerprint. Fix an error the branch causes, acknowledge one the agent provoked intentionally or one unrelated to the branch task with acknowledge-event-log-errors, or use /itl-verify-fix before accepting a clean retry. Previous evidence: $reportPath"
                 reader = [string](Get-StateValue -State $Verification -Name "reader" -Default "")
                 baselinePath = [string](Get-StateValue -State $Verification -Name "baselinePath" -Default "")
                 reportPath = $reportPath
@@ -2600,8 +2600,9 @@ function Get-DevBranchEventLogObjectList {
 }
 
 function Get-DevBranchEventLogAcknowledgements {
-    # Error signatures the agent confirmed as provoked intentionally, such as a
-    # tested business refusal. They live in branch state, apart from the
+    # Error signatures the agent decided not to fix: provoked intentionally,
+    # such as a tested business refusal, or unrelated to the branch task. They
+    # live in branch state, apart from the
     # baseline file whose signature list fork restore compares byte for byte.
     param([object]$State)
 
@@ -2616,9 +2617,10 @@ function Get-DevBranchEventLogAcknowledgements {
 
 function Add-DevBranchEventLogAcknowledgement {
     # The agent's own decision that new event-log errors it observed were
-    # provoked on purpose. It accepts only signatures from the last failed
-    # report, keeps them for the rest of the branch and clears the event-log
-    # debt once every error of the debt report is acknowledged.
+    # provoked on purpose or are unrelated to the branch task. It accepts only
+    # signatures from the last failed report, keeps them with the report's
+    # origin and relation facts for the rest of the branch and clears the
+    # event-log debt once every error of the debt report is acknowledged.
     param([string[]]$Signatures = @(), [string]$Reason = "")
 
     $state = Read-DevBranchState -Name $DevBranchName
@@ -2626,7 +2628,7 @@ function Add-DevBranchEventLogAcknowledgement {
     $requested = @($Signatures | ForEach-Object { ([string]$_) -split '[,;\s]+' } |
         ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ } | Sort-Object -Unique)
     if ($requested.Count -eq 0 -or [string]::IsNullOrWhiteSpace($Reason)) {
-        throw "EVENT_LOG_ACKNOWLEDGE_INVALID: pass -EventLogSignatures with signature values from the failed event-log report and -EventLogAcknowledgeReason explaining why the errors were provoked intentionally."
+        throw "EVENT_LOG_ACKNOWLEDGE_INVALID: pass -EventLogSignatures with signature values from the failed event-log report and -EventLogAcknowledgeReason stating the agent's decision and evidence: provoked intentionally, or unrelated to the branch task."
     }
 
     $reportPaths = @(@("eventLogDebtReportPath", "lastEventLogOnlyReportPath", "lastVanessaEventLogNewErrorsPath") |
@@ -2667,6 +2669,8 @@ function Add-DevBranchEventLogAcknowledgement {
             reportPath = $source.reportPath
             event = [string](Get-StateValue -State $source.item -Name "event" -Default "")
             message = $message.Substring(0, [Math]::Min($message.Length, 300))
+            origin = [string](Get-StateValue -State $source.item -Name "origin" -Default "")
+            relation = [string](Get-StateValue -State $source.item -Name "relation" -Default "")
         }
         $added += $entry
         $known[$signature] = $entry
@@ -3881,6 +3885,121 @@ function Get-VanessaEventLogDiagnosticRunAttribution {
     return [pscustomobject]@{ marks = $marks; runs = @($groups) }
 }
 
+function Get-DevBranchEventLogStackFrames {
+    # 1C prints a frame as {ОбщийМодуль.Имя.Модуль(12)}; an extension frame
+    # adds the extension name before it. {(1)} frames of Вычислить carry no
+    # module and are skipped.
+    param([AllowNull()][string]$Comment)
+
+    $frames = @()
+    foreach ($match in [regex]::Matches([string]$Comment, '\{(?:[^\s{}()]+\s+)?(?<module>[\p{L}\p{N}_]+(?:\.[\p{L}\p{N}_]+)+)\((?<line>\d+)\)\}')) {
+        $module = $match.Groups['module'].Value
+        $parts = $module.Split('.')
+        $frames += [pscustomobject]@{ module = $module; object = "$($parts[0]).$($parts[1])"; line = [int]$match.Groups['line'].Value }
+    }
+    return @($frames)
+}
+
+function ConvertTo-DevBranchEventLogSourceModule {
+    # The object and module names 1C prints in stack frames for a source path
+    # of the configuration or an extension. A path without a module, such as
+    # metadata XML, still identifies its object.
+    param([string]$Path)
+
+    $segments = @(([string]$Path).Replace('\', '/').Split('/') | Where-Object { $_ })
+    for ($index = 0; $index -lt $segments.Count - 1; $index++) {
+        $label = Get-ConfigRepositoryMetadataCollectionLabel -Collection $segments[$index]
+        if (-not $label) { continue }
+        $object = "$label.$([IO.Path]::GetFileNameWithoutExtension($segments[$index + 1]))"
+        $rest = @($segments | Select-Object -Skip ($index + 2)) -join '/'
+        $suffix = ''
+        if ($rest -cmatch '^Ext/Module\.bsl$') { $suffix = 'Модуль' }
+        elseif ($rest -cmatch '^Ext/ObjectModule\.bsl$') { $suffix = 'МодульОбъекта' }
+        elseif ($rest -cmatch '^Ext/ManagerModule\.bsl$') { $suffix = 'МодульМенеджера' }
+        elseif ($rest -cmatch '^Ext/RecordSetModule\.bsl$') { $suffix = 'МодульНабораЗаписей' }
+        elseif ($rest -cmatch '^Ext/ValueManagerModule\.bsl$') { $suffix = 'МодульМенеджераЗначения' }
+        elseif ($rest -cmatch '^Ext/CommandModule\.bsl$') { $suffix = 'МодульКоманды' }
+        elseif ($rest -cmatch '^Ext/Form/Module\.bsl$') { $suffix = 'Форма' }
+        elseif ($rest -cmatch '^Forms/(?<name>[^/]+)/Ext/Form/Module\.bsl$') { $suffix = "Форма.$($Matches['name']).Форма" }
+        elseif ($rest -cmatch '^Commands/(?<name>[^/]+)/Ext/CommandModule\.bsl$') { $suffix = "Команда.$($Matches['name']).МодульКоманды" }
+        return [pscustomobject]@{ object = $object; module = $(if ($suffix) { "$object.$suffix" } else { '' }) }
+    }
+    return $null
+}
+
+function Get-DevBranchEventLogChangedLines {
+    # Current line numbers the branch added or replaced in one module; a pure
+    # deletion marks the two lines around it.
+    param([string]$Base, [string]$Path)
+
+    $lines = [Collections.Generic.HashSet[int]]::new()
+    $diff = [string](Get-GitOutput @('-c', 'core.safecrlf=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '-U0', $Base, '--', ":(literal)$Path") | Out-String)
+    foreach ($match in [regex]::Matches($diff, '(?m)^@@ -\d+(?:,\d+)? \+(?<start>\d+)(?:,(?<count>\d+))? @@')) {
+        $start = [int]$match.Groups['start'].Value
+        $count = if ($match.Groups['count'].Success) { [int]$match.Groups['count'].Value } else { 1 }
+        if ($count -eq 0) { [void]$lines.Add($start); [void]$lines.Add($start + 1); continue }
+        for ($line = $start; $line -lt $start + $count; $line++) { [void]$lines.Add($line) }
+    }
+    return , $lines
+}
+
+function Get-DevBranchEventLogErrorRelations {
+    # Facts for the agent's own decision on each new error; they never change
+    # the verdict. origin compares the error time with the start of this
+    # check. relation compares the stack frames with the branch changes against
+    # its unique accepted master ancestor, working tree included; line numbers
+    # are those of the current sources.
+    param([object[]]$Errors = @(), [Nullable[datetime]]$CheckStartedAt = $null)
+
+    $skew = Get-VanessaEventLogClockSkewSeconds
+    $base = ([string](Get-GitOutput @('merge-base', '--all', "refs/heads/$(Get-MasterBranch)", 'HEAD') | Out-String)).Trim()
+    if ($base -notmatch '^[a-f0-9]{40}$') { throw 'the branch has no unique accepted master ancestor.' }
+    $roots = @((Get-ExportPath), (Get-ExtensionsPath) | ForEach-Object { ":(literal)$(([string]$_).Replace('\', '/').TrimEnd('/'))" } | Sort-Object -Unique)
+    $objects = @{}
+    $modules = @{}
+    $newModules = @{}
+    $changed = @(Get-GitPathList -Arguments (@('-c', 'core.safecrlf=false', 'diff', '--name-only', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', $base, '--') + $roots))
+    # Every line of a module the branch has not added to Git yet is new.
+    $untracked = @(Get-GitPathList -Arguments (@('ls-files', '--others', '--exclude-standard', '-z', '--') + $roots))
+    foreach ($path in @($changed + $untracked)) {
+        $source = ConvertTo-DevBranchEventLogSourceModule -Path $path
+        if ($null -eq $source) { continue }
+        $objects[$source.object] = $true
+        if ($source.module) { $modules[$source.module] = [string]$path }
+        if ($source.module -and $path -cin $untracked) { $newModules[$source.module] = $true }
+    }
+    $changedLines = @{}
+    $relations = @{}
+    for ($index = 0; $index -lt @($Errors).Count; $index++) {
+        $item = $Errors[$index]
+        $date = ConvertTo-VanessaRunWindowLocalTime -Value $item.date
+        $origin = if ($null -eq $CheckStartedAt -or $null -eq $date) { 'unknown' }
+            elseif ($date -lt ([datetime]$CheckStartedAt).AddSeconds(-$skew)) { 'before-check' }
+            else { 'check' }
+        $frames = @(Get-DevBranchEventLogStackFrames -Comment ([string]$item.comment))
+        $changedObjects = @($frames | Where-Object { $objects.ContainsKey($_.object) } | ForEach-Object { $_.object } | Select-Object -Unique)
+        $changedFrames = @()
+        foreach ($frame in $frames) {
+            if (-not $modules.ContainsKey($frame.module)) { continue }
+            if ($newModules.ContainsKey($frame.module)) { $changedFrames += "$($frame.module)($($frame.line))"; continue }
+            $path = $modules[$frame.module]
+            if (-not $changedLines.ContainsKey($path)) { $changedLines[$path] = Get-DevBranchEventLogChangedLines -Base $base -Path $path }
+            if ($changedLines[$path].Contains([int]$frame.line)) { $changedFrames += "$($frame.module)($($frame.line))" }
+        }
+        $relation = if ($changedFrames.Count -gt 0) { 'changed-lines' }
+            elseif ($changedObjects.Count -gt 0) { 'changed-objects' }
+            elseif ($frames.Count -gt 0) { 'unchanged' }
+            else { 'no-stack' }
+        $relations[$index] = [pscustomobject]@{
+            origin = $origin
+            relation = $relation
+            changedObjects = @($changedObjects)
+            changedFrames = @($changedFrames | Select-Object -Unique)
+        }
+    }
+    return [pscustomobject]@{ base = $base; relations = $relations }
+}
+
 function Complete-VanessaRunEventLogWindow {
     param([string]$CursorPath, [datetime]$FinishedAt)
 
@@ -4004,6 +4123,21 @@ function Test-DevBranchEventLogAfterVanessa {
             Write-Host "[WARN] Diagnostic Vanessa run attribution is unavailable: $($_.Exception.Message). Event-log evidence is unchanged."
         }
     }
+    # The canonical check measures itself from its own start; without one, as in
+    # a direct Vanessa run, the run itself is the check.
+    $checkStartedAt = $RunStartedAt
+    $checkTiming = if (Get-Command Get-ItlCheckTimingSnapshot -ErrorAction SilentlyContinue) { Get-ItlCheckTimingSnapshot } else { $null }
+    if ($null -ne $checkTiming) { $checkStartedAt = (Get-Date).AddMilliseconds(-[double]$checkTiming.totalMs) }
+    $relationFacts = $null
+    $relationFailure = ''
+    if ($newErrors.Count -gt 0) {
+        try {
+            $relationFacts = Get-DevBranchEventLogErrorRelations -Errors $newErrors -CheckStartedAt $checkStartedAt
+        } catch {
+            $relationFailure = $_.Exception.Message
+            Write-Host "[WARN] Event-log error origin and branch relation are unavailable: $relationFailure Event-log evidence is unchanged."
+        }
+    }
 
     $reportPath = ""
     if ($newErrors.Count -gt 0 -or $warnings.Count -gt 0 -or $acknowledged.Count -gt 0) {
@@ -4022,6 +4156,9 @@ function Test-DevBranchEventLogAfterVanessa {
                 activeSegment = $(if ($null -ne $cursorInfo) { $cursorInfo.activeSegment } else { "" })
                 scanMode = $readResult.scanMode
             }
+            checkStartedAt = $checkStartedAt.ToString("o")
+            relationBase = $(if ($null -ne $relationFacts) { $relationFacts.base } else { "" })
+            relationFailure = $relationFailure
             newErrorCount = $newErrors.Count
             warningCount = $warnings.Count
             acknowledgedErrorCount = $acknowledged.Count
@@ -4040,6 +4177,13 @@ function Test-DevBranchEventLogAfterVanessa {
                 if ($attribution.marks.ContainsKey($errorIndex)) {
                     $entry["diagnosticRunId"] = $attribution.marks[$errorIndex].runId
                     $entry["diagnosticRunDirectory"] = $attribution.marks[$errorIndex].runDirectory
+                }
+                if ($null -ne $relationFacts -and $relationFacts.relations.ContainsKey($errorIndex)) {
+                    $fact = $relationFacts.relations[$errorIndex]
+                    $entry["origin"] = $fact.origin
+                    $entry["relation"] = $fact.relation
+                    $entry["branchChangedObjects"] = @($fact.changedObjects)
+                    $entry["branchChangedFrames"] = @($fact.changedFrames)
                 }
                 $entry
             })
@@ -4074,6 +4218,8 @@ function Test-DevBranchEventLogAfterVanessa {
                     signature = $source.signature
                     reason = [string](Get-StateValue -State $_.entry -Name "reason" -Default "")
                     acknowledgedAt = [string](Get-StateValue -State $_.entry -Name "acknowledgedAt" -Default "")
+                    origin = [string](Get-StateValue -State $_.entry -Name "origin" -Default "")
+                    relation = [string](Get-StateValue -State $_.entry -Name "relation" -Default "")
                 }
             })
         }
@@ -4081,10 +4227,16 @@ function Test-DevBranchEventLogAfterVanessa {
     }
 
     $status = if ($newErrors.Count -gt 0) { "failed" } else { "passed" }
+    $relationSummary = if ($null -ne $relationFacts) {
+        $facts = @($relationFacts.relations.Values)
+        "Before this check started: $(@($facts | Where-Object { $_.origin -eq 'before-check' }).Count); stack reaches lines the branch changed: $(@($facts | Where-Object { $_.relation -eq 'changed-lines' }).Count); only objects the branch changed: $(@($facts | Where-Object { $_.relation -eq 'changed-objects' }).Count) (report fields origin, relation)."
+    } else {
+        "Origin and branch relation are unavailable: $relationFailure"
+    }
     $reason = if ($newErrors.Count -gt 0) {
-        "1C event log contains $($newErrors.Count) new error signature(s) not present in the branch baseline. Non-blocking warnings: $($warnings.Count). Scope: $CursorScope; scan mode: $($readResult.scanMode). Fix every defect. If the agent provoked an error on purpose, acknowledge its signature from $reportPath with -Action acknowledge-event-log-errors -EventLogSignatures <signature,...> -EventLogAcknowledgeReason <why>, then repeat the original check (verification-result.md)."
+        "1C event log contains $($newErrors.Count) new error signature(s) not present in the branch baseline. Non-blocking warnings: $($warnings.Count). Scope: $CursorScope; scan mode: $($readResult.scanMode). $relationSummary Decide each error yourself without waiting for the user: fix an error the branch causes; acknowledge an error you provoked on purpose, or one unrelated to the branch task, from $reportPath with -Action acknowledge-event-log-errors -EventLogSignatures <signature,...> -EventLogAcknowledgeReason <decision and evidence>, then repeat the original check (verification-result.md)."
     } elseif ($acknowledged.Count -gt 0) {
-        "1C event log contains no blocking new error signatures in scope '$CursorScope' from '$($effectiveStartTime.ToString("o"))'. Acknowledged intentional errors: $($acknowledged.Count); non-blocking warnings: $($warnings.Count); report: $reportPath. Legacy suppressed errors: $legacyCount; scan mode: $($readResult.scanMode)."
+        "1C event log contains no blocking new error signatures in scope '$CursorScope' from '$($effectiveStartTime.ToString("o"))'. Acknowledged errors: $($acknowledged.Count); non-blocking warnings: $($warnings.Count); report: $reportPath. Legacy suppressed errors: $legacyCount; scan mode: $($readResult.scanMode)."
     } elseif ($warnings.Count -gt 0) {
         "1C event log contains no blocking new error signatures in scope '$CursorScope' from '$($effectiveStartTime.ToString("o"))'. Non-blocking warnings: $($warnings.Count); report: $reportPath. Legacy suppressed errors: $legacyCount; scan mode: $($readResult.scanMode)."
     } else {
@@ -4095,7 +4247,7 @@ function Test-DevBranchEventLogAfterVanessa {
     if ($diagnosticRunErrorCount -gt 0) {
         $reason += " Of these, $diagnosticRunErrorCount occurred inside diagnostic Vanessa run window(s): " +
             ((@($attribution.runs | ForEach-Object { "$($_.runId)=$($_.errorCount)" })) -join ", ") +
-            "; they remain event-log evidence and close through a fix or an acknowledgement of intentional errors. Report: $reportPath."
+            "; they remain event-log evidence and close through a fix or an acknowledgement. Report: $reportPath."
         foreach ($run in @($attribution.runs)) {
             Write-Host "Event-log errors during diagnostic Vanessa run $($run.runId): $($run.errorCount); window $($run.startedAt.ToString("o"))..$($run.finishedAt.ToString("o")); first: $($run.firstLine); run=$($run.runDirectory)"
         }
