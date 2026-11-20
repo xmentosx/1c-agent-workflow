@@ -207,7 +207,9 @@ stored as `status: verified` plus `standing: true`, so a copy on the previous
 workflow reads an ordinary verified note; `verified` and `standing` are switched
 by updating the same note. A user statement uses evidence
 `{source:"user", reference:"chat <date>"}`. Optional `title` (80 characters)
-names the note in the index, else its first sentence does.
+names the note in the index, else its first sentence does. Either states the
+claim, not its topic: `Date() takes three or six parts` lets an agent act on
+the index line; `Date() parameters` sends it to recall.
 Each note is one uploaded file, on creation and on update. Its document name is
 `<status>~<knowledge area>~<title>~<id8>.txt`: derived from the original, unique
 per note, without path separators, at most 200 UTF-8 bytes, replaced on every
@@ -277,9 +279,14 @@ datasets; coverage is `empty` when discovery has no outstanding issues. A
 temporary recall failure leaves coverage unknown for that call. If the fact is
 needed in the current turn, use exact status for a known original or make one
 more recall with the same admitted set. After another failure, continue with
-available sources and report the gap. Recall once per topic; search again for
-a new area or object, missing context or after such a failure, not merely
-because a new turn started. Reconcile uncertain writes by exact IDs.
+available sources and report the gap. Recall once per topic before designing a
+change, and by tool and action before writing a test or setting up a stand.
+Search again for a new area or object, missing context, after such a failure,
+or by symptom before retrying an unexpected failure (the exact error text with
+`CHUNKS_LEXICAL`), not merely because a new turn started. Pitfalls are rarely
+found by task topic: on PM5 memory (2026-11-20) topic queries returned 2 of 12
+known pitfall notes, symptom queries 12 of 12. Reconcile uncertain writes by
+exact IDs.
 
 `memory_status(dataset_name, note_id|data_id)` reconciles the exact source and
 updates its local receipt/pending. Dataset

@@ -54,9 +54,10 @@ holds the details on demand.
 
 - Call `memory_status` once at session start and after a `contextChanged`
   notice. Task progress goes to its `checkpoint`, not notes.
-- `recall` once per topic before designing a 1C change; again only for a new
-  area or object, missing context or a transient failure (see
-  `project-memory`).
+- `recall` once per topic before designing a 1C change, and by tool and action
+  before writing a test or setting up a stand; again for a new area or object,
+  missing context, a transient failure, or by symptom before retrying an
+  unexpected failure (see `project-memory`).
 - `remember` in the same turn after a user correction, a rejected approach, a
   standing condition or a confirmed lesson for another session or branch.
   Never save what code, OpenSpec, evidence, Git or test results hold:
