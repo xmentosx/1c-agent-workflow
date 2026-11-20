@@ -38,6 +38,14 @@ A Vanessa `ACTION_FAILED` that names a disconnected TestClient returns
 `ITL_VANESSA_TESTCLIENT_NOT_CONNECTED` with `action: itl_recover_connection`;
 the facade does not recover or replay it automatically.
 
+Any other Vanessa `ACTION_FAILED` or `INVALID_PARAMS` protocol error is an
+answer from a tool handler that has already stopped, so the facade keeps the
+backend and its TestClient, as after a successful call, and returns the code as
+a tool error with `callOutcome: failed`, `partialEffectsPossible: true`,
+`automaticRetryPerformed: false` and `action: inspect-form-state-before-retry`.
+An uncoded protocol error, a transport failure and a deadline still stop the
+owned backend.
+
 When a TestClient this facade already used is replaced and the agent did not
 close it, the next call that acts on open forms (form tools and `run_scenario`
 in `selected`, `fromCurrentStep` or `reloadAndRunFromLine`) is not sent: it
@@ -51,7 +59,8 @@ report is returned as that report even when a failed step quotes a runtime
 marker; the markers still classify editor answers. Vanessa itl-r17 answers a
 failed `execute_feature_step` with `ITL_VANESSA_STEP_FAILED` and a line whose
 status is not Success with `ITL_VANESSA_STEP_NOT_PROVEN` inside a successful MCP
-completion, because a JSON-RPC error stops the backend; the facade returns both
+completion, because facades before 0.4.36 stop the backend on any JSON-RPC
+error; the facade returns both
 as tool errors with `stepExecuted: true`. A successful step gets a note that it
 ran without its scenario context. When the project's `compatibility.json` pins another facade version
 than the running process, every result gets `ITL_ONDEMAND_FACADE_SUPERSEDED`

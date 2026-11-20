@@ -100,7 +100,8 @@ func TestExecuteFeatureStepSuccessIsMarkedAsUnproven(t *testing.T) {
 }
 
 // Vanessa itl-r17 answers a failed or unproven step through a successful MCP
-// completion, because a JSON-RPC error stops the backend; the facade owns the
+// completion, because facades before 0.4.36 stop the backend on any JSON-RPC
+// error; the facade owns the
 // conversion into a tool error (PM5 2026-11-10).
 func TestExecuteFeatureStepFailureCodesBecomeToolErrors(t *testing.T) {
 	rt := &runtime{family: "vanessa-ui"}
