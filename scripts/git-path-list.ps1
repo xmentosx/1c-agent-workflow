@@ -90,6 +90,20 @@ function Get-RepositoryGitPathList {
     return @($result.stdout.Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries) | Where-Object { $_ })
 }
 
+# Every checkout of this repository. A component built in one of them is
+# accepted by its exact SHA-256 only, never because of its location.
+function Get-RepositoryWorktreeRoots {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    try {
+        $records = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("worktree", "list", "--porcelain", "-z"))
+    } catch { return @() }
+    return @(foreach ($record in $records) {
+        if ([string]$record -notmatch '^worktree (.+)$') { continue }
+        try { [System.IO.Path]::GetFullPath($Matches[1]) } catch { continue }
+    })
+}
+
 function Get-RepositoryCommonGitDirectory {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
 

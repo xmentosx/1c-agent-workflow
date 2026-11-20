@@ -139,6 +139,66 @@ Describe 'Delivery v3 immutable selective plan' {
         }
     }
 
+    # 2026-11-20 publication: the unreleased facade 0.4.37 was built in its task
+    # worktree, the candidate was another worktree, and the binding stopped at
+    # ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE, so the stand fetched an absent release.
+    It 'finds an unreleased facade and relay in the task worktree that built them' {
+        $repo=New-PlanRepository
+        $cache=Join-Path $TestDrive ('empty caches ' + [guid]::NewGuid().ToString('N'))
+        $taskRoot=Join-Path $TestDrive ('задача с пробелом ' + [guid]::NewGuid().ToString('N'))
+        $candidateRoot=Join-Path $TestDrive ('кандидат публикации ' + [guid]::NewGuid().ToString('N'))
+        & git -C $repo.root worktree add --quiet --detach $taskRoot HEAD
+        & git -C $repo.root worktree add --quiet --detach $candidateRoot HEAD
+        $files=[ordered]@{
+            ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=@{root=$repo.root; relative='build/third-party/vanessa-automation/1-r1/archive.zip'}
+            VANESSA_MCP_CLIENT_CFE_PATH=@{root=$repo.root; relative='build/third-party/client-mcp/client.cfe'}
+            ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE=@{root=$taskRoot; relative='tools/itl-ondemand-mcp/build/mcp.exe'}
+            ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE=@{root=$taskRoot; relative='tools/itl-ondemand-mcp/build/relay.exe'}
+        }
+        $sha=@{}; $previous=@{}
+        try {
+            foreach($key in @('ITL_ARTIFACT_CACHE_ROOT','ITL_ONDEMAND_MCP_INSTALL_ROOT')) {
+                $previous[$key]=[Environment]::GetEnvironmentVariable($key,'Process')
+                [Environment]::SetEnvironmentVariable($key,(Join-Path $cache $key),'Process')
+            }
+            foreach($name in $files.Keys) {
+                $previous[$name]=[Environment]::GetEnvironmentVariable($name,'Process')
+                [Environment]::SetEnvironmentVariable($name,$null,'Process')
+                $path=Join-Path $files[$name].root $files[$name].relative
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                [IO.File]::WriteAllText($path,$name,[Text.UTF8Encoding]::new($false))
+                $sha[$name]=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            # A stale build at the same path in the candidate is never accepted.
+            $stale=Join-Path $candidateRoot 'tools/itl-ondemand-mcp/build/mcp.exe'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stale) | Out-Null
+            [IO.File]::WriteAllText($stale,'previous facade build')
+            $deps=@{vanessaAutomation=@{sha256=$sha.ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE;compatibilityVersion='1';downstreamRevision='r1';assetName='archive.zip'};
+                vanessaMcp=@{clientMcp=@{sha256=$sha.VANESSA_MCP_CLIENT_CFE_PATH;version='1';assetName='client.cfe'}};
+                itlOndemandMcp=@{sha256=$sha.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE;version='1';assetName='mcp.exe'};
+                itlOndemandRelay=@{sha256=$sha.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE;version='1.0.0';assetName='relay.exe'}}
+            New-Item -ItemType Directory -Force -Path (Join-Path $candidateRoot 'templates') | Out-Null
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates/dependency-lock.json'),(@{dependencies=$deps}|ConvertTo-Json -Depth 6))
+
+            $missing=''
+            $binding=Find-SourceE2EArtifactBinding -RepositoryRoot $candidateRoot -MissingInput ([ref]$missing)
+            $missing | Should -BeNullOrEmpty
+            $binding | Should -Not -BeNullOrEmpty
+            $binding.paths.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE | Should -Be ([IO.Path]::GetFullPath((Join-Path $taskRoot 'tools/itl-ondemand-mcp/build/mcp.exe')))
+            $binding.paths.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE | Should -Be ([IO.Path]::GetFullPath((Join-Path $taskRoot 'tools/itl-ondemand-mcp/build/relay.exe')))
+            (Get-SourceE2EArtifactBindingHashes -RepositoryRoot $candidateRoot -Binding $binding).Count | Should -Be 4
+
+            # Changed bytes in the task worktree are not exact: the binding stays incomplete.
+            [IO.File]::WriteAllText((Join-Path $taskRoot 'tools/itl-ondemand-mcp/build/relay.exe'),'rebuilt relay')
+            $missing=''
+            Find-SourceE2EArtifactBinding -RepositoryRoot $candidateRoot -MissingInput ([ref]$missing) | Should -BeNullOrEmpty
+            $missing | Should -BeExactly 'ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE'
+        } finally {
+            foreach($name in $previous.Keys) {[Environment]::SetEnvironmentVariable($name,$previous[$name],'Process')}
+            & git -C $repo.root worktree remove --force $candidateRoot 2>$null
+            & git -C $repo.root worktree remove --force $taskRoot 2>$null
+        }
+    }
     It 'passes the read-only SHA-validated artifact binding to planner identity and requires current static before reuse' {
         $repo=New-PlanRepository; $script:Root=$repo.root; $catalog=New-PlanCatalog
         $script:GateScript=Join-Path $repo.root 'check.ps1'

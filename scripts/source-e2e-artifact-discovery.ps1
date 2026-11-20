@@ -4,7 +4,10 @@ function Find-SourceE2EArtifactBinding {
     if(-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { return $null }
     $deps=(Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
     $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
-    $roots=@(@($RepositoryRoot)+@($SearchRoot)+@(Split-Path -Parent $common) | Select-Object -Unique)
+    # An unpublished component is built where its change was made, usually a
+    # task worktree rather than the main checkout or the publication candidate;
+    # every worktree is searched after the explicit roots, exact SHA only.
+    $roots=@(@($RepositoryRoot)+@($SearchRoot)+@(Split-Path -Parent $common)+@(Get-RepositoryWorktreeRoots -RepositoryRoot $RepositoryRoot) | Select-Object -Unique)
     $specs=[ordered]@{
         ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=@{sha=$deps.vanessaAutomation.sha256;relative=('build/third-party/vanessa-automation/'+$deps.vanessaAutomation.compatibilityVersion+'-'+$deps.vanessaAutomation.downstreamRevision+'/'+$deps.vanessaAutomation.assetName);shared=('itl/dependencies/vanessa-automation/'+$deps.vanessaAutomation.compatibilityVersion+'-'+$deps.vanessaAutomation.downstreamRevision+'/'+$deps.vanessaAutomation.assetName)}
         VANESSA_MCP_CLIENT_CFE_PATH=@{sha=$deps.vanessaMcp.clientMcp.sha256;relative=('build/third-party/client-mcp/'+$deps.vanessaMcp.clientMcp.assetName)}
