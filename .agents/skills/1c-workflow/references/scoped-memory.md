@@ -133,7 +133,7 @@ product row is checked. Order: project, workspace, organization, product, host,
 workplace, task; inside a level verified before candidate, newest change first.
 Maxima (standing/index rows): task -/10, workspace 2/10, workplace 3/10, host
 3/10, project 5/30, product 3/20 per level, organization 5/30. The whole answer
-is bounded at 2000 tokens by the recall counter; what does not fit is counted in
+is bounded at 3000 tokens by the recall counter; what does not fit is counted in
 `more`. At session start `receipts` lists only writes still to reconcile;
 confirmed ones are noted in `confirmedReceipts` and `local_only=true` lists them.
 Index titles give way first, then those receipts (`localTrimmed`), then standing

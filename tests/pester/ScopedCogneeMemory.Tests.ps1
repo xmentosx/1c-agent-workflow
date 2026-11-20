@@ -1307,7 +1307,7 @@ try {
         @($offline.standing).Count | Should -Be 0
         @($offline.index).Count | Should -Be 0
     }
-    It 'bounds the whole status answer at 2000 tokens with project standing notes first' {
+    It 'bounds the whole status answer at 3000 tokens with project standing notes first' {
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.memory-tokens.ps1')
         $b.memoryProjection.knowledgeAreas=@{planning=@{availableIn=@('prof');memoryHomeProductId='corp'}}
         $limits=Get-ItlMemoryLevelLimits
@@ -1322,10 +1322,10 @@ try {
         $status=Invoke-ItlMemoryStatus $b
         $tokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $status -Depth 30 -Compress)
         $tokens.measurement | Should -BeExactly 'measured-encode-ordinary'
-        $tokens.cl100k_base | Should -BeLessOrEqual 2000
-        $tokens.o200k_base | Should -BeLessOrEqual 2000
+        $tokens.cl100k_base | Should -BeLessOrEqual 3000
+        $tokens.o200k_base | Should -BeLessOrEqual 3000
         # The bound is used, not merely respected.
-        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeGreaterThan 1700
+        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeGreaterThan 2700
         # Standing notes come first and in level order, project first.
         @($status.standing).Count | Should -BeGreaterThan 0
         $status.standing[0].level | Should -BeExactly project
@@ -1348,8 +1348,8 @@ try {
         # PM5 after a batch of writes: the four newest receipts filled the local
         # part and the user's workplace rules, last in level order, fell into more.
         $rule=('Постоянное правило работы с конфигурацией клиента и его стендом. '*8).Substring(0,400)
-        # Eight rules fit the bound alone, not together with four receipts.
-        foreach($kind in @('project','workplace')){
+        # Thirteen rules fit the bound alone, not together with four receipts.
+        foreach($kind in @('project','organization','workplace')){
             $dataset=Get-ScopeDataset $b $kind
             for($number=1;$number -le (Get-ItlMemoryLevelLimits)[$kind].standing;$number++){$null=Add-FixtureNote $dataset "$kind-rule-$number" $rule -Standing -Title "Правило $kind $number"}
         }
@@ -1360,15 +1360,16 @@ try {
         $status=Invoke-ItlMemoryStatus $b
         @($status.receipts).Count | Should -Be 0
         $status.confirmedReceipts | Should -Match 'local_only=true'
-        @($status.standing).Count | Should -Be 8
+        @($status.standing).Count | Should -Be 13
         # Writes still to reconcile are listed, but give way to the rules.
         foreach($file in @(Get-ChildItem -LiteralPath (Join-Path (Get-ItlMemoryHome) 'receipt') -File -Filter '*.json')){
             $null=Update-ItlMemoryJson $file.FullName {param($old) $old.state='unconfirmed';return $old}
         }
         $status=Invoke-ItlMemoryStatus $b
         $tokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $status -Depth 30 -Compress)
-        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 2000
+        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 3000
         @($status.standing|Where-Object level -EQ workplace).Count | Should -Be 3
+        @($status.standing|Where-Object level -EQ organization).Count | Should -Be 5
         @($status.standing|Where-Object level -EQ project).Count | Should -Be 5
         @($status.receipts).Count | Should -BeGreaterThan 0
         @($status.receipts).Count | Should -BeLessThan 4
@@ -1392,7 +1393,7 @@ try {
         for($number=1;$number -le 4;$number++){$null=Invoke-ItlMemoryRemember $b ("Проверенный факт номер $number о стенде клиента.") (Resolve-ItlMemoryDatasetName $b project) "fact-$number" @{} $evidence verified}
         $status=Invoke-ItlMemoryStatus $b
         $tokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $status -Depth 30 -Compress)
-        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 2000
+        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 3000
         @($status.standing).Count | Should -Be 5
         # A product rule keeps its dataset: the product level may hold several.
         @($status.standing|Where-Object level -EQ product)[0].dataset | Should -BeExactly (Get-ScopeDataset $b product).label
