@@ -107,7 +107,11 @@ function Invoke-RepairChild {
     Write-Host "[$LogName] log: $stdout"
     $finished = if ($TimeoutSeconds -gt 0) { $process.WaitForExit($TimeoutSeconds * 1000) } else { $process.WaitForExit(); $true }
     if (-not $finished) {
-        & taskkill.exe /PID ([int]$process.Id) /T /F *> $null
+        # Redirected native stderr is terminating under Stop in Windows
+        # PowerShell; a partial kill must not replace the timeout reason.
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { & taskkill.exe /PID ([int]$process.Id) /T /F *> $null } finally { $ErrorActionPreference = $previousPreference }
         try { $process.WaitForExit() } catch {}
         throw "REPAIR_CHILD_TIMEOUT: $LogName exceeded its $TimeoutSeconds second owner budget. See $stdout and $stderr."
     }

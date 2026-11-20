@@ -408,7 +408,15 @@ function Stop-GateChildProcessTree {
     param([object]$Process)
     if (-not $Process -or $Process.HasExited) { return }
     $processId = [int]$Process.Id
-    if ($env:OS -eq "Windows_NT") { & taskkill.exe /PID $processId /T /F *> $null } else { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue }
+    if ($env:OS -eq "Windows_NT") {
+        # Windows PowerShell raises redirected native stderr as a terminating
+        # error under Stop. A descendant that exits during the kill makes
+        # taskkill report "could not be terminated", which replaced the
+        # caller's timeout reason and skipped the wait below (2026-11 runs).
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try { & taskkill.exe /PID $processId /T /F *> $null } finally { $ErrorActionPreference = $previousPreference }
+    } else { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue }
     try { $Process.WaitForExit() } catch {}
 }
 
