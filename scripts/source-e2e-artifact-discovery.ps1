@@ -4,6 +4,9 @@ function Find-SourceE2EArtifactBinding {
     if(-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { return $null }
     $deps=(Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
     $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
+    # The published supervisor dot-sources this candidate file next to its own,
+    # possibly older, git-path-list.ps1; load the matching helper when it is absent.
+    if(-not (Get-Command Get-RepositoryWorktreeRoots -CommandType Function -ErrorAction SilentlyContinue)) {. (Join-Path $PSScriptRoot 'git-path-list.ps1')}
     # An unpublished component is built where its change was made, usually a
     # task worktree rather than the main checkout or the publication candidate;
     # every worktree is searched after the explicit roots, exact SHA only.
