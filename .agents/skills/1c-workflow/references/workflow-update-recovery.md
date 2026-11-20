@@ -138,6 +138,10 @@ guard strict and supplies this continuation:
    reports branch rollout separately. `WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING`
    means that recovery completed the old update: repeat the same source-side
    command to install the requested new package. The agent owns this repeat.
+   A scoped update continues only with its recorded roots file (receipt
+   `rolloutScope`, same sourceCommit); the new candidate's scope is rejected as
+   `WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH` until this repeat. Use this route,
+   not the old source, when the recorded candidate's helper is the defect.
    After a lost acknowledgement, inspect status and repeat the original update;
    do not treat a stale decision report as authority.
 

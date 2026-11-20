@@ -463,6 +463,85 @@ if($Recovery -ceq 'abandon'){
         Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt
         @(Get-Content -LiteralPath $order -Encoding UTF8) | Should -Be @(('abandon '+(Split-Path -Leaf $roots.defective.root)+' '+$roots.defective.id),'update','update')
     }
+    It 'finishes a master update pinned to a defective earlier candidate through the new exact helper, then installs the candidate' {
+        # 2026-11-20: candidate A failed after the master commit (master-committed,
+        # branches branch-commit-ready). The next candidate's scope was rejected as
+        # WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH and the stand was repaired by hand.
+        # The double mirrors the lifecycle owner: a pending update accepts only its
+        # recorded scope; the newer exact helper then finishes the pinned package
+        # and reports WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING.
+        $updater=@'
+param($ProjectRoot,$SourceRoot,$WorkflowUpdateBranchRootsFile,$Recovery,$SnapshotId)
+$ErrorActionPreference='Stop'
+$order=Join-Path $SourceRoot 'order.txt'
+$scope=Get-Content -LiteralPath $WorkflowUpdateBranchRootsFile -Raw -Encoding UTF8 | ConvertFrom-Json
+$parent=Join-Path $ProjectRoot '.agent-1c/snapshots/workflow-update'
+$pending=@(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue)
+if($pending.Count){
+    $receipt=Get-Content -LiteralPath (Join-Path $pending[0].FullName 'transaction.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if([string]$scope.sourceCommit -cne [string]$receipt.sourceCommit -or (@($scope.roots) -join '|') -cne (@($receipt.rolloutScope.roots) -join '|')){
+        [Console]::Error.WriteLine('WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH: preserve the receipt'); exit 1
+    }
+    if(-not (Test-Path -LiteralPath ([string]$receipt.sourceRoot) -PathType Container)){ [Console]::Error.WriteLine('WORKFLOW_UPDATE_SOURCE_MISSING'); exit 1 }
+    foreach($root in @(@($ProjectRoot) + @($receipt.rolloutScope.roots))){
+        $branchParent=Join-Path $root '.agent-1c/snapshots/workflow-update'
+        foreach($snapshot in @(Get-ChildItem -LiteralPath $branchParent -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue)){
+            Rename-Item -LiteralPath $snapshot.FullName -NewName ($snapshot.Name.Replace('-rollback-','-completed-'))
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'installed.txt'),[string]$receipt.sourceCommit,[Text.UTF8Encoding]::new($false))
+    }
+    Add-Content -LiteralPath $order -Value ('continue '+$receipt.sourceCommit) -Encoding UTF8
+    [Console]::Error.WriteLine("WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING: the interrupted pinned update '$($receipt.sourceCommit)' completed.")
+    exit 1
+}
+foreach($root in @(@($ProjectRoot) + @($scope.roots))){
+    if(@(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue).Count){ throw 'branch still pending' }
+    [IO.File]::WriteAllText((Join-Path $root 'installed.txt'),[string]$scope.sourceCommit,[Text.UTF8Encoding]::new($false))
+}
+Add-Content -LiteralPath $order -Value ('update '+$scope.sourceCommit) -Encoding UTF8
+'@
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        $defective=Join-Path $TestDrive ('itl-source-publish-develop кандидат '+[guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory($defective)
+        $branch=Join-Path $TestDrive ('ветка develop '+[guid]::NewGuid().ToString('N'))
+        [IO.File]::WriteAllText((Join-Path ([IO.Directory]::CreateDirectory($branch).FullName) 'business.txt'),'бизнес-данные ветки',[Text.UTF8Encoding]::new($false))
+        $scopeA=[ordered]@{schemaVersion=1;projectRoot=$script:standRoot;sourceCommit='defective';roots=@($branch)}
+        $ids=@{}
+        foreach($pair in @(@($script:standRoot,'master-committed'),@($branch,'branch-commit-ready'))){
+            $id=[guid]::NewGuid().ToString('N'); $ids[$pair[1]]=$id
+            $snapshot=Join-Path $pair[0] ('.agent-1c/snapshots/workflow-update/itl-workflow-update-rollback-'+$id)
+            [void][IO.Directory]::CreateDirectory($snapshot)
+            [IO.File]::WriteAllText((Join-Path $snapshot 'transaction.json'),([ordered]@{phase=$pair[1];sourceCommit='defective';sourceRoot=$defective;rolloutScope=$scopeA}|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
+        }
+        $preparation=[pscustomobject]@{projectRoot=$script:standRoot;sourceCommit='candidate';roots=@($branch);requiresWorkflowUpdate=$true;capsules=@()}
+        $attempt=[pscustomobject]@{phase='candidate-built'}
+        Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt
+        $order=Join-Path $script:standCandidate 'order.txt'
+        @(Get-Content -LiteralPath $order -Encoding UTF8) | Should -Be @('continue defective','update candidate')
+        @($script:savedAttempt.standPreparation.steps.name) | Should -Be @(('stand-workflow-continue-'+$ids['master-committed']),'stand-workflow-update')
+        $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+        foreach($root in @($script:standRoot,$branch)){ [IO.File]::ReadAllText((Join-Path $root 'installed.txt')) | Should -BeExactly 'candidate' }
+        [IO.File]::ReadAllText((Join-Path $branch 'business.txt')) | Should -BeExactly 'бизнес-данные ветки'
+        Test-Path -LiteralPath (Join-Path $script:standRoot ('.agent-1c/snapshots/workflow-update/itl-workflow-update-completed-'+$ids['master-committed'])) | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $branch ('.agent-1c/snapshots/workflow-update/itl-workflow-update-completed-'+$ids['branch-commit-ready'])) | Should -BeTrue
+        # A resumed preparation has no pinned master update left to continue.
+        Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt
+        @(Get-Content -LiteralPath $order -Encoding UTF8) | Should -Be @('continue defective','update candidate','update candidate')
+    }
+    It 'keeps a pinned master update and its owner failure when the continuation does not finish it' {
+        $updater="param(`$ProjectRoot,`$SourceRoot,`$WorkflowUpdateBranchRootsFile)`n[Console]::Error.WriteLine('WORKFLOW_UPDATE_SOURCE_MISSING: restore the recorded candidate checkout')`nexit 1`n"
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        $id=[guid]::NewGuid().ToString('N')
+        $snapshot=Join-Path $script:standRoot ('.agent-1c/snapshots/workflow-update/itl-workflow-update-rollback-'+$id)
+        [void][IO.Directory]::CreateDirectory($snapshot)
+        $scopeA=[ordered]@{schemaVersion=1;projectRoot=$script:standRoot;sourceCommit='defective';roots=@($script:standRoot)}
+        [IO.File]::WriteAllText((Join-Path $snapshot 'transaction.json'),([ordered]@{phase='master-committed';sourceCommit='defective';sourceRoot='missing';rolloutScope=$scopeA}|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
+        $preparation=[pscustomobject]@{projectRoot=$script:standRoot;sourceCommit='candidate';roots=@();requiresWorkflowUpdate=$true;capsules=@()}
+        $attempt=[pscustomobject]@{phase='candidate-built'}
+        { Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt } | Should -Throw ('*PREPARATION_FAILED*stand-workflow-continue-'+$id+'*')
+        Test-Path -LiteralPath $snapshot | Should -BeTrue
+        $script:savedAttempt.standPreparation.status | Should -Be 'running'
+    }
     It 'keeps preparation before calculation and saving in the actual publisher' {
         $publisher=@($script:publisherAst.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Publish-AccumulatedDevelop'},$false))[0]
         $calls=@($publisher.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst]},$true))

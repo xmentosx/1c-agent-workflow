@@ -96,6 +96,25 @@ function Get-DeliveryStaleBranchUpdates {
     }
 }
 
+function Get-DeliveryPinnedMasterUpdate {
+    # A master update stopped after its file copy stays pinned to its recorded
+    # candidate, which can itself be the defect. The update owner continues it
+    # through this candidate's exact helper only with the recorded scope; this
+    # candidate's scope is rejected until the pinned package completes.
+    param([object]$Preparation)
+    $pending = @(Get-ChildItem -LiteralPath (Join-Path $Preparation.projectRoot '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue)
+    # Ambiguous or receipt-less snapshots stay with the update owner's guards.
+    if ($pending.Count -ne 1) { return }
+    $receiptPath = Join-Path $pending[0].FullName 'transaction.json'
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) { return }
+    $receipt = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    # Copy/prepared/rollback phases restart or restore through their own owner.
+    $scope = if ($receipt.PSObject.Properties['rolloutScope']) { $receipt.rolloutScope } else { $null }
+    if ([string]$receipt.phase -notin @('copy-complete', 'post-copy-running', 'post-copy-failed', 'master-commit-ready', 'master-committed') -or
+        $null -eq $scope -or [string]$receipt.sourceCommit -ceq [string]$Preparation.sourceCommit) { return }
+    [pscustomobject]@{snapshotId=$pending[0].Name.Substring('itl-workflow-update-rollback-'.Length);snapshotRoot=$pending[0].FullName;sourceCommit=[string]$receipt.sourceCommit;rolloutScope=$scope}
+}
+
 function Get-DeliveryStandArtifactEnvironment {
     # The gate's own read-only discovery (candidate lock, SHA-addressed shared
     # cache, installed caches) selects the bytes; the installer re-verifies them
@@ -119,7 +138,10 @@ function Get-DeliveryStandArtifactEnvironment {
 }
 
 function Invoke-DeliveryStandOwner {
-    param([string]$CandidateRoot, [string]$Name, [string[]]$Arguments, [int]$BudgetSeconds, [Collections.IDictionary]$EnvironmentOverrides = $null)
+    param([string]$CandidateRoot, [string]$Name, [string[]]$Arguments, [int]$BudgetSeconds, [Collections.IDictionary]$EnvironmentOverrides = $null,
+        # Decides from owner state and logs whether a non-zero exit is a documented
+        # continuation the caller completes; anything else stays a failure.
+        [scriptblock]$AcceptExit = $null)
     $logs = Join-Path $CandidateRoot 'build/test-results/delivery'
     [void][IO.Directory]::CreateDirectory($logs)
     $stdout = Join-Path $logs ($Name + '.stdout.log'); $stderr = Join-Path $logs ($Name + '.stderr.log')
@@ -133,8 +155,14 @@ function Invoke-DeliveryStandOwner {
             if ($watch.Elapsed.TotalSeconds -ge $BudgetSeconds) { throw "DELIVERY_STAND_PREPARATION_TIMEOUT: $Name; resume the same PublishDevelop after inspecting owner logs $stdout and $stderr; receipts and capsules were preserved." }
         }
         $process.WaitForExit(); $process.Refresh()
-        if ([int]$process.ExitCode -ne 0) { throw "DELIVERY_STAND_PREPARATION_FAILED: $Name exited $($process.ExitCode); follow its owner continuation in $stdout and $stderr, then repeat the same PublishDevelop." }
-        return [pscustomobject]@{name=$Name;durationMs=[int64]$watch.ElapsedMilliseconds;stdout=$stdout;stderr=$stderr}
+        $continued = ''
+        if ([int]$process.ExitCode -ne 0) {
+            if ($null -ne $AcceptExit) { $continued = [string](& $AcceptExit $stdout $stderr) }
+            if (-not $continued) { throw "DELIVERY_STAND_PREPARATION_FAILED: $Name exited $($process.ExitCode); follow its owner continuation in $stdout and $stderr, then repeat the same PublishDevelop." }
+        }
+        $step = [pscustomobject]@{name=$Name;durationMs=[int64]$watch.ElapsedMilliseconds;stdout=$stdout;stderr=$stderr}
+        if ($continued) { $step | Add-Member -NotePropertyName ownerContinuation -NotePropertyValue $continued }
+        return $step
     } catch { $priorError=$_.Exception.Message; throw } finally {
         try { Close-DeliveryProcessJob -JobHandle $job -Process $process -PriorErrorMessage $priorError }
         finally { Stop-DeliveryProcessTree -Process $process }
@@ -227,6 +255,26 @@ function Invoke-DeliveryStandPreparationOwners {
         Write-DevelopPublicationAttempt -Attempt $Attempt
     }
     if ($Preparation.requiresWorkflowUpdate) {
+        $pinned = Get-DeliveryPinnedMasterUpdate -Preparation $Preparation
+        if ($null -ne $pinned) {
+            # The owner finishes the recorded package with this candidate's exact
+            # helper, so a defect in the recorded helper is not executed again,
+            # then requests the new candidate. The recorded candidate checkout
+            # stays retained by cleanup while the receipt names it; it uses its
+            # own pinned dependencies, not this candidate's unpublished bytes.
+            $continueScope = Join-Path $CandidateRoot 'build/test-results/delivery/stand-continue-roots.json'
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $continueScope))
+            [IO.File]::WriteAllText($continueScope, ($pinned.rolloutScope | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+            $snapshotRoot = $pinned.snapshotRoot
+            $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name ('stand-workflow-continue-'+$pinned.snapshotId) -BudgetSeconds 3600 `
+                -Arguments @('-File',(Join-Path $CandidateRoot 'scripts/update-installed-workflow.ps1'),'-ProjectRoot',$Preparation.projectRoot,'-SourceRoot',$CandidateRoot,'-WorkflowUpdateBranchRootsFile',$continueScope) `
+                -AcceptExit {
+                    param($Stdout, $Stderr)
+                    $text = @($Stdout, $Stderr | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | ForEach-Object { [IO.File]::ReadAllText($_, [Text.Encoding]::UTF8) }) -join "`n"
+                    if (-not (Test-Path -LiteralPath $snapshotRoot) -and $text -match 'WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING') { 'WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING' }
+                }.GetNewClosure()
+            Write-DevelopPublicationAttempt -Attempt $Attempt
+        }
         # Capture rejects an out-of-transaction write to a managed path only after
         # the update, when the new receipt has already recorded it as before-state.
         # The same read-only proof runs first, while the write can still be returned.

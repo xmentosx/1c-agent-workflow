@@ -9592,7 +9592,7 @@ function Complete-WorkflowUpdatePostCopyFromSnapshot {
             throw "WORKFLOW_UPDATE_SNAPSHOT_CLEANUP_REQUIRED: post-copy reached its terminal receipt at '$($Snapshot.root)' but the child reported an error. $repeatAction for cleanup only. $postCopyError"
         }
         if ($null -ne $current -and [string]$current.receipt.phase -in @('master-commit-ready', 'master-committed')) {
-            throw "WORKFLOW_UPDATE_POST_COPY_INCOMPLETE: master commit checkpoint is preserved at '$($Snapshot.root)'. $repeatAction to resume the exact recorded scope without replaying file post-copy. $postCopyError"
+            throw "WORKFLOW_UPDATE_POST_COPY_INCOMPLETE: master commit checkpoint is preserved at '$($Snapshot.root)'. $repeatAction to resume the exact recorded scope without replaying file post-copy; if the recorded candidate itself is defective, repeat it from a newer exact clean source with that recorded scope so its helper finishes the pinned package. $postCopyError"
         }
         try {
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-failed
@@ -10950,7 +10950,7 @@ function Resolve-WorkflowUpdateRolloutScope {
     foreach ($scope in $scopes) {
         if ([int]$scope.schemaVersion -ne 1 -or [string]$scope.sourceCommit -cne $SourceCommit -or
             [IO.Path]::GetFullPath([string]$scope.projectRoot).TrimEnd('\','/') -ine [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\','/')) {
-            throw 'WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH: preserve the receipt; repeat the same exact source and root scope.'
+            throw "WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH: preserve the receipt; scope source '$([string]$scope.sourceCommit)' differs from expected '$SourceCommit' or names another project root. A pending update continues only with its recorded scope; a newer exact source may execute it, reports WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING, and then the new scope applies."
         }
         $roots = @($scope.roots | ForEach-Object { [IO.Path]::GetFullPath([string]$_).TrimEnd('\','/') } | Sort-Object)
         if ($roots.Count -eq 0 -or @($roots | Sort-Object -Unique).Count -ne $roots.Count) {
