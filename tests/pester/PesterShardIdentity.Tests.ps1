@@ -150,6 +150,38 @@ Describe 'Pester shard selected-test identity' {
         $missing.reusedWorkerCount | Should -Be 1
     }
 
+    It 'keeps a co-listed test proof when only another exact test file of its contract changes' {
+        # Observed 2026-11-20: an AuxiliaryContours.Tests.ps1 edit re-executed
+        # DevBranchLifecycle and three other DevBranch files (about 1000 s) in Develop.
+        $root = New-ShardIdentityFixture 'Соседний тест'
+        (Invoke-ShardIdentityFixture $root 'out-cold').executedWorkerCount | Should -Be 2
+        [IO.File]::AppendAllText((Join-Path $root 'tests/pester/Beta.Tests.ps1'), "`n# sibling-only edit")
+        & git -C $root add --all; & git -C $root commit -qm 'sibling test edit'
+        $sibling = Invoke-ShardIdentityFixture $root 'out-sibling'
+        @($sibling.workers | Where-Object execution -eq 'reused' | ForEach-Object { Split-Path $_.paths[0] -Leaf }) | Should -Be @('Alpha.Tests.ps1')
+        @($sibling.workers | Where-Object execution -eq 'executed' | ForEach-Object { Split-Path $_.paths[0] -Leaf }) | Should -Be @('Beta.Tests.ps1')
+
+        # A test that names the sibling file may read it, so the sibling stays its input.
+        [IO.File]::WriteAllText((Join-Path $root 'tests/pester/Alpha.Tests.ps1'), "Describe 'AlphaFixture' { It 'alpha' { 'Beta.Tests.ps1' | Should -Not -BeNullOrEmpty } }", [Text.UTF8Encoding]::new($true))
+        & git -C $root add --all; & git -C $root commit -qm 'alpha names beta'
+        (Invoke-ShardIdentityFixture $root 'out-named-cold').executedWorkerCount | Should -Be 1
+        [IO.File]::AppendAllText((Join-Path $root 'tests/pester/Beta.Tests.ps1'), "`n# named sibling edit")
+        & git -C $root add --all; & git -C $root commit -qm 'named sibling edit'
+        $named = Invoke-ShardIdentityFixture $root 'out-named'
+        $named.executedWorkerCount | Should -Be 2
+
+        # A glob owner path still binds every matching test file.
+        [IO.File]::WriteAllText((Join-Path $root 'tests/pester/Alpha.Tests.ps1'), "Describe 'AlphaFixture' { It 'alpha' { `$true | Should -BeTrue } }", [Text.UTF8Encoding]::new($true))
+        $catalog = Get-Content -LiteralPath (Join-Path $root 'tests/quality-contracts.json') -Raw | ConvertFrom-Json
+        $catalog.contracts[0].paths = @('tests/pester/*.Tests.ps1')
+        [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        & git -C $root add --all; & git -C $root commit -qm 'glob owner'
+        (Invoke-ShardIdentityFixture $root 'out-glob-cold').executedWorkerCount | Should -Be 2
+        [IO.File]::AppendAllText((Join-Path $root 'tests/pester/Beta.Tests.ps1'), "`n# globbed sibling edit")
+        & git -C $root add --all; & git -C $root commit -qm 'globbed sibling edit'
+        (Invoke-ShardIdentityFixture $root 'out-glob').executedWorkerCount | Should -Be 2
+    }
+
     It 'separates tests with identical owner inputs and reuses each exact result in another worktree' {
         $root = New-ShardIdentityFixture 'Разные тесты'
         $first = Invoke-ShardIdentityFixture $root 'out-first'

@@ -538,7 +538,30 @@ function Get-ShardInputDigest {
         # Unknown supplemental inputs remain mandatory. Known semantic inputs
         # use their authoritative test owners, including in a Full inventory.
         $supplemental=@($AdditionalInputs|Where-Object {$_ -notin $script:pesterSemanticBindings.paths -or $_ -in $semanticInputs})
-        $inputs = @($relativeTests + $sharedInputs + $supplemental + $semanticInputs + @($resolved.paths) | Sort-Object -Unique)
+        # A contract's exact test-file path makes that contract own the test for
+        # Targeted selection. A co-listed test never executes or loads another
+        # test file unless it names it, so that file is not its reuse input.
+        # Glob paths and declared reuseInputPaths stay inputs (for example, a
+        # scanner of all tests). The decision reads only the selected tests,
+        # which are inputs themselves; an unreadable one keeps every input.
+        $foreignTests = @()
+        $exactTests = @($contracts | ForEach-Object { @($_.paths) } | ForEach-Object { ([string]$_).Replace('\','/') } |
+            Where-Object { $_ -match '^tests/pester/[^/*?\[]+\.Tests\.ps1$' -and $_ -notin $relativeTests -and $_ -notin $reusePatterns } | Sort-Object -Unique)
+        if ($exactTests.Count -gt 0) {
+            $globbed = @($patterns | Where-Object { $_ -match '[*?\[]' } | ForEach-Object { $script:pesterPatternInputs[$_] })
+            $texts = @(foreach ($test in $relativeTests) {
+                $absolute = [IO.Path]::Combine($RepositoryRoot, $test.Replace('/','\'))
+                if ([IO.File]::Exists($absolute)) { [IO.File]::ReadAllText($absolute) } else { $null }
+            })
+            if (@($texts | Where-Object { $null -eq $_ }).Count -eq 0) {
+                $foreignTests = @($exactTests | Where-Object { $_ -notin $globbed } | Where-Object {
+                    $name = [IO.Path]::GetFileName($_)
+                    @($texts | Where-Object { $_.IndexOf($name, [StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -eq 0
+                })
+            }
+        }
+        $ownerPaths = @($resolved.paths | Where-Object { $_ -notin $foreignTests })
+        $inputs = @($relativeTests + $sharedInputs + $supplemental + $semanticInputs + $ownerPaths | Sort-Object -Unique)
         if ($PreparedInputs) { $PreparedInputs.Value = [pscustomobject]@{ selectionKey=$selectionKey; paths=$inputs } }
     }
     $lines = New-Object System.Collections.Generic.List[string]
