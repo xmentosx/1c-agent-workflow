@@ -188,6 +188,30 @@ Describe 'Delivery v3 immutable selective plan' {
             $binding.paths.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE | Should -Be ([IO.Path]::GetFullPath((Join-Path $taskRoot 'tools/itl-ondemand-mcp/build/relay.exe')))
             (Get-SourceE2EArtifactBindingHashes -RepositoryRoot $candidateRoot -Binding $binding).Count | Should -Be 4
 
+            # The published supervisor dot-sources this candidate discovery next to its own
+            # older git-path-list.ps1, which has no worktree lister (2026-11-20 retry).
+            $scripts=Join-Path $PSScriptRoot '..\..\scripts'
+            $helperText=[IO.File]::ReadAllText((Join-Path $scripts 'git-path-list.ps1'))
+            $tokens=$null; $errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseInput($helperText,[ref]$tokens,[ref]$errors)
+            $lister=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-RepositoryWorktreeRoots'},$true)
+            $lister | Should -Not -BeNullOrEmpty
+            $olderHelper=Join-Path $TestDrive ('older supervisor helper ' + [guid]::NewGuid().ToString('N') + '.ps1')
+            [IO.File]::WriteAllText($olderHelper,$helperText.Remove($lister.Extent.StartOffset,$lister.Extent.EndOffset-$lister.Extent.StartOffset),[Text.UTF8Encoding]::new($true))
+            $runspace=[powershell]::Create()
+            try {
+                [void]$runspace.AddScript({
+                    param($OlderHelper,$Identity,$Discovery,$Root)
+                    . $OlderHelper; . $Identity
+                    $before=[bool](Get-Command Get-RepositoryWorktreeRoots -ErrorAction SilentlyContinue)
+                    & { param($module,$candidate) . $module; [pscustomobject]@{before=$before;binding=Find-SourceE2EArtifactBinding -RepositoryRoot $candidate} } $Discovery $Root
+                }).AddArgument($olderHelper).AddArgument((Join-Path $scripts 'stand-env-identity.ps1')).AddArgument((Join-Path $scripts 'source-e2e-artifact-discovery.ps1')).AddArgument($candidateRoot)
+                $older=@($runspace.Invoke())
+                @($runspace.Streams.Error) | Should -BeNullOrEmpty
+            } finally { $runspace.Dispose() }
+            $older[0].before | Should -BeFalse
+            $older[0].binding.paths.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE | Should -Be $binding.paths.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE
+
             # Changed bytes in the task worktree are not exact: the binding stays incomplete.
             [IO.File]::WriteAllText((Join-Path $taskRoot 'tools/itl-ondemand-mcp/build/relay.exe'),'rebuilt relay')
             $missing=''
