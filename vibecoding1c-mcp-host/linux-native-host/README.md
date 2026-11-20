@@ -65,7 +65,11 @@ instances. Set the same 02:00 schedule as the existing Windows host.
 
 The deployment-only Windows config extends the normal host export config with
 `rootPath`, `workflowPath`, `guardRoot`, `linuxHost`, `linuxUser`, `identityFile`,
-`knownHostsFile`, `hostKeyAlias`, `sshPath`, and `timeoutSeconds`.
+`knownHostsFile`, `hostKeyAlias`, `sshPath`, and `timeoutSeconds`. On a host with the ITLand AI
+Gateway Client, add `aiGatewayMaintenance` with `enabled`, `scriptPath` (the installed copy of
+`ai-gateway-maintenance.ps1`) and optional `timeoutSeconds` (default 300): the nightly task refreshes
+and restarts the gateway before the first export and records `aiGateway` in its state without
+blocking indexing.
 Each configuration keeps the canonical `sourcePath`, `mainConfigPath`, and
 `dump` settings, including its own platform version and repository address.
 Provision dedicated export infobases first. Use paths on the selected SSD.

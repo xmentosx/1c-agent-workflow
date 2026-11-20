@@ -3949,6 +3949,7 @@ function Get-McpHostNightlyIndexSettings {
     $timeoutMinutes = [int](Get-ObjectValue -Object $raw -Name "timeoutMinutes" -Default 480)
     $pollSeconds = [int](Get-ObjectValue -Object $raw -Name "pollSeconds" -Default 15)
     $configIds = @(As-Array (Get-ObjectValue -Object $raw -Name "configIds" -Default @()) | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ } | Select-Object -Unique)
+    $aiGatewayRestart = [System.Convert]::ToBoolean((Get-ObjectValue -Object $raw -Name "aiGatewayRestart" -Default $false))
     if ($at -notmatch '^(?<hour>[01][0-9]|2[0-3]):(?<minute>[0-5][0-9])$') {
         throw "nightlyIndex.at must use 24-hour HH:mm format."
     }
@@ -3972,7 +3973,36 @@ function Get-McpHostNightlyIndexSettings {
         timeoutMinutes = $timeoutMinutes
         pollSeconds = $pollSeconds
         configIds = $configIds
+        aiGatewayRestart = $aiGatewayRestart
     }
+}
+
+function Invoke-McpHostAiGatewayMaintenance {
+    param([string]$HelperPath = (Join-Path $PSScriptRoot "ai-gateway-maintenance.ps1"), [string[]]$HelperArguments = @())
+    # Indexing embeds through the host AI Gateway, whose running engine keeps the
+    # server set it started with. Refresh and restart it first; never block indexing.
+    if ($DryRun) {
+        Write-Host "Would refresh and restart the AI Gateway Client before nightly indexing."
+        return [pscustomobject]@{ status = "dry-run" }
+    }
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $powershell = Join-Path $PSHOME "powershell.exe"
+        $lines = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $HelperPath @HelperArguments 2>&1 | ForEach-Object { [string]$_ })
+        $line = @($lines | Where-Object { $_.TrimStart().StartsWith("{") } | Select-Object -Last 1)
+        $result = if ($line.Count -eq 1) { $line[0] | ConvertFrom-Json } else { [pscustomobject]@{ status = "failed"; message = "AI Gateway maintenance returned no result line (exit code $LASTEXITCODE)." } }
+    } catch {
+        $result = [pscustomobject]@{ status = "failed"; message = $_.Exception.Message }
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ([string]$result.status -in @("restarted", "skipped")) {
+        Write-Host "AI Gateway before nightly indexing: $($result.status)."
+    } else {
+        Write-Warning "AI Gateway before nightly indexing: $($result.status). $([string](Get-ObjectValue -Object $result -Name 'message' -Default '')) Indexing continues."
+    }
+    return $result
 }
 
 function Get-McpHostNightlyIndexStatePath {
@@ -4463,6 +4493,7 @@ function Invoke-McpHostNightlyIndexRunCore {
         $missing = @($settings.configIds | Where-Object { $selectedIds -notcontains $_ })
         if ($missing.Count -gt 0) { throw "nightlyIndex.configIds contains unknown configuration(s): $($missing -join ', ')" }
     }
+    $aiGateway = if ($settings.aiGatewayRestart) { Invoke-McpHostAiGatewayMaintenance } else { $null }
     $results = @()
     try {
         foreach ($configuration in $selected) {
@@ -4470,12 +4501,12 @@ function Invoke-McpHostNightlyIndexRunCore {
             $results += $result
             if (-not $DryRun) { Publish-Registry -Config $Config }
         }
-        $state = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "succeeded"; configurations = $results; message = "Fresh configuration dumps, reports, and incremental indexes completed." }
+        $state = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "succeeded"; configurations = $results; aiGateway = $aiGateway; message = "Fresh configuration dumps, reports, and incremental indexes completed." }
         if (-not $DryRun) { Write-JsonFile -Path (Get-McpHostNightlyIndexStatePath -Config $Config) -Value $state }
         Write-Host "MCP host nightly indexing completed."
     } catch {
         $message = $_.Exception.Message
-        $state = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "failed"; configurations = $results; message = $message }
+        $state = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "failed"; configurations = $results; aiGateway = $aiGateway; message = $message }
         if (-not $DryRun) {
             try { Write-JsonFile -Path (Get-McpHostNightlyIndexStatePath -Config $Config) -Value $state } catch { Write-Warning "Could not persist nightly indexing failure state: $($_.Exception.Message)" }
         }

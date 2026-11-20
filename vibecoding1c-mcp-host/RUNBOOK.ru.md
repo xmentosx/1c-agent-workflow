@@ -976,7 +976,8 @@ mount bindings и SHA256, завершите восстановление чер
   "taskName": "ITL MCP Host Nightly Index",
   "timeoutMinutes": 480,
   "pollSeconds": 15,
-  "configIds": ["pm5corp", "pm4corp"]
+  "configIds": ["pm5corp", "pm4corp"],
+  "aiGatewayRestart": false
 }
 ```
 
@@ -1004,6 +1005,13 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 позволяет watchdog вмешаться в активную ночную индексацию. Установка задачи не запускает её сразу;
 первый контролируемый запуск выполняйте через `nightly-index-run`. Результат сохраняется в
 `<stateRoot>\nightly-index-state.json`.
+
+Если хост ходит к ИИ-API через ITLand AI Gateway Client, задайте `aiGatewayRestart: true`. Перед
+индексацией `ai-gateway-maintenance.ps1` запрашивает у клиента обновление опубликованной политики,
+перезапускает службу, чтобы работающий движок загрузил текущий пул серверов, и до 5 минут ждёт
+`AI egress: vpn-auto` со здоровым VPN. Результат пишется в поле `aiGateway` состояния ночной задачи.
+Сбой или отсутствие клиента индексацию не останавливают. Linux-native хост использует тот же
+помощник через `aiGatewayMaintenance` в Windows nightly config.
 
 ## Проверка
 

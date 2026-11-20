@@ -224,7 +224,8 @@ Enable the managed nightly job only for local `sourcePath` configurations that h
   "taskName": "ITL MCP Host Nightly Index",
   "timeoutMinutes": 480,
   "pollSeconds": 15,
-  "configIds": ["pm5corp", "pm4corp"]
+  "configIds": ["pm5corp", "pm4corp"],
+  "aiGatewayRestart": false
 }
 ```
 
@@ -250,6 +251,13 @@ servers reach a stable successful status. A failure keeps the previous published
 The host maintenance lock makes the watchdog skip reconciliation while a nightly run is active.
 Task installation does not start an immediate index run; use `nightly-index-run` for the first
 controlled execution. `<stateRoot>/nightly-index-state.json` records the last result.
+
+On a host that reaches AI APIs through the ITLand AI Gateway Client, set `aiGatewayRestart` to
+`true`. Before indexing, `ai-gateway-maintenance.ps1` asks the client to refresh its published
+policy, restarts the service so the running engine loads the current server pool, and waits up
+to 5 minutes for `AI egress: vpn-auto` with a healthy VPN. The result is stored as `aiGateway` in
+the nightly state. A failure or a host without the client never blocks indexing. The Linux-native
+host uses the same helper through `aiGatewayMaintenance` in the Windows nightly config.
 
 `read_ticket` returns comments, issue-level and comment-level attachments, sanitized
 rendered HTML, formatting spans, and prompt-ready markdown. Image originals are always

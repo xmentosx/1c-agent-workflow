@@ -103,6 +103,29 @@ def refresh_linux(config, config_id, force):
     return status
 
 
+def maintain_ai_gateway(config):
+    """Refresh and restart the host AI Gateway before indexing; never blocks it."""
+    settings = config.get('aiGatewayMaintenance') or {}
+    if not settings.get('enabled'):
+        return None
+    timeout = int(settings.get('timeoutSeconds', 300))
+    arguments = ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                 '-File', str(settings['scriptPath']), '-TimeoutSeconds', str(timeout)]
+    try:
+        completed = subprocess.run(arguments, capture_output=True, encoding='utf-8', errors='replace',
+                                   timeout=timeout + 180,
+                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    except Exception as error:
+        return {'status': 'failed', 'message': type(error).__name__ + ': ' + str(error)[:300]}
+    for line in reversed(completed.stdout.splitlines()):
+        if line.strip().startswith('{'):
+            try:
+                return json.loads(line)
+            except ValueError:
+                break
+    return {'status': 'failed', 'message': 'exit code %d without a result line' % completed.returncode}
+
+
 def main():
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
@@ -126,6 +149,12 @@ def main():
     state_path = Path(config['rootPath']) / 'state/nightly-index-state.json'
     state = {'state': 'running', 'startedAt': time.time(), 'configurations': []}
     save(state_path, state)
+    # Indexing embeds through the AI Gateway; reload its published servers first.
+    gateway = maintain_ai_gateway(config)
+    if gateway is not None:
+        state['aiGateway'] = gateway
+        print('AI_GATEWAY=' + json.dumps(gateway, ensure_ascii=False), flush=True)
+        save(state_path, state)
     failures = []
     # One configuration failure must not prevent the other from refreshing.
     for configuration in configurations:

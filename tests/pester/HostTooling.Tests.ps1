@@ -1561,6 +1561,80 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "refreshes and restarts the AI Gateway before nightly indexing and reports without blocking" {
+        $root = Join-Path $TestDrive "шлюз ИИ с пробелом"
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $helper = Join-Path $RepoRoot "vibecoding1c-mcp-host/ai-gateway-maintenance.ps1"
+        $ctl = Join-Path $root "fake gateway ctl.ps1"
+        $statePath = Join-Path $root "состояние шлюза.json"
+        Set-Content -LiteralPath $ctl -Encoding UTF8 -Value @'
+param([string]$Command)
+$s = Get-Content -LiteralPath $env:ITL_FAKE_GATEWAY_STATE -Raw -Encoding UTF8 | ConvertFrom-Json
+$s.calls = @($s.calls) + $Command
+switch ($Command) {
+    'stop' { $s.running = $false }
+    'start' { if ($s.failedStarts -gt 0) { $s.failedStarts-- } else { $s.running = $true; $s.polls = 0 } }
+    'status' {
+        if ($s.running) { $s.polls++ }
+        $egress = if ($s.running -and $s.polls -gt $s.directPolls) { 'vpn-auto' } else { 'direct' }
+        "Service: $(if ($s.running) { 'RUNNING' } else { 'STOPPED' })"
+        "AI egress: $egress"
+        'VPN: HEALTHY (120 ms) [Netherlands]'
+        'Policy revision: 42'
+    }
+}
+$s | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:ITL_FAKE_GATEWAY_STATE -Encoding UTF8
+'@
+        function Invoke-FakeGatewayMaintenance {
+            param([int]$DirectPolls, [int]$FailedStarts, [string]$CtlPath = $ctl)
+            @{ running = $true; polls = 0; directPolls = $DirectPolls; failedStarts = $FailedStarts; calls = @() } | ConvertTo-Json -Compress | Set-Content -LiteralPath $statePath -Encoding UTF8
+            $env:ITL_FAKE_GATEWAY_STATE = $statePath
+            try {
+                $output = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $helper -CtlPath $CtlPath -TimeoutSeconds 10 -PollSeconds 1 -PolicySettleSeconds 0 -RestartAfterSeconds 1 2>&1 | ForEach-Object { [string]$_ })
+                return [pscustomobject]@{ exitCode = $LASTEXITCODE; result = ($output[-1] | ConvertFrom-Json); calls = @((Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json).calls); output = $output }
+            } finally { Remove-Item Env:\ITL_FAKE_GATEWAY_STATE -ErrorAction SilentlyContinue }
+        }
+
+        $restarted = Invoke-FakeGatewayMaintenance -DirectPolls 1 -FailedStarts 0
+        $restarted.exitCode | Should -Be 0 -Because ($restarted.output -join [Environment]::NewLine)
+        $restarted.result.status | Should -Be "restarted"
+        $restarted.result.egress | Should -Be "vpn-auto"
+        $restarted.result.revisionAfter | Should -Be "42"
+        @($restarted.calls)[0..3] | Should -Be @("status", "refresh", "stop", "start")
+
+        $retried = Invoke-FakeGatewayMaintenance -DirectPolls 0 -FailedStarts 1
+        $retried.result.status | Should -Be "restarted"
+        $retried.result.startAttempts | Should -Be 2
+
+        $degraded = Invoke-FakeGatewayMaintenance -DirectPolls 1000 -FailedStarts 0
+        $degraded.exitCode | Should -Be 1
+        $degraded.result.status | Should -Be "degraded"
+        $degraded.result.egress | Should -Be "direct"
+
+        $missing = Invoke-FakeGatewayMaintenance -DirectPolls 0 -FailedStarts 0 -CtlPath (Join-Path $root "нет клиента.exe")
+        $missing.exitCode | Should -Be 0
+        $missing.result.status | Should -Be "skipped"
+
+        $configPath = Join-Path $root "host.config.json"
+        Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"nightlyIndex":{"enabled":true,"aiGatewayRestart":true}}'
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            (Get-McpHostNightlyIndexSettings -Config (Read-JsonFile -Path $configPath)).aiGatewayRestart | Should -BeTrue
+            (Get-McpHostNightlyIndexSettings -Config ([pscustomobject]@{ nightlyIndex = [pscustomobject]@{ enabled = $true } })).aiGatewayRestart | Should -BeFalse
+            @{ running = $true; polls = 0; directPolls = 0; failedStarts = 0; calls = @() } | ConvertTo-Json -Compress | Set-Content -LiteralPath $statePath -Encoding UTF8
+            $env:ITL_FAKE_GATEWAY_STATE = $statePath
+            try {
+                $wrapped = Invoke-McpHostAiGatewayMaintenance -HelperPath $helper -HelperArguments @("-CtlPath", $ctl, "-TimeoutSeconds", "10", "-PollSeconds", "1", "-PolicySettleSeconds", "0") 3>$null 6>$null
+                $wrapped.status | Should -Be "restarted"
+                $broken = Join-Path $root "сломанный помощник.ps1"
+                Set-Content -LiteralPath $broken -Encoding UTF8 -Value 'Write-Output "no result"; exit 7'
+                $failed = Invoke-McpHostAiGatewayMaintenance -HelperPath $broken 3>$null 6>$null
+                $failed.status | Should -Be "failed"
+                $failed.message | Should -Match "exit code 7"
+            } finally { Remove-Item Env:\ITL_FAKE_GATEWAY_STATE -ErrorAction SilentlyContinue }
+        }
+    }
+
     It "classifies code and graph index status without treating an idle server as busy" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-nightly-index-status-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"

@@ -121,7 +121,8 @@
     "taskName": "ITL MCP Host Nightly Index",
     "timeoutMinutes": 480,
     "pollSeconds": 15,
-    "configIds": []
+    "configIds": [],
+    "aiGatewayRestart": false
   },
   "enabledServers": {
     "global": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis" ],
