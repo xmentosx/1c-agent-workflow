@@ -43,13 +43,7 @@ function Get-VanessaSourceBuildArchiveLayout {
 
 function Get-VanessaSourceBuildWorktreeRoots {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
-    try {
-        $records = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @('worktree', 'list', '--porcelain', '-z'))
-    } catch { return @() }
-    return @(foreach ($record in $records) {
-        if ([string]$record -notmatch '^worktree (.+)$') { continue }
-        try { [IO.Path]::GetFullPath($Matches[1]) } catch { continue }
-    })
+    return @(Get-RepositoryWorktreeRoots -RepositoryRoot $RepositoryRoot)
 }
 
 function Resolve-VanessaSourceBuildArchive {
