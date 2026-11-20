@@ -5,7 +5,9 @@ Read this before any publication action: `PublishDevelop`, `PromoteRelease`,
 An ordinary change ends at a passed `RegisterChange`. Publication runs only when
 the user asks for it; once asked, carry that publication through, including
 diagnosis and retries, without confirmation prompts. Detailed procedures live in
-`docs/local-quality-gate.md` and `docs/release-checklist.md`.
+`docs/local-quality-gate.md`, `docs/release-checklist.md` and, for master
+promotion, delivery cleanup, Develop retry and Release budgets,
+`docs/source-publication-reference.md`.
 
 ## Develop
 
