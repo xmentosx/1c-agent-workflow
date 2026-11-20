@@ -134,11 +134,18 @@ and override rules are untouched; the relay has no override variable.
 
 ## Migration Plan
 
-1. Release `itl-ondemand-relay` v1 and pin it with the workflow change
-   (publication only on the user's request, per docs/source-publication.md).
-2. `update-workflow` installs the relay, writes descriptors and switches
+1. Stage A (no pin): the relay source, its build next to the facade, the
+   publisher's finalizer support for `dependencies.itlOndemandRelay`, and the
+   workflow integration that activates only when the lock pins the relay. The
+   published supervisor refuses a candidate lock with an owned asset it cannot
+   finalize, so the pin cannot ship in the same publication (refines grill
+   Q10: one change, two publications).
+2. Stage B, after stage A is published on the user's request: pin
+   `itlOndemandRelay`, route the relay source build through the E2E stands,
+   release relay and facade (docs/source-publication.md).
+3. `update-workflow` installs the relay, writes descriptors and switches
    proven unchanged owned entries; clients restart once.
-3. Rollback: an older workflow rewrites its direct facade entries (they are
+4. Rollback: an older workflow rewrites its direct facade entries (they are
    owned and unchanged since the relay write); descriptors and the relay cache
    stay unused.
 

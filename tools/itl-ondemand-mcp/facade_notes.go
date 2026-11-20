@@ -77,7 +77,13 @@ func (r *runtime) facadeSupersededNote() string {
 	if json.Unmarshal(raw, &manifest) != nil || manifest.FacadeVersion == "" || manifest.FacadeVersion == version {
 		return ""
 	}
-	return fmt.Sprintf("ITL_ONDEMAND_FACADE_SUPERSEDED: this %s facade process runs version %s, while the project now pins %s. This call was handled by the running process; reconnect this MCP server in the client (or start a new chat) to load the pinned facade.", r.family, version, manifest.FacadeVersion)
+	continuation := "reconnect this MCP server in the client (or start a new chat) to load the pinned facade."
+	if os.Getenv("ITL_ONDEMAND_RELAY") == "1" {
+		// The relay replaces the facade itself; it kept this one because the
+		// pinned facade is not installed.
+		continuation = "the relay keeps this facade because the pinned one is not installed; repeat update-workflow to install it."
+	}
+	return fmt.Sprintf("ITL_ONDEMAND_FACADE_SUPERSEDED: this %s facade process runs version %s, while the project now pins %s. This call was handled by the running process; %s", r.family, version, manifest.FacadeVersion, continuation)
 }
 
 func appendResultNote(result *mcp.CallToolResult, text string) {

@@ -73,10 +73,17 @@ func TestFacadeSupersededNoteNamesThePinnedVersion(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"facadeVersion":"9.9.9"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("ITL_ONDEMAND_RELAY", "")
 	note := rt.facadeSupersededNote()
-	if !strings.HasPrefix(note, "ITL_ONDEMAND_FACADE_SUPERSEDED:") || !strings.Contains(note, "version "+version) || !strings.Contains(note, "pins 9.9.9") {
+	if !strings.HasPrefix(note, "ITL_ONDEMAND_FACADE_SUPERSEDED:") || !strings.Contains(note, "version "+version) || !strings.Contains(note, "pins 9.9.9") || !strings.Contains(note, "reconnect this MCP server") {
 		t.Fatalf("unexpected superseded note: %q", note)
 	}
+	// Under the relay a reconnect would not help; the pinned facade is missing.
+	t.Setenv("ITL_ONDEMAND_RELAY", "1")
+	if relayed := rt.facadeSupersededNote(); !strings.Contains(relayed, "repeat update-workflow") || strings.Contains(relayed, "reconnect") {
+		t.Fatalf("relay continuation is wrong: %q", relayed)
+	}
+	t.Setenv("ITL_ONDEMAND_RELAY", "")
 	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}
 	rt.appendFacadeNotes("get_window_list_os", result)
 	if resultText(result) != "ok\n"+note {
