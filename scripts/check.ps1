@@ -164,15 +164,48 @@ function Add-StageResult {
     }) | Out-Null
 }
 
+# The one owner of the shard runner's inputs. The Pester stage and its
+# diagnostic isolated rerun both start workers through invoke-pester-shards.ps1
+# with these arguments, so a rerun sees the same environment (AI rules source,
+# Vanessa source-build archive, declared external inputs, module path).
+function Get-PesterShardRunnerArguments {
+    param([string]$ShardOutputRoot, [string]$ShardJunitPath, [string]$ShardSelectionPath = "", [switch]$IsolatedRerun)
+    $arguments = @("-RepositoryRoot", $repoRoot, "-OutputRoot", $ShardOutputRoot, "-JunitPath", $ShardJunitPath)
+    if ($IsolatedRerun) { $arguments += @("-WorkerCount", "1", "-IsolatedRerun") }
+    else {
+        $arguments += @("-WorkerCount", [string]$effectivePesterWorkers, "-RequestedWorkerCount", [string]$PesterWorkers)
+        if (-not $pesterWorkersExplicit) { $arguments += "-WorkerCountDefaulted" }
+    }
+    if ($ShardSelectionPath) { $arguments += @("-SelectionPath", $ShardSelectionPath) }
+    if ($effectiveMode -notin @("Targeted", "Smoke") -and $resolvedAiRulesSource) { $arguments += @("-AiRulesSource", $resolvedAiRulesSource) }
+    return $arguments
+}
+
 # Diagnostic only: after a Pester failure, rerun the failed files once, serially
 # and alone, to tell a nondeterministic failure from a reproducible one. The gate
 # still fails either way; no proof, cache entry or registration comes from it.
+# A file reproduces only when one of its originally failed tests fails again;
+# a different test failing alone is not a reproduction.
 function Invoke-PesterIsolatedRerun {
     $reportPath = Join-Path $outputRoot "pester-isolated-rerun.json"
     $report = [ordered]@{ schemaVersion = 1; status = "skipped"; reason = ""; files = @() }
     try {
         $root = $repoRoot.TrimEnd('\') + '\'
-        $failed = @()
+        function Get-PesterFailedCasesByFile([Xml.XmlDocument]$Document) {
+            $cases = @{}
+            foreach ($case in @($Document.SelectNodes('//testcase[failure or error]'))) {
+                $file = [string]$case.GetAttribute('classname')
+                if (-not $file) { $file = [string]$case.ParentNode.GetAttribute('name') }
+                if ($file -and [IO.Path]::IsPathRooted($file)) { $file = [IO.Path]::GetFullPath($file) }
+                if (-not $file.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { continue }
+                $file = $file.Substring($root.Length).Replace('\', '/')
+                if ($file -notlike 'tests/pester/*.Tests.ps1') { continue }
+                if (-not $cases.ContainsKey($file)) { $cases[$file] = New-Object System.Collections.Generic.List[string] }
+                $cases[$file].Add([string]$case.GetAttribute('name')) | Out-Null
+            }
+            return $cases
+        }
+        $failedCases = @{}
         $observed = @{}
         if (Test-Path -LiteralPath $junitPath -PathType Leaf) {
             $document = New-Object Xml.XmlDocument; $document.XmlResolver = $null; $document.Load($junitPath)
@@ -185,13 +218,9 @@ function Invoke-PesterIsolatedRerun {
                     $observed[(Split-Path -Leaf $file)] = $seconds
                 }
             }
-            $failed = @(@(foreach ($case in @($document.SelectNodes('//testcase[failure or error]'))) {
-                $file = [string]$case.GetAttribute('classname')
-                if (-not $file) { $file = [string]$case.ParentNode.GetAttribute('name') }
-                if ($file -and [IO.Path]::IsPathRooted($file)) { $file = [IO.Path]::GetFullPath($file) }
-                if ($file.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $file.Substring($root.Length).Replace('\', '/') }
-            }) | Where-Object { $_ -like 'tests/pester/*.Tests.ps1' } | Sort-Object -Unique)
+            $failedCases = Get-PesterFailedCasesByFile $document
         }
+        $failed = @($failedCases.Keys | Sort-Object -Unique)
         if ($failed.Count -eq 0) { $report.reason = "no failed Pester file was reported" }
         elseif ($failed.Count -gt 5) { $report.reason = "$($failed.Count) failed files suggest a systematic failure" }
         else {
@@ -209,19 +238,37 @@ function Invoke-PesterIsolatedRerun {
                 New-Item -ItemType Directory -Force -Path $rerunRoot | Out-Null
                 $report.files = @(foreach ($file in $failed) {
                     $name = [IO.Path]::GetFileNameWithoutExtension($file)
-                    $planPath = Join-Path $rerunRoot "$name.plan.json"; $resultPath = Join-Path $rerunRoot "$name.result.json"
-                    [IO.File]::WriteAllText($planPath, (([ordered]@{ schemaVersion = 1; worker = 0; paths = @($file) } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-                    if (Test-Path -LiteralPath $resultPath) { Remove-Item -LiteralPath $resultPath -Force }
+                    $fileRoot = Join-Path $rerunRoot $name
+                    if (Test-Path -LiteralPath $fileRoot) { Remove-Item -LiteralPath $fileRoot -Recurse -Force }
+                    New-Item -ItemType Directory -Force -Path $fileRoot | Out-Null
+                    $selectionPath = Join-Path $fileRoot "selection.json"; $rerunJunitPath = Join-Path $fileRoot "pester.xml"
+                    [IO.File]::WriteAllText($selectionPath, (([ordered]@{ schemaVersion = 1; tests = @($file) } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
                     try {
-                        Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot "scripts\run-pester-shard.ps1") -Arguments @("-PlanPath", $planPath, "-JunitPath", (Join-Path $rerunRoot "$name.xml"), "-ResultPath", $resultPath) -TimeoutSeconds $estimate -NoProgressSeconds $estimate -LogName "pester-isolated-$name"
+                        Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot "scripts\invoke-pester-shards.ps1") -Arguments @(Get-PesterShardRunnerArguments -ShardOutputRoot $fileRoot -ShardJunitPath $rerunJunitPath -ShardSelectionPath $selectionPath -IsolatedRerun) -TimeoutSeconds $estimate -NoProgressSeconds $estimate -LogName "pester-isolated-$name"
                     } catch { }
                     # Only a worker result is a verdict. A rerun stopped before its
                     # result (deadline, crash) reproduced nothing: it stays skipped.
                     $outcome = "skipped"
-                    if (Test-Path -LiteralPath $resultPath -PathType Leaf) {
-                        try { $outcome = if ([string](Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status -eq "passed") { "passed" } else { "failed" } } catch { $outcome = "skipped" }
+                    $originalFailures = @($failedCases[$file] | Sort-Object -Unique)
+                    $isolatedFailures = @()
+                    $summaryPath = Join-Path $fileRoot "pester-shards\summary.json"
+                    if (Test-Path -LiteralPath $summaryPath -PathType Leaf) {
+                        try {
+                            $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                            if (@($summary.workers).Count -eq 1) {
+                                if ([string]$summary.status -eq "passed") { $outcome = "passed" }
+                                else {
+                                    if (Test-Path -LiteralPath $rerunJunitPath -PathType Leaf) {
+                                        $rerunDocument = New-Object Xml.XmlDocument; $rerunDocument.XmlResolver = $null; $rerunDocument.Load($rerunJunitPath)
+                                        $rerunCases = Get-PesterFailedCasesByFile $rerunDocument
+                                        if ($rerunCases.ContainsKey($file)) { $isolatedFailures = @($rerunCases[$file] | Sort-Object -Unique) }
+                                    }
+                                    $outcome = if (@($isolatedFailures | Where-Object { $_ -cin $originalFailures }).Count) { "failed" } else { "not-reproduced" }
+                                }
+                            }
+                        } catch { $outcome = "skipped" }
                     }
-                    [pscustomobject][ordered]@{ path = $file; isolatedRerun = $outcome }
+                    [pscustomobject][ordered]@{ path = $file; isolatedRerun = $outcome; originalFailures = $originalFailures; isolatedFailures = $isolatedFailures }
                 })
                 $report.status = if (@($report.files | Where-Object { $_.isolatedRerun -eq "passed" }).Count) { "passed-in-isolation" } elseif (@($report.files | Where-Object { $_.isolatedRerun -eq "failed" }).Count) { "reproduced" } else { "inconclusive" }
             }
@@ -230,11 +277,17 @@ function Invoke-PesterIsolatedRerun {
     [IO.File]::WriteAllText($reportPath, (($report | ConvertTo-Json -Depth 5) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     $passed = @($report.files | Where-Object { $_.isolatedRerun -eq "passed" } | ForEach-Object { $_.path })
     $reproduced = @($report.files | Where-Object { $_.isolatedRerun -eq "failed" } | ForEach-Object { $_.path })
+    $different = @($report.files | Where-Object { $_.isolatedRerun -eq "not-reproduced" })
     $unfinished = @($report.files | Where-Object { $_.isolatedRerun -eq "skipped" } | ForEach-Object { $_.path })
     if ($report.status -eq "skipped") { return " Isolated rerun skipped: $($report.reason)." }
     $text = ""
     if ($passed.Count) { $text += " Isolated rerun: $($passed -join ', ') passed alone (nondeterministic; diagnose the unstable test, not the product)." }
     if ($reproduced.Count) { $text += " Isolated rerun: $($reproduced -join ', ') failed again." }
+    # A different failure alone neither reproduces nor excuses the original one.
+    foreach ($entry in $different) {
+        $others = if (@($entry.isolatedFailures).Count) { @($entry.isolatedFailures) -join '; ' } else { 'no failed test case reported' }
+        $text += " Isolated rerun inconclusive: $($entry.path) did not repeat its failed tests; other tests failed alone ($others); see its pester-isolated log."
+    }
     if ($unfinished.Count) { $text += " Isolated rerun inconclusive: $($unfinished -join ', ') ended without a worker result; see its pester-isolated log." }
     return $text
 }
@@ -1208,8 +1261,7 @@ try {
                 $selection = Get-Content -LiteralPath $selectionPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 if ($effectiveMode -eq "Targeted") {
                     $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
-                    $shardArguments = @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$effectivePesterWorkers, "-RequestedWorkerCount", [string]$PesterWorkers, "-SelectionPath", $selectionPath)
-                    if (-not $pesterWorkersExplicit) { $shardArguments += "-WorkerCountDefaulted" }
+                    $shardArguments = @(Get-PesterShardRunnerArguments -ShardOutputRoot $outputRoot -ShardJunitPath $junitPath -ShardSelectionPath $selectionPath)
                     Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments $shardArguments -TimeoutSeconds $modeHardBudgetSeconds -NoProgressSeconds 300 -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-selection-shards"
                     $selectionResult = Get-Content -LiteralPath (Join-Path $outputRoot "pester-shards\summary.json") -Raw -Encoding UTF8 | ConvertFrom-Json
                     $script:pesterShardSummary = $selectionResult
@@ -1224,9 +1276,7 @@ try {
                 $script:pesterResult = [pscustomobject]@{ Result = $(if ([string]$selectionResult.status -eq "passed") { "Passed" } else { "Failed" }); PassedCount = [int]$selectionResult.passed; FailedCount = [int]$selectionResult.failed; SkippedCount = [int]$selectionResult.skipped }
             } else {
                 $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
-                $shardArguments = @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$effectivePesterWorkers, "-RequestedWorkerCount", [string]$PesterWorkers)
-                if (-not $pesterWorkersExplicit) { $shardArguments += "-WorkerCountDefaulted" }
-                if ($resolvedAiRulesSource) { $shardArguments += @("-AiRulesSource", $resolvedAiRulesSource) }
+                $shardArguments = @(Get-PesterShardRunnerArguments -ShardOutputRoot $outputRoot -ShardJunitPath $junitPath)
                 Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments $shardArguments -TimeoutSeconds $pesterHardBudgetSeconds -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-shards"
                 $shardSummaryPath = Join-Path $outputRoot "pester-shards\summary.json"
                 if (-not (Test-Path -LiteralPath $shardSummaryPath -PathType Leaf)) { throw "Pester shard summary was not created." }

@@ -10,6 +10,10 @@ param(
     [switch]$WorkerCountDefaulted,
     [switch]$InputIdentityOnly,
     [switch]$PlanOnly,
+    # Diagnostic rerun of failed files: the same worker environment as the
+    # normal run (external inputs, Vanessa archive, module path), but no proof
+    # is read or written: no prior result, cache lookup or cache entry.
+    [switch]$IsolatedRerun,
     [string]$BaseRef = ""
 )
 
@@ -20,6 +24,7 @@ $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = $utf8NoBom
 [Console]::OutputEncoding = $utf8NoBom
 $OutputEncoding = $utf8NoBom
+if ($IsolatedRerun -and ($PlanOnly -or $InputIdentityOnly)) { throw "-IsolatedRerun executes tests; it cannot be combined with -PlanOnly or -InputIdentityOnly." }
 $workerCountParameterExplicit = $PSBoundParameters.ContainsKey("WorkerCount")
 $reportedRequestedWorkerCount = $(if ($RequestedWorkerCount -gt 0) { $RequestedWorkerCount } else { $WorkerCount })
 
@@ -774,9 +779,10 @@ foreach ($item in $items) {
     $stderrPath = Join-Path $workerRoot ("worker-{0}.stderr.log" -f $index)
     $stdinPath = Join-Path $workerRoot ("worker-{0}.stdin.txt" -f $index)
     $preparedInputs = $null
-    $digest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -PreparedInputs ([ref]$preparedInputs)
+    # An isolated rerun has no digest: nothing is restored from or saved to the cache.
+    $digest = if ($IsolatedRerun) { '' } else { Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -PreparedInputs ([ref]$preparedInputs) }
     $legacyDigests = New-Object System.Collections.Generic.List[string]
-    if (-not $PlanOnly -and (Test-Path -LiteralPath $planPath -PathType Leaf) -and (Test-Path -LiteralPath $resultPath -PathType Leaf) -and (Test-Path -LiteralPath $workerJunit -PathType Leaf)) {
+    if (-not $PlanOnly -and -not $IsolatedRerun -and (Test-Path -LiteralPath $planPath -PathType Leaf) -and (Test-Path -LiteralPath $resultPath -PathType Leaf) -and (Test-Path -LiteralPath $workerJunit -PathType Leaf)) {
         try {
             $priorPlan = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $priorResult = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -798,11 +804,11 @@ foreach ($item in $items) {
     }
 
     $lookupStopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path) -ReadOnly:$PlanOnly
+    $cached = if ($IsolatedRerun) { $null } else { Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path) -ReadOnly:$PlanOnly }
     $lookupStopwatch.Stop()
     $script:pesterCacheLookupMs += [int64]$lookupStopwatch.ElapsedMilliseconds
     $reuseReason = "exact owner input fingerprint"
-    if (-not $cached) {
+    if (-not $cached -and -not $IsolatedRerun) {
         foreach ($legacyWorkerCount in 1..4) {
             $priorWorkerDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -LegacyWorkerCount $legacyWorkerCount -PreparedInputs ([ref]$preparedInputs)
             if ($priorWorkerDigest) { $legacyDigests.Add($priorWorkerDigest) | Out-Null }
@@ -862,7 +868,7 @@ foreach ($item in $items) {
         $witness=$script:pesterExternalRuntimeReceipt.PSObject.Properties[$profile]
         if(-not $witness){$profile+': identity unavailable'}elseif($witness.Value.status -ne 'known'){$profile+': '+$witness.Value.reason}
     })
-    $repeatReason = if ($cached) { $reuseReason } elseif ($nonReusable -and $relativeItemPath -in @($nonReusable.Value)) {
+    $repeatReason = if ($cached) { $reuseReason } elseif ($IsolatedRerun) { 'isolated diagnostic rerun of a failed file; no reuse' } elseif ($nonReusable -and $relativeItemPath -in @($nonReusable.Value)) {
         'unqualified external runtime; mandatory native boundary'
     } elseif ($unknownExternal.Count) { 'unqualified external runtime: '+($unknownExternal -join '; ') }
     elseif ($script:pesterRuntimeReceipt.status -ne 'known') { 'unknown child runtime identity' }

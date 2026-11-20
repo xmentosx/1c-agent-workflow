@@ -1598,10 +1598,10 @@
       "id": "pester-isolated-rerun",
       "owner": "diagnostic isolated rerun of failed Pester files and its nondeterministic classification",
       "gate": "targeted",
-      "budgetSeconds": 60,
+      "budgetSeconds": 180,
       "primaryTest": "tests/pester/PesterIsolatedRerun.Tests.ps1",
-      "paths": ["tests/pester/PesterIsolatedRerun.Tests.ps1", "scripts/check.ps1"],
-      "reuseInputPaths": ["scripts/source-delivery-process.ps1", "scripts/pester-timings.json", "tests/pester/SourceDeliveryPlan.TestSupport.ps1", "scripts/ai-rules-native-inputs.ps1", "tests/pester/TestSupport.ps1"],
+      "paths": ["tests/pester/PesterIsolatedRerun.Tests.ps1", "scripts/check.ps1", "scripts/invoke-pester-shards.ps1"],
+      "reuseInputPaths": ["scripts/source-delivery-process.ps1", "scripts/pester-timings.json", "tests/pester/SourceDeliveryPlan.TestSupport.ps1", "scripts/ai-rules-native-inputs.ps1", "tests/pester/TestSupport.ps1", "scripts/run-pester-shard.ps1", "scripts/run-pester-external-shard.ps1", "scripts/invoke-pester-runtime.ps1", "scripts/vanessa-source-build-archive.ps1", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
       "tests": ["tests/pester/PesterIsolatedRerun.Tests.ps1"]
     },
     {
