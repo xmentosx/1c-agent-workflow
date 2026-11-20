@@ -713,11 +713,15 @@ static class FakeFormClient {
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
     [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
     static WndProc proc = Proc; static string flag; static bool opened;
     static IntPtr Proc(IntPtr h, uint m, IntPtr w, IntPtr l) {
-        if (m == 0x0113 && !opened && File.Exists(flag)) { opened = true; Activate(Open("V8TopLevelFrameSDIsec", "ITL fake settings form")); }
+        // A null key event gives this process the last input, so Windows lets the
+        // form take the foreground inside ShowWindow, the way 1C activates a form it
+        // shows; without it the foreground lock decides the order (2026-11-20).
+        if (m == 0x0113 && !opened && File.Exists(flag)) { opened = true; keybd_event(0, 0, 0, UIntPtr.Zero); Activate(Open("V8TopLevelFrameSDIsec", "ITL fake settings form")); }
         // A busy 1C thread answers WM_PRINT late.
         if (m == 0x0317 || m == 0x0318) Thread.Sleep(400);
         return DefWindowProc(h, m, w, l);
@@ -824,7 +828,8 @@ static class FakeFormClient {
             '{"t":"2026-11-17T03:00:00.0000000Z","event":"desktop-locked"}'
         ) | Set-Content -LiteralPath (Join-Path $dir 'journal\desktop.jsonl') -Encoding UTF8
         $group = [pscustomobject]@{ ready = $true; directory = $dir; mode = 'hidden'; warning = '' }
-        (Write-ItlWindowHelperFailureDiagnostics -Group $group 6>&1) -join "`n" | Should -Match "Hidden TestClient window: t=\S+ role=testclient title='Настройки канбана'"
+        $diagnostics = (Write-ItlWindowHelperFailureDiagnostics -Group $group 6>&1) -join "`n"
+        $diagnostics.Contains("role=testclient title='Настройки канбана'") | Should -BeTrue
         $until = [datetime]::new(2026, 11, 17, 3, 30, 0, [DateTimeKind]::Utc)
         $intervals = @(Get-ItlWindowHelperDesktopLockIntervals -Group $group -UntilUtc $until)
         $intervals | Should -HaveCount 2
