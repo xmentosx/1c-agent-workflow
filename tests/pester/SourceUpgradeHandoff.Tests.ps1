@@ -142,6 +142,66 @@ exit 0
         } finally {if($hadOverride){$env:ITL_WORKFLOW_SOURCE_PATH=$oldOverride}else{Remove-Item Env:ITL_WORKFLOW_SOURCE_PATH -ErrorAction SilentlyContinue}}
     }
 
+    It 'continues a scoped master update pinned to a defective candidate only with its recorded scope' {
+        # Stand preparation repeats the receipt scope for this continuation; the
+        # new candidate's scope stays rejected until the pinned package completes.
+        # Scope admission precedes the phase dispatch shared by all post-copy phases.
+        $project=Join-Path $TestDrive 'Pinned scoped master Кириллица с пробелом'
+        $branch=Join-Path $TestDrive 'Pinned scoped ветка с пробелом'
+        $newSource=Join-Path $TestDrive 'New scoped helper кандидат'
+        New-Item -ItemType Directory -Force -Path $project,$branch,$newSource | Out-Null
+        [IO.File]::WriteAllText((Join-Path $project 'managed.txt'),'before',[Text.UTF8Encoding]::new($false))
+        $oldOverride=$env:ITL_WORKFLOW_SOURCE_PATH
+        $hadOverride=Test-Path Env:ITL_WORKFLOW_SOURCE_PATH
+        try {
+            $env:ITL_WORKFLOW_SOURCE_PATH=$newSource
+            $result=& {
+                . $helperPath -ProjectRoot $project -Action help *> $null
+                $script:RecoverySource=[pscustomobject]@{root=$newSource;commit=('2'*40)}
+                $script:Agent1cScriptPath=Join-Path $newSource '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+                function Resolve-WorkflowPackageSource { $script:RecoverySource }
+                function Assert-WorkflowSourceOutsideProject { param($SourceRoot) }
+                function Assert-WorkflowPackageUpdateContext { param([switch]$DeferCleanCheck) }
+                function Assert-WorkflowUpdateRecordedSource { param($Receipt) }
+                function Get-GitWorktrees { @(@{path=$project;branch='master'},@{path=$branch;branch='itldev/develop'}) }
+                $script:RolloutScopes=@()
+                function Assert-WorkflowDevelopmentBranchRolloutComplete { param($SourceCommit,$RolloutScope) if($SourceCommit -cne ('1'*40)){throw 'Pinned candidate identity changed'}; $script:RolloutScopes+=@($RolloutScope) }
+                $script:Children=0
+                function Invoke-Agent1cFreshProcess { param([string[]]$AdditionalArguments,[switch]$ReturnExitStatus) $script:Children++; [pscustomobject]@{exitCode=0} }
+                $recorded=[pscustomobject]@{root='C:\defective-candidate';commit=('1'*40)}
+                $scope=[ordered]@{schemaVersion=1;projectRoot=$project;sourceCommit=$recorded.commit;roots=@($branch)}
+                $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('managed.txt') -SnapshotParent (Join-Path $project '.agent-1c/snapshots/workflow-update')
+                [IO.File]::WriteAllText((Join-Path $project 'managed.txt'),'defective candidate bytes',[Text.UTF8Encoding]::new($false))
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $recorded -Phase post-copy-failed -Details @{rolloutScope=$scope}
+                $files=@{}
+                foreach($pair in @(@('candidate',('2'*40)),@('recorded',$recorded.commit))){
+                    $files[$pair[0]]=Join-Path $TestDrive ($pair[0]+' scope.json')
+                    $copy=[ordered]@{schemaVersion=1;projectRoot=$project;sourceCommit=$pair[1];roots=@($branch)}
+                    [IO.File]::WriteAllText($files[$pair[0]],($copy|ConvertTo-Json -Depth 4),[Text.UTF8Encoding]::new($false))
+                }
+                $rejected=''
+                $WorkflowUpdateBranchRootsFile=$files.candidate
+                try{Update-WorkflowPackage|Out-Null}catch{$rejected=$_.Exception.Message}
+                $afterReject=[pscustomobject]@{children=$script:Children;pending=($null -ne (Get-WorkflowUpdatePendingSnapshot));text=[IO.File]::ReadAllText((Join-Path $project 'managed.txt'))}
+                $next=''
+                $WorkflowUpdateBranchRootsFile=$files.recorded
+                try{Update-WorkflowPackage|Out-Null}catch{$next=$_.Exception.Message}
+                $id=(Split-Path -Leaf $snapshot.root).Substring('itl-workflow-update-rollback-'.Length)
+                $completed=Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id
+                [pscustomobject]@{rejected=$rejected;afterReject=$afterReject;next=$next;payload=$completed.receipt.sourceCommit;executor=$completed.receipt.recoveryExecutorCommit;scopeRoots=@($script:RolloutScopes[-1].roots);pending=($null -ne (Get-WorkflowUpdatePendingSnapshot))}
+            }
+            $result.rejected | Should -Match 'WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH'
+            $result.afterReject.children | Should -Be 0
+            $result.afterReject.pending | Should -BeTrue
+            $result.afterReject.text | Should -Be 'defective candidate bytes'
+            $result.next | Should -Match 'WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING'
+            $result.payload | Should -Be ('1'*40)
+            $result.executor | Should -Be ('2'*40)
+            $result.scopeRoots | Should -Be @([IO.Path]::GetFullPath($branch))
+            $result.pending | Should -BeFalse
+        } finally {if($hadOverride){$env:ITL_WORKFLOW_SOURCE_PATH=$oldOverride}else{Remove-Item Env:ITL_WORKFLOW_SOURCE_PATH -ErrorAction SilentlyContinue}}
+    }
+
     It 'records a real failed post-copy child before returning and resumes through the same owner' {
         $project=Join-Path $TestDrive 'Native child failure Кириллица'
         New-Item -ItemType Directory -Force -Path $project | Out-Null
