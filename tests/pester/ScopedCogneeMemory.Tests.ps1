@@ -220,6 +220,17 @@
         $products=@(Get-ItlMemoryScopes $persisted read|Where-Object scopeKind -EQ product)
         $products.Count | Should -Be 1
         Resolve-ItlMemoryDatasetName $persisted product | Should -BeExactly $products[0].label
+        # recall arguments as the stdio server parses them: no list or an empty
+        # one is the admitted union, several names stay separate.
+        foreach($sent in @('{"query":"q"}','{"query":"q","datasets":[]}')){
+            $requested=Resolve-ItlMemoryRequestedDatasets $persisted ($sent|ConvertFrom-Json)
+            ,$requested | Should -BeOfType [object[]]
+            $requested.Count | Should -Be 0 -Because $sent
+        }
+        $requested=Resolve-ItlMemoryRequestedDatasets $persisted ('{"query":"q","datasets":["project","itl_org_org"]}'|ConvertFrom-Json)
+        ($requested -join '|') | Should -BeExactly 'itl_project_customer|itl_org_org'
+        $requested=Resolve-ItlMemoryRequestedDatasets $persisted ('{"query":"q","datasets":["task"]}'|ConvertFrom-Json)
+        ($requested -join '|') | Should -BeExactly ('itl_task_'+$persisted.cycleId)
         $local.Contains('writeGuidance') | Should -BeFalse
         {Get-ItlMemoryScopes $b write} | Should -Throw '*MEMORY_DESTINATION_REQUIRED*'
         {Get-ItlMemoryScopes $b write 'itl_product_corp' 'planning'} | Should -Throw '*MEMORY_DESTINATION_REQUIRED*'

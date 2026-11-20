@@ -237,6 +237,14 @@ function Resolve-ItlMemoryDatasetName {
     return $Name
 }
 
+function Resolve-ItlMemoryRequestedDatasets {
+    param([object]$Binding,[object]$Arguments)
+    # recall datasets as the client sent them: each kind or label resolved,
+    # none or an empty list meaning the admitted union.
+    $requested=Get-ItlCatalogField $Arguments 'datasets' @()
+    return ,@(foreach($name in @($requested)){if($null -ne $name){Resolve-ItlMemoryDatasetName $Binding ([string]$name)}})
+}
+
 function Find-ItlMemoryNativeDataset {
     param([object]$Binding,[string]$Label,[DateTime]$DeadlineUtc,[object]$Listing=$null)
     if(-not $Listing){$Listing=Invoke-ItlMemoryHttp $Binding.provider GET '/api/v1/datasets' -DeadlineUtc $DeadlineUtc}
