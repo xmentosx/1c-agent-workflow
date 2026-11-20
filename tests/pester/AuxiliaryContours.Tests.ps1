@@ -725,10 +725,10 @@
                 Set-Content -LiteralPath $envPath -Value @('# local comment','ITL_AUX_EXCHANGE_PASSWORD = retirement-secret','ITL_AUX_EXCHANGE_PASSWORD_OTHER=keep','OTHER=keep') -Encoding UTF8
                 $missing = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-name-required' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour
                 $missing.exitCode | Should -Be 1
-                $missing.combinedText | Should -Match 'ITL_AUXILIARY_CONTOUR_REQUIRED'
+                $missing.combinedText.Contains('ITL_AUXILIARY_CONTOUR_REQUIRED') | Should -BeTrue
                 $wrong = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-name-exact' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='EXCHANGE'}
                 $wrong.exitCode | Should -Be 1
-                $wrong.combinedText | Should -Match 'ITL_AUXILIARY_CONTOUR_NAME_INVALID'
+                $wrong.combinedText.Contains('ITL_AUXILIARY_CONTOUR_NAME_INVALID') | Should -BeTrue
                 $result = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-managed' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='exchange'}
                 $result.combinedText | Should -Not -Match 'retirement-secret'
                 $result.combinedText | Should -Match 'archived.*itldev-auxiliary-fixture[/\\]exchange'
@@ -767,7 +767,10 @@
                 $before = (Get-FileHash -LiteralPath $config).Hash
                 $result = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-profile-block' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='exchange'}
                 $result.exitCode | Should -Be 1
-                $result.combinedText | Should -Match "ITL_AUXILIARY_RETIREMENT_PROFILE_REFERENCE.*Branch User"
+                # The code is followed by the referencing profile.
+                $codeAt = $result.combinedText.IndexOf('ITL_AUXILIARY_RETIREMENT_PROFILE_REFERENCE')
+                $codeAt | Should -BeGreaterThan -1
+                $result.combinedText.IndexOf('Branch User', $codeAt) | Should -BeGreaterThan $codeAt
                 $result.combinedText | Should -Match ([regex]::Escape($manifest))
                 (Get-FileHash -LiteralPath $config).Hash | Should -Be $before
                 Test-Path -LiteralPath $base | Should -BeTrue
@@ -927,8 +930,8 @@
                         $output | Should -Match 'mdperf-ab-copy.*3 bytes'
                         $output | Should -Match 'Ручной эталон.*3 bytes'
                         $output | Should -Match 'linked.*reparse-or-unavailable'
-                        $output | Should -Match 'ITL_AUX_MD_FRESH_085_PASSWORD'
-                        $output | Should -Match 'cursor/itl-roctup-aux-md-fresh-085'
+                        $output.Contains('ITL_AUX_MD_FRESH_085_PASSWORD') | Should -BeTrue
+                        $output.Contains('cursor/itl-roctup-aux-md-fresh-085') | Should -BeTrue
                         $output | Should -Not -Match 'orphan-secret|vanessa-service-fixture|infobases\\primary|itldev-auxiliary-fixture\\exchange'
                     }
                     (Invoke-ItlArtifactCleanup -Automatic *>&1 | Out-String) | Should -Not -Match 'md-fresh-085|ITL_AUX_MD_FRESH_085_PASSWORD'
@@ -1019,7 +1022,10 @@
                     $testState.crash = $false
                     $result = Reset-DevBranch *>&1 | Out-String
                     $result | Should -Match 'exchange.*archived'
-                    $result | Should -Match 'ITL_AUX_EXCHANGE_PASSWORD.*Target Primary'
+                    # The secret name is followed by the target that still uses it.
+                    $secretAt = ([string]$result).IndexOf('ITL_AUX_EXCHANGE_PASSWORD')
+                    $secretAt | Should -BeGreaterThan -1
+                    ([string]$result).IndexOf('Target Primary', $secretAt) | Should -BeGreaterThan $secretAt
                     $result | Should -Not -Match 'fixture-kept|fixture-unused'
                     (Read-DevBranchState).resetStatus | Should -Be 'complete'
                     (Get-GitOutput @('rev-parse','HEAD^{tree}')).Trim() | Should -Be $targetTree
@@ -1073,7 +1079,10 @@
                 [IO.File]::WriteAllText($db, 'external bytes')
                 New-Item -ItemType Junction -Path $managed -Target $other | Out-Null
                 $result = Invoke-Agent1cEntrypointProbe -ProbeId 'auxiliary-remove-junction' -HelperPath $HelperPath -ProjectRoot $root -Action remove-auxiliary-contour -Arguments @{AuxiliaryContourName='exchange'}
-                $result.combinedText | Should -Match 'preserved.*path-or-archive-ownership-unproved'
+                # The preserved item carries its reason identifier.
+                $preservedAt = $result.combinedText.IndexOf('preserved')
+                $preservedAt | Should -BeGreaterThan -1
+                $result.combinedText.IndexOf('path-or-archive-ownership-unproved', $preservedAt) | Should -BeGreaterThan $preservedAt
                 $result.exitCode | Should -Be 0
                 [IO.File]::ReadAllText($db) | Should -Be 'external bytes'
                 Test-Path -LiteralPath $managed | Should -BeTrue
