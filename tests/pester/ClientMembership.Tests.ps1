@@ -91,6 +91,9 @@ Describe 'ITL client membership planning' {
             function Get-ItlExpectedSurfaceFiles { param([string]$Client) return ([ordered]@{".agents/skills/itl-$Client/SKILL.md"='managed'}) }
             function Get-AiRules1cProjectManifest { [pscustomobject]@{tools=@('kilocode','claude-code')} }
             function Get-ItlOnDemandMcpExecutablePath { return $facadePath }
+            # The pinned relay must be installed, or client entries are skipped
+            # before the collision check; gate shards use an empty install root.
+            function Get-ItlOnDemandRelayContract { [pscustomobject]@{ path = $facadePath } }
             function Get-ItlOnDemandMcpEndpointDescriptors { @([pscustomobject]@{name='reserved';url='https://itl.invalid'}) }
             function Sync-ItlUiToolsMcp { return $null }
             $before = (Get-FileHash -LiteralPath $mcpPath).Hash

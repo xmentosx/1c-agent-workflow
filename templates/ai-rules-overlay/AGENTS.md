@@ -18,7 +18,9 @@ replacing the upstream process, coding, MCP, memory, or OpenSpec rules.
   A request to analyze or document alone does not authorize implementation.
 - Treat current worktree code, staged and unstaged changes, and untracked
   relevant files as the local delta. MCP indexing of the baseline does not
-  replace that delta. Read the matching on-demand ITL rule before changing a
+  replace that delta; remote `code`/`graph` MCP show `master` as last indexed,
+  up to a day old (`/itl-status` indexedAt): check this branch in its files and
+  `master` by `git log`. Read the matching on-demand ITL rule before changing a
   managed form (`content/rules/itl-managed-form-context.md`) or using
   project-specific architecture facts.
 - For a code review, including `/ponytail-review`, take the scope from the
