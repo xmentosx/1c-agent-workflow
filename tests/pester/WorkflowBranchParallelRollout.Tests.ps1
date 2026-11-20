@@ -63,9 +63,13 @@ Describe 'Parallel development-branch rollout of update-workflow' {
             . $HelperPath -ProjectRoot $fixture.root -Action help -MaxParallelWorkflowBranches 2 *> $null
             $script:childRequests = @()
             function Invoke-WorkflowDevelopmentBranchItemUpdate { throw 'the parallel route must not update a branch in process' }
+            # This case proves the parallelism limit; the free-memory admission
+            # has its own case. Real host memory under a loaded gate would hold
+            # the second branch back and hide the limit.
+            function Get-WorkflowUpdateAvailableMemoryBytes { [int64]8GB }
             function Start-WorkflowDevelopmentBranchChild {
                 param($Item, $Source, $MasterClients, $OutputRoot, $RunInputsPath)
-                $script:childRequests += [pscustomobject]@{ branch = [string]$Item.branch; inputs = (Get-Content -LiteralPath $RunInputsPath -Raw -Encoding UTF8 | ConvertFrom-Json) }
+                $script:childRequests +=[pscustomobject]@{ branch = [string]$Item.branch; inputs = (Get-Content -LiteralPath $RunInputsPath -Raw -Encoding UTF8 | ConvertFrom-Json) }
                 $safe = ConvertTo-SafeName ([string]$Item.branch)
                 $resultPath = Join-Path $OutputRoot "$safe.result.json"
                 $stdout = Join-Path $OutputRoot "$safe.stdout.json"
