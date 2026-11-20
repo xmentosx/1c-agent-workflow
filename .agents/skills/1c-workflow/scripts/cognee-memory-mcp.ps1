@@ -62,7 +62,7 @@ while($null -ne ($line=[Console]::ReadLine())){
                 $evidence=Get-ItlCatalogField $arguments 'evidence' @()
                 # Destinations name a scope kind; every tool resolves it to this
                 # copy's exact dataset label before its owner sees the name.
-                $requestedDatasets=@(@(Get-ItlCatalogField $arguments 'datasets' @())|ForEach-Object {Resolve-ItlMemoryDatasetName $binding ([string]$_)})
+                $requestedDatasets=Resolve-ItlMemoryRequestedDatasets $binding $arguments
                 $datasetName=Resolve-ItlMemoryDatasetName $binding ([string](Get-ItlCatalogField $arguments 'dataset_name' ''))
                 $held='MEMORY_CONTEXT_CHANGED: the task cycle or project changed under this session, so nothing was written. Call memory_status, then repeat the write only if it belongs to the new context.'
                 $value=switch($name){
