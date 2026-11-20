@@ -127,6 +127,38 @@ Describe "Local quality gate contract" {
         $localRunner | Should -Match 'SetEnvironmentVariable\("ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT", \$originalExecutionGuardFallbackRoot, "Process"\)'
     }
 
+    It "previews the exact Targeted selection for committed and uncommitted paths without running it" {
+        . (Join-Path $RepoRoot "scripts\git-path-list.ps1")
+        $base = ([string](Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @("rev-parse", "HEAD~1") -AllowFailure).stdout).Trim()
+        if (-not $base) { Set-ItResult -Skipped -Because "the checkout has no parent commit"; return }
+        $outputRoot = Join-Path $TestDrive "предпросмотр targeted"
+        $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot "scripts\test.ps1") -Arguments @("-Targeted", "-ListOnly", "-BaseRef", $base, "-OutputFile", (Join-Path $outputRoot "testResults.xml"))
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $preview = Get-Content -LiteralPath (Join-Path $outputRoot "selection.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        Test-Path -LiteralPath (Join-Path $outputRoot "pester-shards") | Should -BeFalse
+
+        # The gate's own selector over the same merge base plus uncommitted paths.
+        $uncommitted = @(@(
+            Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @("diff", "--name-only", "-z", "--")
+            Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @("diff", "--cached", "--name-only", "-z", "--")
+            Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--")
+        ) | Where-Object { $_ } | Sort-Object -Unique)
+        $gatePath = Join-Path $TestDrive "gate-selection.json"
+        $selectorArguments = @{ RepositoryRoot = $RepoRoot; BaseRef = $base; OutputPath = $gatePath }
+        if ($uncommitted.Count -gt 0) { $selectorArguments.ChangedPath = $uncommitted }
+        & (Join-Path $RepoRoot "scripts\resolve-targeted-tests.ps1") @selectorArguments | Out-Null
+        $gate = Get-Content -LiteralPath $gatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($preview.tests) | Should -Be @($gate.tests)
+        @($preview.paths) | Should -Be @($gate.paths)
+        @($preview.additionalInputs) | Should -Be @($gate.additionalInputs)
+        @($preview.tests).Count | Should -BeGreaterThan 0
+
+        $both = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot "scripts\test.ps1") -Arguments @("-Targeted", "-Path", "tests/pester/LocalQualityGate.Tests.ps1")
+        $both.exitCode | Should -Not -Be 0
+        # Focused runs use the gate's PowerShell 7 resolution, so Core-host cases are not skipped.
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\test.ps1") -Raw -Encoding UTF8) | Should -Match 'Resolve-WorkflowGatePwsh'
+    }
+
     It "runs owner-selected upgrade before complete Pester and records shard timing metrics" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
         $early = $check.IndexOf('owner-selected fail-fast $journey journey before complete Pester')

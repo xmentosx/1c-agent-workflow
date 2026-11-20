@@ -223,6 +223,16 @@ there is saved in the shared shard cache, and `RegisterChange` reuses it while
 its owner inputs are unchanged. A plain `Invoke-Pester` has neither strict mode
 nor that isolation; its pass does not predict registration and is never reused.
 
+When the unit is complete and before its commit, run `.\scripts\test.ps1 -Targeted`
+(`-BaseRef`, default `origin/develop`; `-CoverageContract` as for registration;
+`-ListOnly` prints without running). It passes the committed range from the merge
+base plus uncommitted paths to the gate's own selector and runs exactly the Pester
+files `Targeted` would select, with the same selection inputs, so `RegisterChange`
+reuses their proofs. In November 2026 31 of 47 Targeted test failures were in files
+the change did not touch; fix them here in short focused reruns instead of through
+repeated registrations. Repeat it only after relevant edits. Its other stages
+(encoding, helper parse, tracked state) still run only in registration.
+
 Treat `Targeted` as a potentially expensive registration gate, not an intermediate
 development check. Run it once through `RegisterChange` after the implementation
 unit is complete; never pre-run it manually or start a broad gate merely because
