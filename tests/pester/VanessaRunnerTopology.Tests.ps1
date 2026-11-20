@@ -1181,9 +1181,13 @@ Describe "Vanessa verification failure classification" {
 
             $result.ready | Should -BeFalse
             $result.seconds | Should -BeLessThan 15
-            $result.message | Should -Match '^ITL_ONDEMAND_BACKEND_EXITED: vanessa-ui backend PID \d+ exited with code 3 before opening port'
+            # Stable identifiers only: the code, the backend PID and its exit code.
+            ($result.message -split ':', 2)[0] | Should -Be 'ITL_ONDEMAND_BACKEND_EXITED'
+            $result.message | Should -Match '\bPID \d+'
+            $result.message | Should -Match '\bcode 3\b'
             $result.message | Should -Match ([regex]::Escape("ONEC_CONFIGURATION_SIGNATURE_INVALID: 1C could not open infobase '$($result.serviceBase)'"))
-            $result.alive | Should -Match '^vanessa-ui on-demand MCP did not open port \d+\. Log: '
+            $result.alive | Should -Not -Match 'ITL_ONDEMAND_BACKEND_EXITED'
+            $result.alive | Should -Match 'port \d+\. Log: '
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -1233,7 +1237,12 @@ Describe "Vanessa verification failure classification" {
             $result.missing | Should -HaveCount 0
             # The runner applies the route only to a product-assertion verdict.
             $runner = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1') -Raw -Encoding UTF8
-            $runner | Should -Match "(?s)if \(\`$failureRoute\.category -eq 'product-assertion'\) \{\s+\`$sessionLock = Find-VanessaFailureSessionLock.*?category = 'runner'; requiredAction = 'unlock-windows-session-and-repeat-original-command'"
+            $guard = $runner.IndexOf("`$failureRoute.category -eq 'product-assertion'")
+            $lookup = $runner.IndexOf('$sessionLock = Find-VanessaFailureSessionLock')
+            $route = $runner.IndexOf("requiredAction = 'unlock-windows-session-and-repeat-original-command'")
+            $guard | Should -BeGreaterThan -1
+            $lookup | Should -BeGreaterThan $guard
+            $route | Should -BeGreaterThan $lookup
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

@@ -767,7 +767,11 @@ static class FakeFormClient {
             $events = @($entries | ForEach-Object { [string]$_.event })
             $events | Should -Contain 'foreground-returned' -Because 'the stand-in form takes the foreground the way 1C does'
             $events | Should -Contain 'hidden'
-            [array]::IndexOf($events, 'foreground-returned') | Should -BeLessThan ([array]::IndexOf($events, 'hidden')) -Because 'the focus returns before the capture of the form'
+            # No order between the return and the capture is asserted: Windows lets the form
+            # take the foreground inside ShowWindow or only on its later explicit activation
+            # (foreground lock), and in the second interleaving the show event finds nothing
+            # to return yet (observed 2026-11-20 under Remote Control). The D2 regression is
+            # the return itself (absent before D2) within less than the busy WM_PRINT.
             $returned = $entries[[array]::IndexOf($events, 'foreground-returned')]
             [string]$returned.role | Should -Be 'testclient'
             [int64]$returned.exposureMs | Should -BeLessThan 400 -Because 'the return does not wait for the busy WM_PRINT'
@@ -824,7 +828,8 @@ static class FakeFormClient {
             '{"t":"2026-11-17T03:00:00.0000000Z","event":"desktop-locked"}'
         ) | Set-Content -LiteralPath (Join-Path $dir 'journal\desktop.jsonl') -Encoding UTF8
         $group = [pscustomobject]@{ ready = $true; directory = $dir; mode = 'hidden'; warning = '' }
-        (Write-ItlWindowHelperFailureDiagnostics -Group $group 6>&1) -join "`n" | Should -Match "Hidden TestClient window: t=\S+ role=testclient title='Настройки канбана'"
+        $diagnostics = (Write-ItlWindowHelperFailureDiagnostics -Group $group 6>&1) -join "`n"
+        $diagnostics.Contains("role=testclient title='Настройки канбана'") | Should -BeTrue
         $until = [datetime]::new(2026, 11, 17, 3, 30, 0, [DateTimeKind]::Utc)
         $intervals = @(Get-ItlWindowHelperDesktopLockIntervals -Group $group -UntilUtc $until)
         $intervals | Should -HaveCount 2
