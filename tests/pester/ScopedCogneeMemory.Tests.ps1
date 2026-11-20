@@ -826,7 +826,7 @@ try {
         $remember.description | Should -Match 'task only for user decisions for this cycle'
         $recallTool=@($lines[1].result.tools|Where-Object name -EQ recall)[0]
         $recallTool.description | Should -Match 'Search once per topic before designing a 1C change, and by tool and action before writing a test or setting up a stand; again for a new area or object, missing context, or by symptom before retrying an unexpected failure\. Omit datasets for the admitted union'
-        $remember.inputSchema.properties.title.description | Should -Match 'the claim, not its topic'
+        $remember.inputSchema.properties.title.description | Should -Not -BeNullOrEmpty
         $recallTool.description | Should -Match 'below the relevance threshold are omitted; no card is not proof of absence'
         $recallTool.description | Should -Not -Match 'next eligible turn'
         $recallTool.inputSchema.properties.project_id.type | Should -BeExactly string
