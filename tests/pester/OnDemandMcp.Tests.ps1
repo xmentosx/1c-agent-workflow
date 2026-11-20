@@ -235,10 +235,15 @@ Describe "ITL on-demand MCP facade" {
             $branchWorkflowRoot = Join-Path $branchRoot ".agents\skills\1c-workflow"
             $expectedHelper = [System.IO.Path]::GetFullPath((Join-Path $branchWorkflowRoot "scripts\agent-1c.ps1")); $expectedCatalogRoot = [System.IO.Path]::GetFullPath((Join-Path $branchWorkflowRoot "assets\ondemand-mcp\catalogs"))
             foreach ($endpoint in @($endpoints)) {
-                $helperIndex = [Array]::IndexOf([object[]]$endpoint.args, "--helper"); $catalogIndex = [Array]::IndexOf([object[]]$endpoint.args, "--catalog")
-                $endpoint.args[$helperIndex + 1] | Should -Be $expectedHelper
-                [string]$endpoint.args[$catalogIndex + 1] | Should -Match ("^" + [regex]::Escape($expectedCatalogRoot))
-                $endpoint.args[$helperIndex + 1] | Should -Not -Match ([regex]::Escape($mainRoot))
+                # The pinned relay entry names the branch and the server; the resolved
+                # facade launch with its helper and catalog lives in the launch descriptor.
+                @($endpoint.args) | Should -Be @("--project-root", [IO.Path]::GetFullPath($branchRoot), "--server", [string]$endpoint.name)
+                $descriptor = Get-Content -LiteralPath (Join-Path $branchRoot ".agent-1c\mcp\ondemand\launch\$($endpoint.name).json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                $facadeArgs = [object[]]@($descriptor.args)
+                $helperIndex = [Array]::IndexOf($facadeArgs, "--helper"); $catalogIndex = [Array]::IndexOf($facadeArgs, "--catalog")
+                $facadeArgs[$helperIndex + 1] | Should -Be $expectedHelper
+                [string]$facadeArgs[$catalogIndex + 1] | Should -Match ("^" + [regex]::Escape($expectedCatalogRoot))
+                $facadeArgs[$helperIndex + 1] | Should -Not -Match ([regex]::Escape($mainRoot))
             }
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $oldExecutable, "Process")
@@ -644,6 +649,7 @@ Describe "ITL on-demand MCP facade" {
     It "writes native stdio facade entries for all ten clients and preserves unrelated config" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-clients-" + [guid]::NewGuid().ToString("N"))
         $fakeExe = Join-Path $tempRoot "itl-ondemand-mcp.exe"
+        $savedInstallRoot = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", "Process")
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
@@ -652,8 +658,15 @@ Describe "ITL on-demand MCP facade" {
             $fixtureTemplatePath = Join-Path $tempRoot 'templates/dependency-lock.json'
             $fixtureTemplate = Get-Content -LiteralPath $fixtureTemplatePath -Raw -Encoding UTF8 | ConvertFrom-Json
             $fixtureTemplate.dependencies.itlOndemandMcp.sha256 = (Get-FileHash -LiteralPath $fakeExe -Algorithm SHA256).Hash.ToLowerInvariant()
+            $relayBytes = [byte[]](4, 5, 6)
+            $relaySha = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($relayBytes))).Replace("-", "").ToLowerInvariant()
+            $fixtureTemplate.dependencies.itlOndemandRelay.sha256 = $relaySha
+            $relayExe = Join-Path $tempRoot "cache\relay\v1\$relaySha\itl-ondemand-relay-windows-amd64.exe"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $relayExe) | Out-Null
+            [IO.File]::WriteAllBytes($relayExe, $relayBytes)
             Set-Content -LiteralPath $fixtureTemplatePath -Encoding UTF8 -Value ($fixtureTemplate | ConvertTo-Json -Depth 30)
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $fakeExe, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", (Join-Path $tempRoot "cache\ondemand"), "Process")
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 foreach ($client in @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")) {
@@ -674,10 +687,16 @@ Describe "ITL on-demand MCP facade" {
             $codex = Get-Content -LiteralPath (Join-Path $tempRoot ".codex\config.toml") -Raw -Encoding UTF8
             $codex | Should -Match 'model = "keep"'
             $codex | Should -Match '\[mcp_servers\."itl-roctup-data"\]'
-            $codex | Should -Match ([regex]::Escape($fakeExe.Replace('\', '\\')))
+            $codex | Should -Match ([regex]::Escape($relayExe.Replace('\', '\\')))
             $codex | Should -Match 'tool_timeout_sec = 600'
-            $codex | Should -Match '"--surface"'
-            $codex | Should -Match '"gateway"'
+            $codex | Should -Match '"--server"'
+            $codex | Should -Not -Match ([regex]::Escape($fakeExe.Replace('\', '\\')))
+            # The facade launch the relay serves keeps the gateway surface.
+            $descriptor = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\mcp\ondemand\launch\itl-vanessa-ui.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $descriptor.facadePath | Should -Be $fakeExe
+            @($descriptor.args) | Should -Contain "vanessa-ui"
+            @($descriptor.args) | Should -Contain "--surface"
+            @($descriptor.args) | Should -Contain "gateway"
 
             foreach ($case in @(
                 [pscustomobject]@{ client = "kilocode"; path = ".kilo\kilo.json"; container = "mcp"; local = $true },
@@ -697,27 +716,26 @@ Describe "ITL on-demand MCP facade" {
                 $entry = $config.($case.container).'itl-vanessa-ui'
                 if ($case.local) {
                     $entry.type | Should -Be "local"
-                    @($entry.command)[0] | Should -Be $fakeExe
+                    @($entry.command)[0] | Should -Be $relayExe
                     $entry.timeout | Should -Be 600000
-                    @($entry.command) | Should -Contain "--surface"
-                    @($entry.command) | Should -Contain "gateway"
+                    @($entry.command) | Should -Contain "--server"
+                    @($entry.command) | Should -Contain "itl-vanessa-ui"
                 } elseif ($case.PSObject.Properties.Name -contains "pi" -and $case.pi) {
                     $entry.transport | Should -Be "stdio"
                     $entry.lifecycle | Should -Be "eager"
-                    $entry.command | Should -Be $fakeExe
-                    @($entry.args) | Should -Contain "vanessa-ui"
-                    @($entry.args) | Should -Contain "--surface"
-                    @($entry.args) | Should -Contain "gateway"
+                    $entry.command | Should -Be $relayExe
+                    @($entry.args) | Should -Contain "--server"
+                    @($entry.args) | Should -Contain "itl-vanessa-ui"
                 } else {
-                    $entry.command | Should -Be $fakeExe
-                    @($entry.args) | Should -Contain "vanessa-ui"
-                    @($entry.args) | Should -Contain "--surface"
-                    @($entry.args) | Should -Contain "gateway"
+                    $entry.command | Should -Be $relayExe
+                    @($entry.args) | Should -Contain "--server"
+                    @($entry.args) | Should -Contain "itl-vanessa-ui"
                 }
                 @($config.($case.container).PSObject.Properties.Name) | Should -Contain "itl-roctup-data"
             }
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $null, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $savedInstallRoot, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
