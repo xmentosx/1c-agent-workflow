@@ -257,7 +257,7 @@ Describe 'Delivery v3 resource ledger' {
         $entryText.Substring($statusRouteOffset, $worktreeAddOffset - $statusRouteOffset) | Should -Not -Match '(?i)worktree\s+(add|remove)'
         $supervisorText = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-supervisor.ps1') -Raw -Encoding UTF8
         $supervisorText | Should -Match 'disposition = \(Get-DeliveryDispositionReport\)'
-        $docsText = Get-Content -LiteralPath (Join-Path $RepoRoot 'docs\local-quality-gate.md') -Raw -Encoding UTF8
+        $docsText = Get-Content -LiteralPath (Join-Path $RepoRoot 'docs\source-publication-reference.md') -Raw -Encoding UTF8
         foreach ($marker in @(
             'git update-ref --no-deref --stdin',
             'delivery-operation', 'name-only worktree match', 'age-based decision',

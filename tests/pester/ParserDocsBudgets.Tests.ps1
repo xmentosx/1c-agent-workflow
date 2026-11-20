@@ -471,6 +471,9 @@
             'scripts/source-delivery.ps1 -Action ReleaseMaster', '`itl-ondemand-mcp`', '`scripts/source-repair.ps1`', '`-RequireRelease`', '`server-reset`')) {
             $publicationText | Should -Match ([regex]::Escape($identifier))
         }
+        # Publication-only procedures load from the publication route, not the everyday gate guide.
+        $publicationText | Should -Match ([regex]::Escape('`docs/source-publication-reference.md`'))
+        $qualityText | Should -Match ([regex]::Escape('(source-publication-reference.md)'))
         $agentsText | Should -Match ([regex]::Escape('follow the blocking policy in `docs/package-architecture.md`'))
         $architectureText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\package-architecture.md") -Raw -Encoding UTF8
         $architectureNormalized = $architectureText -replace '\s+', ' '
@@ -501,7 +504,8 @@
             "docs/ai-rules-fork-upgrades.md",
             "docs/local-quality-gate.md",
             "docs/release-checklist.md",
-            "docs/source-publication.md"
+            "docs/source-publication.md",
+            "docs/source-publication-reference.md"
         )) {
             Test-Path -LiteralPath (Join-Path $RepoRoot $relativePath) -PathType Leaf | Should -BeTrue
         }

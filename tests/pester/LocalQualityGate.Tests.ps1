@@ -297,8 +297,9 @@ Describe "Local quality gate contract" {
         $actual = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills") -Directory | Select-Object -ExpandProperty Name | Sort-Object)
         $actual | Should -Be $expected
         $docs = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8
-        $docs | Should -Match "Git hooks"
-        $docs | Should -Match "GitHub Actions"
+        $publicationReference = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\source-publication-reference.md") -Raw -Encoding UTF8
+        $publicationReference | Should -Match "Git hooks"
+        $publicationReference | Should -Match "GitHub Actions"
         $docs | Should -Match "continuation\s+scope"
         $docs | Should -Match 'точный прошедший `Targeted`'
     }

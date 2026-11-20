@@ -110,7 +110,8 @@
       "scripts/test.ps1",
       "scripts/pester-timings.json",
       "tests/quality-contracts.json",
-      "docs/local-quality-gate.md"
+      "docs/local-quality-gate.md",
+      "docs/source-publication-reference.md"
     ],
     "develop": [
       "scripts/source-e2e-workflow-update.ps1",
