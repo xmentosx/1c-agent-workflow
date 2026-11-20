@@ -61,6 +61,25 @@ def patch_lancedb(source):
     )
 
 
+def patch_embedding_engine(source):
+    anchor = "from cognee.shared.rate_limiting import embedding_rate_limiter_context_manager\n"
+    source = replace(
+        source,
+        anchor,
+        anchor + "from cognee.shared.itl_recall_policy import apply_query_request_options\n",
+    )
+    return replace(
+        source,
+        "                create_kwargs[\"extra_body\"] = {\"input_type\": self.input_type}\n"
+        "\n"
+        "            async with embedding_rate_limiter_context_manager():\n",
+        "                create_kwargs[\"extra_body\"] = {\"input_type\": self.input_type}\n"
+        "            create_kwargs = apply_query_request_options(self.endpoint, create_kwargs)\n"
+        "\n"
+        "            async with embedding_rate_limiter_context_manager():\n",
+    )
+
+
 def main():
     wheel = distribution("cognee")
     if wheel.version != "1.6.5":
@@ -75,6 +94,11 @@ def main():
             "cognee/infrastructure/databases/vector/lancedb/LanceDBAdapter.py",
             "7bd305e55836a73c6840de9cc5669d6482a4dbd0075a9ac1ff057318605f8a4f",
             patch_lancedb,
+        ),
+        (
+            "cognee/infrastructure/databases/vector/embeddings/OpenAICompatibleEmbeddingEngine.py",
+            "f79dcb9c076bf66c0193e439d26a478a9b03d6958ec925f5348f209552d68ea7",
+            patch_embedding_engine,
         ),
     ]
     edits = {}
