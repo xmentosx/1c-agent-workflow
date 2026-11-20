@@ -1687,6 +1687,22 @@ function Assert-VerificationComponentEvidence {
     }
 }
 
+function Test-VerificationComponentEvidenceReusable {
+    # A passed receipt that still matches the exact inputs, loaded target and
+    # checker has nothing new to observe: the whole-result assessment accepts
+    # it through the same assertion. Any mismatch or read error runs the tool.
+    param([object]$State, [string]$Component)
+    $receipts = Get-StateValue -State $State -Name 'lastVerificationComponentEvidence' -Default $null
+    $receipt = Get-VerificationCatalogValue -Value $receipts -Name $Component -Default $null
+    if ($null -eq $receipt -or [string](Get-VerificationCatalogValue -Value $receipt -Name 'status' -Default '') -cne 'passed') { return $false }
+    try {
+        Assert-VerificationComponentEvidence -State $State -Component $Component -Fingerprint (Get-VerificationFingerprint)
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Get-VerificationCurrentProofAssessment {
     param([object]$State, [string]$Fingerprint)
     if ((Get-VerificationModel) -eq 'change') { return (Get-VerificationChangeAssessment -State $State -Fingerprint $Fingerprint) }

@@ -12942,6 +12942,8 @@ function Format-DevBranchCheckDurationText {
         $value = $Timing.PSObject.Properties[$item[1]].Value
         if ($null -ne $value) { $parts += "$($item[0]) $(& $format $value)" }
     }
+    $reused = $Timing.PSObject.Properties['yaxunitReused']
+    if ($null -ne $reused -and [bool]$reused.Value) { $parts += 'YAxUnit переиспользован без прогона' }
     $text = & $format $Timing.totalMs
     if ($parts.Count -gt 0) { $text += " ($($parts -join ', '))" }
     if ($Timing.selectionMode) { $text += "; наборы Vanessa: $($Timing.selectionMode)" }
