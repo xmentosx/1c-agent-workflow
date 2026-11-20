@@ -1869,6 +1869,82 @@ local after
                 Test-Path -LiteralPath (Join-Path $current.root '.git/itl-last-used') | Should -BeTrue
             }
         }
+
+        It "rebuilds a recorded source whose removal a file holder left incomplete once the holder releases it" {
+            # 2026-11-20 RegisterChange of 58206f3d: under load a scanner held a
+            # tracked file while the checkout was removed, so the remnant without
+            # .git kept the exact path and the update reported WORKFLOW_UPDATE_SOURCE_BUSY.
+            & {
+                . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+                $current = Resolve-WorkflowPackageSource
+                $receipt = [pscustomobject]@{ sourceRoot = $current.root; sourceCommit = $current.commit; sourceRepo = $fixture.remote }
+                $held = Join-Path $current.root $fixture.catalog
+                $held | Should -Match ' '
+                $held | Should -Match '[а-яё]'
+                $scan = [IO.File]::Open($held, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                $release = [PowerShell]::Create()
+                try {
+                    Remove-Item -LiteralPath $current.root -Recurse -Force -ErrorAction SilentlyContinue
+                    # The removal is still incomplete when the update recreates the exact path.
+                    Test-Path -LiteralPath (Join-Path $current.root '.git') | Should -BeFalse
+                    Test-Path -LiteralPath $held | Should -BeTrue
+
+                    # A holder that outlives the bounded wait still reports a busy source.
+                    $ItlGitSourceCacheReleaseWaitSeconds = 1
+                    { Assert-WorkflowUpdateRecordedSource -Receipt $receipt 3> $null } | Should -Throw '*WORKFLOW_UPDATE_SOURCE_BUSY*Close that reader and repeat update-workflow*'
+                    Test-Path -LiteralPath $held | Should -BeTrue
+                    Remove-Variable -Name ItlGitSourceCacheReleaseWaitSeconds
+
+                    # Continuation: the repeated update waits until the holder releases the remnant.
+                    $null = $release.AddScript({ param($Stream) Start-Sleep -Milliseconds 1500; $Stream.Dispose() }).AddArgument($scan)
+                    $pending = $release.BeginInvoke()
+                    $captured = @(Assert-WorkflowUpdateRecordedSource -Receipt $receipt 3>&1)
+                    $release.EndInvoke($pending)
+                } finally {
+                    $scan.Dispose()
+                    $release.Dispose()
+                }
+                $warnings = @($captured | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }) -join ' '
+                [IO.File]::ReadAllText($held) | Should -BeExactly "original: $($fixture.catalog)"
+                (Get-ItlGitSourceCacheState -Root $current.root -Repo $fixture.remote -ExpectedCommit $current.commit).valid | Should -BeTrue
+                $diagnostic = [regex]::Match($warnings, "WORKFLOW_PACKAGE_CACHE_RECOVERED.*diagnostic='([^']+)'").Groups[1].Value
+                $diagnostic | Should -Match '[\\/]invalid-[0-9a-f]{12}$'
+                [IO.File]::ReadAllText((Join-Path $diagnostic $fixture.catalog)) | Should -BeExactly "original: $($fixture.catalog)"
+            }
+        }
+
+        It "publishes a removed recorded source at its exact path while a scanner still holds the fresh preparation" {
+            # Renaming the preparation into the freed exact path fails while any
+            # file inside it is open without delete sharing.
+            & {
+                . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+                $current = Resolve-WorkflowPackageSource
+                Remove-Item -LiteralPath $current.root -Recurse -Force
+                $script:ScanHolder = $null
+                $script:ScanRelease = [PowerShell]::Create()
+                $originalGit = (Get-Command Invoke-GitAt).ScriptBlock
+                function Invoke-GitAt {
+                    param([string]$Root, [string[]]$Arguments)
+                    & $originalGit -Root $Root -Arguments $Arguments
+                    if ($Arguments -contains 'checkout' -and $null -eq $script:ScanHolder) {
+                        $script:ScanHolder = [IO.File]::Open((Join-Path $Root $fixture.catalog), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                        $null = $script:ScanRelease.AddScript({ param($Stream) Start-Sleep -Milliseconds 1500; $Stream.Dispose() }).AddArgument($script:ScanHolder)
+                        $script:ScanPending = $script:ScanRelease.BeginInvoke()
+                    }
+                }
+                try {
+                    Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{ sourceRoot = $current.root; sourceCommit = $current.commit; sourceRepo = $fixture.remote })
+                    $script:ScanRelease.EndInvoke($script:ScanPending)
+                } finally {
+                    if ($null -ne $script:ScanHolder) { $script:ScanHolder.Dispose() }
+                    $script:ScanRelease.Dispose()
+                }
+                $script:ScanHolder | Should -Not -BeNullOrEmpty
+                $script:ScanHolder.Name | Should -Match '[\\/]prepare-[0-9a-f]{12}[\\/]'
+                [IO.File]::ReadAllText((Join-Path $current.root $fixture.catalog)) | Should -BeExactly "original: $($fixture.catalog)"
+                (Get-ItlGitSourceCacheState -Root $current.root -Repo $fixture.remote -ExpectedCommit $current.commit).valid | Should -BeTrue
+            }
+        }
     }
 
     It "stops before copying when the canonical workflow source clone is stale" {

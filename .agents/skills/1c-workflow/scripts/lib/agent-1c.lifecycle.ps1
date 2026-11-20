@@ -5707,6 +5707,18 @@ function Test-ItlGitSourceCachePhysicalDirectory {
     }
 }
 
+function Get-ItlGitSourceCacheEntryKind {
+    param([string]$Path)
+    # missing | pending (listed but unreadable: delete-pending) | other
+    # (file or reparse point) | checkout (has .git) | remnant (a physical
+    # directory whose .git an interrupted removal already deleted).
+    if (-not (Test-Path -LiteralPath $Path)) { return 'missing' }
+    try { $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop } catch { return 'pending' }
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return 'other' }
+    if (Test-Path -LiteralPath (Join-Path $Path '.git')) { return 'checkout' }
+    return 'remnant'
+}
+
 function Test-ItlGitSourceCacheMirror {
     param([string]$Root)
     if (-not (Test-ItlGitSourceCachePhysicalDirectory -Path $Root)) { return $false }
@@ -5764,7 +5776,7 @@ function Initialize-ItlGitSourceCacheMirror {
             throw "$($CodePrefix)_CACHE_FOREIGN: '$mirror' is not an ITL $Label mirror. Move it away and repeat the original operation."
         }
         $diagnostic = Join-Path $RepoCache ('invalid-' + (New-ItlGitSourceCacheId))
-        Move-Item -LiteralPath $mirror -Destination $diagnostic -ErrorAction Stop
+        Move-WorkflowManagedPathAtomic -SourcePath $mirror -DestinationPath $diagnostic
         Write-Warning "$($CodePrefix)_CACHE_INVALID path='$mirror' state='not a bare repository' diagnostic='$diagnostic'. Recreating the shared mirror."
     }
     if (-not (Test-Path -LiteralPath $mirror)) {
@@ -5775,7 +5787,7 @@ function Initialize-ItlGitSourceCacheMirror {
             throw "Failed to clone $Label from '$SourceRepo' into '$prepare': $($_.Exception.Message). Existing caches are preserved; resolve the source/transport failure and repeat the original operation."
         }
         try {
-            Move-Item -LiteralPath $prepare -Destination $mirror -ErrorAction Stop
+            Move-WorkflowManagedPathAtomic -SourcePath $prepare -DestinationPath $mirror
         } catch {
             # A concurrent preparation published the mirror first.
             if (-not (Test-ItlGitSourceCacheMirror -Root $mirror)) {
@@ -5955,32 +5967,48 @@ function Publish-ItlGitSourceCacheCheckout {
 
     $root = $prepare
     $diagnostic = $target
-    if ($null -ne $targetState -and $targetState.owned) {
-        # Recheck physical ownership before the only move of a damaged copy.
-        $beforeMove = Get-ItlGitSourceCacheState -Root $target -Repo $Repo
-        if ($beforeMove.owned) {
-            $candidate = Join-Path $RepoCache ('invalid-' + (New-ItlGitSourceCacheId))
+    # A scanner or indexer briefly holding a file interrupts a retention or
+    # Storage Sense removal: the target stays delete-pending, or remains as a
+    # remnant without .git that outlives the holder. Wait a bounded time for the
+    # holder instead of reporting the exact cached path as busy; a reader that
+    # keeps holding it still gets the verified private preparation. Only an
+    # atomic rename is used: Move-Item falls back to moving item by item and
+    # leaves both the preparation and the exact path incomplete.
+    $waitVariable = Get-Variable -Name ItlGitSourceCacheReleaseWaitSeconds -ValueOnly -ErrorAction SilentlyContinue
+    $deadlineUtc = [DateTime]::UtcNow.AddSeconds($(if ($null -ne $waitVariable) { [double]$waitVariable } else { 15 }))
+    while ($true) {
+        $entry = Get-ItlGitSourceCacheEntryKind -Path $target
+        if ($entry -eq 'missing') {
             try {
-                Move-Item -LiteralPath $target -Destination $candidate -ErrorAction Stop
-                $diagnostic = $candidate
+                [IO.Directory]::Move($prepare, $target)
+                $root = $target
+                break
             } catch {
-                # A reader still holds the damaged copy; this invocation uses
-                # its verified private preparation instead.
+                # A concurrent preparation published first, or the removed
+                # entry is still delete-pending; the next pass tells them apart.
             }
-        }
-    }
-    if (-not (Test-Path -LiteralPath $target)) {
-        try {
-            Move-Item -LiteralPath $prepare -Destination $target -ErrorAction Stop
-            $root = $target
-        } catch {
-            # A concurrent preparation may have published the same commit first.
-            if ((Get-ItlGitSourceCacheState -Root $target -Repo $Repo -ExpectedCommit $Commit).valid) {
+        } elseif ($entry -ne 'pending') {
+            $current = Get-ItlGitSourceCacheState -Root $target -Repo $Repo -ExpectedCommit $Commit
+            if ($current.valid) {
                 Remove-Item -LiteralPath $prepare -Recurse -Force -ErrorAction SilentlyContinue
                 $root = $target
                 Set-ItlGitSourceCacheLastUsed -Root $target
+                break
+            }
+            # Recheck physical ownership before each move of a damaged copy;
+            # unknown directories and foreign repositories stay untouched.
+            if (-not ($entry -eq 'remnant' -or ($entry -eq 'checkout' -and $current.owned))) { break }
+            $candidate = Join-Path $RepoCache ('invalid-' + (New-ItlGitSourceCacheId))
+            try {
+                [IO.Directory]::Move($target, $candidate)
+                $diagnostic = $candidate
+                continue
+            } catch {
+                # A reader still holds the damaged copy.
             }
         }
+        if ([DateTime]::UtcNow -ge $deadlineUtc) { break }
+        Start-Sleep -Milliseconds 250
     }
     if ($null -ne $targetState) {
         Write-Warning "$($CodePrefix)_CACHE_RECOVERED path='$target' expectedCommit='$Commit' result='verified source ready' source='$root' diagnostic='$diagnostic'. Unknown directories remain untouched."
