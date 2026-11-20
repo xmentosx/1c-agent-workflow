@@ -601,12 +601,43 @@ func qualifiedVanessaCommandRejection(family, tool string, err error) *mcp.CallT
 	return result
 }
 
+// A Vanessa tool handler raises ACTION_FAILED or INVALID_PARAMS only after it
+// has stopped: MCPVA handlers return synchronously, and the asynchronous error
+// completions return or unwind right after answering. The answer therefore
+// leaves nothing running, exactly like a successful call, and stopping the
+// backend would only discard the forms the agent must inspect (PM5 13a). The
+// outcome may include partial effects and is never replayed. A disconnected
+// TestClient, an uncoded error, a transport failure and a deadline still stop
+// the owned backend.
+func answeredVanessaHandlerFailure(family, tool string, err error) *mcp.CallToolResult {
+	if family != "vanessa-ui" || protocolErrorReportsTestClientDisconnected(err) {
+		return nil
+	}
+	var rpcError *jsonrpc.Error
+	if !errors.As(err, &rpcError) {
+		return nil
+	}
+	message := strings.TrimSpace(rpcError.Message)
+	code, _, found := strings.Cut(message, ":")
+	if !found || (code != "ACTION_FAILED" && code != "INVALID_PARAMS") {
+		return nil
+	}
+	return toolError(code, message, map[string]any{
+		"backendJSONRPCCode": rpcError.Code, "tool": tool, "callOutcome": "failed",
+		"partialEffectsPossible": true, "automaticRetryPerformed": false, "backendKept": true,
+		"action": "inspect-form-state-before-retry",
+	})
+}
+
 func (r *runtime) callUpstream(ctx context.Context, session *mcp.ClientSession, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
 	deadline := time.Now().Add(r.vanessaConnectWait)
 	for {
 		result, err := session.CallTool(ctx, params)
 		if rejected := qualifiedVanessaCommandRejection(r.family, params.Name, err); rejected != nil {
 			return rejected, nil
+		}
+		if failed := answeredVanessaHandlerFailure(r.family, params.Name, err); failed != nil {
+			return failed, nil
 		}
 		if err != nil || result == nil || result.IsError {
 			return result, err

@@ -897,23 +897,29 @@ func TestGatewayPreservesQualifiedVanessaPathProtocolErrors(t *testing.T) {
 	}
 }
 
+// Qualified pre-action rejections and answered Vanessa handler failures keep
+// the backend; every other protocol error still stops it (PM5 13a).
 func TestGatewayKeepsOnlyQualifiedPreActionRejections(t *testing.T) {
 	for _, tc := range []struct {
 		name, tool, message string
 		properResult, keep  bool
+		outcome             string
 	}{
-		{"non-executable-line", "execute_feature_step", "ITL_VANESSA_COMMAND_REJECTED: строка 266 не исполняется", false, true},
-		{"invalid-syntax", "run_scenario", "ITL_VANESSA_COMMAND_REJECTED: ошибка синтаксиса строка 5", false, true},
-		{"legacy-ambiguous", "run_scenario", "ACTION_FAILED: ошибка синтаксиса строка 5", false, false},
-		{"wrong-producer", "get_editor_state", "ITL_VANESSA_COMMAND_REJECTED: отказ", false, false},
-		{"unqualified-path-site", "run_scenario", "PATH_INVALID: отказ", false, false},
-		{"native-path-validation", "open_feature_file", "INVALID_PARAMS: Файл <C:\\Путь с пробелом\\ошибка.feature> не был найден.", false, true},
-		{"unqualified-invalid-params", "run_scenario", "INVALID_PARAMS: отказ", false, false},
-		{"malformed", "run_scenario", "ITL_VANESSA_COMMAND_REJECTED", false, false},
-		{"proper-tool-error", "run_scenario", "existing ordinary tool error", true, true},
+		{"non-executable-line", "execute_feature_step", "ITL_VANESSA_COMMAND_REJECTED: строка 266 не исполняется", false, true, "not-started"},
+		{"invalid-syntax", "run_scenario", "ITL_VANESSA_COMMAND_REJECTED: ошибка синтаксиса строка 5", false, true, "not-started"},
+		{"answered-action-failure", "run_scenario", "ACTION_FAILED: ошибка синтаксиса строка 5", false, true, "failed"},
+		{"answered-form-action-failure", "execute_form_actions", "ACTION_FAILED: ## Действие 2: click_button - не выполнено", false, true, "failed"},
+		{"wrong-producer", "get_editor_state", "ITL_VANESSA_COMMAND_REJECTED: отказ", false, false, ""},
+		{"unqualified-path-site", "run_scenario", "PATH_INVALID: отказ", false, false, ""},
+		{"native-path-validation", "open_feature_file", "INVALID_PARAMS: Файл <C:\\Путь с пробелом\\ошибка.feature> не был найден.", false, true, "not-started"},
+		{"answered-invalid-params", "run_scenario", "INVALID_PARAMS: отказ", false, true, "failed"},
+		{"disconnected-testclient", "execute_form_actions", "ACTION_FAILED: Клиент тестирования не подключён.", false, false, ""},
+		{"uncoded", "run_scenario", "native modification may have completed", false, false, ""},
+		{"malformed", "run_scenario", "ITL_VANESSA_COMMAND_REJECTED", false, false, ""},
+		{"proper-tool-error", "run_scenario", "existing ordinary tool error", true, true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tools := append(vanessaIntegrationTools(), &mcp.Tool{Name: "execute_feature_step", InputSchema: map[string]any{"type": "object"}})
+			tools := append(vanessaIntegrationTools(), &mcp.Tool{Name: "execute_feature_step", InputSchema: map[string]any{"type": "object"}}, &mcp.Tool{Name: "execute_form_actions", InputSchema: map[string]any{"type": "object"}})
 			server := mcp.NewServer(&mcp.Implementation{Name: "rejection-backend", Version: "1"}, nil)
 			calls := 0
 			for _, definition := range tools {
@@ -947,7 +953,8 @@ func TestGatewayKeepsOnlyQualifiedPreActionRejections(t *testing.T) {
 				arguments["filePath"] = `C:\Путь с пробелом\ошибка.feature`
 			}
 			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": tc.tool, "arguments": arguments}})
-			if err != nil || result == nil || !result.IsError || !strings.Contains(resultText(result), tc.message) {
+			// The disconnected-TestClient code keeps the original text in details.cause.
+			if err != nil || result == nil || !result.IsError || !strings.Contains(resultText(result)+fmt.Sprint(result.StructuredContent), tc.message) {
 				t.Fatalf("original error lost: result=%+v err=%v", result, err)
 			}
 			ensures, stops := broker.counts()
@@ -958,10 +965,13 @@ func TestGatewayKeepsOnlyQualifiedPreActionRejections(t *testing.T) {
 			if calls != 1 || ensures != 1 || stops != wantStops || (rt.backend != nil) != tc.keep {
 				t.Fatalf("wrong cleanup/replay: calls=%d ensures=%d stops=%d keep=%v", calls, ensures, stops, tc.keep)
 			}
-			if tc.keep && !tc.properResult {
+			if tc.outcome != "" {
 				details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
-				if details["callOutcome"] != "not-started" || details["automaticRetryPerformed"] != false {
+				if details["callOutcome"] != tc.outcome || details["automaticRetryPerformed"] != false {
 					t.Fatalf("missing outcome proof: %+v", details)
+				}
+				if tc.outcome == "failed" && (details["partialEffectsPossible"] != true || details["action"] != "inspect-form-state-before-retry") {
+					t.Fatalf("answered failure lost its continuation: %+v", details)
 				}
 			}
 			result, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": "get_environment_data", "arguments": map[string]any{}}})
