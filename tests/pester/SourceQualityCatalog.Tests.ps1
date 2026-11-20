@@ -1349,3 +1349,51 @@ Describe 'Source catalog Develop journey selection' {
         @($cleanup.contracts) | Should -Be @('e2e-artifact-cleanup-tests','source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Static script loads are shard inputs' {
+    BeforeAll { . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1') }
+
+    It 'resolves anchored loads, literal module lists and child scripts while runtime roots stay external' {
+        $text = @'
+param([string]$ProjectRoot)
+$script:CoreRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$script:LibRoot = Join-Path $script:CoreRoot 'lib'
+$script:Modules = @(
+    'модуль с пробелом.ps1',
+    'second.ps1'
+)
+foreach ($module in $script:Modules) {
+    $modulePath = Join-Path $script:LibRoot $module
+    . $modulePath
+}
+. "$PSScriptRoot\..\shared\common.ps1"
+$runner = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) 'tools'))
+foreach ($name in @('a', 'b')) { . (Join-Path $runner ('tool.' + $name + '.ps1')) }
+& powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'child.ps1')
+. (Join-Path $ProjectRoot 'installed.ps1')
+'@
+        $result = Get-QualityScriptStaticReferences -RelativePath 'pkg/scripts/entry.ps1' -Text $text
+        @($result.includes | Sort-Object) | Should -Be @(@(
+            'pkg/scripts/child.ps1', 'pkg/scripts/lib/second.ps1', 'pkg/scripts/lib/модуль с пробелом.ps1',
+            'pkg/shared/common.ps1', 'pkg/tools/tool.a.ps1', 'pkg/tools/tool.b.ps1') | Sort-Object)
+        @($result.unresolved) | Should -BeNullOrEmpty
+    }
+
+    It 'rejects an anchored load it cannot resolve and accepts the literal list that replaces it' {
+        $root = Join-Path $TestDrive 'Статические входы с пробелом'
+        foreach ($path in @('tests/pester/Alpha.Tests.ps1', 'scripts/библиотека с пробелом/помощник.ps1')) {
+            $target = Join-Path $root $path
+            [void][IO.Directory]::CreateDirectory((Split-Path $target))
+            [IO.File]::WriteAllText($target, "Set-StrictMode -Version Latest`n", [Text.UTF8Encoding]::new($true))
+        }
+        $entry = Join-Path $root 'scripts/entry.ps1'
+        [IO.File]::WriteAllText($entry, "`$lib = Join-Path `$PSScriptRoot 'библиотека с пробелом'`nforeach (`$module in (Get-ChildItem -LiteralPath `$lib -Filter '*.ps1')) { . (Join-Path `$lib `$module.Name) }`n", [Text.UTF8Encoding]::new($true))
+        $tracked = @('tests/pester/Alpha.Tests.ps1', 'scripts/entry.ps1', 'scripts/библиотека с пробелом/помощник.ps1')
+        $catalog = [pscustomobject]@{ contracts = @([pscustomobject]@{ id = 'fixture'; paths = @('scripts/entry.ps1'); tests = @('tests/pester/Alpha.Tests.ps1') }) }
+        { Assert-QualityStaticInputsResolvable -RepositoryRoot $root -Catalog $catalog -TrackedPaths $tracked } |
+            Should -Throw "*QUALITY_STATIC_INCLUDE_UNRESOLVED*scripts/entry.ps1:2*scripts/библиотека с пробелом*"
+        [IO.File]::WriteAllText($entry, "`$lib = Join-Path `$PSScriptRoot 'библиотека с пробелом'`nforeach (`$module in @('помощник.ps1')) { . (Join-Path `$lib `$module) }`n", [Text.UTF8Encoding]::new($true))
+        $closure = Assert-QualityStaticInputsResolvable -RepositoryRoot $root -Catalog $catalog -TrackedPaths $tracked
+        $closure.paths | Should -Contain 'scripts/библиотека с пробелом/помощник.ps1'
+    }
+}

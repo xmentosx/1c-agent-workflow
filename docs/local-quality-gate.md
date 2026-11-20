@@ -725,6 +725,29 @@ Glob-пути и `reuseInputPaths` остаются входами. 2026-11-20 �
 `AuxiliaryContours.Tests.ps1` заново выполнила в Develop четыре DevBranch-файла
 (около 1000 с) без изменения их кода.
 
+Статически загружаемые скрипты входят в digest без объявления. Единственный
+владелец — `Get-QualityStaticInputClosure` в `scripts/quality-contracts.ps1`:
+от test-файла, общих входов runner и `.ps1` из `paths`/`reuseInputPaths` его
+контрактов он проходит dot-source, вызовы `&` и `powershell -File`, путь которых
+строится от `$PSScriptRoot` (`$PSCommandPath`, `$MyInvocation.MyCommand.Path`)
+через `Join-Path`, `Split-Path -Parent`, `Resolve-Path`, `[IO.Path]::GetFullPath`/
+`Combine`, литералы, конкатенацию, однократно присвоенные переменные и `foreach`
+по литеральному массиву (так разбирается список модулей `agent-1c.ps1`). Все
+найденные отслеживаемые файлы входят в identity шарда для Targeted, Full,
+Develop static, preview и плана; выбор `Targeted` по `paths` не расширяется.
+Пути от параметров и неизвестных команд (целевой проект, фикстура, копия) и
+неотслеживаемые файлы остаются внешними. Загрузка от `$PSScriptRoot` с
+нестатическим остатком отключает reuse затронутых шардов, а проверка каталога
+останавливает Targeted с `QUALITY_STATIC_INCLUDE_UNRESOLVED`: сделайте путь
+литеральным `Join-Path` или перечислите модули литеральным массивом и повторите
+ту же команду. `reuseInputPaths` остаётся для того, что замыкание не видит:
+data-входов (`templates/dependency-lock.json`) и скриптов, загружаемых через
+объект контекста или копию проекта.
+Условную загрузку, до которой тесты контракта не доходят, контракт исключает
+точным путём в `staticInputExclusions`: так fixtures с custom gate не зависят от
+`scripts/delivery-native-plan.ps1`. Путь, объявленный любым владельцем теста,
+остаётся входом.
+
 Нативный расчёт и оценка времени находятся в `scripts/delivery-native-plan.ps1`.
 Supervisor с явным custom gate возвращает его план до загрузки этого модуля и
 Develop qualification. Поэтому native planner/qualification не входят в digest

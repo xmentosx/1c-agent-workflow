@@ -63,6 +63,21 @@ function Get-QualityContractReuseInputPaths {
     return $paths
 }
 
+function Get-QualityContractStaticInputExclusions {
+    param([Parameter(Mandatory = $true)][object]$Contract)
+    # Scripts whose static load this contract's tests never reach (the loader
+    # returns before it, as the custom-gate supervisor does before the native
+    # planner). A path any owner of the test declares remains an input.
+    $property = $Contract.PSObject.Properties['staticInputExclusions']
+    if (-not $property) { return @() }
+    $paths = @($property.Value | ForEach-Object { ([string]$_).Replace('\', '/') })
+    if ($paths.Count -eq 0 -or @($paths | Sort-Object -Unique).Count -ne $paths.Count -or
+        @($paths | Where-Object { -not $_ -or $_ -notlike '*.ps1' -or $_ -match '[*?\[]' -or [IO.Path]::IsPathRooted($_) -or $_ -match '(^|/)\.\.(/|$)' }).Count -gt 0) {
+        throw "Quality contract '$($Contract.id)' staticInputExclusions must contain unique exact repository-relative .ps1 paths."
+    }
+    return $paths
+}
+
 function Get-DevelopE2EJourneyContractProjection {
     param([Parameter(Mandatory = $true)][object]$Catalog, [Parameter(Mandatory = $true)][ValidateSet('upgrade','fresh')][string]$Journey)
     $route = $Catalog.developJourneys.routes.$Journey
@@ -73,7 +88,8 @@ function Get-DevelopE2EJourneyContractProjection {
     # budgets. Unknown owner fields disable reuse until classified explicitly.
     $runtimeOwners = @(foreach ($owner in $owners) {
         foreach ($property in $owner.PSObject.Properties) {
-            if ($property.Name -notin @('id','owner','gate','budgetSeconds','primaryTest','paths','tests','reuseInputPaths')) {
+            # staticInputExclusions narrows isolated Pester identity only.
+            if ($property.Name -notin @('id','owner','gate','budgetSeconds','primaryTest','paths','tests','reuseInputPaths','staticInputExclusions')) {
                 throw "DEVELOP_INPUT_OWNER_FIELD_UNKNOWN: $($owner.id).$($property.Name)"
             }
         }
@@ -568,12 +584,495 @@ function Get-Agent1cEntrypointProbeInventory {
     return @($records | ForEach-Object { $_ })
 }
 
+function Get-QualityPesterSharedInputPaths {
+    # Every isolated Pester shard binds these runner/support files.
+    @('tests/pester/TestSupport.ps1', 'scripts/run-pester-shard.ps1', 'scripts/invoke-pester-runtime.ps1')
+}
+
+function Join-QualityStaticPath {
+    param([string]$Base, [string]$Child)
+    if ($Child -match '^[A-Za-z]:|^[\\/]{2}|[*?$`]') { return $null }
+    $segments = New-Object System.Collections.Generic.List[string]
+    foreach ($part in @(($Base + '/' + $Child) -split '[\\/]+')) {
+        if (-not $part -or $part -eq '.') { continue }
+        if ($part -eq '..') {
+            if ($segments.Count -eq 0) { return $null }
+            $segments.RemoveAt($segments.Count - 1)
+            continue
+        }
+        $segments.Add($part) | Out-Null
+    }
+    return ($segments -join '/')
+}
+
+function New-QualityStaticValue {
+    param([string]$Kind, [string[]]$Values)
+    # 'path' is repository-relative and anchored at the analysed file;
+    # 'dynamic' is anchored there but not static (its value is the prefix).
+    return [pscustomobject]@{ kind = $Kind; values = @($Values) }
+}
+
+function Join-QualityStaticValues {
+    param($Base, $Child, [switch]$Concatenate)
+    if ($null -eq $Base) { return $null }
+    if ($Base.kind -eq 'dynamic') { return $Base }
+    if ($Base.kind -eq 'text' -and $Concatenate -and $null -ne $Child -and $Child.kind -eq 'text') {
+        return New-QualityStaticValue text @(foreach ($left in $Base.values) { foreach ($right in $Child.values) { $left + $right } })
+    }
+    if ($Base.kind -ne 'path') { return $null }
+    if ($null -eq $Child -or $Child.kind -ne 'text') { return New-QualityStaticValue dynamic @($Base.values[0]) }
+    $joined = @(foreach ($left in $Base.values) {
+        foreach ($right in $Child.values) {
+            if ($Concatenate) { Join-QualityStaticPath -Base '' -Child ($left + $right) } else { Join-QualityStaticPath -Base $left -Child $right }
+        }
+    })
+    if (@($joined | Where-Object { $null -eq $_ }).Count -gt 0) { return New-QualityStaticValue dynamic @($Base.values[0]) }
+    return New-QualityStaticValue path @($joined | Sort-Object -Unique)
+}
+
+function Merge-QualityStaticValues {
+    param([object[]]$Items, [switch]$RequireSame)
+    if (@($Items).Count -eq 0) { return $null }
+    $dynamic = @($Items | Where-Object { $null -ne $_ -and $_.kind -eq 'dynamic' })
+    if ($dynamic.Count -gt 0) { return $dynamic[0] }
+    $anchored = @($Items | Where-Object { $null -ne $_ -and $_.kind -eq 'path' })
+    if (@($Items | Where-Object { $null -eq $_ }).Count -gt 0 -or @($Items.kind | Sort-Object -Unique).Count -ne 1) {
+        if ($anchored.Count -gt 0) { return New-QualityStaticValue dynamic @($anchored[0].values[0]) }
+        return $null
+    }
+    if ($RequireSame) {
+        $first = (@($Items[0].values | Sort-Object) -join [char]0)
+        if (@($Items | Where-Object { (@($_.values | Sort-Object) -join [char]0) -cne $first }).Count -gt 0) {
+            if ($anchored.Count -gt 0) { return New-QualityStaticValue dynamic @($anchored[0].values[0]) }
+            return $null
+        }
+        return $Items[0]
+    }
+    return New-QualityStaticValue ([string]$Items[0].kind) @($Items | ForEach-Object { $_.values })
+}
+
+function Get-QualityStaticVariableName {
+    param($Variable)
+    return (([string]$Variable.VariablePath.UserPath) -replace '^(?i:script|global|local|private|using):', '').ToLowerInvariant()
+}
+
+function Resolve-QualityStaticValue {
+    param($Node, $Context, [int]$Depth = 0)
+    # Only paths anchored at the analysed file ($PSScriptRoot, $PSCommandPath,
+    # $MyInvocation.MyCommand.Path) are repository inputs. Other roots are
+    # runtime values (target project, fixture, parameter) and stay unknown.
+    if ($null -eq $Node -or $Depth -gt 24) { return $null }
+    $next = $Depth + 1
+    $language = 'System.Management.Automation.Language'
+    switch ($Node.GetType().FullName) {
+        "$language.StringConstantExpressionAst" { return New-QualityStaticValue text @([string]$Node.Value) }
+        "$language.VariableExpressionAst" {
+            $name = Get-QualityStaticVariableName $Node
+            if ($name -eq 'psscriptroot') { return New-QualityStaticValue path @($Context.directory) }
+            if ($name -eq 'pscommandpath') { return New-QualityStaticValue path @($Context.file) }
+            # The enclosing foreach binds its own variable, even when another
+            # loop elsewhere in the file reuses the name.
+            for ($parent = $Node.Parent; $null -ne $parent; $parent = $parent.Parent) {
+                if ($parent -is [Management.Automation.Language.ForEachStatementAst] -and (Get-QualityStaticVariableName $parent.Variable) -eq $name -and
+                    -not [object]::ReferenceEquals($parent.Condition, $Node) -and $parent.Body.Extent.StartOffset -le $Node.Extent.StartOffset) {
+                    return Resolve-QualityStaticValue -Node $parent.Condition -Context $Context -Depth $next
+                }
+            }
+            if ($Context.variables.ContainsKey($name) -and $null -ne $Context.variables[$name]) {
+                # One file-wide binding has one value; resolve it once per file.
+                if (-not $Context.resolved.ContainsKey($name)) { $Context.resolved[$name] = Resolve-QualityStaticValue -Node $Context.variables[$name] -Context $Context -Depth $next }
+                return $Context.resolved[$name]
+            }
+            return $null
+        }
+        "$language.MemberExpressionAst" {
+            if (($Node.Extent.Text -replace '\s', '') -ieq '$MyInvocation.MyCommand.Path') { return New-QualityStaticValue path @($Context.file) }
+            # (Resolve-Path <anchored>).Path names the same file.
+            if (-not $Node.Static -and ([string]$Node.Member.Extent.Text) -in @('Path', 'ProviderPath')) {
+                $owner = Resolve-QualityStaticValue -Node $Node.Expression -Context $Context -Depth $next
+                if ($null -ne $owner -and $owner.kind -ne 'text') { return $owner }
+            }
+            return $null
+        }
+        "$language.ConvertExpressionAst" {
+            if (([string]$Node.Type.TypeName.Name) -notin @('string', 'System.String')) { return $null }
+            return Resolve-QualityStaticValue -Node $Node.Child -Context $Context -Depth $next
+        }
+        "$language.ForEachStatementAst" { return Resolve-QualityStaticValue -Node $Node.Condition -Context $Context -Depth $next }
+        "$language.ParenExpressionAst" { return Resolve-QualityStaticValue -Node $Node.Pipeline -Context $Context -Depth $next }
+        "$language.CommandExpressionAst" { return Resolve-QualityStaticValue -Node $Node.Expression -Context $Context -Depth $next }
+        "$language.PipelineAst" {
+            if (@($Node.PipelineElements).Count -ne 1) { return $null }
+            return Resolve-QualityStaticValue -Node $Node.PipelineElements[0] -Context $Context -Depth $next
+        }
+        "$language.StatementBlockAst" {
+            if (@($Node.Statements).Count -ne 1) { return $null }
+            return Resolve-QualityStaticValue -Node $Node.Statements[0] -Context $Context -Depth $next
+        }
+        "$language.ArrayExpressionAst" {
+            return Merge-QualityStaticValues @(foreach ($statement in @($Node.SubExpression.Statements)) { ,(Resolve-QualityStaticValue -Node $statement -Context $Context -Depth $next) })
+        }
+        "$language.ArrayLiteralAst" {
+            return Merge-QualityStaticValues @(foreach ($element in @($Node.Elements)) { ,(Resolve-QualityStaticValue -Node $element -Context $Context -Depth $next) })
+        }
+        "$language.IfStatementAst" {
+            if ($null -eq $Node.ElseClause) { return $null }
+            $branches = @(foreach ($clause in @($Node.Clauses)) { ,(Resolve-QualityStaticValue -Node $clause.Item2 -Context $Context -Depth $next) })
+            $branches += ,(Resolve-QualityStaticValue -Node $Node.ElseClause -Context $Context -Depth $next)
+            return Merge-QualityStaticValues $branches -RequireSame
+        }
+        "$language.BinaryExpressionAst" {
+            if ([string]$Node.Operator -ne 'Plus') { return $null }
+            $left = Resolve-QualityStaticValue -Node $Node.Left -Context $Context -Depth $next
+            return Join-QualityStaticValues -Base $left -Child (Resolve-QualityStaticValue -Node $Node.Right -Context $Context -Depth $next) -Concatenate
+        }
+        "$language.ExpandableStringExpressionAst" {
+            $text = [string]$Node.Value
+            if ($text.Contains('`')) { return $null }
+            $value = $null
+            $position = 0
+            foreach ($nested in @($Node.NestedExpressions)) {
+                $nestedText = [string]$nested.Extent.Text
+                $index = $text.IndexOf($nestedText, $position, [StringComparison]::Ordinal)
+                if ($index -lt 0) { return $null }
+                $literal = New-QualityStaticValue text @($text.Substring($position, $index - $position))
+                $part = Resolve-QualityStaticValue -Node $nested -Context $Context -Depth $next
+                if ($null -eq $value) {
+                    $value = if ($index -eq 0) { $part } elseif ($null -ne $part -and $part.kind -eq 'text') { Join-QualityStaticValues -Base $literal -Child $part -Concatenate } else { $null }
+                    if ($null -eq $value) { return $null }
+                } else {
+                    $value = Join-QualityStaticValues -Base (Join-QualityStaticValues -Base $value -Child $literal -Concatenate) -Child $part -Concatenate
+                    if ($null -eq $value) { return $null }
+                }
+                $position = $index + $nestedText.Length
+            }
+            if ($null -eq $value) { return New-QualityStaticValue text @($text) }
+            return Join-QualityStaticValues -Base $value -Child (New-QualityStaticValue text @($text.Substring($position))) -Concatenate
+        }
+        "$language.InvokeMemberExpressionAst" {
+            # [IO.Path]::GetFullPath(<anchored>) and [IO.Path]::Combine(<anchored>, '<literal>', ...)
+            if ($Node.Static -and ([string]$Node.Member.Extent.Text) -ieq 'GetFullPath' -and @($Node.Arguments).Count -eq 1 -and
+                ([string]$Node.Expression.Extent.Text -replace '\s', '') -match '^\[(System\.)?IO\.Path\]$') {
+                return Resolve-QualityStaticValue -Node $Node.Arguments[0] -Context $Context -Depth $next
+            }
+            if (-not $Node.Static -or ([string]$Node.Member.Extent.Text) -ine 'Combine' -or
+                ([string]$Node.Expression.Extent.Text -replace '\s', '') -notmatch '^\[(System\.)?IO\.Path\]$' -or @($Node.Arguments).Count -lt 2) { return $null }
+            $value = Resolve-QualityStaticValue -Node $Node.Arguments[0] -Context $Context -Depth $next
+            foreach ($argument in @($Node.Arguments | Select-Object -Skip 1)) {
+                $value = Join-QualityStaticValues -Base $value -Child (Resolve-QualityStaticValue -Node $argument -Context $Context -Depth $next)
+            }
+            return $value
+        }
+        "$language.CommandAst" { }
+        default { return $null }
+    }
+
+    $key = ([string]$Node.GetCommandName()).ToLowerInvariant()
+    $valueParameters = @{ 'join-path' = @('path', 'childpath'); 'split-path' = @('path', 'literalpath'); 'resolve-path' = @('path', 'literalpath'); 'convert-path' = @('path', 'literalpath') }
+    $switchParameters = @{ 'join-path' = @('resolve'); 'split-path' = @('parent'); 'resolve-path' = @(); 'convert-path' = @() }
+    if (-not $valueParameters.ContainsKey($key)) { return $null }
+    $named = @{}
+    $positional = New-Object System.Collections.Generic.List[object]
+    $unsupported = $false
+    $elements = @($Node.CommandElements)
+    for ($index = 1; $index -lt $elements.Count; $index++) {
+        $element = $elements[$index]
+        if ($element -isnot [Management.Automation.Language.CommandParameterAst]) { $positional.Add($element) | Out-Null; continue }
+        $parameter = ([string]$element.ParameterName).ToLowerInvariant()
+        $valueName = @($valueParameters[$key] | Where-Object { $_.StartsWith($parameter, [StringComparison]::Ordinal) })
+        $switchName = @($switchParameters[$key] | Where-Object { $_.StartsWith($parameter, [StringComparison]::Ordinal) })
+        if ($valueName.Count -eq 1) {
+            if ($null -ne $element.Argument) { $named[$valueName[0]] = $element.Argument; continue }
+            if ($index + 1 -ge $elements.Count) { return $null }
+            $index++
+            $named[$valueName[0]] = $elements[$index]
+        } elseif ($switchName.Count -ne 1) {
+            $unsupported = $true
+        }
+    }
+    if ($key -eq 'join-path') {
+        $pathNode = if ($named.ContainsKey('path')) { $named['path'] } elseif ($positional.Count -gt 0) { $positional[0] } else { $null }
+        $childIndex = if ($named.ContainsKey('path')) { 0 } else { 1 }
+        $childNode = if ($named.ContainsKey('childpath')) { $named['childpath'] } elseif ($positional.Count -gt $childIndex) { $positional[$childIndex] } else { $null }
+        $base = Resolve-QualityStaticValue -Node $pathNode -Context $Context -Depth $next
+        $child = if ($unsupported -or $positional.Count -gt $childIndex + 1) { $null } else { Resolve-QualityStaticValue -Node $childNode -Context $Context -Depth $next }
+        return Join-QualityStaticValues -Base $base -Child $child
+    }
+    $targetNode = if ($named.ContainsKey('path')) { $named['path'] } elseif ($named.ContainsKey('literalpath')) { $named['literalpath'] } elseif ($positional.Count -gt 0) { $positional[0] } else { $null }
+    $target = Resolve-QualityStaticValue -Node $targetNode -Context $Context -Depth $next
+    if ($null -eq $target -or $target.kind -eq 'text') { return $null }
+    if ($unsupported -or $target.kind -eq 'dynamic') { return New-QualityStaticValue dynamic @($target.values[0]) }
+    if ($key -ne 'split-path') { return $target }
+    $parents = @(foreach ($path in $target.values) {
+        if (-not $path) { $null } else { $separator = ([string]$path).LastIndexOf('/'); if ($separator -lt 0) { '' } else { ([string]$path).Substring(0, $separator) } }
+    })
+    if (@($parents | Where-Object { $null -eq $_ }).Count -gt 0) { return $null }
+    return New-QualityStaticValue path @($parents | Sort-Object -Unique)
+}
+
+function Get-QualityStaticAstPredicate {
+    param([Parameter(Mandatory = $true)][ValidateSet('loads', 'bindings')][string]$Kind)
+    $cache = Get-Variable -Name qualityStaticAstPredicates -Scope Script -ErrorAction SilentlyContinue
+    if (-not $cache -or $null -eq $cache.Value) { $script:qualityStaticAstPredicates = @{} }
+    if ($script:qualityStaticAstPredicates.ContainsKey($Kind)) { return $script:qualityStaticAstPredicates[$Kind] }
+    # Compiled type tests keep the pass over large helper files native-speed;
+    # a script-block predicate or a PowerShell loop over every command costs
+    # seconds across the repository.
+    $expression = [Linq.Expressions.Expression]
+    $parameter = $expression::Parameter([Management.Automation.Language.Ast], 'node')
+    if ($Kind -eq 'loads') {
+        # Dot/call operators, or a command named powershell*/pwsh* (a child
+        # -File script). Never read Extent.Text here: for a Describe block it
+        # is the whole file, which made this pass quadratic.
+        $command = $expression::Convert($parameter, [Management.Automation.Language.CommandAst])
+        $operator = $expression::NotEqual($expression::Property($command, 'InvocationOperator'), $expression::Constant([Management.Automation.Language.TokenKind]::Unknown))
+        $elements = $expression::Property($command, 'CommandElements')
+        $first = $expression::Property($elements, 'Item', [Linq.Expressions.Expression[]]@($expression::Constant(0)))
+        $value = $expression::Property($expression::Property($first, 'Extent'), 'Text')
+        $startsWith = [string].GetMethod('StartsWith', [Type[]]@([string], [StringComparison]))
+        $named = $expression::AndAlso($expression::GreaterThan($expression::Property($elements, 'Count'), $expression::Constant(0)),
+            $expression::AndAlso($expression::TypeIs($first, [Management.Automation.Language.StringConstantExpressionAst]),
+                $expression::OrElse($expression::Call($value, $startsWith, $expression::Constant('powershell'), $expression::Constant([StringComparison]::OrdinalIgnoreCase)),
+                    $expression::Call($value, $startsWith, $expression::Constant('pwsh'), $expression::Constant([StringComparison]::OrdinalIgnoreCase)))))
+        # A literal or script-block call target can never be an anchored file.
+        $literal = $expression::OrElse($expression::TypeIs($first, [Management.Automation.Language.StringConstantExpressionAst]),
+            $expression::TypeIs($first, [Management.Automation.Language.ScriptBlockExpressionAst]))
+        $body = $expression::AndAlso($expression::TypeIs($parameter, [Management.Automation.Language.CommandAst]),
+            $expression::OrElse($expression::AndAlso($operator, $expression::Not($literal)), $named))
+    } else {
+        # Only bindings of the requested names (the shared set below, refilled
+        # per file); visiting every assignment of large helpers costs seconds.
+        $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        $script:qualityStaticAstPredicates['bindingNames'] = $set
+        $names = $expression::Constant($set)
+        $contains = $set.GetType().GetMethod('Contains')
+        $requested = {
+            param($variable)
+            $expression::Call($names, $contains, $expression::Property($expression::Property($variable, 'VariablePath'), 'UserPath'))
+        }
+        $variableType = [Management.Automation.Language.VariableExpressionAst]
+        $left = $expression::Property($expression::Convert($parameter, [Management.Automation.Language.AssignmentStatementAst]), 'Left')
+        $converted = $expression::Property($expression::Convert($left, [Management.Automation.Language.ConvertExpressionAst]), 'Child')
+        $assigned = $expression::AndAlso($expression::TypeIs($parameter, [Management.Automation.Language.AssignmentStatementAst]), $expression::OrElse(
+            $expression::AndAlso($expression::TypeIs($left, $variableType), (& $requested $expression::Convert($left, $variableType))),
+            $expression::AndAlso($expression::TypeIs($left, [Management.Automation.Language.ConvertExpressionAst]),
+                $expression::AndAlso($expression::TypeIs($converted, $variableType), (& $requested $expression::Convert($converted, $variableType))))))
+        $loop = $expression::AndAlso($expression::TypeIs($parameter, [Management.Automation.Language.ForEachStatementAst]),
+            (& $requested $expression::Property($expression::Convert($parameter, [Management.Automation.Language.ForEachStatementAst]), 'Variable')))
+        $bound = $expression::AndAlso($expression::TypeIs($parameter, [Management.Automation.Language.ParameterAst]),
+            (& $requested $expression::Property($expression::Convert($parameter, [Management.Automation.Language.ParameterAst]), 'Name')))
+        $body = $expression::OrElse($assigned, $expression::OrElse($loop, $bound))
+    }
+    $script:qualityStaticAstPredicates[$Kind] = $expression::Lambda([Func[Management.Automation.Language.Ast, bool]], $body, [Linq.Expressions.ParameterExpression[]]@($parameter)).Compile()
+    return $script:qualityStaticAstPredicates[$Kind]
+}
+
+function Get-QualityScriptStaticReferences {
+    param([Parameter(Mandatory = $true)][string]$RelativePath, [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
+    # Static .ps1 loads (dot-source, call, powershell -File) resolved from the
+    # file's own location. A load anchored there whose remainder is not static
+    # is returned as unresolved, never skipped. A path passed through an
+    # unknown command is a runtime value (fixture, copy, target project).
+    $empty = [pscustomobject]@{ includes = @(); unresolved = @() }
+    if ($Text -notmatch '(?i)PSScriptRoot|PSCommandPath|MyInvocation') { return $empty }
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($Text.TrimStart([char]0xfeff), [ref]$tokens, [ref]$errors)
+    if (@($errors).Count -gt 0) { return $empty }
+    $file = $RelativePath.Replace('\', '/')
+    $context = [pscustomobject]@{
+        file = $file
+        directory = $(if ($file.Contains('/')) { $file.Substring(0, $file.LastIndexOf('/')) } else { '' })
+        variables = @{}
+        resolved = @{}
+    }
+    $loads = @($ast.FindAll((Get-QualityStaticAstPredicate -Kind loads), $true))
+    if ($loads.Count -eq 0) { return $empty }
+    # Bind only names the load targets read, then the names their definitions
+    # read, until no new name appears.
+    $pattern = '(?i)\$\{?(?:script:|global:|local:|private:|using:)?([a-z_][a-z0-9_]*)'
+    $pending = @(foreach ($load in $loads) { foreach ($match in [regex]::Matches([string]$load.CommandElements[0].Extent.Text, $pattern)) { $match.Groups[1].Value } })
+    $requested = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $variables = $context.variables
+    for ($round = 0; $round -lt 16; $round++) {
+        $names = @($pending | Where-Object { $_ -notin @('PSScriptRoot', 'PSCommandPath', 'MyInvocation', 'true', 'false', 'null') -and $requested.Add($_) })
+        if ($names.Count -eq 0) { break }
+        $predicate = Get-QualityStaticAstPredicate -Kind bindings
+        $bindingNames = $script:qualityStaticAstPredicates['bindingNames']
+        $bindingNames.Clear()
+        foreach ($name in $names) { foreach ($scope in @('', 'script:', 'global:', 'local:', 'private:')) { [void]$bindingNames.Add($scope + $name) } }
+        $pending = @()
+        foreach ($node in @($ast.FindAll($predicate, $true))) {
+            $value = $null
+            if ($node -is [Management.Automation.Language.AssignmentStatementAst]) {
+                $left = $node.Left
+                if ($left -is [Management.Automation.Language.ConvertExpressionAst]) { $left = $left.Child }
+                $name = [string]$left.VariablePath.UserPath
+                if ([string]$node.Operator -eq 'Equals') { $value = $node.Right }
+            } elseif ($node -is [Management.Automation.Language.ForEachStatementAst]) {
+                $name = [string]$node.Variable.VariablePath.UserPath
+                $value = $node
+            } else {
+                $name = [string]$node.Name.VariablePath.UserPath
+            }
+            if ($name.IndexOf(':') -ge 0) { $name = $name -replace '^(?i:script|global|local|private|using):', '' }
+            # A reassigned or parameter-bound name has no single static value.
+            $variables[$name] = if ($variables.ContainsKey($name)) { $null } else { $value }
+            if ($null -ne $value) { $pending += @(foreach ($match in [regex]::Matches([string]$value.Extent.Text, $pattern)) { $match.Groups[1].Value }) }
+        }
+    }
+    $includes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $unresolved = New-Object System.Collections.Generic.List[object]
+    foreach ($node in $loads) {
+        # A load is a dot-source, a call, or a child PowerShell -File script.
+        $target = $null
+        if ([string]$node.GetCommandName() -match '(?i)^(powershell|pwsh)(\.exe)?$') {
+            $elements = @($node.CommandElements)
+            for ($index = 1; $index -lt $elements.Count - 1; $index++) {
+                if ($elements[$index] -is [Management.Automation.Language.CommandParameterAst] -and ([string]$elements[$index].ParameterName) -ieq 'File') { $target = $elements[$index + 1]; break }
+            }
+        } elseif ([string]$node.InvocationOperator -in @('Dot', 'Ampersand')) {
+            $target = $node.CommandElements[0]
+        }
+        if ($null -eq $target) { continue }
+        $value = Resolve-QualityStaticValue -Node $target -Context $context
+        if ($null -eq $value) { continue }
+        if ($value.kind -eq 'path') {
+            foreach ($path in @($value.values | Where-Object { ([string]$_) -like '*.ps1' })) { [void]$includes.Add([string]$path) }
+        } elseif ($value.kind -eq 'dynamic') {
+            $unresolved.Add([pscustomobject]@{ source = $file; line = [int]$node.Extent.StartLineNumber; text = ([string]$node.Extent.Text -split "`r?`n")[0].Trim(); prefix = [string]$value.values[0] }) | Out-Null
+        }
+    }
+    return [pscustomobject]@{ includes = @($includes | Sort-Object); unresolved = @($unresolved | ForEach-Object { $_ }) }
+}
+
+function New-QualityTrackedScriptIndex {
+    param([AllowEmptyCollection()][string[]]$Paths)
+    $byKey = @{}
+    $directories = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($raw in @($Paths)) {
+        $path = ([string]$raw).Replace('\', '/')
+        if ($path -notlike '*.ps1') { continue }
+        $byKey[$path.ToLowerInvariant()] = $path
+        $directory = $path
+        while ($directory.Contains('/')) { $directory = $directory.Substring(0, $directory.LastIndexOf('/')); [void]$directories.Add($directory) }
+        [void]$directories.Add('')
+    }
+    return [pscustomobject]@{ scripts = $byKey; directories = $directories; analyses = @{}; closures = @{} }
+}
+
+function Get-QualityStaticScriptAnalysis {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot, [Parameter(Mandatory = $true)][string]$Source, [Parameter(Mandatory = $true)][object]$Index)
+    if ($Index.analyses.ContainsKey($Source)) { return $Index.analyses[$Source] }
+    $absolute = Join-Path $RepositoryRoot $Source.Replace('/', '\')
+    # An analysis depends only on the path and bytes; reuse it across catalog
+    # validations and digests within one process.
+    $shared = Get-Variable -Name qualityStaticAnalysisCache -Scope Script -ErrorAction SilentlyContinue
+    if (-not $shared -or $null -eq $shared.Value) { $script:qualityStaticAnalysisCache = @{} }
+    if (-not [IO.File]::Exists($absolute)) {
+        $Index.analyses[$Source] = [pscustomobject]@{ includes = @(); unresolved = @() }
+    } else {
+        $bytes = [IO.File]::ReadAllBytes($absolute)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $key = $Source + '|' + [BitConverter]::ToString($sha.ComputeHash($bytes)) } finally { $sha.Dispose() }
+        if (-not $script:qualityStaticAnalysisCache.ContainsKey($key)) {
+            $script:qualityStaticAnalysisCache[$key] = Get-QualityScriptStaticReferences -RelativePath $Source -Text ([Text.Encoding]::UTF8.GetString($bytes))
+        }
+        $Index.analyses[$Source] = $script:qualityStaticAnalysisCache[$key]
+    }
+    return $Index.analyses[$Source]
+}
+
+function Get-QualityStaticInputClosure {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [AllowEmptyCollection()][string[]]$Roots,
+        [Parameter(Mandatory = $true)][object]$Index,
+        [AllowEmptyCollection()][string[]]$Exclusions = @()
+    )
+    # The single owner of statically loaded shard inputs. Every consumer of
+    # shard identity (Targeted, Full, Develop static, preview, plan) and the
+    # catalog validation call this function; none keeps its own copy. Each
+    # root's closure is computed once per index and then merged natively.
+    $paths = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $unresolved = New-Object System.Collections.Generic.List[object]
+    $excluded = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in @($Exclusions)) { [void]$excluded.Add(([string]$path).Replace('\', '/')) }
+    $exclusionKey = (@($excluded | Sort-Object) -join [char]0) + [char]1
+    foreach ($root in @($Roots)) {
+        $tracked = $Index.scripts[([string]$root).Replace('\', '/').ToLowerInvariant()]
+        if (-not $tracked) { continue }
+        $closureKey = $exclusionKey + $tracked
+        if (-not $Index.closures.ContainsKey($closureKey)) {
+            $visited = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+            $queue = New-Object System.Collections.Generic.Queue[string]
+            $rootUnresolved = New-Object System.Collections.Generic.List[object]
+            [void]$visited.Add($tracked); $queue.Enqueue($tracked)
+            while ($queue.Count -gt 0) {
+                $analysis = Get-QualityStaticScriptAnalysis -RepositoryRoot $RepositoryRoot -Source $queue.Dequeue() -Index $Index
+                foreach ($include in @($analysis.includes)) {
+                    # Untracked or external files (installed modules, runtime copies) are not repository inputs.
+                    $next = $Index.scripts[([string]$include).ToLowerInvariant()]
+                    # An excluded script is entered only as a root (a declared input).
+                    if ($next -and -not $excluded.Contains($next) -and $visited.Add($next)) { $queue.Enqueue($next) }
+                }
+                foreach ($item in @($analysis.unresolved)) { if ($Index.directories.Contains([string]$item.prefix)) { $rootUnresolved.Add($item) | Out-Null } }
+            }
+            $Index.closures[$closureKey] = [pscustomobject]@{ paths = $visited; unresolved = @($rootUnresolved | ForEach-Object { $_ }) }
+        }
+        $paths.UnionWith($Index.closures[$closureKey].paths)
+        foreach ($item in @($Index.closures[$closureKey].unresolved)) { $unresolved.Add($item) | Out-Null }
+    }
+    $distinct = @($unresolved | Sort-Object source, line, text -Unique)
+    return [pscustomobject]@{
+        complete = $distinct.Count -eq 0
+        paths = @($paths | Sort-Object)
+        unresolved = $distinct
+    }
+}
+
+function Get-QualityContractStaticInputRoots {
+    param([Parameter(Mandatory = $true)][object]$Catalog, [Parameter(Mandatory = $true)][object]$Index)
+    # Contract scripts and reuse inputs are executed by their tests. Another
+    # contract's test file matched by a broad pattern is data (for example a
+    # policy reading every test), so only listed tests are roots.
+    $scripts = @($Index.scripts.Values)
+    $roots = @(Get-QualityPesterSharedInputPaths)
+    foreach ($contract in @($Catalog.contracts)) {
+        $declared = @(@($contract.paths) + @(Get-QualityContractReuseInputPaths -Contract $contract) | ForEach-Object { ([string]$_).Replace('\', '/') })
+        $roots += @($contract.tests | ForEach-Object { ([string]$_).Replace('\', '/') })
+        $roots += @(Select-QualityPaths -Paths $scripts -Pattern $declared | Where-Object { $_ -notlike 'tests/pester/*.Tests.ps1' })
+    }
+    $semantic = Get-QualityPesterSemanticInputBindings -Catalog $Catalog
+    return @(@($roots) + @($semantic.paths) | Sort-Object -Unique)
+}
+
+function Assert-QualityStaticInputsResolvable {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][object]$Catalog,
+        [AllowNull()][string[]]$TrackedPaths = $null
+    )
+    if ($null -eq $TrackedPaths) {
+        if (-not (Get-Command Get-RepositoryGitPathList -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'git-path-list.ps1') }
+        $TrackedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @('ls-files', '-z', '--'))
+    }
+    $index = New-QualityTrackedScriptIndex -Paths $TrackedPaths
+    $closure = Get-QualityStaticInputClosure -RepositoryRoot $RepositoryRoot -Roots (Get-QualityContractStaticInputRoots -Catalog $Catalog -Index $index) -Index $index
+    if (-not $closure.complete) {
+        $items = @($closure.unresolved | Sort-Object source, line | ForEach-Object { "$($_.source):$($_.line) '$($_.text)' under '$($_.prefix)'" })
+        throw ("QUALITY_STATIC_INCLUDE_UNRESOLVED: a script load anchored in the repository is not static, so Pester shard identity cannot bind its target and such shards would not be reused. " +
+            "Continue by building the path from `$PSScriptRoot with literal Join-Path children, or iterate a literal array with foreach, then repeat the same command. Unresolved: $($items -join '; ').")
+    }
+    return $closure
+}
+
 function Test-QualityContractCatalog {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][object]$Catalog,
         [switch]$SkipSemanticEntrypointValidation,
-        [string[]]$SkipSemanticLibraryValidation = @()
+        [string[]]$SkipSemanticLibraryValidation = @(),
+        [AllowNull()][string[]]$TrackedPaths = $null
     )
 
     Assert-QualityOnDemandVersionConsistency -RepositoryRoot $RepositoryRoot
@@ -644,6 +1143,12 @@ function Test-QualityContractCatalog {
     if ($ids.Count -eq 0 -or @($ids | Sort-Object -Unique).Count -ne $ids.Count) { throw "Quality contracts must have unique non-empty ids." }
     foreach ($contract in @($Catalog.contracts)) {
         [void](Get-QualityContractReuseInputPaths -Contract $contract)
+        $exclusions = @(Get-QualityContractStaticInputExclusions -Contract $contract)
+        $declaredExclusions = @(Select-QualityPaths -Paths $exclusions -Pattern @(@($contract.paths) + @(Get-QualityContractReuseInputPaths -Contract $contract)))
+        $missingExclusions = @($exclusions | Where-Object { -not (Test-Path -LiteralPath (Join-Path $RepositoryRoot $_.Replace('/', '\')) -PathType Leaf) })
+        if ($declaredExclusions.Count -gt 0 -or $missingExclusions.Count -gt 0) {
+            throw "Quality contract '$($contract.id)' staticInputExclusions must name existing scripts it does not declare: $(@($declaredExclusions + $missingExclusions) -join ', ')."
+        }
         if (-not [string]$contract.owner -or -not [string]$contract.primaryTest -or [int]$contract.budgetSeconds -le 0 -or @($contract.paths).Count -eq 0 -or @($contract.tests).Count -eq 0) {
             throw "Quality contract '$($contract.id)' must define owner, primaryTest, budgetSeconds, paths, and tests."
         }
@@ -689,6 +1194,9 @@ function Test-QualityContractCatalog {
     $ownedTests = @($Catalog.contracts | ForEach-Object { @($_.tests) } | ForEach-Object { ([string]$_).Replace('\', '/') } | Sort-Object -Unique)
     $unownedTests = @($inventory | Where-Object { $_ -notin $ownedTests })
     if ($unownedTests.Count -gt 0) { throw "Every Pester file must have a quality contract owner. Unowned: $($unownedTests -join ', ')." }
+    # Shard identity binds static script loads automatically; a load it cannot
+    # resolve would silently disable reuse, so the catalog owner rejects it.
+    [void](Assert-QualityStaticInputsResolvable -RepositoryRoot $RepositoryRoot -Catalog $Catalog -TrackedPaths $TrackedPaths)
 
     if (-not $SkipSemanticEntrypointValidation -and $Catalog.PSObject.Properties['semanticTargeting']) {
     $actualActions = @(Get-PublicLifecycleActions -RepositoryRoot $RepositoryRoot)
