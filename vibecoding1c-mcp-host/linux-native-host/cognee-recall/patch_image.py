@@ -66,7 +66,15 @@ def patch_embedding_engine(source):
     source = replace(
         source,
         anchor,
-        anchor + "from cognee.shared.itl_recall_policy import apply_query_request_options\n",
+        anchor
+        + "from cognee.shared.itl_recall_policy import apply_query_request_options, embedding_http_client\n",
+    )
+    source = replace(
+        source,
+        "        self._client = AsyncOpenAI(api_key=self.api_key, base_url=base, timeout=120)\n",
+        "        self._client = AsyncOpenAI(\n"
+        "            api_key=self.api_key, base_url=base, timeout=120, http_client=embedding_http_client()\n"
+        "        )\n",
     )
     return replace(
         source,

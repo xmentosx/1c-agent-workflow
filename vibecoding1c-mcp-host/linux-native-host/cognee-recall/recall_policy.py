@@ -14,6 +14,11 @@ DEADLINE_SECONDS = 20
 HEDGE_DELAYS_SECONDS = (3.0, 6.0, 9.0)
 OPENROUTER_HOST = "openrouter.ai"
 QUERY_CACHE_TTL_SECONDS = 86400
+# The SDK closes an idle connection after 5 s, so a recall minutes after the
+# previous one paid a new TLS handshake over the slow host route (median 3 s,
+# up to 10.6 s). Measured idle gaps up to 240 s reused the connection safely;
+# after 7-10 min the peer had closed it and a new one was opened either way.
+EMBEDDING_KEEPALIVE_SECONDS = 240.0
 _embeddings = ContextVar("itl_recall_embeddings", default=None)
 _query_vector_request = ContextVar("itl_recall_query_vector_request", default=False)
 
@@ -101,6 +106,20 @@ async def _hedged_query_vector(gateway, query_text):
         for attempt in attempts:
             attempt.cancel()
         await asyncio.gather(*attempts, return_exceptions=True)
+
+
+def embedding_http_client():
+    """SDK default HTTP client with a longer idle keep-alive; limits stay the SDK's."""
+    import httpx
+    from openai import DefaultAsyncHttpxClient
+
+    return DefaultAsyncHttpxClient(
+        limits=httpx.Limits(
+            max_connections=1000,
+            max_keepalive_connections=100,
+            keepalive_expiry=EMBEDDING_KEEPALIVE_SECONDS,
+        )
+    )
 
 
 def apply_query_request_options(endpoint, create_kwargs):
