@@ -586,5 +586,15 @@ public static class $fixtureTypeName {
                 # .\scripts\ondemand-mcp-lock.ps1 -Action Repin instead of editing the lock.
                 throw "ITL_ONDEMAND_TEST_FIXTURE_HASH_MISMATCH expected='$($entry.sha256)' actual='$($build[0].sha256)'. Run .\scripts\ondemand-mcp-lock.ps1 -Action Repin [-Version <next-version>]."
             }
+            # The pinned relay is installed beside the facade cache, as Install-ItlOnDemandRelay expects.
+            $relay = $lock.dependencies.PSObject.Properties['itlOndemandRelay']
+            if ($relay) {
+                if ([string]$build[0].relaySha256 -cne ([string]$relay.Value.sha256).ToLowerInvariant()) {
+                    throw "ITL_ONDEMAND_TEST_FIXTURE_HASH_MISMATCH relay expected='$($relay.Value.sha256)' actual='$($build[0].relaySha256)'. Run .\scripts\ondemand-mcp-lock.ps1 -Action Repin -RelayVersion <next-relay-version>."
+                }
+                $relayPath = Join-Path $TargetRoot ("relay\v" + ([string]$relay.Value.version).Split('.')[0] + "\" + [string]$relay.Value.sha256 + "\" + [string]$relay.Value.assetName)
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $relayPath) | Out-Null
+                Copy-Item -LiteralPath ([string]$build[0].relayPath) -Destination $relayPath -Force
+            }
             return $installRoot
         }

@@ -20,6 +20,16 @@
       "arch": "amd64",
       "source": "workflow release asset"
     },
+    "itlOndemandRelay": {
+      "version": "1.0.0",
+      "releaseTag": "itl-ondemand-relay-v1.0.0",
+      "assetName": "itl-ondemand-relay-windows-amd64.exe",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-relay-v1.0.0/itl-ondemand-relay-windows-amd64.exe",
+      "sha256": "3860e6dee95ce16b9a2caa3fd97283cff3917bce23d4bee9e7e0ac119a362b95",
+      "os": "windows",
+      "arch": "amd64",
+      "source": "workflow release asset"
+    },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
       "ref": "itl-main-2f640143-r60",

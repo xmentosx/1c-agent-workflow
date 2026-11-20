@@ -84,7 +84,9 @@ if ($ArtifactBindingPath) {
     $ArtifactBindingPath = [IO.Path]::GetFullPath($ArtifactBindingPath)
     $artifactBinding = Get-Content -LiteralPath $ArtifactBindingPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $artifactHashes = Get-SourceE2EArtifactBindingHashes -RepositoryRoot $CandidateRoot -Binding $artifactBinding
-    $onDemandSourceBuild = [pscustomobject]@{path=[string]$artifactBinding.paths.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE;sha256=$artifactHashes.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE}
+    $onDemandSourceBuild = [pscustomobject]@{path=[string]$artifactBinding.paths.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE;sha256=$artifactHashes.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE
+        relayPath=$(if ($artifactBinding.paths.PSObject.Properties['ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE']) { [string]$artifactBinding.paths.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE } else { '' })
+        relaySha256=$(if ($artifactHashes.Contains('ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE')) { [string]$artifactHashes.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE } else { '' })}
 } else {
     $onDemandSourceBuild = & (Join-Path $CandidateRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests
 }
@@ -96,6 +98,14 @@ if ([string]$onDemandSourceBuild.sha256 -cne ([string]$onDemandLock.sha256).ToLo
     throw "DEVELOP_E2E_ONDEMAND_SOURCE_BUILD_MISMATCH: expected='$(([string]$onDemandLock.sha256).ToLowerInvariant())' actual='$([string]$onDemandSourceBuild.sha256)'."
 }
 $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE = [string]$onDemandSourceBuild.path
+# A pinned relay installs from the exact candidate build, like the facade.
+$onDemandRelayLock = (Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.PSObject.Properties['itlOndemandRelay']
+if ($onDemandRelayLock) {
+    if ([string]$onDemandSourceBuild.relaySha256 -cne ([string]$onDemandRelayLock.Value.sha256).ToLowerInvariant()) {
+        throw "DEVELOP_E2E_ONDEMAND_RELAY_SOURCE_BUILD_MISMATCH: expected='$(([string]$onDemandRelayLock.Value.sha256).ToLowerInvariant())' actual='$([string]$onDemandSourceBuild.relaySha256)'."
+    }
+    $env:ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE = [string]$onDemandSourceBuild.relayPath
+}
 $nativeInputProjectRoot=$ProjectRoot
 $nativeInputBefore=@{}
 foreach($name in $requestedJourneys) {

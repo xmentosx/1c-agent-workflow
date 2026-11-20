@@ -10,6 +10,10 @@ function Find-SourceE2EArtifactBinding {
         VANESSA_MCP_CLIENT_CFE_PATH=@{sha=$deps.vanessaMcp.clientMcp.sha256;relative=('build/third-party/client-mcp/'+$deps.vanessaMcp.clientMcp.assetName)}
         ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE=@{sha=$deps.itlOndemandMcp.sha256;relative=('tools/itl-ondemand-mcp/build/'+$deps.itlOndemandMcp.assetName)}
     }
+    # A pinned relay is the client command of the on-demand entries; it is built
+    # next to the facade and installed under its major and SHA.
+    $relay=$deps.PSObject.Properties['itlOndemandRelay']
+    if($relay) {$specs.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE=@{sha=$relay.Value.sha256;relative=('tools/itl-ondemand-mcp/build/'+$relay.Value.assetName)}}
     # Read the installed cache owner's layout without importing its lifecycle.
     # An override remains authoritative; no recursive scan, download or build.
     $artifactCache=[Environment]::GetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT','Process')
@@ -20,6 +24,7 @@ function Find-SourceE2EArtifactBinding {
     else {$ondemandCache=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ITL/MCP/ondemand'}
     $specs.VANESSA_MCP_CLIENT_CFE_PATH['installed']=Join-Path $artifactCache ('vanessa-mcp-clientMcp/'+$deps.vanessaMcp.clientMcp.version+'/'+$deps.vanessaMcp.clientMcp.sha256+'/'+$deps.vanessaMcp.clientMcp.assetName)
     $specs.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE['installed']=Join-Path $ondemandCache ($deps.itlOndemandMcp.version+'/'+$deps.itlOndemandMcp.sha256+'/'+$deps.itlOndemandMcp.assetName)
+    if($relay) {$specs.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE['installed']=Join-Path (Split-Path -Parent $ondemandCache) ('relay/v'+([string]$relay.Value.version).Split('.')[0]+'/'+$relay.Value.sha256+'/'+$relay.Value.assetName)}
     $paths=[ordered]@{}
     foreach($name in $specs.Keys) {
         $spec=$specs[$name]; $explicit=[Environment]::GetEnvironmentVariable($name,'Process')

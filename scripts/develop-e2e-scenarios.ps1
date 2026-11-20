@@ -42,6 +42,11 @@ function ConvertTo-DevelopScenarioArtifactIdentity {
         $copy -and $copy.PSObject.Properties['ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE'] -and
         [string]$copy.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE -cmatch '^[a-f0-9]{64}$') {
         $copy.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE='opaque-broker-not-executed'
+        # The relay only launches that broker, so it is not executed either.
+        if($copy.PSObject.Properties['ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE'] -and
+            [string]$copy.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE -cmatch '^[a-f0-9]{64}$') {
+            $copy.ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE='opaque-broker-not-executed'
+        }
     }
     return $copy
 }
@@ -188,7 +193,9 @@ function Test-DevelopColdCutoverConsumers {
         # before bootstrap; it reads no retained on-demand runtime records.
         # Parameter discovery only reads the bootstrap declaration; it still
         # starts without retained runtime and keeps the exact helper paired.
-        'scripts/invoke-develop-e2e.ps1'=@('ab50bc1388d98b40b4a9dd602d969635889cdb5bb762e3a7dd27e2e5ff11a77d','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda')
+        # Forwarding the pinned relay source build like the facade build reads
+        # only the dependency lock; no retained on-demand runtime record.
+        'scripts/invoke-develop-e2e.ps1'=@('ab50bc1388d98b40b4a9dd602d969635889cdb5bb762e3a7dd27e2e5ff11a77d','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda','8023cdeca4c5ab761e7bd1968b5c92fa7931e85c18ba85c7d8801773bb99c391')
     }
     try {
         foreach($path in $consumers.Keys) {
@@ -196,7 +203,7 @@ function Test-DevelopColdCutoverConsumers {
             $sha=[Security.Cryptography.SHA256]::Create()
             try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
             if($hash -cnotin $consumers[$path]) {return $false}
-            if($path -ceq 'scripts/invoke-develop-e2e.ps1' -and $hash -cin @('00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda')) {
+            if($path -ceq 'scripts/invoke-develop-e2e.ps1' -and $hash -cin @('00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda','8023cdeca4c5ab761e7bd1968b5c92fa7931e85c18ba85c7d8801773bb99c391')) {
                 # The modern recipe plans current-change evidence, but still
                 # registers no diagnostic batch and invokes no explicit cleanup.
                 $helper='scripts/develop-configuration-rejection.ps1'
@@ -205,7 +212,7 @@ function Test-DevelopColdCutoverConsumers {
                 $sha=[Security.Cryptography.SHA256]::Create()
                 try {$helperHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($helperText)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
                 if($helperHash -cnotin @('a547992821bcd7c88f44eb68a7874bcfdc4727688d9d96f147867b22dd21346e','626e58491b3cc856f9a0f24b91e353b73750b3fadf34b2e1dadf68f69b06df42')) {return $false}
-                if($hash -cin @('b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda')){
+                if($hash -cin @('b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda','8023cdeca4c5ab761e7bd1968b5c92fa7931e85c18ba85c7d8801773bb99c391')){
                     $catalogHelper='scripts/source-e2e-workflow-update.ps1'
                     $catalogText=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $catalogHelper}else{[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $catalogHelper)))}
                     $sha=[Security.Cryptography.SHA256]::Create()
@@ -213,7 +220,7 @@ function Test-DevelopColdCutoverConsumers {
                     # The bound technical-publisher repair reads only project,
                     # configuration and catalog data, never retained on-demand
                     # records; the fresh recipe still starts with a cold root.
-                    $expectedCatalogHashes=if($hash -ceq 'f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda'){@('8718186e811cd530c17dbb58dc08b88d3b07c8bf85b18194e98ba6a696e4c92e','51804b1968b8b21fda559e06682812c3cd1c4436c5eeec0077df81909bb36293')}else{@('27c8386bb9cd6158b3acd137950f57d22d203625cacc928a8085f8c592d08c7e')}
+                    $expectedCatalogHashes=if($hash -cin @('f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda','8023cdeca4c5ab761e7bd1968b5c92fa7931e85c18ba85c7d8801773bb99c391')){@('8718186e811cd530c17dbb58dc08b88d3b07c8bf85b18194e98ba6a696e4c92e','51804b1968b8b21fda559e06682812c3cd1c4436c5eeec0077df81909bb36293')}else{@('27c8386bb9cd6158b3acd137950f57d22d203625cacc928a8085f8c592d08c7e')}
                     if($catalogHash -cnotin $expectedCatalogHashes){return $false}
                 }
             }

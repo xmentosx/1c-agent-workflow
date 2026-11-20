@@ -740,7 +740,8 @@ function Read-Example {
         [IO.File]::WriteAllText($envPath,"PLATFORM_PATH=$artifact`r`nAGENT_1C_UI_TESTING=off`r`n",[Text.UTF8Encoding]::new($true))
         Mock Get-DevelopE2EStandStateSha256 {'c'*64}
         Mock Get-Command {[pscustomobject]@{Source=$artifact}} -ParameterFilter {$Name -contains 'go.exe'}
-        $keys=@('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')
+        # The pinned relay is part of a complete physical binding, like the facade.
+        $keys=@('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE','ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE')
         $previous=@{}
         try {
             foreach($key in $keys){$previous[$key]=[Environment]::GetEnvironmentVariable($key,'Process');[Environment]::SetEnvironmentVariable($key,$artifact,'Process')}

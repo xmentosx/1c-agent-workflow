@@ -306,7 +306,9 @@ function Get-DevelopGoInputConsumerAudit {
         'scripts/update-installed-workflow.ps1'=@('bd4c23855e9255bb112277d33a36c1d2b263860d455dfeb3fd7919b36bd51664','f07f3182a49f119857a37ef84df5cccc9510517f620c242a466333d7114136af','d9acb246fc18235a3824bb2671ef25158a2822e8d71a26087a07922023e18254','0112c05de9d755f9351571e4f76376aae8e26689599588fefd075f7b584f3855')
         # Technical-catalog arguments and bootstrap parameter discovery add
         # no Go input reader.
-        'scripts/invoke-develop-e2e.ps1'=@('f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc')
+        # Forwarding the pinned relay source build like the facade build reads
+        # only the dependency lock; it adds no Go test or README reader.
+        'scripts/invoke-develop-e2e.ps1'=@('f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','8023cdeca4c5ab761e7bd1968b5c92fa7931e85c18ba85c7d8801773bb99c391')
         # The rejection proof only stops requiring a pending refresh merge
         # on the production path; it reads no Go test or README.
         # Accepting a confirmed native rollback receipt (no DT) reads only

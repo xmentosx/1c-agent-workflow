@@ -31,11 +31,11 @@ stage A is published.
 ## 4. Documentation and delivery (stage A)
 
 - [x] 4.1 Document the relay, descriptor, notes and error codes in `tools/itl-ondemand-mcp/README.md`
-- [ ] 4.2 Commit and run `scripts/source-delivery.ps1 -Action RegisterChange`; verify the registration reports `registered`
+- [x] 4.2 Commit and run `scripts/source-delivery.ps1 -Action RegisterChange`; verify the registration reports `registered`
 
 ## 5. Pin and acceptance (stage B, after the user publishes stage A)
 
-- [ ] 5.1 Add `itlOndemandRelay` to `templates/dependency-lock.json` (repin tooling for the relay SHA in `scripts/ondemand-mcp-lock.ps1`); verify the dependency-lock and lock-staleness tests
-- [ ] 5.2 Pass the relay source build through Develop/Release E2E stands (`ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE` in artifact discovery, stand identity and the `ondemand-mcp` stage) so the Release stage serves both families through the relay; verify with the release orchestration and stand preparation Pester tests
-- [ ] 5.3 Align auxiliary-contour retirement (queued `codex/retire-auxiliary-contours`: `Test-ItlOnDemandLegacyAuxiliaryEntry` compares entries with the direct facade shape) with relay entries before pinning; verify with its retirement Pester tests in relay mode
+- [x] 5.1 Add `itlOndemandRelay` 1.0.0 to `templates/dependency-lock.json`; `scripts/ondemand-mcp-lock.ps1` verifies the relay SHA and repins it (`-RelayVersion` required when its bytes change); verified by the dependency-lock and lock-staleness tests
+- [x] 5.2 Pass the relay source build through Develop/Release E2E stands (`ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE` in artifact discovery, stand identity, the Develop runner and qualification) and run the Release `ondemand-mcp` live probe through the exact pinned relay (`itl-ondemand-probe -relay`); verified by `TestFacadeCommandRunsThroughTheRelay` and the release orchestration and stand preparation Pester tests
+- [ ] 5.3 (owner: `codex/retire-auxiliary-contours`, deferred from the 2026-11-20 publication) Align auxiliary-contour retirement ( `Test-ItlOnDemandLegacyAuxiliaryEntry` compares entries with the direct facade shape) with relay entries before pinning; verify with its retirement Pester tests in relay mode
 - [ ] 5.4 After the user requests publication: release the relay and facade, then perform the live acceptance in an installed project (open chat, `update-workflow` to a new facade, next `itl-vanessa-ui` call served by the new version without reconnect, replacement note present); until then report it as unverified

@@ -38,6 +38,8 @@ function Resolve-SourceE2EArtifactBinding {
             ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE=[IO.Path]::GetFullPath([string]$build.path)
         }
     }
+    $relayLock = (Get-Content -LiteralPath (Join-Path $root 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.PSObject.Properties['itlOndemandRelay']
+    if ($relayLock) { $binding.paths | Add-Member -NotePropertyName ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE -NotePropertyValue ([IO.Path]::GetFullPath([string]$build.relayPath)) }
     [void](Get-SourceE2EArtifactBindingHashes -RepositoryRoot $root -Binding $binding)
     return $binding
 }
@@ -52,6 +54,7 @@ function Get-SourceE2EArtifactBindingHashes {
         VANESSA_MCP_CLIENT_CFE_PATH=[string]$lock.vanessaMcp.clientMcp.sha256
         ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE=[string]$lock.itlOndemandMcp.sha256
     }
+    if ($lock.PSObject.Properties['itlOndemandRelay']) { $expected['ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE'] = [string]$lock.itlOndemandRelay.sha256 }
     $hashes = [ordered]@{}
     foreach ($name in $expected.Keys) {
         $path = [string]$Binding.paths.$name

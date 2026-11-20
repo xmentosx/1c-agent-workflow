@@ -3263,6 +3263,7 @@ url = "http://localhost:9999/mcp"
         $projectRoot = Join-Path $tempRoot "project"
         $ondemandExe = Join-Path $tempRoot "itl-ondemand-mcp.exe"
         $oldOndemand = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", "Process")
+        $oldInstallRoot = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", "Process")
 
         try {
             New-Item -ItemType Directory -Force -Path `
@@ -3280,9 +3281,17 @@ url = "http://localhost:9999/mcp"
             Set-Content -LiteralPath $ondemandExe -Encoding UTF8 -Value "dummy-ondemand"
             $fixtureLock=Get-Content -LiteralPath (Join-Path $projectRoot '.agent-1c/dependency-lock.json') -Raw -Encoding UTF8|ConvertFrom-Json
             $fixtureLock.dependencies.itlOndemandMcp.sha256=(Get-FileHash -LiteralPath $ondemandExe -Algorithm SHA256).Hash.ToLowerInvariant()
+            # The pinned relay is the client command; an installed relay lets the entries be written.
+            $relayBytes = [Text.Encoding]::UTF8.GetBytes("dummy-relay")
+            $relaySha = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($relayBytes))).Replace("-", "").ToLowerInvariant()
+            $fixtureLock.dependencies.itlOndemandRelay.sha256 = $relaySha
+            $relayPath = Join-Path $tempRoot "relay\v1\$relaySha\itl-ondemand-relay-windows-amd64.exe"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $relayPath) | Out-Null
+            [IO.File]::WriteAllBytes($relayPath, $relayBytes)
             [IO.File]::WriteAllText((Join-Path $projectRoot '.agent-1c/dependency-lock.json'),($fixtureLock|ConvertTo-Json -Depth 100),[Text.UTF8Encoding]::new($false))
             Write-McpFixturePackage -Root $projectRoot -Lock $fixtureLock
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $ondemandExe, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", (Join-Path $tempRoot "ondemand"), "Process")
 
             $probe = Invoke-Agent1cEntrypointProbe `
                 -ProbeId 'sync-client-mcp-cursor-codex' `
@@ -3309,6 +3318,7 @@ url = "http://localhost:9999/mcp"
             $cursorConfig.mcpServers.'external-keep'.command | Should -Be "keep-me"
             @($cursorConfig.mcpServers.PSObject.Properties.Name) | Should -Contain "itl-roctup-data"
             @($cursorConfig.mcpServers.PSObject.Properties.Name) | Should -Contain "itl-vanessa-ui"
+            $cursorConfig.mcpServers.'itl-vanessa-ui'.command | Should -Be $relayPath
 
             $firstJson = Get-Content -LiteralPath (Join-Path $projectRoot ".cursor\mcp.json") -Raw -Encoding UTF8
             $second = Invoke-Agent1cEntrypointProbe `
@@ -3321,6 +3331,7 @@ url = "http://localhost:9999/mcp"
             (Get-Content -LiteralPath (Join-Path $projectRoot ".cursor\mcp.json") -Raw -Encoding UTF8) | Should -BeExactly $firstJson
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $oldOndemand, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $oldInstallRoot, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
