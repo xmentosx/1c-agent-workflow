@@ -127,14 +127,24 @@
             @($endpoints.name) | Should -Contain "itl-vanessa-ui"
             @($endpoints.name) | Should -Contain "itl-roctup-aux-exchange"
             @($endpoints.name) | Should -Contain "itl-vanessa-ui-aux-exchange"
+            # The pinned relay entry names the server; its facade launch, with the
+            # primary helper or the contour wrapper, is in the launch descriptor.
+            $facadeArgs = {
+                param($endpoint)
+                @($endpoint.args) | Should -Be @("--project-root", [IO.Path]::GetFullPath($root), "--server", [string]$endpoint.name)
+                $descriptor = Get-Content -LiteralPath (Join-Path $root ".agent-1c\mcp\ondemand\launch\$($endpoint.name).json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                [object[]]@($descriptor.args)
+            }
             foreach ($primary in @($endpoints | Where-Object { $_.name -in @("itl-roctup-data", "itl-vanessa-ui") })) {
-                ($primary.args -join ' ') | Should -Not -Match '--contour'
-                $helperIndex = [Array]::IndexOf([object[]]$primary.args, "--helper")
-                [string]$primary.args[$helperIndex + 1] | Should -Match 'scripts[\\/]agent-1c\.ps1$'
+                $launch = & $facadeArgs $primary
+                ($launch -join ' ') | Should -Not -Match '--contour'
+                $helperIndex = [Array]::IndexOf($launch, "--helper")
+                [string]$launch[$helperIndex + 1] | Should -Match 'scripts[\\/]agent-1c\.ps1$'
             }
             foreach ($auxiliary in @($endpoints | Where-Object { $_.name -like '*-aux-*' })) {
-                $helperIndex = [Array]::IndexOf([object[]]$auxiliary.args, "--helper")
-                $wrapper = [string]$auxiliary.args[$helperIndex + 1]
+                $launch = & $facadeArgs $auxiliary
+                $helperIndex = [Array]::IndexOf($launch, "--helper")
+                $wrapper = [string]$launch[$helperIndex + 1]
                 Test-Path -LiteralPath $wrapper -PathType Leaf | Should -BeTrue
                 (Get-Content -LiteralPath $wrapper -Raw -Encoding UTF8) | Should -Match 'InternalOnDemandAuxiliaryContour.*exchange'
             }
@@ -895,6 +905,50 @@
                     Test-Path -LiteralPath $wrapper | Should -BeTrue
                 }
             } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        # Relay-shaped auxiliary entries are written with the owner's baseline, so
+        # retirement removes them; the legacy direct-facade shape is only for
+        # entries an older workflow wrote without a baseline (ondemand-facade-relay 5.3).
+        It 'retires auxiliary entries that run through the pinned relay' {
+            $root = New-AuxiliaryFixture @{exchange=@{baseMode='managed-file';mcp=@{roctup=$true;vanessaUi=$true}}}
+            $saved = @{}
+            foreach ($name in @('ITL_ONDEMAND_MCP_EXE','ITL_ONDEMAND_MCP_INSTALL_ROOT')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+            try {
+                Initialize-AuxiliaryRetirementFixture $root | Out-Null
+                $exe = Join-Path $root 'itl-ondemand-mcp.exe'
+                Set-Content -LiteralPath $exe -Encoding ASCII -Value 'fixture facade'
+                $relayBytes = [byte[]](7, 7, 7)
+                $relaySha = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($relayBytes))).Replace('-', '').ToLowerInvariant()
+                $relay = Join-Path $root "cache\relay\v1\$relaySha\itl-ondemand-relay-windows-amd64.exe"
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $relay) | Out-Null
+                [IO.File]::WriteAllBytes($relay, $relayBytes)
+                $fixtureLock = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $fixtureLock.dependencies.itlOndemandMcp.sha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+                $fixtureLock.dependencies.itlOndemandRelay.sha256 = $relaySha
+                New-Item -ItemType Directory -Path (Join-Path $root 'templates') -Force | Out-Null
+                Set-Content -LiteralPath (Join-Path $root 'templates/dependency-lock.json') -Encoding UTF8 -Value ($fixtureLock | ConvertTo-Json -Depth 30)
+                [Environment]::SetEnvironmentVariable('ITL_ONDEMAND_MCP_EXE', $exe, 'Process')
+                [Environment]::SetEnvironmentVariable('ITL_ONDEMAND_MCP_INSTALL_ROOT', (Join-Path $root 'cache\ondemand'), 'Process')
+                & {
+                    . $HelperPath -ProjectRoot $root -Action help *> $null
+                    $AuxiliaryContourName = 'exchange'
+                    # The same planned write update-workflow performs (Sync-ItlClientSurfaces).
+                    Write-ItlClientMcpEndpointSet -Requests @(Write-ItlOnDemandMcpClientConfig -Client cursor -PlanOnly) | Out-Null
+                    $before = Read-ItlClientMcpEntries -Client cursor
+                    $before['itl-vanessa-ui-aux-exchange'].command | Should -Be $relay
+                    $before['itl-roctup-aux-exchange'].command | Should -Be $relay
+                    $result = Remove-AuxiliaryContour *>&1 | Out-String
+                    $result | Should -Not -Match 'user change conflict'
+                    $after = Read-ItlClientMcpEntries -Client cursor
+                    $after.Contains('itl-vanessa-ui-aux-exchange') | Should -BeFalse
+                    $after.Contains('itl-roctup-aux-exchange') | Should -BeFalse
+                    $after['itl-vanessa-ui'].command | Should -Be $relay
+                }
+            } finally {
+                foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
 
         It 'inventories only unknown local resources and leaves them through preview, cleanup and automatic cleanup' {

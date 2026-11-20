@@ -2135,6 +2135,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/AuxiliaryContours.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.auxiliary.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.auxiliary-retirement.ps1", "tests/pester/AuxiliaryContours.Tests.ps1"],
+      "reuseInputPaths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1", "templates/dependency-lock.json"],
       "tests": ["tests/pester/AuxiliaryContours.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1"]
     },
     {
