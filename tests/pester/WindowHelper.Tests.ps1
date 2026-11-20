@@ -713,11 +713,15 @@ static class FakeFormClient {
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
     [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
     static WndProc proc = Proc; static string flag; static bool opened;
     static IntPtr Proc(IntPtr h, uint m, IntPtr w, IntPtr l) {
-        if (m == 0x0113 && !opened && File.Exists(flag)) { opened = true; Activate(Open("V8TopLevelFrameSDIsec", "ITL fake settings form")); }
+        // A null key event gives this process the last input, so Windows lets the
+        // form take the foreground inside ShowWindow, the way 1C activates a form it
+        // shows; without it the foreground lock decides the order (2026-11-20).
+        if (m == 0x0113 && !opened && File.Exists(flag)) { opened = true; keybd_event(0, 0, 0, UIntPtr.Zero); Activate(Open("V8TopLevelFrameSDIsec", "ITL fake settings form")); }
         // A busy 1C thread answers WM_PRINT late.
         if (m == 0x0317 || m == 0x0318) Thread.Sleep(400);
         return DefWindowProc(h, m, w, l);
@@ -767,11 +771,7 @@ static class FakeFormClient {
             $events = @($entries | ForEach-Object { [string]$_.event })
             $events | Should -Contain 'foreground-returned' -Because 'the stand-in form takes the foreground the way 1C does'
             $events | Should -Contain 'hidden'
-            # No order between the return and the capture is asserted: Windows lets the form
-            # take the foreground inside ShowWindow or only on its later explicit activation
-            # (foreground lock), and in the second interleaving the show event finds nothing
-            # to return yet (observed 2026-11-20 under Remote Control). The D2 regression is
-            # the return itself (absent before D2) within less than the busy WM_PRINT.
+            [array]::IndexOf($events, 'foreground-returned') | Should -BeLessThan ([array]::IndexOf($events, 'hidden')) -Because 'the focus returns before the capture of the form'
             $returned = $entries[[array]::IndexOf($events, 'foreground-returned')]
             [string]$returned.role | Should -Be 'testclient'
             [int64]$returned.exposureMs | Should -BeLessThan 400 -Because 'the return does not wait for the busy WM_PRINT'
