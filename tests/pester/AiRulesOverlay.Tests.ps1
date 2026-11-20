@@ -332,8 +332,11 @@ Describe "controlled ai_rules_1c release overlay" {
         # symptom, not by task topic (PM5 probe: topic 2 of 12, symptom 12 of 12).
         # +116 bytes, about 30 tokens per session: core 2,058 -> 2,174, appendix
         # 5,198 -> 5,314.
+        # Remote code/graph MCP answer from an hours-old master snapshot, which agents
+        # took for their branch (2026-11-20, accepted limitation): +162 bytes, about
+        # 40 tokens per session outside the memory core: appendix 5,314 -> 5,476.
         [Text.Encoding]::UTF8.GetByteCount($core.Value.TrimEnd("`n")) | Should -BeLessOrEqual 2180
-        [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 5320
+        [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 5480
         $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
         # One qualification call for both rules: the session-start status.
         $userRules | Should -Match ([regex]::Escape('`itl-scoped-cognee` `memory_status` returns `bindingState=current`'))

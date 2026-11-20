@@ -1965,10 +1965,13 @@ function Confirm-ItlOnDemandExecutionInvocation {
     return $fresh
 }
 
-function Write-ItlRoctupStartupFailureDiagnostic {
+# Observation of a failed backend launch, written before cleanup. ROCTUP records
+# every failed start; Vanessa records each launch whose backend exited early.
+function Write-ItlOnDemandStartupFailureDiagnostic {
     param([string]$InstanceId, [object]$State, [object]$RuntimeState, [object]$LaunchResult,
         [int]$Port, [string]$BackendVersion, [string]$Stage, [datetime]$StartedAt,
-        [long]$ElapsedMilliseconds, [string]$StartupMessage, [string]$Password)
+        [long]$ElapsedMilliseconds, [string]$StartupMessage, [string]$Password,
+        [ValidateSet('roctup', 'vanessa-ui')][string]$Family = 'roctup', [int]$Attempt = 1)
 
     # Observation only: this file is never an ownership or recovery proof.
     $redact = { param([string]$Text, [int]$Limit)
@@ -2023,18 +2026,43 @@ function Write-ItlRoctupStartupFailureDiagnostic {
     if ($Port -gt 0) {
         try { $portState = if (Test-TcpPortOpen -Port $Port) { 'listening' } else { 'closed' } } catch { }
     }
+    $infoBaseKind = [string](Get-StateValue $State 'infoBaseKind' '')
+    $infoBasePath = [string](Get-StateValue $State 'devBranchInfoBasePath' '')
+    if ($Family -eq 'vanessa-ui') {
+        # The Vanessa backend opens its service infobase, not the branch infobase.
+        $infoBaseKind = [string](Get-StateValue $RuntimeState 'managerInfoBaseKind' '')
+        $infoBasePath = [string](Get-StateValue $RuntimeState 'managerInfoBasePath' '')
+    }
+    $eventLogPath = ''
+    if ($infoBaseKind -eq 'file' -and $infoBasePath) {
+        $candidate = Join-Path $infoBasePath '1Cv8Log'
+        if (Test-Path -LiteralPath $candidate -PathType Container) { $eventLogPath = $candidate }
+    }
+    # Crash dumps 1C wrote to the user's default dump folders since this launch.
+    $dumps = @()
+    foreach ($profileRoot in @($env:LOCALAPPDATA, $env:APPDATA)) {
+        if (-not $profileRoot) { continue }
+        try {
+            $dumpRoot = Join-Path $profileRoot '1C\1cv8\dumps'
+            if (-not (Test-Path -LiteralPath $dumpRoot -PathType Container)) { continue }
+            $dumps += @(Get-ChildItem -LiteralPath $dumpRoot -File -ErrorAction Stop |
+                Where-Object { $_.Extension -in @('.mdmp', '.dmp') -and $_.LastWriteTimeUtc -ge $StartedAt.ToUniversalTime() } |
+                Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 5 | ForEach-Object { $_.FullName })
+        } catch { }
+    }
     $record = [ordered]@{
-        schemaVersion = 1; kind = 'roctup-startup-failure-observation'; instanceId = $InstanceId
+        schemaVersion = 1; kind = "$Family-startup-failure-observation"; instanceId = $InstanceId; attempt = $Attempt
         capturedAt = (Get-Date).ToUniversalTime().ToString('o'); capturedBeforeCleanup = $true
         startedAt = $StartedAt.ToUniversalTime().ToString('o'); elapsedMilliseconds = $ElapsedMilliseconds; stage = $Stage
-        infoBaseKind = [string](Get-StateValue $State 'infoBaseKind' ''); infoBasePath = [string](Get-StateValue $State 'devBranchInfoBasePath' '')
+        infoBaseKind = $infoBaseKind; infoBasePath = $infoBasePath; eventLogPath = $eventLogPath; dumps = @($dumps)
         backendVersion = $BackendVersion; port = $Port; portState = $portState; process = $observation
         startupMessage = (& $redact $StartupMessage 1024)
         log = [ordered]@{ path = $logPath; status = $logStatus; bytes = $logBytes; excerpt = $logExcerpt; truncated = $logTruncated }
     }
-    $summary = "ROCTUP startup observation: stage=$Stage; process=$($observation.state); exitCode=$($observation.exitCode); port=$portState; log=$logStatus."
+    $label = if ($Family -eq 'roctup') { 'ROCTUP' } else { 'Vanessa' }
+    $summary = "$label startup observation: stage=$Stage; process=$($observation.state); exitCode=$($observation.exitCode); port=$portState; log=$logStatus; dumps=$(@($dumps).Count)."
     try {
-        $path = Join-Path (Join-Path $script:ProjectRoot 'logs/1c') ('roctup-startup-failure-' + [guid]::NewGuid().ToString('N') + '.json')
+        $path = Join-Path (Join-Path $script:ProjectRoot 'logs/1c') ("$Family-startup-failure-" + [guid]::NewGuid().ToString('N') + '.json')
         Write-Utf8TextAtomic -Path $path -Value ($record | ConvertTo-Json -Depth 5) -RetryCount 1
         return "$summary Diagnostic: $path"
     } catch {
@@ -2208,36 +2236,62 @@ function Start-ItlOnDemandBackendInstanceCore {
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
         $runtimeStatePersisted = $true
         $sessionWait = Get-OneCSessionWaitParameters
-        $startupStage = 'launch'
-        if ($Family -eq "roctup") {
-            $result = Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact.path -Port $port `
-                -User $targetUser -Password $targetPassword -SessionWait $sessionWait
-        } else {
-            $result = Start-EnterpriseBackground `
-                -InfoBasePath $serviceInfoBase.path `
-                -InfoBaseKind $serviceInfoBase.kind `
-                -UseTestManager `
-                -TestClientPort $testClientPort `
-                @sessionWait `
-                -User $serviceInfoBase.user `
-                -Password $serviceInfoBase.password `
-                -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")
+        # PM5 2026-11-08: the Vanessa service backend sometimes exited about a
+        # second after start; the cause is unproven and a repeated launch worked.
+        # An exit before the port opens is recorded and the launch repeated once.
+        $earlyExit = ''
+        for ($launchAttempt = 1; $true; $launchAttempt++) {
+            $launchStartedAt = (Get-Date).ToUniversalTime()
+            $launchWatch = [Diagnostics.Stopwatch]::StartNew()
+            $startupStage = 'launch'
+            if ($Family -eq "roctup") {
+                $result = Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact.path -Port $port `
+                    -User $targetUser -Password $targetPassword -SessionWait $sessionWait
+            } else {
+                $result = Start-EnterpriseBackground `
+                    -InfoBasePath $serviceInfoBase.path `
+                    -InfoBaseKind $serviceInfoBase.kind `
+                    -UseTestManager `
+                    -TestClientPort $testClientPort `
+                    @sessionWait `
+                    -User $serviceInfoBase.user `
+                    -Password $serviceInfoBase.password `
+                    -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")
+            }
+            $startupStage = 'process-identity'
+            $ready = $false
+            $process = $null
+            try { $process = Get-Process -Id $result.process.Id -ErrorAction Stop }
+            catch { if ($Family -ne 'vanessa-ui' -or -not (Test-VanessaLaunchedProcessExited -Process $result.process)) { throw } }
+            if ($null -ne $process) {
+                $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values ([ordered]@{
+                    status = "process-started"
+                    pid = $result.process.Id
+                    processStartTime = $process.StartTime.ToUniversalTime().ToString("o")
+                    executablePath = (Resolve-Agent1cFullPath -Path $result.executablePath)
+                    logPath = $result.logPath
+                    startedAt = (Get-Date).ToUniversalTime().ToString("o")
+                })
+                Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
+                Set-ItlOnDemandManagedPortLeaseStatus -Family $portFamily -Key $key -LeaseToken $portLeaseToken -Status "process-started" -ProcessId $result.process.Id
+                $startupStage = 'port-readiness'
+                $ready = $(if ($Family -eq "roctup") { Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) } else { Wait-VanessaMcpPort -Port $port -TimeoutSeconds 120 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) -Process $result.process })
+            }
+            if ($ready) { break }
+            $notReady = Get-ItlOnDemandBackendNotReadyMessage -Family $Family -Port $port -Process $result.process -LogPath ([string]$result.logPath) -InfoBasePath ([string]$runtimeState.managerInfoBasePath)
+            $exited = $Family -eq 'vanessa-ui' -and (Test-VanessaLaunchedProcessExited -Process $result.process)
+            if ($exited) {
+                $observation = Write-ItlOnDemandStartupFailureDiagnostic -Family $Family -Attempt $launchAttempt -InstanceId $InstanceId -State $state -RuntimeState $runtimeState -LaunchResult $result -Port $port -BackendVersion $version -Stage $startupStage -StartedAt $launchStartedAt -ElapsedMilliseconds $launchWatch.ElapsedMilliseconds -StartupMessage $notReady -Password $serviceInfoBase.password
+                if ($launchAttempt -eq 1) {
+                    # The saved observation is the record of this repeat.
+                    $earlyExit = $observation
+                    continue
+                }
+                $notReady += " $observation"
+            }
+            if ($earlyExit) { $notReady += " The launch was repeated once; first launch: $earlyExit" }
+            throw $notReady
         }
-        $startupStage = 'process-identity'
-        $process = Get-Process -Id $result.process.Id -ErrorAction Stop
-        $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values ([ordered]@{
-            status = "process-started"
-            pid = $result.process.Id
-            processStartTime = $process.StartTime.ToUniversalTime().ToString("o")
-            executablePath = (Resolve-Agent1cFullPath -Path $result.executablePath)
-            logPath = $result.logPath
-            startedAt = (Get-Date).ToUniversalTime().ToString("o")
-        })
-        Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
-        Set-ItlOnDemandManagedPortLeaseStatus -Family $portFamily -Key $key -LeaseToken $portLeaseToken -Status "process-started" -ProcessId $result.process.Id
-        $startupStage = 'port-readiness'
-        $ready = $(if ($Family -eq "roctup") { Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) } else { Wait-VanessaMcpPort -Port $port -TimeoutSeconds 120 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null) -Process $result.process })
-        if (-not $ready) { throw (Get-ItlOnDemandBackendNotReadyMessage -Family $Family -Port $port -Process $result.process -LogPath ([string]$result.logPath) -InfoBasePath ([string]$runtimeState.managerInfoBasePath)) }
         $startupStage = 'port-owner'
         $portOwnership = Get-ItlOnDemandPortOwnership -Port $port -ProcessId $result.process.Id -RetryUntil (New-ItlPortOwnershipDeadline)
         if ($portOwnership.decision -ne 'owned') {
@@ -2256,7 +2310,7 @@ function Start-ItlOnDemandBackendInstanceCore {
         $startupDiagnostic = ''
         if ($Family -eq 'roctup') {
             try {
-                $startupDiagnostic = ' ' + (Write-ItlRoctupStartupFailureDiagnostic -InstanceId $InstanceId -State $state -RuntimeState $runtimeState -LaunchResult $result -Port $port -BackendVersion $version -Stage $startupStage -StartedAt $startupStartedAt -ElapsedMilliseconds $startupWatch.ElapsedMilliseconds -StartupMessage $startupError.Exception.Message -Password $targetPassword)
+                $startupDiagnostic = ' ' + (Write-ItlOnDemandStartupFailureDiagnostic -InstanceId $InstanceId -State $state -RuntimeState $runtimeState -LaunchResult $result -Port $port -BackendVersion $version -Stage $startupStage -StartedAt $startupStartedAt -ElapsedMilliseconds $startupWatch.ElapsedMilliseconds -StartupMessage $startupError.Exception.Message -Password $targetPassword)
             } catch {
                 $diagnosticError = $_.Exception.Message
                 if ($targetPassword) { $diagnosticError = $diagnosticError.Replace($targetPassword, '[redacted]') }

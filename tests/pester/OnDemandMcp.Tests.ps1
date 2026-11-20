@@ -1064,7 +1064,7 @@ Describe "ITL on-demand MCP facade" {
                 $savedRoot = $script:ProjectRoot
                 $script:ProjectRoot = Join-Path $TestDrive ('ROCTUP Проба ' + $case)
                 $root = $script:ProjectRoot
-                $script:cleanupCalls = 0; $script:identityCalls = 0; $script:observedBeforeStop = $null
+                $script:cleanupCalls = 0; $script:identityCalls = 0; $script:observedBeforeStop = $null; $script:roctupLaunches = 0
                 $script:launchProcess = [pscustomobject]@{ Id = 76001; StartTime = [datetime]'2026-10-15T08:00:00Z'; HasExited = ($case -eq 'exited'); ExitCode = 17 }
                 $script:launchProcess | Add-Member ScriptMethod Refresh { }
                 function Read-ItlOnDemandRuntimeState { $null }
@@ -1078,6 +1078,7 @@ Describe "ITL on-demand MCP facade" {
                 function Resolve-ItlManagedPortLease { [pscustomobject]@{port=48001;leaseToken='private-lease-secret'} }
                 function Get-RoctupMcpUrl { 'http://127.0.0.1:48001/mcp' }
                 function Start-EnterpriseBackground {
+                    $script:roctupLaunches++
                     if ($case -eq 'launch-error') { throw 'original launch failure' }
                     $log = Join-Path $root 'Журнал 1С.log'
                     Write-Utf8Text -Path $log -Value ''
@@ -1109,9 +1110,11 @@ Describe "ITL on-demand MCP facade" {
                 catch { $message = $_.Exception.Message }
                 finally { $script:ProjectRoot = $savedRoot }
                 $files = @(Get-ChildItem -LiteralPath (Join-Path $root 'logs/1c') -Filter 'roctup-startup-failure-*.json' -ErrorAction SilentlyContinue)
-                [pscustomobject]@{message=$message;before=$script:observedBeforeStop;files=$files;cleanup=$script:cleanupCalls;process=$script:launchProcess}
+                [pscustomobject]@{message=$message;before=$script:observedBeforeStop;files=$files;cleanup=$script:cleanupCalls;process=$script:launchProcess;launches=$script:roctupLaunches}
             }
             $actual.cleanup | Should -Be 1
+            # Only a Vanessa backend that exited early is launched again.
+            $actual.launches | Should -Be 1
             if ($case -eq 'write-error') {
                 $actual.message | Should -Match 'did not open port.*Diagnostic could not be saved: diagnostic write denied'
                 $actual.files.Count | Should -Be 0
@@ -1154,7 +1157,7 @@ Describe "ITL on-demand MCP facade" {
                 $writer = [IO.FileStream]::new($log, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
                 try {
                     $launch = [pscustomobject]@{ process=$child;logPath=$log;executablePath=$start.FileName }
-                    $message = Write-ItlRoctupStartupFailureDiagnostic -InstanceId ('d'*32) -LaunchResult $launch -StartedAt (Get-Date) -Stage port-readiness -StartupMessage 'original'
+                    $message = Write-ItlOnDemandStartupFailureDiagnostic -InstanceId ('d'*32) -LaunchResult $launch -StartedAt (Get-Date) -Stage port-readiness -StartupMessage 'original'
                     $record = Read-Utf8Text (($message -split 'Diagnostic: ',2)[1]) | ConvertFrom-Json
                     $record.process.pid | Should -Be $child.Id
                     $record.process.state | Should -Be 'exited'
@@ -1182,7 +1185,7 @@ Describe "ITL on-demand MCP facade" {
                     if ($status -eq 'missing') { Remove-Item -LiteralPath $log }
                     if ($status -eq 'unreadable') { [IO.File]::WriteAllBytes($log,[byte[]]@(255,255,255)) }
                     $launch = if ($status -eq 'unknown') { $null } else { [pscustomobject]@{logPath=$log;executablePath='1cv8c.exe';process=$null} }
-                    $summary = Write-ItlRoctupStartupFailureDiagnostic -InstanceId ('c'*32) -State $state -LaunchResult $launch -Port 6003 -Stage launch -StartedAt (Get-Date) -StartupMessage 'original пароль-secret error' -Password 'пароль-secret'
+                    $summary = Write-ItlOnDemandStartupFailureDiagnostic -InstanceId ('c'*32) -State $state -LaunchResult $launch -Port 6003 -Stage launch -StartedAt (Get-Date) -StartupMessage 'original пароль-secret error' -Password 'пароль-secret'
                     $path = ($summary -split 'Diagnostic: ',2)[1]
                     $raw = Read-Utf8Text $path
                     $record = $raw | ConvertFrom-Json
@@ -1197,6 +1200,112 @@ Describe "ITL on-demand MCP facade" {
                     if ($status -eq 'read') { $record.log.truncated | Should -BeTrue; $record.log.excerpt.Length | Should -BeLessOrEqual 4096 }
                 }
             } finally { $script:ProjectRoot = $savedRoot }
+        }
+    }
+
+    It 'records a Vanessa backend that exited before its port and launches it once more' {
+        # PM5 itldev/branch8, 2026-11-08: the TESTMANAGER on the Vanessa service
+        # infobase exited about a second after start; a repeated command worked.
+        foreach ($case in @('second-ready', 'second-exited')) {
+            $actual = & {
+                $savedRoot = $script:ProjectRoot
+                $savedLocal = $env:LOCALAPPDATA
+                $script:ProjectRoot = Join-Path $TestDrive ('Vanessa Проба ' + $case)
+                $root = $script:ProjectRoot
+                $serviceBase = Join-Path $root 'Сервисная база'
+                New-Item -ItemType Directory -Force -Path (Join-Path $serviceBase '1Cv8Log') | Out-Null
+                $env:LOCALAPPDATA = Join-Path $root 'Локальный профиль'
+                $dumpRoot = Join-Path $env:LOCALAPPDATA '1C\1cv8\dumps'
+                New-Item -ItemType Directory -Force -Path $dumpRoot | Out-Null
+                $staleDump = Join-Path $dumpRoot 'old.mdmp'
+                Write-Utf8Text -Path $staleDump -Value 'old'
+                (Get-Item -LiteralPath $staleDump).LastWriteTimeUtc = [datetime]'2020-01-01T00:00:00Z'
+                $script:launches = @(); $script:cleanupCalls = 0
+                function Read-ItlOnDemandRuntimeState { $null }
+                function Read-CurrentDevBranchStateForRoctupMcp { [pscustomobject]@{ devBranchInfoBasePath = (Join-Path $root 'База ветки'); infoBaseKind = 'file'; unsafeActionProtectionConfirmed = $true } }
+                function Assert-DevBranchApplicationReady { param($State) $State }
+                function Ensure-VanessaMcpInstalled { param($State) $State }
+                function Ensure-ProjectTestsReady { param($State) $State }
+                function Ensure-VanessaServiceInfoBase { [pscustomobject]@{ path = $serviceBase; kind = 'file'; user = 'manager'; password = 'пароль-secret' } }
+                function Ensure-VanessaAutomationReady { [pscustomobject]@{ version = '1.2.3'; epfPath = 'vanessa.epf'; downstreamRevision = 'r1'; archiveSha256 = 'a'; epfSha256 = 'e' } }
+                function Get-ItlOnDemandPortFamily { 'vanessa-mcp' }
+                function Get-ItlOnDemandPortKey { 'vanessa-key' }
+                function Get-VanessaMcpPortRange { [pscustomobject]@{ start = 48100; end = 48110 } }
+                function Get-ItlOnDemandVanessaTestClientPortKey { 'vanessa-mcp-testclient:key' }
+                function Get-ItlOnDemandVanessaTestClientPortRange { [pscustomobject]@{ start = 48151; end = 48160 } }
+                function New-ItlManagedPortLeaseToken { 'private-lease-secret' }
+                function Resolve-ItlManagedPortLease { param($Family) [pscustomobject]@{ port = $(if ($Family -eq 'vanessa-mcp') { 48101 } else { 48152 }); leaseToken = 'private-lease-secret' } }
+                function Start-ItlWindowHelperGroup { $null }
+                function New-ItlOnDemandVanessaParamsFile { Join-Path $root 'VAParams.json' }
+                function Get-VanessaMcpUrl { 'http://127.0.0.1:48101/mcp' }
+                function Get-ItlOnDemandMcpFamilyDefinition { [pscustomobject]@{ backendVersions = [pscustomobject]@{} } }
+                function Get-OneCSessionWaitParameters { @{} }
+                function Start-EnterpriseBackground {
+                    $number = $script:launches.Count + 1
+                    $log = Join-Path $root "Журнал запуска $number.log"
+                    Write-Utf8Text -Path $log -Value "Запуск $number"
+                    $exits = $number -eq 1 -or $case -eq 'second-exited'
+                    if ($exits) { Write-Utf8Text -Path (Join-Path $dumpRoot "crash $number.mdmp") -Value 'dump' }
+                    # Alive at the identity check; an exiting backend exits during the port wait.
+                    $process = [pscustomobject]@{ Id = 76100 + $number; StartTime = [datetime]'2026-11-08T08:00:00Z'; HasExited = $false; ExitCode = 3; WillExit = $exits }
+                    $process | Add-Member ScriptMethod Refresh { }
+                    $script:launches += $process
+                    [pscustomobject]@{ process = $process; logPath = $log; executablePath = 'C:\platform\1cv8c.exe' }
+                }
+                function Get-Process { param($Id) $script:launches | Where-Object { $_.Id -eq $Id -and -not $_.HasExited } | Select-Object -First 1 }
+                function Resolve-Agent1cFullPath { param($Path) $Path }
+                function Write-ItlOnDemandRuntimeState { }
+                function Set-ItlOnDemandManagedPortLeaseStatus { }
+                function Wait-VanessaMcpPort {
+                    param($Port, $TimeoutSeconds, $FocusGuard, $Process)
+                    if ($Process.WillExit) { $Process.HasExited = $true; return $false }
+                    $true
+                }
+                function Get-ItlOnDemandPortOwnership { [pscustomobject]@{ decision = 'owned'; diagnostic = 'decision=owned fixture' } }
+                function Test-TcpPortOpen { $false }
+                function Stop-Process { }
+                function Start-Sleep { }
+                function Stop-ItlOnDemandBackendInstance { $script:cleanupCalls++ }
+                $message = ''; $started = $null
+                try { $started = Start-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('c'*32) -CatalogSha256 ('d'*64) }
+                catch { $message = $_.Exception.Message }
+                finally { $script:ProjectRoot = $savedRoot; $env:LOCALAPPDATA = $savedLocal }
+                $files = @(Get-ChildItem -LiteralPath (Join-Path $root 'logs/1c') -Filter 'vanessa-ui-startup-failure-*.json' -ErrorAction SilentlyContinue)
+                [pscustomobject]@{ message = $message; started = $started; launches = $script:launches.Count; cleanup = $script:cleanupCalls
+                    records = @($files | ForEach-Object { Read-Utf8Text $_.FullName } | Sort-Object { ($_ | ConvertFrom-Json).attempt })
+                    paths = @($files.FullName); serviceBase = $serviceBase; dumpRoot = $dumpRoot }
+            }
+
+            $actual.launches | Should -Be 2
+            $first = $actual.records[0] | ConvertFrom-Json
+            $first.kind | Should -Be 'vanessa-ui-startup-failure-observation'
+            $first.attempt | Should -Be 1
+            $first.stage | Should -Be 'port-readiness'
+            $first.process.pid | Should -Be 76101
+            $first.process.state | Should -Be 'exited'
+            $first.process.exitCode | Should -Be 3
+            $first.infoBasePath | Should -Be $actual.serviceBase
+            $first.eventLogPath | Should -Be (Join-Path $actual.serviceBase '1Cv8Log')
+            @($first.dumps) | Should -Be @((Join-Path $actual.dumpRoot 'crash 1.mdmp'))
+            $first.log.excerpt | Should -Be 'Запуск 1'
+            ($first.startupMessage -split ':', 2)[0] | Should -Be 'ITL_ONDEMAND_BACKEND_EXITED'
+            $actual.records | ForEach-Object { $_ | Should -Not -Match 'пароль-secret|private-lease-secret' }
+            if ($case -eq 'second-ready') {
+                $actual.message | Should -BeNullOrEmpty
+                $actual.records.Count | Should -Be 1
+                $actual.started.pid | Should -Be 76102
+                $actual.started.readiness | Should -Be 'tcp-port-owner-verified'
+                $actual.cleanup | Should -Be 0
+            } else {
+                $actual.records.Count | Should -Be 2
+                $second = $actual.records[1] | ConvertFrom-Json
+                $second.attempt | Should -Be 2
+                $second.process.pid | Should -Be 76102
+                ($actual.message -split ':', 2)[0] | Should -Be 'ITL_ONDEMAND_BACKEND_EXITED'
+                $actual.message | Should -Match '\bPID 76102\b'
+                foreach ($path in $actual.paths) { $actual.message | Should -Match ([regex]::Escape($path)) }
+                $actual.cleanup | Should -Be 1
+            }
         }
     }
 
@@ -1223,7 +1332,7 @@ Describe "ITL on-demand MCP facade" {
                 }
             }
             function Wait-RoctupMcpPort { return $true }
-            function Write-ItlRoctupStartupFailureDiagnostic { throw 'successful start must not collect diagnostics' }
+            function Write-ItlOnDemandStartupFailureDiagnostic { throw 'successful start must not collect diagnostics' }
             function Get-ItlOnDemandPortOwnership { [pscustomobject]@{ decision = 'owned'; status = 'proven'; owners = @(); diagnostic = 'decision=owned fixture' } }
             function Set-ItlOnDemandManagedPortLeaseStatus {}
             function Get-Process { return [pscustomobject]@{ Id = 76001; StartTime = [datetime]"2026-07-31T08:00:00Z" } }
