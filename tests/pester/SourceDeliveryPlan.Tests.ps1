@@ -1080,6 +1080,8 @@ Describe 'E2E client delivery inputs' {
             function Stop-DeliveryProcessTree {param($Process)}
             function Write-DeliveryRunRecord {param($Mode,$Status,$ErrorMessage,$WorkingRoot,$StartedAt,$FinishedAt,$ExitCode,$ReleaseCapability)'fixture-record'}
             function Update-DeliveryOperation {param($Values)}
+            function Enter-SourceGateSlot {param($Mode,$WorkingRoot)[pscustomobject]@{stream=$null;slot=0;waitedSeconds=0}}
+            function Exit-SourceGateSlot {param($Slot)}
             foreach($mode in @('Develop','Release')){
                 {Invoke-SourceGate -Mode $mode -WorkingRoot $TestDrive}|Should -Throw '*fixture launch boundary*'
                 ([regex]::Matches($script:capturedClientArguments,'-AgentTarget kilocode')).Count|Should -Be 1
