@@ -64,6 +64,17 @@ disposable through its age. Remaining snapshots protect the Docker resources the
 reference; live or changed containers and shared images remain protected.
 Unclassified legacy snapshots also protect image deletion because their full image
 dependencies are unknown.
+
+Stopped containers carry no owner label: superseded runtimes, rollback copies and
+experiments look alike. The same online collection removes a stopped `itl-*`
+container (`exited`, `created` or `dead`) only after it has been stopped longer
+than `minimumAgeDays` (creation time for a never-started one), when it is not
+named in current host servers, not named by any snapshot manifest or still
+`accepted` retention entry, and no running container shares its Compose project.
+A snapshot directory without a manifest protects every container. Each removal
+rechecks the exact identity and never forces; a concurrent start or refusal keeps
+the container and is counted. Images and volumes are not removed by this rule.
+`storage-plan` lists every stopped `itl-*` container with its reason.
 Online cache/snapshot collection needs its own build/cutover owners idle; an
 independent index worker cannot prevent eligible cold-data collection. Offline
 VHD reclaim additionally requires every relevant indexing owner idle.

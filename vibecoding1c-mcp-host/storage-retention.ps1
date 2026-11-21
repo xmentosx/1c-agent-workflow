@@ -39,19 +39,30 @@ function Invoke-McpStorageDocker {
 }
 
 function Get-McpStorageContainers {
-    $ids=@(Invoke-McpStorageDocker @('ps','-aq','--no-trunc'))
+    param([string[]]$Ids)
+    $ids=if($PSBoundParameters.ContainsKey('Ids')){@($Ids)}else{@(Invoke-McpStorageDocker @('ps','-aq','--no-trunc'))}
     if(-not $ids.Count){return @()}
-    # Inspect only identities and mounts. Environment variables may contain secrets.
+    # Inspect only identities, state, mounts and labels. Environment variables may contain secrets.
     $rows=@()
     for($offset=0;$offset -lt $ids.Count;$offset+=128){
         $batch=@($ids|Select-Object -Skip $offset -First 128)
-        $rows+=Invoke-McpStorageDocker (@('inspect','--format','{{json .Id}}|{{json .Name}}|{{json .Image}}|{{json .State.Running}}|{{json .Mounts}}')+$batch)
+        $rows+=Invoke-McpStorageDocker (@('inspect','--format','{{json .Id}}|{{json .Name}}|{{json .Image}}|{{json .State.Running}}|{{json .State.Status}}|{{json .State.FinishedAt}}|{{json .Created}}|{{json .Mounts}}|{{json .Config.Labels}}')+$batch)
     }
     return @(foreach($row in $rows){
-        $parts=$row -split '\|',5
-        if($parts.Count -ne 5){throw 'Unrecognized container inventory'}
-        [pscustomobject]@{id=($parts[0]|ConvertFrom-Json);name=($parts[1]|ConvertFrom-Json).TrimStart('/');image=($parts[2]|ConvertFrom-Json);running=($parts[3]|ConvertFrom-Json);mounts=@($parts[4]|ConvertFrom-Json)}
+        # Labels are last: their free-form values may contain the separator.
+        $parts=$row -split '\|',9
+        if($parts.Count -ne 9){throw 'Unrecognized container inventory'}
+        $labels=Convert-ToHash ($parts[8]|ConvertFrom-Json)
+        [pscustomobject]@{id=($parts[0]|ConvertFrom-Json);name=($parts[1]|ConvertFrom-Json).TrimStart('/');image=($parts[2]|ConvertFrom-Json);running=($parts[3]|ConvertFrom-Json);status=[string]($parts[4]|ConvertFrom-Json);finishedAt=($parts[5]|ConvertFrom-Json);createdAt=($parts[6]|ConvertFrom-Json);mounts=@($parts[7]|ConvertFrom-Json);composeProject=[string](Get-ObjectValue $labels 'com.docker.compose.project' '')}
     })
+}
+
+function ConvertFrom-McpStorageDockerTime {
+    param($Value)
+    if($Value -is [datetime]){return $Value.ToUniversalTime()}
+    # Docker emits RFC 3339 with nanoseconds; .NET parses at most seven fractional digits.
+    $text=[string]$Value -replace '(\.\d{7})\d+','$1'
+    return [datetime]::Parse($text,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal)
 }
 
 function Test-McpStorageOwnersIdle {
@@ -424,6 +435,58 @@ function Invoke-McpStorageRetirement {
     return $removed
 }
 
+function Get-McpStorageContainerRetirementPlan {
+    param($Config,$Settings,$Record,[datetime]$Now=(Get-Date))
+    # Stopped workflow runtimes and experiments carry no owner label. A stopped itl-* container is
+    # disposable only after the same rollback window as snapshots, when nothing current or retained
+    # names it and no running sibling in its Compose project could still need it.
+    $containers=@(Get-McpStorageContainers)
+    $servers=@(As-Array (Get-ObjectValue (Read-HostState $Config) 'servers' @()))
+    $stateText=if($servers.Count){$servers|ConvertTo-Json -Depth 25 -Compress}else{''}
+    $retained=@()
+    $root=Join-Path (Get-StateRoot $Config) 'snapshots'
+    if(Test-Path -LiteralPath $root){
+        foreach($directory in Get-ChildItem -LiteralPath $root -Directory -Force){
+            $manifest=Join-Path $directory.FullName 'snapshot.json'
+            # An unreadable snapshot has unknown dependencies; protect every container.
+            if(-not (Test-Path -LiteralPath $manifest)){return @()}
+            $retained+=Read-Text $manifest
+        }
+    }
+    foreach($entry in As-Array (Get-ObjectValue $Record 'accepted' @())){
+        if((Get-ObjectValue $entry 'status' '') -ne 'accepted'){continue}
+        $retained+=[string](Get-ObjectValue $entry 'retiredName' '')
+        foreach($resource in As-Array (Get-ObjectValue $entry 'retiredContainers' @())){$retained+=[string](Get-ObjectValue $resource 'name' '')}
+    }
+    $retainedText=$retained -join "`n"
+    $runningProjects=@($containers|Where-Object {$_.running -and $_.composeProject}|ForEach-Object {$_.composeProject})
+    $cutoff=$Now.ToUniversalTime().AddDays(-[double]$Settings.minimumAgeDays)
+    return @(foreach($container in $containers){
+        if($container.running -or $container.name -cnotlike 'itl-*' -or $container.status -notin @('exited','created','dead')){continue}
+        $stopped=ConvertFrom-McpStorageDockerTime $container.finishedAt
+        if($stopped.Year -lt 2000){$stopped=ConvertFrom-McpStorageDockerTime $container.createdAt}
+        $reason='eligible'
+        if($stopped -gt $cutoff){$reason='minimum-age'}
+        elseif($stateText.Contains($container.name) -or $stateText.Contains($container.id)){$reason='current'}
+        elseif($retainedText.Contains($container.name) -or $retainedText.Contains($container.id)){$reason='retained-snapshot'}
+        elseif($container.composeProject -and $container.composeProject -in $runningProjects){$reason='running-project'}
+        @{id=$container.id;name=$container.name;stoppedAt=$stopped.ToString('o');reason=$reason}
+    })
+}
+
+function Invoke-McpStorageContainerRetirement {
+    param($Config,$Settings,$Record)
+    $plan=@(Get-McpStorageContainerRetirementPlan $Config $Settings $Record|Where-Object {$_.reason -eq 'eligible'})
+    $removed=0;$failed=0
+    foreach($candidate in $plan){
+        # Recheck the exact identity immediately before removal; never force a concurrent start.
+        $fresh=@(Get-McpStorageContainers -Ids @($candidate.id))
+        if($fresh.Count -ne 1 -or $fresh[0].running -or $fresh[0].name -cne $candidate.name){continue}
+        try{[void](Invoke-McpStorageDocker @('rm',[string]$candidate.id));$removed++}catch{$failed++}
+    }
+    return @{candidates=$plan.Count;removed=$removed;failed=$failed}
+}
+
 function Test-McpStorageCompactionWindow {
     param($Settings,$Record,[datetime]$Now=(Get-Date))
     $start=[TimeSpan]::ParseExact([string]$Settings.compactAt,'hh\:mm',[Globalization.CultureInfo]::InvariantCulture)
@@ -527,6 +590,7 @@ function Invoke-McpHostStorageMaintenanceCore {
                 $record.cache=Invoke-McpStorageCacheCollection $settings (Get-McpStorageCachePlan $settings)
                 $record.adopted=Add-McpStorageLegacyAdoptions $Config $record
                 $record.retired=Invoke-McpStorageRetirement $Config $settings $record
+                $record.containers=Invoke-McpStorageContainerRetirement $Config $settings $record
             $record.lastError=''
         }
         if(-not $OnlineOnly -and $level -ne 'healthy' -and (Test-McpStorageCompactionWindow $settings $record) -and (Test-McpStorageOwnersIdle $Config -ForOffline)){
