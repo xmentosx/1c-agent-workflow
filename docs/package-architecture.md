@@ -207,6 +207,11 @@ including conditional Sunday 03:30 detached VHD compaction on dev-ermakov. The
 existing host lease/scheduler delegates eligibility to native owners; current,
 rollback, pinned, unfinished, failed and unclassified legacy data stays protected.
 No new service, elevation or global WSL reset authority is introduced.
+On 2026-11-21 the user approved succession adoption: the same storage owner,
+lease and record enroll an unenrolled intact snapshot only when its candidate
+provably served and its old runtime is not current, after cutovers through a
+delivery-package installer copy left dev-ermakov snapshots outside retention.
+Unproven legacy data stays protected; older code keeps adopted entries.
 
 On 2026-11-06 the user approved a durable machine-local
 [ai_rules_1c source cache](ai-rules-fork-upgrades.md#local-source-cache-integrity):
