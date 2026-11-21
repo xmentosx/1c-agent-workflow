@@ -8,6 +8,15 @@
 }
 
 Describe 'HostBookStack component regressions' {
+    It 'previews and publishes with the personal Windows credential over the shared MCP' {
+        $previousPreference=$ErrorActionPreference
+        try {
+            $ErrorActionPreference='Continue'
+            $output = & $SourceTestPython -X utf8 -B (Join-Path $RepoRoot 'vibecoding1c-mcp-host/bookstack-product-docs-mcp/test_page_write.py') 2>&1
+            $testExit=$LASTEXITCODE
+        } finally { $ErrorActionPreference=$previousPreference }
+        $testExit | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+    }
     It "bounds BookStack MCP responses and keeps explicit continuation" {
         $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\test_server.py"
         $previousErrorActionPreference = $ErrorActionPreference

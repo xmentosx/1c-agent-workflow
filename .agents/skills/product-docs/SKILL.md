@@ -5,6 +5,8 @@ description: Use BookStack product documentation through the BookStack-product-d
 
 # Product Docs
 
+For an explicit request to create or edit a BookStack page, use the [personal write and approval flow](page-write.md).
+
 ## Availability Guard
 
 The project registry decides whether a project has product documentation (its `productDocs` role); the helper configures `BookStack-product-docs-mcp` and the installed `USER-RULES.md` accordingly. A legacy project without a registry binding keeps the old rule: `baseConfigurationVersion` `PM4` in `.agent-1c/project.json` has no product docs. When `USER-RULES.md` says the project has no product documentation MCP, or the server is absent from this session's tools after deferred discovery (`1c-workflow/references/mcp.md`), do not use it. Continue from the user request and the minimum sufficient available code, test, current-metadata, runtime, or non-product MCP evidence, and explicitly state that product docs were skipped because the project has none.

@@ -17,6 +17,7 @@ COPY server.py /app/server.py
 COPY fragment_index.py /app/fragment_index.py
 COPY query_cache.py /app/query_cache.py
 COPY views.py /app/views.py
+COPY page_write.py /app/page_write.py
 VOLUME ["/data", "/app/model_cache"]
 
 CMD ["python", "/app/server.py"]

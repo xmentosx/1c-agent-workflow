@@ -29,6 +29,7 @@ except ImportError:  # Source tests can run before the server requirements are i
 
 from fragment_index import CHUNK_VERSION, FragmentIndex, checked_vector, fragments
 from query_cache import QueryVectorCache
+from page_write import PageWriter, PageWriteError
 from views import ACTIVE_VIEW, ViewRouter, effective_filters, load_views
 
 
@@ -1625,6 +1626,7 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
 
     settings = Settings.from_env()
     service = ProductDocsService(settings)
+    writer = PageWriter(settings, matches_filters)
     mcp = FastMCP("bookstack-product-docs", stateless_http=True)
 
     def wrap_result(operation: str, result: Dict[str, Any]) -> Any:
@@ -1708,7 +1710,18 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
         return wrap_result('source', {'ok': True, 'source': service.settings.base_url,
                            'viewId': view_id, 'binding': 'view' if view_id else 'global',
                            'selectors': service.views.get(view_id, {}),
-                           'capabilities': ['product-docs-view-v1', 'stable-id-selectors']})
+                           'capabilities': ['product-docs-view-v1', 'stable-id-selectors', 'personal-page-write-v1']})
+
+    @mcp.tool
+    def write_page(change: Dict[str, Any], confirmation: str = ""):
+        """Preview a page creation/edit via product-docs/bookstack-write.ps1. Show the exact preview, then use its confirmation only on explicit approval. Never pass credentials as arguments."""
+        from fastmcp.server.dependencies import get_http_headers
+        try:
+            result = writer.run(change, confirmation, get_http_headers().get("x-bookstack-token"),
+                                ACTIVE_VIEW.get(), effective_filters({}, service.views))
+        except PageWriteError as exc:
+            result = {"ok": False, "error": str(exc)}
+        return wrap_result("write", result)
 
     return mcp, service
 
@@ -1723,12 +1736,10 @@ def main() -> None:
     else:
         service.start_background_warm()
     service.start_scheduler()
-    if service.views:
-        import uvicorn
-        uvicorn.run(ViewRouter(mcp.http_app(path='/mcp'), service.views), host=service.settings.host,
-                    port=service.settings.port)
-    else:
-        mcp.run(transport="http", host=service.settings.host, port=service.settings.port)
+    # Even an empty catalog must reject a stale scoped URL instead of running it globally.
+    import uvicorn
+    uvicorn.run(ViewRouter(mcp.http_app(path='/mcp'), service.views), host=service.settings.host,
+                port=service.settings.port)
 
 
 if __name__ == "__main__":

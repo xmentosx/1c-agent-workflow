@@ -2408,7 +2408,7 @@
       "gate": "targeted",
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/HostBookStack.Tests.ps1",
-      "paths": ["vibecoding1c-mcp-host/bookstack-product-docs-mcp/*"],
+      "paths": ["vibecoding1c-mcp-host/bookstack-product-docs-mcp/*", ".agents/skills/product-docs/bookstack-write.ps1"],
       "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1"],
       "tests": ["tests/pester/HostBookStack.Tests.ps1"]
     },
