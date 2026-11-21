@@ -168,10 +168,13 @@ evidence it stays for diagnosis and retry.
 Only the newest two failed plans are retained, never beyond seven days; configured
 reusable stands and active plan resources are never removed, except that a Release
 copy whose capsule's stand is no longer this clone's gate stand (or whose capsule
-is gone, as its own claim shows) can never resume: its reusable-stand record
+is gone, as its own claim shows), or whose candidate is none of the published
+`develop` or `master` heads or the unpublished queue candidate chain, can never
+resume: its reusable-stand record
 closes, its snapshot and capability resources go to their removal adapters, and the copy owner archives
 the whole copy, producer checkpoints included, once it has been idle for an hour,
-ahead of the keep count and under the same per-sweep archive limit. The
+ahead of the keep count and under the same per-sweep archive limit (by
+default ten new archives started within five minutes). The
 archived copy's missing paths then close those resources. The open attempt's
 candidate keeps its copies. A
 successful `PublishDevelop` also applies the recovery-archive retention of

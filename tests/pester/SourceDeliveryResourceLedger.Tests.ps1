@@ -148,7 +148,14 @@
 
 Describe 'Delivery v3 resource ledger' {
     It 'releases Release copies whose own claim shows they cannot resume, even without ledger records' {
-        $root = New-LedgerRepository
+        $repository = New-DispositionRepository
+        try {
+        $root = $repository.root
+        $published = [string]$repository.published
+        # The unpublished queue candidate chain stays preparable; any other
+        # candidate's copy is superseded even on the live stand's capsule.
+        $queued = (& git -C $root commit-tree "$published^{tree}" -p $published -m queued).Trim()
+        & git -C $root update-ref refs/itl/develop-candidate/head $queued
         $common = [IO.Path]::GetFullPath((& git -C $root rev-parse --path-format=absolute --git-common-dir).Trim())
         $fresh = Join-Path $TestDrive ('fresh ' + [char]0x0441 + ' ' + [guid]::NewGuid().ToString('N'))
         $script:currentStand = Join-Path $TestDrive ('current stand ' + [char]0x0441)
@@ -158,10 +165,12 @@ Describe 'Delivery v3 resource ledger' {
         $copies = @{}
         foreach ($case in @(
             @{ name='superseded'; stand=$oldStand; capsule=$true; candidate=('a' * 40) },
-            @{ name='current'; stand=$script:currentStand; capsule=$true; candidate=('a' * 40) },
+            @{ name='current'; stand=$script:currentStand; capsule=$true; candidate=$published },
+            @{ name='queued'; stand=$script:currentStand; capsule=$true; candidate=$queued },
+            @{ name='staleCandidate'; stand=$script:currentStand; capsule=$true; candidate=('a' * 40) },
             @{ name='openAttempt'; stand=$oldStand; capsule=$true; candidate=('c' * 40) },
-            @{ name='capsuleGone'; stand=$script:currentStand; capsule=$false; candidate=('a' * 40) },
-            @{ name='legacyClaim'; stand=$script:currentStand; capsule=$true; candidate=('a' * 40); legacy=$true },
+            @{ name='capsuleGone'; stand=$script:currentStand; capsule=$false; candidate=$published },
+            @{ name='legacyClaim'; stand=$script:currentStand; capsule=$true; candidate=$published; legacy=$true },
             @{ name='compacted'; stand=$oldStand; capsule=$true; candidate=('a' * 40); unrecorded=$true },
             @{ name='foreign'; stand=$oldStand; capsule=$true; candidate=('a' * 40); foreign=$true },
             @{ name='nested'; stand=$oldStand; capsule=$true; candidate=('a' * 40); group='canary run' })) {
@@ -182,15 +191,15 @@ Describe 'Delivery v3 resource ledger' {
                 snapshot = Register-DeliveryResource -PlanId 'plan' -Kind 'release-snapshot' -Owner 'release-e2e' -Identity ([ordered]@{ path=(Join-Path $branch '.agent-1c\runs\release-e2e\r\snapshots\baseline.dt'); worktreePath=$branch }) -State retained
             }
         }
-        $released = @('superseded', 'capsuleGone', 'legacyClaim', 'compacted', 'nested')
+        $released = @('superseded', 'staleCandidate', 'capsuleGone', 'legacyClaim', 'compacted', 'nested')
         $expected = @($released | ForEach-Object { $copies[$_].path } | Sort-Object)
         @(Update-DeliverySupersededReleaseCopyResources -FreshProjectsRoot $fresh) | Sort-Object | Should -Be $expected
         $states = @{}; foreach ($resource in (Read-DeliveryResourceLedger).resources) { $states[[string]$resource.resourceId] = [string]$resource.state }
-        foreach ($name in @('superseded', 'capsuleGone', 'legacyClaim', 'nested')) {
+        foreach ($name in @('superseded', 'staleCandidate', 'capsuleGone', 'legacyClaim', 'nested')) {
             $states[$copies[$name].stand] | Should -Be 'removed' -Because $name
             $states[$copies[$name].snapshot] | Should -Be 'cleanup-pending' -Because $name
         }
-        foreach ($name in @('current', 'openAttempt', 'foreign')) {
+        foreach ($name in @('current', 'queued', 'openAttempt', 'foreign')) {
             $states[$copies[$name].stand] | Should -Be 'active' -Because $name
             $states[$copies[$name].snapshot] | Should -Be 'retained' -Because $name
         }
@@ -203,6 +212,12 @@ Describe 'Delivery v3 resource ledger' {
         @((Read-DeliveryResourceLedger).resources | Where-Object { [string]$_.resourceId -eq $copies.superseded.snapshot }).state | Should -Be 'cleanup-pending'
         Remove-Item -LiteralPath $copies.superseded.path -Recurse -Force
         @(Update-DeliverySupersededReleaseCopyResources -FreshProjectsRoot $fresh) | Sort-Object | Should -Be @($expected | Where-Object { $_ -ne $copies.superseded.path })
+        # Without the published develop head no copy is judged; the ledger stays.
+        & git -C $root update-ref -d refs/remotes/origin/develop
+        $before = (Read-DeliveryResourceLedger | ConvertTo-Json -Depth 24)
+        { Update-DeliverySupersededReleaseCopyResources -FreshProjectsRoot $fresh } | Should -Throw '*published develop head*kept*'
+        (Read-DeliveryResourceLedger | ConvertTo-Json -Depth 24) | Should -BeExactly $before
+        } finally { Remove-DispositionRepository -Fixture $repository }
     }
     It 'hands superseded Release copies from the sweep to the copy owner' {
         $root = New-LedgerRepository

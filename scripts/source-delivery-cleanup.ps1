@@ -516,7 +516,9 @@ function Remove-SourceDeliveryCompletedFixtureCopies {
         $settings=Get-SourceE2ECopyRetentionSettings -CandidateRoot $ownerRoot
         $plan=@{archivePaths=@();inactiveBeforeUtc=[datetime]::MinValue}
         if($settings.enabled){$plan=Get-SourceE2ECopyRetentionPlan -ProjectsRoots @(Get-SourceE2EProjectsRoots -ProjectsRoot $copyRoot -IncludeNestedRoots) -CandidateRoot $ownerRoot -RetentionDays $settings.days -KeepCount $settings.keep}
-        $budget=@{remaining=$settings.batch}
+        # The count caps archives per sweep; the five-minute start window keeps a
+        # backlog of large copies (615 s for 5.2 GiB) inside the executor budget.
+        $budget=@{remaining=$settings.batch;notAfterUtc=[datetime]::UtcNow.AddSeconds(300)}
         Remove-CompletedSourceE2ECopies -ProjectsRoot $copyRoot -CandidateRoot $ownerRoot -DiagnosticRoot $diagnostics -IncludeLegacy -PreservePaths $preserved -IncludeNestedRoots -ArchiveReadyPaths $plan.archivePaths -InactiveBeforeUtc $plan.inactiveBeforeUtc -ArchiveBudget $budget -SupersededPaths $superseded
     } $script:Root $FreshProjectsRoot $PreservePaths $SupersededCopies
 }

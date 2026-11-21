@@ -1188,6 +1188,25 @@ function Register-DeliveryGateResourcesCore {
     return @($registered)
 }
 
+function Get-DeliveryLiveReleaseCandidates {
+    # Candidates a later operation can still prepare a Release copy for: the
+    # published develop head (ReleaseMaster qualifies it), the master head, and
+    # the unpublished queue candidate chain (a deferral publishes a prefix of
+    # it). Any other candidate's merge commit is never rebuilt.
+    $develop = Invoke-DeliveryGit -Arguments @('rev-parse', '--verify', '--quiet', "refs/remotes/$script:Remote/develop^{commit}") -AllowFailure
+    if ($develop.exitCode -ne 0 -or [string]$develop.stdout.Trim() -cnotmatch '^[0-9a-f]{40}$') { throw "The published develop head refs/remotes/$script:Remote/develop is unavailable; Release copies are kept until it resolves." }
+    $developHead = [string]$develop.stdout.Trim()
+    $live = [Collections.Generic.List[string]]::new(); $live.Add($developHead)
+    $master = Invoke-DeliveryGit -Arguments @('rev-parse', '--verify', '--quiet', "refs/remotes/$script:Remote/master^{commit}") -AllowFailure
+    if ($master.exitCode -eq 0) { $live.Add([string]$master.stdout.Trim()) }
+    $queue = Invoke-DeliveryGit -Arguments @('rev-parse', '--verify', '--quiet', 'refs/itl/develop-candidate/head^{commit}') -AllowFailure
+    if ($queue.exitCode -eq 0) {
+        $chain = Invoke-DeliveryGit -Arguments @('rev-list', [string]$queue.stdout.Trim(), "^$developHead")
+        foreach ($commit in @([string]$chain.stdout -split "`r?`n" | Where-Object { $_ -cmatch '^[0-9a-f]{40}$' })) { $live.Add($commit) }
+    }
+    return @($live | Select-Object -Unique)
+}
+
 function Update-DeliverySupersededReleaseCopyResources {
     param([string]$FreshProjectsRoot = 'C:\itlj', [string]$E2EProjectRoot = '')
     # The copy owner proves from each copy's own claim that it can no longer
@@ -1202,11 +1221,12 @@ function Update-DeliverySupersededReleaseCopyResources {
     if ($E2EProjectRoot) { $stands += [IO.Path]::GetFullPath($E2EProjectRoot).TrimEnd('\', '/') }
     $attempt = Read-DevelopPublicationAttempt
     $openCandidate = if ($attempt -and $attempt.PSObject.Properties['candidate']) { [string]$attempt.candidate } else { '' }
+    $liveCandidates = @(Get-DeliveryLiveReleaseCandidates)
     $copies = @(& {
-        param($ownerRoot, $repository, $projectsRoot, $liveStands, $candidate)
+        param($ownerRoot, $repository, $projectsRoot, $liveStands, $candidate, $live)
         . (Join-Path $ownerRoot 'scripts/source-e2e-fixture.ps1')
-        Get-SourceE2ESupersededReleaseCopies -ProjectsRoot $projectsRoot -CandidateRoot $repository -LiveStands $liveStands -OpenCandidate $candidate
-    } (Split-Path -Parent $PSScriptRoot) $script:Root $FreshProjectsRoot $stands $openCandidate)
+        Get-SourceE2ESupersededReleaseCopies -ProjectsRoot $projectsRoot -CandidateRoot $repository -LiveStands $liveStands -OpenCandidate $candidate -LiveCandidates $live
+    } (Split-Path -Parent $PSScriptRoot) $script:Root $FreshProjectsRoot $stands $openCandidate $liveCandidates)
     $ledger = Read-DeliveryResourceLedger
     if ($copies.Count -eq 0) { return @() }
     $now = [DateTime]::UtcNow.ToString('o')

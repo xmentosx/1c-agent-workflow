@@ -284,7 +284,7 @@ Describe 'Inactive qualification copy retention during project operations' {
         $saved=@{};foreach($name in $names){$saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process');[Environment]::SetEnvironmentVariable($name,$null,'Process')}
         try {
             $defaults=Get-SourceE2ECopyRetentionSettings -CandidateRoot $candidate
-            $defaults.enabled|Should -BeTrue;$defaults.days|Should -Be 7;$defaults.keep|Should -Be 1;$defaults.batch|Should -Be 1
+            $defaults.enabled|Should -BeTrue;$defaults.days|Should -Be 7;$defaults.keep|Should -Be 1;$defaults.batch|Should -Be 10
             Write-Utf8Text -Path (Join-Path $primary '.dev.env') -Value "ITL_SOURCE_FIXTURE_CLEANUP_ENABLED=false`nITL_SOURCE_FIXTURE_RETENTION_DAYS='14'`nITL_SOURCE_FIXTURE_KEEP_COUNT=2`nITL_RETENTION_TEST_UNRELATED=do-not-import"
             Write-Utf8Text -Path (Join-Path $candidate '.dev.env') -Value 'ITL_SOURCE_FIXTURE_KEEP_COUNT="1"'
             $settings=Get-SourceE2ECopyRetentionSettings -CandidateRoot $candidate
@@ -371,7 +371,11 @@ Describe 'Inactive qualification copy retention during project operations' {
         $arguments=@{ProjectsRoot=$root;CandidateRoot=$RepoRoot;DiagnosticRoot=(Join-Path $root 'diagnostics')}
         $kept=Remove-CompletedSourceE2ECopies @arguments
         $kept.entries[0].reason|Should -Be 'FIXTURE_COPY_NOT_TERMINAL_OR_NOT_OWNED'
-        $result=Remove-CompletedSourceE2ECopies @arguments -SupersededPaths @($copy.root) -ArchiveBudget @{remaining=1}
+        # A spent start window defers a new archive even with count left.
+        $late=Remove-CompletedSourceE2ECopies @arguments -SupersededPaths @($copy.root) -ArchiveBudget @{remaining=5;notAfterUtc=[datetime]::UtcNow.AddSeconds(-1)}
+        $late.entries[0].reason|Should -BeLike 'FIXTURE_COPY_ARCHIVE_DEFERRED*'
+        Test-Path -LiteralPath $copy.root|Should -BeTrue
+        $result=Remove-CompletedSourceE2ECopies @arguments -SupersededPaths @($copy.root) -ArchiveBudget @{remaining=1;notAfterUtc=[datetime]::UtcNow.AddMinutes(5)}
         $result.removed|Should -Be 1
         $result.entries[0].status|Should -BeExactly 'archived-inactive'
         Test-Path -LiteralPath $copy.root|Should -BeFalse
@@ -379,6 +383,9 @@ Describe 'Inactive qualification copy retention during project operations' {
         $zip=[IO.Compression.ZipFile]::OpenRead((Join-Path $root ('diagnostics/'+(Split-Path -Leaf $copy.root)+'/recovery.zip')))
         try {$zip.GetEntry('branch/.agent-1c/runs/release-e2e/rel-e2e-r8/checkpoint.json')|Should -Not -BeNullOrEmpty}finally{$zip.Dispose()}
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0
+    }
+    It 'judges no Release copy superseded without a live candidate to compare against' {
+        {Get-SourceE2ESupersededReleaseCopies -ProjectsRoot $TestDrive -CandidateRoot $RepoRoot -LiveCandidates @('')}|Should -Throw 'FIXTURE_LIVE_CANDIDATES_REQUIRED*'
     }
     It 'keeps a superseded Release copy that was active within the last hour' {
         $root=Join-Path $TestDrive 'superseded active Пример';$copy=New-RecoverableStorageCopy -Root $root -State ready -Phase Release

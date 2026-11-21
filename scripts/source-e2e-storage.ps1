@@ -146,6 +146,14 @@ function Get-SourceE2EFixtureReaderInventory {
     }
 }
 
+function Test-SourceE2EArchiveBudgetSpent {
+    # A sweep starts no new archive once its count or its start window is spent;
+    # an archive already started always finishes.
+    param([AllowNull()][hashtable]$Budget)
+    if($null -eq $Budget){return $false}
+    return ($Budget.remaining -le 0 -or ($Budget.ContainsKey('notAfterUtc') -and [datetime]::UtcNow -ge [datetime]$Budget.notAfterUtc))
+}
+
 function Remove-SourceE2EFixtureCopy {
     param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot,[switch]$RecoveryCleanup,[switch]$ArchiveInactive,[datetime]$InactiveBeforeUtc=[datetime]::MinValue,[hashtable]$ArchiveBudget=$null,[switch]$Superseded)
     $contextArguments=@{}+ $PSBoundParameters;$contextArguments.Remove('InactiveBeforeUtc');$contextArguments.Remove('ArchiveBudget');$contextArguments.Remove('Superseded')
@@ -213,7 +221,7 @@ function Remove-SourceE2EFixtureCopy {
         }
         if($InactiveBeforeUtc -ne [datetime]::MinValue -and @($files|Where-Object LastWriteTimeUtc -gt $InactiveBeforeUtc).Count){throw 'FIXTURE_COPY_RECENT_ACTIVITY: retain the copy until its inactivity interval expires'}
         if($ArchiveInactive -and $null -ne $ArchiveBudget){
-            if($ArchiveBudget.remaining -le 0){throw 'FIXTURE_COPY_ARCHIVE_DEFERRED: this sweep archive limit was reached; next project operation or Cleanup will retry'}
+            if(Test-SourceE2EArchiveBudgetSpent -Budget $ArchiveBudget){throw 'FIXTURE_COPY_ARCHIVE_DEFERRED: this sweep archive limit was reached; next project operation or Cleanup will retry'}
             $ArchiveBudget.remaining--
         }
         if($RecoveryCleanup){
@@ -292,11 +300,16 @@ function Get-SourceE2EProjectsRoots {
 }
 
 function Get-SourceE2ESupersededReleaseCopies {
-    param([string]$ProjectsRoot,[string]$CandidateRoot,[string[]]$LiveStands=@(),[string]$OpenCandidate='')
+    param([string]$ProjectsRoot,[string]$CandidateRoot,[string[]]$LiveStands=@(),[string]$OpenCandidate='',[string[]]$LiveCandidates=@())
     # A Release copy resumes only from its own capsule and candidate. Its own
     # claim proves that: the capsule is gone or sits on a stand that is no
     # longer live, a claim without a capsule path has none to resume from, and
-    # only the open attempt's candidate keeps its copies.
+    # a candidate no delivery operation can prepare again has no reuse. The open
+    # attempt's candidate always keeps its copies; LiveCandidates names the
+    # other candidates a later operation can still prepare.
+    # Observed 2026-11-21: every copy shared the one live capsule, so copies of
+    # 33 published or abandoned candidates stayed protected for twelve days.
+    if(@($LiveCandidates|Where-Object{[string]$_ -cmatch '^[0-9a-f]{40}$'}).Count -eq 0){throw 'FIXTURE_LIVE_CANDIDATES_REQUIRED: resolve the published develop head before judging Release copies; every copy is kept until then'}
     $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot
     foreach($root in @(Get-SourceE2EProjectsRoots -ProjectsRoot $ProjectsRoot -IncludeNestedRoots)){
         $container=Resolve-QualificationFixtureChild -Root $root -RelativePath 'q Проект'
@@ -312,7 +325,8 @@ function Get-SourceE2ESupersededReleaseCopies {
                 ($OpenCandidate -and (& $field 'candidateCommit') -ceq $OpenCandidate)){continue}
             $capsule=& $field 'capsulePath'
             $stand=if($capsule -match '^(.+?)[\\/]\.git[\\/]itl[\\/]qualification-fixtures[\\/]'){[IO.Path]::GetFullPath($matches[1]).TrimEnd('\','/')}else{''}
-            if($stand -and (Test-Path -LiteralPath $capsule -PathType Leaf) -and @($LiveStands|Where-Object{$_ -and [IO.Path]::GetFullPath($_).TrimEnd('\','/') -ieq $stand}).Count){continue}
+            $capsuleLive=$stand -and (Test-Path -LiteralPath $capsule -PathType Leaf) -and @($LiveStands|Where-Object{$_ -and [IO.Path]::GetFullPath($_).TrimEnd('\','/') -ieq $stand}).Count
+            if($capsuleLive -and $LiveCandidates -ccontains (& $field 'candidateCommit')){continue}
             $directory.FullName
         }
     }
@@ -320,7 +334,7 @@ function Get-SourceE2ESupersededReleaseCopies {
 
 function Get-SourceE2ECopyRetentionSettings {
     param([string]$CandidateRoot)
-    $values=@{ITL_SOURCE_FIXTURE_CLEANUP_ENABLED='true';ITL_SOURCE_FIXTURE_RETENTION_DAYS='7';ITL_SOURCE_FIXTURE_KEEP_COUNT='1';ITL_SOURCE_FIXTURE_ARCHIVE_BATCH_SIZE='1'}
+    $values=@{ITL_SOURCE_FIXTURE_CLEANUP_ENABLED='true';ITL_SOURCE_FIXTURE_RETENTION_DAYS='7';ITL_SOURCE_FIXTURE_KEEP_COUNT='1';ITL_SOURCE_FIXTURE_ARCHIVE_BATCH_SIZE='10'}
     # Cleanup executors are temporary worktrees. The primary source .dev.env is
     # the fallback, with a checkout-local override and process env taking priority.
     $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot
@@ -419,7 +433,7 @@ function Remove-CompletedSourceE2ECopies {
             if($archivePending -or $superseded -or $ArchiveReadyPaths -icontains $directory.FullName){
                 $inactiveBefore=if($superseded){[datetime]::UtcNow.AddHours(-1)}else{$InactiveBeforeUtc}
                 if(-not $archivePending -and $inactiveBefore -eq [datetime]::MinValue){throw 'FIXTURE_RETENTION_INACTIVITY_REQUIRED'}
-                if(-not $archivePending -and $null -ne $ArchiveBudget -and $ArchiveBudget.remaining -le 0){throw 'FIXTURE_COPY_ARCHIVE_DEFERRED: this sweep archive limit was reached; next project operation or Cleanup will retry'}
+                if(-not $archivePending -and (Test-SourceE2EArchiveBudgetSpent -Budget $ArchiveBudget)){throw 'FIXTURE_COPY_ARCHIVE_DEFERRED: this sweep archive limit was reached; next project operation or Cleanup will retry'}
                 $cutoff=if($archivePending){[datetime]::MinValue}else{$inactiveBefore}
                 # Already archived disposal must finish even when this sweep has
                 # no budget for another new archive.

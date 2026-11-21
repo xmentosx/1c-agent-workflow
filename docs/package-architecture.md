@@ -456,6 +456,13 @@ copy owner now proves supersession from each copy's own claim (same common Git
 directory, Release phase, not the open candidate, capsule gone or on a stand
 that is no longer live), and the sweep only closes the records under the copies
 it returns; no ledger record is needed to find a copy.
+Every later copy shared the one live capsule, so 33 copies of published or
+abandoned candidates stayed protected for twelve days (observed 2026-11-21).
+A copy is keyed by its candidate's merge commit, which no operation rebuilds;
+the sweep therefore also passes the candidates a later operation can still
+prepare (published `develop` and `master` heads and the unpublished queue
+candidate chain), and the owner supersedes any other candidate's copy. Without
+a resolvable `develop` head it judges none. No new state, lock or authority.
 The Develop upgrade journey then showed that its configuration-rejection
 refresh on PM5 resumed a merged refresh left by an older workflow whose refresh
 ran the production Gate6 profile. The current refresh runs the development
