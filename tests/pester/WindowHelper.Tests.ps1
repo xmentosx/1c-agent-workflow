@@ -312,8 +312,12 @@ static class ServiceClient {
                 return ($script:ServiceObserved -and $context.launcherExited)
             } | Out-Null
             $script:ServiceObserved | Should -BeTrue
-            $script:ServiceWatch | Should -Not -BeNullOrEmpty
+            # The watcher may already have exited with the client. Never pipe the Process into
+            # Should: Pester stringifies it, and Process.ToString reads ProcessName, which throws
+            # for an exited process.
+            ($script:ServiceWatch -is [Diagnostics.Process]) | Should -BeTrue
             $script:ServiceWatch.WaitForExit(5000) | Should -BeTrue
+            $script:ServiceWatch.HasExited | Should -BeTrue
             $script:ServiceWatch.ExitCode | Should -Be 0
         } finally {
             # Only these two exact test process handles; never enumerate user 1C.
