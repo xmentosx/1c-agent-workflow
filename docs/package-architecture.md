@@ -212,6 +212,9 @@ lease and record enroll an unenrolled intact snapshot only when its candidate
 provably served and its old runtime is not current, after cutovers through a
 delivery-package installer copy left dev-ermakov snapshots outside retention.
 Unproven legacy data stays protected; older code keeps adopted entries.
+The same day the user approved removal of stopped `itl-*` containers by that owner
+after the fourteen-day window when no current server, snapshot, accepted entry or
+running Compose sibling needs them; images and volumes stay with their owners.
 
 On 2026-11-06 the user approved a durable machine-local
 [ai_rules_1c source cache](ai-rules-fork-upgrades.md#local-source-cache-integrity):

@@ -153,9 +153,11 @@ Describe 'MCP storage owner retention' {
         function Get-McpStorageCachePlan {param($Settings);return @()}
         function Invoke-McpStorageCacheCollection {param($Settings,$Plan);$script:OnlineCollections++;return @{removed=0}}
         function Invoke-McpStorageRetirement {param($Config,$Settings,$Record);return 0}
+        function Add-McpStorageLegacyAdoptions {param($Config,$Record);return 0}
+        function Invoke-McpStorageContainerRetirement {param($Config,$Settings,$Record);$script:OnlineCollections++;return @{removed=0}}
         function Invoke-McpStorageVhdCompaction {throw 'must not stop independent owners'}
         Invoke-McpHostStorageMaintenance @{stateRoot=$TestDrive;storageRetention=@{enabled=$true;compactEnabled=$true}} -OnlineOnly
-        $script:OnlineCollections|Should -Be 1
+        $script:OnlineCollections|Should -Be 2
         $script:OnlineRecord.Contains('lastCleanupAt')|Should -BeTrue
     }
 
@@ -275,6 +277,59 @@ Describe 'MCP storage owner retention' {
         foreach($kept in $legacy){Test-Path $kept|Should -BeTrue}
         # rt-bravo stays referenced by the then-remaining chained snapshot; legacy data protects the rest.
         $script:DockerMutations.Count|Should -Be 0
+    }
+
+    It 'removes only old stopped itl containers that nothing current or retained needs' {
+        $cfg=@{stateRoot=(Join-Path $TestDrive ('containers '+[char]0x0417+' Unicode'))}
+        $snapshot=Join-Path $cfg.stateRoot ('snapshots/cutover-'+('9'*32))
+        New-Item -ItemType Directory -Path $snapshot -Force|Out-Null
+        Write-JsonFile (Join-Path $snapshot 'snapshot.json') @{oldContainer='itl-snap-old';candidate='itl-current-x';complete=$true;records=@()}
+        function New-StoppedFixture {
+            param([string]$Name,[string]$Finished,[string]$Status='exited',[string]$Project='',[bool]$Running=$false,[string]$Created='2026-08-01T00:00:00Z')
+            return [pscustomobject]@{id=($Name+'-id');name=$Name;image='img';running=$Running;status=$Status;finishedAt=$Finished;createdAt=$Created;mounts=@();composeProject=$Project}
+        }
+        $script:Inventory=@(
+            (New-StoppedFixture 'itl-old-exp' '2026-10-01T00:00:00Z'),
+            (New-StoppedFixture 'itl-recent' '2026-11-15T00:00:00Z'),
+            (New-StoppedFixture 'itl-current-x' '2026-10-01T00:00:00Z'),
+            (New-StoppedFixture 'itl-snap-old' '2026-10-01T00:00:00Z'),
+            (New-StoppedFixture 'itl-accepted-old' '2026-10-01T00:00:00Z'),
+            (New-StoppedFixture 'itl-proj-init' '2026-10-01T00:00:00Z' -Project 'proj'),
+            (New-StoppedFixture 'itl-proj-main' '' 'running' 'proj' $true),
+            (New-StoppedFixture 'foreign-db' '2026-09-01T00:00:00Z'),
+            (New-StoppedFixture 'itl-never-started' '0001-01-01T00:00:00Z' 'created' -Created '2026-09-01T00:00:00Z'),
+            (New-StoppedFixture 'itl-nano' '2026-10-02T16:39:42.123456789Z'))
+        $record=@{accepted=@(@{status='accepted';retiredName='itl-accepted-old';retiredContainers=@()},@{status='retired';retiredName='itl-old-exp'})}
+        function Read-HostState {param($Config);return @{servers=@(@{containerName='itl-current-x'})}}
+        function Get-McpStorageContainers {param([string[]]$Ids);if($PSBoundParameters.ContainsKey('Ids')){return @($script:Fresh|Where-Object {$_.id -in $Ids})};return $script:Inventory}
+        $plan=@(Get-McpStorageContainerRetirementPlan $cfg (Get-McpStorageSettings @{}) $record ([datetime]'2026-11-21T12:00:00Z'))
+        $reasons=@{};foreach($item in $plan){$reasons[$item.name]=$item.reason}
+        $reasons.Count|Should -Be 8
+        @($reasons.Keys|Where-Object {$reasons[$_] -eq 'eligible'}|Sort-Object)|Should -Be @('itl-nano','itl-never-started','itl-old-exp')
+        $reasons['itl-recent']|Should -Be 'minimum-age'
+        $reasons['itl-current-x']|Should -Be 'current'
+        $reasons['itl-snap-old']|Should -Be 'retained-snapshot'
+        $reasons['itl-accepted-old']|Should -Be 'retained-snapshot'
+        $reasons['itl-proj-init']|Should -Be 'running-project'
+
+        # A concurrent start wins and a refused removal is counted, never forced.
+        $script:Fresh=@($script:Inventory|Where-Object {$_.name -ne 'itl-nano'})+@(New-StoppedFixture 'itl-nano' '' 'running' -Running $true)
+        $script:Removed=@()
+        function Invoke-McpStorageDocker {
+            param($Arguments,$TimeoutSec)
+            if($Arguments[0] -ne 'rm'){throw 'Unexpected Docker operation'}
+            if($Arguments -contains '-f' -or $Arguments -contains '--force'){throw 'Removal must never force'}
+            if($Arguments[1] -eq 'itl-never-started-id'){throw 'conflict: container is in use'}
+            $script:Removed+=$Arguments[1]
+        }
+        $result=Invoke-McpStorageContainerRetirement $cfg (Get-McpStorageSettings @{}) $record
+        $script:Removed|Should -Be @('itl-old-exp-id')
+        $result.candidates|Should -Be 3
+        $result.removed|Should -Be 1
+        $result.failed|Should -Be 1
+
+        New-Item -ItemType Directory -Path (Join-Path $cfg.stateRoot ('snapshots/cutover-'+('8'*32)))|Out-Null
+        @(Get-McpStorageContainerRetirementPlan $cfg (Get-McpStorageSettings @{}) $record ([datetime]'2026-11-21T12:00:00Z')).Count|Should -Be 0
     }
 
     It 'rejects unknown Mantis owner bytes without changing either file' {
