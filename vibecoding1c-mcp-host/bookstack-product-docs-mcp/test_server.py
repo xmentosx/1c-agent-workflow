@@ -196,6 +196,40 @@ class RankingEmbeddings(FakeEmbeddings):
 
 
 class BookStackClientStructureTests(unittest.TestCase):
+    def test_uncached_page_url_uses_exact_live_book_and_page_with_view_check(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root) / "cache.sqlite"),
+                               base_url="https://kb.example/library", views_json='{"other":{"book_ids":[99]}}')
+            service = server.ProductDocsService(settings)
+            url = "https://kb.example/library/books/product/page/%D0%BF%D0%BB%D0%B0%D0%BD?x=1#heading"
+            requested = []
+
+            def api(path, query=None):
+                requested.append((path, query))
+                if path == "/api/books" and query == {"filter[slug]": "product", "count": 2}:
+                    return {"data": [{"id": 10, "slug": "product"}]}
+                if path == "/api/pages" and query == {"filter[book_id]": 10, "filter[slug]": "план", "count": 2}:
+                    return {"data": [{"id": 4, "slug": "план", "book_id": 10}]}
+                if path == "/api/pages/4" and query is None:
+                    return page(4, "freshly published")
+                self.fail((path, query))
+
+            service.client.get_json = api
+            token = server.ACTIVE_VIEW.set("other")
+            try:
+                self.assertFalse(service.read_page(None, url, "text")["ok"])
+                self.assertEqual(0, service.cache.count_pages())
+            finally:
+                server.ACTIVE_VIEW.reset(token)
+            self.assertEqual("freshly published", service.read_page(None, url, "text")["content"])
+            requested.clear()
+            self.assertEqual(4, service.read_page(None, "/library/link/4#part", "text")["metadata"]["id"])
+            self.assertEqual([("/api/pages/4", None)], requested)
+            for invalid in ("https://foreign.example/library/link/4", "/another-install/link/4"):
+                with self.assertRaises(server.BookStackApiError):
+                    service.read_page(None, invalid, "text")
+            self.assertEqual([("/api/pages/4", None)], requested)
+
     def test_page_inventory_requires_complete_consistent_unique_batches(self):
         client = object.__new__(server.BookStackClient)
         for responses in (
@@ -847,6 +881,26 @@ class CosineScoreTests(unittest.TestCase):
 
 
 class ProductDocsServiceTests(unittest.TestCase):
+    def test_direct_reads_never_mix_cached_text_or_metadata_into_a_live_revision(self):
+        with tempfile.TemporaryDirectory() as root:
+            service = server.ProductDocsService(make_settings(Path(root) / "cache.sqlite"))
+            old = dict(page(1, "removed markdown"), html="<p>removed html</p>")
+            service.index_page(old)
+            fresh = dict(old, markdown="", html="<p>new content</p>", chapter={"name": "New chapter"})
+            service.client = FakeClient([fresh])
+            service.client.export_page = mock.Mock(side_effect=server.BookStackApiError("export unavailable"))
+            # Equal title/timestamp and an unavailable index writer used to return the old text.
+            with service._index_lock:
+                for fmt, expected in (("text", "new content"), ("html", "<p>new content</p>"), ("markdown", "new content")):
+                    result = service.read_page(1, "", fmt)
+                    self.assertEqual(expected, result["content"])
+                    self.assertEqual("New chapter", result["metadata"]["chapter_name"])
+                fresh["html"] = ""
+                self.assertEqual("", service.read_page(1, "", "html")["content"])
+            fresh["markdown"] = "new markdown"
+            self.assertEqual("new markdown", service.read_page(1, "", "text")["content"])
+            self.assertEqual("new markdown", service.cache.get_page(1)["content_text"])
+
     def make_service(self, temp_root, pages):
         service = server.ProductDocsService(make_settings(Path(temp_root) / "cache.sqlite"))
         service.client = FakeClient(pages)

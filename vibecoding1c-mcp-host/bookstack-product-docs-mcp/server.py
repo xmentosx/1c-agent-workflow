@@ -312,6 +312,36 @@ class BookStackClient:
     def list_pages(self, max_items: int = 0) -> List[Dict[str, Any]]:
         return self.paginated("/api/pages", max_items=max_items)
 
+    def resolve_page_url(self, url: str) -> Optional[int]:
+        """Resolve BookStack's two page routes using only the configured API origin."""
+        base = parse.urlsplit(self.settings.base_url)
+        address = parse.urlsplit(parse.urljoin(self.settings.base_url.rstrip("/") + "/", url))
+        def origin(parts):
+            return parts.scheme, parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)
+
+        prefix = base.path.rstrip("/") + "/"
+        if (origin(base) != origin(address) or address.username is not None
+                or not address.path.startswith(prefix)):
+            raise BookStackApiError("Page URL is outside the configured BookStack site.")
+        path = address.path[len(prefix):].rstrip("/")
+        permalink = re.fullmatch(r"link/([1-9][0-9]*)", path)
+        if permalink:
+            return int(permalink[1])
+        route = re.fullmatch(r"books/([^/]+)/page/([^/]+)", path)
+        if not route:
+            return None  # Older indexed installations can have other URL forms.
+        book_slug, page_slug = (parse.unquote(part, errors="strict") for part in route.groups())
+        def lookup(collection, slug, **extra):
+            filters = {"slug": slug, **extra}
+            query = {f"filter[{key}]": value for key, value in filters.items()}
+            data = self.get_json("/api/" + collection, dict(query, count=2))
+            matches = [row for row in data["data"] if all(row.get(k) == v for k, v in filters.items())]
+            if len(matches) != 1 or type(matches[0].get("id")) is not int or matches[0]["id"] <= 0:
+                raise BookStackApiError("Page URL was not found or is not visible in BookStack.")
+            return matches[0]["id"]
+
+        return lookup("pages", page_slug, book_id=lookup("books", book_slug))
+
     def read_page(self, page_id: int) -> Dict[str, Any]:
         page = self.get_json(f"/api/pages/{page_id}")
         # The page API may omit its URL. BookStack's ID permalink survives renames.
@@ -679,8 +709,10 @@ class DocsCache:
             row = conn.execute("SELECT id FROM pages WHERE url = ?", (url,)).fetchone()
             if row:
                 return int(row["id"])
-            row = conn.execute("SELECT id FROM pages WHERE url LIKE ? ORDER BY id LIMIT 1", (f"%{url.rstrip('/')}",)).fetchone()
-            return int(row["id"]) if row else None
+            suffix = url.rstrip("/")
+            rows = conn.execute("SELECT id FROM pages WHERE substr(url, -length(?)) = ? LIMIT 2",
+                                (suffix, suffix)).fetchall()
+            return int(rows[0]["id"]) if len(rows) == 1 else None
 
     def upsert_page(self, page: Dict[str, Any], markdown: str, html: str, content_text: str) -> str:
         page_id = int(page.get("id", 0))
@@ -995,46 +1027,42 @@ class ProductDocsService:
     ) -> Dict[str, Any]:
         resolved_id = page_id
         if not resolved_id and url:
-            resolved_id = self.cache.find_page_id_by_url(url)
+            resolved_id = self.client.resolve_page_url(url) or self.cache.find_page_id_by_url(url)
         if not resolved_id:
-            return {"ok": False, "error": "page_id is required, or url must exist in the local cache"}
+            return {"ok": False, "error": "Provide a page ID or a BookStack page URL."}
         page = self.client.read_page(int(resolved_id))
         if not matches_filters(normalize_search_item(page), effective_filters({}, self.views)):
             return {"ok": False, "error": "Page is outside the selected BookStack view"}
         cached = self.cache.get_page(int(resolved_id))
+        markdown = page.get("markdown") or ""
+        html = page.get("html") or ""
+        metadata = compact_page_metadata(normalize_search_item(page))
         if (
             not cached
             or str(cached.get("updated_at", "")) != str(page.get("updated_at", ""))
             or str(cached.get("name", "")) != str(page.get("name", ""))
+            or cached.get("markdown") != markdown or cached.get("html") != html
             or not self.embedding_is_current(cached)
         ):
             try:
                 self.index_page(page)
-            except IndexBusyError:
-                # Reading live content does not wait for a corpus rebuild.
-                cached = dict(normalize_search_item(page), markdown=page.get("markdown", ""),
-                              html=page.get("html", ""), content_text=clean_text(page.get("markdown") or html_to_text(page.get("html", ""))))
-            except EmbeddingUnavailable:
-                # Content is already cached before embedding. A provider outage
-                # must not prevent reading the live document.
-                cached = self.cache.get_page(int(resolved_id))
-            else:
-                cached = self.cache.get_page(int(resolved_id))
+            except (IndexBusyError, EmbeddingUnavailable):
+                pass  # Index maintenance does not own the live response.
         content_format = (fmt or "markdown").lower()
         content = ""
         if content_format == "html":
-            content = str(page.get("html", "") or (cached or {}).get("html", ""))
+            content = html
         elif content_format in {"text", "plain", "plaintext"}:
-            content = str((cached or {}).get("content_text", "")) or html_to_text(str(page.get("html", "")))
+            content = markdown or html_to_text(html)
             content_format = "text"
         else:
             content_format = "markdown"
-            content = str(page.get("markdown", "") or (cached or {}).get("markdown", ""))
+            content = markdown
             if not content:
                 try:
                     content = self.client.export_page(int(resolved_id), "markdown")
                 except Exception:
-                    content = str((cached or {}).get("content_text", "")) or html_to_text(str(page.get("html", "")))
+                    content = html_to_text(html)
         normalized_content = clean_text(content) if content_format != "html" else content
         selection = select_content(
             normalized_content,
@@ -1048,13 +1076,13 @@ class ProductDocsService:
             return {
                 "ok": False,
                 "error": selection["error"],
-                "metadata": compact_page_metadata(cached or normalize_search_item(page)),
+                "metadata": metadata,
                 "available_headings": selection.get("available_headings", []),
             }
         return {
             "ok": True,
             "format": content_format,
-            "metadata": compact_page_metadata(cached or normalize_search_item(page)),
+            "metadata": metadata,
             "content": selection["content"],
             "total_chars": len(normalized_content),
             "selection": selection["selection"],
@@ -1659,7 +1687,7 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
         cursor: int = 0,
         max_chars: int = DEFAULT_PAGE_MAX_CHARS,
     ):
-        """Read a bounded page excerpt. Narrow with query/heading; follow next_cursor. Use max_chars=0 only for explicit full reads."""
+        """Read a live page by ID or BookStack URL, including unindexed pages. Narrow with query/heading; follow next_cursor. Use max_chars=0 only for explicit full reads."""
         try:
             result = service.read_page(
                 page_id=page_id,

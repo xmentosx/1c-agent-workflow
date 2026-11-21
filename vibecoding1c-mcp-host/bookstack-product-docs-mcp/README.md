@@ -7,6 +7,12 @@ Exact/FTS search remains available
 when semantic indexing is incomplete; `search_docs` discloses that state. `read_page`
 continues returning the document during a provider failure.
 
+`read_page` reads current content and metadata from BookStack. It accepts a page ID, a
+`/link/{id}` permalink, or a normal `/books/{book}/page/{page}` URL on the configured
+site, including before the first index refresh. Normal URLs use exact API filters
+for the book and page slugs. The selected view still limits the result. Search
+can show an older index snapshot until the page is indexed.
+
 ## Search modes and query cache
 
 `search_docs(query="...", mode="hybrid")` retains the default combined exact/FTS and
