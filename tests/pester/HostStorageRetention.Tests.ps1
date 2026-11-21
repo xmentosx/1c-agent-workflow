@@ -222,6 +222,61 @@ Describe 'MCP storage owner retention' {
         $script:RemovedVolumes|Should -Be @('unused-index')
     }
 
+    It 'adopts only snapshots whose cutover is proven by succession, then retires them by the normal policy' {
+        $cfg=@{stateRoot=(Join-Path $TestDrive ('adoption '+[char]0x0416+' Unicode'))}
+        $snapshots=Join-Path $cfg.stateRoot 'snapshots'
+        function New-AdoptionSnapshot {
+            param([string]$Id,[string]$Old,[string]$Candidate,[string]$Created,[bool]$Complete=$true,[string]$Volume='')
+            $path=Join-Path $snapshots ('cutover-'+($Id*32))
+            $folder=Join-Path $path 'index';New-Item -ItemType Directory -Path $folder -Force|Out-Null
+            Write-Text (Join-Path $folder 'index.tar') ('payload '+$Id+[char]0x0415)
+            $record=@{role='index';type=$(if($Volume){'volume'}else{'bind'});source=$(if($Volume){$Volume}else{'E:/bind'});oldContainer=$Old;folder=$folder;sha256=(Get-FileHash (Join-Path $folder 'index.tar')).Hash.ToLowerInvariant()}
+            Write-JsonFile (Join-Path $path 'snapshot.json') @{oldContainer=$Old;candidate=$Candidate;image='img-new';complete=$Complete;records=@($record)}
+            (Get-Item -LiteralPath $path).CreationTimeUtc=[datetime]::Parse($Created).ToUniversalTime()
+            return $path
+        }
+        $chained=New-AdoptionSnapshot 'a' 'rt-alpha' 'rt-bravo' '2026-09-01T00:00:00Z'
+        $direct=New-AdoptionSnapshot 'b' 'rt-bravo' 'rt-charlie' '2026-09-10T00:00:00Z' -Volume 'vol-bravo'
+        $failed=New-AdoptionSnapshot 'c' 'rt-alpha' 'rt-delta' '2026-09-02T00:00:00Z'
+        $rolledBack=New-AdoptionSnapshot 'd' 'rt-charlie' 'rt-echo' '2026-09-03T00:00:00Z'
+        $changed=New-AdoptionSnapshot 'e' 'rt-fox' 'rt-charlie' '2026-09-04T00:00:00Z'
+        Write-Text (Join-Path $changed 'failed-proof.txt') 'preserve'
+        $incomplete=New-AdoptionSnapshot 'f' 'rt-golf' 'rt-charlie' '2026-09-05T00:00:00Z' -Complete $false
+        $running=New-AdoptionSnapshot '1' 'rt-hotel' 'rt-charlie' '2026-09-06T00:00:00Z'
+        $script:Inventory=@(@{id=('b'*64);name='rt-bravo';image='img-bravo';running=$false;mounts=@()},@{id=('c'*64);name='rt-charlie';image='img-new';running=$true;mounts=@()},@{id=('h'*64);name='rt-hotel';image='img-hotel';running=$true;mounts=@()})
+        $script:DockerMutations=@();$script:Saves=0
+        function Read-HostState {param($Config);return @{servers=@(@{containerName='rt-charlie';configId='pm5';id='code'})}}
+        function Save-McpStorageRecord {param($Config,$Record);$script:Saves++}
+        function Get-McpStorageContainers {return $script:Inventory}
+        function Invoke-McpStorageDocker {
+            param($Arguments,$TimeoutSec)
+            if($Arguments[0] -eq 'volume' -and $Arguments[1] -eq 'ls'){return @('vol-bravo')}
+            if($Arguments[0] -eq 'volume' -and $Arguments[1] -eq 'inspect'){return '[{"Name":"vol-bravo","Driver":"local","CreatedAt":"fixture","Options":null}]'}
+            $script:DockerMutations+=($Arguments -join ' ')
+        }
+        $record=[ordered]@{}
+        Add-McpStorageLegacyAdoptions $cfg $record|Should -Be 2
+        $adopted=@($record.accepted)
+        @($adopted|ForEach-Object {$_.snapshotPath})|Should -Be @($chained,$direct)
+        @($adopted|Where-Object {$_.service -ne 'pm5/code' -or $_.qualification -ne 'legacy-succession-adopted'}).Count|Should -Be 0
+        $adopted[1].retiredContainer|Should -Be ('b'*64)
+        $adopted[1].retiredVolumes[0].name|Should -Be 'vol-bravo'
+        $adopted[0].retiredContainer|Should -Be ''
+        ([datetime]$adopted[0].acceptedAt).ToUniversalTime()|Should -Be ([datetime]::Parse('2026-09-01T00:00:00Z').ToUniversalTime())
+        $legacy=@(Get-McpStorageLegacySnapshots $cfg $record|ForEach-Object {$_.path})|Sort-Object
+        $legacy|Should -Be (@($failed,$rolledBack,$changed,$incomplete,$running)|Sort-Object)
+        Add-McpStorageLegacyAdoptions $cfg $record|Should -Be 0
+        @($record.accepted).Count|Should -Be 2
+
+        $record.accepted=@($record.accepted)+@(@{service='pm5/code';acceptedAt='2026-10-30T00:00:00Z';status='accepted';qualification='native-cutover-and-control-restart'},@{service='pm5/code';acceptedAt='2026-10-31T00:00:00Z';status='accepted';qualification='native-cutover-and-control-restart'})
+        Invoke-McpStorageRetirement $cfg (Get-McpStorageSettings @{}) $record|Should -Be 2
+        Test-Path $direct|Should -BeFalse
+        Test-Path $chained|Should -BeFalse
+        foreach($kept in $legacy){Test-Path $kept|Should -BeTrue}
+        # rt-bravo stays referenced by the then-remaining chained snapshot; legacy data protects the rest.
+        $script:DockerMutations.Count|Should -Be 0
+    }
+
     It 'rejects unknown Mantis owner bytes without changing either file' {
         . (Join-Path $RepoRoot 'scripts/host-test-runtime.ps1')
         $python=Get-SourceHostTestPython -RepositoryRoot $RepoRoot -Component Mantis

@@ -199,7 +199,7 @@ function Get-McpStorageRetirementPlan {
         $position=0
         foreach($entry in $ordered){
             $reason='eligible'
-            $accepted=(Get-ObjectValue $entry 'status' '') -in @('accepted','snapshot-retired') -and (Get-ObjectValue $entry 'qualification' '') -eq 'native-cutover-and-control-restart'
+            $accepted=(Get-ObjectValue $entry 'status' '') -in @('accepted','snapshot-retired') -and (Get-ObjectValue $entry 'qualification' '') -in @('native-cutover-and-control-restart','legacy-succession-adopted')
             if(-not $accepted){$reason='protected'}
             elseif($position -lt [int]$Settings.keepAccepted){$reason='latest-accepted'}
             elseif(([datetime]$entry.acceptedAt) -gt $Now.AddDays(-[double]$Settings.minimumAgeDays)){$reason='minimum-age'}
@@ -219,30 +219,39 @@ function Get-McpStorageLegacySnapshots {
     return @(Get-ChildItem -LiteralPath $root -Directory -Force|Where-Object {$_.FullName -notin $known}|ForEach-Object {@{path=$_.FullName;status='protected';reason='not-enrolled-by-full-acceptance-owner'}})
 }
 
+function Assert-McpStorageSnapshotIntact {
+    param([string]$Path)
+    # The caller has validated $Path as an exact owned snapshot directory.
+    $manifestPath=Join-Path $Path 'snapshot.json'
+    $manifest=Read-JsonFile $manifestPath
+    if(-not $manifest.complete){throw 'Incomplete snapshot remains protected'}
+    $children=@(Get-ChildItem -LiteralPath $Path -Force -Recurse)
+    if(@($children|Where-Object {$_.Attributes -band [IO.FileAttributes]::ReparsePoint}).Count){throw 'Snapshot contains a reparse point'}
+    $expected=@($manifestPath)
+    foreach($part in $manifest.records){
+        $archive=[IO.Path]::GetFullPath((Join-Path ([string]$part.folder) 'index.tar'))
+        if(-not $archive.StartsWith($Path+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Snapshot archive escaped its owner directory'}
+        $expected+=$archive
+        if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$part.sha256){throw 'Snapshot archive integrity changed'}
+    }
+    if(@($children|Where-Object {-not $_.PSIsContainer -and $_.FullName -notin $expected}).Count){throw 'Snapshot contains unrecorded evidence; retain it'}
+    return $manifest
+}
+
 function Remove-McpStorageSnapshot {
     param($Config,$Entry)
     $path=Assert-McpStorageSnapshotPath $Config ([string]$Entry.snapshotPath)
     $manifestPath=Join-Path $path 'snapshot.json'
     if((Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash -cne $Entry.manifestSha256){throw 'Snapshot manifest changed; preserve its data'}
-    $manifest=Read-JsonFile $manifestPath
-    if(-not $manifest.complete){throw 'Incomplete snapshot remains protected'}
-    $children=@(Get-ChildItem -LiteralPath $path -Force -Recurse)
-    if(@($children|Where-Object {$_.Attributes -band [IO.FileAttributes]::ReparsePoint}).Count){throw 'Snapshot contains a reparse point'}
-    $expected=@($manifestPath)
-    foreach($part in $manifest.records){
-        $archive=[IO.Path]::GetFullPath((Join-Path ([string]$part.folder) 'index.tar'))
-        if(-not $archive.StartsWith($path+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Snapshot archive escaped its owner directory'}
-        $expected+=$archive
-        if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$part.sha256){throw 'Snapshot archive integrity changed'}
-    }
-    if(@($children|Where-Object {-not $_.PSIsContainer -and $_.FullName -notin $expected}).Count){throw 'Snapshot contains unrecorded evidence; retain it'}
+    [void](Assert-McpStorageSnapshotIntact $path)
     $retiredId=[string](Get-ObjectValue $Entry 'retiredContainer' '')
     if($retiredId){
         $fresh=@(Get-McpStorageContainers|Where-Object id -eq $retiredId)
         if($fresh.Count -and $fresh[0].running){throw 'Retired runtime restarted during verification; keep its snapshot'}
-        $current=Get-ObjectValue (Read-HostState $Config) 'servers' @()
-        if(($current|ConvertTo-Json -Depth 25 -Compress).Contains([string]$Entry.retiredName)){throw 'Retired runtime became current during verification; keep its snapshot'}
     }
+    $retiredName=[string](Get-ObjectValue $Entry 'retiredName' '')
+    $current=Get-ObjectValue (Read-HostState $Config) 'servers' @()
+    if($retiredName -and ($current|ConvertTo-Json -Depth 25 -Compress).Contains($retiredName)){throw 'Retired runtime became current during verification; keep its snapshot'}
     # The absolute path and every descendant have been validated in this shell.
     Remove-Item -LiteralPath $path -Recurse -Force
 }
@@ -269,16 +278,90 @@ function Add-McpStorageAcceptance {
         if($aux.Count -ne 1 -or $aux[0].running){throw 'Retired Neo4j identity is not stable'}
         $entry.retiredContainers+=@($aux)
     }
-    $entry.retiredVolumes=@()
-    foreach($binding in @($Context.snapshots|Where-Object {$_.type -eq 'volume' -and $_.role -in @('index','neo4j')})){
+    $entry.retiredVolumes=Get-McpStorageRetiredVolumes $Context.snapshots
+    $record.accepted=$accepted+@($entry)
+    Save-McpStorageRecord $Config $record
+}
+
+function Get-McpStorageRetiredVolumes {
+    param($Bindings)
+    $volumes=@()
+    foreach($binding in @($Bindings|Where-Object {$_.type -eq 'volume' -and $_.role -in @('index','neo4j')})){
         $volume=(@(Invoke-McpStorageDocker @('volume','inspect',[string]$binding.source)) -join '')|ConvertFrom-Json
         $volume=@($volume)[0]
         if($volume.Driver -eq 'local' -and (Convert-ToHash $volume.Options).Count -eq 0 -and (Get-ObjectValue $volume 'CreatedAt' '')){
-            $entry.retiredVolumes+=@(@{name=$volume.Name;driver=$volume.Driver;createdAt=$volume.CreatedAt;role=$binding.role})
+            $volumes+=@(@{name=$volume.Name;driver=$volume.Driver;createdAt=$volume.CreatedAt;role=$binding.role})
         }
     }
-    $record.accepted=$accepted+@($entry)
-    Save-McpStorageRecord $Config $record
+    return ,$volumes
+}
+
+function Add-McpStorageLegacyAdoptions {
+    param($Config,$Record)
+    # A cutover run by an installer copy without this owner leaves an intact, unenrolled snapshot.
+    # Acceptance is then proven only by succession: the candidate served (it is current, or a later
+    # proven/enrolled replacement retired it) and the old runtime is not current. Everything else
+    # (incomplete, changed, failed or rolled-back cutovers) stays protected legacy data.
+    $root=Join-Path (Get-StateRoot $Config) 'snapshots'
+    if(-not (Test-Path -LiteralPath $root)){return 0}
+    $accepted=@(As-Array (Get-ObjectValue $Record 'accepted' @()))
+    $known=@($accepted|ForEach-Object {[string](Get-ObjectValue $_ 'snapshotPath' '')})
+    $current=@{}
+    foreach($server in As-Array (Get-ObjectValue (Read-HostState $Config) 'servers' @())){
+        $name=[string](Get-ObjectValue $server 'containerName' '')
+        if($name){$current[$name]=[string](Get-ObjectValue $server 'configId' '')+'/'+[string](Get-ObjectValue $server 'id' '')}
+    }
+    $served=@{}
+    foreach($key in $current.Keys){$served[$key]=$current[$key]}
+    foreach($entry in $accepted){
+        $name=[string](Get-ObjectValue $entry 'retiredName' '')
+        if($name -and -not $served.ContainsKey($name)){$served[$name]=[string](Get-ObjectValue $entry 'service' '')}
+    }
+    $pending=@()
+    foreach($directory in Get-ChildItem -LiteralPath $root -Directory -Force){
+        if($directory.FullName -in $known){continue}
+        try{
+            $path=Assert-McpStorageSnapshotPath $Config $directory.FullName
+            $manifest=Assert-McpStorageSnapshotIntact $path
+        }catch{continue}
+        $old=[string](Get-ObjectValue $manifest 'oldContainer' '')
+        $candidate=[string](Get-ObjectValue $manifest 'candidate' '')
+        if(-not $old -or -not $candidate -or $old -ceq $candidate -or $current.ContainsKey($old)){continue}
+        $pending+=@{path=$path;manifest=$manifest;old=$old;candidate=$candidate;createdAt=$directory.CreationTimeUtc;service=''}
+    }
+    do{
+        $changed=$false
+        foreach($item in @($pending|Where-Object {-not $_.service -and $served.ContainsKey($_.candidate)})){
+            $item.service=$served[$item.candidate]
+            if(-not $served.ContainsKey($item.old)){$served[$item.old]=$item.service}
+            $changed=$true
+        }
+    }while($changed)
+    $proven=@($pending|Where-Object {$_.service})
+    if(-not $proven.Count){return 0}
+    $containers=Get-McpStorageContainers
+    $volumeNames=@(Invoke-McpStorageDocker @('volume','ls','--quiet'))
+    $adopted=0
+    foreach($item in $proven){
+        $records=@(As-Array (Get-ObjectValue $item.manifest 'records' @()))
+        $names=@(@($item.old)+@($records|ForEach-Object {[string](Get-ObjectValue $_ 'oldContainer' '')})|Where-Object {$_}|Select-Object -Unique)
+        $retired=@();$stable=$true
+        foreach($name in $names){
+            $match=@($containers|Where-Object {$_.name -ceq $name})
+            if($match.Count -gt 1 -or ($match.Count -and $match[0].running)){$stable=$false;break}
+            if($match.Count){$retired+=@($match[0])}
+        }
+        if(-not $stable){continue}
+        $main=@($retired|Where-Object {$_.name -ceq $item.old})
+        $entry=@{service=$item.service;acceptedAt=$item.createdAt.ToString('o');status='accepted';snapshotPath=$item.path;manifestSha256=(Get-FileHash -LiteralPath (Join-Path $item.path 'snapshot.json') -Algorithm SHA256).Hash;retiredContainer='';retiredName=$item.old;retiredImage='';qualification='legacy-succession-adopted';pinned=$false}
+        if($main.Count){$entry.retiredContainer=$main[0].id;$entry.retiredImage=$main[0].image}
+        $entry.retiredContainers=@($retired)
+        $entry.retiredVolumes=Get-McpStorageRetiredVolumes @($records|Where-Object {[string](Get-ObjectValue $_ 'source' '') -in $volumeNames})
+        $Record.accepted=@(As-Array (Get-ObjectValue $Record 'accepted' @()))+@($entry)
+        Save-McpStorageRecord $Config $Record
+        $adopted++
+    }
+    return $adopted
 }
 
 function Invoke-McpStorageRetirement {
@@ -288,9 +371,10 @@ function Invoke-McpStorageRetirement {
         if($candidate.reason -ne 'eligible'){continue}
         $entry=$candidate.entry
         $stateText=(Read-HostState $Config).servers|ConvertTo-Json -Depth 25 -Compress
-        if($stateText.Contains([string]$entry.retiredName) -or $stateText.Contains([string]$entry.retiredContainer)){continue}
+        # An adopted entry may have no surviving old runtime; empty identities match nothing.
+        if($stateText.Contains([string]$entry.retiredName) -or ($entry.retiredContainer -and $stateText.Contains([string]$entry.retiredContainer))){continue}
         $containers=Get-McpStorageContainers
-        $old=@($containers|Where-Object id -eq $entry.retiredContainer)
+        $old=@($containers|Where-Object {$entry.retiredContainer -and $_.id -eq $entry.retiredContainer})
         if($old.Count -gt 1 -or ($old.Count -and ($old[0].running -or $old[0].name -cne $entry.retiredName -or $old[0].image -cne $entry.retiredImage))){continue}
         # A restart after interruption may already have removed the snapshot.
         if(Test-Path -LiteralPath $entry.snapshotPath){Remove-McpStorageSnapshot $Config $entry}
@@ -300,7 +384,7 @@ function Invoke-McpStorageRetirement {
             $manifest=Join-Path $directory.FullName 'snapshot.json'
             if(-not (Test-Path -LiteralPath $manifest)){$referenced=$true;break}
             $text=Read-Text $manifest
-            if($text.Contains([string]$entry.retiredName) -or $text.Contains([string]$entry.retiredImage)){$referenced=$true;break}
+            if($text.Contains([string]$entry.retiredName) -or ($entry.retiredImage -and $text.Contains([string]$entry.retiredImage))){$referenced=$true;break}
         }
         if(-not $referenced){
             foreach($resource in As-Array (Get-ObjectValue $entry 'retiredContainers' @($old))){
@@ -441,6 +525,7 @@ function Invoke-McpHostStorageMaintenanceCore {
                 $record.lastCleanupAt=(Get-Date).ToString('o');$record.pressureAttempted=$true
                 Save-McpStorageRecord $Config $record
                 $record.cache=Invoke-McpStorageCacheCollection $settings (Get-McpStorageCachePlan $settings)
+                $record.adopted=Add-McpStorageLegacyAdoptions $Config $record
                 $record.retired=Invoke-McpStorageRetirement $Config $settings $record
             $record.lastError=''
         }

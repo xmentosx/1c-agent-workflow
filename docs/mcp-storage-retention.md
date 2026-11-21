@@ -48,11 +48,22 @@ a control main restart. Snapshot creation alone is not acceptance. The host
 records the exact manifest SHA, service, retired container/image identity and
 acceptance time. Older eligible records still require unchanged manifest/archive
 hashes, an ordinary directory under the exact snapshot root, no added evidence,
-and no current/pinned/unfinished/failed dependency. Unknown legacy snapshots are
-retained. Historic failed-run data does not become disposable through its age.
-Remaining snapshots protect the Docker resources they reference; live or changed
-containers and shared images remain protected. Unclassified legacy snapshots
-also protect image deletion because their full image dependencies are unknown.
+and no current/pinned/unfinished/failed dependency.
+
+A cutover run by an installer copy without this owner (for example a delivery
+package's owner copy) leaves an unenrolled snapshot. Each due online collection
+adopts such a snapshot only when its acceptance is proven by succession: the
+directory and manifest pass the same integrity checks as removal; the manifest's
+old runtime is not current; its candidate is current in host state or was retired
+by a later proven/enrolled cutover; and every recorded old container is absent or
+stopped under the same name. Adoption records `legacy-succession-adopted` with
+the snapshot directory's creation time, so the same two-transition and fourteen-day
+rules apply. Incomplete, changed, failed and rolled-back cutovers stay unknown
+legacy snapshots and are retained. Historic failed-run data does not become
+disposable through its age. Remaining snapshots protect the Docker resources they
+reference; live or changed containers and shared images remain protected.
+Unclassified legacy snapshots also protect image deletion because their full image
+dependencies are unknown.
 Online cache/snapshot collection needs its own build/cutover owners idle; an
 independent index worker cannot prevent eligible cold-data collection. Offline
 VHD reclaim additionally requires every relevant indexing owner idle.
