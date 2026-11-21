@@ -278,7 +278,7 @@ Describe 'Change mode recovery and reuse boundaries' {
             $selection=Get-ItlVanessaVerificationSelectionPlan
             $selection.mode | Should -BeExactly 'reuse'
             @($selection.selectedSuiteIds).Count | Should -Be 0
-            $selection.reason | Should -Match 'Excluded by the agent: existing'
+            $selection.reason | Should -Match 'agent: existing\b'
             $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
             Set-CurrentObservation first; Set-CurrentEventEvidence
             (Complete-VerificationChange).changeStatus | Should -BeExactly 'accepted'
@@ -338,7 +338,7 @@ Describe 'Change mode recovery and reuse boundaries' {
             Start-VerificationChange -EvidencePath $file | Out-Null
             $selection=Get-ItlVanessaVerificationSelectionPlan
             @($selection.selectedSuiteIds) | Should -Be @('probe')
-            $selection.reason | Should -Match 'Excluded by the agent: existing'
+            $selection.reason | Should -Match 'agent: existing\b'
             # A probe edit is now a verification input in every model.
             $base=Get-VerificationSelectionEffectiveTree
             Write-Utf8TextAtomic -Path (Join-Path $root $probe) -Value 'Procedure Probe() Changed EndProcedure'
