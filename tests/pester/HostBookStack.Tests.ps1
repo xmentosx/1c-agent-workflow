@@ -28,7 +28,7 @@ Describe 'HostBookStack component regressions' {
             $ErrorActionPreference = $previousErrorActionPreference
         }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 50 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 52 tests"
     }
     It 'enforces BookStack ID selectors and request-bound views on every read path' {
         $previousPreference=$ErrorActionPreference
