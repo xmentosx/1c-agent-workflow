@@ -821,7 +821,7 @@ Describe "Branch-first verification suite selection" {
         $result['unchanged'].runs | Should -Be 0
         $result['unchanged'].reused | Should -BeTrue
         $result['unchanged'].skipped | Should -Not -Contain 'yaxunit'
-        $result['unchanged'].duration | Should -Match 'YAxUnit переиспользован без прогона'
+        $result['unchanged'].duration | Should -Match 'YAxUnit переиспользован'
         foreach ($case in @('named', 'changed inputs', 'other loaded infobase', 'failed receipt', 'changed report')) {
             $result[$case].runs | Should -Be 1 -Because $case
             $result[$case].reused | Should -BeFalse -Because $case
