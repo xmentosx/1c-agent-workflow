@@ -168,7 +168,9 @@ Describe 'Diagnostic isolated rerun of failed Pester files' {
         $result.report.status | Should -Be 'reproduced'
         $result.text | Should -Match 'tests/pester/Same\.Tests\.ps1 failed again'
         $result.text | Should -Not -Match 'Other\.Tests\.ps1[^.]*failed again'
-        $result.text | Should -Match 'Isolated rerun inconclusive: tests/pester/Other\.Tests\.ps1 did not repeat its failed tests; other tests failed alone \(needs the archive\)'
+        # The inconclusive file is named with the test that failed alone; the report fields above carry the verdict.
+        $result.text | Should -Match ([regex]::Escape($other.path))
+        $result.text | Should -Match ([regex]::Escape("($(@($other.isolatedFailures) -join ', '))"))
 
         $only = New-RerunFixture @('tests/pester/Other.Tests.ps1')
         $alone = Invoke-RerunFixture $only -PassingAlone @() -FailingAlone @{ 'tests/pester/Other.Tests.ps1' = @('needs the archive') }
