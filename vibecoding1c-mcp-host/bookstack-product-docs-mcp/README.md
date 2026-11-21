@@ -206,3 +206,9 @@ restore only the BookStack fields, never overwrite newer unrelated host settings
 restored cache reflects the saved point; its regular refresh catches up from BookStack.
 There is no automatic E5 fallback or permanent dual index. Before switching, a failed
 candidate requires only correction/resume while the existing E5 service keeps serving.
+
+## Personal page writes
+
+The installed [product-docs helper](../../.agents/skills/product-docs/page-write.md) sends the user's API token in a request header only on a personal write-tool call. The deployment supports the corporate HTTP transport. The MCP and the network path to it can see that header. Keep request headers out of proxy/debug logs. The service credentials continue to serve ordinary reads and indexing.
+
+The MCP checks live page source, permissions and view scope using the personal token. Approval covers the exact destination, title, content and base revision. Receipts are in process memory for up to one hour (4096 most recent previews). The same receipt returns the saved result on retry. After restart, eviction or an ambiguous BookStack response, inspect the destination before preparing another create. Updates re-read the page immediately before PUT. A simultaneous external editor can still write between that read and PUT. The public index follows its usual read/refresh schedule.

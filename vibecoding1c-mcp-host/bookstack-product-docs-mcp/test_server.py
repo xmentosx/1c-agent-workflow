@@ -100,7 +100,7 @@ class ProductDocsTransportTests(unittest.TestCase):
         self.assertIs(mcp.options.get("stateless_http"), True)
         self.assertEqual(
             mcp.registered_tools,
-            ["search_docs", "read_page", "list_structure", "reindex_docs", "index_status", "source_info"],
+            ["search_docs", "read_page", "list_structure", "reindex_docs", "index_status", "source_info", "write_page"],
         )
 
 
@@ -342,7 +342,8 @@ class EmbeddingClientTests(unittest.TestCase):
             client._tokenizer_lock = WaitingLock()
             client._remote_batch = mock.Mock(return_value=[[1.0, 0.0]])
 
-            def serve(**kwargs):
+            def serve(app, **kwargs):
+                self.assertIsInstance(app, server.ViewRouter)
                 with ThreadPoolExecutor(max_workers=1) as pool:
                     try:
                         self.assertTrue(entered.wait(5))
@@ -354,8 +355,8 @@ class EmbeddingClientTests(unittest.TestCase):
                     self.assertIs(caller.result(timeout=5), tokenizer)
 
             mcp = mock.Mock()
-            mcp.run.side_effect = serve
             with mock.patch.dict(sys.modules, {"transformers": module}), \
+                    mock.patch("uvicorn.run", side_effect=serve), \
                     mock.patch.object(server, "create_mcp", return_value=(mcp, service)), \
                     mock.patch.object(service, "start_background_reindex") as reindex:
                 server.main()

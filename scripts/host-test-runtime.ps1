@@ -29,7 +29,7 @@
         $base=($probe.lines -join "`n") | ConvertFrom-Json
         if([int]$base.version[0] -ne 3){throw 'Source host tests require Python 3. Configure ITL_SOURCE_TEST_PYTHON and repeat the same component test.'}
         $requirements=if($Component -eq 'Sppr'){Join-Path $root 'vibecoding1c-mcp-host/sppr-mcp/requirements.txt'}elseif($Component -eq 'BookStack'){Join-Path $root 'vibecoding1c-mcp-host/bookstack-product-docs-mcp/requirements.txt'}else{''}
-        $requiredPackages=@(if($Component -eq 'BookStack'){'snowballstemmer';'httpx';'numpy'})
+        $requiredPackages=@(if($Component -eq 'BookStack'){'snowballstemmer';'httpx';'numpy';'fastmcp'})
         $dependencyHash=if($requirements){(Get-FileHash -LiteralPath $requirements -Algorithm SHA256).Hash.ToLowerInvariant()}else{'stdlib-only'}
         $identity=[ordered]@{component=$Component;bootstrap=[string]$base.executable;bootstrapSha256=(Get-FileHash -LiteralPath $base.executable -Algorithm SHA256).Hash.ToLowerInvariant();version=@($base.version);requirementsSha256=$dependencyHash;requiredPackages=@($requiredPackages)}
         $identityJson=$identity | ConvertTo-Json -Compress
@@ -48,9 +48,9 @@
             if($created.exitCode -ne 0){throw "Source $Component venv preparation failed: $($created.lines -join '; '). Restore bootstrap venv support and repeat the same component test; other environments were not changed."}
         }
         if($Component -eq 'BookStack'){
-            # Source tests fake the model/MCP SDK but exercise these real imports.
+            # The page write transport test runs the real MCP SDK without a model.
             # Constraints stay authoritative in the component requirements file.
-            $selected=@(Get-Content -LiteralPath $requirements -Encoding UTF8 | Where-Object {$_ -match '^(snowballstemmer|httpx|numpy)([<>=!~]|$)'})
+            $selected=@(Get-Content -LiteralPath $requirements -Encoding UTF8 | Where-Object {$_ -match '^(snowballstemmer|httpx|numpy|fastmcp)([<>=!~]|$)'})
             if($selected.Count -ne $requiredPackages.Count){throw 'BookStack source-test dependencies differ from the production requirements. Review its real imports and repeat this component preparation.'}
             $requirements=Join-Path $generation 'source-requirements.txt'
             [IO.File]::WriteAllText($requirements,($selected -join "`n"),[Text.UTF8Encoding]::new($false))
@@ -71,7 +71,7 @@
                 $versionsCode='import sys,importlib.metadata as m; from pip._vendor.packaging.requirements import Requirement; rows=[Requirement(s.strip()) for s in open(sys.argv[1],encoding="utf-8-sig") if s.strip() and not s.lstrip().startswith("#")]; bad=[str(r)+" installed="+m.version(r.name) for r in rows if (not r.marker or r.marker.evaluate()) and not r.specifier.contains(m.version(r.name),prereleases=True)]; assert not bad, "; ".join(bad)'
                 $versions=Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-I','-X','utf8','-c',$versionsCode,$requirements) -TimeoutSec 30
                 if($versions.exitCode -ne 0){throw "Source $Component package versions differ from its requirements: $($versions.lines -join '; '). Repair this component environment and repeat its test."}
-                $importCode=if($Component -eq 'Sppr'){'import fastmcp,mcp,numpy,tzdata'}else{'import snowballstemmer,httpx,numpy'}
+                $importCode=if($Component -eq 'Sppr'){'import fastmcp,mcp,numpy,tzdata'}else{'import fastmcp,snowballstemmer,httpx,numpy'}
                 $imports=Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-I','-X','utf8','-c',$importCode) -TimeoutSec 30
                 if($imports.exitCode -ne 0){throw "Source $Component imports failed: $($imports.lines -join '; '). Repair this component environment and repeat its test."}
             }

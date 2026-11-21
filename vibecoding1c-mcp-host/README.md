@@ -52,7 +52,8 @@ The `bookstack` global server is built locally from `bookstack-product-docs-mcp/
 Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_ID` and
 `BOOKSTACK_TOKEN_SECRET` in `secrets`, and keep `bookstack` in `enabledServers.global`.
 The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `read_page`,
-`list_structure`, `index_status`, and `reindex_docs`.
+`list_structure`, `index_status`, `reindex_docs`, `source_info`, and the on-demand
+[personal page write](../.agents/skills/product-docs/page-write.md). The host read token stays read-only.
 Search defaults to five compact results and exposes `total_matches`, `has_more`, and
 `next_cursor` for bounded pagination. Multi-term FTS requires every term, exact matches stay
 first, confident semantic matches rank ahead of pages where query terms only occur separately,
