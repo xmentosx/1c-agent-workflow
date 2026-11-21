@@ -328,6 +328,15 @@ function Test-PowerShellEncoding {
     }
 }
 
+function Test-ReleaseStandDirtRolledBack {
+    # Only tracked changes are admitted: the runner's reset to the checkpoint's
+    # initial HEAD restores them, while an untracked file would survive it.
+    param([string]$StandWorktree, [AllowEmptyString()][string]$Rollback)
+    if (-not $Rollback) { return $false }
+    $entries = @(Get-RepositoryGitPathList -RepositoryRoot $StandWorktree -Arguments @('status', '--porcelain', '--untracked-files=all', '-z'))
+    return @($entries | Where-Object { ([string]$_).StartsWith('?? ') }).Count -eq 0
+}
+
 function Test-ReleaseCheckpointPreflight {
     param(
         [string]$StandProjectRoot,
@@ -418,6 +427,17 @@ function Test-ReleaseCheckpointPreflight {
         } catch {
             Add-ReadinessIssue -Code 'RELEASE_CHECKPOINT_SUPPORT_INVALID' -Category 'STAND_STALE' -Message $_.Exception.Message -Recovery 'Preserve the checkpoint and its original receipts; repair the exact owned snapshot/state/evidence before continuation.'
         }
+    }
+
+    # Names the runner step that resets the worktree to the checkpoint's initial
+    # HEAD before any stage uses it: Restart and a cross-release promotion always
+    # do, an exact Auto resume does when config-cadence has not passed. Observed
+    # 2026-11-21: a killed config-cadence left ConfigDumpInfo.xml modified and each
+    # resume of that candidate stopped at RELEASE_STAND_DIRTY before the rollback.
+    $record['worktreeRollback'] = ''
+    if ($admission.allowed) {
+        $cadence = Get-E2EAdmissionValue (Get-E2EAdmissionValue $checkpoint 'stages') 'config-cadence'
+        $record['worktreeRollback'] = if ($ResumeMode -eq 'Restart') { 'restart' } elseif ($admission.crossReleaseReuse) { 'cross-release' } elseif ($cadence -and [string](Get-E2EAdmissionValue $cadence 'status' '') -ne 'passed') { 'config-cadence' } else { '' }
     }
 
     $checkpointFixturePath = ""
@@ -680,9 +700,6 @@ if ($Mode -in @("Develop", "Release")) {
                     -Message "Configured E2E worktree is not registered in the configured E2E project's Git repository: $standWorktree" `
                     -Recovery "Point release-e2e.json at an owned disposable Release worktree."
             }
-            if (-not $standClean) {
-                Add-ReadinessIssue -Code "RELEASE_STAND_DIRTY" -Category "STAND_STALE" -Message "Configured E2E worktree has tracked or untracked changes." -Recovery "Use a clean disposable Release branch."
-            }
             foreach ($lockRoot in @($E2EProjectRoot, $standWorktree)) {
                 $lockPath = Join-Path $lockRoot ".agent-1c\dependency-lock.json"
                 $installedLock = Get-JsonFile -Path $lockPath -Code "RELEASE_STAND_LOCK_INVALID" -Label "Installed workflow dependency lock"
@@ -718,6 +735,14 @@ if ($Mode -in @("Develop", "Release")) {
             $actualAiRulesCommit = if ($AiRulesSource -and (Test-Path -LiteralPath $AiRulesSource -PathType Container)) { Get-GitValue -Root $AiRulesSource -Arguments @("rev-parse", "HEAD") } else { "" }
             $actualAiRulesTree = if ($actualAiRulesCommit) { Get-GitValue -Root $AiRulesSource -Arguments @('rev-parse', 'HEAD^{tree}') } else { '' }
             $standRecord.checkpoint = Test-ReleaseCheckpointPreflight -StandProjectRoot $E2EProjectRoot -StandWorktree $standWorktree -DevBranchName $devBranchName -CandidateCommit $commit -CandidateTree $tree -AiRulesCommit $actualAiRulesCommit -AiRulesTree $actualAiRulesTree
+            if (-not $standClean) {
+                $rollback = [string]$standRecord.checkpoint['worktreeRollback']
+                if (Test-ReleaseStandDirtRolledBack -StandWorktree $standWorktree -Rollback $rollback) {
+                    $standRecord['dirtyRollback'] = $rollback
+                } else {
+                    Add-ReadinessIssue -Code "RELEASE_STAND_DIRTY" -Category "STAND_STALE" -Message "Configured E2E worktree has tracked or untracked changes." -Recovery "Use a clean disposable Release branch."
+                }
+            }
             $markerPath = Join-Path $standWorktree 'tests\features\workflow-release-e2e.feature'
             $masterMarkerPath = Join-Path $E2EProjectRoot 'tests\features\workflow-release-e2e.feature'
             if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf) -and

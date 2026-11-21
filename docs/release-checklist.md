@@ -402,7 +402,11 @@ baseline hashes, restores the baseline database and state, and resets only the
 dedicated E2E worktree to the recorded initial commit before beginning a new
 run. A corrupt checkpoint, changed HEAD, damaged evidence/snapshot or different
 project/worktree/branch is refused even for `Restart`; do not edit checkpoint or
-state by hand.
+state by hand. Readiness admits tracked-only worktree changes of an admitted
+checkpoint when the runner resets the worktree to the initial commit before any
+stage uses it: `Restart`, a cross-release promotion, or an exact `Auto` resume
+whose `config-cadence` has not passed (an interrupted dump). Untracked files
+and every other case still stop at `RELEASE_STAND_DIRTY`.
 
 ## Reset and rollback
 

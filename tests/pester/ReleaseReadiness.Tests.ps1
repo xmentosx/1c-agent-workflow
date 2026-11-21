@@ -693,7 +693,7 @@ Describe 'Shared Release early admission' -Tag 'ReleaseAdmissionContract' {
         $tokens = $null; $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/test-release-readiness.ps1'), [ref]$tokens, [ref]$errors)
         if ($errors) { throw 'Readiness owner must parse' }
-        foreach ($name in @('Add-ReadinessIssue', 'Get-JsonFile', 'Get-GitValue', 'Get-FileSha256', 'Test-PathInsideRoot', 'Get-ManagedTextOrBinarySha256', 'Test-ReleaseCheckpointPreflight')) {
+        foreach ($name in @('Add-ReadinessIssue', 'Get-JsonFile', 'Get-GitValue', 'Get-FileSha256', 'Test-PathInsideRoot', 'Get-ManagedTextOrBinarySha256', 'Test-ReleaseStandDirtRolledBack', 'Test-ReleaseCheckpointPreflight')) {
             $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
             . ([scriptblock]::Create($definition.Extent.Text))
         }
@@ -733,10 +733,10 @@ Describe 'Shared Release early admission' -Tag 'ReleaseAdmissionContract' {
             return @{main=$main;worktree=$worktree;run=$run;checkpoint=$checkpoint;checkpointPath=(Join-Path $run 'checkpoint.json');state=$state;envCopy=$envCopy}
         }
         function Invoke-EarlyAdmissionFixture {
-            param($Fixture)
+            param($Fixture, [string]$Mode = 'Auto')
             [IO.File]::WriteAllText($Fixture.checkpointPath, ($Fixture.checkpoint | ConvertTo-Json -Depth 16), [Text.UTF8Encoding]::new($false))
             $script:issues = New-Object 'Collections.Generic.List[object]'
-            $RepositoryRoot=$RepoRoot; $ResumeMode='Auto'; $AgentTarget='codex'
+            $RepositoryRoot=$RepoRoot; $ResumeMode=$Mode; $AgentTarget='codex'
             $before = Get-E2EAdmissionFileSha256 $Fixture.checkpointPath
             $candidateCommit=(Invoke-RepositoryGit $RepoRoot @('rev-parse','HEAD')).stdout.Trim()
             $candidateTree=(Invoke-RepositoryGit $RepoRoot @('rev-parse','HEAD^{tree}')).stdout.Trim()
@@ -771,6 +771,27 @@ Describe 'Shared Release early admission' -Tag 'ReleaseAdmissionContract' {
         $second=Invoke-EarlyAdmissionFixture $fixture
         $second.record.transition.allowed | Should -BeFalse
         @($second.issues.code) | Should -Contain 'RELEASE_CHECKPOINT_HEAD_MISMATCH'
+    }
+
+    It 'admits tracked stand changes only when the runner resets the worktree before a stage uses it' {
+        # 2026-11-21: a killed config-cadence left ConfigDumpInfo.xml modified on the
+        # exact checkpoint HEAD; every resume of that candidate stopped at
+        # RELEASE_STAND_DIRTY although the runner restores that stage's baseline first.
+        $fixture=New-EarlyAdmissionFixture (Join-Path $TestDrive 'Прерванный config-cadence')
+        $fixture.checkpoint.stages['config-cadence']=@{status='running';fingerprint='current'}
+        $interrupted=Invoke-EarlyAdmissionFixture $fixture
+        $interrupted.record.transition.allowed | Should -BeTrue
+        $interrupted.record.exactIdentity | Should -BeTrue
+        $interrupted.record.worktreeRollback | Should -BeExactly 'config-cadence'
+        (Invoke-EarlyAdmissionFixture $fixture -Mode Restart).record.worktreeRollback | Should -BeExactly 'restart'
+        $fixture.checkpoint.stages['config-cadence']=@{status='passed';fingerprint='current'}
+        (Invoke-EarlyAdmissionFixture $fixture).record.worktreeRollback | Should -BeExactly ''
+
+        [IO.File]::AppendAllText((Join-Path $fixture.worktree '.gitignore'), "# прерванная выгрузка`n", [Text.UTF8Encoding]::new($false))
+        Test-ReleaseStandDirtRolledBack -StandWorktree $fixture.worktree -Rollback 'config-cadence' | Should -BeTrue
+        Test-ReleaseStandDirtRolledBack -StandWorktree $fixture.worktree -Rollback '' | Should -BeFalse
+        [IO.File]::WriteAllText((Join-Path $fixture.worktree 'Лишний файл.xml'), 'untracked', [Text.UTF8Encoding]::new($false))
+        Test-ReleaseStandDirtRolledBack -StandWorktree $fixture.worktree -Rollback 'config-cadence' | Should -BeFalse
     }
 
     It 'reports rerun when HEAD is valid but source continuation proof is absent' {
