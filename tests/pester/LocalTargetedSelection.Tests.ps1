@@ -415,6 +415,17 @@ Describe "Local quality gate contract" {
         $rejected.combinedText.Contains($unknownPath) | Should -BeTrue -Because 'the UTF-8 child boundary must retain the exact whitespace-and-Cyrillic path in its diagnostic'
     }
 
+    It "selects the text-assertion policy for a changed test file and keeps an exactly listed test direct-only" {
+        # 2026-11-21: five queue entries added prose assertions; no registration
+        # selected the policy, so the published-develop candidate failed it.
+        $resolver = Join-Path $RepoRoot "scripts\resolve-targeted-tests.ps1"
+        $run = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @("-RepositoryRoot", $RepoRoot, "-ChangedPath", "tests/pester/PowerShellEncodingOutput.Tests.ps1")
+        $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
+        $selection = ($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+        @($selection.contracts.id) | Should -Be @("text-assertion-policy")
+        @($selection.tests) | Should -Be @("tests/pester/PowerShellEncodingOutput.Tests.ps1", "tests/pester/TextAssertionPolicy.Tests.ps1")
+    }
+
     It "falls back for a deleted or exactly renamed semantic entrypoint without reading a missing file" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl semantic rename путь " + [guid]::NewGuid().ToString("N"))
         $entrypoint = ".agents/skills/1c-workflow/scripts/agent-1c.ps1"

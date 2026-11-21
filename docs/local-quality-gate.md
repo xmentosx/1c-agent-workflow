@@ -374,7 +374,10 @@ action names or anchors for documentation contracts. If a behavior-preserving
 refactor breaks a text assertion, replace it with an executable or derived check.
 `TextAssertionPolicy.Tests.ps1` counts `Should -Match` patterns of four or more
 words in changed test files at the merge base with published develop and now;
-a change may not add them on net. Moving one between files is neutral, and no
+a change may not add them on net; upper-case error codes are identifiers and
+never count. A changed test file selects the policy in `Targeted`: a contract
+whose wildcard path observes test files is selected beside the file itself, and
+an exactly listed test file stays direct-only. Moving one between files is neutral, and no
 shared recorded count exists that parallel queue entries could make stale. It is a Pester
 preflight file: it runs before costly files start, so a violation stops
 registration within seconds and the retry reuses every already passed file.

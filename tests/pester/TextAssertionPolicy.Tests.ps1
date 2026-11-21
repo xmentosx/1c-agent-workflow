@@ -8,7 +8,8 @@
     # `PublishDevelop` or `docs/x.md` are stable contracts and are not counted.
     function Get-TextAssertionWordCount {
         param([string]$Pattern)
-        $plain = $Pattern -replace '`[^`]*`', ' ' -replace '\S*[/\\]\S*[/\\.]\S*', ' ' -replace '[\w.-]+\.(md|ps1|psm1|json|ya?ml|txt|xml|cs|go|py)\b', ' ' -replace '\\.', ' '
+        # Error codes such as WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH are identifiers, not prose.
+        $plain = $Pattern -creplace '\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b', ' ' -replace '`[^`]*`', ' ' -replace '\S*[/\\]\S*[/\\.]\S*', ' ' -replace '[\w.-]+\.(md|ps1|psm1|json|ya?ml|txt|xml|cs|go|py)\b', ' ' -replace '\\.', ' '
         return [regex]::Matches($plain, '[A-Za-zА-Яа-яЁё]{3,}').Count
     }
 
@@ -124,6 +125,7 @@ $text | Should -Match 'scripts/source-delivery.ps1 -Action PublishDevelop'
 $text | Should -Match 'tests/pester/beta\.Tests\.ps1 reported failed'
 $text | Should -Not -Match 'never keep any obsolete legacy wording'
 $text | Should -Match 'Публикуй только по просьбе пользователя'
+$text | Should -Match 'WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH'
 '@, [Text.UTF8Encoding]::new($true))
         @(Get-WordingAssertions -Path $fixture) | Should -Be @(
             'Publish only when the user asks',
