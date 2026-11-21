@@ -371,8 +371,9 @@
             @(@($result.report.errors)[2].branchChangedObjects) | Should -Be @('ОбщийМодуль.ТестПоддержкаЗаписатьПланыКак')
             $result.report.relationBase | Should -BeExactly $master
             $result.report.relationFailure | Should -BeExactly ''
-            $result.failed.reason | Should -Match ([regex]::Escape('Before this check started: 2; stack reaches lines the branch changed: 2; only objects the branch changed: 1'))
-            $result.failed.reason | Should -Match 'Decide each error yourself without waiting for the user'
+            # The summary names the report fields that carry these facts; their values are asserted above.
+            $result.failed.reason | Should -Match ([regex]::Escape('origin, relation'))
+            $result.failed.reason | Should -Match ([regex]::Escape([string]$result.failed.reportPath))
             @([regex]::Matches([string]$result.failed.reason, '-Action (\S+)') | ForEach-Object { $_.Groups[1].Value }) | Should -Contain 'acknowledge-event-log-errors'
             $entry = @($result.state.eventLogAcknowledgements)[0]
             $entry.reason | Should -BeExactly 'Строка 3060 не менялась веткой: ожидаемый отказ теста'
@@ -401,7 +402,7 @@
             }
             $result.failed.status | Should -Be 'failed'
             $result.failed.newErrorCount | Should -Be 3
-            $result.failed.reason | Should -Match 'Origin and branch relation are unavailable'
+            $result.failed.reason | Should -Match ([regex]::Escape([string]$result.report.relationFailure))
             $result.report.relationFailure | Should -Not -BeNullOrEmpty
             @($result.report.errors | Where-Object { $null -ne $_.PSObject.Properties['relation'] }) | Should -HaveCount 0
         } finally {
