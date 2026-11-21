@@ -34,6 +34,20 @@ and the next action. The failed call has already stopped the owned backend, so
 its result store is gone: a modifying call needs a read-only state probe before
 any retry. Without a caller `progressToken` no progress is requested.
 
+A transport failure without an answer (for example HTTP 504) keeps the same
+code with the same `callOutcome: unknown`, `partialEffectsPossible` and next
+action, plus `backendStopped: true`: the next call starts a fresh backend, so
+`itl_recover_connection` is not needed.
+
+ROCTUP answers a rejected `execute_code` as an ordinary result
+`{"success":false,"dangerous_keywords":[...]}` when a dangerous keyword is not
+auto-allowed by the branch profile (`ROCTUP_DATA_CHANGES=auto`, or no desktop
+for the confirm dialog). The facade returns it as
+`ITL_ROCTUP_DANGEROUS_KEYWORDS_REJECTED` with `callOutcome: not-started`, the
+keywords, `action: route-code-through-vanessa-code-step` and that route in the
+text, and keeps the backend. A user's refusal in the dialog has no keyword list
+and is returned unchanged.
+
 A Vanessa `ACTION_FAILED` that names a disconnected TestClient returns
 `ITL_VANESSA_TESTCLIENT_NOT_CONNECTED` with `action: itl_recover_connection`;
 the facade does not recover or replay it automatically.

@@ -328,44 +328,70 @@
         $result | Should -BeFalse
     }
 
-    It "starts ROCTUP with explicit write-confirmation keys that ask only where a desktop can answer" {
+    It "starts ROCTUP with explicit dangerous-keyword keys: auto by default, per-call dialog only in confirm mode with a desktop" {
         $root = Join-Path $TestDrive 'ROCTUP запуск с пробелом'
         New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
         Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
-        $commands = & {
-            . $HelperPath -ProjectRoot $root -Action help *> $null
-            $state = [pscustomobject]@{ devBranchInfoBasePath = $root; infoBaseKind = 'file' }
-            $artifact = Join-Path $root 'MCP_Toolkit.epf'
-            $watchStarts = [Collections.Generic.List[int]]::new()
-            function Test-ItlInteractiveDesktopSession { $desktop }
-            function Start-EnterpriseBackground {
-                param($InfoBasePath, $InfoBaseKind, $User, $Password, $EnterpriseArgs)
-                [pscustomobject]@{ arguments = $EnterpriseArgs; windowMode = $mode; process = [Diagnostics.Process]::GetCurrentProcess() }
+        $oldMode = [Environment]::GetEnvironmentVariable('ROCTUP_DATA_CHANGES', 'Process')
+        $oldPrefixedMode = [Environment]::GetEnvironmentVariable('AGENT_1C_ROCTUP_DATA_CHANGES', 'Process')
+        try {
+            [Environment]::SetEnvironmentVariable('AGENT_1C_ROCTUP_DATA_CHANGES', $null, 'Process')
+            $commands = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $state = [pscustomobject]@{ devBranchInfoBasePath = $root; infoBaseKind = 'file' }
+                $artifact = Join-Path $root 'MCP_Toolkit.epf'
+                $watchStarts = [Collections.Generic.List[int]]::new()
+                function Test-ItlInteractiveDesktopSession { $desktop }
+                function Start-EnterpriseBackground {
+                    param($InfoBasePath, $InfoBaseKind, $User, $Password, $EnterpriseArgs)
+                    [pscustomobject]@{ arguments = $EnterpriseArgs; windowMode = $mode; process = [Diagnostics.Process]::GetCurrentProcess() }
+                }
+                function Start-ItlOneCMainFrameWatch {
+                    param([Diagnostics.Process]$Process)
+                    $watchStarts.Add($Process.Id)
+                    [Diagnostics.Process]::new()
+                }
+                $result = [ordered]@{}
+                foreach ($dataChanges in @($null, 'confirm')) {
+                    [Environment]::SetEnvironmentVariable('ROCTUP_DATA_CHANGES', $dataChanges, 'Process')
+                    $key = $(if ($dataChanges) { $dataChanges } else { 'default' })
+                    $desktop = $true
+                    $mode = 'hidden'
+                    $result["$key-interactive"] = (Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact -Port 6003).arguments
+                    $mode = 'visible'
+                    $result["$key-visible"] = (Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact -Port 6003).arguments
+                    $desktop = $false
+                    $mode = 'hidden'
+                    $result["$key-service"] = (Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact -Port 6003).arguments
+                }
+                [Environment]::SetEnvironmentVariable('ROCTUP_DATA_CHANGES', ' AUTO ', 'Process')
+                $result['explicit-auto'] = Get-RoctupMcpStartupCommand -Port 6003
+                [Environment]::SetEnvironmentVariable('ROCTUP_DATA_CHANGES', 'ask', 'Process')
+                $result['invalid'] = try { Get-RoctupMcpStartupCommand -Port 6003 } catch { $_.Exception.Message }
+                $result['watchStarts'] = $watchStarts.ToArray()
+                [pscustomobject]$result
             }
-            function Start-ItlOneCMainFrameWatch {
-                param([Diagnostics.Process]$Process)
-                $watchStarts.Add($Process.Id)
-                [Diagnostics.Process]::new()
-            }
-            $desktop = $true
-            $mode = 'hidden'
-            $interactive = (Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact -Port 6003).arguments
-            $mode = 'visible'
-            $visible = (Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact -Port 6003).arguments
-            $desktop = $false
-            $mode = 'hidden'
-            $service = (Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact -Port 6003).arguments
-            [pscustomobject]@{ interactive = $interactive; visible = $visible; service = $service; watchStarts = $watchStarts.ToArray() }
+        } finally {
+            [Environment]::SetEnvironmentVariable('ROCTUP_DATA_CHANGES', $oldMode, 'Process')
+            [Environment]::SetEnvironmentVariable('AGENT_1C_ROCTUP_DATA_CHANGES', $oldPrefixedMode, 'Process')
         }
         # Omitted danger_* keys fall back to the processing's saved settings, so
-        # every key is explicit; nothing is auto-allowed.
-        $commands.interactive[0] | Should -BeExactly '/Execute'
-        $commands.interactive[1] | Should -BeExactly (Join-Path $root 'MCP_Toolkit.epf')
-        $commands.interactive[2] | Should -BeExactly '/Cstartup;mode=embedded;port=6003;danger_confirm=true;danger_auto_write=false;danger_auto_priv=false'
-        $commands.visible[2] | Should -BeExactly $commands.interactive[2]
-        $commands.service[2] | Should -BeExactly '/Cstartup;mode=embedded;port=6003;danger_confirm=false;danger_auto_write=false;danger_auto_priv=false'
-        $commands.watchStarts | Should -HaveCount 1
-        $commands.watchStarts[0] | Should -Be $PID
+        # every key is explicit. The default auto mode never opens a dialog:
+        # Записать and privileged mode run, any other keyword is rejected at once.
+        $auto = '/Cstartup;mode=embedded;port=6003;danger_confirm=false;danger_auto_write=true;danger_auto_priv=true'
+        $commands.'default-interactive'[0] | Should -BeExactly '/Execute'
+        $commands.'default-interactive'[1] | Should -BeExactly (Join-Path $root 'MCP_Toolkit.epf')
+        $commands.'default-interactive'[2] | Should -BeExactly $auto
+        $commands.'default-visible'[2] | Should -BeExactly $auto
+        $commands.'default-service'[2] | Should -BeExactly $auto
+        $commands.'explicit-auto' | Should -BeExactly $auto.Substring(2)
+        # confirm keeps the per-call dialog only where a desktop can answer it.
+        $commands.'confirm-interactive'[2] | Should -BeExactly '/Cstartup;mode=embedded;port=6003;danger_confirm=true;danger_auto_write=false;danger_auto_priv=false'
+        $commands.'confirm-visible'[2] | Should -BeExactly $commands.'confirm-interactive'[2]
+        $commands.'confirm-service'[2] | Should -BeExactly '/Cstartup;mode=embedded;port=6003;danger_confirm=false;danger_auto_write=false;danger_auto_priv=false'
+        $commands.invalid | Should -Match '^ITL_ROCTUP_DATA_CHANGES_INVALID: .*''ask'''
+        $commands.watchStarts | Should -HaveCount 2
+        $commands.watchStarts | ForEach-Object { $_ | Should -Be $PID }
         $ondemandText = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1') -Raw -Encoding UTF8
         $ondemandText | Should -Match ([regex]::Escape('Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact.path -Port $port'))
         $ondemandText | Should -Not -Match 'startup;mode=embedded'
@@ -396,7 +422,7 @@
         $HelperText | Should -Match "VAExtension"
 
         $devEnvTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")
-        foreach ($name in @("ROCTUP_MCP_ENABLED=true", "ROCTUP_MCP_REQUIRED=false", "ROCTUP_MCP_INSTALL_ROOT=.agent-1c/tools/roctup-mcp-toolkit", "ROCTUP_MCP_PORT_RANGE=6003..6102")) {
+        foreach ($name in @("ROCTUP_MCP_ENABLED=true", "ROCTUP_MCP_REQUIRED=false", "ROCTUP_MCP_INSTALL_ROOT=.agent-1c/tools/roctup-mcp-toolkit", "ROCTUP_MCP_PORT_RANGE=6003..6102", "ROCTUP_DATA_CHANGES=auto")) {
             $devEnvTemplate | Should -Match ([regex]::Escape($name))
         }
         # Branch MCP servers start on demand; no code reads an auto-start key.
@@ -458,7 +484,14 @@
         $skillText | Should -Match "call_tool"
         $skillText | Should -Match "TOOL_DATA"
         $skillText | Should -Match "read access alone is not permission to load a configuration"
-        $skillText | Should -Match "explicit-request restriction above still applies"
+        # Data changes inside the branch infobase need no per-operation request;
+        # a ROCTUP rejection has a dialog-free continuation in the Vanessa skill.
+        $skillText | Should -Not -Match "explicitly requests that exact operation"
+        $skillText | Should -Match "ROCTUP_DATA_CHANGES=auto"
+        $skillText | Should -Match "ITL_ROCTUP_DANGEROUS_KEYWORDS_REJECTED"
+        $vanessaSkillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")
+        $vanessaSkillText | Should -Match "ITL_ROCTUP_DANGEROUS_KEYWORDS_REJECTED"
+        $vanessaSkillText | Should -Match ([regex]::Escape('(Расширение)'))
     }
 
     It "wires vibecoding1c MCP actions, scopes, ports, registry, selection, and client config" {

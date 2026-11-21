@@ -356,7 +356,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		if phaseDeadlineExceeded(ctx, err) {
 			return phaseDeadlineFailure(toolName, err, route, !isIdempotentTool(r.family, tool)), nil
 		}
-		return toolError("ITL_ONDEMAND_BACKEND_CALL_FAILED", err.Error(), nil), nil
+		return backendCallFailure(toolName, err, !isIdempotentTool(r.family, tool)), nil
 	}
 	if result == nil {
 		return toolError("ITL_ONDEMAND_EMPTY_RESULT", "backend returned no tool result", nil), nil
@@ -643,6 +643,7 @@ func (r *runtime) callUpstream(ctx context.Context, session *mcp.ClientSession, 
 			return result, err
 		}
 		result = r.validateVanessaResult(ctx, params.Name, params.Arguments, result, session)
+		result = roctupDangerousKeywordRejection(r.family, params.Name, result)
 		if params.Name == "close_test_client" && result != nil && !result.IsError {
 			if owner, ok := r.broker.(testClientCloseBroker); ok {
 				if err := owner.CompleteTestClientClose(ctx, r.backend); err != nil {
