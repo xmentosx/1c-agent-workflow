@@ -190,6 +190,7 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `ROCTUP_MCP_REQUIRED` | Блокировать без MCP | default `false` | user |
 | `ROCTUP_MCP_INSTALL_ROOT` | Явный пользовательский каталог; managed default адресуется через immutable-кэш | default `.agent-1c/tools/roctup-mcp-toolkit` как логический managed marker | helper/user |
 | `ROCTUP_MCP_PORT_RANGE` | Диапазон портов | default `6003..6102` | user |
+| `ROCTUP_DATA_CHANGES` | Изменение данных через `execute_code` в ИБ ветки: `auto` выполняет `Записать` и привилегированный режим без окна, остальные опасные слова сразу отклоняет; `confirm` спрашивает в окне ROCTUP на каждый вызов | `auto`, `confirm`; default `auto` | user |
 | `ROCTUP_MCP_TOOLKIT_EPF` | Точный путь к toolkit EPF в immutable user-local cache (или явный пользовательский путь) | определяется helper | helper |
 | `ROCTUP_MCP_VERSION` | Установленная версия | определяется helper | helper |
 | `ROCTUP_MCP_SHA256` | SHA256 toolkit | определяется helper | helper |

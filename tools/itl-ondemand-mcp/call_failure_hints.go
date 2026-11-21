@@ -81,6 +81,28 @@ func phaseDeadlineFailure(toolName string, err error, route *progressRoute, muta
 	return toolError("ITL_ONDEMAND_BACKEND_CALL_FAILED", message, details)
 }
 
+// The backend failed without an answer (for example a transport 504) and the
+// facade has already stopped it in owned cleanup. Recovery is automatic on the
+// next call, so the only open question is what a modifying call applied.
+func backendCallFailure(toolName string, err error, mutating bool) *mcp.CallToolResult {
+	details := map[string]any{
+		"callOutcome": "unknown", "reason": "backend-call-failed", "tool": toolName,
+		"partialEffectsPossible": mutating, "automaticRetryPerformed": false,
+		"backendStopped": true, "backendResultsRetained": false,
+	}
+	message := err.Error() + "; call outcome unknown: the backend gave no answer" +
+		"; the facade stopped the owned backend and the next call starts a fresh one without " + ownerRecoveryTool
+	if mutating {
+		details["action"] = "probe-state-read-only-before-retry"
+		message += "; the operation may be fully, partially or not applied" +
+			"; probe the affected state read-only before any retry and repeat only what is missing"
+	} else {
+		details["action"] = "retry-tool-call"
+		message += "; the tool is read-only, so a retry is safe"
+	}
+	return toolError("ITL_ONDEMAND_BACKEND_CALL_FAILED", message, details)
+}
+
 func describeProgress(last *progressSnapshot) string {
 	text := "step " + formatProgressNumber(last.Progress)
 	if last.Total > 0 {

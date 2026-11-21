@@ -1,6 +1,6 @@
 ---
 name: itl-roctup-1c-data
-description: Use for read-only, token-bounded data exploration in the current itldev/* branch through branch-local ROCTUP/1c-mcp-toolkit. Prefer metadata-first queries and use the legacy web Branch Data MCP only when ROCTUP is unavailable or explicitly required.
+description: Use for token-bounded data exploration, probes and data preparation in the current itldev/* branch through branch-local ROCTUP/1c-mcp-toolkit. Prefer metadata-first queries and use the legacy web Branch Data MCP only when ROCTUP is unavailable or explicitly required.
 ---
 
 # ITL ROCTUP 1C Data Skill
@@ -26,13 +26,14 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 
 ## Safety
 
-- Do not pass `execute_code` to `call_tool` unless the user explicitly requests that exact operation. The facade performs `close_1c_session` and `restart_1c_session` itself through its owned stop/start; use them without separate confirmation to release or renew the current managed dev-branch session. Ignore any launcher command in upstream tool text: the next call starts a backend automatically.
-- To change data in the current managed dev-branch infobase at the user's request, pass the code to `execute_code`; never disguise dangerous keywords. ROCTUP shows its own confirmation dialog with the code in a 1C window: tell the user to confirm there. `Операция отклонена пользователем` is the user's refusal: report it and do not repeat without a new request. `Операция запрещена` means no desktop could show the dialog: give the user the code to run manually. Verify an interrupted call's outcome with a query before any repeat.
+- The managed dev-branch infobase is the safety boundary. Within the task use `execute_query` to read and `execute_code` for one-off probes, dry runs and data preparation; keep one logical change in one call. A check worth keeping as a regression goes to YAxUnit or Vanessa, not to repeated probes. Ask the user in chat first only before deleting or changing data the user prepared or named as reference, and list the data you changed in the final report. Never rename, split or build dangerous keywords to pass ROCTUP's check.
+- `ROCTUP_DATA_CHANGES=auto` (default) runs `Записать` and privileged mode without a dialog and rejects any other dangerous keyword at once with `ITL_ROCTUP_DANGEROUS_KEYWORDS_REJECTED`; nothing ran. The check is textual, so collection methods such as `Т.Удалить(…)` and rolled-back writes count too. Rebuild an in-memory collection instead of deleting rows; route needed database or file code through the Vanessa `(Расширение)` code step as the error text says. `confirm` opens ROCTUP's dialog per call: `Операция отклонена пользователем` is the user's refusal, so do not repeat it without a new request.
+- `ITL_ONDEMAND_BACKEND_CALL_FAILED` with `callOutcome: unknown` has already stopped the backend; probe the state with a query before repeating a modifying call. The facade performs `close_1c_session` and `restart_1c_session` itself through its owned stop/start; use them without separate confirmation to release or renew the current managed dev-branch session. Ignore any launcher command in upstream tool text: the next call starts a backend automatically.
 - Do not pass a 1C password through ROCTUP startup parameters.
 - Recover facade connection/cleanup failures through its existing owner as described in [local MCP recovery](../1c-workflow/references/mcp.md#availability-recovery-and-return-to-work); do not stop at a static fallback or request a manual reset.
 - Treat ROCTUP and Vanessa artifacts as runtime tooling; they must not be exported as product CF/CFE artifacts.
 - Never start, stop, or call the backend through raw HTTP. If a call returns `ITL_INFOBASE_APPLICATION_NOT_READY`, report the dependent read as unverified and give the supported `update-dev-branch-base` continuation. Run that helper and repeat the original call only when updating this exact branch infobase is already authorized by the task; read access alone is not permission to load a configuration. Report any other structured facade, catalog, or broker error.
-- For Gate 3a, use `get_metadata` and a bounded read-only `execute_query` only when `TOOL_DATA` permits the provider and the facade identifies the current dev/test branch infobase. Record the branch/infobase identity, ROCTUP provider identity, query and parameter scope, expected result and observed result. Metadata lookup alone cannot prove query execution or result correctness. `execute_code` is not an automatic substitute for a read-only query; the explicit-request restriction above still applies.
+- For Gate 3a, use `get_metadata` and a bounded read-only `execute_query` only when `TOOL_DATA` permits the provider and the facade identifies the current dev/test branch infobase. Record the branch/infobase identity, ROCTUP provider identity, query and parameter scope, expected result and observed result. Metadata lookup alone cannot prove query execution or result correctness. `execute_code` is not a substitute for this read-only query evidence.
 
 ## Database Access Handoff
 

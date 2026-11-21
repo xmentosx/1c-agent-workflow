@@ -136,13 +136,28 @@ function Test-ItlInteractiveDesktopSession {
     try { return [Environment]::UserInteractive -and [Diagnostics.Process]::GetCurrentProcess().SessionId -ne 0 } catch { return $false }
 }
 
+function Get-RoctupDataChangeMode {
+    $mode = ([string](Get-EnvValue -Name 'ROCTUP_DATA_CHANGES' -Default 'auto')).Trim().ToLowerInvariant()
+    if ($mode -ne 'auto' -and $mode -ne 'confirm') {
+        throw "ITL_ROCTUP_DATA_CHANGES_INVALID: ROCTUP_DATA_CHANGES must be 'auto' or 'confirm', found '$mode'. Fix .dev.env and repeat the call."
+    }
+    return $mode
+}
+
 function Get-RoctupMcpStartupCommand {
     param([int]$Port)
-    # ROCTUP asks the user in its own visible dialog before code with a
-    # dangerous keyword (Записать, Удалить, ...) runs; nothing is allowed
-    # automatically. Every key is explicit because an omitted one falls back to
-    # the processing's saved settings. Without a desktop the backend rejects
-    # such code at once instead of waiting for the call budget.
+    # ROCTUP checks execute_code for dangerous keywords: it first runs code
+    # whose every keyword is auto-allowed, then asks in a visible dialog when
+    # danger_confirm=true, otherwise rejects at once with dangerous_keywords.
+    # Every key is explicit because an omitted one falls back to the
+    # processing's saved settings. The managed branch infobase is the safety
+    # boundary, so 'auto' runs Записать and privileged mode without a dialog
+    # and rejects everything else at once; the agent routes that code through
+    # the Vanessa code step instead. 'confirm' keeps the per-call dialog; a
+    # session without a desktop still rejects at once.
+    if ((Get-RoctupDataChangeMode) -eq 'auto') {
+        return "startup;mode=embedded;port=$Port;danger_confirm=false;danger_auto_write=true;danger_auto_priv=true"
+    }
     $confirm = $(if (Test-ItlInteractiveDesktopSession) { 'true' } else { 'false' })
     return "startup;mode=embedded;port=$Port;danger_confirm=$confirm;danger_auto_write=false;danger_auto_priv=false"
 }
