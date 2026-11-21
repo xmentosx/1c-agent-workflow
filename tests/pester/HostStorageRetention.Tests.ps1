@@ -155,9 +155,10 @@ Describe 'MCP storage owner retention' {
         function Invoke-McpStorageRetirement {param($Config,$Settings,$Record);return 0}
         function Add-McpStorageLegacyAdoptions {param($Config,$Record);return 0}
         function Invoke-McpStorageContainerRetirement {param($Config,$Settings,$Record);$script:OnlineCollections++;return @{removed=0}}
+        function Invoke-McpStorageDockerDataRetirement {param($Config,$Settings,$Record);$script:OnlineCollections++;return @{}}
         function Invoke-McpStorageVhdCompaction {throw 'must not stop independent owners'}
         Invoke-McpHostStorageMaintenance @{stateRoot=$TestDrive;storageRetention=@{enabled=$true;compactEnabled=$true}} -OnlineOnly
-        $script:OnlineCollections|Should -Be 2
+        $script:OnlineCollections|Should -Be 3
         $script:OnlineRecord.Contains('lastCleanupAt')|Should -BeTrue
     }
 
@@ -298,14 +299,16 @@ Describe 'MCP storage owner retention' {
             (New-StoppedFixture 'itl-proj-main' '' 'running' 'proj' $true),
             (New-StoppedFixture 'foreign-db' '2026-09-01T00:00:00Z'),
             (New-StoppedFixture 'itl-never-started' '0001-01-01T00:00:00Z' 'created' -Created '2026-09-01T00:00:00Z'),
-            (New-StoppedFixture 'itl-nano' '2026-10-02T16:39:42.123456789Z'))
+            (New-StoppedFixture 'itl-nano' '2026-10-02T16:39:42.123456789Z'),
+            (New-StoppedFixture 'itl-current' '2026-10-01T00:00:00Z'))
         $record=@{accepted=@(@{status='accepted';retiredName='itl-accepted-old';retiredContainers=@()},@{status='retired';retiredName='itl-old-exp'})}
         function Read-HostState {param($Config);return @{servers=@(@{containerName='itl-current-x'})}}
         function Get-McpStorageContainers {param([string[]]$Ids);if($PSBoundParameters.ContainsKey('Ids')){return @($script:Fresh|Where-Object {$_.id -in $Ids})};return $script:Inventory}
         $plan=@(Get-McpStorageContainerRetirementPlan $cfg (Get-McpStorageSettings @{}) $record ([datetime]'2026-11-21T12:00:00Z'))
         $reasons=@{};foreach($item in $plan){$reasons[$item.name]=$item.reason}
-        $reasons.Count|Should -Be 8
-        @($reasons.Keys|Where-Object {$reasons[$_] -eq 'eligible'}|Sort-Object)|Should -Be @('itl-nano','itl-never-started','itl-old-exp')
+        $reasons.Count|Should -Be 9
+        # A shorter old name inside a current name is not a reference to it.
+        @($reasons.Keys|Where-Object {$reasons[$_] -eq 'eligible'}|Sort-Object)|Should -Be @('itl-current','itl-nano','itl-never-started','itl-old-exp')
         $reasons['itl-recent']|Should -Be 'minimum-age'
         $reasons['itl-current-x']|Should -Be 'current'
         $reasons['itl-snap-old']|Should -Be 'retained-snapshot'
@@ -323,13 +326,107 @@ Describe 'MCP storage owner retention' {
             $script:Removed+=$Arguments[1]
         }
         $result=Invoke-McpStorageContainerRetirement $cfg (Get-McpStorageSettings @{}) $record
-        $script:Removed|Should -Be @('itl-old-exp-id')
-        $result.candidates|Should -Be 3
-        $result.removed|Should -Be 1
+        $script:Removed|Should -Be @('itl-old-exp-id','itl-current-id')
+        $result.candidates|Should -Be 4
+        $result.removed|Should -Be 2
         $result.failed|Should -Be 1
 
         New-Item -ItemType Directory -Path (Join-Path $cfg.stateRoot ('snapshots/cutover-'+('8'*32)))|Out-Null
         @(Get-McpStorageContainerRetirementPlan $cfg (Get-McpStorageSettings @{}) $record ([datetime]'2026-11-21T12:00:00Z')).Count|Should -Be 0
+    }
+
+    It 'parses real inspect rows into individual mounts and labels with separators in values' {
+        function Invoke-McpStorageDocker {
+            param($Arguments,$TimeoutSec)
+            if($Arguments[0] -eq 'ps'){return @('c'*64)}
+            return '"'+('c'*64)+'"|"/itl-run"|"sha256:used"|true|"running"|"0001-01-01T00:00:00Z"|"2026-10-01T00:00:00.123456789Z"|[{"Type":"volume","Name":"vol-one","Destination":"/a"},{"Type":"bind","Source":"E:\\data","Destination":"/b"}]|{"com.docker.compose.project":"proj","note":"a|b"}'
+        }
+        $container=@(Get-McpStorageContainers)
+        $container.Count|Should -Be 1
+        $container[0].name|Should -Be 'itl-run'
+        @($container[0].mounts).Count|Should -Be 2
+        @($container[0].mounts|Where-Object {$_.Type -eq 'volume'})[0].Name|Should -Be 'vol-one'
+        $container[0].composeProject|Should -Be 'proj'
+        (ConvertFrom-McpStorageDockerTime $container[0].createdAt).Ticks|Should -Be ([datetime]::Parse('2026-10-01T00:00:00.1234567Z').ToUniversalTime().Ticks)
+    }
+
+    It 'removes only unmounted volumes and itl images that no owner names, needs or builds on' {
+        $cfg=@{stateRoot=(Join-Path $TestDrive ('docker data '+[char]0x0418+' Unicode'));toolsListProxy=@{image='itl/proxy:1'}}
+        $snapshot=Join-Path $cfg.stateRoot ('snapshots/cutover-'+('7'*32))
+        New-Item -ItemType Directory -Path $snapshot -Force|Out-Null
+        Write-JsonFile (Join-Path $snapshot 'snapshot.json') @{oldContainer='itl-gone';image='itl/snap:1';complete=$true;records=@(@{type='volume';source='itl-snap-vol'})}
+        $compose=Join-Path $cfg.stateRoot 'configs/pm5/runtime/itl-pm5-graph/docker-compose.yml'
+        New-Item -ItemType Directory -Path (Split-Path $compose) -Force|Out-Null
+        Write-Text $compose "services:`n  graph:`n    image: itl/compose:1`n    volumes:`n      - itl-compose-vol:/data`nvolumes:`n  itl-compose-vol: {}`n"
+        $old='2026-10-01T00:00:00Z';$recent='2026-11-20T00:00:00Z'
+        $anonymous=@('a','b','c'|ForEach-Object {$_*64})
+        function Read-HostState {param($Config);return @{servers=@()}}
+        function Get-McpStorageContainers {return @([pscustomobject]@{id='run-id';name='itl-run';image='sha256:used';running=$true;mounts=@(@{Type='volume';Name=$anonymous[2]})})}
+        $script:Volumes=@(
+            [pscustomobject]@{name=$anonymous[0];driver='local';createdAt=$old},
+            [pscustomobject]@{name=$anonymous[1];driver='local';createdAt=$recent},
+            [pscustomobject]@{name=$anonymous[2];driver='local';createdAt=$old},
+            [pscustomobject]@{name='itl-exp-data';driver='local';createdAt='2026-10-21T10:00:00+03:00'},
+            [pscustomobject]@{name='itl-new-data';driver='local';createdAt=$recent},
+            [pscustomobject]@{name='itl-snap-vol';driver='local';createdAt=$old},
+            [pscustomobject]@{name='itl-compose-vol';driver='local';createdAt=$old},
+            [pscustomobject]@{name='itl-nfs';driver='nfs';createdAt=$old},
+            [pscustomobject]@{name='other-vol';driver='local';createdAt=$old})
+        function Get-McpStorageVolumes {return $script:Volumes}
+        function New-ImageFixture {param([string]$Id,[string[]]$Tags=@(),[string[]]$Layers=@('x'),[string]$Created='2026-10-01T00:00:00Z',[string[]]$Digests=@());return [pscustomobject]@{id=$Id;createdAt=$Created;tags=@($Tags);digests=@($Digests);layers=@($Layers)}}
+        $script:Images=@(
+            (New-ImageFixture 'sha256:used' @('itl/run:1') @('l1','l2','l3')),
+            (New-ImageFixture 'sha256:base' @('itl/g3-base:1') @('l1','l2')),
+            (New-ImageFixture 'sha256:dangling'),
+            (New-ImageFixture 'sha256:old' @('itl/old:1','itl/old:2')),
+            (New-ImageFixture 'sha256:recent' @('itl/recent:1') -Created '2026-11-20T00:00:00Z'),
+            (New-ImageFixture 'sha256:snap' @('itl/snap:1')),
+            (New-ImageFixture 'sha256:proxy' @('itl/proxy:1')),
+            (New-ImageFixture 'sha256:compose' @('itl/compose:1')),
+            (New-ImageFixture 'sha256:node' @('node:22-alpine')),
+            (New-ImageFixture 'sha256:pinned' -Digests @('comol/x@sha256:abc')))
+        function Get-McpStorageImages {return $script:Images}
+        $now=[datetime]'2026-11-21T12:00:00Z';$settings=Get-McpStorageSettings @{}
+        $volumes=@{};foreach($item in Get-McpStorageVolumeRetirementPlan $cfg $settings @{} $now){$volumes[$item.name]=$item.reason}
+        $volumes.Count|Should -Be 8
+        $volumes[$anonymous[0]]|Should -Be 'eligible'
+        $volumes[$anonymous[1]]|Should -Be 'eligible'
+        $volumes[$anonymous[2]]|Should -Be 'mounted'
+        $volumes['itl-exp-data']|Should -Be 'eligible'
+        $volumes['itl-new-data']|Should -Be 'minimum-age'
+        $volumes['itl-snap-vol']|Should -Be 'retained-snapshot'
+        $volumes['itl-compose-vol']|Should -Be 'referenced'
+        $volumes['itl-nfs']|Should -Be 'foreign-driver'
+        $images=@{};foreach($item in Get-McpStorageImageRetirementPlan $cfg $settings @{} $now){$images[$item.id]=$item.reason}
+        $images.Count|Should -Be 8
+        $images['sha256:used']|Should -Be 'in-use'
+        $images['sha256:base']|Should -Be 'base-of-current'
+        $images['sha256:dangling']|Should -Be 'eligible'
+        $images['sha256:old']|Should -Be 'eligible'
+        $images['sha256:recent']|Should -Be 'minimum-age'
+        $images['sha256:snap']|Should -Be 'retained-snapshot'
+        $images['sha256:proxy']|Should -Be 'referenced'
+        $images['sha256:compose']|Should -Be 'referenced'
+
+        $script:DataMutations=@()
+        function Invoke-McpStorageDocker {
+            param($Arguments,$TimeoutSec)
+            if($Arguments -contains '-f' -or $Arguments -contains '--force'){throw 'Removal must never force'}
+            if($Arguments[1] -ne 'rm'){throw 'Unexpected Docker operation'}
+            if($Arguments[2] -eq 'itl-exp-data'){throw 'volume is in use'}
+            $script:DataMutations+=($Arguments -join ' ')
+        }
+        # Real collection uses the current clock; every fixture except the recent ones is old enough.
+        $result=Invoke-McpStorageDockerDataRetirement $cfg $settings @{}
+        $script:DataMutations|Should -Be @(('volume rm '+$anonymous[0]),('volume rm '+$anonymous[1]),'image rm sha256:dangling','image rm itl/old:1 itl/old:2')
+        $result.volumes.candidates|Should -Be 3
+        $result.volumes.removed|Should -Be 2
+        $result.volumes.failed|Should -Be 1
+        $result.images.removed|Should -Be 2
+
+        New-Item -ItemType Directory -Path (Join-Path $cfg.stateRoot ('snapshots/cutover-'+('6'*32)))|Out-Null
+        @(Get-McpStorageVolumeRetirementPlan $cfg $settings @{} $now).Count|Should -Be 0
+        @(Get-McpStorageImageRetirementPlan $cfg $settings @{} $now).Count|Should -Be 0
     }
 
     It 'rejects unknown Mantis owner bytes without changing either file' {

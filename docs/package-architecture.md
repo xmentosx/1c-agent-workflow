@@ -214,7 +214,9 @@ delivery-package installer copy left dev-ermakov snapshots outside retention.
 Unproven legacy data stays protected; older code keeps adopted entries.
 The same day the user approved removal of stopped `itl-*` containers by that owner
 after the fourteen-day window when no current server, snapshot, accepted entry or
-running Compose sibling needs them; images and volumes stay with their owners.
+running Compose sibling needs them, then of unmounted anonymous volumes and, after
+the same window, unreferenced named `itl-*` volumes and untagged or `itl/*` images
+that are not build bases of in-use images.
 
 On 2026-11-06 the user approved a durable machine-local
 [ai_rules_1c source cache](ai-rules-fork-upgrades.md#local-source-cache-integrity):

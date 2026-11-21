@@ -5858,7 +5858,7 @@ switch ($Action) {
         $settings=Get-McpStorageSettings $config
         $record=Get-McpStorageRecord $config
         $legacy=@(Get-McpStorageLegacySnapshots $config $record)
-        @{freeBytes=(Get-McpStorageFreeBytes $config);cache=@(Get-McpStorageCachePlan $settings);retirement=@(Get-McpStorageRetirementPlan $config $settings $record);containers=@(Get-McpStorageContainerRetirementPlan $config $settings $record);protectedLegacyCount=$legacy.Count;protectedLegacy=@($legacy|Select-Object -First 256)}|ConvertTo-Json -Depth 12
+        @{freeBytes=(Get-McpStorageFreeBytes $config);cache=@(Get-McpStorageCachePlan $settings);retirement=@(Get-McpStorageRetirementPlan $config $settings $record);containers=@(Get-McpStorageContainerRetirementPlan $config $settings $record);volumes=@(Get-McpStorageVolumeRetirementPlan $config $settings $record);images=@(Get-McpStorageImageRetirementPlan $config $settings $record);protectedLegacyCount=$legacy.Count;protectedLegacy=@($legacy|Select-Object -First 256)}|ConvertTo-Json -Depth 12
     }
     "storage-run" {
         if(Test-McpHostNightlyPriorityLockActive $config){throw 'Nightly indexing is active; repeat storage-run after it completes'}

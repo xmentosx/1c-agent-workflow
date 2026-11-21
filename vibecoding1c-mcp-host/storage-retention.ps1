@@ -53,7 +53,7 @@ function Get-McpStorageContainers {
         $parts=$row -split '\|',9
         if($parts.Count -ne 9){throw 'Unrecognized container inventory'}
         $labels=Convert-ToHash ($parts[8]|ConvertFrom-Json)
-        [pscustomobject]@{id=($parts[0]|ConvertFrom-Json);name=($parts[1]|ConvertFrom-Json).TrimStart('/');image=($parts[2]|ConvertFrom-Json);running=($parts[3]|ConvertFrom-Json);status=[string]($parts[4]|ConvertFrom-Json);finishedAt=($parts[5]|ConvertFrom-Json);createdAt=($parts[6]|ConvertFrom-Json);mounts=@($parts[7]|ConvertFrom-Json);composeProject=[string](Get-ObjectValue $labels 'com.docker.compose.project' '')}
+        [pscustomobject]@{id=($parts[0]|ConvertFrom-Json);name=($parts[1]|ConvertFrom-Json).TrimStart('/');image=($parts[2]|ConvertFrom-Json);running=($parts[3]|ConvertFrom-Json);status=[string]($parts[4]|ConvertFrom-Json);finishedAt=($parts[5]|ConvertFrom-Json);createdAt=($parts[6]|ConvertFrom-Json);mounts=@(($parts[7]|ConvertFrom-Json)|ForEach-Object {$_});composeProject=[string](Get-ObjectValue $labels 'com.docker.compose.project' '')}
     })
 }
 
@@ -435,30 +435,64 @@ function Invoke-McpStorageRetirement {
     return $removed
 }
 
-function Get-McpStorageContainerRetirementPlan {
-    param($Config,$Settings,$Record,[datetime]$Now=(Get-Date))
-    # Stopped workflow runtimes and experiments carry no owner label. A stopped itl-* container is
-    # disposable only after the same rollback window as snapshots, when nothing current or retained
-    # names it and no running sibling in its Compose project could still need it.
-    $containers=@(Get-McpStorageContainers)
+function Get-McpStorageTokens {
+    param([string[]]$Texts)
+    # Docker names, image references and IDs compare as whole tokens: a shorter old name embedded
+    # in a current name must not protect the old resource.
+    $set=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($text in $Texts){
+        foreach($match in [regex]::Matches([string]$text,'[A-Za-z0-9][A-Za-z0-9_.:@/+-]*')){
+            # Keep whole image references and their segments, e.g. `volume:/path` names the volume.
+            [void]$set.Add($match.Value.TrimEnd('.',':'))
+            foreach($part in $match.Value -split '[:/@]'){if($part){[void]$set.Add($part.TrimEnd('.'))}}
+        }
+    }
+    return ,$set
+}
+
+function Test-McpStorageNamed {
+    param($Set,[string[]]$Names)
+    foreach($name in $Names){if($name -and $Set.Contains($name)){return $true}}
+    return $false
+}
+
+function Get-McpStorageReferences {
+    param($Config,$Record)
+    # Owners that may still start, restore or rebuild a Docker resource name it here. $null means
+    # an unreadable snapshot with unknown dependencies: every container, volume and image stays.
     $servers=@(As-Array (Get-ObjectValue (Read-HostState $Config) 'servers' @()))
-    $stateText=if($servers.Count){$servers|ConvertTo-Json -Depth 25 -Compress}else{''}
+    $current=@();if($servers.Count){$current+=$servers|ConvertTo-Json -Depth 25 -Compress}
     $retained=@()
-    $root=Join-Path (Get-StateRoot $Config) 'snapshots'
+    $stateRoot=Get-StateRoot $Config
+    $root=Join-Path $stateRoot 'snapshots'
     if(Test-Path -LiteralPath $root){
         foreach($directory in Get-ChildItem -LiteralPath $root -Directory -Force){
             $manifest=Join-Path $directory.FullName 'snapshot.json'
-            # An unreadable snapshot has unknown dependencies; protect every container.
-            if(-not (Test-Path -LiteralPath $manifest)){return @()}
+            if(-not (Test-Path -LiteralPath $manifest)){return $null}
             $retained+=Read-Text $manifest
         }
     }
     foreach($entry in As-Array (Get-ObjectValue $Record 'accepted' @())){
         if((Get-ObjectValue $entry 'status' '') -ne 'accepted'){continue}
-        $retained+=[string](Get-ObjectValue $entry 'retiredName' '')
-        foreach($resource in As-Array (Get-ObjectValue $entry 'retiredContainers' @())){$retained+=[string](Get-ObjectValue $resource 'name' '')}
+        $retained+=($entry|ConvertTo-Json -Depth 10 -Compress)
     }
-    $retainedText=$retained -join "`n"
+    $build=@($Config|ConvertTo-Json -Depth 30 -Compress)
+    if(Test-Path -LiteralPath $stateRoot){
+        # Runtime, distribution and package Compose files can recreate their services.
+        foreach($file in Get-ChildItem -LiteralPath $stateRoot -Recurse -Depth 4 -File -Force -ErrorAction Stop|Where-Object {$_.Name -match '^(docker-)?compose.*\.ya?ml$'}){$build+=Read-Text $file.FullName}
+    }
+    foreach($file in Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File -Filter 'Dockerfile*'){$build+=Read-Text $file.FullName}
+    return @{current=(Get-McpStorageTokens $current);retained=(Get-McpStorageTokens $retained);build=(Get-McpStorageTokens $build)}
+}
+
+function Get-McpStorageContainerRetirementPlan {
+    param($Config,$Settings,$Record,[datetime]$Now=(Get-Date),$References)
+    # Stopped workflow runtimes and experiments carry no owner label. A stopped itl-* container is
+    # disposable only after the same rollback window as snapshots, when nothing current or retained
+    # names it and no running sibling in its Compose project could still need it.
+    if(-not $PSBoundParameters.ContainsKey('References')){$References=Get-McpStorageReferences $Config $Record}
+    if($null -eq $References){return @()}
+    $containers=@(Get-McpStorageContainers)
     $runningProjects=@($containers|Where-Object {$_.running -and $_.composeProject}|ForEach-Object {$_.composeProject})
     $cutoff=$Now.ToUniversalTime().AddDays(-[double]$Settings.minimumAgeDays)
     return @(foreach($container in $containers){
@@ -467,8 +501,8 @@ function Get-McpStorageContainerRetirementPlan {
         if($stopped.Year -lt 2000){$stopped=ConvertFrom-McpStorageDockerTime $container.createdAt}
         $reason='eligible'
         if($stopped -gt $cutoff){$reason='minimum-age'}
-        elseif($stateText.Contains($container.name) -or $stateText.Contains($container.id)){$reason='current'}
-        elseif($retainedText.Contains($container.name) -or $retainedText.Contains($container.id)){$reason='retained-snapshot'}
+        elseif(Test-McpStorageNamed $References.current @($container.name,$container.id)){$reason='current'}
+        elseif(Test-McpStorageNamed $References.retained @($container.name,$container.id)){$reason='retained-snapshot'}
         elseif($container.composeProject -and $container.composeProject -in $runningProjects){$reason='running-project'}
         @{id=$container.id;name=$container.name;stoppedAt=$stopped.ToString('o');reason=$reason}
     })
@@ -485,6 +519,108 @@ function Invoke-McpStorageContainerRetirement {
         try{[void](Invoke-McpStorageDocker @('rm',[string]$candidate.id));$removed++}catch{$failed++}
     }
     return @{candidates=$plan.Count;removed=$removed;failed=$failed}
+}
+
+function Get-McpStorageVolumes {
+    $names=@(Invoke-McpStorageDocker @('volume','ls','--quiet'))
+    $rows=@()
+    for($offset=0;$offset -lt $names.Count;$offset+=128){
+        $rows+=Invoke-McpStorageDocker (@('volume','inspect','--format','{{json .Name}}|{{json .Driver}}|{{json .CreatedAt}}')+@($names|Select-Object -Skip $offset -First 128))
+    }
+    return @(foreach($row in $rows){
+        $parts=$row -split '\|',3
+        if($parts.Count -ne 3){throw 'Unrecognized volume inventory'}
+        [pscustomobject]@{name=($parts[0]|ConvertFrom-Json);driver=($parts[1]|ConvertFrom-Json);createdAt=($parts[2]|ConvertFrom-Json)}
+    })
+}
+
+function Get-McpStorageVolumeRetirementPlan {
+    param($Config,$Settings,$Record,[datetime]$Now=(Get-Date),$References)
+    # An unmounted anonymous volume cannot be found again by any owner. An unmounted named itl-*
+    # volume is removable after the rollback window when no owner names it.
+    if(-not $PSBoundParameters.ContainsKey('References')){$References=Get-McpStorageReferences $Config $Record}
+    if($null -eq $References){return @()}
+    $mounted=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($container in Get-McpStorageContainers){foreach($mount in @($container.mounts)){if((Get-ObjectValue $mount 'Type' '') -eq 'volume'){[void]$mounted.Add([string](Get-ObjectValue $mount 'Name' ''))}}}
+    $cutoff=$Now.ToUniversalTime().AddDays(-[double]$Settings.minimumAgeDays)
+    return @(foreach($volume in Get-McpStorageVolumes){
+        $anonymous=$volume.name -cmatch '^[0-9a-f]{64}$'
+        if(-not $anonymous -and $volume.name -cnotlike 'itl-*'){continue}
+        $reason='eligible'
+        if($mounted.Contains($volume.name)){$reason='mounted'}
+        elseif($volume.driver -cne 'local'){$reason='foreign-driver'}
+        elseif($anonymous){$reason='eligible'}
+        elseif((ConvertFrom-McpStorageDockerTime $volume.createdAt) -gt $cutoff){$reason='minimum-age'}
+        elseif(Test-McpStorageNamed $References.current @($volume.name)){$reason='current'}
+        elseif(Test-McpStorageNamed $References.retained @($volume.name)){$reason='retained-snapshot'}
+        elseif(Test-McpStorageNamed $References.build @($volume.name)){$reason='referenced'}
+        @{name=$volume.name;anonymous=$anonymous;reason=$reason}
+    })
+}
+
+function Get-McpStorageImages {
+    $ids=@(Invoke-McpStorageDocker @('image','ls','--no-trunc','--quiet')|Select-Object -Unique)
+    $rows=@()
+    for($offset=0;$offset -lt $ids.Count;$offset+=128){
+        $rows+=Invoke-McpStorageDocker (@('image','inspect','--format','{{json .Id}}|{{json .Created}}|{{json .RepoTags}}|{{json .RepoDigests}}|{{json .RootFS.Layers}}')+@($ids|Select-Object -Skip $offset -First 128))
+    }
+    return @(foreach($row in $rows){
+        $parts=$row -split '\|',5
+        if($parts.Count -ne 5){throw 'Unrecognized image inventory'}
+        [pscustomobject]@{id=($parts[0]|ConvertFrom-Json);createdAt=($parts[1]|ConvertFrom-Json);tags=@(As-Array ($parts[2]|ConvertFrom-Json));digests=@(As-Array ($parts[3]|ConvertFrom-Json));layers=@(As-Array ($parts[4]|ConvertFrom-Json))}
+    })
+}
+
+function Get-McpStorageImageRetirementPlan {
+    param($Config,$Settings,$Record,[datetime]$Now=(Get-Date),$References)
+    # Only untagged and itl/* images are considered; foreign images stay with their publishers.
+    # A base whose layers prefix an in-use image frees nothing and is still needed to rebuild it.
+    if(-not $PSBoundParameters.ContainsKey('References')){$References=Get-McpStorageReferences $Config $Record}
+    if($null -eq $References){return @()}
+    $usedIds=@(Get-McpStorageContainers|ForEach-Object {[string]$_.image})
+    $images=@(Get-McpStorageImages)
+    $usedLayers=@($images|Where-Object {$_.id -in $usedIds}|ForEach-Object {,@($_.layers)})
+    $cutoff=$Now.ToUniversalTime().AddDays(-[double]$Settings.minimumAgeDays)
+    return @(foreach($image in $images){
+        $repositories=@(@($image.tags)+@($image.digests)|ForEach-Object {([string]$_ -split '@')[0] -replace ':[^/:]*$',''})
+        if(@($repositories|Where-Object {$_ -cnotlike 'itl/*'}).Count){continue}
+        $names=@($image.id,($image.id -replace '^sha256:',''))+@($image.tags)+@($image.digests)
+        $base=$false
+        foreach($layers in $usedLayers){
+            if($image.layers.Count -and $image.layers.Count -le $layers.Count){
+                $prefix=$true
+                for($i=0;$i -lt $image.layers.Count;$i++){if($image.layers[$i] -cne $layers[$i]){$prefix=$false;break}}
+                if($prefix){$base=$true;break}
+            }
+        }
+        $reason='eligible'
+        if($image.id -in $usedIds){$reason='in-use'}
+        elseif((ConvertFrom-McpStorageDockerTime $image.createdAt) -gt $cutoff){$reason='minimum-age'}
+        elseif(Test-McpStorageNamed $References.current $names){$reason='current'}
+        elseif(Test-McpStorageNamed $References.retained $names){$reason='retained-snapshot'}
+        elseif(Test-McpStorageNamed $References.build $names){$reason='referenced'}
+        elseif($base){$reason='base-of-current'}
+        @{id=$image.id;tags=@($image.tags);reason=$reason}
+    })
+}
+
+function Invoke-McpStorageDockerDataRetirement {
+    param($Config,$Settings,$Record)
+    # Runs after container retirement so newly unmounted data is visible. No removal is forced:
+    # a concurrent mount, container or child image makes Docker refuse and the item is kept.
+    $references=Get-McpStorageReferences $Config $Record
+    $result=@{volumes=@{candidates=0;removed=0;failed=0};images=@{candidates=0;removed=0;failed=0}}
+    if($null -eq $references){return $result}
+    foreach($volume in @(Get-McpStorageVolumeRetirementPlan $Config $Settings $Record -References $references|Where-Object {$_.reason -eq 'eligible'})){
+        $result.volumes.candidates++
+        try{[void](Invoke-McpStorageDocker @('volume','rm',[string]$volume.name));$result.volumes.removed++}catch{$result.volumes.failed++}
+    }
+    foreach($image in @(Get-McpStorageImageRetirementPlan $Config $Settings $Record -References $references|Where-Object {$_.reason -eq 'eligible'})){
+        $result.images.candidates++
+        $targets=if(@($image.tags).Count){@($image.tags)}else{@($image.id)}
+        try{[void](Invoke-McpStorageDocker (@('image','rm')+$targets));$result.images.removed++}catch{$result.images.failed++}
+    }
+    return $result
 }
 
 function Test-McpStorageCompactionWindow {
@@ -591,6 +727,7 @@ function Invoke-McpHostStorageMaintenanceCore {
                 $record.adopted=Add-McpStorageLegacyAdoptions $Config $record
                 $record.retired=Invoke-McpStorageRetirement $Config $settings $record
                 $record.containers=Invoke-McpStorageContainerRetirement $Config $settings $record
+                $record.dockerData=Invoke-McpStorageDockerDataRetirement $Config $settings $record
             $record.lastError=''
         }
         if(-not $OnlineOnly -and $level -ne 'healthy' -and (Test-McpStorageCompactionWindow $settings $record) -and (Test-McpStorageOwnersIdle $Config -ForOffline)){

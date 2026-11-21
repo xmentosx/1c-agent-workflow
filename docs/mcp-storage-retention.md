@@ -71,10 +71,20 @@ container (`exited`, `created` or `dead`) only after it has been stopped longer
 than `minimumAgeDays` (creation time for a never-started one), when it is not
 named in current host servers, not named by any snapshot manifest or still
 `accepted` retention entry, and no running container shares its Compose project.
-A snapshot directory without a manifest protects every container. Each removal
-rechecks the exact identity and never forces; a concurrent start or refusal keeps
-the container and is counted. Images and volumes are not removed by this rule.
-`storage-plan` lists every stopped `itl-*` container with its reason.
+Names compare as whole tokens (and `:`/`/`/`@` segments), never as substrings.
+Each removal rechecks the exact identity and never forces; a concurrent start or
+refusal keeps the container and is counted.
+
+The same pass then removes Docker data nothing can reach any more. An unmounted
+anonymous (64-hex) volume is removed. An unmounted named `itl-*` local volume and
+an unused untagged or `itl/*` image are removed after `minimumAgeDays` unless host
+servers, snapshot manifests, `accepted` entries, `host.config.json`, Compose files
+under `stateRoot` or the host's Dockerfiles name them. An image whose layers prefix
+an in-use image is a build base, frees nothing, and stays. Foreign images and
+volumes stay with their publishers. A snapshot directory without a manifest has
+unknown dependencies and protects every container, volume and image. `storage-plan`
+lists `containers`, `volumes` and `images` with their reasons. Rolling a local
+service back past this window requires rebuilding its image.
 Online cache/snapshot collection needs its own build/cutover owners idle; an
 independent index worker cannot prevent eligible cold-data collection. Offline
 VHD reclaim additionally requires every relevant indexing owner idle.
