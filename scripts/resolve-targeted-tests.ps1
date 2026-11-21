@@ -95,6 +95,20 @@ $selectedContracts = New-Object System.Collections.Generic.List[object]
 foreach ($contract in @($selection.contracts)) { $selectedContracts.Add($contract) | Out-Null }
 $selectedTests = New-Object System.Collections.Generic.List[string]
 foreach ($test in @($selection.tests)) { $selectedTests.Add(([string]$test).Replace('\', '/')) | Out-Null }
+# A changed test file selects itself directly. A contract whose wildcard path
+# observes test files (the text-assertion policy) is selected as well; an
+# exactly listed test file stays direct-only. Observed 2026-11-21: no
+# registration ran the policy, and the published candidate met it first.
+$changedTests = @($ordinaryPaths | Where-Object { $_ -like 'tests/pester/*.Tests.ps1' })
+foreach ($contract in @(if ($changedTests.Count -gt 0) { $catalog.contracts })) {
+    $observer = @($contract.paths | Where-Object {
+        $pattern = ([string]$_).Replace('\', '/')
+        $pattern -match '[*?\[]' -and @($changedTests | Where-Object { $_ -like $pattern }).Count -gt 0
+    }).Count -gt 0
+    if (-not $observer -or @($selectedContracts | Where-Object { [string]$_.id -eq [string]$contract.id }).Count -gt 0) { continue }
+    $selectedContracts.Add($contract) | Out-Null
+    foreach ($test in @($contract.tests)) { $selectedTests.Add(([string]$test).Replace('\', '/')) | Out-Null }
+}
 $semanticImpacts = @()
 $additionalInputs = @()
 if ($semanticPathChanged) {
