@@ -38,8 +38,8 @@
       "upstreamRef": "refs/heads/main",
       "upstreamCommit": "2f640143756ecd01fed42100e412632aa9082385",
       "downstreamRevision": 63,
-      "compatibilityStatus": "pending",
-      "compatibilityCheckedAt": ""
+      "compatibilityStatus": "passed",
+      "compatibilityCheckedAt": "2026-11-22T11:52:53Z"
     },
     "openSpecCli": {
       "version": "1.13.1",
