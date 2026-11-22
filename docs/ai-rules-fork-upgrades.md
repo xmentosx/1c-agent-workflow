@@ -43,7 +43,11 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: Claude root imports, local r61
+## Current candidate: DCS filter evaluation, local r63
+
+`itl-main-2f640143-r63` pins `571ddb0e2b326c99e3c134031283c6057817ec57` over r61. The coding index and DCS design route load the approved v4 filter rule for reports, dynamic lists and workplaces. The rule body is installed with the client rules. The candidate also reproduces the existing workflow appendix for index age and memory recall (+278 root bytes) and records both r61 file identities in the overlay ledger. The filter itself adds 101 bytes to the coding index and is otherwise loaded on demand.
+
+## Earlier candidate: Claude root imports, local r61
 
 6b4d268380a677225e075013aa84f415da6e4c3a uses a literal YAML block for the Claude entry. Each of the four root imports occupies its own line in the installed file. The installer retains its existing ownership and update checks.
 
