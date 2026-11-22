@@ -43,7 +43,11 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: installed workflow adequacy, local r60
+## Current candidate: Claude root imports, local r61
+
+6b4d268380a677225e075013aa84f415da6e4c3a uses a literal YAML block for the Claude entry. Each of the four root imports occupies its own line in the installed file. The installer retains its existing ownership and update checks.
+
+## Earlier candidate: installed workflow adequacy, local r60
 
 `itl-main-2f640143-r60` pins
 `2db0058ca7e135715525f48ba35cb454da057118` over r59 on the same audited

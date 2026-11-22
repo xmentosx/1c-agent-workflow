@@ -668,6 +668,10 @@ Describe 'Shared client MCP ownership' {
             $planned = [pscustomobject]@{ unchanged = ((Get-ItlMcpFileState $settingsPath) -ceq $before); state = (Read-ItlManagedMcpState) }
             Write-ItlClientMcpEndpointSet @(@{client='claude-code';owner='scoped-memory';endpoints=$memory}) *> $null
             $enabled = & $read; $enabledState = Read-ItlManagedMcpState
+            $notified = Test-WorkflowClaudeMemoryTransition $root
+            $script:ItlClientMcpSemanticChanges = [ordered]@{}
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints $memory | Out-Null
+            $repeatNotified = Test-WorkflowClaudeMemoryTransition $root
             Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints @() | Out-Null
             $disabled = & $read; $disabledState = Read-ItlManagedMcpState
             # A user value equal to the ITL value is still the user's.
@@ -675,8 +679,19 @@ Describe 'Shared client MCP ownership' {
             Write-Utf8TextAtomic $settingsPath ($userFalse | ConvertTo-Json -Depth 6)
             Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints $memory | Out-Null
             $userFalseState = Read-ItlManagedMcpState
+            $userFalseNotified = Test-WorkflowClaudeMemoryTransition $root
             Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints @() | Out-Null
             $userFalseKept = & $read
+            # A user-owned approval can coexist with an explicit denial. Claude honors the denial.
+            $conflict = & $read
+            $conflict.enabledMcpjsonServers += 'itl-scoped-cognee'
+            $conflict | Add-Member disabledMcpjsonServers @('itl-scoped-cognee')
+            Write-Utf8TextAtomic $settingsPath ($conflict | ConvertTo-Json -Depth 6)
+            $script:ItlClientMcpSemanticChanges = [ordered]@{}
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints $memory | Out-Null
+            $deniedNotified = Test-WorkflowClaudeMemoryTransition $root
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints @() | Out-Null
+            Write-Utf8TextAtomic $settingsPath ($userFalseKept | ConvertTo-Json -Depth 6)
             # A value the user changes after the ITL write becomes theirs.
             $cleared = & $read; $cleared.PSObject.Properties.Remove('autoMemoryEnabled')
             Write-Utf8TextAtomic $settingsPath ($cleared | ConvertTo-Json -Depth 6)
@@ -686,9 +701,13 @@ Describe 'Shared client MCP ownership' {
             Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints $memory | Out-Null
             $takenOverState = Read-ItlManagedMcpState
             Write-ItlClientMcpEndpoints -Client claude-code -Owner scoped-memory -Endpoints @() | Out-Null
-            [pscustomobject]@{ catalogOnly=$catalogOnly; planned=$planned; enabled=$enabled; enabledState=$enabledState; disabled=$disabled; disabledState=$disabledState
+            [pscustomobject]@{ notified=$notified; repeatNotified=$repeatNotified; deniedNotified=$deniedNotified; userFalseNotified=$userFalseNotified; catalogOnly=$catalogOnly; planned=$planned; enabled=$enabled; enabledState=$enabledState; disabled=$disabled; disabledState=$disabledState
                 userFalseState=$userFalseState; userFalseKept=$userFalseKept; takenOverState=$takenOverState; final=(& $read) }
         }
+        $result.notified | Should -BeTrue
+        $result.repeatNotified | Should -BeFalse
+        $result.deniedNotified | Should -BeFalse
+        $result.userFalseNotified | Should -BeTrue
         $result.catalogOnly.PSObject.Properties.Name | Should -Not -Contain 'autoMemoryEnabled'
         $result.planned.unchanged | Should -BeTrue
         $result.planned.state.Contains('autoMemoryDisabled') | Should -BeFalse

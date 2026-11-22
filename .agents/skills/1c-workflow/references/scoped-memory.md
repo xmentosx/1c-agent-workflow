@@ -173,8 +173,13 @@ backend call; the pending source is kept and `remember` with the same `note_id`
 and shortened data completes it. Notes stored before the limit are read as before.
 While scoped memory is connected to Claude Code in an ITL project, ITL turns off
 Claude's built-in auto memory (`autoMemoryEnabled: false` in
-`.claude/settings.local.json`, unless the user set that key), so knowledge goes
-only to scoped memory. A workaround for an ITL defect goes to one
+`.claude/settings.local.json`, unless the user set that key). An open Claude
+chat can retain an earlier personal-memory instruction after the MCP tools
+appear. Save durable lessons through scoped remember. On first connection
+during a 1C task, read status and search the active topic before the next
+related edit or check if it has not been searched successfully in this chat.
+A successful empty search counts. Start the next independent task in a fresh
+Claude chat after an update that first connects Cognee or turns off auto memory. A workaround for an ITL defect goes to one
 `organization` note titled `Дефект ITL <CODE>@<owner>: …` with the same
 `applicability.incidentKey`, never to project or client memory, as described in
 `references/workflow-incidents.md`. When the installed

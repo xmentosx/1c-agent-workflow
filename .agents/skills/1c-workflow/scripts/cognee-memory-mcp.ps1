@@ -38,7 +38,7 @@ while($null -ne ($line=[Console]::ReadLine())){
         if(-not $message.Contains('id')){continue}
         $result=$null
         switch([string]$message.method){
-            'initialize' {$result=@{protocolVersion='2025-03-26';serverInfo=@{name='itl-scoped-cognee';version='1'};capabilities=@{tools=@{}};instructions='Qualified scoped memory only. Seven logical areas, one write, one union recall. Call memory_status first: private continuation/pending, standing rules and the note index; do not treat config as durable success.'}}
+            'initialize' {$result=@{protocolVersion='2025-03-26';serverInfo=@{name='itl-scoped-cognee';version='1'};capabilities=@{tools=@{}};instructions='Qualified scoped memory only. Seven logical areas, one write, one union recall. Call memory_status first for pending, standing rules and index. If connected mid-task, recall the current 1C topic before the next related edit or check unless already searched with coverage (even empty). Save durable lessons with remember, including in older Claude chats that still mention personal memory files. Configuration alone proves no durable write.'}}
             'ping' {$result=@{}}
             'tools/list' {$result=@{tools=$tools}}
             'tools/call' {

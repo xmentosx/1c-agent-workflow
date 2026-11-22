@@ -869,13 +869,15 @@ function Register-ItlClientMcpSemanticChange {
     param(
         [string]$Client,
         [string]$Owner,
-        [string]$Path
+        [string]$Path,
+        [switch]$ClaudeMemoryTransition
     )
 
     if (-not (Get-Variable -Name ItlClientMcpSemanticChanges -Scope Script -ErrorAction SilentlyContinue)) {
         $script:ItlClientMcpSemanticChanges = [ordered]@{}
     }
-    $script:ItlClientMcpSemanticChanges["$Client/$Owner"] = [pscustomobject]@{
+    $script:ItlClientMcpSemanticChanges["$Client/$Owner/$Path"] = [pscustomobject]@{
+        claudeMemoryTransition = [bool]$ClaudeMemoryTransition
         client = $Client
         owner = $Owner
         path = $Path
@@ -1039,7 +1041,7 @@ function ConvertTo-ItlClientMcpEntry {
 }
 
 function Sync-ItlClientMcpApproval {
-    param([string]$Client, [System.Collections.IDictionary]$State)
+    param([string]$Client, [System.Collections.IDictionary]$State, [switch]$MemoryEndpointAdded)
 
     # Claude Code starts project .mcp.json servers only after a per-checkout
     # approval. Approve exactly this client's ITL-owned keys in this checkout,
@@ -1080,9 +1082,11 @@ function Sync-ItlClientMcpApproval {
     $next += @($granted | Where-Object { $_ -cnotin $next })
     $changed = ($next -join "`n") -cne ($current -join "`n")
     if ($changed) { if ($next.Count -gt 0) { $settings[$key] = @($next) } else { $settings.Remove($key) } }
+    $disabledNativeMemory = $false
     if ($memoryKey) {
         $itlValue = $settings.Contains($memoryKey) -and $settings[$memoryKey] -is [bool] -and -not $settings[$memoryKey]
         if ($memoryWanted -and -not $settings.Contains($memoryKey)) {
+            $disabledNativeMemory = $true
             $settings[$memoryKey] = $false; $memoryOwned = $true; $itlValue = $true; $changed = $true
         } elseif (-not $memoryWanted -and $memoryOwned -and $itlValue) {
             $settings.Remove($memoryKey); $changed = $true
@@ -1099,6 +1103,11 @@ function Sync-ItlClientMcpApproval {
         } elseif (Test-Path -LiteralPath $path -PathType Leaf) {
             Remove-Item -LiteralPath $path -Force
         }
+    }
+    $memoryName = 'itl-scoped-cognee'
+    $connected = $memoryWanted -and $granted -ccontains $memoryName -and ($MemoryEndpointAdded -or $current -cnotcontains $memoryName)
+    if ($disabledNativeMemory -or $connected) {
+        Register-ItlClientMcpSemanticChange -Client $Client -Owner 'scoped-memory' -Path $path -ClaudeMemoryTransition
     }
     if ($granted.Count -gt 0) { $approvals[$Client] = @($granted) } else { $approvals.Remove($Client) }
     if ($approvals.Count -gt 0) { $State["approvals"] = $approvals } elseif ($State.Contains("approvals")) { $State.Remove("approvals") }
@@ -1427,7 +1436,9 @@ function Write-ItlClientMcpEndpoints {
     }
     $owners[$stateKey] = @($written + @($PreserveOwnedKeys) | Select-Object -Unique)
     $state["owners"] = $owners
-    Sync-ItlClientMcpApproval -Client $Client -State $state
+    $memoryEndpointAdded = $Client -eq 'claude-code' -and $Owner -eq 'scoped-memory' -and
+        -not $beforeContainer.Contains('itl-scoped-cognee') -and $orderedContainer.Contains('itl-scoped-cognee')
+    Sync-ItlClientMcpApproval -Client $Client -State $state -MemoryEndpointAdded:$memoryEndpointAdded
     Write-ItlManagedMcpState -State $state
     if ($ReturnReceipt) { return [pscustomobject]@{ path=$path; fileState=$expectedFileState; ownerState=(Get-ItlMcpTextState -Text (($state | ConvertTo-Json -Depth 12) + [Environment]::NewLine)) } }
     return $path

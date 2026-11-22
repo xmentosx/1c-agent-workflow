@@ -870,6 +870,8 @@ try {
         @($lines[1].result.tools|Where-Object name -EQ memory_status)[0].description | Should -Match 'once at session start and after a contextChanged notice'
         $retire.description | Should -Match 'outdated or contradicts a checked source'
         $lines[0].result.instructions | Should -Match 'Seven logical areas'
+        $lines[0].result.instructions | Should -Match '\bmemory_status\b'
+        $lines[0].result.instructions | Should -Match '\bremember\b'
         # R56 adds scope choice, readState and the retry continuation. The
         # always-loaded text grows 1,721 -> 2,205 bytes and tools/list grows
         # 2,955 -> 3,439 bytes. Keep examples and exact-read procedure on demand.
@@ -880,7 +882,8 @@ try {
         # Event-triggered recall (2026-11-20, PM5 probe: pitfalls found by topic 2
         # of 12, by symptom 12 of 12): the recall description grows 2,468 -> 2,582
         # bytes (+114, about 30 tokens per session).
-        $alwaysOn | Should -BeLessOrEqual 2590
+        # Late connection and old Claude chat guidance add 230 characters to initialize only.
+        $alwaysOn | Should -BeLessOrEqual 2820
         $schemaBytes=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $lines[1].result -Depth 20 -Compress))
         # The same +270 description bytes move tools/list from 3,459 to 3,729.
         # Event-triggered recall plus the remember title hint (2026-11-20): +114

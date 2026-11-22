@@ -8204,6 +8204,14 @@ function Add-WorkflowFixedDefectHandoffReportLines {
     $Lines.Add('  Закройте каждый отчёт supplement-ом со строкой `incidentClosed: <incidentKey>` после проверки, что обход больше не нужен.')
 }
 
+function Test-WorkflowClaudeMemoryTransition {
+    param([string]$Root)
+    $settings = Join-Path $Root (Get-ItlClientAdapter -Client 'claude-code').mcpApprovalPath
+    return @((Get-ItlClientMcpSemanticChanges -Owner 'scoped-memory') | Where-Object {
+        $_.path -eq $settings -and (Get-ConfigValueFromObject $_ 'claudeMemoryTransition' $false)
+    }).Count -gt 0
+}
+
 function Write-WorkflowUpdateFollowUp {
     param(
         [object]$Source,
@@ -8283,6 +8291,13 @@ function Write-WorkflowUpdateFollowUp {
         }
     } else {
         $reportLines.Add("- Зарегистрированных рабочих веток для обновления нет.")
+    }
+    $memoryRoots = @(if (Test-WorkflowClaudeMemoryTransition $script:ProjectRoot) { $script:ProjectRoot }
+        foreach ($outcome in $outcomes) {
+            if (Get-ConfigValueFromObject $outcome 'claudeMemoryTransition' $false) { $outcome.root }
+        })
+    if ($memoryRoots.Count -gt 0) {
+        $reportLines.Add("- Настройки памяти Claude изменились в $($memoryRoots -join ', '). В открытом ранее чате может сохраняться инструкция писать в личную память. Текущую задачу можно продолжить, знания сохраняйте через Cognee remember. Следующую самостоятельную задачу начните в новом чате Claude.")
     }
     Add-WorkflowFixedDefectHandoffReportLines -Lines $reportLines -BranchReport $BranchReport
     Write-AndSetRunUserReport -Lines $reportLines
@@ -11156,7 +11171,8 @@ function Invoke-WorkflowDevelopmentBranchItemUpdate {
             foreach ($handle in @($lease.handles)) { $handle.stream.Dispose() }
         }
     }
-    return [pscustomobject]@{ status = $status; reason = $reason; commit = $commit; clients = @($appliedClients) }
+    return [pscustomobject]@{ status = $status; reason = $reason; commit = $commit; clients = @($appliedClients)
+        claudeMemoryTransition = ($status -eq 'completed' -and (Test-WorkflowClaudeMemoryTransition $BranchRoot)) }
 }
 
 function Get-WorkflowUpdateAvailableMemoryBytes {
@@ -11223,7 +11239,8 @@ function Receive-WorkflowDevelopmentBranchChild {
     }
     if ($null -ne $result -and [string]$result.status -in @('completed', 'deferred', 'blocked')) {
         return [pscustomobject]@{ status = [string]$result.status; reason = [string]$result.reason; commit = [string]$result.commit
-            clients = @($result.clients | Where-Object { $_ }); logPath = $logPath }
+            clients = @($result.clients | Where-Object { $_ }); logPath = $logPath
+            claudeMemoryTransition = [bool](Get-ConfigValueFromObject $result 'claudeMemoryTransition' $false) }
     }
     # No branch outcome: the child stopped before or outside the branch owner.
     $stderrText = if (Test-Path -LiteralPath $Entry.stderr -PathType Leaf) { Read-Utf8Text -Path $Entry.stderr } else { '' }
@@ -11323,7 +11340,8 @@ function Invoke-WorkflowDevelopmentBranchChild {
         }
     }) | Select-Object -Last 1
     $payload = [ordered]@{ schemaVersion = 1; branch = [string]$request.branch; status = [string]$outcome.status; reason = [string]$outcome.reason
-        commit = [string]$outcome.commit; clients = @($outcome.clients) }
+        commit = [string]$outcome.commit; clients = @($outcome.clients)
+        claudeMemoryTransition = [bool](Get-ConfigValueFromObject $outcome 'claudeMemoryTransition' $false) }
     Write-Utf8TextAtomic -Path ([string]$request.resultPath) -Value (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
     if ([string]$outcome.status -ne 'completed') {
         throw "WORKFLOW_BRANCH_$(([string]$outcome.status).ToUpperInvariant()): $($outcome.reason)"
@@ -11405,6 +11423,7 @@ function Invoke-WorkflowDevelopmentBranchRollout {
             [pscustomobject]@{
                 root = [string]$slot.item.root; branch = [string]$slot.item.branch
                 status = $slotStatus; reason = $slotReason; commit = [string]$slot.outcome.commit; clients = @($slot.outcome.clients)
+                claudeMemoryTransition = [bool](Get-ConfigValueFromObject $slot.outcome 'claudeMemoryTransition' $false)
                 continuation = Get-WorkflowUpdateBranchContinuation -Status $slotStatus -Reason $slotReason -Default $(if ($slotStatus -eq 'blocked' -and [string]$slot.item.eligibility -eq 'eligible') {
                     'Inspect the reported branch failure and its preserved snapshot, then repeat update-workflow from master.'
                 } else { [string]$slot.item.continuation })

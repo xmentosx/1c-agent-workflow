@@ -6,6 +6,7 @@
     # Load the rollout and cleanup owners by call closure; functions this file
     # defines are its substitutes, so a new real callee needs no fixture edit.
     $lib='.agents/skills/1c-workflow/scripts/lib/'
+    $null=Import-TestFunctionClosure -Path @(Join-Path $RepoRoot ($lib+'agent-1c.client-adapters.ps1')) -Root @('Get-ItlClientAdapter','Register-ItlClientMcpSemanticChange','Get-ItlClientMcpSemanticChanges') -StubSource $PSCommandPath
     $null=Import-TestFunctionClosure -Path @((Join-Path $RepoRoot ($lib+'agent-1c.core.ps1')),(Join-Path $RepoRoot ($lib+'agent-1c.lifecycle.ps1'))) -Root @('Resolve-WorkflowUpdateRolloutScope','Invoke-WorkflowDevelopmentBranchRollout','Assert-WorkflowDevelopmentBranchRolloutComplete') -StubSource $PSCommandPath
     $null=Import-TestFunctionClosure -Path @(Join-Path $RepoRoot 'scripts/source-delivery-component.ps1') -Root @('ConvertTo-DeliveryNativeArgument') -StubSource $PSCommandPath
     $null=Import-TestFunctionClosure -Path @(Join-Path $RepoRoot 'scripts/source-delivery-cleanup.ps1') -Root @('Invoke-PublishDevelopWithCleanup') -StubSource $PSCommandPath
@@ -79,7 +80,10 @@ Describe 'Selected workflow rollout remains with the lifecycle owner' {
     }
     It 'updates only selected roots and rejects that report as proof of a full rollout' {
         $source=[pscustomobject]@{root='payload';commit='exact';rolloutScope=$script:selectionScope}
+        $settings = Join-Path $script:selectedRoot (Get-ItlClientAdapter -Client 'claude-code').mcpApprovalPath
+        Register-ItlClientMcpSemanticChange -Client 'claude-code' -Owner 'scoped-memory' -Path $settings -ClaudeMemoryTransition
         $report=Invoke-WorkflowDevelopmentBranchRollout $source
+        $report.roots[0].claudeMemoryTransition | Should -BeTrue
         $script:updatedRoots | Should -Be @($script:selectedRoot)
         $script:inspectedRoots | Should -Be @($script:selectedRoot)
         $report.roots.root | Should -Be $script:selectedRoot
