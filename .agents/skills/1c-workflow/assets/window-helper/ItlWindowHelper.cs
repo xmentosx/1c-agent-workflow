@@ -1234,7 +1234,15 @@ namespace Itl.WindowHelper
             uint pid = Native.PidOf(hwnd);
             // A list opened outside a lease is hidden like any other client window: Vanessa
             // inspects it through the test API and reopens it inside the selection lease.
-            if (!members.Clients.Contains(pid) || Exposed(pid)) return;
+            if (!members.Clients.Contains(pid)) return;
+            // A capture shows the client under the user's windows; a window it opens meanwhile,
+            // such as a dropdown list after an MCP open, joins it there (wm22, 2026-11-23).
+            if (captures.ContainsKey(pid) && !(state == LeaseState.Leased && pid == leasedPid) && !revealed.Contains(pid))
+            {
+                Native.SetWindowPos(hwnd, Native.HWND_BOTTOM, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+                return;
+            }
+            if (Exposed(pid)) return;
             // 1C activates a form while showing it; the foreground event waits behind this one.
             ReturnFocusFromClient(hwnd, pid, time, false);
             HideOutside(hwnd, pid, "shown");

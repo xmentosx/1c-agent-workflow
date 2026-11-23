@@ -825,6 +825,13 @@ static class FakeFormClient {
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
 [DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
 [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr desk);
+[DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr h);
+[DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+public static int ZIndex(IntPtr target) {
+    int i = 0;
+    for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero; h = GetWindow(h, 2), i++) if (h == target) return i;
+    return -1;
+}
 '@ -ErrorAction SilentlyContinue
         $desk = [WhTest.DropDesk]::OpenInputDesktop(0, $false, 1)
         if ($desk -eq [IntPtr]::Zero -or [WhTest.DropDesk]::GetForegroundWindow() -eq [IntPtr]::Zero) {
@@ -915,20 +922,31 @@ static class FakeListClient {
             [IO.File]::WriteAllText((Join-Path $fakeDir 'list 1.flag'), 'open')
             & $waitFor { (& $list 1) -ne [IntPtr]::Zero -and -not [WhTest.DropDesk]::IsWindowVisible((& $list 1)) } | Should -BeTrue -Because 'a list opened outside a lease stays off the user desktop'
 
+            # wm22 facade run, 2026-11-23: after an MCP open_dropdown Vanessa shows the client for
+            # its screenshot, and the list it opened stayed above every user window for 3 s.
+            $userWindow = [WhTest.DropDesk]::FindWindow('ITLFakeUserWindow', 'ITL fake user window')
+            $capture = Send-ItlWindowHelperRequest -Directory $group.directory -Operation capture-show -Fields @{ pid = $client.Id }
+            $capture.status | Should -Be 'ok' -Because ($capture | ConvertTo-Json -Compress)
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'list 2.flag'), 'open')
+            & $waitFor { (& $list 2) -ne [IntPtr]::Zero -and [WhTest.DropDesk]::IsWindowVisible((& $list 2)) } | Should -BeTrue -Because 'a capture keeps the client visible for its screenshot'
+            Start-Sleep -Milliseconds 300
+            [WhTest.DropDesk]::ZIndex((& $list 2)) | Should -BeGreaterThan ([WhTest.DropDesk]::ZIndex($userWindow)) -Because 'a list opened during a capture stays under the user windows'
+            (Send-ItlWindowHelperRequest -Directory $group.directory -Operation capture-end -Fields @{ pid = $client.Id }).status | Should -Be 'ok'
+            & $waitFor { -not [WhTest.DropDesk]::IsWindowVisible((& $list 2)) } | Should -BeTrue -Because 'the capture end hides the list again'
+
             $policy = @{ scope = 'сценарий списка'; pid = $client.Id; dropdownPrompt = $false; promptSource = 'default' }
             $lease = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease -Fields $policy -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(15))
             $lease.status | Should -Be 'ok' -Because ($lease | ConvertTo-Json -Compress)
-            [IO.File]::WriteAllText((Join-Path $fakeDir 'list 2.flag'), 'open')
-            & $waitFor { (& $list 2) -ne [IntPtr]::Zero } | Should -BeTrue
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'list 3.flag'), 'open')
+            & $waitFor { (& $list 3) -ne [IntPtr]::Zero } | Should -BeTrue
             Start-Sleep -Milliseconds 600
-            [WhTest.DropDesk]::IsWindowVisible((& $list 2)) | Should -BeTrue -Because 'the list of the selection stays visible inside its lease'
+            [WhTest.DropDesk]::IsWindowVisible((& $list 3)) | Should -BeTrue -Because 'the list of the selection stays visible inside its lease'
 
             $osInput = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease -Fields @{ scope = 'сценарий списка'; pid = $client.Id } -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(15))
             $osInput.status | Should -Be 'ok' -Because 'OS input of the same step joins the pending selection'
             $osInput.activation | Should -Be 'kept'
 
             [IO.File]::WriteAllText((Join-Path $fakeDir 'user.flag'), 'click')
-            $userWindow = [WhTest.DropDesk]::FindWindow('ITLFakeUserWindow', 'ITL fake user window')
             & $waitFor { [WhTest.DropDesk]::GetForegroundWindow() -eq $userWindow } | Should -BeTrue -Because 'the stand-in user takes the foreground'
             Start-Sleep -Milliseconds 300
             $done = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease-end -Fields @{ scope = 'сценарий списка'; dropdownResult = 'completed' }
