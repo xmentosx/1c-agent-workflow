@@ -31,6 +31,29 @@ func TestLoadCatalogAndCompare(t *testing.T) {
 	}
 }
 
+func TestDropdownOverrideInVanessaCatalog(t *testing.T) {
+	path := filepath.Join("..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs", "vanessa-ui-v0.6.5-va-1.2.043.42.json")
+	catalog, err := loadCatalog(path, "vanessa-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"execute_feature_step", "run_scenario"} {
+		args := map[string]any{}
+		if tool == "execute_feature_step" {
+			args["lineNumber"] = 1
+		}
+		for _, prompt := range []any{nil, false, true, "false"} {
+			if prompt != nil {
+				args["dropdownPrompt"] = prompt
+			}
+			err := catalog.validate(tool, args)
+			if (err != nil) != (prompt == "false") {
+				t.Fatalf("%s: dropdownPrompt=%v: %v", tool, prompt, err)
+			}
+		}
+	}
+}
+
 func TestLoadCatalogHashIgnoresLineEndingsAndBOM(t *testing.T) {
 	dir := t.TempDir()
 	lfPath := filepath.Join(dir, "lf.json")

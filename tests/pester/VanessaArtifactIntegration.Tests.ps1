@@ -18,13 +18,13 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         New-Item -ItemType Directory -Force -Path $script:FixtureContent | Out-Null
         $script:FixtureEpfPath = Join-Path $script:FixtureContent "vanessa-automation-single.epf"
         [System.IO.File]::WriteAllBytes($script:FixtureEpfPath, [System.Text.Encoding]::UTF8.GetBytes("qualified patched EPF fixture"))
-        $script:FixtureVaExtensionPath = Join-Path $script:FixtureContent "VAExtension.1.32-itl-r17.cfe"
+        $script:FixtureVaExtensionPath = Join-Path $script:FixtureContent "VAExtension.1.32-itl-r18.cfe"
         [System.IO.File]::WriteAllBytes($script:FixtureVaExtensionPath, [System.Text.Encoding]::UTF8.GetBytes("qualified paired VAExtension fixture"))
         $script:FixtureNestedPath = Join-Path $script:FixtureContent "metadata\fixture.txt"
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:FixtureNestedPath) | Out-Null
         [System.IO.File]::WriteAllText($script:FixtureNestedPath, "nested fixture", [System.Text.UTF8Encoding]::new($false))
         [System.IO.File]::WriteAllText((Join-Path $script:FixtureContent "LICENSE"), "license fixture", [System.Text.UTF8Encoding]::new($false))
-        $script:FixtureArchivePath = Join-Path $script:FixtureRoot "vanessa-automation-single.1.2.043.42-itl-r17.zip"
+        $script:FixtureArchivePath = Join-Path $script:FixtureRoot "vanessa-automation-single.1.2.043.42-itl-r18.zip"
         Compress-Archive -Path (Join-Path $script:FixtureContent "*") -DestinationPath $script:FixtureArchivePath
         $script:FixtureArchiveSha256 = (Get-FileHash -LiteralPath $script:FixtureArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
         $script:FixtureEpfSha256 = (Get-FileHash -LiteralPath $script:FixtureEpfPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -85,13 +85,13 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $entry = (Get-Content -LiteralPath (Join-Path $script:RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
         $entry.version | Should -Be "1.2.043.42"
         $entry.compatibilityVersion | Should -Be "1.2.043.42"
-        $entry.downstreamRevision | Should -Be "itl-r17"
-        $entry.assetName | Should -Be "vanessa-automation-single.1.2.043.42-itl-r17.zip"
-        $entry.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r17/vanessa-automation-single.1.2.043.42-itl-r17.zip"
-        $entry.sha256 | Should -Be "e99f933827ee5e52e6c4623da1936b45c54ece947ff63168fa64167ec9686759"
-        $entry.epfSha256 | Should -Be "a62528a4140d4cd3bd3f0f9571ea43be70c8b708a5cea409a64aa5c07d242b41"
-        $entry.manifestSha256 | Should -Be "0a6b0a52a631b3207b765354fbb19a3a714bdbcb2a3d1e461c182bc3c4954ce9"
-        $entry.patchSha256 | Should -Be "7f7209acf6e1186d63831d6353c6ce7286b99aefb77e7e9a267efdfeb5414ca2"
+        $entry.downstreamRevision | Should -Be "itl-r18"
+        $entry.assetName | Should -Be "vanessa-automation-single.1.2.043.42-itl-r18.zip"
+        $entry.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r18/vanessa-automation-single.1.2.043.42-itl-r18.zip"
+        $entry.sha256 | Should -Be "dd6b39533d201fb6611ba4573381084dddc8c71623f1a44df892a205835771d7"
+        $entry.epfSha256 | Should -Be "cf6ed6227a90d87c61fd6dd913598f8039b1bf90bd8b81975c127ce9fb61445c"
+        $entry.manifestSha256 | Should -Be "2b4cc98d47f2d1d369b001c271a7f1a79610041b23240bf44563ea69dbd8eedf"
+        $entry.patchSha256 | Should -Be "741e3f44b3103c6fa17ffecae6181391388ff3f1dae1cc063212a7f495788d8e"
         $entry.upstreamCommit | Should -Be "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1"
         $entry.PSObject.Properties.Name | Should -Not -Contain "publicationStatus"
     }
@@ -118,10 +118,10 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         Test-Path -LiteralPath $downloads[0] | Should -BeFalse
         $result.ready | Should -BeTrue
         $result.version | Should -Be "1.2.043.42"
-        $result.downstreamRevision | Should -Be "itl-r17"
+        $result.downstreamRevision | Should -Be "itl-r18"
         $result.epfSha256 | Should -Be $script:FixtureEpfSha256
         (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
-        (Get-Content -LiteralPath (Join-Path $testProjectPath ".dev.env") -Raw -Encoding UTF8) | Should -Match "VANESSA_AUTOMATION_DOWNSTREAM_REVISION=itl-r17"
+        (Get-Content -LiteralPath (Join-Path $testProjectPath ".dev.env") -Raw -Encoding UTF8) | Should -Match "VANESSA_AUTOMATION_DOWNSTREAM_REVISION=itl-r18"
         $installedRoot = Split-Path -Parent $result.epfPath
         $installedRoot | Should -Match ([regex]::Escape($script:NonAsciiWord))
         $installedRoot | Should -Not -Match ([regex]::Escape($testProjectPath))
@@ -149,7 +149,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         [IO.File]::ReadAllText($result.path, [Text.Encoding]::UTF8) | Should -Be "qualified paired VAExtension fixture"
         $lockEntry = (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaMcp.vaExtension
         $lockEntry.source | Should -Be "workflow-pinned"
-        $lockEntry.releaseTag | Should -Be "vanessa-automation-v1.2.043.42-itl-r17"
+        $lockEntry.releaseTag | Should -Be "vanessa-automation-v1.2.043.42-itl-r18"
         $lockEntry.protocol | Should -Be "itl-file-code-v1"
     }
 
@@ -170,7 +170,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
 
         $result.ready | Should -BeTrue
         $result.epfSha256 | Should -Be $script:FixtureEpfSha256
-        $result.downstreamRevision | Should -Be "itl-r17"
+        $result.downstreamRevision | Should -Be "itl-r18"
     }
 
     It "rejects archive and EPF mismatches without replacing an existing owned install" {

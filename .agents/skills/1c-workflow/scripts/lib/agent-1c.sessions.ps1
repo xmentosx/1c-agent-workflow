@@ -228,6 +228,23 @@ function Get-OneCWindowMode {
     return $value
 }
 
+function Add-OneCDropdownPromptSettings {
+    param([System.Collections.IDictionary]$LaunchParameters)
+    $project = [string](Get-EnvValue -Name 'ONEC_DROPDOWN_PROMPT' -Default '')
+    if ($project) {
+        $prompt = $false
+        if (-not [bool]::TryParse($project, [ref]$prompt)) {
+            throw "ONEC_DROPDOWN_PROMPT must be true or false. Actual: '$project'."
+        }
+        $LaunchParameters['ITLDropdownPrompt'] = $prompt
+    }
+    $run = $env:ITL_RUN_DROPDOWN_PROMPT
+    if ($run) {
+        if ($run -notin @('on', 'off')) { throw "ITL_RUN_DROPDOWN_PROMPT must be on or off. Actual: '$run'." }
+        $LaunchParameters['ITLDropdownRunPrompt'] = $run -eq 'on'
+    }
+}
+
 function Get-OneCUiLeaseCountdownSeconds {
     return (Get-OneCIntegerSetting -Name 'ONEC_UI_LEASE_COUNTDOWN_SECONDS' -Default 10 -Minimum 0 -Maximum 600 -Guidance 'Use 0 only on unattended stands: it starts the lease without the consent window.')
 }

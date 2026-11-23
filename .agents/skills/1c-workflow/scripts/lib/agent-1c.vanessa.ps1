@@ -4337,6 +4337,7 @@ function Add-VanessaAgentLaunchParams {
     # Only a ready helper group hides the TestClient; the group owner already applied
     # the window mode, the Vanessa capability and the same MAX_PATH check.
     if ($null -ne $WindowGroup -and [bool]$WindowGroup.ready) {
+        Add-OneCDropdownPromptSettings -LaunchParameters $agent
         $agent["ITLWindowChannelRoot"] = [string]$WindowGroup.directory
         $agent["ITLUiLeaseCountdownSeconds"] = Get-OneCUiLeaseCountdownSeconds
     }

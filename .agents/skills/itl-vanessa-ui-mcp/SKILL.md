@@ -58,6 +58,8 @@ These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r17` backend.
 - `И я выбираю файл` presets the next file dialog with a file path. Before a directory-selection dialog, pass the directory with a trailing `\`; without it the product received the parent directory. Assert the resulting file location in a separate step.
 - A TestClient closed with `И я закрываю TestClient` reconnects on its assigned port at once; leftover TIME_WAIT or CLOSE_WAIT connections do not occupy it. `ITL_TESTCLIENT_NO_FREE_PORT` means a process still listens on every port of the profile range, such as a TestClient that was not closed; do not widen the range or drop a profile to pass.
 
+For a one-off dropdown check, open, inspect, select and assert the resulting value in one `run_scenario` call. With the user's agreement, set boolean `dropdownPrompt` on this call or on `execute_feature_step` to override the project and scenario policy.
+
 ## Failure Handling
 
 For connection/cleanup failures, use the existing facade owner in [local MCP recovery](../1c-workflow/references/mcp.md#availability-recovery-and-return-to-work) before fallback; do not request a manual reset. Recovery does not replay an unknown UI action. For `ITL_VANESSA_TESTCLIENT_NOT_CONNECTED`, call `itl_recover_connection` before the next UI call.

@@ -1055,6 +1055,8 @@ namespace Itl.WindowHelper
     {
         public string Id = "";
         public string Scope = "";
+        public bool? DropdownPrompt;
+        public string PromptSource = "";
         public uint Pid;
         public DateTime DeadlineUtc;
         // Optional diagnostics: the Vanessa step and feature line that asked for OS input.
@@ -1140,6 +1142,7 @@ namespace Itl.WindowHelper
         private uint leasedPid;
         private IntPtr leasedWindow;
         private string activation = "";
+        private bool dropdownPending, consentShown;
         private DateTime stateSince, mutexSince, leaseSince, lastLeaseRequest, pauseSince;
         private long queueWaitMs, consentWaitMs, idleWaitMs;
         private int leaseRequests;
@@ -1221,7 +1224,7 @@ namespace Itl.WindowHelper
             if (eventType == Native.EVENT_SYSTEM_FOREGROUND) { OnForeground(hwnd, time); return; }
             if (eventType != Native.EVENT_OBJECT_SHOW || Native.GetAncestor(hwnd, 2) != hwnd) return;
             uint pid = Native.PidOf(hwnd);
-            if (!members.Clients.Contains(pid) || Exposed(pid)) return;
+            if (!members.Clients.Contains(pid) || Exposed(pid) || IsDropdown(hwnd)) return;
             // 1C activates a form while showing it; the foreground event waits behind this one.
             ReturnFocusFromClient(hwnd, pid, time, false);
             HideOutside(hwnd, pid, "shown");
@@ -1344,6 +1347,11 @@ namespace Itl.WindowHelper
         }
 
         // ------------------------------------------------ hiding
+        private static bool IsDropdown(IntPtr hwnd)
+        {
+            return Native.ClassOf(hwnd) == "V8DropWindowExWnd";
+        }
+
         private void HideOutside(IntPtr hwnd, uint pid, string reason)
         {
             HideOutside(hwnd, pid, reason, true);
@@ -1353,7 +1361,7 @@ namespace Itl.WindowHelper
         // capture is not a new appearance.
         private void HideOutside(IntPtr hwnd, uint pid, string reason, bool journal)
         {
-            if (!Native.IsWindowVisible(hwnd)) return;
+            if (IsDropdown(hwnd) || !Native.IsWindowVisible(hwnd)) return;
             journal = journal && !hiddenByUs.ContainsKey(hwnd);
             string title = Native.TitleOf(hwnd), cls = Native.ClassOf(hwnd);
             string image = "";
@@ -1461,6 +1469,7 @@ namespace Itl.WindowHelper
             var expired = new List<uint>();
             foreach (var kv in captures) if ((DateTime.UtcNow - kv.Value).TotalMilliseconds > CaptureLimitMs) expired.Add(kv.Key);
             foreach (uint pid in expired) { captures.Remove(pid); }
+            if (state == LeaseState.Leased && current.DropdownPrompt.HasValue && !members.Clients.Contains(leasedPid)) EndLease("client-exited");
             revealed.RemoveWhere(delegate(uint gone) { return !members.Clients.Contains(gone); });
             HideClientWindows(null, "reconcile");
             IntPtr fg = Native.GetForegroundWindow();
@@ -1555,13 +1564,27 @@ namespace Itl.WindowHelper
                 case "show": RevealShow(id, pid); break;
                 case "hide": RevealHide(id, pid); break;
                 case "capture-end": CaptureEnd(id, pid); break;
-                case "lease-end": LeaseEnd(id, Json.Str(request, "scope"), Json.Bool(request, "endScope")); break;
+                case "lease-end":
+                    if (request.ContainsKey("dropdownResult")) CompleteDropdown(id, Json.Str(request, "scope"), Json.Str(request, "dropdownResult"));
+                    else LeaseEnd(id, Json.Str(request, "scope"), Json.Bool(request, "endScope"));
+                    break;
                 case "lease":
                     Ack(id);
                     var lease = new LeaseRequest();
                     lease.Id = id;
                     lease.Scope = Json.Str(request, "scope");
                     lease.Pid = pid;
+                    if (request.ContainsKey("dropdownPrompt"))
+                    {
+                        lease.PromptSource = Json.Str(request, "promptSource");
+                        if (!(request["dropdownPrompt"] is bool) ||
+                            Array.IndexOf(new[] { "default", "project", "scenario", "run", "mcp" }, lease.PromptSource) < 0)
+                        {
+                            Respond(id, op, "error", new Dictionary<string, object> { { "code", "ITL_DROPDOWN_POLICY_INVALID" } });
+                            break;
+                        }
+                        lease.DropdownPrompt = (bool)request["dropdownPrompt"];
+                    }
                     lease.Step = Clip(Json.Str(request, "step"), 300);
                     lease.Feature = Clip(Json.Str(request, "feature"), 260);
                     lease.Line = Json.Num(request, "line", 0);
@@ -1604,7 +1627,7 @@ namespace Itl.WindowHelper
             }
             Respond(id, "status", "ok", new Dictionary<string, object>
             {
-                { "mode", config.Mode }, { "helperPid", ownPid }, { "members", members.Members.Count },
+                { "dropdownLease", true }, { "mode", config.Mode }, { "helperPid", ownPid }, { "members", members.Members.Count },
                 { "clients", clients.ToArray() }, { "state", state.ToString().ToLowerInvariant() },
                 { "revealed", new List<uint>(revealed).ToArray() }
             });
@@ -1674,12 +1697,19 @@ namespace Itl.WindowHelper
             if (state == LeaseState.Leased)
             {
                 if (r.Pid != 0 && r.Pid != leasedPid) EndLease("client-changed");
+                else if (current.DropdownPrompt != r.DropdownPrompt || current.PromptSource != r.PromptSource) EndLease("policy-changed");
+                else if (r.DropdownPrompt.HasValue && Native.PidOf(Native.GetForegroundWindow()) != leasedPid)
+                {
+                    if (dropdownPending) { FailActivation(r); return; }
+                    EndLease("focus-returned");
+                }
                 else
                 {
                     lastLeaseRequest = DateTime.UtcNow;
                     leaseRequests++;
+                    dropdownPending = r.DropdownPrompt.HasValue;
                     string how = Native.PidOf(Native.GetForegroundWindow()) == leasedPid ? "kept" : Native.Bring(ActiveWindow(leasedPid), leasedPid);
-                    if (how == "fail") { FailActivation(r); return; }
+                    if (how == "fail" || Native.PidOf(Native.GetForegroundWindow()) != leasedPid) { FailActivation(r); return; }
                     RespondLeaseOk(r, how);
                     return;
                 }
@@ -1695,10 +1725,11 @@ namespace Itl.WindowHelper
         private void Start(LeaseRequest r)
         {
             current = r;
+            consentShown = false;
             cancelled = false;
             queueWaitMs = consentWaitMs = idleWaitMs = 0;
             leaseRequests = 1;
-            uint pid = ResolveClient(r.Pid);
+            uint pid = r.DropdownPrompt.HasValue ? ResolveMember(r.Pid) : ResolveClient(r.Pid);
             if (pid == 0) { Decline(r, "no-client", false); return; }
             r.Pid = pid;
             Enqueue(false);
@@ -1721,9 +1752,11 @@ namespace Itl.WindowHelper
             queueWaitMs += (long)(DateTime.UtcNow - stateSince).TotalMilliseconds;
             if (!got) { Decline(r, "deadline", false); return; }
             mutexSince = DateTime.UtcNow;
-            if (consentGiven) scopeDecisions[r.Scope] = "granted";
+            if (consentGiven && !r.DropdownPrompt.HasValue) scopeDecisions[r.Scope] = "granted";
             string decision;
-            bool granted = config.CountdownSeconds == 0 || (scopeDecisions.TryGetValue(r.Scope, out decision) && decision == "granted");
+            bool granted = r.DropdownPrompt.HasValue
+                ? consentGiven || !r.DropdownPrompt.Value
+                : config.CountdownSeconds == 0 || (scopeDecisions.TryGetValue(r.Scope, out decision) && decision == "granted");
             if (granted) EnterIdleWait();
             else EnterConsent();
         }
@@ -1758,7 +1791,7 @@ namespace Itl.WindowHelper
             Rectangle bounds;
             IntPtr anchor = UserAnchor();
             Native.MonitorWorkArea(anchor, out bounds);
-            consentRemaining = config.CountdownSeconds;
+            consentRemaining = current.DropdownPrompt == true && config.CountdownSeconds == 0 ? 10 : config.CountdownSeconds;
             consentForm = new ConsentForm(bounds, ScaleFor(anchor), consentRemaining);
             consentForm.Now += delegate { Grant(); };
             consentForm.Pause += delegate { EnterPause(); };
@@ -1771,6 +1804,7 @@ namespace Itl.WindowHelper
                 Decline(current, "consent-not-visible", false);
                 return;
             }
+            consentShown = true;
             consentTick = DateTime.UtcNow;
         }
 
@@ -1778,7 +1812,7 @@ namespace Itl.WindowHelper
         {
             if (current == null) return;
             consentWaitMs += (long)(DateTime.UtcNow - stateSince).TotalMilliseconds;
-            scopeDecisions[current.Scope] = "granted";
+            if (!current.DropdownPrompt.HasValue) scopeDecisions[current.Scope] = "granted";
             CloseForms();
             EnterIdleWait();
         }
@@ -1872,7 +1906,7 @@ namespace Itl.WindowHelper
                     }
                     break;
                 case LeaseState.Leased:
-                    if ((now - lastLeaseRequest).TotalMilliseconds >= LeaseIdleEndMs) { EndLease("idle-end"); return; }
+                    if (!dropdownPending && (now - lastLeaseRequest).TotalMilliseconds >= LeaseIdleEndMs) { EndLease("idle-end"); return; }
                     if ((now - mutexSince).TotalMilliseconds >= HoldLimitMs) { EndLease("hold-limit"); return; }
                     break;
             }
@@ -1897,6 +1931,7 @@ namespace Itl.WindowHelper
             if (UserEligible(fg)) userWindow = fg;
             cursorSaved = Native.GetCursorPos(out savedCursor);
             leasedPid = r.Pid;
+            dropdownPending = r.DropdownPrompt.HasValue;
             SetState(LeaseState.Leased);
             leaseSince = DateTime.UtcNow;
             lastLeaseRequest = DateTime.UtcNow;
@@ -1953,6 +1988,7 @@ namespace Itl.WindowHelper
             string returned = ReturnFocus();
             uint pid = leasedPid;
             leasedPid = 0;
+            dropdownPending = false;
             SetState(LeaseState.Idle);
             HideClientWindows(pid, "lease-end");
             if (cursorSaved) Native.SetCursorPos(savedCursor.X, savedCursor.Y);
@@ -1986,6 +2022,20 @@ namespace Itl.WindowHelper
             completion.Show();
             completionSince = DateTime.UtcNow;
             stateTimer.Enabled = true;
+        }
+
+        private void CompleteDropdown(string id, string scope, string result)
+        {
+            if (!dropdownPending || state != LeaseState.Leased || current == null || current.Scope != scope ||
+                (result != "completed" && result != "failed"))
+            {
+                Respond(id, "lease-end", "error", new Dictionary<string, object> { { "code", "ITL_DROPDOWN_LEASE_LOST" } });
+                return;
+            }
+            dropdownPending = false;
+            lastLeaseRequest = DateTime.UtcNow;
+            if (result == "failed") EndLease("dropdown-failed");
+            Respond(id, "lease-end", "ok", new Dictionary<string, object>());
         }
 
         private void LeaseEnd(string id, string scope, bool endScope)
@@ -2047,9 +2097,15 @@ namespace Itl.WindowHelper
         }
 
         // A lease journal row names the step that started the lease when the client sent it.
-        private static Dictionary<string, object> WithStep(Dictionary<string, object> row, LeaseRequest r)
+        private Dictionary<string, object> WithStep(Dictionary<string, object> row, LeaseRequest r)
         {
             if (r == null) return row;
+            if (r.DropdownPrompt.HasValue)
+            {
+                row["dropdownPrompt"] = r.DropdownPrompt.Value;
+                row["promptSource"] = r.PromptSource;
+                row["consentShown"] = consentShown;
+            }
             if (r.Step.Length > 0) row["step"] = r.Step;
             if (r.Feature.Length > 0) row["feature"] = r.Feature;
             if (r.Line > 0) row["line"] = r.Line;

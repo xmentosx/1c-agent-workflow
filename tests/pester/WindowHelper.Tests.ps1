@@ -2,7 +2,7 @@
     $script:WhRepo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
     $script:WhLib = Join-Path $script:WhRepo '.agents/skills/1c-workflow/scripts/lib'
     $script:WhAssets = Join-Path $script:WhRepo '.agents/skills/1c-workflow/assets/window-helper'
-    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r17'
+    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18'
     foreach ($module in 'agent-1c.runtime-values.ps1', 'agent-1c.core.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1', 'agent-1c.window-helper.ps1') {
         . (Join-Path $script:WhLib $module)
     }
@@ -71,6 +71,29 @@ AfterAll {
 
 Describe 'Agent 1C window mode and settings' {
     AfterEach { Remove-Item Env:\ONEC_WINDOW_MODE, Env:\ONEC_UI_LEASE_COUNTDOWN_SECONDS, Env:\ONEC_UI_LEASE_PAUSE_LIMIT_SECONDS -ErrorAction SilentlyContinue }
+
+    It 'passes optional project and run dropdown settings as booleans' {
+        Mock Get-EnvValue { param($Name, $Default) $Default }
+        $saved = $env:ITL_RUN_DROPDOWN_PROMPT
+        try {
+            $env:ITL_RUN_DROPDOWN_PROMPT = $null
+            $params = @{}
+            Add-OneCDropdownPromptSettings $params
+            $params.Count | Should -Be 0
+            Mock Get-EnvValue { 'true' }
+            $env:ITL_RUN_DROPDOWN_PROMPT = 'off'
+            Add-OneCDropdownPromptSettings $params
+            $params.ITLDropdownPrompt | Should -BeTrue
+            $params.ITLDropdownRunPrompt | Should -BeFalse
+            Mock Get-EnvValue { 'false' }
+            $env:ITL_RUN_DROPDOWN_PROMPT = 'on'
+            Add-OneCDropdownPromptSettings $params
+            $params.ITLDropdownPrompt | Should -BeFalse
+            $params.ITLDropdownRunPrompt | Should -BeTrue
+            Mock Get-EnvValue { 'invalid' }
+            { Add-OneCDropdownPromptSettings $params } | Should -Throw '*ONEC_DROPDOWN_PROMPT*'
+        } finally { $env:ITL_RUN_DROPDOWN_PROMPT = $saved }
+    }
 
     It 'defaults to hidden with a 10-second countdown and a 600-second pause limit' {
         Mock Get-EnvValue { param($Name, $Default) $Default }
@@ -447,6 +470,11 @@ Describe 'Window helper build, group and channel' {
         $status.status | Should -Be 'ok'
         $status.mode | Should -Be 'hidden'
         $status.protocol | Should -Be 1
+        $status.dropdownLease | Should -BeTrue
+        $bad = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease -Fields @{scope='dropdown'; dropdownPrompt='false'; promptSource='project'}
+        $bad.code | Should -Be 'ITL_DROPDOWN_POLICY_INVALID'
+        $lost = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease-end -Fields @{scope='dropdown'; dropdownResult='completed'}
+        $lost.code | Should -Be 'ITL_DROPDOWN_LEASE_LOST'
         $before = Get-WhTreeCount $PID
         $adopted = Send-ItlWindowHelperRequest -Directory $group.directory -Operation adopt -Fields @{ pid = $PID } -Executable $group.executable
         $adopted.members | Should -BeIn @($before, (Get-WhTreeCount $PID))
@@ -865,7 +893,12 @@ Describe 'Window channel operation contract' {
         foreach ($field in $protocol.requestFields) { $patch | Should -Match ('Запрос\.Вставить\("' + [regex]::Escape($field) + '"') }
         foreach ($field in $protocol.operations.lease) {
             $source | Should -Match ('"' + [regex]::Escape($field) + '"') -Because "the helper reads lease field $field"
-            $patch | Should -Match ('Вставить\("' + [regex]::Escape($field) + '"') -Because "Vanessa sends lease field $field"
+            if ($field -in 'dropdownPrompt', 'promptSource') {
+                # The OneScript policy test exercises the values of both wire fields.
+                $patch | Should -Match '"dropdownPrompt,promptSource"'
+            } else {
+                $patch | Should -Match ('Вставить\("' + [regex]::Escape($field) + '"') -Because "Vanessa sends lease field $field"
+            }
         }
         $patch | Should -Match ([regex]::Escape('Запрос.Вставить("protocol", 1);'))
         $protocol.protocol | Should -Be 1
@@ -987,7 +1020,7 @@ ITLЗапросПомощникуОкон("status", Новый Структур�
         $patch = [IO.File]::ReadAllText((Join-Path $script:WhRevision 'file-operations.patch'), [Text.Encoding]::UTF8)
         $patch | Should -Match ([regex]::Escape('+		КомандаЗапуска = """" + СтрокаЗапуска1с + """ " + СтрокаЗапуска + " /DisableSplash";'))
         $patch | Should -Match ([regex]::Escape('+		ПолучитьWshShell().Run(КомандаЗапуска, 0, Ложь);'))
-        $patch | Should -Match '(?s)\+Процедура ITLАрендоватьУправлениеДляВводаОС\(\) Экспорт.*?ITLПроверитьОтветПомощникаОкон\(Ответ, "ввод ОС"\);.*?Если НЕ ЗначениеЗаполнено\(PIDКлиента\) Или PIDАктивного <> PIDКлиента Тогда\n\+\t\tВызватьИсключение "ITL_WINDOW_ACTIVATION_FAILED'
+        $patch | Should -Match '(?s)\+Процедура ITLАрендоватьУправлениеДляВводаОС\(ПараметрыСписка = Неопределено\) Экспорт.*?ITLПроверитьОтветПомощникаОкон\(Ответ, "ввод ОС"\);.*?Если НЕ ЗначениеЗаполнено\(PIDКлиента\) Или PIDАктивного <> PIDКлиента Тогда\n\+\t\tЕсли ПараметрыСписка <> Неопределено Тогда\n\+\t\t\tITLЗавершитьВыборИзСписка\(Истина\);\n\+\t\tКонецЕсли;\n\+\t\tВызватьИсключение "ITL_WINDOW_ACTIVATION_FAILED'
         $patch | Should -Match '(?s)\+\t\tИначеЕсли ITLПоказатьКлиентДляСнимка\(\) Тогда\n\+\t\t\tСпособСнятияСкриншотовВнешнейКомпонентой = 1;'
         $patch | Should -Match ([regex]::Escape('+			Если ДвоичныеДанные = Неопределено И НЕ ЗначениеЗаполнено(ITLКаталогКаналаОкон()) Тогда'))
     }
@@ -1022,8 +1055,8 @@ ITLЗапросПомощникуОкон("status", Новый Структур�
         }
         $patch | Should -Not -Match '(?m)^\+.*<WindowOpeningMode>(LockOwnerWindow|LockWholeInterface)</WindowOpeningMode>'
         $manifest = Get-Content -LiteralPath (Join-Path $script:WhRevision 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.downstreamRevision | Should -Be 'itl-r17'
-        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r17.cfe'
+        $manifest.downstreamRevision | Should -Be 'itl-r18'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r18.cfe'
         foreach ($form in $forms) { $manifest.patch.expectedChangedPaths | Should -Contain "lib/VAExtension/DataProcessors/$form/Forms/Форма/Ext/Form.xml" }
     }
     It 'calls no server-only date function from the added thin-client channel code' {

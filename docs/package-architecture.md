@@ -202,6 +202,14 @@ path as the deciding evidence. Approval covers that stated boundary. A newly
 affected owner, resource class, administrative prerequisite, or installed
 migration is a scope change; implementation details inside the boundary are not.
 
+On 2026-11-23 the user approved the [hidden TestClient dropdown policy](vanessa-dropdown-focus-plan.md).
+The wm22 child form lost its open list when Windows returned focus before selection.
+Vanessa owns the opening, selection and close boundaries. The existing per-desktop
+helper mutex owns activation, consent, cancellation and the maximum hold. A
+pending dropdown survives the idle timer. A completed batch can share its lease
+until focus returns. Permission for a dropdown applies only to that batch.
+The existing hidden/visible switch is the rollback path.
+
 On 2026-11-02 the user approved [Windows MCP storage retention](mcp-storage-retention.md),
 including conditional Sunday 03:30 detached VHD compaction on dev-ermakov. The
 existing host lease/scheduler delegates eligibility to native owners; current,
