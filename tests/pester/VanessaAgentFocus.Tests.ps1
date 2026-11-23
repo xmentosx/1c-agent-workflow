@@ -728,4 +728,87 @@ ITLРежимСпискаMCP = Истина;
         $result.exitCode | Should -Be 0 -Because $result.output
         $result.output | Should -Match 'POLICY PASSED'
     }
+
+    It 'takes the focus only for the selection gesture and reopens a list opened before it' {
+        # wm22, 2026-11-23: a list opened under its own lease closed while the scenario
+        # paused before the selection. Opening, inspecting, closing and input by string
+        # run in the background; each selection reopens the list inside one lease.
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18/file-operations.patch'))
+        foreach ($name in 'ITLВОткрытойФормеЯОткрываюВыпадающийСписокСЗаголовкомПлатформа', 'ITLВТаблицеЯОткрываюВыпадающийСписокПлатформа',
+            'ITLЯЗакрываюВыпадающийСписокПлатформа', 'ITLВТаблицеЯЗакрываюВыпадающийСписокПлатформа', 'ITLСделатьВводПоСтрокеВПолеВВодаПлатформа',
+            'ITLОткрытьВыпадающийСписокПлатформа', 'ITLОткрытьСписокДляОперации', 'ITLЗапомнитьОткрытыйСписок') {
+            $patch | Should -Not -Match ([regex]::Escape($name)) -Because "$name took the focus outside a selection"
+        }
+        $client = Get-FocusNewSide 'VanessaAutomation/Forms/КлиентТестирования/Ext/Form/Module.bsl' $patch
+        $steps = Get-FocusNewSide 'features/Libraries/UITestRunner/step_definitions/РаботаСИнтерфейсом/Forms/Форма/Ext/Form/Module.bsl' $patch
+        $mcp = Get-FocusNewSide 'VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl' $patch
+        foreach ($wrapper in @(
+                @($client, 'ИзВыпадающегоСпискаЯВыбираюТочноеЗначение'), @($client, 'ВТаблицеИзВыпадающегоСпискаЯВыбираюТочноеЗначение'),
+                @($client, 'ЯНажимаюНаКнопкуСоздатьПоля'))) {
+            $method = Get-FocusMethod $wrapper[0] $wrapper[1]
+            $method | Should -Match '(?s)^[^\n]+\n\tВанесса\.ITLНачатьВыборИзСписка\(\);\n\tПопытка\n.*ITLЗавершитьВыборИзСписка\(Истина\);.*ITLЗавершитьВыборИзСписка\(\);' -Because $wrapper[1]
+        }
+        $reopen = [regex]::Escape('Ванесса.ITLПереоткрытьСписокВАренде(ПолеРеквизит);')
+        $client | Should -Match ('ТипПоля, ДопПараметры\);\n\t\t\t' + $reopen + '\n[ \t]*\n\t\t\tДопПараметрыОткрытьВыпадающийСписок') -Because 'the exact selection closes an earlier list before it opens one'
+        ([regex]::Matches($client, 'ПолеРеквизит\.Активизировать\(\);\n\t\t\t' + $reopen)).Count | Should -Be 2 -Because 'the table selection and the create button reopen the list'
+        $steps | Should -Match '(?s)Ванесса\.ITLНачатьВыборИзСписка\(\);\n\t+ВыпадающийСписокОткрыт = РеквизитТаблицы\.ВыпадающийСписокОткрыт\(\) И НЕ Ванесса\.ITLПереоткрытьСписокВАренде\(РеквизитТаблицы\);'
+        $mcp | Should -Match '(?s)Ванесса\.ITLНачатьВыборИзСписка\(\);\n\t+Если Ванесса\.ITLПереоткрытьСписокВАренде\(Поле\) Тогда\n\t+Поле\.ОткрытьВыпадающийСписок\(\);.*Поле\.ВыполнитьВыборИзВыпадающегоСписка\(Значение\);\n\t+Ванесса\.ITLЗавершитьВыборИзСписка\(\);'
+    }
+
+    It 'reports a lost foreground as a failed selection and keeps the original error of a failed step' {
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18/file-operations.patch'))
+        $form = Get-FocusNewSide 'VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl' $patch
+        $methods = foreach ($name in 'ITLПереоткрытьСписокВАренде', 'ITLЗавершитьВыборИзСписка', 'ITLПроверитьОтветПомощникаОкон') { Get-FocusMethod $form $name }
+        $prefix = @'
+Перем ITLАрендаСписка, ОтветПомощника, Запросы;
+Функция ITLЗапросПомощникуОкон(Операция, Поля, Таймаут) Запросы.Добавить(Поля); Возврат ОтветПомощника; КонецФункции
+Функция ITLОбластьУправления() Возврат "сценарий 1"; КонецФункции
+Процедура ЗаписатьЛогВЖРОшибка(Имя, Текст) КонецПроцедуры
+Функция Ошибка(Код, Заголовок = "") Возврат Новый Структура("status,code,foregroundTitle", "error", Код, Заголовок); КонецФункции
+Процедура Ожидать(Условие, Текст) Если НЕ Условие Тогда ВызватьИсключение Текст; КонецЕсли; КонецПроцедуры
+'@
+        $body = @'
+Запросы = Новый Массив;
+Поле = ЗагрузитьСценарийИзСтроки("Перем Открыт Экспорт; Перем Закрытий Экспорт;
+|Функция ВыпадающийСписокОткрыт() Экспорт Возврат Открыт; КонецФункции
+|Процедура ЗакрытьВыпадающийСписок() Экспорт Открыт = Ложь; Закрытий = Закрытий + 1; КонецПроцедуры");
+Поле.Открыт = Истина; Поле.Закрытий = 0;
+ITLАрендаСписка = Ложь;
+Ожидать(НЕ ITLПереоткрытьСписокВАренде(Поле) И Поле.Закрытий = 0, "a list outside a lease stays untouched");
+ITLЗавершитьВыборИзСписка();
+Ожидать(Запросы.Количество() = 0, "no lease, no lease-end");
+ITLАрендаСписка = Истина;
+Ожидать(ITLПереоткрытьСписокВАренде(Поле) И Поле.Закрытий = 1 И НЕ Поле.Открыт, "an earlier list is closed inside the lease");
+Ожидать(ITLПереоткрытьСписокВАренде(Поле) И Поле.Закрытий = 1, "a closed list is not closed again");
+ОтветПомощника = Ошибка("ITL_DROPDOWN_FOCUS_LOST", "Блокнот с пробелом");
+Попытка
+    ITLЗавершитьВыборИзСписка();
+    ВызватьИсключение "missing focus loss";
+Исключение
+    Текст = ОписаниеОшибки();
+    Ожидать(СтрНайти(Текст, "ITL_DROPDOWN_FOCUS_LOST") > 0 И СтрНайти(Текст, "Блокнот с пробелом") > 0, Текст);
+КонецПопытки;
+Ожидать(Запросы[0].dropdownResult = "completed" И ITLАрендаСписка = Ложь, "a completed selection is reported once");
+ITLАрендаСписка = Истина;
+ОтветПомощника = Ошибка("ITL_DROPDOWN_LEASE_LOST");
+ITLЗавершитьВыборИзСписка(Истина);
+Ожидать(Запросы[1].dropdownResult = "failed" И ITLАрендаСписка = Ложь, "a failed step ends the lease without a second error");
+ITLАрендаСписка = Истина;
+Попытка
+    ITLЗавершитьВыборИзСписка();
+    ВызватьИсключение "missing lease loss";
+Исключение
+    Ожидать(СтрНайти(ОписаниеОшибки(), "ITL_DROPDOWN_LEASE_LOST") > 0, ОписаниеОшибки());
+КонецПопытки;
+Попытка
+    ITLПроверитьОтветПомощникаОкон(Новый Структура("status,reason", "declined", "consent-not-visible"), "выбор из списка");
+Исключение
+    Ожидать(СтрНайти(ОписаниеОшибки(), "активном разблокированном рабочем столе") > 0, ОписаниеОшибки());
+КонецПопытки;
+Сообщить("SELECTION PASSED");
+'@
+        $result = Invoke-FocusProbe -Source ((@($prefix) + $methods + @($body)) -join "`n") -Arguments @()
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match 'SELECTION PASSED'
+    }
 }

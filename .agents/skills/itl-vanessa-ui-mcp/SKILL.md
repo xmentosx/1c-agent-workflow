@@ -47,7 +47,7 @@ When an interaction fails twice without new evidence, change the route (recordin
 
 ## Step Notes
 
-These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r17` backend.
+These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r18` backend.
 
 - `run_scenario` with `filePath` in modes `all`, `reloadAndRun` and `reloadAndRunFromLine` reloads the file from disk and returns `featureSha256` of the executed bytes; compare it with the file you just wrote. Without `filePath`, and in `selected` or `fromCurrentStep`, the previously loaded text with its selected scenario or step runs. `ITL_FEATURE_INVALID_XML_CHARACTER` names `file:line:column` of a control character, such as `\f` produced by an unescaped Windows path; `ITL_FEATURE_CHANGED_DURING_LOAD` means the file was still being written.
 - In ITL runs every built-in code step `(Расширение)`, including the `через буфер обмена` variants, runs through the file-code channel and fails with the original exception or compilation error. `ITL_CLIENT_CODE_CHANNEL_UNAVAILABLE` rejects a clipboard variant that could not report its result; use the plain step.
@@ -58,7 +58,7 @@ These notes apply to the pinned Vanessa Automation `1.2.043.42-itl-r17` backend.
 - `И я выбираю файл` presets the next file dialog with a file path. Before a directory-selection dialog, pass the directory with a trailing `\`; without it the product received the parent directory. Assert the resulting file location in a separate step.
 - A TestClient closed with `И я закрываю TestClient` reconnects on its assigned port at once; leftover TIME_WAIT or CLOSE_WAIT connections do not occupy it. `ITL_TESTCLIENT_NO_FREE_PORT` means a process still listens on every port of the profile range, such as a TestClient that was not closed; do not widen the range or drop a profile to pass.
 
-For a one-off dropdown check, open, inspect, select and assert the resulting value in one `run_scenario` call. With the user's agreement, set boolean `dropdownPrompt` on this call or on `execute_feature_step` to override the project and scenario policy.
+For a one-off dropdown check, open and inspect the list, select, and assert the resulting value; the steps may come in separate calls. In a hidden TestClient only the selection takes the user's focus and reopens the list first, so a filter typed into the open list is lost. `ITL_DROPDOWN_FOCUS_LOST` means another window took the foreground during the selection: the value is unconfirmed, so read it before any retry. With the user's agreement, set boolean `dropdownPrompt` on `run_scenario` or `execute_feature_step` to override the project and scenario policy.
 
 ## Failure Handling
 

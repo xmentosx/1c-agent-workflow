@@ -28,6 +28,9 @@ namespace Itl.WindowHelper
         public static readonly string[] RequestFields = { "protocol", "op", "id", "scope", "deadlineUtc" };
         public const string Declined = "ITL_UI_CONTROL_DECLINED";
         public const string ActivationFailed = "ITL_WINDOW_ACTIVATION_FAILED";
+        public const string DropdownFocusLost = "ITL_DROPDOWN_FOCUS_LOST";
+        public const string DropdownLeaseLost = "ITL_DROPDOWN_LEASE_LOST";
+        public const string DropdownPolicyInvalid = "ITL_DROPDOWN_POLICY_INVALID";
     }
 
     internal static class Program
@@ -1178,7 +1181,12 @@ namespace Itl.WindowHelper
         private uint leasedPid;
         private IntPtr leasedWindow;
         private string activation = "";
-        private bool dropdownPending, consentShown;
+        // A selection is pending from its lease until Vanessa reports its result. 1C closes
+        // an open list when another process takes the foreground, so a foreground change
+        // after the activation (leaseActiveTick, the WinEvent clock) fails the selection.
+        private bool dropdownPending, dropdownFocusLost, consentShown;
+        private string dropdownLostTitle = "";
+        private uint leaseActiveTick;
         private DateTime stateSince, mutexSince, leaseSince, lastLeaseRequest, pauseSince;
         private long queueWaitMs, consentWaitMs, idleWaitMs;
         private int leaseRequests;
@@ -1260,7 +1268,9 @@ namespace Itl.WindowHelper
             if (eventType == Native.EVENT_SYSTEM_FOREGROUND) { OnForeground(hwnd, time); return; }
             if (eventType != Native.EVENT_OBJECT_SHOW || Native.GetAncestor(hwnd, 2) != hwnd) return;
             uint pid = Native.PidOf(hwnd);
-            if (!members.Clients.Contains(pid) || Exposed(pid) || IsDropdown(hwnd)) return;
+            // A list opened outside a lease is hidden like any other client window: Vanessa
+            // inspects it through the test API and reopens it inside the selection lease.
+            if (!members.Clients.Contains(pid) || Exposed(pid)) return;
             // 1C activates a form while showing it; the foreground event waits behind this one.
             ReturnFocusFromClient(hwnd, pid, time, false);
             HideOutside(hwnd, pid, "shown");
@@ -1270,6 +1280,19 @@ namespace Itl.WindowHelper
         {
             uint pid = Native.PidOf(hwnd);
             if (pid == ownPid) return;
+            // Events queued before the activation (a closing panel, the user's window) are
+            // older than leaseActiveTick and do not count.
+            if (state == LeaseState.Leased && dropdownPending && pid != leasedPid && !dropdownFocusLost &&
+                unchecked((int)(eventTime - leaseActiveTick)) > 0)
+            {
+                dropdownFocusLost = true;
+                dropdownLostTitle = Native.TitleOf(hwnd);
+                Journal(paths.HiddenLog, new Dictionary<string, object>
+                {
+                    { "t", Now() }, { "event", "dropdown-focus-lost" }, { "pid", pid }, { "role", RoleOf(pid) },
+                    { "title", dropdownLostTitle }, { "leasedPid", leasedPid }
+                });
+            }
             // A TestClient started since the last reconcile is joined at once.
             if (!members.Clients.Contains(pid) && Foreign(pid).IsTestClient &&
                 (DateTime.UtcNow - lastMembershipRefresh).TotalMilliseconds >= 250) RefreshMembership();
@@ -1383,11 +1406,6 @@ namespace Itl.WindowHelper
         }
 
         // ------------------------------------------------ hiding
-        private static bool IsDropdown(IntPtr hwnd)
-        {
-            return Native.ClassOf(hwnd) == "V8DropWindowExWnd";
-        }
-
         private void HideOutside(IntPtr hwnd, uint pid, string reason)
         {
             HideOutside(hwnd, pid, reason, true);
@@ -1397,7 +1415,7 @@ namespace Itl.WindowHelper
         // capture is not a new appearance.
         private void HideOutside(IntPtr hwnd, uint pid, string reason, bool journal)
         {
-            if (IsDropdown(hwnd) || !Native.IsWindowVisible(hwnd)) return;
+            if (!Native.IsWindowVisible(hwnd)) return;
             journal = journal && !hiddenByUs.ContainsKey(hwnd);
             string title = Native.TitleOf(hwnd), cls = Native.ClassOf(hwnd);
             string image = "";
@@ -1616,7 +1634,7 @@ namespace Itl.WindowHelper
                         if (!(request["dropdownPrompt"] is bool) ||
                             Array.IndexOf(new[] { "default", "project", "scenario", "run", "mcp" }, lease.PromptSource) < 0)
                         {
-                            Respond(id, op, "error", new Dictionary<string, object> { { "code", "ITL_DROPDOWN_POLICY_INVALID" } });
+                            Respond(id, op, "error", new Dictionary<string, object> { { "code", Protocol.DropdownPolicyInvalid } });
                             break;
                         }
                         lease.DropdownPrompt = (bool)request["dropdownPrompt"];
@@ -1732,20 +1750,25 @@ namespace Itl.WindowHelper
             }
             if (state == LeaseState.Leased)
             {
+                // OS input inside a pending selection (a click or a key of the same step)
+                // joins its lease: ending it would let 1C close the open list.
+                bool joins = dropdownPending && !r.DropdownPrompt.HasValue;
+                bool focusLost = dropdownFocusLost || Native.PidOf(Native.GetForegroundWindow()) != leasedPid;
                 if (r.Pid != 0 && r.Pid != leasedPid) EndLease("client-changed");
-                else if (current.DropdownPrompt != r.DropdownPrompt || current.PromptSource != r.PromptSource) EndLease("policy-changed");
-                else if (r.DropdownPrompt.HasValue && Native.PidOf(Native.GetForegroundWindow()) != leasedPid)
+                else if (!joins && (current.DropdownPrompt != r.DropdownPrompt || current.PromptSource != r.PromptSource)) EndLease("policy-changed");
+                else if ((r.DropdownPrompt.HasValue || joins) && focusLost)
                 {
-                    if (dropdownPending) { FailActivation(r); return; }
+                    if (dropdownPending) { FailDropdownFocus(r.Id, "lease"); return; }
                     EndLease("focus-returned");
                 }
                 else
                 {
                     lastLeaseRequest = DateTime.UtcNow;
                     leaseRequests++;
-                    dropdownPending = r.DropdownPrompt.HasValue;
+                    if (r.DropdownPrompt.HasValue && !dropdownPending) { dropdownPending = true; dropdownFocusLost = false; }
                     string how = Native.PidOf(Native.GetForegroundWindow()) == leasedPid ? "kept" : Native.Bring(ActiveWindow(leasedPid), leasedPid);
                     if (how == "fail" || Native.PidOf(Native.GetForegroundWindow()) != leasedPid) { FailActivation(r); return; }
+                    if (how != "kept") leaseActiveTick = unchecked((uint)Environment.TickCount);
                     RespondLeaseOk(r, how);
                     return;
                 }
@@ -1969,6 +1992,7 @@ namespace Itl.WindowHelper
             cursorSaved = Native.GetCursorPos(out savedCursor);
             leasedPid = r.Pid;
             dropdownPending = r.DropdownPrompt.HasValue;
+            dropdownFocusLost = false;
             SetState(LeaseState.Leased);
             leaseSince = DateTime.UtcNow;
             lastLeaseRequest = DateTime.UtcNow;
@@ -1985,6 +2009,7 @@ namespace Itl.WindowHelper
             leasePanel = new PanelForm(work, Native.RectOf(leasedWindow), ScaleFor(leasedWindow), "Агент управляет вводом", new[] { "Отмена" },
                 new EventHandler[] { delegate { CancelLease(); } });
             leasePanel.Show();
+            leaseActiveTick = unchecked((uint)Environment.TickCount);
             RespondLeaseOk(r, activation);
         }
 
@@ -2010,6 +2035,20 @@ namespace Itl.WindowHelper
             EndLease("activation-failed");
         }
 
+        // The pending selection lost the foreground to another process; 1C closes its list
+        // then, so the selection is not confirmed.
+        private void FailDropdownFocus(string id, string op)
+        {
+            string title = dropdownLostTitle;
+            if (!dropdownFocusLost)
+            {
+                IntPtr fg = Native.GetForegroundWindow();
+                title = fg == IntPtr.Zero ? "" : Native.TitleOf(fg);
+            }
+            EndLease("dropdown-focus-lost");
+            Respond(id, op, "error", new Dictionary<string, object> { { "code", Protocol.DropdownFocusLost }, { "foregroundTitle", title } });
+        }
+
         private void CancelLease()
         {
             if (current == null) return;
@@ -2026,6 +2065,7 @@ namespace Itl.WindowHelper
             uint pid = leasedPid;
             leasedPid = 0;
             dropdownPending = false;
+            dropdownFocusLost = false;
             SetState(LeaseState.Idle);
             HideClientWindows(pid, "lease-end");
             if (cursorSaved) Native.SetCursorPos(savedCursor.X, savedCursor.Y);
@@ -2066,10 +2106,12 @@ namespace Itl.WindowHelper
             if (!dropdownPending || state != LeaseState.Leased || current == null || current.Scope != scope ||
                 (result != "completed" && result != "failed"))
             {
-                Respond(id, "lease-end", "error", new Dictionary<string, object> { { "code", "ITL_DROPDOWN_LEASE_LOST" } });
+                Respond(id, "lease-end", "error", new Dictionary<string, object> { { "code", Protocol.DropdownLeaseLost } });
                 return;
             }
+            if (result == "completed" && dropdownFocusLost) { FailDropdownFocus(id, "lease-end"); return; }
             dropdownPending = false;
+            dropdownFocusLost = false;
             lastLeaseRequest = DateTime.UtcNow;
             if (result == "failed") EndLease("dropdown-failed");
             Respond(id, "lease-end", "ok", new Dictionary<string, object>());
