@@ -90,6 +90,42 @@ Describe 'Agent 1C window mode and settings' {
     }
 }
 
+Describe 'Window helper pause panel' {
+    It 'cycles the four working-area corners and reopens in the last selected corner' {
+        Add-Type -AssemblyName System.Windows.Forms
+        $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes((Get-ItlWindowHelperExecutable)))
+        $constructor = $assembly.GetType('Itl.WindowHelper.PanelForm').GetConstructors()[0]
+        $work = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+        $subKey = 'Software\ITL.WindowHelper.Test.' + [guid]::NewGuid().ToString('N')
+        $key = 'HKEY_CURRENT_USER\' + $subKey
+        $argsForPanel = [object[]]@($work, [Drawing.Rectangle]::Empty, [float]1, 'Пауза',
+            [string[]]@('Сейчас', 'Отмена'), [EventHandler[]]@({ throw 'Unexpected resume' }, { throw 'Unexpected cancel' }), $key)
+        $panel = $null
+        try {
+            $panel = $constructor.Invoke($argsForPanel)
+            $left = $work.Left + 12
+            $right = $work.Right - $panel.Width - 12
+            $top = $work.Top + 12
+            $bottom = $work.Bottom - $panel.Height - 12
+            $corners = @([Drawing.Point]::new($right, $bottom), [Drawing.Point]::new($left, $bottom),
+                [Drawing.Point]::new($left, $top), [Drawing.Point]::new($right, $top))
+            $panel.Location | Should -Be $corners[0]
+            $click = [Windows.Forms.Button].GetMethod('OnClick', [Reflection.BindingFlags]'NonPublic,Instance')
+            foreach ($index in 1, 2, 3, 0) {
+                $button = $panel.Controls | Where-Object Text -eq 'Другой угол'
+                $click.Invoke($button, @([EventArgs]::Empty))
+                $panel.Location | Should -Be $corners[$index]
+                $panel.Dispose()
+                $panel = $constructor.Invoke($argsForPanel)
+                $panel.Location | Should -Be $corners[$index]
+            }
+        } finally {
+            if ($panel) { $panel.Dispose() }
+            [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey($subKey, $false)
+        }
+    }
+}
+
 Describe 'Agent 1C window mode for one run' {
     AfterEach { [Environment]::SetEnvironmentVariable('ITL_RUN_WINDOW_MODE', $null, 'Process') }
 

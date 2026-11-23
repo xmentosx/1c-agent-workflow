@@ -1017,11 +1017,16 @@ namespace Itl.WindowHelper
 
     internal sealed class PanelForm : OverlayForm
     {
-        public PanelForm(Rectangle workArea, Rectangle avoid, float scale, string text, string[] buttons, EventHandler[] handlers) : base(scale)
+        public const string PauseSettingsKey = @"HKEY_CURRENT_USER\Software\ITL\WindowHelper";
+        private const string CornerValue = "PausePanelCorner";
+
+        public PanelForm(Rectangle workArea, Rectangle avoid, float scale, string text, string[] buttons, EventHandler[] handlers,
+            string cornerSettingsKey = null) : base(scale)
         {
             BackColor = Color.FromArgb(36, 40, 48);
             int bw = S(110), bh = S(34), pad = S(12);
-            int width = Math.Max(S(360), pad + buttons.Length * (bw + pad));
+            int buttonCount = buttons.Length + (cornerSettingsKey == null ? 0 : 1);
+            int width = Math.Max(S(360), pad + buttonCount * (bw + pad));
             int height = S(56) + bh + pad;
             Size = new Size(width, height);
             AddLabel(text, 15, FontStyle.Regular, new Rectangle(pad, pad, width - 2 * pad, S(40)), Color.White, ContentAlignment.MiddleLeft);
@@ -1029,24 +1034,55 @@ namespace Itl.WindowHelper
             {
                 AddButton(this, buttons[i], pad + i * (bw + pad), S(56), bw, bh, handlers[i]);
             }
-            Location = Corner(workArea, avoid, Size, pad);
+            if (cornerSettingsKey == null)
+            {
+                Location = Corner(workArea, avoid, Size, pad);
+                return;
+            }
+
+            int corner = ReadPauseCorner(cornerSettingsKey);
+            Location = CornerLocation(workArea, Size, pad, corner);
+            AddButton(this, "Другой угол", pad + buttons.Length * (bw + pad), S(56), bw, bh, delegate
+            {
+                corner = (corner + 1) % 4;
+                Location = CornerLocation(Screen.FromRectangle(Bounds).WorkingArea, Size, pad, corner);
+                try { Microsoft.Win32.Registry.SetValue(cornerSettingsKey, CornerValue, corner); }
+                catch (System.Security.SecurityException) { }
+                catch (UnauthorizedAccessException) { }
+                catch (IOException) { }
+            });
+        }
+
+        private static int ReadPauseCorner(string key)
+        {
+            try
+            {
+                object value = Microsoft.Win32.Registry.GetValue(key, CornerValue, 0);
+                if (value is int && (int)value >= 0 && (int)value < 4) return (int)value;
+            }
+            catch (System.Security.SecurityException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (IOException) { }
+            return 0;
+        }
+
+        // Clockwise from bottom right, in the monitor's working area (taskbar excluded).
+        private static Point CornerLocation(Rectangle work, Size size, int margin, int corner)
+        {
+            int x = corner == 1 || corner == 2 ? work.Left + margin : work.Right - size.Width - margin;
+            int y = corner >= 2 ? work.Top + margin : work.Bottom - size.Height - margin;
+            return new Point(x, y);
         }
 
         // The first monitor corner whose panel does not overlap the client window.
         private static Point Corner(Rectangle work, Rectangle avoid, Size size, int margin)
         {
-            var candidates = new[]
+            foreach (int corner in new[] { 0, 3, 1, 2 })
             {
-                new Point(work.Right - size.Width - margin, work.Bottom - size.Height - margin),
-                new Point(work.Right - size.Width - margin, work.Top + margin),
-                new Point(work.Left + margin, work.Bottom - size.Height - margin),
-                new Point(work.Left + margin, work.Top + margin)
-            };
-            foreach (Point p in candidates)
-            {
+                Point p = CornerLocation(work, size, margin, corner);
                 if (avoid.IsEmpty || !new Rectangle(p, size).IntersectsWith(avoid)) return p;
             }
-            return candidates[0];
+            return CornerLocation(work, size, margin, 0);
         }
     }
 
@@ -1816,7 +1852,8 @@ namespace Itl.WindowHelper
             IntPtr anchor = UserAnchor();
             Rectangle work = Native.MonitorWorkArea(anchor, out bounds);
             Rectangle avoid = current != null ? Native.RectOf(WindowOps.MainWindow(current.Pid)) : Rectangle.Empty;
-            panel = new PanelForm(work, avoid, ScaleFor(anchor), text, buttons, handlers);
+            panel = new PanelForm(work, avoid, ScaleFor(anchor), text, buttons, handlers,
+                state == LeaseState.Paused ? PanelForm.PauseSettingsKey : null);
             panel.Show();
         }
 
