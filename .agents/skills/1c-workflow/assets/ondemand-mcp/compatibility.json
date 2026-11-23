@@ -27,15 +27,15 @@
         "vanessaAutomation": "itl-r18"
       },
       "vanessaAutomationArtifact": {
-        "archiveSha256": "0b35689a5ce5844dcf957cdc027889eb3fb3aa7fb7f61a150f9a0d86badbdae0",
-        "epfSha256": "1e69d089c6af9fd3f25ca7066ffb888fae98c630d0a8559ad5325b8640a743b0",
-        "manifestSha256": "2aea06720f1e6387ba230e5d23470767bcd520f97780715578e21c3243571941",
-        "patchSha256": "ad11324c806e4256bb52dac2235939a1dd5c90cd0941212a1c1a341a77d27af0",
+        "archiveSha256": "ad3122311a637b367ebeac638587e0efa31f57cfde5267e1752619695199d732",
+        "epfSha256": "024795b12e9c2aba42b84c07800f566ebceef2cc901dc11a1454159d46145102",
+        "manifestSha256": "1aecd3f6239f00271909fd74672a407ae3788dd202b0671905162b5272b3f995",
+        "patchSha256": "5d3073bf4cd683c716cb1dd215026438cb11e702dcd078055c01180b6c0bc6cb",
         "upstreamCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1"
       },
       "pairedExtensionArtifact": {
         "assetName": "VAExtension.1.32-itl-r18.cfe",
-        "sha256": "5781ca4e67eefa0ca0b3fb82fbc556d65fa1e63720d7dc3fc890e8aaadf64aa3",
+        "sha256": "ab7d6a6345bc760be16fdd5e0a417fb2d12c27c509e21cfa2ea2fab6bf809c01",
         "protocol": "itl-file-code-v1"
       },
       "lockKeys": [
