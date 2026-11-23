@@ -837,4 +837,45 @@ ITLЗакрытьСписок(Поле);
         $result.exitCode | Should -Be 0 -Because $result.output
         $result.output | Should -Match 'SELECTION PASSED'
     }
+
+    It 'ends the lease scope of a synchronous form tool in its own answer' {
+        # wm22 facade run, 2026-11-23: the MCP library sends a synchronous answer itself, so the
+        # scope of select_from_dropdown ended only with the next call and the completion panel
+        # appeared about nine seconds after the selection.
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18/file-operations.patch'))
+        $mcp = Get-FocusNewSide 'VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl' $patch
+        $methods = foreach ($name in 'ITLЗавершитьСинхронныйВызов', 'ВыполнитьПоследовательностьДействийФормы') { Get-FocusMethod $mcp $name }
+        # The patch hunk starts below the header of the manage_form_elements handler; its body is the changed part.
+        $answer = $mcp.IndexOf("`tИдентификатор = Запрос.Идентификатор;`n`tВанесса.УстановитьИдентификаторЗадачиMCP(Идентификатор);`n`tВозврат ITLЗавершитьСинхронныйВызов(")
+        if ($answer -lt 0) { throw 'Missing the patched manage_form_elements answer' }
+        $methods += "Функция УправлениеЭлементамиФормы(Запрос, ДополнительныеПараметры)`n" + $mcp.Substring($answer, $mcp.IndexOf('КонецФункции', $answer) - $answer) + 'КонецФункции'
+        $fakes = @'
+Функция УправлениеЭлементамиФормыСлужебный(Запрос, Параметры) Возврат "Значение выбрано"; КонецФункции
+Функция ВыполнитьПоследовательностьДействийФормыITL(Запрос, Параметры) Возврат Новый Структура("code", "ACTION_FAILED"); КонецФункции
+'@
+        $body = @'
+Ванесса = ЗагрузитьСценарийИзСтроки("Перем Вызовы Экспорт; Перем Сбой Экспорт;
+|Функция ITLДобавитьИтогУправления(Текст) Экспорт Вызовы.Добавить(""итог""); Возврат Текст + "" Agent UI control: leases=1""; КонецФункции
+|Функция ITLЗавершитьОбластьУправления() Экспорт Вызовы.Добавить(""конец""); Если Сбой Тогда ВызватьИсключение ""канал окон недоступен""; КонецЕсли; Возврат """"; КонецФункции
+|Процедура ЗаписатьЛогВЖРОшибка(Имя, Текст) Экспорт Вызовы.Добавить(Имя); КонецПроцедуры
+|Процедура УстановитьИдентификаторЗадачиMCP(Ид) Экспорт Вызовы.Добавить(""задача "" + Ид); КонецПроцедуры");
+Ванесса.Вызовы = Новый Массив; Ванесса.Сбой = Ложь;
+Ответ = ITLЗавершитьСинхронныйВызов("Значение выбрано");
+Если Ответ <> "Значение выбрано Agent UI control: leases=1" Или Ванесса.Вызовы.Количество() <> 1 Тогда ВызватьИсключение "a successful answer carries the lease summary"; КонецЕсли;
+Ошибка = Новый Структура("code", "ACTION_FAILED");
+Ванесса.Вызовы = Новый Массив; Ванесса.Сбой = Истина;
+Если ITLЗавершитьСинхронныйВызов(Ошибка) <> Ошибка Тогда ВызватьИсключение "an error answer stays unchanged"; КонецЕсли;
+Если Ванесса.Вызовы.Количество() <> 2 Или Ванесса.Вызовы[0] <> "конец" Или Ванесса.Вызовы[1] <> "ITLЗавершитьСинхронныйВызов" Тогда ВызватьИсключение "an error answer ends the scope and logs a channel failure"; КонецЕсли;
+// Both synchronous form handlers answer through the wrapper.
+Ванесса.Вызовы = Новый Массив; Ванесса.Сбой = Ложь;
+Если УправлениеЭлементамиФормы(Новый Структура("Идентификатор", 7), Неопределено) <> "Значение выбрано Agent UI control: leases=1" Тогда ВызватьИсключение "manage_form_elements answers with the lease summary"; КонецЕсли;
+Если Ванесса.Вызовы[0] <> "задача 7" Или Ванесса.Вызовы[1] <> "итог" Тогда ВызватьИсключение "the call id is set before the scope ends"; КонецЕсли;
+Ванесса.Вызовы = Новый Массив;
+Если ВыполнитьПоследовательностьДействийФормы(Неопределено, Неопределено).code <> "ACTION_FAILED" Или Ванесса.Вызовы.Количество() <> 1 Или Ванесса.Вызовы[0] <> "конец" Тогда ВызватьИсключение "execute_form_actions ends the scope of a failed call"; КонецЕсли;
+Сообщить("SYNC SCOPE PASSED");
+'@
+        $result = Invoke-FocusProbe -Source ((@('Перем Ванесса;') + $methods + @($fakes, $body)) -join "`n") -Arguments @()
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match 'SYNC SCOPE PASSED'
+    }
 }

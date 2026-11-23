@@ -111,10 +111,10 @@
       "assetName": "vanessa-automation-single.1.2.043.42-itl-r18.zip",
       "releaseTag": "vanessa-automation-v1.2.043.42-itl-r18",
       "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r18/vanessa-automation-single.1.2.043.42-itl-r18.zip",
-      "sha256": "ad3122311a637b367ebeac638587e0efa31f57cfde5267e1752619695199d732",
-      "epfSha256": "024795b12e9c2aba42b84c07800f566ebceef2cc901dc11a1454159d46145102",
-      "manifestSha256": "1aecd3f6239f00271909fd74672a407ae3788dd202b0671905162b5272b3f995",
-      "patchSha256": "5d3073bf4cd683c716cb1dd215026438cb11e702dcd078055c01180b6c0bc6cb",
+      "sha256": "ce3dddbded9ba2429bf976e5cd8d41c5d7475458cbbb88cd198e21cd5569b9e2",
+      "epfSha256": "7b6ae82e54f1ed06a19be0ab6652994cf6883be02ddfc2c8bd18ffd5b391d53c",
+      "manifestSha256": "04dce00b2e3f8fd6bb5e19d398371250481fbe02b10453f55fb2362831b0d932",
+      "patchSha256": "51fbdc4fe46dc7d119b63494341df6006ec56bbb52da3a7a11d5d92e1d5afef1",
       "capabilities": ["itl-window-channel-1"],
       "upstreamCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1",
       "source": "workflow-pinned"
@@ -152,7 +152,7 @@
         "assetName": "VAExtension.1.32-itl-r18.cfe",
         "releaseTag": "vanessa-automation-v1.2.043.42-itl-r18",
         "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r18/VAExtension.1.32-itl-r18.cfe",
-        "sha256": "ab7d6a6345bc760be16fdd5e0a417fb2d12c27c509e21cfa2ea2fab6bf809c01",
+        "sha256": "fc964181ec3e623c21985656cba1c5ecb77f90c0a47316d945580ebe6212a510",
         "protocol": "itl-file-code-v1",
         "source": "workflow-pinned",
         "updatedAt": "2026-09-26T18:04:00Z"
