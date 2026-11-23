@@ -47,6 +47,10 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "dropdownPrompt": {
+            "description": "Предупреждать перед передачей фокуса для списков только в этом вызове. Переопределение согласуется с пользователем.",
+            "type": "boolean"
+          },
           "filePath": {
             "description": "Путь к .feature файлу. Если параметр не указан, то команда будет выполняться в текущей вкладке редактора в уже открытом файле.",
             "type": "string"
@@ -607,6 +611,10 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "dropdownPrompt": {
+            "description": "Предупреждать перед передачей фокуса для списков только в этом вызове. Переопределение согласуется с пользователем.",
+            "type": "boolean"
+          },
           "filePath": {
             "description": "Путь к .feature файлу. Если указан — в режимах all, reloadAndRun и reloadAndRunFromLine текущее содержимое файла заново загружается в дерево и открывается в редакторе перед каждым запуском; результат содержит featureSha256 выполненных байтов файла.",
             "type": "string"

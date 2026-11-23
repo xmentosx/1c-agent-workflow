@@ -681,3 +681,51 @@ Describe 'Vanessa 1.2.043.42-itl-r17 execute_feature_step outcome' {
         $result.output | Should -Match ('R17_CASE_PASSED: ' + [regex]::Escape($case))
     }
 }
+
+Describe 'Dropdown policy in Vanessa r18' {
+    It 'resolves all four override sources and rejects conflicting scenario tags' {
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18/file-operations.patch'))
+        $form = Get-FocusNewSide 'VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl' $patch
+        $method = Get-FocusMethod $form 'ITLПараметрыСписка'
+        $prefix = @'
+Перем Объект, МассивСценариевДляВыполнения, ТекИД_СценарияВМассиве, ITLРежимСпискаMCP, УзелСценария;
+Функция ИдетВыполнениеСценариев() Возврат Истина; КонецФункции
+Функция ИдентификаторЗадачиMCP() Возврат 1; КонецФункции
+Функция ПолучитьСтрокуСценарияИзДанныхФормы(ИД) Возврат УзелСценария; КонецФункции
+Процедура Проверить(Режим, Источник)
+    Итог = ITLПараметрыСписка();
+    Если Итог.dropdownPrompt <> Режим Или Итог.promptSource <> Источник Тогда ВызватьИсключение Источник; КонецЕсли;
+КонецПроцедуры
+'@
+        $body = @'
+Объект = Новый Структура("ДополнительныеПараметры", Новый Структура);
+Проверить(Ложь, "default");
+Объект.ДополнительныеПараметры.Вставить("ITLDropdownPrompt", Истина);
+Проверить(Истина, "project");
+Теги = Новый Массив;
+УзелСценария = Новый Структура("Имя,ПроизвольныеЗначения", "Тест", Новый Структура("МассивТегов", Теги));
+МассивСценариевДляВыполнения = Новый Массив;
+МассивСценариевДляВыполнения.Добавить(Новый Структура("СтрокаДерева", 1));
+ТекИД_СценарияВМассиве = 0;
+Теги.Добавить(Новый Структура("ТегИсходный", "@ITLDropdownNoPrompt"));
+Проверить(Ложь, "scenario");
+Теги[0].ТегИсходный = "@other @ITLDropdownPrompt";
+Проверить(Истина, "scenario");
+Объект.ДополнительныеПараметры.Вставить("ITLDropdownRunPrompt", Ложь);
+Проверить(Ложь, "run");
+ITLРежимСпискаMCP = Истина;
+Проверить(Истина, "mcp");
+Теги[0].ТегИсходный = "@ITLDropdownPrompt @ITLDropdownNoPrompt";
+Попытка
+    ITLПараметрыСписка();
+    ВызватьИсключение "missing conflict";
+Исключение
+    Если СтрНайти(ОписаниеОшибки(), "ITL_DROPDOWN_TAG_CONFLICT") = 0 Тогда ВызватьИсключение; КонецЕсли;
+КонецПопытки;
+Сообщить("POLICY PASSED");
+'@
+        $result = Invoke-FocusProbe -Source (($prefix, $method, $body) -join "`n") -Arguments @()
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match 'POLICY PASSED'
+    }
+}

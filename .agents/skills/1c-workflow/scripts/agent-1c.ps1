@@ -34,6 +34,8 @@ param(
     # One run or session in this window mode; the project ONEC_WINDOW_MODE stays unchanged.
     [ValidateSet('', 'hidden', 'visible')]
     [string]$WindowMode = '',
+    [ValidateSet('on', 'off')]
+    [string]$DropdownPrompt,
     [switch]$CleanupDiagnosticsOnly,
     [string]$DiagnosticCompletionPath = "",
     [switch]$ConfirmBranchDeletion,
@@ -352,6 +354,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaProfileOwnerId" -Value $VanessaProfileOwnerId
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFilterTags" -Value $VanessaFilterTags
     Add-Agent1cReexecArgument -Arguments $arguments -Name "YAxUnitModule" -Value $YAxUnitModule
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "DropdownPrompt" -Value $DropdownPrompt
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaTestPort" -Value $(if ($VanessaTestPort -ne 0) { $VanessaTestPort } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaMcpPort" -Value $(if ($VanessaMcpPort -ne 0) { $VanessaMcpPort } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "RoctupMcpPort" -Value $(if ($RoctupMcpPort -ne 0) { $RoctupMcpPort } else { $null })
@@ -530,6 +533,7 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
 }
 # Before any launch: an invalid -WindowMode stops the action before it starts.
 Set-OneCRunWindowMode -Mode $WindowMode
+if ($DropdownPrompt) { $env:ITL_RUN_DROPDOWN_PROMPT = $DropdownPrompt }
 
 $script:InitDatabaseSettingsReady = $false
 $script:CatalogRegistryOperationOwned=$false
