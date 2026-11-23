@@ -204,11 +204,14 @@ migration is a scope change; implementation details inside the boundary are not.
 
 On 2026-11-23 the user approved the [hidden TestClient dropdown policy](vanessa-dropdown-focus-plan.md).
 The wm22 child form lost its open list when Windows returned focus before selection.
-Vanessa owns the opening, selection and close boundaries. The existing per-desktop
-helper mutex owns activation, consent, cancellation and the maximum hold. A
-pending dropdown survives the idle timer. A completed batch can share its lease
-until focus returns. Permission for a dropdown applies only to that batch.
-The existing hidden/visible switch is the rollback path.
+Vanessa owns the selection boundary; opening, inspecting, closing and input by
+string stay in the background. Each selection reopens the list inside one lease,
+and a foreground taken by another process during it fails the selection. The
+existing per-desktop helper mutex owns activation, consent, cancellation and the
+maximum hold. A completed batch can share its lease until focus returns.
+Permission for a dropdown applies only to that batch. The existing hidden/visible
+switch is the rollback path. The user narrowed the lease to the selection gesture
+on the same day after the review of the first candidate.
 
 On 2026-11-02 the user approved [Windows MCP storage retention](mcp-storage-retention.md),
 including conditional Sunday 03:30 detached VHD compaction on dev-ermakov. The

@@ -815,6 +815,142 @@ static class FakeFormClient {
         }
     }
 
+    It 'hides a list outside a selection lease, keeps it inside one and fails the selection when another process takes the foreground' {
+        # wm22, 2026-11-23: 1C closes an open list when the foreground leaves its client, and
+        # Vanessa still reported the selection done. A stand-in TestClient shows owned
+        # V8DropWindowExWnd lists; a second process plays the user who clicks elsewhere.
+        Add-Type -Namespace WhTest -Name DropDesk -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+[DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+[DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr desk);
+'@ -ErrorAction SilentlyContinue
+        $desk = [WhTest.DropDesk]::OpenInputDesktop(0, $false, 1)
+        if ($desk -eq [IntPtr]::Zero -or [WhTest.DropDesk]::GetForegroundWindow() -eq [IntPtr]::Zero) {
+            if ($desk -ne [IntPtr]::Zero) { [void][WhTest.DropDesk]::CloseDesktop($desk) }
+            Set-ItResult -Skipped -Because 'a selection lease needs an interactive desktop with a foreground window'
+            return
+        }
+        [void][WhTest.DropDesk]::CloseDesktop($desk)
+        $fakeDir = Join-Path $TestDrive 'Клиент со списком и пробелом'
+        [void][IO.Directory]::CreateDirectory($fakeDir)
+        $fakeSource = Join-Path $fakeDir 'fake list client.cs'
+        [IO.File]::WriteAllText($fakeSource, @'
+using System; using System.IO; using System.Runtime.InteropServices;
+static class FakeListClient {
+    delegate IntPtr WndProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct WNDCLASS { public uint style; public WndProc proc; public int a; public int b; public IntPtr inst; public IntPtr icon; public IntPtr cursor; public IntPtr brush; public string menu; public string name; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w; public IntPtr l; public uint t; public int x; public int y; }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern ushort RegisterClass(ref WNDCLASS c);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string title, uint style, int x, int y, int w, int h, IntPtr p, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr h, uint a, uint b);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr SetTimer(IntPtr h, IntPtr id, uint ms, IntPtr proc);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
+    static WndProc proc = Proc; static string dir, role; static IntPtr main, original; static int lists; static bool activated, restored;
+    static IntPtr Proc(IntPtr h, uint m, IntPtr w, IntPtr l) {
+        if (m == 0x0113 && role == "client" && File.Exists(Path.Combine(dir, "list " + (lists + 1) + ".flag"))) {
+            lists++;
+            // 1C shows its list as an owned popup without activating it.
+            ShowWindow(Open("V8DropWindowExWnd", "ITL fake list " + lists, 0x80000000, main, 100, 100), 4);
+        }
+        if (m == 0x0113 && role == "user" && !activated && File.Exists(Path.Combine(dir, "user.flag"))) {
+            activated = true;
+            keybd_event(0, 0, 0, UIntPtr.Zero);
+            uint fg = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero), me = GetCurrentThreadId();
+            bool attached = fg != 0 && fg != me && AttachThreadInput(me, fg, true);
+            BringWindowToTop(main); SetForegroundWindow(main);
+            if (attached) AttachThreadInput(me, fg, false);
+        }
+        // The stand-in user owns the foreground at the end and hands it back to the window
+        // that had it before the test, so no later test starts without a foreground.
+        if (m == 0x0113 && role == "user" && !restored && File.Exists(Path.Combine(dir, "restore.flag"))) { restored = true; SetForegroundWindow(original); }
+        return DefWindowProc(h, m, w, l);
+    }
+    static IntPtr Open(string cls, string title, uint style, IntPtr owner, int x, int y) {
+        var c = new WNDCLASS { proc = proc, name = cls, inst = GetModuleHandle(null) };
+        RegisterClass(ref c);
+        return CreateWindowEx(0, cls, title, style, x, y, 320, 240, owner, IntPtr.Zero, c.inst, IntPtr.Zero);
+    }
+    [STAThread] static void Main(string[] args) {
+        dir = args[0]; role = args[1]; original = role == "user" ? new IntPtr(long.Parse(args[2])) : IntPtr.Zero;
+        main = role == "client"
+            ? Open("V8TopLevelFrameSDI", "ITL fake list TestClient", 0x00CF0000, IntPtr.Zero, -32000, -32000)
+            : Open("ITLFakeUserWindow", "ITL fake user window", 0x00CF0000, IntPtr.Zero, 40, 40);
+        ShowWindow(main, role == "client" ? 5 : 4);
+        SetTimer(main, new IntPtr(1), 50, IntPtr.Zero);
+        MSG m; while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref m); DispatchMessage(ref m); }
+    }
+}
+'@, [Text.UTF8Encoding]::new($false))
+        $fakeExe = Join-Path $fakeDir '1cv8c.exe'
+        $build = Invoke-ItlNativeProcessCapture -FilePath (Get-ItlWindowHelperCompilerPath) -WorkingDirectory $fakeDir -TimeoutSeconds 120 -Arguments @('/nologo', '/target:winexe', "/out:$fakeExe", $fakeSource)
+        $build.exitCode | Should -Be 0 -Because ([string]$build.stdout)
+        $clientStart = [Diagnostics.ProcessStartInfo]::new($fakeExe, ('"' + $fakeDir + '" client ENTERPRISE /TESTCLIENT -TPort 48179'))
+        $clientStart.UseShellExecute = $false
+        $originalForeground = [WhTest.DropDesk]::GetForegroundWindow()
+        $userStart = [Diagnostics.ProcessStartInfo]::new($fakeExe, ('"' + $fakeDir + '" user ' + $originalForeground.ToInt64()))
+        $userStart.UseShellExecute = $false
+        $client = [Diagnostics.Process]::Start($clientStart)
+        $user = [Diagnostics.Process]::Start($userStart)
+        $list = { param([int]$Number) [WhTest.DropDesk]::FindWindow('V8DropWindowExWnd', "ITL fake list $Number") }
+        $waitFor = { param([scriptblock]$Condition) $deadline = [DateTime]::UtcNow.AddSeconds(10); while ([DateTime]::UtcNow -lt $deadline -and -not (& $Condition)) { Start-Sleep -Milliseconds 100 }; & $Condition }
+        try {
+            $group = New-WhGroup 'выбор из списка' -Roots @($client.Id)
+            Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+            & $waitFor { -not [WhTest.DropDesk]::IsWindowVisible([WhTest.DropDesk]::FindWindow('V8TopLevelFrameSDI', 'ITL fake list TestClient')) } | Should -BeTrue -Because 'the helper hides the stand-in client'
+
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'list 1.flag'), 'open')
+            & $waitFor { (& $list 1) -ne [IntPtr]::Zero -and -not [WhTest.DropDesk]::IsWindowVisible((& $list 1)) } | Should -BeTrue -Because 'a list opened outside a lease stays off the user desktop'
+
+            $policy = @{ scope = 'сценарий списка'; pid = $client.Id; dropdownPrompt = $false; promptSource = 'default' }
+            $lease = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease -Fields $policy -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(15))
+            $lease.status | Should -Be 'ok' -Because ($lease | ConvertTo-Json -Compress)
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'list 2.flag'), 'open')
+            & $waitFor { (& $list 2) -ne [IntPtr]::Zero } | Should -BeTrue
+            Start-Sleep -Milliseconds 600
+            [WhTest.DropDesk]::IsWindowVisible((& $list 2)) | Should -BeTrue -Because 'the list of the selection stays visible inside its lease'
+
+            $osInput = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease -Fields @{ scope = 'сценарий списка'; pid = $client.Id } -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(15))
+            $osInput.status | Should -Be 'ok' -Because 'OS input of the same step joins the pending selection'
+            $osInput.activation | Should -Be 'kept'
+
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'user.flag'), 'click')
+            $userWindow = [WhTest.DropDesk]::FindWindow('ITLFakeUserWindow', 'ITL fake user window')
+            & $waitFor { [WhTest.DropDesk]::GetForegroundWindow() -eq $userWindow } | Should -BeTrue -Because 'the stand-in user takes the foreground'
+            Start-Sleep -Milliseconds 300
+            $done = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease-end -Fields @{ scope = 'сценарий списка'; dropdownResult = 'completed' }
+            $done.status | Should -Be 'error'
+            $done.code | Should -Be 'ITL_DROPDOWN_FOCUS_LOST'
+            $done.foregroundTitle | Should -Be 'ITL fake user window'
+            $leases = @(Read-ItlWindowHelperJournal -Path (Join-Path $group.directory 'journal\leases.jsonl'))
+            [string]$leases[-1].outcome | Should -Be 'dropdown-focus-lost'
+            [int]$leases[-1].requests | Should -Be 2
+            $hidden = @(Read-ItlWindowHelperJournal -Path (Join-Path $group.directory 'journal\hidden.jsonl') | Where-Object { $_.event -eq 'dropdown-focus-lost' })
+            $hidden | Should -HaveCount 1
+            [string]$hidden[0].title | Should -Be 'ITL fake user window'
+        } finally {
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'restore.flag'), 'restore')
+            & $waitFor { [WhTest.DropDesk]::GetForegroundWindow() -eq $originalForeground } | Out-Null
+            foreach ($process in $client, $user) {
+                if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit(5000) | Out-Null }
+                $process.Dispose()
+            }
+        }
+    }
+
     It 'answers window-show and window-hide in visible mode without a helper' {
         $saved = $script:ProjectRoot
         $script:ProjectRoot = Join-Path $TestDrive 'проект без помощника'
