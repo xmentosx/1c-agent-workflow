@@ -76,6 +76,67 @@
 }
 
 Describe 'Change mode recovery and reuse boundaries' {
+    It 'keeps begin and check independent of master after the branch <Origin>' -TestCases @(
+        @{Origin='creation'}, @{Origin='refresh'}, @{Origin='fork'}
+    ) {
+        param($Origin)
+        $root = Join-Path $TestDrive "База ветки с пробелом $Origin"
+        New-ChangeFixture $root -WithoutCatalog
+        $module = Join-Path $root 'src/cf/current.bsl'
+        $template = Join-Path $root 'src/cf/Шаблон.xml'
+        [IO.File]::WriteAllText((Join-Path $root '.gitattributes'), "src/cf/** -text`n")
+        [IO.File]::WriteAllText($module, "base`r`n")
+        [IO.File]::WriteAllText($template, "a`r`nb`n")
+        & git -C $root add -- .
+        & git -C $root commit --quiet --amend --no-edit
+        $base = (& git -C $root rev-parse HEAD).Trim()
+        & git -C $root branch itldev/change
+        [IO.File]::WriteAllText($template, "a`r`nb`r`nc`r`n")
+        [IO.File]::WriteAllText($module, "master`n")
+        & git -C $root add -- src/cf
+        & git -C $root commit --quiet -m 'master changes content and line endings'
+        & git -C $root checkout --quiet itldev/change
+        [IO.File]::WriteAllText($module, "branch`n")
+        & git -C $root add -- src/cf/current.bsl
+        & git -C $root commit --quiet -m 'committed branch edit with LF'
+
+        Enter-ChangeFixture $root {
+            $state = $script:ChangeTestState
+            $state | Add-Member devBranch 'itldev/change'
+            @(Repair-OneCSourceLineEndings) | Should -HaveCount 0
+            @(Repair-OneCSourceLineEndings -ReferenceCommit $base -CandidatePaths @() -StageChanges) | Should -HaveCount 0
+            (& git -C $root write-tree) | Should -Be (& git -C $root rev-parse 'HEAD^{tree}')
+            [IO.File]::ReadAllText($module) | Should -BeExactly "branch`n"
+            if ($Origin -eq 'refresh') {
+                $at = (Get-Date).ToString('o')
+                $state | Add-Member lastRefreshAt $at
+                $state | Add-Member lastRefreshMasterCommit $base
+                $proof = New-DevBranchResultTransferBaseline -State $state -Operation 'refresh-dev-branch' -BaseCommit $base -CompletedHead $base -CompletedAt $at
+                $state | Add-Member resultTransferBaseline ([pscustomobject]$proof)
+            } elseif ($Origin -eq 'fork') {
+                $state | Add-Member forkId 'fork-eol'
+                $state | Add-Member forkedFromCommit $base
+                $proof = New-DevBranchResultTransferBaseline -State $state -Operation 'fork-dev-branch' -BaseCommit $base -CompletedHead $base
+                $state | Add-Member resultTransferBaseline ([pscustomobject]$proof)
+            } else {
+                $state | Add-Member createdFromCommit $base
+            }
+            $plan = Write-CurrentPlan
+            foreach ($pass in 1..2) {
+                Start-VerificationChange -EvidencePath $plan | Out-Null
+                [IO.File]::ReadAllText($module) | Should -BeExactly "branch`r`n"
+                (& git -C $root hash-object --no-filters -- $template) | Should -Be (& git -C $root rev-parse 'HEAD:src/cf/Шаблон.xml')
+            }
+            # Exercise the real check preparation with an unstaged edit; stop at the platform boundary.
+            [IO.File]::WriteAllText($module, "next branch edit`n")
+            function Assert-VerificationClassificationReady { param($Reason,[switch]$RequireVanessa,[switch]$RequireYAxUnit) }
+            function Invoke-DevBranchVanessaRuntimeRelease { throw 'Reached platform preflight' }
+            { Invoke-DevBranchCheck } | Should -Throw '*Reached platform preflight*'
+            [IO.File]::ReadAllText($module) | Should -BeExactly "next branch edit`r`n"
+            (& git -C $root hash-object --no-filters -- $template) | Should -Be (& git -C $root rev-parse 'HEAD:src/cf/Шаблон.xml')
+        }
+    }
+
     It 'assesses a catalog-free change through real selection and completion: <Fault>' -TestCases @(
         @{Fault='none'; ErrorPattern=''},
         @{Fault='missing-one-off'; ErrorPattern='*VERIFICATION_ONE_OFF_PROOF_PENDING*'},
@@ -784,6 +845,7 @@ Describe 'Automatic re-registration of an unchanged plan in check-dev-branch' {
             & git -C $Root commit -qm 'module with LF reference'
             $script:RebindBody=$Body
             Enter-ChangeFixture $Root {
+                $script:ChangeTestState | Add-Member createdFromCommit (Get-CurrentCommit)
                 function Get-DevBranchKind { param($State) 'configuration' }
                 function Assert-VerificationClassificationReady { param($Reason,[switch]$RequireVanessa,[switch]$RequireYAxUnit) }
                 function Invoke-DevBranchVanessaRuntimeRelease { throw 'stop-after-change-preflight' }
