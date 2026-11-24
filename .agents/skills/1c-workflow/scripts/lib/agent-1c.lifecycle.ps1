@@ -483,9 +483,13 @@ function Repair-OneCSourceLineEndings {
         [switch]$StageChanges
     )
 
+    if ($PSBoundParameters.ContainsKey('CandidatePaths') -and -not $CandidatePaths) { return @() }
     try {
-        if (-not $ReferenceCommit) {
-            $ReferenceCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
+        if (-not $PSBoundParameters.ContainsKey('ReferenceCommit')) {
+            $state = Read-DevBranchState -Name $DevBranchName
+            $baseline = Get-DevBranchResultTransferBaseline -State $state -RecordedOnly
+            if ($null -eq $baseline) { return @() }
+            $ReferenceCommit = $baseline.commit
         }
         if ($ReferenceCommit -notmatch '^[a-f0-9]{40,64}$' -or -not (Test-GitCommitExists -Commit $ReferenceCommit)) {
             return @()
@@ -4606,7 +4610,7 @@ function New-DevBranchResultTransferBaseline {
 }
 
 function Get-DevBranchResultTransferBaseline {
-    param([AllowNull()][object]$State = $null)
+    param([AllowNull()][object]$State = $null, [switch]$RecordedOnly)
 
     if ($null -ne $State) {
         $stateObject = if ($State -is [Collections.IDictionary]) { [pscustomobject]$State } else { $State }
@@ -4663,6 +4667,18 @@ function Get-DevBranchResultTransferBaseline {
                 throw "DEV_BRANCH_TRANSFER_BASELINE_INVALID: $($_.Exception.Message). $continuation"
             }
         }
+    }
+
+    if ($RecordedOnly) {
+        # Before the first lifecycle transition the creation commit is the recorded base.
+        # A legacy refresh/reset without its proof cannot safely use the original seed.
+        if ($null -eq $State -or $stateValues['lastRefreshMasterCommit'] -or $stateValues['lastRefreshAt'] -or $stateValues['resetStatus'] -or
+            (Get-DevBranchInitializationStatus -State $stateObject) -ne 'ready') { return $null }
+        $seed = [string]$stateValues['createdFromCommit']
+        if ($seed -match '^[a-f0-9]{40}$' -and (Test-GitCommitIsAncestor -Ancestor $seed -Descendant HEAD)) {
+            return [pscustomobject]@{ commit = $seed; provenance = 'branch-creation'; completedAt = '' }
+        }
+        return $null
     }
 
     # No completed lifecycle proof was recorded by an older helper. Do not
