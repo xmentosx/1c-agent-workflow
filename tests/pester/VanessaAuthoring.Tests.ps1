@@ -171,6 +171,8 @@
             & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlVanessaLibraries }
             $navigationLibrary = Join-Path $tempRoot "tests\features\Libraries\ITL\Core\NavigationLinks.feature"
             Test-Path -LiteralPath $navigationLibrary | Should -BeTrue
+            $waitLibrary = Join-Path (Split-Path -Parent $navigationLibrary) 'WaitForClientValue.feature'
+            (Get-FileHash -LiteralPath $waitLibrary).Hash | Should -Be (Get-FileHash -LiteralPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/assets/vanessa-libraries/Core/WaitForClientValue.feature')).Hash
             $navigationText = Get-Content -LiteralPath $navigationLibrary -Raw -Encoding UTF8
             $navigationText | Should -Match 'TestClient'
             ($navigationText -cmatch '(?m)^@ExportScenarios\s*$') | Should -BeTrue

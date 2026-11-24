@@ -1,4 +1,4 @@
-function Get-ItlVerificationMode {
+﻿function Get-ItlVerificationMode {
     param([ValidateSet("yaxunit", "vanessa", "event-log")][string]$Component)
 
     $key = switch ($Component) {
@@ -946,6 +946,47 @@ function Get-ItlVanessaVerificationSelectionPlan {
     return $plan
 }
 
+function Invoke-VanessaSelectionBatches {
+    param([AllowNull()][object]$Plan, [scriptblock]$RunBatch)
+
+    $batch = $Plan
+    $messages = [Collections.Generic.List[string]]::new()
+    do {
+        $script:ActiveVerificationSelectionPlan = $batch
+        $continuing = $messages.Count -gt 0
+        try {
+            & $RunBatch $continuing
+            if ($continuing) {
+                $batchState = Read-DevBranchState -Name $DevBranchName
+                $messages.Add("Продолжение Vanessa прошло: $($batch.selectedSuiteIds -join ', '). JUnit: $($batchState.lastVanessaReportPath)")
+            }
+            break
+        } catch {
+            $exception = $_.Exception
+            $messages.Add($exception.Message)
+            if ($exception.Data['vanessaRunDirectory']) { $messages.Add("JUnit: $($exception.Data['vanessaRunDirectory'])") }
+            $next = $null
+            try {
+                $suites = $exception.Data['vanessaFeatureSuites']
+                if ($null -ne $suites -and $batch.currentTree -ceq (Get-VerificationSelectionEffectiveTree)) {
+                    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+                    $next = Get-IndependentVanessaRemainderPlan -Plan $batch -Suites $suites -Catalog $catalog
+                }
+            } catch {
+                $messages.Add("Не удалось определить оставшиеся независимые наборы: $($_.Exception.Message)")
+                break
+            }
+            if ($null -eq $next -and -not $continuing) { throw }
+            if ($next) { Write-Host "Continuing Vanessa in a new TestManager: $($next.selectedSuiteIds -join ', ')." }
+            $batch = $next
+        }
+    } while ($null -ne $batch)
+    if ($messages.Count) {
+        Set-RunStage -Stage 'vanessa.failed' -Detail 'Vanessa finished with a failed scenario.'
+        throw ($messages -join [Environment]::NewLine)
+    }
+}
+
 function Invoke-ItlVerificationCycle {
     param(
         [ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger = "command",
@@ -1038,13 +1079,16 @@ function Invoke-ItlVerificationCycle {
                 $script:ItlSkipEventLogForVerification = $false
             }
         } else {
-            $script:ActiveVerificationSelectionPlan = $selectionPlan
             try {
-                Run-DevBranchTests `
-                    -RecordFullVerificationEvidence:$recordFullProof `
-                    -EventLogCursorPath $EventLogCursorPath `
-                    -EventLogBoundaryAt $EventLogBoundaryAt `
-                    -EventLogCursorScope $EventLogCursorScope
+                Invoke-VanessaSelectionBatches -Plan $selectionPlan -RunBatch {
+                    param($continuing)
+                    Run-DevBranchTests `
+                        -RecordFullVerificationEvidence:$recordFullProof `
+                        -IndependentContinuation:$continuing `
+                        -EventLogCursorPath $EventLogCursorPath `
+                        -EventLogBoundaryAt $EventLogBoundaryAt `
+                        -EventLogCursorScope $EventLogCursorScope
+                }
             } finally {
                 $script:ItlSkipEventLogForVerification = $false
                 $script:ActiveVerificationSelectionPlan = $null

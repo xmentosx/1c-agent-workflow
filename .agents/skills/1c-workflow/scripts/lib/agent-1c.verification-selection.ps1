@@ -816,6 +816,7 @@ function Read-VerificationSuiteCatalog {
                 $normalizedSuite = [pscustomobject][ordered]@{
                     id = $id
                     purpose = $purpose
+                    independentAfterFailure = ([object]::Equals((Get-VerificationCatalogValue -Value $suite -Name 'independentAfterFailure' -Default $false), $true))
                     always = [bool](Get-VerificationCatalogValue -Value $suite -Name "always" -Default $false)
                     featurePaths = $featurePatterns
                     ownerPaths = $ownerPatterns
@@ -890,7 +891,9 @@ function Read-VerificationSuiteCatalog {
                 "assigned=$($assignedPaths -join ',')",
                 "scenarios=$(@($scenarioAnalysis.scenarios | Where-Object suiteId -eq $suite.id | Select-Object -ExpandProperty fingerprint | Sort-VerificationIdentityStrings) -join ',')"
             )
-            [pscustomobject]@{ id = [string]$suite.id; purpose = [string]$suite.purpose; fingerprint = Get-VerificationSelectionSha256 -Text ($semanticParts -join "`n") }
+            $entry = [pscustomobject]@{ id = [string]$suite.id; purpose = [string]$suite.purpose; fingerprint = Get-VerificationSelectionSha256 -Text ($semanticParts -join "`n") }
+            if ($suite.independentAfterFailure) { $entry | Add-Member -NotePropertyName independentAfterFailure -NotePropertyValue $true }
+            $entry
         })
         return [pscustomobject]@{
             available = $true
@@ -924,6 +927,41 @@ function Read-VerificationSuiteCatalog {
             catalogPaths = @($catalogPaths)
         }
     }
+}
+
+function Get-IndependentVanessaRemainderPlan {
+    param([object]$Plan, [object[]]$Suites, [object]$Catalog)
+
+    if (-not $Catalog.valid -or [string]$Catalog.fingerprint -cne [string]$Plan.catalogFingerprint) { return }
+    $selected = @($Catalog.assignments | Where-Object { $_.fullPath -in $Plan.selectedFeatureFiles })
+    # A zero-test node is evidence. An absent, skipped or ambiguous node is not.
+    $byTitle = @{}
+    foreach ($file in $Catalog.assignments) {
+        $title = Get-VanessaFeatureTitle -Path $file.fullPath
+        if ($title) {
+            if (-not $byTitle.ContainsKey($title)) { $byTitle[$title] = [Collections.Generic.List[object]]::new() }
+            $byTitle[$title].Add($file)
+        }
+    }
+    $unstarted = @{}
+    foreach ($group in @($Suites | Group-Object -Property name)) {
+        $files = $byTitle[$group.Name]
+        if ($group.Count -eq 1 -and $group.Group[0].empty -and $null -ne $files -and $files.Count -eq 1 -and
+            $files[0].fullPath -in $Plan.selectedFeatureFiles) {
+            $unstarted[$files[0].fullPath] = $true
+        }
+    }
+    $ids = @(foreach ($suite in $Catalog.suites) {
+        if (-not $suite.independentAfterFailure -or $suite.id -notin $Plan.selectedSuiteIds) { continue }
+        $members = @($Catalog.assignments | Where-Object suiteId -eq $suite.id)
+        if ($members.Count -gt 0 -and @($members | Where-Object { -not $unstarted.ContainsKey($_.fullPath) }).Count -eq 0) { $suite.id }
+    })
+    if ($ids.Count -eq 0 -or $ids.Count -ge @($Plan.selectedSuiteIds).Count) { return }
+    $next = $Plan.PSObject.Copy()
+    $next.selectedSuiteIds = $ids
+    $next.selectedFeatureFiles = @($selected | Where-Object { $_.suiteId -in $ids } | ForEach-Object { $_.fullPath })
+    $next.reason = "Independent suites remaining after a scenario failure: $($ids -join ', ')."
+    return $next
 }
 
 function Get-VerificationSelectionEffectiveTree {

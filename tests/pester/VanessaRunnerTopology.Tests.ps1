@@ -156,6 +156,23 @@
         }
     }
 
+    It "runs extension setup in the already connected named client slot" {
+        $file = Join-Path $TestDrive 'Подготовка набора.feature'
+        [IO.File]::WriteAllText($file, @'
+Функционал: Подготовка данных
+Сценарий: Своя фикстура
+    Дано я подключаю профиль TestClient "Редактор"
+    И я выполняю код встроенного языка на сервере (Расширение)
+'@)
+        $requirements = & {
+            . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+            Get-VanessaFeatureTestClientRequirements -FeatureFiles @($file)
+        }
+        $requirements.maximumConcurrency | Should -Be 1
+        $requirements.requiresExtensionTestClient | Should -BeTrue
+        @($requirements.requiredProfiles) | Should -Be @('Редактор')
+    }
+
     It "binds the generic TestClient opener to the first product profile in an execution-only feature copy" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-default-profile-" + [guid]::NewGuid().ToString("N"))
         try {
