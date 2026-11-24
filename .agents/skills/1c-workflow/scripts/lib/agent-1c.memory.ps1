@@ -408,6 +408,27 @@ function Close-ItlMemoryHttp {
     $Pending.request.Dispose();$Pending.client.Dispose();$Pending.handler.Dispose()
 }
 
+function Read-ItlMemoryHttpText {
+    param([object]$Content,[DateTime]$DeadlineUtc,[int]$ByteLimit)
+    $remaining=[int][Math]::Max(0,($DeadlineUtc-[DateTime]::UtcNow).TotalMilliseconds)
+    $open=$Content.ReadAsStreamAsync()
+    if(-not $remaining -or -not $open.Wait($remaining)){throw 'MEMORY_DEADLINE'}
+    $stream=$open.GetAwaiter().GetResult()
+    $buffer=[byte[]]::new(8192);$memory=[IO.MemoryStream]::new()
+    try{
+        while($true){
+            $remaining=[int][Math]::Max(0,($DeadlineUtc-[DateTime]::UtcNow).TotalMilliseconds)
+            if(-not $remaining){throw 'MEMORY_DEADLINE'}
+            $read=$stream.ReadAsync($buffer,0,$buffer.Length)
+            if(-not $read.Wait($remaining)){throw 'MEMORY_DEADLINE'}
+            $n=$read.GetAwaiter().GetResult();if(-not $n){break}
+            if($memory.Length+$n -gt $ByteLimit){throw 'MEMORY_RESPONSE_BOUNDED'}
+            $memory.Write($buffer,0,$n)
+        }
+        return [Text.UTF8Encoding]::new($false,$true).GetString($memory.ToArray())
+    }finally{$stream.Dispose();$memory.Dispose()}
+}
+
 function Complete-ItlMemoryHttp {
     param([object]$Pending)
     # A synchronous transport can supply an already completed response.
@@ -425,25 +446,24 @@ function Complete-ItlMemoryHttp {
         if(-not $ready){throw 'MEMORY_TRANSPORT_UNCONFIRMED: deadline'}
         $Pending.response=$Pending.task.GetAwaiter().GetResult()
         $status=[int]$Pending.response.StatusCode
-        # Native error pages may be HTML or plain text. Non-raw callers only consume their status.
-        if($status -ge 400 -and -not $Pending.raw){return [pscustomobject]@{status=$status;body=$null}}
-        $remaining=[int][Math]::Max(0,($Pending.deadline-[DateTime]::UtcNow).TotalMilliseconds)
-        $open=$Pending.response.Content.ReadAsStreamAsync()
-        if(-not $remaining -or -not $open.Wait($remaining)){throw 'MEMORY_DEADLINE'}
-        $stream=$open.GetAwaiter().GetResult()
-        $buffer=[byte[]]::new(8192);$memory=[IO.MemoryStream]::new()
-        try{
-            while($true){
-                $remaining=[int][Math]::Max(0,($Pending.deadline-[DateTime]::UtcNow).TotalMilliseconds)
-                if(-not $remaining){throw 'MEMORY_DEADLINE'}
-                $read=$stream.ReadAsync($buffer,0,$buffer.Length)
-                if(-not $read.Wait($remaining)){throw 'MEMORY_DEADLINE'}
-                $n=$read.GetAwaiter().GetResult();if(-not $n){break}
-                if($memory.Length+$n -gt 2097152){throw 'MEMORY_RESPONSE_BOUNDED'}
-                $memory.Write($buffer,0,$n)
+        if($status -ge 400 -and -not $Pending.raw){
+            $failure=[ordered]@{status=$status;body=$null}
+            if($status -eq 422 -and $Pending.request.Method.Method -ceq 'POST' -and $Pending.request.RequestUri.AbsolutePath.EndsWith('/api/v1/recall',[StringComparison]::Ordinal)){
+                # Only a fixed diagnostic leaves the transport. A malformed, oversized or slow
+                # error page still returns the original HTTP status.
+                $limit=[DateTime]::UtcNow.AddSeconds(1)
+                if($Pending.deadline -lt $limit){$limit=$Pending.deadline}
+                try{
+                    $page=Read-ItlMemoryHttpText $Pending.response.Content $limit 8192
+                    $detail=($page | ConvertFrom-Json -ErrorAction Stop).detail
+                    if($detail -is [string] -and $detail -cmatch '(?s)^\s*Error code:\s*403\b.*\[EmbeddingCredentialsError\]\s*$'){
+                        $failure['failureKind']='embedding_access_denied'
+                    }
+                }catch{}
             }
-            $text=[Text.UTF8Encoding]::new($false,$true).GetString($memory.ToArray())
-        }finally{$stream.Dispose();$memory.Dispose()}
+            return [pscustomobject]$failure
+        }
+        $text=Read-ItlMemoryHttpText $Pending.response.Content $Pending.deadline 2097152
         $value=if($Pending.raw){$text}elseif($text){$text|ConvertFrom-Json -ErrorAction Stop}else{$null}
         return [pscustomobject]@{status=$status;body=$value}
     }finally{Close-ItlMemoryHttp $Pending}
@@ -939,7 +959,13 @@ function Invoke-ItlMemoryRecall {
     if($reference -and $result.status -in @(401,403)){$Trace['failureStage']='search';throw 'MEMORY_READ_SCOPE_DENIED: the native account refused the explicit project search.'}
     if($result.status -ne 200){
         $Trace['failureStage']='search';$Trace['httpStatus']=[int]$result.status
-        return @{cards=@();coverage='unavailable';coverageIssues=$issues;httpStatus=$Trace.httpStatus;continuation=(Get-ItlMemoryRecallRetryGuidance)}
+        $failure=@{cards=@();coverage='unavailable';coverageIssues=$issues;failureStage='search';httpStatus=$Trace.httpStatus;continuation=(Get-ItlMemoryRecallRetryGuidance)}
+        if((Get-ItlCatalogField $result 'failureKind') -ceq 'embedding_access_denied'){
+            $Trace['failureKind']=$failure['failureKind']='embedding_access_denied'
+            $Trace['upstreamHttpStatus']=$failure['upstreamHttpStatus']=403
+            $failure.continuation='The embedding service denied access (403). Check the VPN route from the Cognee host to OpenRouter. '+$failure.continuation
+        }
+        return $failure
     }
     # Native Cognee answers datasets without graph data by one system status
     # row instead of chunks. That is known absence, not unattributed results.
@@ -1526,7 +1552,7 @@ function Add-ItlMemoryUsage {
         $kind=[regex]::Match($Outcome,'kind=([a-z-]+)')
         if($kind.Success){$entry['recordKind']=$kind.Groups[1].Value}
         if($Tool -eq 'recall' -and $Trace.Contains('elapsedMs')){
-            foreach($field in @('elapsedMs','stageMs','failureStage','failureKind','coverageIssues','httpStatus')){
+            foreach($field in @('elapsedMs','stageMs','failureStage','failureKind','coverageIssues','httpStatus','upstreamHttpStatus')){
                 if($Trace.Contains($field)){$entry[$field]=$Trace[$field]}
             }
             $entry['readOutcome']=if($Outcome -ne 'ok'){'failed'}elseif($Result.coverage -in @('partial','unavailable')){$Result.coverage}elseif(-not @($Result.cards).Count){'empty'}else{'cards'}

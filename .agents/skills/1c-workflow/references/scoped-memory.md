@@ -298,7 +298,9 @@ datasets; coverage is `empty` when discovery has no outstanding issues. A
 temporary recall failure leaves coverage unknown for that call. If the fact is
 needed, use exact status for a known original. For unavailable coverage, retry
 recall once with the same topic and scope before the next related edit or check. After another failure, continue with
-available sources and report the gap. Recall once per topic before designing a
+available sources and report the gap. For Cognee HTTP 422 with a nested embedding
+provider 403, check the VPN route from the Cognee host to OpenRouter. The
+usage journal records the two status codes and `embedding_access_denied`. Recall once per topic before designing a
 change, and by tool and action before writing a test or setting up a stand.
 Search again for a new area or object, missing context, after such a failure,
 or by symptom before retrying an unexpected failure (the exact error text with

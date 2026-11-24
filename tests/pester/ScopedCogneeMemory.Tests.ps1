@@ -281,6 +281,46 @@
             @($Body.dataset_ids).Count -eq 1 -and $Body.dataset_ids[0] -ceq $dataset.datasetId
         }
     }
+    It 'classifies only the nested embedding refusal in a recall error: <case>' -TestCases @(
+        @{case='handoff';detail="Error code: 403 - {'success': False, 'error': 'Access denied by security policy.'} [EmbeddingCredentialsError]";expected=$true}
+        @{case='ordinary 422';detail='Invalid request';expected=$false}
+        @{case='different service';detail='Error code: 403 - denied [OtherCredentialsError]';expected=$false}
+        @{case='different provider status';detail='Error code: 401 - denied [EmbeddingCredentialsError]';expected=$false}
+        @{case='oversized';detail=('Error code: 403 '+('x'*8192)+' [EmbeddingCredentialsError]');expected=$false}
+    ) {
+        param($case,$detail,$expected)
+        Add-Type -AssemblyName System.Net.Http
+        $request=[Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post,'http://localhost/api/v1/recall')
+        $response=[Net.Http.HttpResponseMessage]::new([Enum]::ToObject([Net.HttpStatusCode],422))
+        $response.Content=[Net.Http.StringContent]::new((@{detail=$detail;private='private-fixture-marker'} | ConvertTo-Json -Compress))
+        $ready=[Threading.Tasks.TaskCompletionSource[Net.Http.HttpResponseMessage]]::new()
+        $ready.SetResult($response)
+        try{
+            $script:nativeRecallFailure=Complete-ItlMemoryHttp @{
+                request=$request;response=$null;task=$ready.Task;deadline=[DateTime]::UtcNow.AddSeconds(5);raw=$false
+            }
+        }finally{$response.Dispose();$request.Dispose()}
+        $script:nativeRecallFailure.body | Should -BeNullOrEmpty
+        Mock Invoke-ItlMemoryHttp { $script:nativeRecallFailure } -ParameterFilter {$Path -eq '/api/v1/recall'}
+        $trace=@{elapsedMs=5}
+        $r=Invoke-ItlMemoryRecall $b 'Редактор планов' -Trace $trace
+        Add-ItlMemoryUsage $b recall 'fixture' 'ok' $r $trace
+        $entry=(Read-ItlMemoryJson (Get-ItlMemoryPath usage $b.identity.workspaceId)).entries[-1]
+        foreach($item in @($r,$entry)){
+            $item.httpStatus | Should -Be 422
+            $item.failureStage | Should -BeExactly search
+            ($item | ConvertTo-Json -Compress -Depth 8) | Should -Not -Match 'private-fixture-marker|EmbeddingCredentialsError'
+            if($expected){
+                $item.failureKind | Should -BeExactly embedding_access_denied
+                $item.upstreamHttpStatus | Should -Be 403
+            }else{
+                $item.Contains('failureKind') | Should -BeFalse
+                $item.Contains('upstreamHttpStatus') | Should -BeFalse
+            }
+        }
+        $r.coverage | Should -BeExactly unavailable
+        ($r.continuation -match 'VPN.*OpenRouter') | Should -Be $expected
+    }
     It 'recovers a refused write under the original note ID after native access returns' {
         $script:denyMemoryWrite=$true
         Mock Invoke-ItlMemoryHttp { @{status=403;body=@{}} } -ParameterFilter {$Path -eq '/api/v1/remember' -and $script:denyMemoryWrite}
