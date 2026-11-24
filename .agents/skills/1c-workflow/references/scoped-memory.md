@@ -296,8 +296,8 @@ remains before search, the operation reports a deadline failure.
 A native `memory_warming_up` response indicates no indexed notes in the searched
 datasets; coverage is `empty` when discovery has no outstanding issues. A
 temporary recall failure leaves coverage unknown for that call. If the fact is
-needed in the current turn, use exact status for a known original or make one
-more recall with the same admitted set. After another failure, continue with
+needed, use exact status for a known original. For unavailable coverage, retry
+recall once with the same topic and scope before the next related edit or check. After another failure, continue with
 available sources and report the gap. Recall once per topic before designing a
 change, and by tool and action before writing a test or setting up a stand.
 Search again for a new area or object, missing context, after such a failure,
@@ -317,6 +317,12 @@ there is no local receipt; it addresses one note only, never a dataset.
 retiring a note also discards its unsent update. A draft that was already sent
 is reconciled by exact `memory_status(dataset_name, note_id)` first.
 Precise correction updates its original through the qualified native update API.
+
+A rejected or unconfirmed remember returns a tool error with the pending note ID.
+Only a durable receipt confirms a save. A definite HTTP refusal reports its status;
+after resolving it, retry the original arguments and note ID once. A timeout,
+unresolved name conflict or older refusal without a recorded cause requires an
+exact status lookup. Keep the pending source when there is no matching original.
 
 Pending/source and receipts remain private outside reset. After durable receipt,
 the pending owner saves its exact source separately and removes pending while

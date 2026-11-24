@@ -425,6 +425,8 @@ function Complete-ItlMemoryHttp {
         if(-not $ready){throw 'MEMORY_TRANSPORT_UNCONFIRMED: deadline'}
         $Pending.response=$Pending.task.GetAwaiter().GetResult()
         $status=[int]$Pending.response.StatusCode
+        # Native error pages may be HTML or plain text. Non-raw callers only consume their status.
+        if($status -ge 400 -and -not $Pending.raw){return [pscustomobject]@{status=$status;body=$null}}
         $remaining=[int][Math]::Max(0,($Pending.deadline-[DateTime]::UtcNow).TotalMilliseconds)
         $open=$Pending.response.Content.ReadAsStreamAsync()
         if(-not $remaining -or -not $open.Wait($remaining)){throw 'MEMORY_DEADLINE'}
@@ -636,6 +638,26 @@ function Find-ItlMemoryNativeNote {
     return $null
 }
 
+function Get-ItlMemoryWriteRecovery {
+    param([object]$Receipt,[string]$DatasetName)
+    $httpStatus=Get-ItlCatalogField $Receipt 'httpStatus'
+    $feedback=[ordered]@{state=$Receipt.state;pending=$true;noteId=$Receipt.noteId;datasetName=$DatasetName}
+    if($Receipt.dataId){$feedback['dataId']=$Receipt.dataId}
+    if($httpStatus){$feedback['httpStatus']=$httpStatus}
+    $feedback['continuation']=if($Receipt.state -eq 'rejected' -and $httpStatus){
+        $action=switch([int]$httpStatus){
+            401 {'Restore the ordinary account credential.'}
+            403 {'Verify native write access for the same account and dataset.'}
+            429 {'Wait for the native rate limit to clear.'}
+            default {"Check native request validation and destination for HTTP $httpStatus."}
+        }
+        "No confirmed save. $action After resolving the rejection, repeat the original remember once with the same data, evidence, status, dataset_name and note_id (and original data_id for an update). If still rejected, report the pending note."
+    }else{
+        'Save unconfirmed. Use memory_status with datasetName as dataset_name and noteId as note_id to check the original. Keep the pending note; do not replay the write or change destination.'
+    }
+    return $feedback
+}
+
 function Invoke-ItlMemoryRemember {
     param([object]$Binding,[string]$Data,[string]$DatasetName,[string]$NoteId='', [object]$Applicability=@{},[object[]]$Evidence=@(),[string]$Status='candidate',[string]$Source='', [string]$Revision='',[string]$DataId='',[string]$Title='',[switch]$ContextHold)
     $deadline=[DateTime]::UtcNow.AddSeconds(60)
@@ -716,6 +738,7 @@ function Invoke-ItlMemoryRemember {
     $receiptPath=Get-ItlMemoryPath receipt $key
     $existing=Read-ItlMemoryJson $receiptPath;$existingHash=Get-ItlCatalogHash $existing;$found=$null
     if($existing -and $existing.state -in @('retired','retirement-unconfirmed')){throw 'MEMORY_NOTE_RETIRED: resolve retirement status; use a new explicit ID for a new fact.'}
+    if(-not $DataId -and $existing -and $existing.state -eq 'rejected'){$DataId=[string](Get-ItlCatalogField $existing 'dataId' '')}
     if($DataId){
         if($existing -and $existing.dataId -and $existing.dataId -cne $DataId){throw 'MEMORY_NOTE_ID_MISMATCH'}
         $native=Get-ItlMemoryOriginal $Binding $dataset $DataId $deadline
@@ -723,11 +746,12 @@ function Invoke-ItlMemoryRemember {
         if(-not $existing){$existing=@{state='durable';dataId=$DataId}}
         $found=@{note=$native;dataId=$DataId}
     }
-    if($existing -and $existing.state -in @('sending','unconfirmed','indexing','durable')){
+    $legacyRejection=$existing -and $existing.state -eq 'rejected' -and -not (Get-ItlCatalogField $existing 'httpStatus')
+    if($existing -and ($legacyRejection -or $existing.state -in @('sending','unconfirmed','indexing','durable'))){
         if(-not $found){$found=if($existing.dataId){$n=Get-ItlMemoryOriginal $Binding $dataset $existing.dataId $deadline;if($n){@{note=$n;dataId=$existing.dataId}}}else{Find-ItlMemoryNativeNote $Binding $dataset $NoteId $deadline}}
-        if(-not $found){return [ordered]@{state='unconfirmed';noteId=$NoteId;pending=$true;continuation='Use memory_status with this note ID; do not replay remember or switch provider.'}}
+        if(-not $found){return Get-ItlMemoryWriteRecovery @{state='unconfirmed';noteId=$NoteId;dataId=$existing.dataId} $dataset.label}
         if($found.note.noteId -cne $NoteId){throw 'MEMORY_NOTE_ID_MISMATCH'}
-        if($existing.state -in @('sending','unconfirmed','indexing') -and (Get-ItlMemoryIntentHash $found.note) -cne $existing.contentHash){return @{state='unconfirmed';noteId=$NoteId;dataId=$found.dataId;pending=$true;continuation='The old original is still current; it does not prove rejection of the in-flight update. Reconcile without replay.'}}
+        if(($legacyRejection -or $existing.state -in @('sending','unconfirmed','indexing')) -and (Get-ItlMemoryIntentHash $found.note) -cne $existing.contentHash){return Get-ItlMemoryWriteRecovery @{state='unconfirmed';noteId=$NoteId;dataId=$found.dataId} $dataset.label}
         if((Get-ItlMemoryIntentHash $found.note) -ceq $intentHash){
             $receipt=[ordered]@{schemaVersion=1;state='durable';noteId=$NoteId;datasetId=$dataset.datasetId;dataId=$found.dataId;contentHash=$intentHash;status=$Status}
             $null=Update-ItlMemoryJson $receiptPath {param($old) if((Get-ItlCatalogHash $old) -cne $existingHash){throw 'MEMORY_WRITE_IN_FLIGHT'};return $receipt}
@@ -772,9 +796,9 @@ function Invoke-ItlMemoryRemember {
             # an earlier accepted request. Reconcile it by exact ID, no replay.
             $found=Find-ItlMemoryNativeNote $Binding $dataset $NoteId $deadline
             if($found){$receipt.dataId=$found.dataId;$receipt.state=if((Get-ItlMemoryIntentHash $found.note) -ceq $intentHash){'durable'}else{'unconfirmed'}}
-            else{$receipt.state='rejected'}
+            else{$receipt.state='unconfirmed'}
         }
-        elseif($result.status -ge 400 -and $result.status -lt 500){$receipt.state='rejected'}
+        elseif($result.status -ge 400 -and $result.status -lt 500 -and $result.status -notin @(408,409)){$receipt.state='rejected'}
         elseif($result.status -eq 200){
             $nativeIds=Get-ItlCatalogField $result.body 'items' @();$ids=@($nativeIds)
             if(-not $receipt.dataId -and $ids.Count -eq 1){$receipt.dataId=[string](Get-ItlCatalogField $ids[0] 'id')}
@@ -782,6 +806,7 @@ function Invoke-ItlMemoryRemember {
             if(-not $original){$found=Find-ItlMemoryNativeNote $Binding $dataset $NoteId $deadline;if($found){$receipt.dataId=$found.dataId;$original=$found.note}}
             $receipt.state=if($original -and (Get-ItlMemoryIntentHash $original) -ceq $intentHash){'durable'}else{'unconfirmed'}
         }else{$receipt.state='unconfirmed'}
+        if($result.status -ne 200){$receipt['httpStatus']=[int]$result.status}
     }catch{$receipt.state='unconfirmed'}
     $null=Update-ItlMemoryJson $receiptPath {param($old)
         if((Get-ItlCatalogField $old 'attemptId') -cne $receipt.attemptId){throw 'MEMORY_WRITE_IN_FLIGHT'}
@@ -789,7 +814,12 @@ function Invoke-ItlMemoryRemember {
     }
     if($receipt.state -eq 'durable'){Complete-ItlMemoryPending $Binding $NoteId $intentHash}
     $receipt['pending']=($receipt.state -ne 'durable');$receipt['searchState']='unverified'
-    $receipt['operation']=if($updating){'updated'}else{'saved'}
+    if($receipt.state -eq 'durable'){
+        $receipt['operation']=if($updating){'updated'}else{'saved'}
+    }else{
+        $feedback=Get-ItlMemoryWriteRecovery $receipt $dataset.label
+        foreach($field in $feedback.Keys){$receipt[$field]=$feedback[$field]}
+    }
     $receipt['scopeKind']=$dataset.scopeKind
     if($route){$receipt['routedTo']=$dataset.label;$receipt['routeReason']=$route.reason}
     return $receipt
@@ -823,6 +853,10 @@ function Resolve-ItlMemoryProjectRoute {
     if($products.Count -ne 1){return (& $keep 'area-not-applicable')}
     try{$target=@(Get-ItlMemoryScopes $Binding write $products[0].label $area)}catch{return (& $keep 'area-not-applicable')}
     return @{dataset=$target[0];reason='product-home'}
+}
+
+function Get-ItlMemoryRecallRetryGuidance {
+    return 'Coverage is unknown. Before the next related edit or check, retry recall once with the same topic and scope. If that retry also fails, continue with available sources and report the missing coverage.'
 }
 
 function Invoke-ItlMemoryRecallStage {
@@ -894,7 +928,7 @@ function Invoke-ItlMemoryRecall {
     }
     if([DateTime]::UtcNow -ge $deadline){throw 'MEMORY_DEADLINE'}
     if(-not $selected.Count){
-        return @{cards=@();coverage='unavailable';coverageIssues=$issues;continuation='Prepare admitted dataset IDs/grants; no unscoped recall was sent.'}
+        return @{cards=@();coverage='unavailable';coverageIssues=$issues;continuation=("Prepare admitted dataset IDs/grants. "+(Get-ItlMemoryRecallRetryGuidance))}
     }
     $ids=@($selected|ForEach-Object {$_.datasetId}|Select-Object -Unique)
     $result=Invoke-ItlMemoryRecallStage $Trace 'search' {
@@ -903,7 +937,10 @@ function Invoke-ItlMemoryRecall {
         return $response
     }
     if($reference -and $result.status -in @(401,403)){$Trace['failureStage']='search';throw 'MEMORY_READ_SCOPE_DENIED: the native account refused the explicit project search.'}
-    if($result.status -ne 200){$Trace['failureStage']='search';return @{cards=@();coverage='unavailable';coverageIssues=$issues;continuation='Preserve the scope and verify native access; required coverage remains incomplete.'}}
+    if($result.status -ne 200){
+        $Trace['failureStage']='search';$Trace['httpStatus']=[int]$result.status
+        return @{cards=@();coverage='unavailable';coverageIssues=$issues;httpStatus=$Trace.httpStatus;continuation=(Get-ItlMemoryRecallRetryGuidance)}
+    }
     # Native Cognee answers datasets without graph data by one system status
     # row instead of chunks. That is known absence, not unattributed results.
     $backendCalls=2+[int]$discovery.attempted
@@ -1407,6 +1444,9 @@ function Invoke-ItlMemoryStatus {
     $key=Get-ItlMemoryRecordKey $Binding $scope[0].datasetId $NoteId
     $receipt=Read-ItlMemoryJson (Get-ItlMemoryPath receipt $key)
     $found=if($exact){$exact}elseif($receipt -and $receipt.dataId){$note=Get-ItlMemoryOriginal $Binding $scope[0] $receipt.dataId $deadline;if($note){@{dataId=$receipt.dataId;note=$note}}}else{Find-ItlMemoryNativeNote $Binding $scope[0] $NoteId $deadline}
+    if($receipt -and $receipt.state -eq 'rejected' -and (-not $found -or (Get-ItlMemoryIntentHash $found.note) -cne $receipt.contentHash)){
+        return Get-ItlMemoryWriteRecovery $receipt $scope[0].label
+    }
     if(-not $found){return @{state='unconfirmed-or-retired';noteId=$NoteId;continuation='Retain pending; absence in a bounded lookup is not permission to replay remember.'}}
     if($found.note.noteId -cne $NoteId){throw 'MEMORY_NOTE_ID_MISMATCH'}
     if($receipt -and $receipt.state -in @('sending','unconfirmed','indexing') -and (Get-ItlMemoryIntentHash $found.note) -cne $receipt.contentHash){return @{state='unconfirmed';noteId=$NoteId;dataId=$found.dataId;pending=$true;continuation='Current original differs from the attempted update; preserve source and receipt, do not replay.'}}
@@ -1486,7 +1526,7 @@ function Add-ItlMemoryUsage {
         $kind=[regex]::Match($Outcome,'kind=([a-z-]+)')
         if($kind.Success){$entry['recordKind']=$kind.Groups[1].Value}
         if($Tool -eq 'recall' -and $Trace.Contains('elapsedMs')){
-            foreach($field in @('elapsedMs','stageMs','failureStage','failureKind','coverageIssues')){
+            foreach($field in @('elapsedMs','stageMs','failureStage','failureKind','coverageIssues','httpStatus')){
                 if($Trace.Contains($field)){$entry[$field]=$Trace[$field]}
             }
             $entry['readOutcome']=if($Outcome -ne 'ok'){'failed'}elseif($Result.coverage -in @('partial','unavailable')){$Result.coverage}elseif(-not @($Result.cards).Count){'empty'}else{'cards'}
@@ -1494,6 +1534,10 @@ function Add-ItlMemoryUsage {
         if($Result -is [Collections.IDictionary]){
             if($Result.Contains('cards')){$entry['cards']=@($Result['cards']).Count}
             $state=[string](Get-ItlCatalogField $Result 'state' '');$operation=[string](Get-ItlCatalogField $Result 'operation' '')
+            if($Tool -eq 'remember' -and $state -in @('rejected','unconfirmed')){
+                $entry['outcome']=$state
+                if($Result.Contains('httpStatus')){$entry['httpStatus']=$Result.httpStatus}
+            }
             if($state -eq 'durable' -and $operation -in @('saved','updated')){
                 $entry[$operation]=1
                 $scopeKind=[string](Get-ItlCatalogField $Result 'scopeKind' '')

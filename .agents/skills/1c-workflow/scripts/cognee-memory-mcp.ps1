@@ -95,7 +95,8 @@ while($null -ne ($line=[Console]::ReadLine())){
                 if($contextNotice -and $value -is [Collections.IDictionary]){$value['contextChanged']=$contextNotice;$contextNotice=$null}
                 if($recallWatch){$trace['elapsedMs']=$recallWatch.ElapsedMilliseconds}
                 Add-ItlMemoryUsage $binding $name $sessionId 'ok' $value $trace
-                $result=@{content=@(@{type='text';text=(ConvertTo-Json -InputObject $value -Depth 40 -Compress)});isError=$false}
+                $writeUnsettled=$name -ceq 'remember' -and $value.state -in @('rejected','unconfirmed')
+                $result=@{content=@(@{type='text';text=(ConvertTo-Json -InputObject $value -Depth 40 -Compress)});isError=$writeUnsettled}
             }
             default {throw 'MEMORY_METHOD_UNKNOWN'}
         }
@@ -118,7 +119,7 @@ while($null -ne ($line=[Console]::ReadLine())){
             if($errorCode -in @('MEMORY_DEADLINE','MEMORY_TRANSPORT_UNCONFIRMED')){
                 $timedOut=$errorCode -eq 'MEMORY_DEADLINE' -or $text -ceq 'MEMORY_TRANSPORT_UNCONFIRMED: deadline'
                 $reason=if($timedOut){'The search in this turn timed out.'}else{'This call ended with a transport failure.'}
-                $continuation="$reason Coverage is unknown. If needed, read a known original with memory_status(dataset_name, data_id) or retry recall once with the same admitted set. After another failure continue with available sources and report the gap. Use fresh recall in the next eligible turn."
+                $continuation="$reason $(Get-ItlMemoryRecallRetryGuidance) A known original can be read with memory_status(dataset_name, data_id)."
                 $trace['failureKind']=if($timedOut){'operation_deadline'}else{'transport'}
             }
         }
@@ -126,6 +127,13 @@ while($null -ne ($line=[Console]::ReadLine())){
         $data=@{continuation=$continuation}
         if($contextNotice){$data['contextChanged']=$contextNotice}
         $id=if($message -and $message.Contains('id')){$message.id}else{$null}
-        [Console]::WriteLine((ConvertTo-Json -InputObject @{jsonrpc='2.0';id=$id;error=@{code=-32000;message=$errorCode;data=$data}} -Depth 10 -Compress))
+        $errorDetail=@{code=-32000;message=$errorCode;data=$data}
+        if(($calledTool -eq 'remember' -and $errorCode -in @('MEMORY_DESTINATION_REQUIRED','MEMORY_EVIDENCE_REQUIRED','MEMORY_PENDING_CONFLICT','MEMORY_STANDING_TOO_LONG','MEMORY_STANDING_LIMIT','MEMORY_NOTE_TOO_LONG')) -or
+           ($calledTool -eq 'recall' -and $errorCode -in @('MEMORY_DEADLINE','MEMORY_TRANSPORT_UNCONFIRMED'))){
+            # Tool failures carry their recovery in visible content even on clients that hide JSON-RPC error.data.
+            $reply=@{result=@{isError=$true;content=@(@{type='text';text=($errorDetail|ConvertTo-Json -Depth 8 -Compress)})}}
+        }else{$reply=@{error=$errorDetail}}
+        $reply['jsonrpc']='2.0';$reply['id']=$id
+        [Console]::WriteLine(($reply|ConvertTo-Json -Depth 10 -Compress))
     }
 }

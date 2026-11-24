@@ -69,7 +69,7 @@
         }
         function Invoke-MemoryServerCall {
             # Returns the tool result, or the JSON-RPC error object.
-            param($Server,[string]$Tool,[hashtable]$Arguments=@{})
+            param($Server,[string]$Tool,[hashtable]$Arguments=@{},[switch]$AsEnvelope)
             $Server.id++
             $line=ConvertTo-Json -InputObject @{jsonrpc='2.0';id=$Server.id;method='tools/call';params=@{name=$Tool;arguments=$Arguments}} -Depth 8 -Compress
             $wire=[Text.Encoding]::UTF8.GetBytes($line+"`n")
@@ -79,6 +79,7 @@
             $answer=$read.GetAwaiter().GetResult()
             if($null -eq $answer){throw ('memory server closed stdio: '+$Server.stderr.GetAwaiter().GetResult())}
             $message=$answer|ConvertFrom-Json
+            if($AsEnvelope){return $message}
             if($message.PSObject.Properties['error']){return $message.error}
             return ($message.result.content[0].text|ConvertFrom-Json)
         }
@@ -259,6 +260,80 @@
         @($local.pending).Count | Should -Be 1
         $local.pending[0].fact | Should -Be 'Проверенная особенность'
         $script:Calls.Count | Should -Be 0
+    }
+    It 'reports native recall failure and retries only the same admitted search on the next call' {
+        $dataset=Get-ProjectDataset $b
+        $trace=@{}
+        Mock Invoke-ItlMemoryHttp { @{status=503;body=@{}} } -ParameterFilter {$Path -eq '/api/v1/recall'}
+        $failed=Invoke-ItlMemoryRecall $b 'Расчёт прогноза' @($dataset.label) -Trace $trace
+        $failed.coverage | Should -BeExactly unavailable
+        $failed.httpStatus | Should -Be 503
+        $trace.failureStage | Should -BeExactly search
+        $failed.continuation | Should -Match 'retry recall once'
+        $failed.continuation | Should -Match 'report'
+        Should -Invoke Invoke-ItlMemoryHttp -Times 1 -Exactly -ParameterFilter {$Path -eq '/api/v1/recall'}
+
+        Mock Invoke-ItlMemoryHttp { @{status=200;body=@()} } -ParameterFilter {$Path -eq '/api/v1/recall'}
+        $retry=Invoke-ItlMemoryRecall $b 'Расчёт прогноза' @($dataset.label)
+        $retry.coverage | Should -Not -Be unavailable
+        Should -Invoke Invoke-ItlMemoryHttp -Times 2 -Exactly -ParameterFilter {
+            $Path -eq '/api/v1/recall' -and $Body.query -ceq 'Расчёт прогноза' -and
+            @($Body.dataset_ids).Count -eq 1 -and $Body.dataset_ids[0] -ceq $dataset.datasetId
+        }
+    }
+    It 'recovers a refused write under the original note ID after native access returns' {
+        $script:denyMemoryWrite=$true
+        Mock Invoke-ItlMemoryHttp { @{status=403;body=@{}} } -ParameterFilter {$Path -eq '/api/v1/remember' -and $script:denyMemoryWrite}
+        $argsForWrite=@{Binding=$b;Data='Проверенный факт';DatasetName='itl_project_customer';NoteId='refused'}
+        $r=Invoke-ItlMemoryRemember @argsForWrite
+        $r.state | Should -BeExactly rejected
+        $r.httpStatus | Should -Be 403
+        $r.pending | Should -BeTrue
+        $r.Contains('operation') | Should -BeFalse
+        Add-ItlMemoryUsage $b remember 'fixture' 'ok' $r
+        $entry=(Read-ItlMemoryJson (Get-ItlMemoryPath usage $b.identity.workspaceId)).entries[0]
+        $entry.outcome | Should -BeExactly rejected
+        $entry.httpStatus | Should -Be 403
+        $entry.Contains('saved') | Should -BeFalse
+        $retry=Invoke-ItlMemoryStatus $b $r.datasetName $r.noteId
+        $retry.state | Should -BeExactly rejected
+        $retry.httpStatus | Should -Be 403
+        $retry.continuation | Should -Match 'remember'
+        $script:denyMemoryWrite=$false
+        $done=Invoke-ItlMemoryRemember @argsForWrite
+        $done.state | Should -BeExactly durable
+        $done.operation | Should -BeExactly saved
+        $done.noteId | Should -BeExactly $r.noteId
+        @(($script:Originals).Keys).Count | Should -Be 1
+        @((Invoke-ItlMemoryStatus $b -LocalOnly).pending).Count | Should -Be 0
+    }
+    It 'does not confirm a rejected update against the old original and can finish updating the same data ID' {
+        $argsForWrite=@{Binding=$b;Data='Исходный факт';DatasetName='itl_project_customer';NoteId='updated-note'}
+        $original=Invoke-ItlMemoryRemember @argsForWrite
+        $script:denyUpdate=$true
+        Mock Invoke-ItlMemoryHttp { @{status=403;body=@{}} } -ParameterFilter {$Method -eq 'PATCH' -and $script:denyUpdate}
+        $argsForWrite.Data='Уточнённый факт'
+        $r=Invoke-ItlMemoryRemember @argsForWrite
+        $r.state | Should -BeExactly rejected
+        $r.dataId | Should -BeExactly $original.dataId
+        (Invoke-ItlMemoryStatus $b $r.datasetName $r.noteId $r.dataId).state | Should -BeExactly rejected
+        $script:denyUpdate=$false
+        $confirmed=Invoke-ItlMemoryRemember @argsForWrite
+        $confirmed.operation | Should -BeExactly updated
+        $confirmed.dataId | Should -BeExactly $original.dataId
+        (Invoke-ItlMemoryStatus $b $r.datasetName $r.noteId $r.dataId).note.fact | Should -BeExactly $argsForWrite.Data
+        @($script:Originals.Keys).Count | Should -Be 1
+    }
+    It 'keeps an unresolved name conflict and an older rejected receipt from replaying a write' {
+        Mock Invoke-ItlMemoryHttp { @{status=409;body=@{}} } -ParameterFilter {$Path -eq '/api/v1/remember'}
+        $r=Invoke-ItlMemoryRemember $b 'Факт' 'itl_project_customer' 'conflict'
+        $r.state | Should -BeExactly unconfirmed
+        $r.httpStatus | Should -Be 409
+        (Invoke-ItlMemoryRemember $b 'Факт' 'itl_project_customer' 'conflict').state | Should -BeExactly unconfirmed
+        $path=Get-ItlMemoryPath receipt (Get-ItlMemoryRecordKey $b $r.datasetId $r.noteId)
+        $null=Update-ItlMemoryJson $path {param($old) $old.state='rejected';$old.Remove('httpStatus');return $old}
+        (Invoke-ItlMemoryRemember $b 'Факт' 'itl_project_customer' 'conflict').state | Should -BeExactly unconfirmed
+        Should -Invoke Invoke-ItlMemoryHttp -Times 1 -Exactly -ParameterFilter {$Path -eq '/api/v1/remember'}
     }
     It 'reconciles accepted body loss after restart without replaying remember' {
         $script:BodyLoss=$true
@@ -1092,7 +1167,9 @@ try {
             $status.contextChanged.reason | Should -BeExactly cycle
             $status.currentCycleId | Should -BeExactly 'next-cycle'
             @($status.pending|Where-Object noteId -EQ 'late').Count | Should -Be 1
-            $accepted=Invoke-MemoryServerCall $server remember @{data='Поздний факт старого чата';note_id='late'}
+            $wire=Invoke-MemoryServerCall $server remember @{data='Поздний факт старого чата';note_id='late'} -AsEnvelope
+            $wire.result.isError | Should -BeTrue
+            $accepted=$wire.result.content[0].text | ConvertFrom-Json
             $accepted.message | Should -BeExactly 'MEMORY_DESTINATION_REQUIRED'
             $accepted.data.continuation | Should -Match 'note_id=late.*retire_note\(note_id\)'
             $accepted.data.PSObject.Properties['contextChanged'] | Should -BeNullOrEmpty
