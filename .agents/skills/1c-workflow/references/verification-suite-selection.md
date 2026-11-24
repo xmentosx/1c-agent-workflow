@@ -40,6 +40,15 @@ that own their result:
 started deliberately and excluded from normal acceptance. Reserve `always=true`
 for a genuinely cheap invariant, not as a substitute for owner classification.
 
+A suite may declare `"independentAfterFailure": true` if it can start from its
+own fixtures even when another suite's setup or teardown stopped halfway.
+Leave it unset for shared product data or ordering dependencies. After a
+product assertion and confirmed client cleanup, an ordinary check runs the
+explicitly independent, entirely unstarted suites together in a new TestManager.
+An absent or ambiguous JUnit suite gives no permission to repeat work. Each
+batch uses its own JUnit and normal suite receipts. The first failure keeps the
+whole check failed. Infrastructure failures end the operation.
+
 The default `ITL_VERIFICATION_MODEL=change` uses a helper-owned current scope;
 see [current change verification](verification-change.md). The catalogs still own
 retained tests. Catalog-wide one-off readiness below describes `cumulative`;

@@ -41,6 +41,8 @@ ITL runs execute the `(Расширение)` code steps, including the `чер�
 
 ## Diagnose One Run
 
+For an asynchronous UI command, connect the scenario's TestClient profile and use the Core step `И Я жду до 20 секунд значение "Да" от выражения клиента "$КодНаблюдения$"`. Prepare the client expression to return the expected string on success and one short, non-sensitive observation (for example the HTML controller's rejection message) while waiting. The step includes the last value and the original error in the failure. Keep the subsequent assertion of the actual window or business result. A handled form/HTML rejection can leave the event log empty. If the UI evidence is insufficient, use ROCTUP to replay the read-only command parser with the same payload.
+
 `/itl-check` is the only executable verification gate. Inspect its current run in this order: `status.json`, JUnit, the error directory, fresh event-log report/entries, `vanessa.log`, then TestClient `/Out`. Treat `/Out` as supplementary because Enterprise may leave it empty.
 
 Treat its category as a routing hint, not a proven root cause:

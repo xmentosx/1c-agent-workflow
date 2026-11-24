@@ -51,6 +51,82 @@
         }
     }
 
+    It "reports the partial failed feature and empty suites from the current selection" {
+        $root = New-DiagnosticsProjectRoot
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $first = Join-Path $root 'Доска редактора.feature'
+                $other = Join-Path $root 'Следующая.feature'
+                [IO.File]::WriteAllText($first, "Feature: Board`nScenario: Setup`nScenario: Open`nScenario: Cleanup")
+                [IO.File]::WriteAllText($other, "Feature: Other`nScenario: Inspect")
+                [IO.File]::WriteAllText((Join-Path $root 'junit.xml'), @'
+<testsuites>
+  <testsuite name="Board" tests="2" failures="1"><testcase name="Setup"/><testcase name="Open"><failure>timeout</failure></testcase></testsuite>
+  <testsuite name="Other" tests="0" failures="0"/>
+</testsuites>
+'@)
+                Get-VanessaVerificationStatus -RunDirectory $root -StatusPath (Join-Path $root 'status.json') -SelectedFeatureFiles @($first, $other)
+            }
+            $result.status | Should -Be 'failed'
+            # The report carries the error totals, selected files, JUnit suites,
+            # unexecuted suites, and the failed feature's executed/expected counts.
+            @([regex]::Matches($result.reason, '\d+') | ForEach-Object { [int]$_.Value }) | Should -Be @(1, 0, 2, 2, 1, 2, 3)
+            $result.reason | Should -Match 'First failure: timeout'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "continues only whole explicitly independent empty suites and retains the first failure" {
+        $root = New-DiagnosticsProjectRoot
+        try {
+            & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $dir = Join-Path $root 'tests/features'
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                $entries = foreach ($id in 'broken','independent','dependent','partial','skipped','absent','ambiguous') {
+                    $entry = @{id=$id; purpose='acceptance'; ownerPaths=@("src/$id/**"); featurePaths=@("tests/features/$id*.feature")}
+                    if ($id -ne 'dependent') { $entry.independentAfterFailure = $true }
+                    [IO.File]::WriteAllText("$dir/$id.feature", "Feature: $id`nScenario: check $id")
+                    $entry
+                }
+                [IO.File]::WriteAllText("$dir/partial2.feature", "Feature: partial2`nScenario: second")
+                [IO.File]::WriteAllText("$dir/ambiguous2.feature", "Feature: ambiguous`nScenario: duplicate")
+                [IO.File]::WriteAllText("$root/tests/verification-suites.branch.json", (@{schemaVersion=1;suites=@($entries)} | ConvertTo-Json -Depth 5))
+                $files = @(Get-VanessaApplicationFeatureFiles -FeaturePath $dir)
+                $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles $files
+                $catalog.valid | Should -BeTrue
+                $plan = [pscustomobject]@{currentTree='tree'; catalogFingerprint=$catalog.fingerprint; selectedSuiteIds=@($entries.id); selectedFeatureFiles=$files; acceptanceSuites=$catalog.suiteFingerprints; reason='initial'}
+                [IO.File]::WriteAllText("$root/junit.xml", @'
+<testsuites>
+ <testsuite name="broken" tests="1" failures="1"><testcase name="check broken"><failure>first-cause</failure></testcase></testsuite>
+ <testsuite name="independent" tests="0"/><testsuite name="dependent" tests="0"/>
+ <testsuite name="partial" tests="1"><testcase name="check partial"/></testsuite><testsuite name="partial2" tests="0"/>
+ <testsuite name="skipped" tests="1"><testcase name="check skipped"><skipped/></testcase></testsuite>
+ <testsuite name="ambiguous" tests="0"/>
+</testsuites>
+'@)
+                $verification = Get-VanessaVerificationStatus -RunDirectory $root -StatusPath "$root/status.json" -SelectedFeatureFiles $files
+                $eventLog = [pscustomobject]@{status='passed'}
+                $runner = New-VanessaScenarioFailure $verification ([pscustomobject]@{category='runner'}) $eventLog $plan $root
+                $runner.Data.Contains('vanessaFeatureSuites') | Should -BeFalse
+                $cause = New-VanessaScenarioFailure $verification ([pscustomobject]@{category='product-assertion'}) $eventLog $plan $root
+                function Get-VerificationSelectionEffectiveTree { 'tree' }
+                function Read-DevBranchState { [pscustomobject]@{lastVanessaReportPath='second-junit'} }
+                function Set-RunStage { param($Stage, $Detail) }
+                $calls = [Collections.Generic.List[string]]::new()
+                { Invoke-VanessaSelectionBatches -Plan $plan -RunBatch {
+                    param($continuing)
+                    if (-not $continuing) { $calls.Add('first'); throw $cause }
+                    $calls.Add(($script:ActiveVerificationSelectionPlan.selectedSuiteIds -join ','))
+                } } | Should -Throw '*first-cause*second-junit*'
+                $calls.ToArray() | Should -Be @('first','independent')
+                $plan.selectedFeatureFiles.Count | Should -Be $files.Count
+            }
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "puts the 2026-11-03 PM5 ErrorDetails cause before the Vanessa service error" {
         $root = New-DiagnosticsProjectRoot
         try {

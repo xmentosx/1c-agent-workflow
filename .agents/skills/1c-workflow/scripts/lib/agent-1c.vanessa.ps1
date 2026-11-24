@@ -759,7 +759,7 @@ function Get-VanessaFeatureTestClientRequirements {
             foreach ($step in @($scenario.steps.ToArray())) {
                 if ($step -match '(?i)\(Расширение\)') {
                     $requiresExtensionTestClient = $true
-                    $currentClientKey = '__itl_current_testclient__'
+                    if (-not $currentClientKey) { $currentClientKey = '__itl_current_testclient__' }
                     if (-not $active.ContainsKey($currentClientKey)) {
                         $active[$currentClientKey] = 'extension'
                         $maximumConcurrency = [Math]::Max($maximumConcurrency, $active.Count)
@@ -5284,7 +5284,7 @@ function Get-VanessaErrorDetailsFocus {
 }
 
 function Get-VanessaJunitSummary {
-    param([string]$RunDirectory, [string[]]$ReportPaths = @())
+    param([string]$RunDirectory, [string[]]$ReportPaths = @(), [switch]$IncludeFeatureCoverage)
 
     $summary = [ordered]@{
         found = $false
@@ -5292,6 +5292,7 @@ function Get-VanessaJunitSummary {
         failures = 0
         errors = 0
         skipped = 0
+        featureSuites = @()
         testCases = @()
         files = @()
     }
@@ -5312,6 +5313,19 @@ function Get-VanessaJunitSummary {
                 $nodes = @($xml.DocumentElement)
             }
             foreach ($node in $nodes) {
+                if ($IncludeFeatureCoverage -and $node.LocalName -eq 'testsuite' -and $node.HasAttribute('tests') -and
+                    -not $node.SelectSingleNode('.//*[local-name()="testsuite"]')) {
+                    $observed = @($node.SelectNodes('./*[local-name()="testcase"]'))
+                    # Aggregate-only JUnit cannot tell how many cases actually ran.
+                    if ($observed.Count -eq [int]$node.GetAttribute('tests')) {
+                        $summary.featureSuites += [pscustomobject]@{
+                            name = $node.GetAttribute('name')
+                            empty = ($observed.Count -eq 0)
+                            executed = @($observed | Where-Object { -not $_.SelectSingleNode('./*[local-name()="skipped"]') }).Count
+                            failed = [bool]$node.SelectSingleNode('./*[local-name()="testcase"]/*[local-name()="failure" or local-name()="error"]')
+                        }
+                    }
+                }
                 if ($node.Attributes["tests"]) {
                     $summary.tests += [int]$node.Attributes["tests"].Value
                     $summary.found = $true
@@ -5480,10 +5494,12 @@ function Merge-VanessaScenarioCountDiagnostic {
 function Get-VanessaVerificationStatus {
     param(
         [string]$RunDirectory,
-        [string]$StatusPath
+        [string]$StatusPath,
+        [string[]]$SelectedFeatureFiles = @(),
+        [string]$FilterTags = ""
     )
 
-    $junit = Get-VanessaJunitSummary -RunDirectory $RunDirectory
+    $junit = Get-VanessaJunitSummary -RunDirectory $RunDirectory -IncludeFeatureCoverage:($SelectedFeatureFiles.Count -gt 0)
     if ($junit.found) {
         if (($junit.failures + $junit.errors) -gt 0) {
             $failedCases = @($junit.testCases | Where-Object { $_.failure -or $_.error })
@@ -5500,6 +5516,23 @@ function Get-VanessaVerificationStatus {
                 $failureRequiredAction = 'inspect-testclient-startup-diagnostics-and-repeat-original-command'
             }
             $reason = "Vanessa JUnit report contains failures/errors: failures=$($junit.failures), errors=$($junit.errors)."
+            if ($SelectedFeatureFiles.Count -gt 0) {
+                $reason += " Выбрано файлов Vanessa: $($SelectedFeatureFiles.Count)."
+                $suites = @($junit.featureSuites)
+                if ($suites.Count -gt 0) {
+                    $empty = @($suites | Where-Object { $_.executed -eq 0 }).Count
+                    $reason += " Наборов в JUnit: $($suites.Count), без выполненных сценариев: $empty."
+                    $failedSuite = @($suites | Where-Object failed)
+                    if ($failedSuite.Count -eq 1) {
+                        $title = $failedSuite[0].name
+                        $matchingFiles = @($SelectedFeatureFiles | Where-Object { (Get-VanessaFeatureTitle -Path $_) -ceq $title })
+                        if ($matchingFiles.Count -eq 1) {
+                            $expected = Get-VanessaSelectedScenarioCount -FeatureFiles $matchingFiles -FilterTags $FilterTags
+                            if ($expected -gt 0) { $reason += " В упавшем наборе выполнено сценариев: $($failedSuite[0].executed) из $expected." }
+                        }
+                    }
+                }
+            }
             if ($diagnostic) {
                 $reason += " First failure: $diagnostic"
             }
@@ -5511,6 +5544,7 @@ function Get-VanessaVerificationStatus {
                 primaryErrorSignature = $(if ($failedCases.Count -gt 0) { [string]$failedCases[0].diagnosticSignature } else { "" })
                 primaryErrorSource = $(if ($failedCases.Count -gt 0) { [string]$failedCases[0].diagnosticSource } else { "" })
                 secondaryDiagnostics = @($failedCases | ForEach-Object { $_.secondaryDiagnostic } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+                featureSuites = $junit.featureSuites
             }
         }
         if ($junit.tests -gt 0) {
@@ -6189,9 +6223,24 @@ function Get-VanessaVerificationRuntimeState {
     }
 }
 
+function New-VanessaScenarioFailure {
+    param($Verification, $FailureRoute, $EventLogVerification, $SelectionPlan, [string]$RunDirectory)
+
+    $failure = [InvalidOperationException]::new("Vanessa verification did not pass: $($Verification.status). $($Verification.reason)")
+    $failure.Data['vanessaRunDirectory'] = $RunDirectory
+    # Cleanup failures replace the JUnit result and carry no feature evidence.
+    if ($FailureRoute.category -eq 'product-assertion' -and $EventLogVerification.status -in @('passed','skipped') -and
+        $Verification.PSObject.Properties['featureSuites'] -and $null -ne $SelectionPlan -and
+        @(Get-VerificationCatalogValue $SelectionPlan 'acceptanceSuites' @() | Where-Object { (Get-VerificationCatalogValue $_ 'independentAfterFailure' $false) -and $_.id -in $SelectionPlan.selectedSuiteIds }).Count -gt 0) {
+        $failure.Data['vanessaFeatureSuites'] = @($Verification.featureSuites)
+    }
+    return $failure
+}
+
 function Run-DevBranchTests {
     param(
         [switch]$RecordFullVerificationEvidence,
+        [switch]$IndependentContinuation,
         [string]$EventLogCursorPath = "",
         [Nullable[datetime]]$EventLogBoundaryAt = $null,
         [string]$EventLogCursorScope = "vanessa-only"
@@ -6285,7 +6334,9 @@ function Run-DevBranchTests {
     }
     $runtimeState = Get-VanessaVerificationRuntimeState -State $state
     Invoke-ForeignVanessaTestProcessPolicy -State $runtimeState -TestPort $testPort
-    Invoke-DevBranchVanessaRuntimeRelease -State $runtimeState -Reason "Vanessa verification preflight" | Out-Null
+    if (-not $IndependentContinuation) {
+        Invoke-DevBranchVanessaRuntimeRelease -State $runtimeState -Reason "Vanessa verification preflight" | Out-Null
+    }
 
     $runDirectory = New-VanessaRunDirectory
     $diagnosticInputManifest = ''
@@ -6505,7 +6556,9 @@ function Run-DevBranchTests {
             lastVanessaTimedOut = $script:LastProcessTimedOut
             lastVanessaTimeoutSeconds = $timeoutSeconds
         }
-        Add-VanessaVerificationEvidenceUpdates -Updates $updates -State $state -Status "failed" -Reason $failureReason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
+        if (-not $IndependentContinuation) {
+            Add-VanessaVerificationEvidenceUpdates -Updates $updates -State $state -Status "failed" -Reason $failureReason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
+        }
         if ($null -ne $eventLogVerification) {
             $updates["lastVanessaEventLogReader"] = $eventLogVerification.reader
             $updates["lastVanessaEventLogBaselinePath"] = $eventLogVerification.baselinePath
@@ -6538,7 +6591,7 @@ function Run-DevBranchTests {
     $runFinishedAt = Get-Date
     Complete-VanessaRunEventLogWindow -CursorPath $runEventLogCursorPath -FinishedAt $runFinishedAt
     $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    $verification = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
+    $verification = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath -SelectedFeatureFiles $applicationFeatureFiles -FilterTags $VanessaFilterTags
     $tagFilterEvidence = $null
     try {
         $scenarioCountEvidence = Assert-VanessaScenarioCountJunitEvidence `
@@ -6669,7 +6722,9 @@ function Run-DevBranchTests {
             Add-VerificationComponentEvidenceUpdates -Updates $updates -State $state -Component 'event-log' -Status $eventLogVerification.status -EventLogObservation $eventLogVerification -RunDirectory $runDirectory
         }
     }
-    Add-VanessaVerificationEvidenceUpdates -Updates $updates -State $state -Status $verification.status -Reason $verification.reason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
+    if (-not $IndependentContinuation) {
+        Add-VanessaVerificationEvidenceUpdates -Updates $updates -State $state -Status $verification.status -Reason $verification.reason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
+    }
     Update-ActiveVanessaVerificationState -State $state -Updates $updates
     $script:ActiveVerificationSelectionPlan = $null
 
@@ -6710,7 +6765,7 @@ function Run-DevBranchTests {
             Write-OneCVanessaProcessDiagnostics -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
             Stop-OwnHungVanessaTestClients -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
         }
-        throw "Vanessa verification did not pass: $($verification.status). $($verification.reason)"
+        throw (New-VanessaScenarioFailure $verification $failureRoute $eventLogVerification $selectionPlan $runDirectory)
     }
     Set-RunStage -Stage "vanessa.complete" -Detail "Vanessa Automation verification passed."
 }
