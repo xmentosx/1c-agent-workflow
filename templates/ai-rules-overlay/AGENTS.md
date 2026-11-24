@@ -56,24 +56,25 @@ holds the details on demand.
 
 - Call `memory_status` once at session start and after a `contextChanged`
   notice. Task progress goes to its `checkpoint`, not notes.
-- `recall` once per topic before designing a 1C change, and by tool and action
-  before writing a test or setting up a stand; again for a new area or object,
-  missing context, a transient failure, or by symptom before retrying an
-  unexpected failure (see `project-memory`).
-- `remember` in the same turn after a user correction, a rejected approach, a
-  standing condition or a confirmed lesson for another session or branch.
+- Before designing or first editing a 1C topic, including direct fixes or
+  mid-chat connection, call `recall`. Reuse this chat's covered search
+  (even empty). Search new areas/objects or missing context, by tool/action
+  before tests or stand setup, and by symptom before retrying a failure.
+  On temporary failure retry once if needed, then continue and report the gap.
+- After a correction or rejected approach, `remember` only a reusable
+  decision or confirmed lesson, in the same turn. Keep one-off permissions
+  and expectations in context; a prediction needs a check to become a fact.
   Never save what code, OpenSpec, evidence, Git or test results hold:
   progress, runs, SHAs, line numbers, statuses.
-- One fact, at most 600 characters: rule, why, when, conditions and versions;
-  evidence by reference. A user statement is `verified`, an "always/never"
-  rule `standing`, evidence `{source:"user", reference:"chat <date>"}`;
-  never `candidate`.
-- Destination: the project; add `applicability.knowledgeArea` for base-product
-  behavior to route it to the product home. Organization only for knowledge
-  true across projects and products (platform, BSP, tooling, company
-  conventions), never client, project or configuration data; `standing` there
-  only at the user's word. Workplace for your practices, `host` for machine
-  facts, task only for user decisions for this cycle.
+- One fact, at most 600 characters, with conditions/version and evidence.
+  Use `verified` for confirmed conventions. Reserve `standing` for an explicit
+  future obligation in the chosen scope; cite the user's words and reference.
+- Choose by future audience and lifetime: project for recurring project
+  knowledge; `applicability.knowledgeArea` routes base-product behavior to
+  its proven home. Task for user decisions expiring this cycle; workplace
+  for lasting personal practices; host for verified machine facts. Organization
+  only across projects and products, never client/project/configuration data;
+  organizational `standing` needs explicit user direction.
 - Update a note that contradicts checked code, documentation or the user in
   place (`note_id` + `data_id`) or `retire_note` it in the same turn, never
   under a new ID; another project's organization note only after the user

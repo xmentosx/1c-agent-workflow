@@ -191,8 +191,8 @@ retire it.
 | --- | --- |
 | project | A confirmed decision, fix, constraint or lesson for other branches or copies of the project, including customer customizations. Add `applicability.knowledgeArea` for base-product behaviour. |
 | `organization` | Confirmed knowledge across projects and products (platform, BSP, tooling, company conventions), never client, project or configuration data. Organizational `standing` needs explicit user direction. |
-| `workplace` | A practice of the same `workplaceId`. |
-| `host` | Machine environment, such as the platform version or tool location. |
+| `workplace` | A lasting personal practice of the developer across tasks. |
+| `host` | A verified fact about this machine, such as the platform version or tool location. |
 | `task` | Only the user's decisions and permissions for the current cycle, such as an approved exception or a chosen release version. Never a run result or interim state. |
 
 A project write with `applicability.knowledgeArea` goes to the product home
@@ -218,7 +218,12 @@ a `dataset_name`, or `retire_note(note_id)`. The default note ID is derived from
 the branch copy, project and fact, not from the destination, so repeating the
 same fact with a chosen dataset completes the same pending record.
 `status` is `candidate`, `verified` or `standing`. `standing` is a confirmed
-working rule stated by the user: it needs evidence like `verified`, at most 400
+future obligation explicitly stated for the chosen scope. Supply one evidence entry with
+`source:"user"`, the chat reference and a direct `quote` supporting the obligation.
+A reusable project term is a verified convention, including when the user mentions future
+tasks. Standing rules guide agent behavior at session start.
+One-off permission and predicted outcomes stay in the task; verify the technical outcome
+before storing it as fact. A standing rule has at most 400
 characters, never the task scope, and at most the level maximum above (checked
 by the target dataset's listing); a refusal keeps the pending source and says to
 shorten it, save it as `verified` or move another note to `verified`. It is

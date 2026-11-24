@@ -684,8 +684,18 @@ function Invoke-ItlMemoryRemember {
     if([string]::IsNullOrWhiteSpace($Data) -or [Text.Encoding]::UTF8.GetByteCount($Data) -gt 16384 -or $Status -notin @('candidate','verified','standing')){throw 'MEMORY_NOTE_INVALID: data is one non-empty fact up to 16 KiB; status is candidate, verified or standing.'}
     $Title=$Title.Trim()
     if($Title.Length -gt 80){throw 'MEMORY_NOTE_INVALID: title is at most 80 characters.'}
-    if($Status -in @('verified','standing') -and $Evidence.Count -eq 0){throw 'MEMORY_EVIDENCE_REQUIRED: verified and standing need evidence [{source,reference}]; keep an unsupported assumption as candidate.'}
+    if($Status -eq 'verified' -and $Evidence.Count -eq 0){throw 'MEMORY_EVIDENCE_REQUIRED: verified and standing need evidence [{source,reference}]; keep an unsupported assumption as candidate.'}
     foreach($proof in $Evidence){if(-not (Get-ItlCatalogField $proof 'source') -and -not (Get-ItlCatalogField $proof 'reference')){throw 'MEMORY_EVIDENCE_REQUIRED: evidence needs an identifiable source/reference.'}}
+    if($Status -eq 'standing'){
+        $userProof=$Evidence | Where-Object {
+            $reference=Get-ItlCatalogField $_ 'reference'
+            $quote=Get-ItlCatalogField $_ 'quote'
+            (Get-ItlCatalogField $_ 'source') -eq 'user' -and
+                $reference -is [string] -and -not [string]::IsNullOrWhiteSpace($reference) -and
+                $quote -is [string] -and -not [string]::IsNullOrWhiteSpace($quote)
+        } | Select-Object -First 1
+        if(-not $userProof){throw 'MEMORY_EVIDENCE_REQUIRED: standing needs one evidence entry with source=user, a chat reference and a direct quote of the future obligation for this scope. Supply the original words or leave the remark in this task. Use verified only for an independently supported fact or convention.'}
+    }
     if($DataId -and -not $NoteId){throw 'MEMORY_NOTE_ID_REQUIRED: pair the exact native data ID with the recalled note ID.'}
     $intent=[ordered]@{data=$Data;datasetName=$DatasetName;applicability=$Applicability;evidence=$Evidence;status=$Status;source=$Source;revision=$Revision;at=[DateTime]::UtcNow.ToString('o')}
     if($Title){$intent['title']=$Title}

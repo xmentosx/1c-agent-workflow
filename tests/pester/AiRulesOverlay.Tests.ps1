@@ -297,21 +297,21 @@ Describe "controlled ai_rules_1c release overlay" {
         $core.Value | Should -Match 'Applies only when the `memory_status` tool is available'
         $core.Value | Should -Match 'Call `memory_status` once at session start and after a `contextChanged`'
         $core.Value | Should -Match 'Task progress goes to its `checkpoint`, not notes'
-        $core.Value | Should -Match '`recall` once per topic before designing a 1C change, and by tool and action\s+before writing a test or setting up a stand; again for a new area or object,\s+missing context, a transient failure, or by symptom before retrying an\s+unexpected failure'
-        $core.Value | Should -Match '`remember` in the same turn after a user correction, a rejected approach, a\s+standing condition or a confirmed lesson for another session or branch'
+        $core.Value | Should -Match 'Before designing or first editing a 1C topic'
+        $core.Value | Should -Match 'only a reusable\s+decision or confirmed lesson'
         # The note is knowledge, not a work log (improve-memory-content-quality D1).
         $core.Value | Should -Match 'Never save what code, OpenSpec, evidence, Git or test results hold:\s+progress, runs, SHAs, line numbers, statuses'
         $core.Value | Should -Match 'One fact, at most 600 characters'
         $core.Value | Should -Not -Match 'non-obvious finding'
-        $core.Value | Should -Match ([regex]::Escape('{source:"user", reference:"chat <date>"}'))
-        $core.Value | Should -Match 'never `candidate`'
+        $core.Value | Should -Match 'future obligation in the chosen scope; cite the user'
+        $core.Value | Should -Match 'a prediction needs a check to become a fact'
         $core.Value | Should -Match 'in\s+place \(`note_id` \+ `data_id`\) or `retire_note` it in the same turn, never\s+under a new ID'
-        $core.Value | Should -Match 'never client, project or configuration\s+data'
-        $core.Value | Should -Match "``standing`` there\s+only at the user's word"
+        $core.Value | Should -Match 'never client/project/configuration data'
+        $core.Value | Should -Match 'organizational `standing` needs explicit user direction'
         $core.Value | Should -Match "another project's organization note only after the user\s+confirms"
-        $core.Value | Should -Match '`host` for machine\s+facts, task only for user decisions for this cycle'
+        $core.Value | Should -Match 'lasting personal practices; host for verified machine facts'
         # One project choice routes base-product behaviour to its home (D3/D4).
-        $core.Value | Should -Match 'Destination: the project; add `applicability.knowledgeArea` for base-product\s+behavior to route it to the product home'
+        $core.Value | Should -Match '`applicability.knowledgeArea` routes base-product behavior to\s+its proven home'
         $core.Value | Should -Match 'Memory: recall N, saved N, updated N, retired N'
         # The memory line this core absorbed keeps its trigger, action,
         # exception and prohibition.
@@ -335,8 +335,9 @@ Describe "controlled ai_rules_1c release overlay" {
         # Remote code/graph MCP answer from an hours-old master snapshot, which agents
         # took for their branch (2026-11-20, accepted limitation): +162 bytes, about
         # 40 tokens per session outside the memory core: appendix 5,314 -> 5,476.
-        [Text.Encoding]::UTF8.GetByteCount($core.Value.TrimEnd("`n")) | Should -BeLessOrEqual 2180
-        [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 5480
+        # First-edit recall and decision/expectation boundaries add 157 root bytes.
+        [Text.Encoding]::UTF8.GetByteCount($core.Value.TrimEnd("`n")) | Should -BeLessOrEqual 2337
+        [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 5637
         $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
         # One qualification call for both rules: the session-start status.
         $userRules | Should -Match ([regex]::Escape('`itl-scoped-cognee` `memory_status` returns `bindingState=current`'))

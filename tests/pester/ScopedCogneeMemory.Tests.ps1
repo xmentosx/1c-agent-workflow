@@ -969,15 +969,15 @@ try {
         $remember=@($lines[1].result.tools|Where-Object name -EQ remember)[0]
         @($remember.inputSchema.properties.status.enum) | Should -Be @('candidate','verified','standing')
         $remember.inputSchema.properties.title.maxLength | Should -Be 80
-        $remember.description | Should -Match 'In the same turn after a user correction|Call in the same turn after a user correction'
-        $remember.description | Should -Match 'source:"user",reference:"chat <date>"'
+        $remember.description | Should -Match 'save only a reusable decision or confirmed lesson in the same turn'
+        $remember.description | Should -Match 'source:"user",reference:"chat <date>",quote:"exact user words"'
         $remember.description | Should -Match 'note_id and data_id from the recall card'
         # A note is knowledge, not a work log; the project choice routes product areas.
         $remember.description | Should -Match 'One fact up to 600 characters.*Never save progress, runs, SHAs, line numbers'
-        $remember.description | Should -Match 'dataset_name: the project \(applicability\.knowledgeArea routes base-product behaviour to its product home; see routedTo\)'
-        $remember.description | Should -Match 'task only for user decisions for this cycle'
+        $remember.description | Should -Match 'Choose dataset_name by future audience and lifetime: project for recurring project knowledge'
+        $remember.description | Should -Match 'task for user decisions expiring this cycle'
         $recallTool=@($lines[1].result.tools|Where-Object name -EQ recall)[0]
-        $recallTool.description | Should -Match 'Search once per topic before designing a 1C change, and by tool and action before writing a test or setting up a stand; again for a new area or object, missing context, or by symptom before retrying an unexpected failure\. Omit datasets for the admitted union'
+        $recallTool.description | Should -Match 'Before designing or first editing a 1C topic.*already covered in this chat.*new areas/objects.*by tool/action before tests or stand setup.*by symptom before retrying'
         $remember.inputSchema.properties.title.description | Should -Not -BeNullOrEmpty
         $recallTool.description | Should -Match 'below the relevance threshold are omitted; no card is not proof of absence'
         $recallTool.description | Should -Not -Match 'next eligible turn'
@@ -998,12 +998,12 @@ try {
         # of 12, by symptom 12 of 12): the recall description grows 2,468 -> 2,582
         # bytes (+114, about 30 tokens per session).
         # Late connection and old Claude chat guidance add 230 characters to initialize only.
-        $alwaysOn | Should -BeLessOrEqual 2820
+        # The descriptor explains the first-edit trigger and evidence for each status.
+        # The schema adds one field hint distinguishing future reuse from agent behavior.
+        $alwaysOn | Should -BeLessOrEqual 3100
         $schemaBytes=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $lines[1].result -Depth 20 -Compress))
-        # The same +270 description bytes move tools/list from 3,459 to 3,729.
-        # Event-triggered recall plus the remember title hint (2026-11-20): +114
-        # description and +90 title-schema bytes move tools/list to 3,938.
-        $schemaBytes | Should -BeLessOrEqual 3950
+        $remember.inputSchema.properties.status.description | Should -Not -BeNullOrEmpty
+        $schemaBytes | Should -BeLessOrEqual 4550
     }
 
     # improve-scoped-memory-adoption
@@ -1282,9 +1282,12 @@ try {
         (Invoke-ItlMemoryStatus $one -LocalOnly).continuation.goal | Should -Be 'Задача первой ветки'
     }
     It 'stores a standing rule as verified with a mark and moves it in place' {
-        $evidence=@(@{source='user';reference='chat 2026-11-11'})
+        $evidence=@(@{source='user';reference='chat 2026-11-11';quote='В этом проекте никогда не меняй режим на клиенте.'})
         $fact='В этом проекте никогда не меняй режим на клиенте.'
         {Invoke-ItlMemoryRemember $b $fact 'itl_project_customer' 'rule' @{} @() standing} | Should -Throw '*MEMORY_EVIDENCE_REQUIRED*'
+        foreach($incomplete in @(@{source='user';reference='chat'},@{source='test';reference='chat';quote=$fact},@{source='user';reference=' ';quote=$fact},@{source='user';reference='chat';quote=' '})){
+            {Invoke-ItlMemoryRemember $b $fact 'project' 'rule' @{} @($incomplete) standing} | Should -Throw '*MEMORY_EVIDENCE_REQUIRED*direct quote*'
+        }
         $rule=Invoke-ItlMemoryRemember $b $fact 'itl_project_customer' 'rule' @{} $evidence standing -Title 'Режим на клиенте'
         $rule.state | Should -Be durable
         $rule.operation | Should -Be saved
@@ -1306,6 +1309,7 @@ try {
         $plain.operation | Should -Be updated
         ($script:Originals[$rule.dataId]|ConvertFrom-Json).PSObject.Properties['standing'] | Should -BeNullOrEmpty
         $script:Names[$rule.dataId] | Should -Match '^verified~~Режим на клиенте~'
+        {Invoke-ItlMemoryRemember $b $fact 'project' 'rule' @{} @(@{source='user';reference='chat'}) standing -DataId $rule.dataId} | Should -Throw '*MEMORY_EVIDENCE_REQUIRED*direct quote*'
         $again=Invoke-ItlMemoryRemember $b $fact 'itl_project_customer' 'rule' @{} $evidence standing -DataId $rule.dataId -Title 'Режим на клиенте'
         $again.state | Should -Be durable
         $script:Names[$rule.dataId] | Should -Match '^standing~~'
@@ -1372,7 +1376,7 @@ try {
         @((Invoke-ItlMemoryStatus $b -LocalOnly).pending).Count | Should -Be 0
     }
     It 'completes the pending record of a fact once its destination is chosen' {
-        $evidence=@(@{source='user';reference='chat 2026-11-11'})
+        $evidence=@(@{source='user';reference='chat 2026-11-11';quote='В этом проекте никогда не меняй режим на клиенте.'})
         $fact='Регистр заполняется документом, а не обработкой.'
         {Invoke-ItlMemoryRemember $b $fact '' '' @{} $evidence verified} | Should -Throw '*MEMORY_DESTINATION_REQUIRED*note_id=*repeat remember*retire_note(note_id)*'
         $pending=@((Invoke-ItlMemoryStatus $b -LocalOnly).pending)
@@ -1678,7 +1682,7 @@ try {
         $current=Get-ProjectDataset $reader
         $reader.provider.datasets+=@($foreign)
         $script:NativeDatasets=@(@{name=$foreign.label;id=$foreign.datasetId;ownerId=$foreign.ownerId})
-        $evidence=@(@{source='test';reference='project reference fixture'})
+        $evidence=@(@{source='user';reference='project reference fixture';quote='Use this convention for future project plans.'})
         $shared=Invoke-ItlMemoryRemember $writer 'Source project plan convention.' $foreign.label 'foreign' @{projectId='source-project'} $evidence standing
         $own=Invoke-ItlMemoryRemember $reader 'Reader project plan convention.' $current.label 'own' @{} $evidence verified
         $shared.state | Should -BeExactly durable
@@ -1975,7 +1979,7 @@ try {
         # cognee-memory-mcp.ps1 sets StrictMode 2: there a missing key or a
         # member of $null throws, which ordinary in-process tests do not see.
         # The binding is the persisted record, as the server reads it.
-        $evidence=@(@{source='user';reference='chat 2026-11-11'})
+        $evidence=@(@{source='user';reference='chat 2026-11-11';quote='Всегда применяй правило под строгим режимом.'})
         $path=Get-ItlMemoryPath binding $b.projectRoot
         $null=Update-ItlMemoryJson $path {param($current) $current.memoryProjection.knowledgeAreas=@{planning=@{availableIn=@('prof');memoryHomeProductId='corp'}};return $current}
         $project=Get-ProjectDataset $b;$product=Get-ScopeDataset $b product
