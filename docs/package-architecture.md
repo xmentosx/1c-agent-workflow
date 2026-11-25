@@ -211,7 +211,11 @@ existing per-desktop helper mutex owns activation, consent, cancellation and the
 maximum hold. A completed batch can share its lease until focus returns.
 Permission for a dropdown applies only to that batch. The existing hidden/visible
 switch is the rollback path. The user narrowed the lease to the selection gesture
-on the same day after the review of the first candidate.
+on the same day after the review of the first candidate. On 2026-11-25, after a
+PM5 user clicking another window broke regular checks, the user approved that the
+selection step itself repeats a lost or unactivated selection up to two times,
+each after a 1.5 s input pause, and accepts one only when that attempt changed the
+field to the requested value; a refusal is never repeated.
 
 On 2026-11-02 the user approved [Windows MCP storage retention](mcp-storage-retention.md),
 including conditional Sunday 03:30 detached VHD compaction on dev-ermakov. The

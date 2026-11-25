@@ -2,7 +2,7 @@
     $script:WhRepo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
     $script:WhLib = Join-Path $script:WhRepo '.agents/skills/1c-workflow/scripts/lib'
     $script:WhAssets = Join-Path $script:WhRepo '.agents/skills/1c-workflow/assets/window-helper'
-    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18'
+    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19'
     foreach ($module in 'agent-1c.runtime-values.ps1', 'agent-1c.core.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1', 'agent-1c.window-helper.ps1') {
         . (Join-Path $script:WhLib $module)
     }
@@ -863,6 +863,7 @@ static class FakeFormClient {
 [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr desk);
 [DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr h);
 [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
 public static int ZIndex(IntPtr target) {
     int i = 0;
     for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero; h = GetWindow(h, 2), i++) if (h == target) return i;
@@ -970,8 +971,12 @@ static class FakeListClient {
             (Send-ItlWindowHelperRequest -Directory $group.directory -Operation capture-end -Fields @{ pid = $client.Id }).status | Should -Be 'ok'
             & $waitFor { -not [WhTest.DropDesk]::IsWindowVisible((& $list 2)) } | Should -BeTrue -Because 'the capture end hides the list again'
 
-            $policy = @{ scope = 'сценарий списка'; pid = $client.Id; dropdownPrompt = $false; promptSource = 'default' }
+            # A repeated selection asks for a longer pause in the user's input (PM5 branch4, 2026-11-25).
+            $policy = @{ scope = 'сценарий списка'; pid = $client.Id; dropdownPrompt = $false; promptSource = 'default'; idleMs = 1200 }
+            [WhTest.DropDesk]::keybd_event(0, 0, 0, [UIntPtr]::Zero); [WhTest.DropDesk]::keybd_event(0, 0, 2, [UIntPtr]::Zero)
+            $waited = [Diagnostics.Stopwatch]::StartNew()
             $lease = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease -Fields $policy -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(15))
+            $waited.ElapsedMilliseconds | Should -BeGreaterOrEqual 1100 -Because 'the lease waits for the requested pause after the last input'
             $lease.status | Should -Be 'ok' -Because ($lease | ConvertTo-Json -Compress)
             [IO.File]::WriteAllText((Join-Path $fakeDir 'list 3.flag'), 'open')
             & $waitFor { (& $list 3) -ne [IntPtr]::Zero } | Should -BeTrue
@@ -989,12 +994,17 @@ static class FakeListClient {
             $done.status | Should -Be 'error'
             $done.code | Should -Be 'ITL_DROPDOWN_FOCUS_LOST'
             $done.foregroundTitle | Should -Be 'ITL fake user window'
+            $done.foregroundClass | Should -Be 'ITLFakeUserWindow' -Because 'the class tells a taskbar click from another program'
+            $done.foregroundProcess | Should -Be '1cv8c.exe'
+            [long]$done.userInputAgoMs | Should -BeGreaterOrEqual 0
             $leases = @(Read-ItlWindowHelperJournal -Path (Join-Path $group.directory 'journal\leases.jsonl'))
             [string]$leases[-1].outcome | Should -Be 'dropdown-focus-lost'
             [int]$leases[-1].requests | Should -Be 2
             $hidden = @(Read-ItlWindowHelperJournal -Path (Join-Path $group.directory 'journal\hidden.jsonl') | Where-Object { $_.event -eq 'dropdown-focus-lost' })
             $hidden | Should -HaveCount 1
             [string]$hidden[0].title | Should -Be 'ITL fake user window'
+            [string]$hidden[0].class | Should -Be 'ITLFakeUserWindow'
+            [int]$hidden[0].leaseMs | Should -BeGreaterThan 0
         } finally {
             [IO.File]::WriteAllText((Join-Path $fakeDir 'restore.flag'), 'restore')
             & $waitFor { [WhTest.DropDesk]::GetForegroundWindow() -eq $originalForeground } | Out-Null
@@ -1105,7 +1115,7 @@ Describe 'Window channel operation contract' {
             if ($line[0] -eq '+' -or $line[0] -eq ' ') { [void]$builder.Append($line.Substring(1) + "`n") }
         }
         $form = $builder.ToString()
-        $methods = 'ITLУдалитьФайлПомощникаОкон', 'ITLПрочитатьJSONПомощникаОкон', 'ITLПомощникОконЖив', 'ITLОтправитьЗапросПомощникуОкон', 'ITLПерезапуститьПомощникОкон', 'ITLЗапросПомощникуОкон', 'ITLПроверитьОтветПомощникаОкон', 'ITLОбластьУправления', 'ITLДобавитьШагЗапросаУправления' | ForEach-Object {
+        $methods = 'ITLУдалитьФайлПомощникаОкон', 'ITLПрочитатьJSONПомощникаОкон', 'ITLПомощникОконЖив', 'ITLОтправитьЗапросПомощникуОкон', 'ITLПерезапуститьПомощникОкон', 'ITLЗапросПомощникуОкон', 'ITLПроверитьОтветПомощникаОкон', 'ITLОписаниеОкнаПомощника', 'ITLОбластьУправления', 'ITLДобавитьШагЗапросаУправления' | ForEach-Object {
             $match = [regex]::Match($form, '(?ms)^(?:Функция|Процедура) ' + [regex]::Escape($_) + '\(.*?^Конец(?:Функции|Процедуры)[^\n]*')
             $match.Success | Should -BeTrue -Because $_
             $match.Value
@@ -1245,8 +1255,8 @@ ITLЗапросПомощникуОкон("status", Новый Структур�
         }
         $patch | Should -Not -Match '(?m)^\+.*<WindowOpeningMode>(LockOwnerWindow|LockWholeInterface)</WindowOpeningMode>'
         $manifest = Get-Content -LiteralPath (Join-Path $script:WhRevision 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.downstreamRevision | Should -Be 'itl-r18'
-        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r18.cfe'
+        $manifest.downstreamRevision | Should -Be 'itl-r19'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r19.cfe'
         foreach ($form in $forms) { $manifest.patch.expectedChangedPaths | Should -Contain "lib/VAExtension/DataProcessors/$form/Forms/Форма/Ext/Form.xml" }
     }
     It 'calls no server-only date function from the added thin-client channel code' {
