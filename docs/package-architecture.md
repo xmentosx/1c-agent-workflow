@@ -138,6 +138,26 @@ other sessions registered during the ~30-minute preparation. Per-stage hard
 limits still stop a runaway run, and the plan still reports `timeEstimate`.
 Rollback is to restore the check in `Assert-DeliveryQualityPlanMayRun`.
 
+Architecture checkpoint approved on 2026-11-25: an ordinary `update-workflow`
+started by a pre-transaction installed helper (the published r33 master) is
+completed by the new post-copy owner instead of stopping with
+`WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING`. The old parent cannot be changed:
+it deletes and recopies the managed directories without a snapshot, then hands
+`-LifecyclePhase post-copy` to the copied helper. That owner now runs the same
+evidence as source-side `legacy-status` against the parent's exact clean source
+(the old cached checkout, or `ITL_WORKFLOW_SOURCE_PATH` for a path source) and,
+when every check passes, adopts the observed copy without a decision file. The
+user decided three points: (1) adoption is automatic, because untracked bytes
+inside the managed directories are already lost before new code runs; (2) the
+transaction keeps the ordinary development-branch rollout instead of the manual
+recovery's `master-only` scope; (3) post-copy executes from that recorded clean
+source, as the manual recovery does. Its receipt records
+`legacyCopyRecovery.scope = legacy-parent-handoff` and the observed-copy before
+boundary, so restore returns the observed copy, never the pre-incident commit.
+Any failed check keeps the original refusal and the reviewed source-side
+recovery. No lock, guard, client surface or old-helper contract changes.
+Rollback is to remove `Start-WorkflowLegacyParentHandoff` from post-copy.
+
 Client routine files are generated from `.agents/skills/1c-workflow/kilo-command-templates`. The capability registry maps them to native commands for Kilo, Claude Code, Cursor, OpenCode, Qwen, and Command Code; to skills for Kimi and Cline; and to prompts for Pi. Generated client surfaces are installed-project runtime state, not source files.
 
 The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the managed ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL provisions the exact project-pinned OpenSpec CLI in its local cache separately from the optional global installation. It does not generate client bundles or run `openspec update`; compatible bundle rendering remains with the fork installer. See `ai-rules-fork-upgrades.md` for the release boundary.
