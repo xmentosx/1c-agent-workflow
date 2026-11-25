@@ -1318,6 +1318,32 @@ function Publish-ReleaseThroughGitHubPullRequest {
     }
 }
 
+function Restore-ReleaseMasterCandidate {
+    param([string]$Root, [string]$PlanId, [string]$Develop, [string]$Master, [string]$MergeTree)
+
+    $invalid = "DELIVERY_RESUME_PLAN_MISMATCH: saved plan '$PlanId' does not match the current master reconciliation. Run ReleaseMaster without -ResumePlan to obtain a new plan."
+    if ($PlanId -cnotmatch '^[a-f0-9]{64}$') { throw $invalid }
+    $path = Join-Path (Get-DeliveryPlanRoot) "$PlanId.json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw $invalid }
+    try {
+        $plan = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $candidate = [string]$plan.candidate.commit
+        if ($plan.schemaVersion -ne 1 -or $plan.kind -cne 'itl-delivery-plan' -or
+            $plan.status -cne 'ready' -or -not $plan.requireRelease -or $plan.planId -cne $PlanId -or
+            $plan.supervisor.commit -cne $script:DeliverySupervisorCommit -or
+            $plan.candidate.baseCommit -cne $Master -or $plan.candidate.tree -cne $MergeTree -or
+            $candidate -cnotmatch '^[a-f0-9]{40}$' -or
+            (Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)) -cne $PlanId) {
+            throw $invalid
+        }
+    } catch { throw $invalid }
+    $identity = Invoke-WorktreeGit -Root $Root -Arguments @('show', '-s', '--format=%H %T %P', $candidate) -AllowFailure
+    if ($identity.exitCode -ne 0 -or $identity.stdout.Trim() -cne "$candidate $MergeTree $Develop $Master") {
+        throw $invalid
+    }
+    [void](Invoke-WorktreeGit -Root $Root -Arguments @('merge', '--ff-only', $candidate))
+}
+
 function Release-DevelopToMaster {
     param(
         [string]$PrequalifiedCommit = "",
@@ -1340,13 +1366,22 @@ function Release-DevelopToMaster {
     $deliveryPlan = $null
     $candidateResourceId = ""
     try {
-        $worktree = New-DeliveryWorktree -StartPoint "$script:Remote/develop" -Purpose "release-master"
-        $masterAncestor = Invoke-WorktreeGit -Root $worktree.path -Arguments @("merge-base", "--is-ancestor", "$script:Remote/master", "HEAD") -AllowFailure
+        $worktree = New-DeliveryWorktree -StartPoint $remoteDevelop -Purpose "release-master"
+        $masterAncestor = Invoke-WorktreeGit -Root $worktree.path -Arguments @("merge-base", "--is-ancestor", $remoteMaster, "HEAD") -AllowFailure
         if ($masterAncestor.exitCode -ne 0) {
-            $merge = Invoke-WorktreeGit -Root $worktree.path -Arguments @("merge", "--no-ff", "--no-edit", "$script:Remote/master") -AllowFailure
+            $mergeMode = if ($ResumePlan) { "--no-commit" } else { "--no-edit" }
+            $merge = Invoke-WorktreeGit -Root $worktree.path -Arguments @("merge", "--no-ff", $mergeMode, $remoteMaster) -AllowFailure
             if ($merge.exitCode -ne 0) {
                 [void](Invoke-WorktreeGit -Root $worktree.path -Arguments @("merge", "--abort") -AllowFailure)
                 throw "origin/master conflicts with develop. Resolve the release reconciliation on develop and publish it first."
+            }
+            if ($ResumePlan) {
+                try {
+                    $mergeTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @('write-tree')).stdout.Trim()
+                } finally {
+                    [void](Invoke-WorktreeGit -Root $worktree.path -Arguments @('merge', '--abort'))
+                }
+                Restore-ReleaseMasterCandidate -Root $worktree.path -PlanId $ResumePlan -Develop $remoteDevelop -Master $remoteMaster -MergeTree $mergeTree
             }
         }
         $candidateBeforeGate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
