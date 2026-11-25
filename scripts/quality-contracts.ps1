@@ -151,9 +151,10 @@ function Resolve-QualityContractsForPaths {
             }
             continue
         }
-        $matches = @($Catalog.contracts | Where-Object {
-            $contract = $_
-            @($contract.paths | Where-Object { Test-QualityPathPattern -Path $path -Pattern ([string]$_) }).Count -gt 0
+        $matches = @(foreach($contract in $Catalog.contracts) {
+            foreach($pattern in $contract.paths) {
+                if($path -like ([string]$pattern).Replace('\','/')) {$contract; break}
+            }
         })
         if ($matches.Count -eq 0) {
             $unknown.Add($path) | Out-Null
