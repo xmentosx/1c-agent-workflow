@@ -1759,6 +1759,7 @@ function Get-ItlRoutineCommandNames {
         "itl.md", "itl-status.md", "itl-sync-master.md", "itl-new-config-branch.md",
         "itl-new-extension-branch.md", "itl-check.md", "itl-refresh.md",
         "itl-refresh-lite.md", "itl-refresh-all.md", "itl-fork-branch.md", "itl-sync-branches.md", "itl-reset-branch.md", "itl-lock-objects.md",
+        "itl-repository-commit-review.md", "itl-repository-commit-auto.md",
         "itl-result.md", "itl-update-workflow.md", "itl-litemode.md", "itl-repository-mode.md", "itl-switch-client.md"
     )
 }
@@ -1795,7 +1796,7 @@ function Get-ItlRoutineLongCommandNames {
         "itl-new-config-branch.md", "itl-new-extension-branch.md",
         "itl-check.md", "itl-sync-master.md", "itl-refresh.md", "itl-refresh-lite.md",
         "itl-refresh-all.md", "itl-fork-branch.md", "itl-sync-branches.md", "itl-reset-branch.md", "itl-lock-objects.md", "itl-result.md",
-        "itl-update-workflow.md", "itl-switch-client.md"
+        "itl-repository-commit-review.md", "itl-repository-commit-auto.md", "itl-update-workflow.md", "itl-switch-client.md"
     )
 }
 
@@ -1808,6 +1809,9 @@ function Get-ItlLongRunCommandLimits {
         if ($name -ne "itl-switch-client.md") { $limits[$name] = 3600 }
     }
     $limits["itl-sync-master.md"] = 14400
+    # update-master captures the source infobase into master like /itl-sync-master.
+    $limits["itl-repository-commit-review.md"] = 14400
+    $limits["itl-repository-commit-auto.md"] = 14400
     return $limits
 }
 

@@ -442,6 +442,8 @@ In an `itldev/*` development worktree, show only:
 /itl-refresh-lite
 /itl-reset-branch
 /itl-lock-objects
+/itl-repository-commit-review
+/itl-repository-commit-auto
 /itl-result
 ```
 
@@ -486,6 +488,8 @@ $itl-refresh
 $itl-refresh-lite
 $itl-reset-branch
 $itl-lock-objects
+$itl-repository-commit-review
+$itl-repository-commit-auto
 $itl-result
 $itl-litemode
 ```

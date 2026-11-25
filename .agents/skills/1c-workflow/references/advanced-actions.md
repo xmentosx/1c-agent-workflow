@@ -154,6 +154,7 @@ refresh-dev-branch-lite
 refresh-all-dev-branches
 reset-dev-branch
 lock-config-repository-objects
+repository-transfer
 export-dev-branch-result
 get-review-scope
 close-dev-branch

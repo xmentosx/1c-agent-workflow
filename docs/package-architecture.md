@@ -931,6 +931,23 @@ compact-20261117-013607). The Vanessa run therefore publishes its budget plus
 timeout. Rollback: the budget function returns the setting or 1800 s, the
 published budget drops the 180 s, and the extra journal field is ignored.
 
+Architecture checkpoint approved on 2026-11-25 (`add-configuration-repository-transfer`):
+the branch lifecycle owns one transfer of a reviewed configuration CF into the
+repository-connected source infobase. Within the existing per-infobase admission
+it may partially load the task's changed files (with `Configuration.xml` when
+objects are added or removed) into its locked objects, run `/UpdateDBCfg`, commit
+the listed task objects without `-keepLocked`, and then dump that infobase into
+`master` without a repository update. `/MergeCfg` is not used. Before the load the
+latest repository version must equal the main configuration, and after it the
+main configuration must equal the checked CF; either mismatch stops the transfer.
+State is one ignored per-branch stage record; no cross-branch coordinator,
+service, queue or elevation is added, because the user does not run concurrent
+transfers or a transfer alongside a repository refresh in another branch. A
+retry whose repository advanced past the recorded base stops for a human
+decision. Rollback restores the manual CF route; repository versions and Mantis
+records stay. Evidence: the change's `evidence.md` stand on 8.3.27.2130 and
+8.5.4.1878.
+
 ## 1C source byte-preservation policy
 
 Git is transport for platform-generated `src/cf/**`, `src/cfe/**`, and optional auxiliary `src/configs/**` files, not their line-ending formatter. Installed projects carry a managed `.gitattributes` block with `-text` for these trees, so checkout, worktree creation, branch transfer, and result assembly preserve the bytes emitted by 1C even when global `core.autocrlf=true`.

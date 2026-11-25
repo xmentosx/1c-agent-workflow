@@ -31,6 +31,8 @@ itldev/*:
   /itl-refresh-lite
   /itl-reset-branch
   /itl-lock-objects
+  /itl-repository-commit-review
+  /itl-repository-commit-auto
   /itl-result
   /itl-litemode <mode>
 ```
