@@ -9303,7 +9303,7 @@ function Restore-CompletedWorkflowUpdate {
         catch { throw "WORKFLOW_UPDATE_ROLLBACK_INCOMPLETE: $($_.Exception.Message) Repeat the same source-side command with -Recovery restore -SnapshotId $SnapshotId; the recovery snapshot is preserved." }
         $plan = New-WorkflowBranchCommitPlan -ManagedPathSpecs @($target.snapshot.records | ForEach-Object { [string]$_.relativePath }) `
             -Message ("chore: restore ITL workflow before snapshot " + $SnapshotId.Substring(0, 7)) -AllowMaster `
-            -RestoreTrackedFromCommit $(if ([string](Get-ConfigValueFromObject $target.receipt 'legacyCopyRecovery.scope' '') -ceq 'master-only') { '' } else { [string]$target.receipt.preUpdateHead })
+            -RestoreTrackedFromCommit $(if ([string](Get-ConfigValueFromObject $target.receipt 'legacyCopyRecovery.scope' '') -cne '') { '' } else { [string]$target.receipt.preUpdateHead })
         Save-WorkflowBranchCommitPlanReceipt -Snapshot $pending.snapshot -Plan $plan
         Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source $source -Phase rollback-commit-ready -Details $details
         $pending = Get-WorkflowUpdatePendingSnapshot
@@ -11688,29 +11688,82 @@ function Start-WorkflowLegacyCopyRecovery {
         (ConvertTo-Agent1cHashtable $actual | ConvertTo-Json -Depth 30 -Compress)) {
         throw 'WORKFLOW_UPDATE_LEGACY_REVIEW_CHANGED: HEAD, index, source or current bytes changed since review. Preserve them and request a fresh legacy-status review.'
     }
-    $dependencyPlan = Get-WorkflowDependencyPlan -SourceRoot ([string]$report.source.root)
+    New-WorkflowLegacyCopyTransaction -Report $report -ReportPath $reportPath -ReportSha256 $reportHash -Scope 'master-only' -Executor $executor | Out-Null
+    return 'pending'
+}
+
+function New-WorkflowLegacyCopyTransaction {
+    param(
+        [Parameter(Mandatory = $true)][object]$Report,
+        [Parameter(Mandatory = $true)][string]$ReportPath,
+        [Parameter(Mandatory = $true)][string]$ReportSha256,
+        [Parameter(Mandatory = $true)][ValidateSet('master-only', 'legacy-parent-handoff')][string]$Scope,
+        [Parameter(Mandatory = $true)][object]$Executor,
+        [object]$RolloutScope = $null
+    )
+
+    $sourceRoot = [string]$Report.source.root
+    $dependencyPlan = Get-WorkflowDependencyPlan -SourceRoot $sourceRoot
     Assert-WorkflowDependencyPlan -Plan $dependencyPlan
-    Assert-WorkflowSourceAiRulesInstallable -SourceRoot ([string]$report.source.root)
-    if (-not $SkipAiRules) { Assert-WorkflowUpdateRulesRootReady -SourceRoot ([string]$report.source.root) }
-    $candidateRulesPaths = @(Get-WorkflowUpdateCandidateRulesPaths -SourceRoot ([string]$report.source.root))
-    $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot ([string]$report.source.root) -AiRulesPathsAfter $candidateRulesPaths) `
-        -SnapshotParent $parent
+    Assert-WorkflowSourceAiRulesInstallable -SourceRoot $sourceRoot
+    if (-not $SkipAiRules) { Assert-WorkflowUpdateRulesRootReady -SourceRoot $sourceRoot }
+    $candidateRulesPaths = @(Get-WorkflowUpdateCandidateRulesPaths -SourceRoot $sourceRoot)
+    $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot $sourceRoot -AiRulesPathsAfter $candidateRulesPaths) `
+        -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
     # This is a NEW recovery transaction. Its before backups are the observed
     # raw copy and current custom settings, never fabricated historical bytes.
-    $actual = Get-WorkflowLegacyCopyEvidence -SourceRoot ([string]$report.source.root)
-    if ((ConvertTo-Agent1cHashtable $report | ConvertTo-Json -Depth 30 -Compress) -cne
+    $actual = Get-WorkflowLegacyCopyEvidence -SourceRoot $sourceRoot
+    if ((ConvertTo-Agent1cHashtable $Report | ConvertTo-Json -Depth 30 -Compress) -cne
         (ConvertTo-Agent1cHashtable $actual | ConvertTo-Json -Depth 30 -Compress)) {
         Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
         throw 'WORKFLOW_UPDATE_LEGACY_REVIEW_CHANGED: inputs changed during backup. Preserve them and request a fresh review.'
     }
     Copy-Item -LiteralPath (Get-GitOutput @('rev-parse','--path-format=absolute','--git-path','index')).Trim() -Destination (Join-Path $snapshot.root 'observed-index')
-    Copy-Item -LiteralPath $reportPath -Destination (Join-Path $snapshot.root 'legacy-copy-review.json')
-    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $report.source -Phase prepared -Details @{
-        dependencyPlan=$dependencyPlan; recoveryExecutorRoot=[string]$executor.root;recoveryExecutorCommit=[string]$executor.commit
-        legacyCopyRecovery=@{reportSha256=$reportHash;scope='master-only';beforeBoundary=[string]$report.beforeBoundary;observedHead=[string]$report.head;observedIndexSha256=[string]$report.indexSha256}
+    Copy-Item -LiteralPath $ReportPath -Destination (Join-Path $snapshot.root 'legacy-copy-review.json')
+    $details = @{
+        dependencyPlan=$dependencyPlan; recoveryExecutorRoot=[string]$Executor.root;recoveryExecutorCommit=[string]$Executor.commit
+        legacyCopyRecovery=@{reportSha256=$ReportSha256;scope=$Scope;beforeBoundary=[string]$Report.beforeBoundary;observedHead=[string]$Report.head;observedIndexSha256=[string]$Report.indexSha256}
     }
-    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $report.source -Phase copy-complete
-    return 'pending'
+    # The handoff keeps the ordinary rollout; master-only recovery records none.
+    if ($Scope -ceq 'legacy-parent-handoff') { $details.rolloutScope = $RolloutScope }
+    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Report.source -Phase prepared -Details $details
+    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Report.source -Phase copy-complete
+    return $snapshot
+}
+
+function Get-WorkflowUpdatePostCopyReceiptMissingMessage {
+    return 'WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING: a legacy updater may have copied this package without a transaction. Preserve all current files; do not commit the incomplete package or repeat the dirty installed updater. Use a clean fixed source scripts/update-installed-workflow.ps1 with -Recovery legacy-status -LegacySourceRoot <exact-copied-payload-checkout>, then follow its reviewed recovery.'
+}
+
+function Start-WorkflowLegacyParentHandoff {
+    # A pre-transaction parent (the published r33 helper) deletes and recopies
+    # the managed directories without a receipt, then hands post-copy to this
+    # copied helper. Adopt only its exact proven copy; every refusal keeps the
+    # reviewed source-side recovery and preserves current files.
+    try {
+        $entry = Get-DependencyLockEntry -Name 'workflowPackage'
+        $kind = [string](Get-ConfigValueFromObject $entry 'source' '')
+        $root = if ($kind -ceq 'git') { Get-WorkflowPackageLegacyTempRoot }
+            elseif ($kind -ceq 'path') { [string](Get-EnvValue -Name 'ITL_WORKFLOW_SOURCE_PATH' -Default '') }
+            else { '' }
+        if ([string]::IsNullOrWhiteSpace($root)) { throw "the copied lock names no recoverable parent source (source='$kind')" }
+        $evidence = Get-WorkflowLegacyCopyEvidence -SourceRoot $root
+    } catch {
+        throw "$(Get-WorkflowUpdatePostCopyReceiptMissingMessage) Automatic adoption was refused: $($_.Exception.Message)"
+    }
+    $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    $reportPath = Join-Path $parent ('legacy-parent-handoff-' + [guid]::NewGuid().ToString('N') + '.json')
+    Write-Utf8TextAtomic -Path $reportPath -Value (($evidence | ConvertTo-Json -Depth 30) + [Environment]::NewLine)
+    $reportHash = (Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $report = Read-Utf8Text -Path $reportPath | ConvertFrom-Json -ErrorAction Stop
+    $source = $report.source
+    $scopeInput = Get-Variable -Name WorkflowUpdateBranchRootsFile -ValueOnly -ErrorAction SilentlyContinue
+    $rolloutScope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$source.commit) -RecordedScope $null -InputFile $scopeInput
+    Write-Host "Adopting the package copied by the previous workflow helper from exact source '$($source.commit)'; untracked files inside its managed directories were removed by that helper before this step."
+    $snapshot = New-WorkflowLegacyCopyTransaction -Report $report -ReportPath $reportPath -ReportSha256 $reportHash `
+        -Scope 'legacy-parent-handoff' -Executor ([pscustomobject]@{root=[string]$source.root;commit=[string]$source.commit}) -RolloutScope $rolloutScope
+    return [pscustomobject]@{snapshot=$snapshot;source=$source;rolloutScope=$rolloutScope}
 }
 
 function Get-WorkflowUpdateCandidateRulesPaths {
@@ -11818,8 +11871,15 @@ function Update-WorkflowPackage {
             throw 'WORKFLOW_UPDATE_POST_COPY_NOT_CONTINUATION: post-copy may only run as the fresh-process continuation of update-workflow.'
         }
         $pendingPostCopy = Get-WorkflowUpdatePendingSnapshot
-        if ($null -eq $pendingPostCopy -or [string]$pendingPostCopy.receipt.phase -notin @('post-copy-running', 'master-commit-ready', 'master-committed')) {
-            throw 'WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING: a legacy updater may have copied this package without a transaction. Preserve all current files; do not commit the incomplete package or repeat the dirty installed updater. Use a clean fixed source scripts/update-installed-workflow.ps1 with -Recovery legacy-status -LegacySourceRoot <exact-copied-payload-checkout>, then follow its reviewed recovery.'
+        if ($null -eq $pendingPostCopy) {
+            $handoff = Start-WorkflowLegacyParentHandoff
+            Set-RunStage -Stage 'workflow-update.legacy-handoff' -Detail 'Completing the update started by the previous workflow helper.'
+            Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot $handoff.snapshot -Source $handoff.source
+            Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$handoff.source.commit) -RolloutScope $handoff.rolloutScope | Out-Null
+            return
+        }
+        if ([string]$pendingPostCopy.receipt.phase -notin @('post-copy-running', 'master-commit-ready', 'master-committed')) {
+            throw (Get-WorkflowUpdatePostCopyReceiptMissingMessage)
         }
         Assert-WorkflowUpdateSnapshotCurrentState -Pending $pendingPostCopy
         $rolloutScope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$pendingPostCopy.receipt.sourceCommit) -RecordedScope (Get-ConfigValueFromObject $pendingPostCopy.receipt 'rolloutScope' $null) -InputFile $scopeInput
@@ -11846,7 +11906,7 @@ function Update-WorkflowPackage {
                 Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
             }
             if ($null -ne $pending -and [string]$pending.receipt.phase -eq 'prepared') {
-                if ([string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -ceq 'master-only') {
+                if ([string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -cne '') {
                     Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source ([pscustomobject]@{root=$pending.receipt.sourceRoot;commit=$pending.receipt.sourceCommit}) -Phase copy-complete
                     $pending = Get-WorkflowUpdatePendingSnapshot
                 } else {

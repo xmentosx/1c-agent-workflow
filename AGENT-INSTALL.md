@@ -332,7 +332,7 @@ The current workflow refreshes the ITL workflow package, workflow-pinned Vanessa
 
 ## Update Existing ITL Workflow
 
-For projects that already have this workflow installed, do not rerun `init-project`. The first migration from the published r33 helper to the new transaction generation must start in a clean, qualified workflow source checkout. The source-side launcher delegates to that checkout's `update-workflow` owner before any project files are replaced; the old installed helper cannot provide the new pre-copy snapshot:
+For projects that already have this workflow installed, do not rerun `init-project`. From the published r33 helper the ordinary `/itl-update-workflow` completes the migration: the old helper copies the package without a snapshot, and the copied helper verifies that copy byte for byte against the old helper's clean source checkout, adopts it and continues the normal transaction, including development worktrees. Untracked files inside the managed package directories are removed by the old helper before that check. If the check refuses, it stops with `WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING` and the reviewed source-side recovery in the installed workflow-update-recovery reference. The source-side launcher instead delegates to a clean, qualified source checkout's `update-workflow` owner before any project files are replaced, so the new pre-copy snapshot also covers those files:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File <source>\scripts\update-installed-workflow.ps1 -ProjectRoot <project> -SourceRoot <source>

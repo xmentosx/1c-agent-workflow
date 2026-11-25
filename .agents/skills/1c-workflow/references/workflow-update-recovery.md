@@ -41,6 +41,11 @@ replaying installation, while unfinished roots retain their original owner.
 
 An old updater can copy a transactional package, remove its temporary backup,
 then fail before the new post-copy owner because no transaction was created.
+When the published r33 helper hands an ordinary update to the copied post-copy
+owner, that owner runs the `legacy-status` checks itself against the parent's
+clean source checkout and, if all pass, adopts the copy with the ordinary
+branch rollout (`legacyCopyRecovery.scope = legacy-parent-handoff`). It stops
+with `WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING` and the refused check otherwise.
 Do not commit that incomplete package or loop through its dirty installed updater.
 Use a clean fixed source checkout and preserve the separate exact copied payload:
 
