@@ -463,7 +463,7 @@
             (Get-FileHash -LiteralPath (Join-Path $clientComponentRoot $notice) -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $clientManifest.notices.$notice
         }
         $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r19.cfe"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "8cf4d3d069666c7d8ea2dc930ca8b907e00994fe7b0654b216a7fa2373240b3b"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "c73a3e7ad11a078a6f7325f4c7b1b54fea5f92b6ac9f59f938651eb45b1b4144"
         $dependencyLock.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"
 
         $compatibility = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") | ConvertFrom-Json

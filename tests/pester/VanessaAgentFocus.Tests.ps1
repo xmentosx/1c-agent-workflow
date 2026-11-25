@@ -745,7 +745,7 @@ ITLРежимСпискаMCP = Истина;
         # The exact selections repeat a lost selection; their loop is exercised by the retry test.
         foreach ($wrapper in @(,@($client, 'ЯНажимаюНаКнопкуСоздатьПоля'))) {
             $method = Get-FocusMethod $wrapper[0] $wrapper[1]
-            $method | Should -Match '(?s)^[^\n]+\n\tВанесса\.ITLНачатьВыборИзСписка\(\);\n\tПопытка\n.*ITLЗавершитьВыборИзСписка\(Истина\);.*ITLЗавершитьВыборИзСписка\(\);' -Because $wrapper[1]
+            $method | Should -Match '(?s)^[^\n]+\n\tВанесса\.ITLНачатьВыборИзСписка\(\);\n\tПопытка\n.*ITLЗавершитьВыборИзСписка\(Истина\).*ITLЗавершитьВыборИзСписка\(\);' -Because $wrapper[1]
         }
         $reopen = [regex]::Escape('Ванесса.ITLПереоткрытьСписокВАренде(ПолеРеквизит);')
         $client | Should -Match ('ТипПоля, ДопПараметры\);\n\t\t\t' + $reopen + '\n[ \t]*\n\t\t\tДопПараметрыОткрытьВыпадающийСписок') -Because 'the exact selection closes an earlier list before it opens one'
@@ -853,7 +853,7 @@ ITLЗакрытьСписок(Поле);
         $form = Get-FocusNewSide 'VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl' $patch
         $client = Get-FocusNewSide 'VanessaAutomation/Forms/КлиентТестирования/Ext/Form/Module.bsl' $patch
         $vanessa = Join-Path $TestDrive 'Ванесса повтора выбора.os'
-        $shared = foreach ($name in 'ITLПовторитьВыборИзСписка', 'ITLВыборСостоялся', 'ITLОшибкаПослеПовторов', 'ITLТекстПоляСписка') { Get-FocusMethod $form $name }
+        $shared = foreach ($name in 'ITLПовторитьВыборИзСписка', 'ITLВыборСостоялся', 'ITLОшибкаПослеПовторов', 'ITLПотеряФокусаВыбора', 'ITLТекстПоляСписка') { Get-FocusMethod $form $name }
         $fakeVanessa = @'
 Перем ITLПаузаВводаПовтора;
 Перем Журнал Экспорт;
@@ -867,7 +867,7 @@ ITLЗакрытьСписок(Поле);
 '@
         [IO.File]::WriteAllText($vanessa, ((@($fakeVanessa) + $shared) -join "`n"), [Text.UTF8Encoding]::new($true))
         # OneScript has no testing types; the field lookup gets the stand-in field directly.
-        $wrappers = foreach ($name in 'ИзВыпадающегоСпискаЯВыбираюТочноеЗначение', 'ITLЗначениеПоляСписка') { (Get-FocusMethod $client $name).Replace('Тип("ТестируемоеПолеФормы")', 'Неопределено') }
+        $wrappers = foreach ($name in 'ИзВыпадающегоСпискаЯВыбираюТочноеЗначение', 'ITLЗначениеПоляСписка', 'ЯНажимаюНаКнопкуСоздатьПоля') { (Get-FocusMethod $client $name).Replace('Тип("ТестируемоеПолеФормы")', 'Неопределено') }
         $prefix = @'
 Перем Ванесса, Поле, Исходы, Номер;
 Функция ПолучитьКорректныйТекстДляВставкиВПоле(Текст) Возврат Текст; КонецФункции
@@ -884,6 +884,20 @@ ITLЗакрытьСписок(Поле);
     Если Исход = "platform-lost" Или Исход = "platform" Тогда ВызватьИсключение "Неподходящий тип элемента управления для вызванного действия"; КонецЕсли;
     Если Исход = "declined" Тогда ВызватьИсключение "ITL_UI_CONTROL_DECLINED: пользователь не передал управление агенту (user-cancel)"; КонецЕсли;
     ВызватьИсключение "ITL_DROPDOWN_FOCUS_LOST: во время выбора активным стало окно '' (класс Shell_TrayWnd, процесс explorer.exe)";
+КонецФункции
+Функция ITLЯНажимаюНаКнопкуСоздатьПоляПлатформа(Имя, ПоИмени)
+    Номер = Номер + 1;
+    Если Исходы[0] = "platform-lost" Тогда Ванесса.ПотеряФокуса = Истина; КонецЕсли;
+    ВызватьИсключение "Неподходящий тип элемента управления для вызванного действия";
+КонецФункции
+Функция Создать(Список)
+    Номер = 0; Исходы = СтрРазделить(Список, ","); Ванесса.Журнал = Новый Массив;
+    Попытка
+        ЯНажимаюНаКнопкуСоздатьПоля("Раздел статусов");
+        Возврат "создано";
+    Исключение
+        Возврат "ОШИБКА " + ОписаниеОшибки();
+    КонецПопытки;
 КонецФункции
 Процедура Ожидать(Условие, Текст) Если НЕ Условие Тогда ВызватьИсключение Текст; КонецЕсли; КонецПроцедуры
 Функция Выбрать(Начало, Список)
@@ -904,14 +918,20 @@ ITLЗакрытьСписок(Поле);
 Ожидать(Ванесса.Журнал[0] = "аренда " И СтрНайти(СтрСоединить(Ванесса.Журнал, ";"), "аренда 1500") > 0, "a repeat waits for a longer pause: " + СтрСоединить(Ванесса.Журнал, ";"));
 Итог = Выбрать("Задания", "lost,lost,lost");
 Ожидать(Номер = 3 И СтрНайти(Итог, "ITL_DROPDOWN_FOCUS_LOST") > 0 И СтрНайти(Итог, "повторён 2") > 0, "a third loss fails the step: " + Итог);
+// PM5 branch4: the agent saw no way on and offered only visible windows.
+Ожидать(СтрНайти(Итог, "-DropdownPrompt on") > 0 И СтрНайти(Итог, "dropdownPrompt: true") > 0, "the final loss names the prompt override: " + Итог);
 Итог = Выбрать("Задания", "declined");
-Ожидать(Номер = 1 И СтрНайти(Итог, "ITL_UI_CONTROL_DECLINED") > 0 И СтрНайти(Итог, "повторён") = 0, "the user's refusal is not repeated: " + Итог);
+Ожидать(Номер = 1 И СтрНайти(Итог, "ITL_UI_CONTROL_DECLINED") > 0 И СтрНайти(Итог, "повторён") = 0 И СтрНайти(Итог, "DropdownPrompt") = 0, "the user's refusal is not repeated: " + Итог);
 Ожидать(Выбрать("Задания", "lost-after") = Неопределено И Номер = 1, "a value already selected by this attempt counts as done");
 Ожидать(Выбрать("Элементы плана", "lost-after,ok") = "выбрано" И Номер = 2, "a value that was there before proves nothing");
 Ожидать(Выбрать("Задания", "activation,ok") = "выбрано" И Номер = 2, "a failed activation is repeated");
 Ожидать(Выбрать("Задания", "platform-lost,ok") = "выбрано" И Номер = 2, "a 1C error after a lost foreground is repeated");
 Итог = Выбрать("Задания", "platform");
-Ожидать(Номер = 1 И СтрНайти(Итог, "Неподходящий тип") > 0, "a 1C error without a lost foreground is not repeated: " + Итог);
+Ожидать(Номер = 1 И СтрНайти(Итог, "Неподходящий тип") > 0 И СтрНайти(Итог, "DropdownPrompt") = 0, "a 1C error without a lost foreground is not repeated: " + Итог);
+Итог = Создать("platform-lost");
+Ожидать(Номер = 1 И СтрНайти(Итог, "ITL_DROPDOWN_FOCUS_LOST") > 0 И СтрНайти(Итог, "-DropdownPrompt on") > 0 И СтрНайти(Итог, "повторён") = 0, "the create button is not repeated but names the override: " + Итог);
+Итог = Создать("platform");
+Ожидать(СтрНайти(Итог, "Неподходящий тип") > 0 И СтрНайти(Итог, "DropdownPrompt") = 0, "a create error without a lost foreground stays unchanged: " + Итог);
 Сообщить("RETRY PASSED");
 '@
         $result = Invoke-FocusProbe -Source ((@($prefix) + $wrappers + @($body)) -join "`n") -Arguments @($vanessa)
