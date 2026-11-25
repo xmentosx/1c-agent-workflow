@@ -15,6 +15,18 @@ if (-not $OutputPath) {
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputPath) | Out-Null
 $temporaryOutputPath = "{0}.{1}.tmp" -f $OutputPath, [guid]::NewGuid().ToString("N")
+# The relay is the stable client command for this facade; it is built from
+# the same module next to the facade and reported with it.
+$relayOutputPath = Join-Path (Split-Path -Parent $OutputPath) "itl-ondemand-relay-windows-amd64.exe"
+$temporaryRelayPath = "{0}.{1}.tmp" -f $relayOutputPath, [guid]::NewGuid().ToString("N")
+
+function Test-ItlOnDemandBuildOutputMatches {
+    param([string]$Path, [string]$Sha256)
+    try {
+        return ((Test-Path -LiteralPath $Path -PathType Leaf) -and
+            (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -eq $Sha256)
+    } catch { return $false }
+}
 
 Push-Location $sourceRoot
 try {
@@ -33,9 +45,25 @@ try {
         $env:GOARCH = "amd64"
         $env:GOAMD64 = "v1"
         $env:CGO_ENABLED = "0"
-        & go build -trimpath -buildvcs=false -ldflags "-s -w -buildid=" -o $temporaryOutputPath .
-        if ($LASTEXITCODE -ne 0) { throw "itl-ondemand-mcp build failed." }
-        Move-Item -LiteralPath $temporaryOutputPath -Destination $OutputPath -Force
+        foreach ($target in @(
+            [pscustomobject]@{ package = "."; temporary = $temporaryOutputPath; output = $OutputPath; label = "itl-ondemand-mcp" },
+            [pscustomobject]@{ package = "./cmd/itl-ondemand-relay"; temporary = $temporaryRelayPath; output = $relayOutputPath; label = "itl-ondemand-relay" }
+        )) {
+            & go build -trimpath -buildvcs=false -ldflags "-s -w -buildid=" -o $target.temporary $target.package
+            if ($LASTEXITCODE -ne 0) { throw "$($target.label) build failed." }
+            $builtSha256 = (Get-FileHash -LiteralPath $target.temporary -Algorithm SHA256).Hash.ToLowerInvariant()
+            if (-not (Test-ItlOnDemandBuildOutputMatches -Path $target.output -Sha256 $builtSha256)) {
+                try {
+                    Move-Item -LiteralPath $target.temporary -Destination $target.output -Force
+                } catch [System.IO.IOException] {
+                    # A concurrent publisher may have installed these exact bytes
+                    # after the comparison. Never replace an identical live image.
+                    if (-not (Test-ItlOnDemandBuildOutputMatches -Path $target.output -Sha256 $builtSha256)) {
+                        throw "ITL_ONDEMAND_BUILD_OUTPUT_REPLACE_FAILED: Keep the existing output and repeat with an unused -OutputPath. $($_.Exception.Message)"
+                    }
+                }
+            }
+        }
     } finally {
         $env:GOOS = $oldGoOs
         $env:GOARCH = $oldGoArch
@@ -45,6 +73,7 @@ try {
 } finally {
     Pop-Location
     Remove-Item -LiteralPath $temporaryOutputPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $temporaryRelayPath -Force -ErrorAction SilentlyContinue
 }
 
 $hash = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -54,4 +83,7 @@ $hash = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerIn
     assetName = [System.IO.Path]::GetFileName($OutputPath)
     os = "windows"
     arch = "amd64"
+    relayPath = $relayOutputPath
+    relaySha256 = (Get-FileHash -LiteralPath $relayOutputPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    relayAssetName = [System.IO.Path]::GetFileName($relayOutputPath)
 }

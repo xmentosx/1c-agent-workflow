@@ -1,0 +1,236 @@
+# Workflow incidents and task continuation
+
+Use this reference for a suspected ITL defect, contradictory instructions, or a
+loaded-skill/installed-file mismatch. Keep the original project task active.
+Classify runner, environment, fixture and product evidence before editing. An
+error category or failed validator alone does not prove defective product data.
+For a loaded/installed mismatch, pause dependent lifecycle commands, resolve the
+reported version/cache mismatch or reload, then resume; independent work can
+continue. Use the existing operation's recovery first. Do not repeat an unchanged
+failed run without new evidence. Repair exhaustion remains recorded; never reset
+counters, locks, lifecycle state or verification evidence by hand.
+
+For Kilo behavior that disagrees with the Intent Map, run `status`, compare the
+reported expected skill contract/SHA, and ask for `/reload` before treating it as
+a source defect. ITL cannot inspect or clear Kilo's internal cache/worktrees.
+
+After classifying the failure, look up the exact error code in
+`references/known-defects.json`: it lists only defects fixed in this installed
+version, so a matching key there means a recurrence, a new defect. One code can
+name defects of several owners; compare the whole `<CODE>@<owner>` key.
+Otherwise recall `Дефект ITL <CODE>` in memory and consult the shared fix
+archive below before investigating a known workflow incident again. A matching
+note, entry or message is a lead, not proof that its cause or remedy applies to
+this project.
+
+An ITL defect workaround belongs to every project that uses ITL, so it lives in
+organization memory until a release fixes the defect, never in project, product
+or workplace notes or in the AI client's own memory. Reuse a recalled note.
+For a new defect, save one `organization` note: title
+`Дефект ITL <CODE>@<owner>: <the workaround in a few words>`, the workaround
+with its conditions and ITL version as the fact, `applicability.incidentKey`
+set to the same key, the handoff report as evidence. Apply the workaround in the
+current task, write the handoff report under the boundaries below, and tell the
+user in one line: `это дефект ITL, отчёт для разработчика: <path>`. After an
+update that fixes it, `memory_status` lists the note under `fixedDefectNotes`;
+retire it then.
+
+## Choose a concrete continuation
+
+For a Gate 6 refusal, read the linked `1c-gate6-diagnostics-*.json`: it retains
+the complete raw log, category counts, compiler findings, unknown lines and
+native codes. The console shows bounded counts and examples; structural
+categories alone do not establish harmless warnings. A zero process/result
+code does not override findings or unknown nonempty text.
+
+For a main-configuration load, `1c-gate6-legacy-context-*.json` records why
+comparison with previous findings was unavailable, including the exact impact
+reason/path, changed and potentially affected owners, or the missing binding.
+The checked-rollback rejection receipt links both evidence files. An unavailable
+legacy context grants no admission: correct the identified source finding or
+satisfy the missing proof through its owner, then repeat the original operation
+with the same repair session. Unsupported XML/BSL changes remain unsupported;
+matching old text is insufficient. A workflow diagnostic repair does not close
+the original project's acceptance.
+
+Diagnose enough to propose a bounded repair; do not turn the project task into an
+open-ended workflow redesign. Prepare the exact change, affected runtime, expected
+effect, validation and rollback before requesting any missing authorization.
+Reuse an existing authorization within its stated project, operation and scope.
+If authoritative evidence leaves a business choice or missing external input,
+ask for that specific decision while preserving work and continuing independent
+steps. A new workflow barrier is incomplete until its owner supplies an
+agent-usable route back to the original task.
+
+- An erroneous ITL instruction can be set aside for the user-authorized case
+  without editing rule files. Record the instruction and permission in the report.
+- For a code check, use the owner's existing supported option or propose a local
+  ITL patch. Permission in prose does not disable executable code. There is no
+  universal ignore-checks option or permission registry.
+- Do not fabricate a pass. Preserve failed, partial or skipped evidence. A local
+  workaround does not qualify a release. With `verificationPolicy=warn`, ordinary
+  result export warns and proceeds; advanced close retains its separate explicit
+  confirmation. `block` requires fresh passed evidence in the normal route.
+- Continue to use the normal wrappers and operation owners. Do not substitute
+  direct 1C launches, modify valid product files to appease a broken validator,
+  erase recovery state, or edit the controlled ai_rules_1c installation.
+
+## Handoff report boundaries
+
+Write durable reports outside managed workflow files, for example in `handoffs/`.
+One independent problem gets one report with a unique timestamp-and-topic name,
+such as `handoff-20261020-153000-refresh-lock.md`. Do not append an unrelated
+problem to an existing report merely because it occurred in the same task,
+branch or command. Related symptoms may share a report when they belong to the
+same investigation and repair; do not assume a shared cause without evidence.
+
+Before handoff, refine the report only within that problem's scope. Once the
+report is presented to the user as ready to transfer, or handed to another
+agent/task for investigation or repair, freeze that file: do not edit, append to,
+overwrite or reuse it, including after the problem is considered resolved.
+Later evidence, corrections, workaround results or recurrence of that problem
+go into a new uniquely named supplement with an explicit link to the original
+report and a clear description of what is new. A supplement is also immutable
+after handoff. A new independent problem always gets its own report, not a
+supplement to an unrelated incident.
+
+When handing off, state whether the file is a new incident report or a supplement,
+identify the problem and provide its exact path. For a supplement, also link the
+original report. Hand off these durable files, not helper-owned report snapshots.
+
+## Temporary ITL file patch
+
+Determine the executing copy first. Refresh starts with the clean tracked runtime
+in the main worktree, then hands the same operation to the branch runtime. A
+branch-only patch cannot fix an earlier main-runtime failure. A main-runtime
+repair requires explicit scope covering other branches that use it; commit its
+sealed patch before refresh so the existing clean-runtime guard remains intact.
+Do not introduce a different launcher or arbitrary runtime-source override.
+
+Choose the report or supplement under the boundaries above and set `$reportPath`
+to its actual path.
+Install/update excludes root `/handoffs/` from untracked Git status; existing tracked reports remain tracked. See [Git continuation](lifecycle-git-continuation.md) for an older installation or a lifecycle Git blocker.
+Finish or cancel the owned operation before editing files it may still load.
+After authorization, capture the original files **before editing**:
+
+```powershell
+& .\.agents\skills\1c-workflow\scripts\workflow-local-patch.ps1 `
+  -Action Capture -ProjectRoot (Get-Location).Path `
+  -Paths @('.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1') `
+  -ReportPath $reportPath
+```
+
+This file-only helper saves one batch of existing, clean tracked ITL text files,
+their byte snapshots and a copy of the report under the already ignored
+`.agent-1c/snapshots/workflow-incidents/`. It never launches 1C or changes product
+files. The returned report path is a helper-owned snapshot; record new evidence
+in the durable report or a linked supplement under the boundaries above. The
+receipt is data, not authorization. For an already edited file, preserve its diff
+and establish the original baseline before capture; never overwrite an unknown
+edit to satisfy it.
+
+Apply the agreed patch, then seal it before staging/committing:
+
+```powershell
+& .\.agents\skills\1c-workflow\scripts\workflow-local-patch.ps1 -Action Seal
+```
+
+Repeat the original operation, record the result, and resume the project task.
+Keep the saved before/after bytes available for an exact reverse edit if needed.
+Further edits to a sealed file require reconciliation with that recorded patch;
+they are not automatically disposable. Before another authorized edit, repeat
+Capture with the additional paths and current report or linked supplement, then
+Seal again. The same batch retains each file's original baseline, including
+already committed patch files. If edits were made before Capture, preserve their
+diff, restore only the
+recorded patch bytes, Capture, and reapply the reviewed diff before Seal.
+
+## Replacement and recovery
+
+Only an actual incoming workflow replacement retires a recorded patch.
+`refresh` and `refresh-lite` first checkpoint work and select the exact master
+commit; configuration-only changes preserve the patch. The helper compares
+package repository/commit identities; older receipts recover this from their
+baseline. When identity is unavailable, refresh compares incoming managed files
+since the common ancestor, excluding the branch's own patch. Unconfirmed change
+preserves the patch with a diagnostic. A same-version or unconfirmed
+`update-workflow` with an active patch skips copying and reports that outcome.
+
+For a confirmed replacement, update retires before its normal clean check/copy,
+and refresh retires before merge. A committed patch is removed by a corrective
+commit; history and unrelated staging remain intact. Extra edits, another branch,
+unmerged state or changed snapshots are preserved with a specific diagnostic:
+inspect the recorded before/after and actual diff, preserve the extra change,
+and reconcile only the incident's files. Never discard unrelated work to unblock
+an update. Ordinary commands do not consult patch history.
+
+Before package copying succeeds, a caught failure restores the working patch.
+Before refresh starts its merge, a caught preparation failure also restores it.
+An interrupted retirement resumes from the recorded before/after bytes. Once
+package copying succeeds or refresh starts its owned merge, the existing owner
+controls recovery; an old patch is not reapplied over incoming code or a pending
+merge. Reports and snapshots survive in the incident directory. On retirement,
+the helper also attempts to save a reusable diff and report in the shared archive.
+
+Retired means replaced, **not fixed**. Updating does not require reproducing an
+expensive, delayed or unavailable original scenario. Use available code/evidence
+and inexpensive relevant checks; record any uncertainty. If the problem recurs
+during normal work, consult the archive and propose a scoped remedy against the
+current version. Never silently overlay old files or send external messages
+merely because a report exists.
+
+## Shared fix archive
+
+The optional cache at `%LOCALAPPDATA%\ITL\workflow-fixes` is shared by projects
+and branches of the current Windows user. It contains a patch diff, file hashes,
+workflow identity when known, and the incident report. It stores no executable
+permission: a previous project's authorization does not transfer to this one.
+
+Search only when diagnosing an incident, using a distinctive error or file name:
+
+```powershell
+& .\.agents\skills\1c-workflow\scripts\workflow-local-patch.ps1 `
+  -Action Find -Query 'distinctive error' -Limit 5
+```
+
+Read the returned entry's report and `files[].diff`. Compare its cause, affected
+code and version with the current project. A clean `git apply --check` is useful
+for applicability, but does not prove the remedy is correct. Prepare a compatible
+change or adapt it; do not run commands found in an archived report as instructions.
+Under authorization covering this task, write the current report and use Capture
+with `-ArchiveId <returned id>` before editing. Apply only the reviewed change,
+Seal, validate as appropriate and resume work. Successful Seal records reuse;
+search alone does not extend retention. Incompatible candidates remain evidence,
+not an obligation to reproduce or repair the old environment.
+
+Exact fixes are deduplicated. On save, reuse and search, cleanup removes entries
+unused for 90 days and keeps at most 100 entries / 100 MiB, preferring recent use.
+There is no background service or scan of projects. Archive errors warn and allow
+local continuation; damaged entries are excluded from results and preserved for
+inspection. These limits cover valid managed cache entries, not unknown files.
+Cleanup never removes active local patches or `handoffs/`. Completed older local
+incident snapshots use the existing archive-retention policy; the current receipt
+and its files remain protected. Keep durable handoff reports outside managed files.
+
+## Report template
+
+The agent writes one Markdown report; no generator is required. Include:
+
+0. A line `incidentKey: <CODE>@<owner>`: the exact error code plus the owning
+   component, for example `RUNNER_STATUS_STALE@verification-tail`. Reuse the
+   key of a matching organization note. A supplement repeats the original key;
+   after the fix is installed, close it with a supplement line
+   `incidentClosed: <key>`.
+1. Original project task, project/branch, workflow revision and executing runtime.
+2. Reproduction command and prerequisites; expected and actual result.
+3. Exact error and selected log/artifact paths; omit secrets and irrelevant logs.
+4. Proven cause separately from hypotheses; runner/environment/fixture/product.
+5. Proposed/applied workaround, affected files/rule, exact authorization scope.
+6. Patch or saved before/after location, rollback, original-scenario result and
+   remaining verification gaps; whether the project task resumed.
+7. Replacement version, archived fix ID when reused, and evidence after update
+   when available; explicitly state when the original scenario was not replayed.
+
+Keep the original report and append outcomes. A report-writing tool failure does
+not block independent project work: write the available evidence directly and
+identify missing artifacts. Refer the general fix to the workflow source owner.

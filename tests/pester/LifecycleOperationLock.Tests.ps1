@@ -25,6 +25,122 @@
 
     AfterAll { $env:LIFECYCLE_LOCK_TIMEOUT_SECONDS = $originalLockTimeout }
 
+    It 'waits for the existing Git exclude writer and preserves Unicode rules without duplicate additions' {
+        $root = Join-Path $TestDrive 'exclude конкурентный с пробелом'
+        Initialize-LifecycleLockTestRepository -Path $root
+        $excludePath = Join-Path $root '.git/info/exclude'
+        $original = '# Пользовательское исключение без перевода строки'
+        [IO.File]::WriteAllText($excludePath, $original, [Text.UTF8Encoding]::new($false))
+        $held = [IO.File]::Open($excludePath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $worker = [PowerShell]::Create()
+        $started = [Threading.ManualResetEvent]::new($false)
+        try {
+            $null = $worker.AddScript({ param($Helper, $Root, $Started)
+                $ErrorActionPreference = 'Stop'
+                . $Helper -ProjectRoot $Root -Action help *> $null
+                [void]$Started.Set()
+                Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $Root
+                Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $Root
+            }).AddArgument($HelperPath).AddArgument($root).AddArgument($started)
+            $async = $worker.BeginInvoke()
+            $started.WaitOne(10000) | Should -BeTrue
+            Start-Sleep -Milliseconds 150
+            $held.Dispose(); $held = $null
+            $async.AsyncWaitHandle.WaitOne(10000) | Should -BeTrue
+            $null = $worker.EndInvoke($async)
+            @($worker.Streams.Error).Count | Should -Be 0 -Because ($worker.Streams.Error -join "`n")
+            $text = [IO.File]::ReadAllText($excludePath, [Text.Encoding]::UTF8)
+            $text.StartsWith($original + [Environment]::NewLine) | Should -BeTrue
+            @([regex]::Matches($text, '(?m)^\.agent-1c/locks/\r?$')).Count | Should -Be 1
+            @([regex]::Matches($text, '(?m)^\.agent-1c/runtime/\r?$')).Count | Should -Be 1
+            $before = [IO.File]::ReadAllBytes($excludePath)
+            & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $root
+            }
+            [IO.File]::ReadAllBytes($excludePath) | Should -Be $before
+        } finally {
+            if ($null -ne $held) { $held.Dispose() }
+            $worker.Dispose()
+            $started.Dispose()
+        }
+    }
+
+    It 'keeps the same lifecycle generation readable while its continuation publishes phases' {
+        . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        $tempRoot=Join-Path ([IO.Path]::GetTempPath()) ('itl lifecycle состояние с пробелом '+[guid]::NewGuid().ToString('N'))
+        $statePath=Join-Path $tempRoot 'lifecycle-operation.json'
+        $initial=@{schemaVersion=1;operationId=[guid]::NewGuid().ToString('N');pid=$PID;startedAt=[DateTime]::UtcNow.ToString('o');status='running';phase='initial';detail=('Ожидание продолжения. '*400)}
+        $writer=[PowerShell]::Create()
+        try {
+            Write-Agent1cLifecycleOperationRecord -Path $statePath -Record $initial
+            $null=$writer.AddScript({param($CorePath,$StatePath,$InitialRecord)
+                $ErrorActionPreference='Stop'
+                . $CorePath
+                $failures=@(); $completed=0
+                for($index=0;$index -lt 500;$index++){
+                    $InitialRecord.phase='phase-'+$index
+                    try {Write-Agent1cLifecycleOperationRecord -Path $StatePath -Record $InitialRecord; $completed++}
+                    catch {$failures+=@($_.Exception.Message)}
+                }
+                return @{completed=$completed;failures=$failures}
+            }).AddArgument((Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')).AddArgument($statePath).AddArgument($initial.Clone())
+            $clock=[Diagnostics.Stopwatch]::StartNew()
+            $async=$writer.BeginInvoke()
+            $reads=0; $unreadable=0; $differentGeneration=0
+            do {
+                $observed=Read-Agent1cLifecycleOperationRecord -Path $statePath -ExistingPublication
+                $reads++
+                if($null -eq $observed){$unreadable++}
+                elseif([string]$observed.operationId -cne $initial.operationId -or [int]$observed.pid -ne $initial.pid -or [string]$observed.startedAt -cne $initial.startedAt){$differentGeneration++}
+            } while(-not $async.IsCompleted -and $clock.Elapsed.TotalSeconds -lt 30)
+            $async.IsCompleted | Should -BeTrue
+            $published=@($writer.EndInvoke($async))
+            @($writer.Streams.Error).Count | Should -Be 0
+            $reads | Should -BeGreaterThan 0
+            $unreadable | Should -Be 0 -Because 'an in-flight phase publication is the same signed lifecycle generation'
+            $differentGeneration | Should -Be 0
+            @($published[0].failures).Count | Should -Be 0
+            $published[0].completed | Should -Be 500
+            (Read-Agent1cLifecycleOperationRecord -Path $statePath).phase | Should -Be 'phase-499'
+        } finally {
+            $writer.Dispose()
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses an existing publication with <Defect> instead of admitting another generation' -ForEach @(
+        @{Defect='missing'}, @{Defect='malformed'}, @{Defect='operation id'}, @{Defect='owner pid'}, @{Defect='start time'}
+    ) {
+        . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
+        $tempRoot=Join-Path ([IO.Path]::GetTempPath()) ('itl lifecycle отказ с пробелом '+[guid]::NewGuid().ToString('N'))
+        $statePath=Join-Path $tempRoot 'lifecycle-operation.json'
+        $previousVariable=Get-Variable -Name LifecycleOperationStatePath -Scope Script -ErrorAction SilentlyContinue
+        $hadPreviousVariable=$null -ne $previousVariable
+        $previousPath=if($hadPreviousVariable){$previousVariable.Value}else{$null}
+        $expected=@{operationId=[guid]::NewGuid().ToString('N');pid=$PID;startedAt=[DateTime]::UtcNow.ToString('o')}
+        try {
+            [IO.Directory]::CreateDirectory($tempRoot)|Out-Null
+            $script:LifecycleOperationStatePath=$statePath
+            $record=$expected.Clone()
+            switch($Defect){
+                'operation id' {$record.operationId=[guid]::NewGuid().ToString('N')}
+                'owner pid' {$record.pid=$PID+999999}
+                'start time' {$record.startedAt='2000-01-01T00:00:00Z'}
+            }
+            if($Defect -eq 'malformed'){Write-Utf8TextAtomic -Path $statePath -Value '{invalid json'}
+            elseif($Defect -ne 'missing'){Write-Agent1cLifecycleOperationRecord -Path $statePath -Record $record}
+            $relay=@{statusPath=(Join-Path $tempRoot 'status.json');operationId=$expected.operationId;ownerPid=$expected.pid;operationStartedAt=$expected.startedAt}
+            {Publish-Agent1cFreshProcessRunStatus -Process ([pscustomobject]@{Id=$PID+1}) -Relay $relay -StartedAtUtc ([DateTime]::UtcNow) -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(30))} | Should -Throw '*fresh wait operation generation changed*'
+            Test-Path -LiteralPath $relay.statusPath | Should -BeFalse
+        } finally {
+            if($hadPreviousVariable){$script:LifecycleOperationStatePath=$previousPath}
+            else{Remove-Variable -Name LifecycleOperationStatePath -Scope Script -ErrorAction SilentlyContinue}
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "publishes meaningful phases for the long lifecycle slices" {
         foreach ($phase in @(
             "config-load.fingerprint",
@@ -112,6 +228,8 @@
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/locks/"))
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/runtime/"))
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/event-log-cursors/"))
+            $excludeText | Should -Match ([regex]::Escape(".agent-1c/execution-checkpoints/"))
+            $excludeText | Should -Match ([regex]::Escape(".agent-1c/execution-guard-generation.json.*"))
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -202,8 +320,9 @@ try {
         }
     }
 
-    It "runs reset through <Scenario> with real worktree archives and seed leases" -ForEach @(
-        @{ Scenario = "parallel branches" }, @{ Scenario = "interruption and resume" }
+    It "runs reset through <Scenario> with real worktrees, Git-history recovery and seed leases" -ForEach @(
+        @{ Scenario = "parallel branches" }, @{ Scenario = "interruption and resume" }, @{ Scenario = "updated helper handoff" },
+        @{ Scenario = "pending refresh" }
     ) {
         $tempRoot = Join-Path $TestDrive ("сброс " + $Scenario)
         $mainRoot = Join-Path $tempRoot "main база"
@@ -211,15 +330,64 @@ try {
         $branchTwo = Join-Path $tempRoot "ветка two"
         $sourceRoot = Join-Path $tempRoot "source база"
         Initialize-LifecycleLockTestRepository -Path $mainRoot
-        Add-Content -LiteralPath (Join-Path $mainRoot '.gitignore') -Value '.agent-1c/'
+        Add-Content -LiteralPath (Join-Path $mainRoot '.gitignore') -Value '.agent-1c/', 'build/'
         & git -C $mainRoot add .gitignore
         & git -C $mainRoot commit --quiet -m 'ignore runtime'
+        if ($Scenario -eq 'updated helper handoff') {
+            $helperDirectory = Join-Path $mainRoot '.agents/skills/1c-workflow/scripts'
+            $templateDirectory = Join-Path $mainRoot '.agents/skills/1c-workflow/assets/vanessa-service'
+            New-Item -ItemType Directory -Path $helperDirectory,$templateDirectory -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $helperDirectory 'agent-1c.ps1') -Encoding UTF8 -Value '# pinned master helper fixture'
+            Set-Content -LiteralPath (Join-Path $templateDirectory 'manifest.json') -Encoding UTF8 -Value '{"template":"new"}'
+            & git -C $mainRoot add .agents
+            & git -C $mainRoot commit --quiet -m 'master service generation'
+        }
         $masterCommit = (& git -C $mainRoot rev-parse HEAD).Trim()
         foreach ($entry in @(@{ name = 'one'; root = $branchOne }, @{ name = 'two'; root = $branchTwo })) {
             & git -C $mainRoot worktree add --quiet -b ('itldev/' + $entry.name) $entry.root master *> $null
             Set-Content -LiteralPath (Join-Path $entry.root 'изменение ветки.txt') -Encoding UTF8 -Value $entry.name
+            if ($Scenario -eq 'updated helper handoff') {
+                Set-Content -LiteralPath (Join-Path $entry.root '.agents/skills/1c-workflow/assets/vanessa-service/manifest.json') -Encoding UTF8 -Value '{"template":"old"}'
+            }
             & git -C $entry.root add .
             & git -C $entry.root commit --quiet -m 'branch work'
+        }
+        if ($Scenario -eq 'pending refresh') {
+            $branchCommit = (& git -C $branchOne rev-parse HEAD).Trim()
+            Set-Content -LiteralPath (Join-Path $mainRoot 'later master.txt') -Encoding UTF8 -Value 'master'
+            & git -C $mainRoot add .
+            & git -C $mainRoot commit --quiet -m 'later master'
+            $masterCommit = (& git -C $mainRoot rev-parse HEAD).Trim()
+            & git -C $branchOne merge --no-ff -m 'merge master' master *> $null
+            $mergeCommit = (& git -C $branchOne rev-parse HEAD).Trim()
+            Set-Content -LiteralPath (Join-Path $branchOne 'repair.txt') -Encoding UTF8 -Value 'repair'
+            & git -C $branchOne add .
+            & git -C $branchOne commit --quiet -m 'repair after merge'
+            New-Item -ItemType Directory -Force -Path (Join-Path $branchOne 'handoffs') | Out-Null
+            Set-Content -LiteralPath (Join-Path $branchOne 'handoffs/заметка.txt') -Encoding UTF8 -Value 'preserve'
+            Set-Content -LiteralPath (Join-Path $branchOne 'изменение ветки.txt') -Encoding UTF8 -Value 'unstaged repair'
+            $pendingState = [ordered]@{
+                devBranchName = 'one'; safeDevBranchName = 'one'; devBranch = 'itldev/one'
+                devBranchKind = 'configuration'; initializationStatus = 'ready'; infoBaseKind = 'file'
+                devBranchInfoBasePath = Join-Path $branchOne '.agent-1c/тестовая база'
+                pendingMergeOperation = 'refresh-dev-branch'; pendingMergeBranch = 'itldev/one'
+                pendingMergeBranchCommit = $branchCommit; pendingMergeTargetCommit = $masterCommit
+                pendingMergeStage = 'merged'; pendingMergeCommit = $mergeCommit
+                pendingMergePostMergeHead = $mergeCommit; pendingMergeResult = 'merge-commit'
+                pendingRefreshOperation = 'refresh-dev-branch'; pendingRefreshMasterCommit = $masterCommit
+            }
+            New-Item -ItemType Directory -Force -Path (Join-Path $branchOne '.agent-1c') | Out-Null
+            $pendingState | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Encoding UTF8
+        }
+        # Previous-task leftovers that recreating the branch removes, written well before reset starts.
+        $leftovers = @((Join-Path $branchOne 'build/agent-artifacts/задача/tmp/old.txt'), (Join-Path $branchOne '.agent-1c/tmp/old/x.txt'),
+            (Join-Path $mainRoot '.agent-1c/branch-archives/one/20261009T141019349Z-3570c292/infobase.dt'))
+        foreach ($leftover in $leftovers) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $leftover) | Out-Null
+            Set-Content -LiteralPath $leftover -Encoding UTF8 -Value 'previous task'
+        }
+        foreach ($tree in @((Join-Path $branchOne 'build/agent-artifacts/задача'), (Join-Path $branchOne '.agent-1c/tmp/old'), (Join-Path $mainRoot '.agent-1c/branch-archives/one'))) {
+            foreach ($item in @(Get-ChildItem -LiteralPath $tree -Recurse -Force) + @(Get-Item -LiteralPath $tree)) { $item.LastWriteTimeUtc = [datetime]::UtcNow.AddDays(-1) }
         }
         New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
         [IO.File]::WriteAllBytes((Join-Path $sourceRoot '1Cv8.1CD'), [byte[]](1, 2, 3, 4))
@@ -227,7 +395,7 @@ try {
         $worker = Join-Path $tempRoot 'reset worker.ps1'
         Set-Content -LiteralPath $worker -Encoding UTF8 -Value @'
 param([string]$HelperPath, [string]$SupportPath, [string]$Root, [string]$SourceRoot,
-    [string]$OtherRoot = "", [string]$InterruptPhase = "")
+    [string]$OtherRoot = "", [string]$InterruptPhase = "", [switch]$PendingRefresh)
 Import-Module Microsoft.PowerShell.Utility
 . $SupportPath
 . $HelperPath -ProjectRoot $Root -Action help *> $null
@@ -252,15 +420,18 @@ function Get-InfoBaseKind { "file" }
 function Get-SourceUsesRepository { $false }
 function Assert-DevelopmentBranchWorktreeContext {}
 function Assert-MasterWorktreeContext {}
-function Resume-DevBranchLifecycleMergeIfPresent { $false }
-function Save-DevBranchCheckpoint { Assert-CleanGit }
+function Save-DevBranchCheckpoint {
+    param($Operation, $Message)
+    if ($PendingRefresh) { Commit-IfChanged -Message $Message -PathSpec @('.') | Out-Null }
+    Assert-CleanGit
+}
 function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "test-fixture"; treeObjectId = "config-tree" } }
 function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
 function Invoke-Designer {
     param($InfoBasePath, $InfoBaseKind, $DesignerArgs)
-    if ($DesignerArgs[0] -ne "/DumpIB") { throw "UNEXPECTED_DESIGNER" }
-    Write-Utf8Text -Path $DesignerArgs[1] -Value "archived original infobase"
-    Add-Content -LiteralPath (Join-Path $Root ".agent-1c/dumps.txt") -Value "dump"
+    # Reset keeps prior work in Git history; it never dumps the old infobase.
+    Add-Content -LiteralPath (Join-Path $Root ".agent-1c/designer.txt") -Value ($DesignerArgs -join ' ')
+    throw "UNEXPECTED_DESIGNER"
 }
 function Initialize-DevBranchEventLogBaseline {
     param($State, $SeedBaselinePath)
@@ -285,11 +456,25 @@ function Sync-KiloItlCommandSurface {}
 function Invoke-AiRules1cManagedMcpConfigReconcile {}
 function Sync-DevBranchContextToDotEnv {}
 function Write-AndSetRunUserReport {}
+function Invoke-Agent1cFreshProcess {
+    param([string]$ScriptPath)
+    $state = Read-DevBranchState
+    if ($state.resetPhase -ne 'git-reset-complete') { throw 'RESET_HANDOFF_PHASE_NOT_PINNED' }
+    $writer = Open-BranchSeedLease -Mode write -TimeoutSeconds 1
+    $writer.Dispose()
+    Write-Utf8Text -Path (Join-Path $Root '.agent-1c/reset-handoff.json') -Value (([ordered]@{
+        helperPath=$ScriptPath;masterCommit=$state.resetMasterCommit;oldHead=$state.resetOldHead
+        seedReaderReleased=$true;databaseRestored=(Test-Path -LiteralPath (Join-Path $state.devBranchInfoBasePath '1Cv8.1CD'))
+    }) | ConvertTo-Json)
+    # Stop at dispatch so the test can inspect the saved boundary and start an
+    # independent helper process against the same phase, old HEAD and seed.
+    throw 'RESET_HANDOFF_DISPATCHED'
+}
 function Set-RunStage {
     param($Stage, $Detail)
     Update-Agent1cLifecycleOperationStage -Stage $Stage -Detail $Detail
-    if ($Stage -eq "reset.archive-dt") {
-        if (Test-Agent1cLifecycleLockHeld -WorktreePath (Get-MainWorktreePath)) { throw "MAIN_LOCK_RETAINED_DURING_ARCHIVE" }
+    if ($Stage -eq "reset.git") {
+        if (Test-Agent1cLifecycleLockHeld -WorktreePath (Get-MainWorktreePath)) { throw "MAIN_LOCK_RETAINED_DURING_BRANCH_RESET" }
         if ($OtherRoot) {
             $nested = Invoke-TestPowerShellFile -FilePath $PSCommandPath -Arguments @(
                 "-HelperPath", $HelperPath, "-SupportPath", $SupportPath, "-Root", $OtherRoot, "-SourceRoot", $SourceRoot)
@@ -313,18 +498,41 @@ try {
 '@
         $arguments = @('-HelperPath', $HelperPath, '-SupportPath', (Join-Path $PSScriptRoot 'TestSupport.ps1'),
             '-Root', $branchOne, '-SourceRoot', $sourceRoot)
+        if ($Scenario -eq 'pending refresh') { $arguments += '-PendingRefresh' }
         if ($Scenario -eq 'parallel branches') {
             $run = Invoke-TestPowerShellFile -FilePath $worker -Arguments ($arguments + @('-OtherRoot', $branchTwo))
             $run.exitCode | Should -Be 0 -Because $run.combinedText
             $other = Get-Content -LiteralPath (Join-Path $branchTwo '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             $other.resetStatus | Should -Be 'complete'
+        } elseif ($Scenario -eq 'updated helper handoff') {
+            $handoff = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
+            $handoff.exitCode | Should -Be 1
+            $handoff.combinedText | Should -Match 'RESET_HANDOFF_DISPATCHED'
+            $boundary = Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-handoff.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $boundary.helperPath | Should -Be (Join-Path $branchOne '.agents/skills/1c-workflow/scripts/agent-1c.ps1')
+            $boundary.masterCommit | Should -Be $masterCommit
+            $boundary.seedReaderReleased | Should -BeTrue
+            $boundary.databaseRestored | Should -BeFalse
+            $resumed = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
+            $resumed.exitCode | Should -Be 0 -Because $resumed.combinedText
+            (Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json).resetOldHead | Should -Be $boundary.oldHead
+        } elseif ($Scenario -eq 'pending refresh') {
+            $failed = Invoke-TestPowerShellFile -FilePath $worker -Arguments ($arguments + @('-InterruptPhase', 'reset.infobase'))
+            $failed.exitCode | Should -Be 1
+            $failed.combinedText | Should -Match 'RESET_INTERRUPTED'
+            $saved = Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $saved.pendingMergeOperation | Should -Be 'refresh-dev-branch'
+            $saved.resetDiscardedRefreshOperation | Should -Be 'refresh-dev-branch'
+            $saved.resetPhase | Should -Be 'git-reset-complete'
+            $resumed = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
+            $resumed.exitCode | Should -Be 0 -Because $resumed.combinedText
         } else {
             $failed = Invoke-TestPowerShellFile -FilePath $worker -Arguments ($arguments + @('-InterruptPhase', 'reset.infobase'))
             $failed.exitCode | Should -Be 1
             $failed.combinedText | Should -Match 'RESET_INTERRUPTED'
             $saved = Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             $saved.resetPhase | Should -Be 'git-reset-complete'
-            # Resume must retain the recorded master and archive even after master moves.
+            # Resume must retain the recorded master and old HEAD even after master moves.
             Set-Content -LiteralPath (Join-Path $mainRoot 'new-master.txt') -Value 'later master'
             & git -C $mainRoot add .
             & git -C $mainRoot commit --quiet -m 'later master'
@@ -337,6 +545,64 @@ try {
             $incompatible.combinedText | Should -Match 'BRANCH_SEED_INCOMPATIBLE'
             $manifest.configurationFingerprint = 'test-fixture'
             $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+            $saved.resetSeedIdentity.syncId | Should -Be $manifest.syncId
+            $saved.resetSeedIdentity.artifactSha256 | Should -Be $manifest.artifactSha256
+            # Same configuration is insufficient: an independently rebuilt
+            # seed may contain different data or a different event-log baseline.
+            foreach ($drift in @('generation', 'database', 'baseline', 'dirty source', 'committed source', 'missing pin')) {
+                $artifactBytes = [IO.File]::ReadAllBytes($manifest.artifactPath)
+                $baselineBytes = [IO.File]::ReadAllBytes($manifest.baselinePath)
+                $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+                $statePath = Join-Path $branchOne '.agent-1c/reset-fixture.json'
+                $stateBytes = [IO.File]::ReadAllBytes($statePath)
+                $sourcePath = Join-Path $branchOne 'sentinel.txt'
+                $sourceBytes = [IO.File]::ReadAllBytes($sourcePath)
+                $head = (& git -C $branchOne rev-parse HEAD).Trim()
+                try {
+                    $expectedError = 'RESET_DEV_BRANCH_SEED_CHANGED'
+                    switch ($drift) {
+                        'generation' {
+                            $changedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                            $changedManifest.syncId = 'later-generation-with-identical-configuration'
+                            $changedManifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+                        }
+                        'database' {
+                            [IO.File]::WriteAllBytes($manifest.artifactPath, [byte[]](5,6,7,8))
+                            $changedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                            $changedManifest.artifactSha256 = (Get-FileHash -LiteralPath $manifest.artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                            $changedManifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+                        }
+                        'baseline' { [IO.File]::WriteAllText($manifest.baselinePath, '{"signatures":["later"]}') }
+                        'dirty source' {
+                            [IO.File]::WriteAllText($sourcePath, 'user changes after interruption')
+                            $expectedError = 'Git worktree is not clean'
+                        }
+                        'committed source' {
+                            [IO.File]::WriteAllText($sourcePath, 'committed user changes after interruption')
+                            & git -C $branchOne add sentinel.txt
+                            & git -C $branchOne commit --quiet -m 'user change after interrupted reset'
+                            $expectedError = 'RESET_DEV_BRANCH_HEAD_CHANGED'
+                        }
+                        'missing pin' {
+                            $changedState = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+                            $changedState.PSObject.Properties.Remove('resetSeedIdentity')
+                            $changedState | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $statePath -Encoding UTF8
+                            $expectedError = 'RESET_DEV_BRANCH_SEED_IDENTITY_REQUIRED'
+                        }
+                    }
+                    $rejected = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
+                    $rejected.exitCode | Should -Be 1 -Because $rejected.combinedText
+                    $rejected.combinedText | Should -Match $expectedError -Because $drift
+                    Test-Path -LiteralPath (Join-Path $saved.devBranchInfoBasePath '1Cv8.1CD') | Should -BeFalse
+                } finally {
+                    [IO.File]::WriteAllBytes($manifest.artifactPath, $artifactBytes)
+                    [IO.File]::WriteAllBytes($manifest.baselinePath, $baselineBytes)
+                    [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+                    [IO.File]::WriteAllBytes($statePath, $stateBytes)
+                    & git -C $branchOne reset --quiet --hard $head
+                    [IO.File]::WriteAllBytes($sourcePath, $sourceBytes)
+                }
+            }
             $resumed = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
             $resumed.exitCode | Should -Be 0 -Because $resumed.combinedText
         }
@@ -344,10 +610,26 @@ try {
         $state.resetStatus | Should -Be 'complete'
         $state.resetMasterCommit | Should -Be $masterCommit
         (& git -C $branchOne rev-parse 'HEAD^{tree}').Trim() | Should -Be (& git -C $mainRoot rev-parse "$masterCommit`^{tree}").Trim()
-        @(Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/dumps.txt')).Count | Should -Be 1
+        Test-Path -LiteralPath (Join-Path $branchOne '.agent-1c/designer.txt') | Should -BeFalse
         [IO.File]::ReadAllBytes((Join-Path $state.devBranchInfoBasePath '1Cv8.1CD')) | Should -Be @([byte]1, [byte]2, [byte]3, [byte]4)
-        Test-Path -LiteralPath (Join-Path $state.resetArchivePath 'files/изменение ветки.txt') | Should -BeTrue
-        if ($Scenario -eq 'interruption and resume') { $state.resetArchivePath | Should -Be $saved.resetArchivePath }
+        # Recovery lives in Git history only: no archive, previous-task leftovers gone.
+        $state.resetArchivePath | Should -BeNullOrEmpty
+        $expectedBranchText = if ($Scenario -eq 'pending refresh') { 'unstaged repair' } else { 'one' }
+        # Set-Content wrote a BOM; compare the text ending only.
+        (& git -C $branchOne show "$($state.resetOldHead):изменение ветки.txt" | Out-String) | Should -Match ([regex]::Escape($expectedBranchText) + '\s*$')
+        foreach ($leftover in $leftovers) { Test-Path -LiteralPath $leftover | Should -BeFalse -Because $leftover }
+        Test-Path -LiteralPath (Join-Path $mainRoot '.agent-1c/branch-archives/one') | Should -BeFalse
+        [int]$state.resetLeftoverCleanup.removedCount | Should -BeGreaterOrEqual 3
+        if ($Scenario -eq 'pending refresh') {
+            $state.pendingMergeOperation | Should -BeNullOrEmpty
+            $state.pendingMergeStage | Should -BeNullOrEmpty
+            $state.pendingMergePostMergeHead | Should -BeNullOrEmpty
+            $state.pendingRefreshOperation | Should -BeNullOrEmpty
+            $state.pendingRefreshMasterCommit | Should -BeNullOrEmpty
+            $state.resetDiscardedRefreshOperation | Should -Be 'refresh-dev-branch'
+            (& git -C $branchOne show "$($state.resetOldHead):handoffs/заметка.txt" | Out-String) | Should -Match 'preserve\s*$'
+        }
+        if ($Scenario -eq 'interruption and resume') { $state.resetOldHead | Should -Be $saved.resetOldHead }
     }
 
     It "locks branch and master in canonical order for refresh and exposes the same owner from master" {
@@ -439,8 +721,8 @@ try {
         }
     }
 
-    It "writes terminal run status when a fresh child fails before entering its body" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-child-binding-" + [guid]::NewGuid().ToString("N"))
+    It "writes terminal run status when a fresh child rejects argument binding before entering its body" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("Передача старому helper " + [guid]::NewGuid().ToString("N"))
         $childPath = Join-Path $tempRoot "invalid-child.ps1"
         $wrapperPath = Join-Path $tempRoot "invoke-parent.ps1"
         $statusPath = Join-Path $tempRoot "status.json"
@@ -448,6 +730,7 @@ try {
         try {
             Initialize-LifecycleLockTestRepository -Path $tempRoot
             Set-Content -LiteralPath $childPath -Encoding UTF8 -Value @'
+[CmdletBinding()]
 param(
     [string]$Action,
     [string]$ProjectRoot,
@@ -483,11 +766,14 @@ $script:Agent1cReexecArguments = @(
 Enter-Agent1cLifecycleOperation -RequestedAction $Action
 try {
     Invoke-Agent1cFreshProcess -ScriptPath $ChildPath -AdditionalArguments @("-LifecyclePhase", "rejected")
-} finally {
-    Exit-Agent1cLifecycleOperation
-}
+} finally { Exit-Agent1cLifecycleOperation }
 '@
 
+            # Windows PowerShell reads script literals through the ANSI code
+            # page without a BOM, even when the fixture writer is PowerShell 7.
+            foreach ($fixtureScript in @($childPath, $wrapperPath)) {
+                [IO.File]::WriteAllText($fixtureScript, [IO.File]::ReadAllText($fixtureScript), [Text.UTF8Encoding]::new($true))
+            }
             $result = Invoke-TestPowerShellFile -FilePath $wrapperPath -Arguments @(
                 "-HelperPath", $HelperPath,
                 "-ProjectRoot", $tempRoot,
@@ -501,7 +787,6 @@ try {
             $result.combinedText | Should -Match "childExitCode='1'"
             $result.combinedText | Should -Match ([regex]::Escape($childPath))
             $result.combinedText | Should -Not -Match "CHILD_BODY_MUST_NOT_RUN"
-
             $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $status.status | Should -Be "failed"
             [int]$status.exitCode | Should -Be 1
@@ -520,8 +805,8 @@ try {
         }
     }
 
-    It "preserves the exact child failure status across fresh-process stderr" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-child-failure-" + [guid]::NewGuid().ToString("N"))
+    It "preserves the exact child failure status and result artifact across fresh-process stderr" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl lifecycle child отказ " + [guid]::NewGuid().ToString("N"))
         $childPath = Join-Path $tempRoot "failing-child.ps1"
         $wrapperPath = Join-Path $tempRoot "invoke-parent.ps1"
         $statusPath = Join-Path $tempRoot "status.json"
@@ -539,7 +824,9 @@ $record | Add-Member -NotePropertyName detail -NotePropertyValue $message -Force
 $record | Add-Member -NotePropertyName exitCode -NotePropertyValue 1 -Force; $record | Add-Member -NotePropertyName updatedAt -NotePropertyValue $now -Force
 $record | Add-Member -NotePropertyName finishedAt -NotePropertyValue $now -Force; $record | Add-Member -NotePropertyName continuationPid -NotePropertyValue $PID -Force
 $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $lifecyclePath -Encoding UTF8
-[ordered]@{ schemaVersion=1; status="failed"; action=$Action; stage="refresh.load"; stageDetail="tracked state validation"; errorMessage=$message; errorCategory="runner"; requiredAction=""; exitCode=1; finishedAt=$now } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $RunStatusPath -Encoding UTF8
+$resultPath = Join-Path $ProjectRoot 'receipt отказ.json'
+[IO.File]::WriteAllText($resultPath,'owned child diagnostic result',[Text.UTF8Encoding]::new($false))
+[ordered]@{ schemaVersion=1; status="failed"; action=$Action; pid=$PID; projectRoot=$ProjectRoot; startedAt=$now; updatedAt=$now; stage="refresh.load"; stageDetail="tracked state validation"; errorMessage=$message; errorCategory="runner"; requiredAction=""; resultPath=$resultPath; exitCode=1; finishedAt=$now } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $RunStatusPath -Encoding UTF8
 [Console]::Error.WriteLine("ITL failure: status=failed; errorCategory=runner; requiredAction=none; completion=failed.")
 [Console]::Error.WriteLine($message)
 exit 1
@@ -571,6 +858,8 @@ try {
             $status.status | Should -Be "failed"; $status.stage | Should -Be "refresh.load"
             $status.errorCategory | Should -Be "runner"; $status.requiredAction | Should -BeNullOrEmpty
             $status.errorMessage | Should -Be "REFRESH_TRACKED_STATE_UNEXPECTED: refresh changed tracked files other than the branch synchronization cursor: .kilo/kilo.json"
+            $status.resultPath | Should -BeExactly (Join-Path $tempRoot 'receipt отказ.json')
+            [IO.File]::ReadAllText($status.resultPath,[Text.UTF8Encoding]::new($false,$true)) | Should -BeExactly 'owned child diagnostic result'
             $lifecycle = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\locks\lifecycle-operation.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $lifecycle.status | Should -Be "failed"; $lifecycle.phase | Should -Be "refresh.load"; $lifecycle.errorMessage | Should -Be $status.errorMessage
         } finally {

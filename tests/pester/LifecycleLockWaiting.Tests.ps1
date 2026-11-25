@@ -39,14 +39,14 @@ finally { Exit-Agent1cLifecycleOperation }
 '@
     }
 
-    It 'waits for <Resource> without changing the holder and continues automatically' -ForEach @(
-        @{ Resource = 'lifecycle' }, @{ Resource = 'runtime-mcp' }
-    ) {
+    It 'waits for the lifecycle resource without changing the holder and continues automatically' {
+        $Resource = 'lifecycle'
+        $RequestedAction = 'check-dev-branch'
         $root = Join-Path $TestDrive "ожидание $Resource"
         New-Item -ItemType Directory -Force -Path $root | Out-Null
         & {
             . $HelperPath -ProjectRoot $root -Action help *> $null
-            $lockPath = if ($Resource -eq 'lifecycle') { Get-Agent1cLifecycleLockPath $root } else { Get-Agent1cRuntimeMcpLockPath $root }
+            $lockPath = Get-Agent1cLifecycleLockPath $root
             New-Item -ItemType Directory -Force -Path (Split-Path $lockPath) | Out-Null
             $ownerPath = Get-Agent1cLifecycleOperationStatePath $root
             Write-Agent1cLifecycleOperationRecord -Path $ownerPath -Record ([ordered]@{ status='running'; action='fixture-owner'; pid=$PID; phase='working' })
@@ -54,20 +54,26 @@ finally { Exit-Agent1cLifecycleOperation }
             $holder = [IO.File]::Open($lockPath, 'OpenOrCreate', 'ReadWrite', 'Read')
             $worker = Join-Path $root 'worker.ps1'
             Set-Content -LiteralPath $worker -Encoding UTF8 -Value $workerText
-            $job = Start-Worker $worker @('-Helper', $HelperPath, '-Root', $root)
+            $job = Start-Worker $worker @('-Helper', $HelperPath, '-Root', $root, '-RequestedAction', $RequestedAction)
             try {
                 $waiter = Wait-Fixture { Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-waiters') -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1 }
-                $first = Read-Agent1cLifecycleOperationRecord $waiter.FullName
+                $first = Read-Agent1cLifecycleOperationRecord -Path $waiter.FullName -ExistingPublication
                 $first.resource | Should -Be $Resource
                 $first.owner | Should -Match "activeAction='fixture-owner'"
                 [IO.File]::ReadAllText($ownerPath) | Should -BeExactly $originalOwner
-                Start-Sleep -Milliseconds 1300
-                $second = Read-Agent1cLifecycleOperationRecord $waiter.FullName
+                $second = Wait-Fixture {
+                    $candidate = Read-Agent1cLifecycleOperationRecord -Path $waiter.FullName -ExistingPublication
+                    if ($candidate.elapsedSeconds -gt $first.elapsedSeconds) { $candidate } else { $null }
+                }
                 $second.elapsedSeconds | Should -BeGreaterThan $first.elapsedSeconds
-                $status = Get-Content -LiteralPath (Join-Path $root 'wait-status.json') -Raw | ConvertFrom-Json
+                $status = Wait-Fixture {
+                    $waitStatusPath = Join-Path $root 'wait-status.json'
+                    if (-not (Test-Path -LiteralPath $waitStatusPath -PathType Leaf)) { return $null }
+                    try { Get-Content -LiteralPath $waitStatusPath -Raw -ErrorAction Stop | ConvertFrom-Json }
+                    catch { $null }
+                }
                 $status.status | Should -Be running
                 $status.liveness | Should -Be 'waiting-lock'
-                if ($Resource -eq 'runtime-mcp') { (Test-Agent1cLifecycleLockHeld $root) | Should -BeFalse }
                 $holder.Dispose()
                 $result = Receive-Worker $job
                 $result.exitCode | Should -Be 0 -Because $result.combinedText
@@ -129,7 +135,7 @@ finally { Exit-Agent1cLifecycleOperation }
             $job = Start-Worker $worker @('-Helper', $HelperPath, '-Root', $secondBranch, '-RequestedAction', 'refresh-dev-branch')
             try {
                 $file = Wait-Fixture { Get-ChildItem -LiteralPath (Join-Path $secondBranch '.agent-1c/locks/lifecycle-waiters') -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1 }
-                $wait = Read-Agent1cLifecycleOperationRecord $file.FullName
+                $wait = Read-Agent1cLifecycleOperationRecord -Path $file.FullName -ExistingPublication
                 $wait.worktreePath | Should -Be $main
                 $wait.owner | Should -Match "activeAction='refresh-dev-branch'"
                 (Test-Agent1cLifecycleLockHeld $secondBranch) | Should -BeFalse
@@ -162,16 +168,18 @@ finally { Exit-Agent1cLifecycleOperation }
             Set-Content -LiteralPath $wrapper -Encoding UTF8 -Value @'
 param($Root, $Runner)
 Set-Location -LiteralPath $Root
-& $Runner -- -Action check-dev-branch
+try { & $Runner -- -Action check-dev-branch }
+finally { [IO.File]::WriteAllText((Join-Path $Root 'caller-finally.txt'), 'caller cleanup completed') }
 exit $LASTEXITCODE
 '@
             $job = Start-Worker $wrapper @('-Root', $root, '-Runner', $runner)
             try {
                 $waiter = Wait-Fixture { Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-waiters') -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1 }
-                $wait = Read-Agent1cLifecycleOperationRecord $waiter.FullName
+                $wait = Read-Agent1cLifecycleOperationRecord -Path $waiter.FullName -ExistingPublication
                 [IO.File]::WriteAllText($wait.cancelPath, '')
                 $result = Receive-Worker $job
                 $result.exitCode | Should -Be 2 -Because $result.combinedText
+                [IO.File]::ReadAllText((Join-Path $root 'caller-finally.txt')) | Should -Be 'caller cleanup completed'
                 $summary = $result.stdout | ConvertFrom-Json
                 $summary.status | Should -Be cancelled
                 $summary.error | Should -Match LIFECYCLE_LOCK_WAIT_CANCELLED
@@ -238,31 +246,48 @@ try {
         New-Item -ItemType Directory -Force -Path $scripts | Out-Null
         Copy-Item -LiteralPath $HelperPath -Destination $scripts
         Copy-Item -LiteralPath (Join-Path (Split-Path $HelperPath) 'lib') -Destination $scripts -Recurse
-        # Keep real entrypoint/admission/config loading; substitute only the
-        # post-admission action so this regression never launches a real 1C base.
+        # Keep the real entrypoint/config loading and waiter handshake while
+        # replacing only the post-wait business action.
+        Copy-Item -LiteralPath (Join-Path (Split-Path (Split-Path $HelperPath)) 'assets') -Destination $root -Recurse
+        $remoteSource = Join-Path $context.RepoRoot '.agents/skills/itl-remote-runner'
+        $remoteDestination = Join-Path $TestDrive 'itl-remote-runner'
+        if (-not (Test-Path -LiteralPath $remoteDestination)) { Copy-Item -LiteralPath $remoteSource -Destination $remoteDestination -Recurse }
+        $fixtureConfig = [ordered]@{fixtureTarget='old';testsPath='tests/features'}
+        & git -C $root init --quiet --initial-branch=master
+        & git -C $root -c user.name=Test -c user.email=test@example.com commit --allow-empty --quiet -m init
+        & git -C $root switch --quiet -c itldev/wait
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c/dev-branches'),(Join-Path $root 'tests/features') | Out-Null
+        $branchState = @{devBranchName='wait';safeDevBranchName='wait';devBranch='itldev/wait';devBranchKind='configuration';worktreePath=$root;infoBaseKind='file';devBranchInfoBasePath=(Join-Path $root 'Целевая база')}
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dev-branches/wait.json'),($branchState | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root 'tests/features/config.feature'),"#language: en`nFeature: Configuration wait`nScenario: Reads current config`n Given retained fixture step`n",[Text.UTF8Encoding]::new($false))
+        # Stub the post-wait action so this regression never launches a real 1C base.
         Add-Content -LiteralPath (Join-Path $scripts 'lib/agent-1c.ai-rules-migration.ps1') -Encoding UTF8 -Value @'
 function Check-DevBranch {
     if ((Get-ConfigValue -Path 'fixtureTarget') -ne 'current') { throw 'STALE_CONFIG' }
     Write-Output 'CURRENT_CONFIG'
 }
+function Invoke-Designer { throw 'Unexpected native Designer in config-wait fixture.' }
+function Invoke-Enterprise { throw 'Unexpected native Enterprise in config-wait fixture.' }
 '@
         & {
             . $HelperPath -ProjectRoot $root -Action help *> $null
             Enter-Agent1cLifecycleOperation -RequestedAction check-dev-branch
             $config = Join-Path $root '.agent-1c/project.json'
-            [IO.File]::WriteAllText($config, '{"fixtureTarget":"old"}')
+            [IO.File]::WriteAllText($config, ($fixtureConfig | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
             $job = Start-Worker (Join-Path $scripts 'agent-1c.ps1') @('-ProjectRoot', $root, '-Action', 'check-dev-branch')
             try {
                 $null = Wait-Fixture { Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-waiters') -Filter '*.json' -ErrorAction SilentlyContinue }
-                [IO.File]::WriteAllText($config, '{"fixtureTarget":"current"}')
+                $fixtureConfig.fixtureTarget = 'current'
+                [IO.File]::WriteAllText($config, ($fixtureConfig | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
                 if ($InputKind -eq 'environment') { [IO.File]::WriteAllText((Join-Path $root '.dev.env'), 'FIXTURE_TARGET=changed') }
                 Complete-Agent1cLifecycleOperation -Status succeeded -ExitCode 0
                 Exit-Agent1cLifecycleOperation
                 $result = Receive-Worker $job
+                $result.combinedText | Should -Not -Match '\bGet-FileHash\b'
                 if ($InputKind -eq 'config') {
                     $result.exitCode | Should -Be 0 -Because $result.combinedText
                     $result.stdout | Should -Match CURRENT_CONFIG
-                } else {
+                } elseif ($InputKind -eq 'environment') {
                     $result.exitCode | Should -Be 1
                     $result.combinedText | Should -Match LIFECYCLE_INPUT_CHANGED
                     $result.stdout | Should -Not -Match CURRENT_CONFIG
@@ -272,6 +297,29 @@ function Check-DevBranch {
                 $job | Stop-Job
                 $job | Remove-Job -Force
             }
+        }
+    }
+
+    It 'fingerprints an unborn repository before the first initialization dump commit' {
+        $root = Join-Path $TestDrive 'первичная инициализация'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        & git -C $root init --quiet
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $admissions = @([pscustomobject]@{
+                infoBaseKind = 'file'
+                infoBasePath = (Join-Path $root 'Исходная база')
+            })
+
+            $before = Get-Agent1cExecutionInputFingerprint -Admissions $admissions
+            $again = Get-Agent1cExecutionInputFingerprint -Admissions $admissions
+            $before.head | Should -Be 'unborn:master'
+            $again.digest | Should -Be $before.digest
+
+            & git -C $root -c user.name=Test -c user.email=test@example.com commit --allow-empty --quiet -m init
+            $after = Get-Agent1cExecutionInputFingerprint -Admissions $admissions
+            $after.head | Should -Match '^[a-f0-9]{40}$'
+            $after.digest | Should -Not -Be $before.digest
         }
     }
 

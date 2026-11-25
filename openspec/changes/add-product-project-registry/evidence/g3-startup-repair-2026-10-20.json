@@ -1,0 +1,1354 @@
+{
+    "acceptanceLimits":  [
+                             "Synthetic Git/config hook and native CLI proof, not full installed PM4/PM5 init/update/branch/restore or actual MCP client tools/reload",
+                             "Both final warm series meet engineering goals on this host; full installed paired context/performance proof remains open",
+                             "Full G3/AC-39, memory AC-43/G5, release population AC-36-38/AC-44 and remaining source/client/platform/distribution/seed conditions remain open",
+                             "Gate 6 was neither fixed nor rerun; G4, working migration, publication and ai_rules fork edits were not started"
+                         ],
+    "causes":  [
+                   "Full snapshot decoded before existing no-op check; moved checked receipt reuse after successful refresh, SHA/input validation and before blob reads. Lazy full reads stay pinned in the same operation.",
+                   "Three blob IDs were resolved by three Git processes; batched fixed immutable object names reduce normal full reader from seven to five Git calls; schema/business checks and exact missing-file diagnostics retained.",
+                   "Single-client sync compared its subset client-list settingsIntentHash with project-wide hash; same context/proved clients now preserve complete applied and operation receipts, while new/changed clients still apply."
+               ],
+    "clientFormats":  {
+                          "checks":  48,
+                          "kind":  "Read-only parsed native client file formats, not active client tool catalogs",
+                          "passed":  true
+                      },
+    "coldCli":  {
+                    "action":  "vibecoding1c-mcp-write-client-config",
+                    "attempt":  "cold-final",
+                    "exitCode":  0,
+                    "fetches":  1,
+                    "limits":  "Original catalog CLI on synthetic Git/config fixture; no 1C init/update/branch journey or actual client tool activation",
+                    "mainPhaseReached":  true,
+                    "metadataDeadlineSeconds":  10,
+                    "observedUtc":  "2026-10-20T18:24:57.5158731Z",
+                    "offlineWarning":  true,
+                    "passed":  true,
+                    "protectedFilesChanged":  [
+
+                                              ],
+                    "requestAccepted":  true,
+                    "root":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM5 de09c775108d4143ba8ddec8c4e1cb5a\\Локальный проект",
+                    "wholeCliSeconds":  24.6445552
+                },
+    "concurrent":  {
+                       "diagnosticExit":  0,
+                       "diagnosticSeconds":  2.7738934,
+                       "firstExit":  0,
+                       "firstSemanticPassed":  true,
+                       "limits":  "Two native Windows PowerShell processes, same non-elevated Windows user and synthetic root. Not separate terminal users, 1C lifecycle/branch completion or actual MCP tool activation.",
+                       "observedUtc":  "2026-10-20T18:25:32.4958576Z",
+                       "passed":  true,
+                       "protectedFilesChanged":  [
+
+                                                 ],
+                       "root":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM5 de09c775108d4143ba8ddec8c4e1cb5a\\Локальный проект",
+                       "secondExit":  0,
+                       "secondLockWaitObserved":  true,
+                       "secondMainPhase":  true,
+                       "sourceCommit":  "4faae104a8242f92fa69a112721c7038d41e357e",
+                       "stalledTransportObserved":  true
+                   },
+    "contextCost":  {
+                        "fingerprintChange":  "Two existing catalog schema files join current source/config/client hashes. A changed fingerprint returns to full validation; no new managed state schema or migration.",
+                        "fullReaderNormalGitCallsAfter":  5,
+                        "fullReaderNormalGitCallsBefore":  7,
+                        "newAlwaysOnRules":  0,
+                        "newLlmOrCogneeCalls":  0,
+                        "newToolSchemas":  0,
+                        "refreshDeadlineSeconds":  10,
+                        "unchangedFullBlobDecodes":  0
+                    },
+    "deadlineObservations":  [
+                                 {
+                                     "attempt":  "cold-final",
+                                     "fetchStartedUtc":  "2026-10-20T18:24:36.648641Z",
+                                     "fetchToPinnedReadSeconds":  9.978513,
+                                     "firstPinnedReadUtc":  "2026-10-20T18:24:46.627154Z",
+                                     "limits":  "Observed interval includes handoff to pinned local read; whole CLI is recorded separately. One stalled fetch per fresh trace."
+                                 },
+                                 {
+                                     "attempt":  "concurrent-final",
+                                     "fetchStartedUtc":  "2026-10-20T18:25:08.552702Z",
+                                     "fetchToPinnedReadSeconds":  9.975311,
+                                     "firstPinnedReadUtc":  "2026-10-20T18:25:18.528013Z",
+                                     "limits":  "Observed interval includes handoff to pinned local read; whole CLI is recorded separately. One stalled fetch per fresh trace."
+                                 }
+                             ],
+    "delivery":  "One final local commit and RegisterChange own mandatory Targeted/queue proof in the shared ledger; this evidence is not publication or a second delivery ledger.",
+    "focused":  {
+                    "failed":  0,
+                    "notRun":  0,
+                    "passed":  133,
+                    "seconds":  124.3470626,
+                    "skipped":  0
+                },
+    "historicalPerformance":  {
+                                  "causalLimit":  "Overlap proven; exclusive contribution and historical paired gain not proven",
+                                  "intermediateLimit":  "Before early reuse, over-target median retained; final results do not erase it",
+                                  "intermediatePM5":  {
+                                                          "medianSeconds":  1.0157194999999999,
+                                                          "observedUtc":  "2026-10-20T18:01:11.9004287Z",
+                                                          "p95Seconds":  1.4714124
+                                                      },
+                                  "matrix":  "g3-final-qualification-2026-10-20.json",
+                                  "overlappingTargetedRuns":  [
+                                                                  {
+                                                                      "durationMs":  680012,
+                                                                      "finishedAt":  "2026-10-20T16:41:11.9088658Z",
+                                                                      "mode":  "Targeted",
+                                                                      "startedAt":  "2026-10-20T16:29:51.8972156Z",
+                                                                      "status":  "passed"
+                                                                  },
+                                                                  {
+                                                                      "durationMs":  972881,
+                                                                      "finishedAt":  "2026-10-20T16:43:51.5851848Z",
+                                                                      "mode":  "Targeted",
+                                                                      "startedAt":  "2026-10-20T16:27:38.7046847Z",
+                                                                      "status":  "failed"
+                                                                  }
+                                                              ]
+                              },
+    "id":  "G3-STARTUP-REPAIR-20261020",
+    "observedUtc":  "2026-10-20T18:31:08.3698259Z",
+    "originalMatrix":  [
+                           {
+                               "clients":  [
+                                               "codex",
+                                               "claude-code",
+                                               "opencode",
+                                               "kilocode",
+                                               "cursor",
+                                               "kimi",
+                                               "qwen",
+                                               "command-code",
+                                               "cline",
+                                               "zcode",
+                                               "mimocode",
+                                               "pi"
+                                           ],
+                               "family":  "PM4",
+                               "limits":  [
+                                              "Warm startup hook, not whole 1C command/init/update/branch journey",
+                                              "MCP tools were not activated by actual clients; catalog endpoint readiness remains unverified",
+                                              "Local file transport and immediate offline connection refusal; real stalled Git deadline measured separately",
+                                              "Synthetic test-only product/project mapping, no business registry population"
+                                          ],
+                               "observations":  23,
+                               "stand":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM4 ff37b7c388064f2c8746f8a876961074",
+                               "summary":  [
+                                               {
+                                                   "clientFilesWritten":  0,
+                                                   "clientSurfaceBytes":  12202,
+                                                   "fetches":  20,
+                                                   "maxSeconds":  1.0980039,
+                                                   "medianSeconds":  0.6456945,
+                                                   "p95Seconds":  1.0399243999999999,
+                                                   "samples":  20,
+                                                   "scenario":  "unchanged"
+                                               },
+                                               {
+                                                   "clientFilesWritten":  0,
+                                                   "clientSurfaceBytes":  12202,
+                                                   "fetches":  1,
+                                                   "maxSeconds":  3.0160511999999997,
+                                                   "medianSeconds":  3.0160511999999997,
+                                                   "p95Seconds":  null,
+                                                   "samples":  1,
+                                                   "scenario":  "publisher-only"
+                                               },
+                                               {
+                                                   "clientFilesWritten":  11,
+                                                   "clientSurfaceBytes":  12345,
+                                                   "fetches":  1,
+                                                   "maxSeconds":  7.3932997,
+                                                   "medianSeconds":  7.3932997,
+                                                   "p95Seconds":  null,
+                                                   "samples":  1,
+                                                   "scenario":  "changed"
+                                               },
+                                               {
+                                                   "clientFilesWritten":  0,
+                                                   "clientSurfaceBytes":  12345,
+                                                   "fetches":  1,
+                                                   "maxSeconds":  3.2731415,
+                                                   "medianSeconds":  3.2731415,
+                                                   "p95Seconds":  null,
+                                                   "samples":  1,
+                                                   "scenario":  "offline"
+                                               }
+                                           ]
+                           },
+                           {
+                               "clients":  [
+                                               "codex",
+                                               "claude-code",
+                                               "opencode",
+                                               "kilocode",
+                                               "cursor",
+                                               "kimi",
+                                               "qwen",
+                                               "command-code",
+                                               "cline",
+                                               "zcode",
+                                               "mimocode",
+                                               "pi"
+                                           ],
+                               "family":  "PM5",
+                               "limits":  [
+                                              "Warm startup hook, not whole 1C command/init/update/branch journey",
+                                              "MCP tools were not activated by actual clients; catalog endpoint readiness remains unverified",
+                                              "Local file transport and immediate offline connection refusal; real stalled Git deadline measured separately",
+                                              "Synthetic test-only product/project mapping, no business registry population"
+                                          ],
+                               "observations":  23,
+                               "stand":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM5 de09c775108d4143ba8ddec8c4e1cb5a",
+                               "summary":  [
+                                               {
+                                                   "clientFilesWritten":  0,
+                                                   "clientSurfaceBytes":  12202,
+                                                   "fetches":  20,
+                                                   "maxSeconds":  1.2339931,
+                                                   "medianSeconds":  0.70996339999999991,
+                                                   "p95Seconds":  0.9916229,
+                                                   "samples":  20,
+                                                   "scenario":  "unchanged"
+                                               },
+                                               {
+                                                   "clientFilesWritten":  0,
+                                                   "clientSurfaceBytes":  12202,
+                                                   "fetches":  1,
+                                                   "maxSeconds":  3.6004983,
+                                                   "medianSeconds":  3.6004983,
+                                                   "p95Seconds":  null,
+                                                   "samples":  1,
+                                                   "scenario":  "publisher-only"
+                                               },
+                                               {
+                                                   "clientFilesWritten":  11,
+                                                   "clientSurfaceBytes":  12345,
+                                                   "fetches":  1,
+                                                   "maxSeconds":  7.6881948,
+                                                   "medianSeconds":  7.6881948,
+                                                   "p95Seconds":  null,
+                                                   "samples":  1,
+                                                   "scenario":  "changed"
+                                               },
+                                               {
+                                                   "clientFilesWritten":  0,
+                                                   "clientSurfaceBytes":  12345,
+                                                   "fetches":  1,
+                                                   "maxSeconds":  3.2861173999999997,
+                                                   "medianSeconds":  3.2861173999999997,
+                                                   "p95Seconds":  null,
+                                                   "samples":  1,
+                                                   "scenario":  "offline"
+                                               }
+                                           ]
+                           }
+                       ],
+    "ownership":  "Existing catalog reader, registry operation context and client preview/apply owner. No persistent cache, service, lock, new admission barrier or client support reduction.",
+    "paired":  [
+                   {
+                       "afterMedianSeconds":  0.66351445,
+                       "afterP95Seconds":  0.984738,
+                       "afterProfile":  {
+                                            "readLocalMilliseconds":  75.42110000000001,
+                                            "reusedCheckedAppliedContext":  true,
+                                            "snapshotMilliseconds":  401.194
+                                        },
+                       "beforeMedianSeconds":  0.71133895,
+                       "beforeP95Seconds":  0.80831829999999993,
+                       "catalogRevision":  "22bcfb899573cc9204fde451197698e3ac729f79",
+                       "comparisonLimits":  "Same root/cache/catalog SHA, separate warm observations on a shared loaded host. Median improvement and p95 variation are observations, not an exclusive causal attribution of historical 1.6-1.8 s to source.",
+                       "family":  "PM4",
+                       "fetchCounts":  [
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1
+                                       ],
+                       "protectedFilesChanged":  [
+
+                                                 ],
+                       "samplesPerVersion":  20,
+                       "stand":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\Матрица startup PM4 dfc8274d56cf4625bc15469523232783"
+                   },
+                   {
+                       "afterMedianSeconds":  0.64612965,
+                       "afterP95Seconds":  1.0574945,
+                       "afterProfile":  {
+                                            "readLocalMilliseconds":  72.2406,
+                                            "reusedCheckedAppliedContext":  true,
+                                            "snapshotMilliseconds":  268.4656
+                                        },
+                       "beforeMedianSeconds":  0.6652016999999999,
+                       "beforeP95Seconds":  0.7856434,
+                       "catalogRevision":  "ba82e6254cb99a687617caa2069b95b125130984",
+                       "comparisonLimits":  "Same root/cache/catalog SHA, separate warm observations on a shared loaded host. Median improvement and p95 variation are observations, not an exclusive causal attribution of historical 1.6-1.8 s to source.",
+                       "family":  "PM5",
+                       "fetchCounts":  [
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1,
+                                           1
+                                       ],
+                       "protectedFilesChanged":  [
+
+                                                 ],
+                       "samplesPerVersion":  20,
+                       "stand":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\Матрица startup PM5 045483be10364b21864d9a37d8106d22"
+                   }
+               ],
+    "platform":  {
+                     "build":  "26300",
+                     "caption":  "Майкрософт Windows 11 Домашняя",
+                     "elevatedToken":  false,
+                     "powerShell":  "5.1.26100.9711",
+                     "productType":  1,
+                     "sessionName":  null
+                 },
+    "preservation":  {
+                         "allPassed":  true,
+                         "gate6Artifacts":  7,
+                         "limits":  "No lifecycle, 1C, Gate 6, old-copy cleanup or raw-seed restoration was run. New restored DB SHA was not remeasured in this read-only consolidation; original native DB proof remains historical.",
+                         "oldRoots":  4,
+                         "originalRawSeedMissing":  true,
+                         "priorCapsuleRawEvidence":  68,
+                         "protectedFiles":  13,
+                         "restoredPm5Roots":  2,
+                         "sourceGitLocalSettingsUnchanged":  true
+                     },
+    "qualifiedInputs":  [
+                            {
+                                "blob":  "fdd289d081ce45b0601a84bb034e4146eb23a94b",
+                                "path":  ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+                                "sha256":  "2f2c4b9eb9fa694460b028a78d17062e93134f9c64f7e6d3710c39fd71ef9528"
+                            },
+                            {
+                                "blob":  "b1da2f6c6f750b781db42c3e6129f2b204178e46",
+                                "path":  ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+                                "sha256":  "14c269a9ad47ebb7b9ceff2b854c5c1009ac783adb51ddec55d5341e8628e25d"
+                            },
+                            {
+                                "blob":  "098ce1b7e178e078ffe7430789565b0a93ef8102",
+                                "path":  ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+                                "sha256":  "66841d17ffbb70c5fddbc905522d2970bbb1f6801e9c61259242dd1ff3fa29b3"
+                            },
+                            {
+                                "blob":  "1cade55cff0f86bf954188c96b0b56c42055648b",
+                                "path":  "tests/pester/ProductProjectRegistry.Tests.ps1",
+                                "sha256":  "28428d6c57d47ec0b78fada28db20251bdaab3687edbce23847715b0cd8b4dc3"
+                            },
+                            {
+                                "blob":  "0aa303757957a95c97a852b7793776f14b90a5bc",
+                                "path":  "tests/pester/ProductProjectSetup.Tests.ps1",
+                                "sha256":  "b6f94f280f9c70d340fa4f7e7e8c41b09e15cea154f4a96eb4d4acd62e55a329"
+                            },
+                            {
+                                "blob":  "1c8cfef02bf78df61e5ae3667934d0c7e42283a7",
+                                "path":  "tests/pester/ProductProjectContext.Tests.ps1",
+                                "sha256":  "e8e1750144f612013f33fc403b3b33074ee66800cbdfda411af86d9620d21c2f"
+                            }
+                        ],
+    "rawEvidence":  [
+                        {
+                            "bytes":  420565,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\delivery-during.json",
+                            "sha256":  "c7439e54a91654197edbbcf0a8ffe170788b6dcbf206f47a9bb2c4ea2b67b02b"
+                        },
+                        {
+                            "bytes":  423,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\client-formats-after.result.json",
+                            "sha256":  "04790f6ef8959865ba0b005bec1a3b56232fe53a2692cc45bbd3b3d5c35a9072"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\client-formats-after.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\client-formats-after.stdout",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  513,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\client-formats-final.result.json",
+                            "sha256":  "29378e1c051ca0b4ee1667948ffa19325b757034d6e729a429ec2ce5cfa0f16b"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\client-formats-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\client-formats-final.stdout",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  405,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\cli-preparation.result.json",
+                            "sha256":  "01933721e7fe8cca4916f1c4f4267ed4d71ae7531a4896f2dcf47da0fe7e245e"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\cli-preparation.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\cli-preparation.stdout",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  411,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\cold-cli-after.result.json",
+                            "sha256":  "f90c40f1fe391adaf997e138c423234582f63cd0e217b18e79b482ab2d90837e"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\cold-cli-after.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\cold-cli-after.stdout",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  495,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\cold-final.result.json",
+                            "sha256":  "edab80eeed8990e1f27dcad5c7615c6bb183ffee8541b8bed25ea2d81f951678"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\cold-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\cold-final.stdout",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  10494,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\collect-final.ps1",
+                            "sha256":  "805f3cd373262709ce5dcb42396ca9217449a1c9f20b6592fdcbdb7b8abad478"
+                        },
+                        {
+                            "bytes":  10158,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\collect-final-initial.ps1",
+                            "sha256":  "c471439b19bf51243212583457465a6c6530ab683743f54f86b0480c0510bfeb"
+                        },
+                        {
+                            "bytes":  412,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\concurrent-after.result.json",
+                            "sha256":  "f57a6fef1b0f365ee7e00024136b23d272fb047bb75a8f8529382c2b38747197"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\concurrent-after.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  941,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\concurrent-after.stdout",
+                            "sha256":  "df5ad30abe01f30f39118f9993d4548ac7cbeb61f4f149a5fb0098288c5731cf"
+                        },
+                        {
+                            "bytes":  510,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\concurrent-final.result.json",
+                            "sha256":  "65ea361939640afa9f2061f305f597fc6475c5a0d921e3f20fc10bbe83f3ba23"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\concurrent-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  932,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\concurrent-final.stdout",
+                            "sha256":  "00fac23e84755510158255af0e4743efd98a6ede89b3289611e733d0a7122916"
+                        },
+                        {
+                            "bytes":  7082,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\fixture-prefix.ps1",
+                            "sha256":  "e9fba4ec95ae58d5c298880cd9b74f4b75ef198d611f51a8da8d1f7d46d48f93"
+                        },
+                        {
+                            "bytes":  968,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused.ps1",
+                            "sha256":  "2df2c4efa39fb5d638399c7bc863819b3ee85fe27a0503e4cd82872e8acf8d87"
+                        },
+                        {
+                            "bytes":  395,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused.result.json",
+                            "sha256":  "84dfcc1511905ead13f1e751fc1a6fb923064a5d1ecb8f46561334b7bd93f269"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  35564,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused.stdout",
+                            "sha256":  "a93dd16abac8edb5132713464942b608307bdf456203ffd4a6036c7626174a7d"
+                        },
+                        {
+                            "bytes":  66033,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused.xml",
+                            "sha256":  "943042bd76682ce988e0a3449ab50af2a2d14a6ef2faa7c8bbbd12e74904000f"
+                        },
+                        {
+                            "bytes":  971,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-final.ps1",
+                            "sha256":  "6e5aa23a7327ecc019cc97798f29857167bca9b264d79a5313ec278dcc7011e5"
+                        },
+                        {
+                            "bytes":  394,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-final.result.json",
+                            "sha256":  "810fe5d877c49295032b9a2d5a5c184fbb619d230331f822cf3a4e617ce2197b"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  24975,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-final.stdout",
+                            "sha256":  "f0dde9be74273405951e8ab006ffcbe81a5c5da098274f45ec435593802a0582"
+                        },
+                        {
+                            "bytes":  55368,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-final.xml",
+                            "sha256":  "86917ab4ca836cf288326ef07862faab2b60d0b151492ca3c0d9b8df41c46c4e"
+                        },
+                        {
+                            "bytes":  977,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-final-r2.ps1",
+                            "sha256":  "7200a4ea036e439cd33e0443fd8111729a98e0ae56f6b6324be1f7a6cddc818d"
+                        },
+                        {
+                            "bytes":  404,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-final-r2.result.json",
+                            "sha256":  "ee89af4ababd732b3e3265c113d8daf4d4341c3fbd490c21bae278f408fe0a9d"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-final-r2.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  20206,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-final-r2.stdout",
+                            "sha256":  "e9cff7e7efc86e694fdad0ed8e2d538d1deff923a446e8e1bbaf1644549d8134"
+                        },
+                        {
+                            "bytes":  50426,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-final-r2.xml",
+                            "sha256":  "55430f75d42600a24285e1e9c524845224dcaa9ee6914978c30cd86ae147c595"
+                        },
+                        {
+                            "bytes":  959,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-initial.ps1",
+                            "sha256":  "6fdbf814d6e68e6e66cf875360fa75b9799010272bab13917da3b003460dd427"
+                        },
+                        {
+                            "bytes":  387,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-r2.result.json",
+                            "sha256":  "8bed5c2b619dcfaf9e1c5f70553bd64f4f3c1fa7aade659a63deed77049c21af"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-r2.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  19925,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-r2.stdout",
+                            "sha256":  "4a8a0e6a1c8a14809aeea35b46f52d091aec4d4f9f1b01b263b3e4a1a6d2e60d"
+                        },
+                        {
+                            "bytes":  49689,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-r2.xml",
+                            "sha256":  "bcceeeb193639cf3440be48af4bbcaed628ea055d0e538c1a17c49cf603e6ead"
+                        },
+                        {
+                            "bytes":  657,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-red.ps1",
+                            "sha256":  "15c617fa3963e576fb5b57215e6fec2bfe671b48b50571a9d660add8673413a8"
+                        },
+                        {
+                            "bytes":  527,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-red-initial.ps1",
+                            "sha256":  "764fde3fc50c2bfda5db66a610c692acbe4456ac64533cace434645a1e7089a5"
+                        },
+                        {
+                            "bytes":  116,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-result.json",
+                            "sha256":  "ecfc5f58249edaaedaddddbe3548451b8ab49ba25cb0e6cc008692922e6661d0"
+                        },
+                        {
+                            "bytes":  124,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-result-final.json",
+                            "sha256":  "d69019e9d3d836a5cee2edd6405e86686a8b1d239b17d450bb5b20d9bc5228b4"
+                        },
+                        {
+                            "bytes":  117,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-result-final-r2.json",
+                            "sha256":  "aa488da3522f560c34a20e08f791cebadb0e42d4c97ed3b66aaeaea8f551acbd"
+                        },
+                        {
+                            "bytes":  116,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\focused-result-r2.json",
+                            "sha256":  "3587f17b2857e694adea498cfd966461d7e624b420f304aa3c4dbb8939522595"
+                        },
+                        {
+                            "bytes":  41697,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\integrity.json",
+                            "sha256":  "90a2fc5ea3ef18e6bfb69b374ee0f3e0b7206d9bf8b48adc768fbadd7230bfc2"
+                        },
+                        {
+                            "bytes":  3708,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\integrity-final.ps1",
+                            "sha256":  "640c38e12a18df6f84dd85ae9a6ef1499d288019d59660f532e466a83a84c6eb"
+                        },
+                        {
+                            "bytes":  484,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\integrity-final.result.json",
+                            "sha256":  "61384a82ef966036ab569cc8464a179ce43955f2d1903119739a127647212144"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\integrity-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  557,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\integrity-final.stdout",
+                            "sha256":  "60c2daed406319e6f2ee007aa9c9fcc73d3b3d93f66e7e5bf5ddd40f664542f4"
+                        },
+                        {
+                            "bytes":  16895,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\client-formats-final.json",
+                            "sha256":  "cd04e9bca3a308dad3ff55413f437a10a99eb3874ef6e05b15b3c18007770027"
+                        },
+                        {
+                            "bytes":  2213,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\client-formats-final.ps1",
+                            "sha256":  "a995a3a453b419336836a9304f3808839df3fc4d9b52c774e81de5ecbdbec8ff"
+                        },
+                        {
+                            "bytes":  416,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\cli-preparation.json",
+                            "sha256":  "d53f491a41fd076bbc583d8b629abfc9e440090da1861ec2541cded8e5c232ca"
+                        },
+                        {
+                            "bytes":  417,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\cold-cli.ps1",
+                            "sha256":  "19231d4513770f05618e7518f3a9d0be23f82f4840d2ad6d4be0b547ea42fd30"
+                        },
+                        {
+                            "bytes":  294,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\cold-final.ps1",
+                            "sha256":  "85146b9bf37a581d5c9be5238af277aa5821a9d67c3b354c1eaeb24f129aaba9"
+                        },
+                        {
+                            "bytes":  930,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-client.json",
+                            "sha256":  "74e398ff2632eb38f171fe3761a9ae1527af2411b267badd7816902d75e331fb"
+                        },
+                        {
+                            "bytes":  5618,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-client.ps1",
+                            "sha256":  "4fabda75b486dbffabd01885d3f38549bfbe5ad73d13d34a4835785d5abe5167"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-diagnostic.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  419,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-diagnostic.stdout",
+                            "sha256":  "8faac586cb9b9d8a8b6ecf215d7c825c8cae094c321a104246eaa95ac8584b88"
+                        },
+                        {
+                            "bytes":  83,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-final.ps1",
+                            "sha256":  "06d677591550ffecfa145be86e28e3c077a37a381fe7e65b9c5a69d63db5cdfa"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-final.stdout",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  83,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-first.ps1",
+                            "sha256":  "a9631bcbb8e1b7b4ab82c6f843b5c3d1b042f5db1d10fcee1a9eecfdebaefa75"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-first.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-first.stdout",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  1122,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-second.stderr",
+                            "sha256":  "a6c6a85a18214efa0e355d1cdf53af4bef402738e7b35f80fe16e4a55468a8fd"
+                        },
+                        {
+                            "bytes":  593,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\concurrent-second.stdout",
+                            "sha256":  "fde4c2a326252d8a754ad08af8580d65488a10f730812fa3ee1daa583a5acf67"
+                        },
+                        {
+                            "bytes":  63,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\matrix-PM4.ps1",
+                            "sha256":  "515bdd48b6c43fe206d493298cc68bed5d30dc41b30245b45c6b8897807a5559"
+                        },
+                        {
+                            "bytes":  63,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\matrix-PM5.ps1",
+                            "sha256":  "aabeab02fb6e5ad0d0f94ddce778908abe16228143498a8eb2c966c34e30b8d8"
+                        },
+                        {
+                            "bytes":  1581,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\prepare-cli.ps1",
+                            "sha256":  "0282d1214edc116227afda8486799bb6b034d6e98e7d44c96315c520c6d6c12a"
+                        },
+                        {
+                            "bytes":  5864,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli.ps1",
+                            "sha256":  "cab99b1b64ab6d0d0f2e4db067d98c919fc63a7f7d973dbb53d560c5140976e3"
+                        },
+                        {
+                            "bytes":  847,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-cold-after.json",
+                            "sha256":  "a472a13119c0b5abfe1a0789dead6467b2087d3dd670223681291492353f1ed3"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-cold-after.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  593,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-cold-after.stdout",
+                            "sha256":  "fde4c2a326252d8a754ad08af8580d65488a10f730812fa3ee1daa583a5acf67"
+                        },
+                        {
+                            "bytes":  56596,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-cold-after-git-trace.jsonl",
+                            "sha256":  "be6f984ee87be6896074b7fff5f60100cfd290d092a10130387bbb04785e82a9"
+                        },
+                        {
+                            "bytes":  847,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-cold-final.json",
+                            "sha256":  "3fc6a27c6a7a99b00e8b6369f8c6b702d0761f75445dd27b3576cb922dcf33f0"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-cold-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  593,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-cold-final.stdout",
+                            "sha256":  "fde4c2a326252d8a754ad08af8580d65488a10f730812fa3ee1daa583a5acf67"
+                        },
+                        {
+                            "bytes":  57240,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-cold-final-git-trace.jsonl",
+                            "sha256":  "6c569648e47bbdad99b62e0a00535cf299bbe2a2b7be8ae749cb1e32a94148b9"
+                        },
+                        {
+                            "bytes":  852,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-concurrent-final.json",
+                            "sha256":  "e3d46993b27f8ca1dc8f93ce781a38d910879fc35592f7129703ae776ee669ae"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-concurrent-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  593,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-concurrent-final.stdout",
+                            "sha256":  "fde4c2a326252d8a754ad08af8580d65488a10f730812fa3ee1daa583a5acf67"
+                        },
+                        {
+                            "bytes":  58304,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-concurrent-final-git-trace.jsonl",
+                            "sha256":  "8ac3689cd79876920d67d1a92b987876467bed917a62cdd7cf9e2965a0b27611"
+                        },
+                        {
+                            "bytes":  853,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-concurrent-first.json",
+                            "sha256":  "cd04ddc5a3ee281404d8d1733a9a6856a0b6a4ec1241e6a6a280f64fc7dcdeba"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-concurrent-first.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  593,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-concurrent-first.stdout",
+                            "sha256":  "fde4c2a326252d8a754ad08af8580d65488a10f730812fa3ee1daa583a5acf67"
+                        },
+                        {
+                            "bytes":  57240,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-deadline-cli-concurrent-first-git-trace.jsonl",
+                            "sha256":  "0b493e3228166ffc4692b66063612074e59857519de54bb46090d3d415d0325d"
+                        },
+                        {
+                            "bytes":  9534,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-matrix.ps1",
+                            "sha256":  "2bdf6bf5174a9c5a6df03a14bb86357b07a1c09762585b2bc88fa1a9fdb86e6e"
+                        },
+                        {
+                            "bytes":  9279,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-matrix-initial.ps1",
+                            "sha256":  "8f7a20ae5b0b40804e6c4b5895222a7f0193c95f0cfe3c2fe726031f2be37028"
+                        },
+                        {
+                            "bytes":  14102,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-matrix-PM4.json",
+                            "sha256":  "1a35f850cda5815cebe4dea46ab2555d076da0e32590c0de0742c04e39e1ae88"
+                        },
+                        {
+                            "bytes":  14055,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\startup-matrix-PM5.json",
+                            "sha256":  "6da3559a578f5db24fdb220663e91bb5a320a82620bb4e61bc641e542d134949"
+                        },
+                        {
+                            "bytes":  495,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-final-PM4.result.json",
+                            "sha256":  "7aec3668b557a0bf67cab3e15b6d0f5a644c33f5dfd2b15dfe60930a47ed96c6"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-final-PM4.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  3165,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-final-PM4.stdout",
+                            "sha256":  "bbcfc7a3e32195c80f9f8a7ebe4bae7d652f313b7ad039e696ac75bda3c86653"
+                        },
+                        {
+                            "bytes":  495,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-final-PM5.result.json",
+                            "sha256":  "c7159ff22196e6915909aa1d2f383c4a1e5923da889eca3e446380de36971b94"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-final-PM5.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  3166,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-final-PM5.stdout",
+                            "sha256":  "c8b14a80ce1f4fcf3513a695e7364a69f07139ded7399316617ab689c5bb310b"
+                        },
+                        {
+                            "bytes":  405,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-PM4-after.result.json",
+                            "sha256":  "677c15ae8d91108103cc0b7bce601080d0532b3fe2f1f98dc54e4d48c7864b90"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-PM4-after.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  3156,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-PM4-after.stdout",
+                            "sha256":  "b7d74d140e04a499311cefdd32e1fa836250458a7becefcb2dffdeb48d64f0ea"
+                        },
+                        {
+                            "bytes":  404,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-PM5-after.result.json",
+                            "sha256":  "5480545e094fb4212979223cb0e9c15df7b0315384e7d6c5a9c33f070dbf0247"
+                        },
+                        {
+                            "bytes":  986,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-PM5-after.stderr",
+                            "sha256":  "cffc818bc13485399dfc592af7fadc165f9373e82c697ff10587077d86cca0ed"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-PM5-after.stdout",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  405,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-PM5-after-r2.result.json",
+                            "sha256":  "3aae44491710fa39a3e37b557be02036a93e7898c3c53a8e7a4b90b343674b42"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-PM5-after-r2.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  3166,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-PM5-after-r2.stdout",
+                            "sha256":  "fbe8bbd7203399ef51c7bab472acd2cb16e6f6c526ec7c3aae97397ed2286982"
+                        },
+                        {
+                            "bytes":  494,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-final-PM4.result.json",
+                            "sha256":  "070bce8a81e23cf5515fcb609ad1a2fe2e260db9d92f5f9a13c1950c1a248d7e"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-final-PM4.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  768,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-final-PM4.stdout",
+                            "sha256":  "e464203b32ac8bf3057a460c6568c26a515ed3acb9d8ae5a5f9277d8b1b7de46"
+                        },
+                        {
+                            "bytes":  494,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-final-PM5.result.json",
+                            "sha256":  "6b25ffe0d180c56c637ddf8e9c4b7b1a5833a3fc4b6ce37ca07dd3553dec65d9"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-final-PM5.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  760,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-final-PM5.stdout",
+                            "sha256":  "e69985938d28d87321df6a6e2bc15c19cd15990a782d7506ee161d98de8eadbf"
+                        },
+                        {
+                            "bytes":  2471,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-PM4-after.json",
+                            "sha256":  "8297d154f10d40e37afbab66eb97b927ef8454bac24155b3ca5780c25c1e2a8e"
+                        },
+                        {
+                            "bytes":  2690,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-PM4-before.json",
+                            "sha256":  "d5a6a7c7dc4deacb03e83f4ef5ae95b5aae826ef8572c1442a23ea4e6b0f3650"
+                        },
+                        {
+                            "bytes":  3088,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-PM4-stand.json",
+                            "sha256":  "6f18bfcba345d0f8d44385e580a9c9c276f9c8b273365e6455af1e73e16ddf4c"
+                        },
+                        {
+                            "bytes":  2481,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-PM5-after.json",
+                            "sha256":  "f22d888f4c2465f1ef2ae0ecf953a36c2b6bc732cab3e976d1774ff606d70141"
+                        },
+                        {
+                            "bytes":  2681,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-PM5-before.json",
+                            "sha256":  "88e9caacd2a450f33f30c30b0808194c132db474be18517bf2076db65cff9ad5"
+                        },
+                        {
+                            "bytes":  4472,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-PM5-before-instrumentation-r2.json",
+                            "sha256":  "05d5796ff8e07e0bba0f86121085d1dd33a467e45e39233daaf642b4153dfab2"
+                        },
+                        {
+                            "bytes":  3088,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-PM5-stand.json",
+                            "sha256":  "1c5ff2c0e6f4d399b470365274da5f8a793885a8c72470a0a5040757d12cfe52"
+                        },
+                        {
+                            "bytes":  3088,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\paired-PM5-stand-initial.json",
+                            "sha256":  "77e3b09643ad66464059e65e6d9b65199106792ef2fc944df2d53af4ff5750ae"
+                        },
+                        {
+                            "bytes":  495,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\prepare-cli-final.result.json",
+                            "sha256":  "31813500275811a3a547241ad0aea78bff937bee0a3f90c8dc584cb1456ad79f"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\prepare-cli-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\prepare-cli-final.stdout",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  5971,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile.ps1",
+                            "sha256":  "163288c07df519fe124d4387ff3e8804a541ce2f9808ebdf14e113cb8aac2a2e"
+                        },
+                        {
+                            "bytes":  69,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-after-PM4.ps1",
+                            "sha256":  "48323caa054d6de1ce0610267ac0f93f9f218108a8285dd23c743983690ea53b"
+                        },
+                        {
+                            "bytes":  69,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-after-PM5.ps1",
+                            "sha256":  "3a92d08479ef38247dde60c10eeb4d8c4655dc78d070c04817d5de82ae9f8fde"
+                        },
+                        {
+                            "bytes":  70,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-before-pm4.ps1",
+                            "sha256":  "598a686a79cd39561f51283eea0f2bd05f3bc363d957dab18e9716dbafb859ad"
+                        },
+                        {
+                            "bytes":  70,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-before-reuse.ps1",
+                            "sha256":  "a390400545be4e817d4879e0a73a42f0a532fe18f0e5beb0208304220e80a61b"
+                        },
+                        {
+                            "bytes":  4428,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-initial.ps1",
+                            "sha256":  "23d603a122cc87958e0a851d92cb0b164d25ed4fb042827e6293e84c2a613764"
+                        },
+                        {
+                            "bytes":  4555,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-instrumentation-r2.ps1",
+                            "sha256":  "3aaa6ec22225098466106186a520323d68caf9fa87f1dc9a4438f2f1f4c4f81d"
+                        },
+                        {
+                            "bytes":  397,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM4-after.result.json",
+                            "sha256":  "cf6e91e71f65bea32a1fc9b23d3787b333057ad8cef0c9efe337bcacec4f5b7b"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM4-after.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  949,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM4-after.stdout",
+                            "sha256":  "9c4468f90de31bb515ee5fc8852678fe68e220494c40a9b2c82147c90133ebdc"
+                        },
+                        {
+                            "bytes":  398,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM4-before.result.json",
+                            "sha256":  "4aa7e54cc771a5141a9be5c32c341653fb325bd4e00bb692bda5fff219ff4118"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM4-before.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  1383,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM4-before.stdout",
+                            "sha256":  "0008153c0bf569b3c8fbf3f05c1152c4ed7efb494bb1a6447bbe95251314aab3"
+                        },
+                        {
+                            "bytes":  397,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM4-final.result.json",
+                            "sha256":  "ae684475682f4417f21d2f601b9b1d9ed25c38cd83970da953b013232716da19"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM4-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  937,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM4-final.stdout",
+                            "sha256":  "bd00a4b1bfbac9d5736d3523bd7b4d1de7ede2a296d0edbee937b8e4de11b7a8"
+                        },
+                        {
+                            "bytes":  405,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-after.result.json",
+                            "sha256":  "7b106e6ceaab32ba46c2c836f7ef89ee862cde226827a92ca1f4b712e5e5ba54"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-after.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  936,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-after.stdout",
+                            "sha256":  "c10f6629f8c7edbb2c4809b697636975e1360e24bfa31a998de2046b0adaa428"
+                        },
+                        {
+                            "bytes":  387,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-before.result.json",
+                            "sha256":  "4a351ac4e0aedb76a04db464e7d07eafb1e70824ad71b925c5d1f31d47b5e1f3"
+                        },
+                        {
+                            "bytes":  576,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-before.stderr",
+                            "sha256":  "55120a0c18b7a9a56615217148fb37e8c05ea940260d75d12609f58dfa9e8230"
+                        },
+                        {
+                            "bytes":  866,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-before.stdout",
+                            "sha256":  "4e37ad8e22a9ad002943decd6fc0f4790241a3ad1b8ff37c9bbe6f71b1bb3889"
+                        },
+                        {
+                            "bytes":  395,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-before-r2.result.json",
+                            "sha256":  "a75710819e1ca8a783c4f43e413d6dc7085fbd5b5601659098c2889108fa7a9a"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-before-r2.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  3371,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-before-r2.stdout",
+                            "sha256":  "e9b6ce83e2b6154635f7f509a6bb8d871e275ba1e11f209aca3895ed7504b61b"
+                        },
+                        {
+                            "bytes":  400,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-before-r3.result.json",
+                            "sha256":  "576873afa67513c7fc4ada0be9974cf47a917ac564529fa7c47d3a0eb3bbbaef"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-before-r3.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  524,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-before-r3.stdout",
+                            "sha256":  "16b6b79e37a584c79c5c095ed1d6b8aea63545c3612d8ba3fcd539203dd72a62"
+                        },
+                        {
+                            "bytes":  397,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-final.result.json",
+                            "sha256":  "acda2888d01729656664da41992aed5b14329d5751a3ea9fef3eba56fa0c31f1"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  955,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\profile-PM5-final.stdout",
+                            "sha256":  "5157d7e61a828c837e9b2cc00f71e27ecc7560c16e9c4fa5ae5b1b4dd1935470"
+                        },
+                        {
+                            "bytes":  105870,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\proof-serialization-initial.json",
+                            "sha256":  "61b88c6f6027ba6c4a2451d26da1685e3032db7dbabbd09e5ddc7edd5827bd4e"
+                        },
+                        {
+                            "bytes":  1135,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\qualified-inputs.json",
+                            "sha256":  "5303aae9fdd3045353e3b3cba28412c80b918a282b69760358561f73913cfcc3"
+                        },
+                        {
+                            "bytes":  1460,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\qualified-inputs-final.json",
+                            "sha256":  "3467fc5e2e4864e2786a48105828a664bf31695575ab33f4b7930d24b4b84efb"
+                        },
+                        {
+                            "bytes":  2687,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\qualify-final.ps1",
+                            "sha256":  "4cbc1728d82e8d60363c1544e53fa83fc1fb4e14b7532865e00e67234214d317"
+                        },
+                        {
+                            "bytes":  736,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\reader-final.ps1",
+                            "sha256":  "9ebe106eccc2b4f9a63a3a91643e696c50577e4455241e1f172e1ae8badcf817"
+                        },
+                        {
+                            "bytes":  392,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\reader-final.result.json",
+                            "sha256":  "aa33c96a742bee261663c451c102af162f692b655f0af2cbbde9c68ef7279ae0"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\reader-final.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  3715,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\reader-final.stdout",
+                            "sha256":  "ab8c069ce9ec52416d41cf48bfdfd8fabf62f001c31848891ee5d41b87e8f3d8"
+                        },
+                        {
+                            "bytes":  13315,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\reader-final.xml",
+                            "sha256":  "f98ce39cbe1b6f15ed17ae74209d6d7bf573378792dc3962af31070878c30b70"
+                        },
+                        {
+                            "bytes":  86,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\reader-final-result.json",
+                            "sha256":  "c22e889a47838290b9c7c2984725d28c996014e9ed7b0f5c3ed60765f8d1148c"
+                        },
+                        {
+                            "bytes":  1211,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\receipt-mtime-final.json",
+                            "sha256":  "c67abad4a7c1abf429f5d36ec364ae11a5396bd269e3982b2752f8d451618519"
+                        },
+                        {
+                            "bytes":  390,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\red.result.json",
+                            "sha256":  "43d13b4a9a4295a381eab53cdaea028bdb2a06bdb192d1b8a72400f14287ed75"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\red.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  8184,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\red.stdout",
+                            "sha256":  "47220b6288fc826d88c7344a9975b84106a8dbdc1091e284efa2e925c637a88d"
+                        },
+                        {
+                            "bytes":  6454,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\red.xml",
+                            "sha256":  "745196dff7bbf4a83608be4b6615e20ece19966a39abfd1cf32297c752d30732"
+                        },
+                        {
+                            "bytes":  390,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\red-r2.result.json",
+                            "sha256":  "3c3e828ed95230c4c4cfaed9c8e46d93acec21fe365514d9adfd08f2baa7c866"
+                        },
+                        {
+                            "bytes":  0,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\red-r2.stderr",
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        },
+                        {
+                            "bytes":  9581,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\red-r2.stdout",
+                            "sha256":  "0604129278697624ef22eab802fb52bdaffa32e80e6d5674ce91f9330d307851"
+                        },
+                        {
+                            "bytes":  12893,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\red-r2.xml",
+                            "sha256":  "1f248769b4c24d6e54f5eeda29410ff254208a64d8dd309211b5176192e30e29"
+                        },
+                        {
+                            "bytes":  1216,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\run-capture.ps1",
+                            "sha256":  "36a3e44409c969f3b7b60378ef69453001465db67b6b5077eff093d42f050859"
+                        },
+                        {
+                            "bytes":  110,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\source-git-settings-after.json",
+                            "sha256":  "36c803f1f83cb1db66c154805df86d3e2b29ba6d91270e2936bbe3899b552060"
+                        },
+                        {
+                            "bytes":  99,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\source-git-settings-before.json",
+                            "sha256":  "6fa4ff54cd0632b43257544cb018f2a08a1c3673e055d4c2c45c5787de800e64"
+                        },
+                        {
+                            "bytes":  2681,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\stage-a\\paired-PM4-after.json",
+                            "sha256":  "c09cc6685cd223e682a54bd6ca82be3094c343c3c0f8611960441d36947cdafc"
+                        },
+                        {
+                            "bytes":  2638,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\stage-a\\paired-PM5-after.json",
+                            "sha256":  "a98502e1c32d0bf87dc883ceab713ea4134af8a6df40dcf5f9a305addb339559"
+                        },
+                        {
+                            "bytes":  1135,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\stage-a\\qualified-inputs.json",
+                            "sha256":  "5303aae9fdd3045353e3b3cba28412c80b918a282b69760358561f73913cfcc3"
+                        },
+                        {
+                            "bytes":  2659,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\stage-b\\paired-PM4-after.json",
+                            "sha256":  "f177c73f60c434410e6ff218415860801cb88dd79a1508ab7a8018147d65c510"
+                        },
+                        {
+                            "bytes":  2636,
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\stage-b\\paired-PM5-after.json",
+                            "sha256":  "f4dbcd185b3c8af42406033a087f059bf33634aa4bcfce8507ce53b4a224b92f"
+                        }
+                    ],
+    "receiptMtimes":  [
+                          {
+                              "cliPreparedUtc":  "2026-10-20T18:24:26.8701258Z",
+                              "kind":  "applied",
+                              "lastWriteUtc":  "2026-10-20T18:23:33.0740086Z",
+                              "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM5 de09c775108d4143ba8ddec8c4e1cb5a\\Локальный проект\\.agent-1c\\mcp\\product-context-applied.json",
+                              "sha256":  "352393d7ab6ec9998da452b0ca8d53ce9a85ad2e525f5a72a5880c0ce1cdf0b4",
+                              "writtenBeforeFirstCli":  true
+                          },
+                          {
+                              "cliPreparedUtc":  "2026-10-20T18:24:26.8701258Z",
+                              "kind":  "operation",
+                              "lastWriteUtc":  "2026-10-20T18:23:33.0960460Z",
+                              "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM5 de09c775108d4143ba8ddec8c4e1cb5a\\Локальный проект\\.agent-1c\\mcp\\product-context-operation.json",
+                              "sha256":  "ada8926c8a0a09ad9020d41946578939e1ec8ec8264aea93436836cac123f564",
+                              "writtenBeforeFirstCli":  true
+                          }
+                      ],
+    "retainedFailures":  [
+                             "red-r2 original source regressions failed on base; early first red harness had encoding/discovery failure",
+                             "focused-result.json initial batching failed because Git echoed --end-of-options; fixed to --revs-only",
+                             "focused-result-final.json 132 passed/1 test wrapper parameter-forwarding failure; corrected wrapper, original retained",
+                             "original-PM5-after initial private Git long-path fixture failure; private root checked and core.longpaths set, workload/path/topology unchanged",
+                             "profile-initial and instrumentation-r2 fixture instrumentation failures retained; no product inference",
+                             "Initial proof exporter serialized a PowerShell 5.1 decorated input array as value/Count; existing canonical serializer now writes plain arrays. Initial script/proof retained; no native replay or runtime change."
+                         ],
+    "schemaVersion":  1,
+    "sourceBase":  "4faae104a8242f92fa69a112721c7038d41e357e",
+    "status":  "passed-source-and-synthetic-native-subset-full-G3-open"
+}

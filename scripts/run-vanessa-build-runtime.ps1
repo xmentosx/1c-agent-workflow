@@ -1,0 +1,91 @@
+﻿[CmdletBinding()]
+param([Parameter(Mandatory = $true)][string]$RequestPath)
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+$buildRequest = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$buildWorkRoot = [IO.Path]::GetFullPath([string]$buildRequest.workRoot)
+$buildSourceRoot = Join-Path $buildWorkRoot 'src'
+$buildRuntimeRoot = Join-Path $buildWorkRoot 'runtime'
+[void][IO.Directory]::CreateDirectory($buildRuntimeRoot)
+$buildRuntimeResultPath = Join-Path $buildWorkRoot 'native-runtime-result.json'
+$buildRepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$buildHelperPath = Join-Path $buildRepositoryRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+. $buildHelperPath -ProjectRoot $buildSourceRoot -Action help *> $null
+. (Join-Path $buildRepositoryRoot 'scripts/vanessa-build-runtime.ps1')
+
+$buildBases = @(Get-VanessaBuildDatabasePlan -WorkRoot $buildWorkRoot)
+$buildManifest = Get-Content -LiteralPath $buildRequest.manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$buildSavedScratch = [Environment]::GetEnvironmentVariable('ITL_VANESSA_BUILD_SCRATCH_BASE', 'Process')
+$buildSavedUser = [Environment]::GetEnvironmentVariable('ITL_VANESSA_BUILD_USER', 'Process')
+$buildSavedPlatform = [Environment]::GetEnvironmentVariable('PLATFORM_PATH', 'Process')
+$buildPreviousJournal = $script:OneCNativeOperationJournal
+$buildJournal = $null
+$buildFailure = $null
+$buildRuntimeResult = [ordered]@{ schemaVersion = 1; succeeded = $false; released = $false; bases = $buildBases; adapters = @(); stages = @(); nativeOperations = @(); templateSha256 = '' }
+Write-Utf8Text -Path $buildRuntimeResultPath -Value ($buildRuntimeResult | ConvertTo-Json -Depth 10)
+try {
+    $buildTemplate = Get-VanessaServiceInfoBaseTemplate
+    if ($buildTemplate.user -cnotmatch '^[A-Za-z0-9_]+$') { throw 'VANESSA_BUILD_SERVICE_USER_INVALID' }
+    $buildRuntimeResult.templateSha256 = $buildTemplate.sha256
+    foreach ($flow in @(
+        @{ path = 'tools/onescript/Compile.os'; single = $false },
+        @{ path = 'tools/onescript/MakeVASingle.os'; single = $true }
+    )) {
+        $pin = @($buildManifest.build.upstreamFlow | Where-Object path -eq $flow.path)
+        if ($pin.Count -ne 1) { throw "VANESSA_BUILD_FLOW_PIN_MISSING: $($flow.path)" }
+        $buildRuntimeResult.adapters += New-VanessaBuildExecutionCopy `
+            -SourcePath (Join-Path $buildSourceRoot $flow.path) `
+            -DestinationPath (Join-Path $buildRuntimeRoot ([IO.Path]::GetFileName($flow.path))) `
+            -ExpectedSha256 $pin[0].sha256 -SingleBuild:$flow.single
+    }
+    $buildJournal = New-OneCNativeOperationJournal -Resources $buildBases
+    $script:OneCNativeOperationJournal = $buildJournal
+    [Environment]::SetEnvironmentVariable('ITL_VANESSA_BUILD_USER', $buildTemplate.user, 'Process')
+    [Environment]::SetEnvironmentVariable('PLATFORM_PATH', [string]$buildRequest.platformExe, 'Process')
+
+    [Environment]::SetEnvironmentVariable('ITL_VANESSA_BUILD_SCRATCH_BASE', $buildBases[0].path, 'Process')
+    $buildRuntimeResult.stages += Invoke-VanessaBuildOwnedNative -FilePath $buildRequest.oscriptExe `
+        -Arguments @('-encoding=utf-8', $buildRuntimeResult.adapters[0].executionPath, ($buildSourceRoot + '\')) `
+        -Bases @($buildBases[0]) -Purpose 'vanessa-build-compile'
+
+    $createBaseArguments = @('CREATEINFOBASE', (New-FileInfoBaseConnectionString -Path $buildBases[2].path),
+        '/DisableStartupDialogs', '/Out', (Join-Path $buildWorkRoot 'create-base.log'))
+    $buildRuntimeResult.stages += Invoke-VanessaBuildOwnedNative -FilePath $buildRequest.platformExe `
+        -Arguments $createBaseArguments -Bases @($buildBases[2]) -Purpose 'vanessa-build-qualification-create' -CreateInfoBase -TimeoutSeconds 300
+    Invoke-Designer -InfoBaseKind file -InfoBasePath $buildBases[2].path -User '' -Password '' `
+        -DesignerArgs @('/RestoreIB', $buildTemplate.path) | Out-Null
+
+    [Environment]::SetEnvironmentVariable('ITL_VANESSA_BUILD_SCRATCH_BASE', $buildBases[1].path, 'Process')
+    $buildRuntimeResult.stages += Invoke-VanessaBuildOwnedNative -FilePath $buildRequest.oscriptExe `
+        -Arguments @('-encoding=utf-8', $buildRuntimeResult.adapters[1].executionPath, $buildSourceRoot,
+            (Join-Path $buildWorkRoot 'out'), (Join-Path $buildSourceRoot 'features/Libraries'),
+            [IO.Path]::GetDirectoryName([string]$buildRequest.platformExe), $buildBases[2].path) `
+        -Bases @($buildBases[1], $buildBases[2]) -Purpose 'vanessa-build-single'
+    $buildRuntimeResult.stages += Invoke-VanessaBuildThinClientCheck -Base $buildBases[2] -User $buildTemplate.user -WorkRoot $buildWorkRoot `
+        -EpfPath (Join-Path $buildWorkRoot ('out\Temp\DistribVanessaAutomationsingle\' + [string]$buildManifest.artifact.entryPoint))
+    if ($buildManifest.PSObject.Properties['pairedExtension'] -and $buildManifest.pairedExtension.required) {
+        $buildRuntimeResult.pairedExtension = Invoke-VanessaBuildPairedExtension -SourceRoot $buildSourceRoot -WorkRoot $buildWorkRoot `
+            -InfoBasePath $buildBases[2].path -User $buildTemplate.user -Specification $buildManifest.pairedExtension
+    }
+    $buildRuntimeResult.succeeded = $true
+} catch {
+    $buildFailure = $_
+} finally {
+    try {
+        $buildRuntimeResult.released = $null -eq $buildJournal -or (Test-OneCNativeOperationJournalReleased -Journal $buildJournal)
+    } catch {
+        $buildRuntimeResult.released = $false
+        if ($null -eq $buildFailure) { $buildFailure = $_ }
+    }
+    if ($null -ne $buildJournal) {
+        $buildRuntimeResult.nativeOperations = @($buildJournal.entries | Select-Object id, purpose, admissions, startAttempted, processId, launcherExited, quiescenceConfirmed, releaseEvidence)
+    }
+    $script:OneCNativeOperationJournal = $buildPreviousJournal
+    [Environment]::SetEnvironmentVariable('ITL_VANESSA_BUILD_SCRATCH_BASE', $buildSavedScratch, 'Process')
+    [Environment]::SetEnvironmentVariable('ITL_VANESSA_BUILD_USER', $buildSavedUser, 'Process')
+    [Environment]::SetEnvironmentVariable('PLATFORM_PATH', $buildSavedPlatform, 'Process')
+    Write-Utf8Text -Path $buildRuntimeResultPath -Value ($buildRuntimeResult | ConvertTo-Json -Depth 10)
+}
+if ($null -ne $buildFailure) { throw $buildFailure }
+if (-not $buildRuntimeResult.released) { throw "VANESSA_BUILD_NATIVE_CLEANUP_UNCONFIRMED: preserve $buildWorkRoot" }

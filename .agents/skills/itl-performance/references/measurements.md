@@ -1,6 +1,10 @@
 # Measurement recipes
 
-The engine measures on the execution host regardless of `local`, `ssh` or `agent`. The controller never times a chat response or SSH transfer. `pack` defaults to `time+profile`, one warmup, three unprofiled repeats and one separate diagnostic profile. Choose `--mode time` for timing alone or `--mode profile` for one profile. Preserve explicit user counts.
+The engine measures on the execution host regardless of local/worker runner, pull/SSH/exchange connection, optional bulk folder, or agent policy. The controller never times a chat response or file transfer. `pack` defaults to `time+profile`, one warmup, three unprofiled repeats and one separate diagnostic profile. Choose `--mode time` for timing alone or `--mode profile` for one profile. Preserve explicit user counts.
+
+Every product run must select an explicit `target.infoBase`. The public result records a credential-free hash of its declared kind/path as `databaseIdentity` and records `databaseTopology` as `file` or `server`. `dataIdentity` describes the dataset state; it is not a substitute for the base identity. A target alias, checkout, machine or report filename is also insufficient. Legacy/calibration output without this binding may be inspected by itself but must not participate in comparison.
+
+For opt-in internal operation boundaries use the versioned [operation evidence](operation-evidence.md) contract. It is analyzed after the measured interval and does not change the automatic/default diagnostic depth because there is no such policy. Product adapters still own readiness and equivalence semantics.
 
 ## Build the scenario in the project
 
@@ -14,7 +18,11 @@ The runner's `Invoke-VanessaFeature.ps1` uses a configured Vanessa EPF and a man
 
 For standalone execution configure `target.vanessa` with `epf`, `managerBase` and a settings JSON template matching the pinned Vanessa build. Profile setup uses that project's normal base/tool preparation adapter; do not copy or patch an installed project's workflow. Workload commands get `ITL_RUN_CONTEXT`, including resolved parameters, target, iteration directory and runtime endpoint. Use the supplied 1C launcher for client processes so the same session guard applies.
 
+When TestManager and TestClient use different bases, follow the [two-base remote Vanessa recipe](../../itl-remote-runner/references/vanessa-two-base.md). It requires an explicit TestClient profile and an actual in-client base assertion before product steps. A successful JUnit alone does not establish the TestClient base.
+
 Vanessa/BSL can implement the handshake through JSON/text files in the per-iteration directory; use the example fragment as scaffolding, not as proof its business operation is correct. Write result signals atomically after the real readiness condition and assertions. Never treat a button's asynchronous return as rendered UI readiness.
+
+For D1, copy `OperationEvidenceFragment.bsl` into the product adapter. Each client, server or background producer builds an in-memory fragment with the same job/iteration/operation identity. Server code must return the serialized fragment through an adapter-owned channel (for example, alongside a diagnostic result or through owned temporary storage); it must not assume the execution worker's directory is visible. After the operation and readiness assertion, the client/harness calls `itl_measure.publish_operation_evidence(envelope, fragments)`. The assembler rejects foreign identities and duplicate IDs, inventories missing producers, and publishes the one private sidecar atomically. Fragment serialization and assembly stay outside the measured interval unless the scenario explicitly declares them as part of the product boundary.
 
 ## Installed ITL facade adapter
 
@@ -29,8 +37,12 @@ Preparation runs outside timing. The pinned VAExtension server-expression step r
 `НомерСеанса` in the own TestClient and binds it to the broker's actual PID/start time.
 With profiling enabled, the guarded launch receives the job's debugger endpoint;
 a changed endpoint or job cannot reuse the client. Discovery must find exactly one
-session/base instance and one ManagedClient for the configured alias and observed
-number. Missing or ambiguous matches fail before attach. The explicit-session CLI
+session/base instance and one native client (`ManagedClient` or `Client`) for the
+configured alias and observed number. The selected executable is preserved;
+the collector does not switch client types to bypass discovery. Zero clients is
+`RDBG_OWNED_CLIENT_NOT_DISCOVERED`; multiple clients remain
+`RDBG_OWNED_CLIENT_AMBIGUOUS`, including a mixture of both client families.
+Missing or ambiguous matches fail before attach. The explicit-session CLI
 remains available; alternatively use `--session-observation <relative-run-path.json>`
 instead of `--seance`. The observation contains `jobId`, `clientPid`,
 `clientStartedAt` and `sessionNumber`.
@@ -53,12 +65,26 @@ For a file base, the worker selects `dbgs.exe` beside the configured platform or
 
 For a server base, `target.rdbg.url` names the actual server/shared `dbgs`. No local replacement is started and no server service is stopped. Both client/server targets must belong to this job's base instance and runtime session. Configure the required server debugging through the authorized environment setup, not by changing server processes during a failed measurement.
 
-Preparation emits `{run}/runtime-proof.json` with `jobId`, `clientPid`, `infoBaseAlias`, `seanceId`, `infoBaseInstanceID`, `targetIds` established from fresh own-client startup and debugger discovery. The `runtime-proof --context <context.json> --client-pid <pid> --seance <session> --instance <instance>` helper verifies the guarded launch and live process, then discovers only that explicit session. Obtain the session/instance from the own TestClient/runtime adapter, never by choosing the first debugger target. Only when `context.rdbg` is available, use `debug: true` in the guarded client launch spec to receive `/DEBUG -http /DEBUGGERURL` with the effective endpoint. In time-only mode omit debug/proof setup. For a profiling handshake iteration establish the fresh proof before publishing `ready.json`. The collector independently compares each named target's live base/session/instance before attach and checks the same fields in returned packets; it never attaches all discovered targets. File-base profiles may have only a client target; server profiles require the client and matching server targets.
+Preparation emits `{run}/runtime-proof.json` with `jobId`, `clientPid`, `infoBaseAlias`, `seanceId`, `infoBaseInstanceID`, `targetIds` and `targetTypes` established from fresh own-client startup and debugger discovery. The `runtime-proof --context <context.json> --client-pid <pid> --seance <session> --instance <instance>` helper verifies the guarded launch and live process, then discovers only that explicit session. Obtain the session/instance from the own TestClient/runtime adapter, never by choosing the first debugger target. Only when `context.rdbg` is available, use `debug: true` in the guarded client launch spec to receive `/DEBUG -http /DEBUGGERURL` with the effective endpoint. In time-only mode omit debug/proof setup. For a profiling handshake iteration establish the fresh proof before publishing `ready.json`. The collector independently compares each named target's live base/session/instance/type before attach and checks the same fields in returned packets; it never attaches all discovered targets. A full file-base profile requires the discovered native client family and its ServerEmulation context; a server-base profile requires that client family and Server. Runtime proof, engine requirements and returned packets must retain the exact Client/ManagedClient type; one does not substitute for the other. Legacy proofs without targetTypes still require ManagedClient. Other sessions and JobFileMode are not adopted. Missing collected packets are retained with `complete=false` and explicit missing families/IDs, making the engine result partial. Client inclusive time overlaps server time and must never be added to it.
 
-Original `.response.bin` and decoded XML, request XML, profile summaries and debugger cleanup status are retained. `analyze --raw <paths...> --session <id>` is offline. An optional `--source-map` maps module IDs to exact version, source path and SHA256; unmatched sources remain unmatched, never silently substituted from another checkout. Native PFF generation is not implemented.
+The engine publishes `loadedState` plus a hash-bound
+`loaded-state-evidence.json`. This evidence keeps declared identities separate and
+records the configuration version and exact versioned module identities returned
+for the actual owned session. Ordinary profiling does not require a configuration
+dump. Request `sourceAnalysis: optional|required` only when line-to-source mapping
+is needed; unresolved selected modules are then exported from the target database
+after measurement while the same admission lease is held. The report binds copied
+module bytes and the verified target snapshot inventory. It does not claim source
+coverage for unexecuted configuration modules or prove the database data state.
+
+Original `.response.bin` and decoded XML, request XML, profile summaries and debugger cleanup status are retained. `analyze --raw <paths...> --session <id>` is offline. `--source-analysis none|optional|required` separates raw coverage from source availability; `--source-map` supplies exact bindings. See [source analysis](source-analysis.md) for native identities, manifests and missing-source results. Native PFF generation is not implemented.
 
 ## Compare
 
-`compare --baseline <result.json> --candidate <result.json>` accepts only validated samples with matching scenario/parameters/data/environment/readiness and reports a historical median difference. The intentionally changed configuration identity is displayed separately. A source edit is not by itself a comparable runtime dataset.
+`compare --baseline <result.json> --candidate <result.json>` accepts only validated samples with matching scenario/parameters/data/database/topology/host/environment/readiness and reports a historical median difference. Missing database binding is incomparable. The intentionally changed configuration identity is displayed separately. A source edit is not by itself a comparable runtime dataset.
 
 For controlled A/B, prepare explicit jobs in A/B/A/B order with matching dataset/reset contracts and permitted version updates, then compare paired results. Never update or roll back a database merely to make saved runs look comparable. Record all samples and expose noise; do not claim statistical significance from three repeats.
+
+For a first investigation without a baseline, use a diagnostic D1 scenario when product probes are available. The runtime creates a per-iteration `operation-evidence.md` showing domain windows, nested blocks, RPC calls, payloads, background lifecycle and coverage. A local job and a remote worker produce the same format. File-base server evidence comes from the required `ServerEmulation` target and does not establish real network or cluster behavior.
+
+That shared format is an analysis convenience, not comparability. A local file base and a remote server base are different database identities and different topologies; keep both single-run maps if useful, but never calculate or narrate their timing difference as product acceleration.

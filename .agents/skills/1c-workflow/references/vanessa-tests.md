@@ -16,17 +16,22 @@ or long regressions only when explicitly requested.
    When a concrete pattern is needed, open only the matching recipe in
    `vanessa-recipes.md`; its companion files are under
    `assets/vanessa-authoring-examples`.
-4. For OpenSpec, write 1-2 representative integration/UI scenarios. Put
-   algorithmic boundary and negative cases in parameterized YAxUnit tests. A
-   quick-fix starts with one focused regression and adds another only for a
-   separate integration/UI boundary.
-5. Keep one selectable file per behavior, cadence, and narrow owner set.
+4. For OpenSpec and quick fixes, first identify sufficient current proof and
+   reuse existing coverage. Retain a new regression when future reuse justifies
+   it; a reliable one-off result can satisfy the current obligation without a
+   new feature file. When adding retained coverage, start with 1-2 representative
+   integration/UI scenarios and put algorithmic boundaries and negative cases in
+   parameterized YAxUnit tests. For a quick fix, start with one focused regression
+   and add another only for a separate integration/UI boundary.
+5. For retained Vanessa coverage, keep one selectable file per behavior,
+   cadence, and narrow owner set.
    Acceptance suites have at most eight scenarios; keep explicit diagnostics
    and measurements separate.
 6. In the same edit, classify each added or changed feature with its
    `acceptance|explicit` purpose and production `ownerPaths`; follow
    `verification-suite-selection.md`.
-7. Run the final ITL check flow. Vanessa UI MCP may aid test development but is not the test runner.
+7. Run the final ITL assessment for applicable obligations. Vanessa UI MCP may aid test development but is not the saved test runner.
+8. Scenario-called test-extension code follows the `yaxunit-tests.md` interceptor rule.
 
 ## Development And Verification
 
@@ -58,7 +63,7 @@ classification, or selection diagnosis.
 
 - Vanessa's `Объект` scenario context is not an arbitrary `Структура`. Do not add fields with `Объект.Поле = ...` or `Объект.Вставить(...)`.
 - Keep local BSL values inside one block; across steps use a supported Vanessa variable/library step, not invented `Объект` fields.
-- The TestManager runs in a branch-local service infobase restored from the packaged qualified empty-base DT template; the TestClient runs in the development infobase. Before verification, the runner reconciles `client_mcp` in the service infobase and `VAExtension` in the development infobase, including exact per-infobase safe-mode proof. The dedicated `itl_vanessa_service` user in the template has unsafe-action protection disabled, so the runner does not edit the user's `conf.cfg` and does not bypass protection in the development infobase. In an execution-only feature copy, the runner binds Vanessa's generic TestClient opener to the first product profile; source feature files remain unchanged. Product metadata/data access therefore uses `на сервере (Расширение)`, while the plain `на сервере` step is reserved for code that intentionally belongs to the empty TestManager infobase.
+- The TestManager runs in a branch-local service infobase restored from the packaged qualified empty-base DT template; the TestClient runs in the development infobase. Before verification, the runner reconciles `client_mcp` in the service infobase and `VAExtension` in the development infobase, including exact per-infobase safe-mode proof. The dedicated `itl_vanessa_service` user in the template has unsafe-action protection disabled, so the runner does not edit the user's `conf.cfg` and does not bypass protection in the development infobase. Packet `StartFeaturePlayer` enables VanessaExt in TestManager; branch create/refresh does not. In an execution-only feature copy, the runner binds Vanessa's generic TestClient opener to the first product profile; source feature files remain unchanged. Product metadata/data access therefore uses `на сервере (Расширение)`, while the plain `на сервере` step is reserved for code that intentionally belongs to the empty TestManager infobase.
 - TestClient manifest schema 1 retains its primary-base behavior. Schema 2 may add `"contour":"primary|<aux-id>"` to each profile; the runner builds each exact connection independently and admits all involved infobases atomically. An auxiliary contour check may run the primary suite against that contour and then its own suite; only the complete configured set creates that contour's separate proof.
 - Classify every executable BSL block: product metadata/data access is TestClient server-side through VAExtension; forms and client-only modules are TestClient client-side. Never combine both contexts in one block.
 - Transfer cross-context values through supported Vanessa variables. Do not use `СохранитьЗначение`/`ВосстановитьЗначение` as VAExtension cross-step transport.
@@ -92,7 +97,7 @@ Minimal structure:
 
 Rules:
 
-- Store application scenarios in `tests/features`.
+- Store retained application scenarios in `tests/features`. For transient `/test-fix-loop` scenarios, follow `verification-result.md`; retain the ignored feature through referenced proof.
 - Store `.feature` files as strict UTF-8. One leading UTF-8 BOM is accepted for compatibility with existing Windows text writers; invalid UTF-8, NUL, and C0/C1 controls other than TAB/CR/LF fail the preflight at a zero-based byte offset. This byte check does not infer Gherkin semantics; the existing parser/application-scenario preflight remains their owner.
 - Name scenarios by checked behavior, not by internal task number.
 - Keep independent acceptance scenarios flat so each produces its own JUnit verdict. Do not use `@tree` to group them; reserve it for deliberately aggregated non-acceptance output.
@@ -118,6 +123,7 @@ prove the changed behavior.
 
 - Create minimal test data in the scenario or library step; use only agreed database fixtures.
 - Make test object names unique, for example with the change id plus date or UUID.
+- Vanessa stops at the first failed step, so final cleanup may not run. If a rerun would find the scenario's own earlier data (fixed names or keys, receipts, changed settings), it first idempotently removes or resets that data by a stable scenario-owned marker and continues instead of failing; never touch data without that marker.
 - Assert observable results: value, record, movement, table row, command availability, not just absence of errors.
 - After opening a form, check warnings and `ErrorWindow` when the next step assumes a successful open.
 - Use explicit waits such as `я жду закрытия окна ... в течение 20 секунд`. Use blind pauses only when no stable event exists, and comment why.
@@ -138,5 +144,5 @@ prove the changed behavior.
 - Do not write a "smoke test for the whole configuration" for one feature.
 - Do not go through menus and forms when server code and assertions can prove the result.
 - Do not copy large scenarios from external repositories.
-- Do not create more than 4 feature checks without explaining why in `test-plan.md`.
+- Over four feature checks: justify risks in `tasks.md` or an existing approved plan.
 - Do not replace the final ITL check flow with Vanessa UI MCP, a headless EPF launch, or `/deploy-and-test`.

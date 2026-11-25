@@ -21,6 +21,7 @@ Describe "Branch-first verification suite selection" {
                 function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
                 function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
                 . $ModulePath
+                function Get-VerificationModel { 'cumulative' }
                 function Get-VerificationSelectionEffectiveTree { "1111111111111111111111111111111111111111" }
                 [pscustomobject]@{
                     catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($first, $second)
@@ -35,6 +36,202 @@ Describe "Branch-first verification suite selection" {
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It 'classifies an empty inventory with <CatalogKind> catalog' -TestCases @(
+        @{CatalogKind='absent'; ExpectedMode='reuse'; Available=$false},
+        @{CatalogKind='valid'; ExpectedMode='reuse'; Available=$true},
+        @{CatalogKind='invalid'; ExpectedMode='classification-required'; Available=$false}
+    ) {
+        param($CatalogKind, $ExpectedMode, $Available)
+        $tempRoot=Join-Path $TestDrive ('Пустой каталог ' + $CatalogKind)
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'tests') -Force | Out-Null
+        if ($CatalogKind -ne 'absent') {
+            $text=if ($CatalogKind -eq 'valid') { '{"schemaVersion":2,"suites":[],"obligations":[]}' } else { '{broken' }
+            [IO.File]::WriteAllText((Join-Path $tempRoot 'tests/verification-suites.branch.json'), $text, [Text.UTF8Encoding]::new($false))
+        }
+        $result = & {
+            $script:ProjectRoot=$tempRoot
+            function Resolve-Agent1cFullPath { param([string]$Path) [IO.Path]::GetFullPath($Path) }
+            function Resolve-ProjectPath { param([string]$Path) Join-Path $script:ProjectRoot $Path }
+            function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+            . $ModulePath
+            function Get-VerificationModel { 'cumulative' }
+            function Get-VerificationSelectionEffectiveTree { '1111111111111111111111111111111111111111' }
+            New-VerificationSelectionPlan -ApplicationFeatureFiles @() -RequireObservedReceipts
+        }
+        $result.mode | Should -BeExactly $ExpectedMode
+        $result.catalogAvailable | Should -Be $Available
+        @($result.selectedFeatureFiles).Count | Should -Be 0
+    }
+
+    It "classifies schema-2 one-off obligations without blocking retained runners on pending proof" {
+        $tempRoot = Join-Path $TestDrive 'schema-two'
+        New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'tests\features') | Out-Null
+        $feature = Join-Path $tempRoot 'tests\features\Orders.feature'
+        [IO.File]::WriteAllText($feature, 'Функционал: Orders', [Text.UTF8Encoding]::new($false))
+        $catalogPath = Join-Path $tempRoot 'tests\verification-suites.branch.json'
+        $catalog = @{
+            schemaVersion = 2
+            suites = @(@{ id = 'orders'; purpose = 'acceptance'; featurePaths = @('tests/features/Orders.feature'); ownerPaths = @('src/cf/Orders/**') })
+            obligations = @(@{ id = 'orders-result'; expectedResult = 'Order total is correct'; inputPaths = @('src/cf/Orders/**'); admissibleProof = @('vanessa-junit'); retention = 'retained'; retentionReason = 'Guards a recurring business rule'; cadence = 'affected'; suiteId = 'orders' })
+        }
+        $result = & {
+            $script:ProjectRoot = $tempRoot
+            function Resolve-Agent1cFullPath { param([string]$Path) [IO.Path]::GetFullPath($Path) }
+            function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
+            function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+            . $ModulePath
+            function Get-VerificationModel { 'cumulative' }
+            $catalog | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $catalogPath -Encoding utf8
+            $retained = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($feature)
+            $catalog.obligations += @{ id = 'orders-observed'; expectedResult = 'Order total observed'; inputPaths = @('src/cf/Orders/**'); admissibleProof = @('runtime-observation'); retention = 'one-off'; retentionReason = 'The scenario is too expensive to retain'; cadence = 'explicit' }
+            $catalog | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $catalogPath -Encoding utf8
+            $oneOff = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($feature)
+            $oneOffAssessment = Get-VerificationOneOffProofAssessment -Obligation @($oneOff.obligations | Where-Object id -eq 'orders-observed')[0] -State ([pscustomobject]@{})
+            $catalog.obligations = @($catalog.obligations | Where-Object id -eq 'orders-result')
+            $catalog.obligations[0].cadence = 'handoff'
+            $catalog | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $catalogPath -Encoding utf8
+            $handoff = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($feature)
+            [pscustomobject]@{ retained = $retained; oneOff = $oneOff; oneOffAssessment = $oneOffAssessment; handoff = $handoff }
+        }
+        $result.retained.classificationComplete | Should -BeTrue
+        $result.retained.obligations[0].id | Should -Be 'orders-result'
+        $result.retained.obligations[0].cadence | Should -Be 'affected'
+        $result.oneOff.classificationComplete | Should -BeTrue
+        $result.oneOffAssessment.passed | Should -BeFalse
+        $result.oneOffAssessment.issue | Should -Match 'VERIFICATION_ONE_OFF_PROOF_PENDING'
+        $result.oneOffAssessment.issue | Should -BeLike '*-Action begin-one-off-proof -VerificationObligationId orders-observed*-Action complete-one-off-proof*'
+        $result.handoff.classificationComplete | Should -BeTrue
+        $result.handoff.obligations[0].cadence | Should -Be 'handoff'
+        $result.handoff.suites[0].purpose | Should -Be 'acceptance'
+    }
+
+    It 'binds an obligation to only its declared source bytes across unrelated commits' {
+        $tempRoot = Join-Path $TestDrive ('Proof inputs Кириллица ' + [guid]::NewGuid().ToString('N'))
+        $orders = Join-Path $tempRoot 'src/cf/Заказы/Ext/Module.bsl'
+        $reports = Join-Path $tempRoot 'src/cf/Отчеты/Ext/Module.bsl'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $orders), (Split-Path -Parent $reports), (Join-Path $tempRoot '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText($orders, 'Функция Сумма() Возврат 1; КонецФункции', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($reports, 'Функция Итог() Возврат 1; КонецФункции', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $tempRoot '.agent-1c/project.json'), '{}', [Text.UTF8Encoding]::new($false))
+        & git -C $tempRoot init --quiet
+        & git -C $tempRoot config user.email 'proof-inputs@example.invalid'
+        & git -C $tempRoot config user.name 'Proof Inputs Test'
+        & git -C $tempRoot add -- src .agent-1c/project.json
+        & git -C $tempRoot commit -qm baseline
+        $result = & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+            $obligation = [pscustomobject]@{ inputPaths = @('src/cf/Заказы/**') }
+            $before = Get-VerificationObligationInputIdentity -Obligation $obligation -Treeish ((& git -C $tempRoot rev-parse 'HEAD^{tree}').Trim())
+            [IO.File]::WriteAllText($reports, 'Функция Итог() Возврат 2; КонецФункции', [Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add -- src
+            & git -C $tempRoot commit -qm 'unrelated report'
+            $unrelated = Get-VerificationObligationInputIdentity -Obligation $obligation -Treeish ((& git -C $tempRoot rev-parse 'HEAD^{tree}').Trim())
+            [IO.File]::WriteAllText($orders, 'Функция Сумма() Возврат 2; КонецФункции', [Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add -- src
+            & git -C $tempRoot commit -qm 'changed order'
+            $changed = Get-VerificationObligationInputIdentity -Obligation $obligation -Treeish ((& git -C $tempRoot rev-parse 'HEAD^{tree}').Trim())
+            [pscustomobject]@{ before = $before; unrelated = $unrelated; changed = $changed }
+        }
+        $result.before | Should -BeExactly $result.unrelated
+        $result.changed | Should -Not -BeExactly $result.before
+    }
+
+    It 'accepts observed one-off evidence only for the same inputs and loaded base' {
+        $tempRoot = Join-Path $TestDrive ('One off Кириллица ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'evidence') | Out-Null
+        $result = & {
+            $script:ProjectRoot = $tempRoot
+            $DevBranchName = 'branch'
+            $script:InputIdentity = 'input-a'
+            $script:LoadedBase = 'base-a'
+            function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
+            function Resolve-Agent1cFullPath { param([string]$Path) [IO.Path]::GetFullPath($Path) }
+            function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+            function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
+            . $ModulePath
+            function Get-VerificationModel { 'cumulative' }
+            function Get-VerificationOneOffObligations { @([pscustomobject]@{ id = 'orders-result'; expectedResult = 'Order total is 42'; inputPaths = @('src/cf/Orders/**'); admissibleProof = @('runtime-observation', 'vanessa-junit') }) }
+            function Read-DevBranchState { [pscustomobject]@{ name = 'branch' } }
+            function Assert-DevelopmentBranchWorktreeContext { param($State, $Operation) }
+            function Get-VerificationObligationInputIdentity { param($Obligation, $Treeish) $script:InputIdentity }
+            function Get-VerificationLoadedBaseIdentity { param($State) $script:LoadedBase }
+            function Get-VerificationSelectionEffectiveTree { '1111111111111111111111111111111111111111' }
+            $started = Start-VerificationOneOffProof -ObligationId 'orders-result'
+            $artifactPath = Resolve-ProjectPath 'evidence/observed.txt'
+            [IO.File]::WriteAllText($artifactPath, 'Actual total: 42', [Text.UTF8Encoding]::new($false))
+            $evidencePath = Resolve-ProjectPath 'evidence/result.json'
+            $evidence = [ordered]@{
+                obligationId = 'orders-result'; runToken = $started.runToken
+                expectedResult = 'Order total is 42'; status = 'passed'
+                proofType = 'runtime-observation'; actualResult = 'Actual total: 42'
+                providerId = 'manual-ui'; runnerVersion = '1'
+                steps = @([ordered]@{ action = 'Open order and calculate'; actual = 'Total displayed as 42' })
+                artifactPaths = @('evidence/observed.txt')
+            }
+            Write-Utf8TextAtomic -Path $evidencePath -Value ($evidence | ConvertTo-Json -Depth 8)
+            $completed = Complete-VerificationOneOffProof -EvidencePath $evidencePath
+            $obligation = @(Get-VerificationOneOffObligations)[0]
+            $passed = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)
+            $reuse = Start-VerificationOneOffProof -ObligationId 'orders-result'
+            $script:InputIdentity = 'input-b'
+            $changedInput = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)
+            $script:InputIdentity = 'input-a'
+            $script:LoadedBase = 'base-b'
+            $changedBase = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)
+            $script:LoadedBase = 'base-a'
+            [IO.File]::WriteAllText($artifactPath, 'Actual total: 41', [Text.UTF8Encoding]::new($false))
+            $changedArtifact = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)
+            $forced = Start-VerificationOneOffProof -ObligationId 'orders-result' -Force
+            $junitPath = Resolve-ProjectPath 'evidence/junit.xml'
+            $junitEvidencePath = Resolve-ProjectPath 'evidence/junit-result.json'
+            $junitEvidence = [ordered]@{
+                obligationId = 'orders-result'; runToken = $forced.runToken
+                expectedResult = 'Order total is 42'; status = 'passed'
+                proofType = 'vanessa-junit'; actualResult = 'One testcase passed'
+                providerId = 'vanessa'; runnerVersion = '1'
+                steps = @([ordered]@{ action = 'Run order scenario'; actual = 'One testcase passed' })
+                artifactPaths = @('evidence/junit.xml')
+            }
+            Write-Utf8TextAtomic -Path $junitPath -Value '<testsuite tests="0" failures="0" errors="0"><testcase name="orders"/></testsuite>'
+            Write-Utf8TextAtomic -Path $junitEvidencePath -Value ($junitEvidence | ConvertTo-Json -Depth 8)
+            $invalidJunit = ''
+            try { Complete-VerificationOneOffProof -EvidencePath $junitEvidencePath | Out-Null } catch { $invalidJunit = $_.Exception.Message }
+            $pendingAfterInvalid = Read-Utf8Text -Path (Get-VerificationOneOffProofPath -ObligationId 'orders-result') | ConvertFrom-Json
+            Write-Utf8TextAtomic -Path $junitPath -Value '<testsuite tests="1" failures="0" errors="0"><testcase name="orders"/></testsuite>'
+            $validJunit = Complete-VerificationOneOffProof -EvidencePath $junitEvidencePath
+            $feature=Resolve-ProjectPath 'evidence/diagnostic.feature'
+            Write-Utf8TextAtomic $feature 'Функционал: Проверка'
+            $manifest=Resolve-ProjectPath 'evidence/diagnostic-inputs.json'
+            $inputs=@{schemaVersion=1;kind='vanessa-diagnostic-inputs';loadedBaseIdentity=$script:LoadedBase;features=@(@{path='evidence/diagnostic.feature';sha256=(Get-FileHash $feature).Hash.ToLowerInvariant()})}
+            Write-Utf8TextAtomic $manifest ($inputs|ConvertTo-Json -Depth 6)
+            $diagnostic=Start-VerificationOneOffProof -ObligationId 'orders-result' -Force
+            $junitEvidence.runToken=$diagnostic.runToken
+            Write-Utf8TextAtomic $junitEvidencePath ($junitEvidence|ConvertTo-Json -Depth 8)
+            { Complete-VerificationOneOffProof -EvidencePath $junitEvidencePath } | Should -Throw '*DIAGNOSTIC_MANIFEST_REQUIRED*'
+            $junitEvidence.artifactPaths=@('evidence/junit.xml','evidence/diagnostic-inputs.json')
+            Write-Utf8TextAtomic $junitEvidencePath ($junitEvidence|ConvertTo-Json -Depth 8)
+            Complete-VerificationOneOffProof -EvidencePath $junitEvidencePath | Out-Null
+            (Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)).passed | Should -BeTrue
+            Write-Utf8TextAtomic $feature 'Функционал: Изменён'
+            (Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)).passed | Should -BeFalse
+            $tampered = Read-Utf8Text -Path (Get-VerificationOneOffProofPath -ObligationId 'orders-result') | ConvertFrom-Json
+            $tampered.actualResult = 'Fabricated result'
+            $tamperedAssessment = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState) -Proof $tampered
+            [pscustomobject]@{ started = $started; completed = $completed; passed = $passed; reuse = $reuse; changedInput = $changedInput; changedBase = $changedBase; changedArtifact = $changedArtifact; invalidJunit = $invalidJunit; pendingAfterInvalid = $pendingAfterInvalid; validJunit = $validJunit; tamperedAssessment = $tamperedAssessment }
+        }
+        $result.started.status | Should -Be 'pending'
+        $result.completed.status | Should -Be 'passed'
+        $result.passed.passed | Should -BeTrue
+        $result.reuse.reused | Should -BeTrue
+        $result.changedInput.passed | Should -BeFalse
+        $result.changedBase.passed | Should -BeFalse
+        $result.changedArtifact.passed | Should -BeFalse
+        $result.invalidJunit | Should -Match 'JUnit has an invalid or nonzero tests summary'
+        $result.pendingAfterInvalid.status | Should -Be 'pending'
+        $result.validJunit.status | Should -Be 'passed'
+        $result.tamperedAssessment.passed | Should -BeFalse
     }
 
     It "excludes explicit suites and reuses unchanged acceptance proof by owner" {
@@ -68,6 +265,7 @@ Describe "Branch-first verification suite selection" {
                 function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
                 function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
                 . $ModulePath
+                function Get-VerificationModel { 'cumulative' }
                 function Get-VerificationSelectionEffectiveTree { $script:CurrentTree }
                 function Get-VerificationSelectionChangedPaths { param([string]$BaseTree, [string]$CurrentTree) @($script:ChangedPaths) }
                 function Get-YAxUnitTestsPath { "tests/yaxunit" }
@@ -145,6 +343,74 @@ Describe "Branch-first verification suite selection" {
         }
     }
 
+    It "runs existing acceptance coverage for pre-adoption source without demanding new suite owners" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl legacy branch " + [guid]::NewGuid().ToString('N'))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'tests\features') | Out-Null
+            $feature = Join-Path $tempRoot 'tests\features\Existing.feature'
+            [IO.File]::WriteAllText($feature, 'Функционал: Existing', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $tempRoot 'tests\verification-suites.branch.json'),
+                '{"schemaVersion":1,"suites":[{"id":"existing","purpose":"acceptance","featurePaths":["tests/features/Existing.feature"],"ownerPaths":["src/cf/Owned/**"]}]}',
+                [Text.UTF8Encoding]::new($false))
+            $result = & {
+                $script:ProjectRoot = $tempRoot
+                $script:AdoptionCommit = 'a' * 40
+                $script:CurrentTree = 'b' * 40
+                $script:ChangedPaths = @()
+                $script:ChangeLegacy = $false
+                $script:LegacyPath = 'src/cf/CommonForms/Старая Форма/Ext/Form/Module.bsl'
+                $script:DeletedPath = 'src/cf/Catalogs/Удаленный.xml'
+                $script:DirtyPath = 'src/cf/Catalogs/Старый.xml'
+                $script:AdoptionState = [pscustomobject]@{
+                    yaxunitApplicabilityBaseline = [pscustomobject]@{
+                        schemaVersion = 1; commit = $script:AdoptionCommit; legacy = $true
+                        legacySourceOids = @([pscustomobject]@{ path = $script:DirtyPath; sourceOid = '2' * 40 })
+                    }
+                }
+                function Resolve-Agent1cFullPath { param([string]$Path) [IO.Path]::GetFullPath($Path) }
+                function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { $Path } else { Join-Path $script:ProjectRoot $Path } }
+                function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+                function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
+                . $ModulePath
+                function Get-VerificationModel { 'cumulative' }
+                function Get-VerificationSelectionEffectiveTree { $script:CurrentTree }
+                function Get-VerificationSelectionChangedPaths { param([string]$BaseTree, [string]$CurrentTree) @($script:ChangedPaths) }
+                function Get-VerificationAcceptedMasterInput { param([string[]]$ChangedPaths, [string]$CurrentTree) [pscustomobject]@{ importedPaths = @(); acceptedCommit = '' } }
+                function Get-VerificationConfigurationMetadataRoots { [pscustomobject]@{ configurationRoots = @('src/cf'); extensionRoots = @('src/cfe'); primaryExtensionsRoot = 'src/cfe' } }
+                function Get-GitObjectIdForTreePath {
+                    param([string]$Treeish, [string]$RepoPath)
+                    if ($RepoPath -eq $script:DeletedPath) { return '<missing>' }
+                    if ($RepoPath -eq $script:DirtyPath) { if ($Treeish -eq $script:AdoptionCommit) { return '<missing>' }; return ('2' * 40) }
+                    if ($RepoPath -eq $script:LegacyPath) { if ($Treeish -eq $script:CurrentTree -and $script:ChangeLegacy) { return ('3' * 40) }; return ('1' * 40) }
+                    return '<missing>'
+                }
+                function Read-DevBranchState { param([string]$Name) $script:AdoptionState }
+                function Get-StateValue { param($State, [string]$Name, $Default) if ($null -ne $State -and $State.PSObject.Properties[$Name]) { return $State.$Name }; return $Default }
+                function Get-YAxUnitTestsPath { 'tests/yaxunit' }
+                function Get-YAxUnitSuiteCatalogPaths { @() }
+                function Get-VanessaFeaturesPath { 'tests/features' }
+                $initial = New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
+                Complete-VerificationSelectionProof -Plan $initial
+                $script:ChangedPaths = @($script:LegacyPath, $script:DeletedPath, $script:DirtyPath)
+                $legacy = New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
+                $script:ChangeLegacy = $true
+                $changed = New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
+                $script:ChangeLegacy = $false
+                $script:AdoptionState.yaxunitApplicabilityBaseline.legacy = $false
+                $reset = New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
+                [pscustomobject]@{ legacy = $legacy; changed = $changed; reset = $reset }
+            }
+            $result.legacy.mode | Should -Be 'full' -Because $result.legacy.reason
+            $result.legacy.reason | Should -Match 'legacy paths=3'
+            @($result.legacy.selectedFeatureFiles) | Should -Contain $feature
+            $result.changed.mode | Should -Be 'classification-required'
+            $result.changed.reason | Should -Match 'Старая Форма'
+            $result.reset.mode | Should -Be 'classification-required'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "requires classification without selecting files for an ambiguous catalog" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-invalid-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -158,6 +424,7 @@ Describe "Branch-first verification suite selection" {
                 function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
                 function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
                 . $ModulePath
+                function Get-VerificationModel { 'cumulative' }
                 function Get-VerificationSelectionEffectiveTree { "1111111111111111111111111111111111111111" }
                 New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
             }
@@ -340,6 +607,7 @@ Describe "Branch-first verification suite selection" {
                 function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
                 function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
                 . $ModulePath
+                function Get-VerificationModel { 'cumulative' }
                 function Get-VerificationSelectionStateRoot { Join-Path $script:ProjectRoot ".agent-1c\verification-selection" }
                 $script:ActiveAuxiliaryVanessaContext = $null
                 function Get-VanessaFeaturesPath { $feature }
@@ -403,6 +671,53 @@ Describe "Branch-first verification suite selection" {
         }
     }
 
+    It "treats ConfigDumpInfo as a cursor while retaining full root metadata and unknown-product safeguards" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Read-VerificationSuiteCatalog {
+                [pscustomobject]@{
+                    available = $true
+                    valid = $true
+                    classificationComplete = $true
+                    fingerprint = "catalog"
+                    catalogPaths = @()
+                    assignments = @([pscustomobject]@{ purpose = "acceptance"; fullPath = "test.feature"; path = "tests/features/test.feature"; suiteId = "test" })
+                    suiteFingerprints = @([pscustomobject]@{ purpose = "acceptance"; id = "test"; fingerprint = "suite" })
+                    suites = @([pscustomobject]@{ id = "test"; purpose = "acceptance"; always = $false; ownerPaths = @("src/cf/CommonModules/Known/**") })
+                }
+            }
+            function Get-VerificationSelectionEffectiveTree { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+            function Read-VerificationSelectionProof { [pscustomobject]@{ schemaVersion = 1; tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; acceptanceSuites = @([pscustomobject]@{ id = "test"; fingerprint = "suite" }) } }
+            function Get-VerificationSelectionChangedPaths { @($script:changedPaths) }
+            function Get-VerificationAcceptedMasterInput { param($ChangedPaths, $CurrentTree) [pscustomobject]@{ available = $false; importedPaths = @(); branchPaths = @($ChangedPaths); reason = "fixture" } }
+            function Get-YAxUnitTestsPath { "tests/yaxunit" }
+            function Get-YAxUnitSuiteCatalogPaths { @() }
+            function Get-VanessaFeaturesPath { "tests/features" }
+            function Get-AuxiliaryContourDefinitions { @([pscustomobject]@{ configurationPath = "src/configs/exchange/cf"; extensions = @([pscustomobject]@{ path = "src/configs/exchange/cfe/Support" }) }) }
+            $plans = [ordered]@{}
+            foreach ($case in @("src/cf/ConfigDumpInfo.xml", "src/cfe/Extension/ConfigDumpInfo.xml", "src/configs/exchange/cf/ConfigDumpInfo.xml", "src/configs/exchange/cfe/Support/ConfigDumpInfo.xml")) {
+                $script:changedPaths = @($case)
+                $plans[$case] = New-VerificationSelectionPlan -ApplicationFeatureFiles @("test.feature")
+            }
+            $script:changedPaths = @("src/cf/Configuration.xml")
+            $plans["configuration"] = New-VerificationSelectionPlan -ApplicationFeatureFiles @("test.feature")
+            $script:changedPaths = @("src/cf/ConfigDumpInfo.xml", "src/cf/CommonModules/Unknown/Ext/Module.bsl")
+            $plans["unknown"] = New-VerificationSelectionPlan -ApplicationFeatureFiles @("test.feature")
+            $script:changedPaths = @("docs/ConfigDumpInfo.xml")
+            $plans["unrecognizedCursor"] = New-VerificationSelectionPlan -ApplicationFeatureFiles @("test.feature")
+            $plans
+        }
+
+        $result["src/cf/ConfigDumpInfo.xml"].mode | Should -Be "reuse"
+        $result["src/cfe/Extension/ConfigDumpInfo.xml"].mode | Should -Be "reuse"
+        $result["src/configs/exchange/cf/ConfigDumpInfo.xml"].mode | Should -Be "reuse"
+        $result["src/configs/exchange/cfe/Support/ConfigDumpInfo.xml"].mode | Should -Be "reuse"
+        $result.configuration.mode | Should -Be "full"
+        $result.unknown.mode | Should -Be "classification-required"
+        $result.unknown.reason | Should -Match 'Unknown/Ext/Module.bsl'
+        $result.unrecognizedCursor.mode | Should -Be "classification-required"
+    }
+
     It "does not start Vanessa when only explicit suites changed" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -428,7 +743,7 @@ Describe "Branch-first verification suite selection" {
             function Get-VerificationFingerprint { "fingerprint" }
             function Complete-VerificationSelectionProof { $script:ProofCalls++ }
             function Update-DevBranchState { param([hashtable]$Updates) $script:Updates += ,$Updates }
-            function Get-VerificationState { [pscustomobject]@{ status = "passed" } }
+            function Get-VerificationState { [pscustomobject]@{ status = "passed"; isFreshPassed = $true } }
             function Run-DevBranchTests { throw "Vanessa must not run" }
             Invoke-ItlVerificationCycle -Trigger command
             $reuseUpdateCount = @($script:Updates | Where-Object { $_.ContainsKey("lastVerificationSelectionMode") -and $_["lastVerificationSelectionMode"] -eq "reuse" }).Count
@@ -440,13 +755,135 @@ Describe "Branch-first verification suite selection" {
         $result.reuseUpdateCount | Should -Be 1
     }
 
+    It 'reuses a passed YAxUnit receipt only for the same inputs, loaded infobase and an unnamed request' {
+        # PM5 2026-11-20: after an event-log acknowledgement the repeated check
+        # reran 419 unchanged YAxUnit tests while Vanessa proof was reused.
+        $root = Join-Path $TestDrive 'Проект YAxUnit с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root 'build/yaxunit') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{}', [Text.UTF8Encoding]::new($false))
+        $junit = Join-Path $root 'build/yaxunit/junit.xml'
+        [IO.File]::WriteAllText($junit, '<testsuites><testsuite name="ОМ_Расчёт" tests="1" failures="0" errors="0" skipped="0"><testcase classname="ОМ_Расчёт" name="Сумма"/></testsuite></testsuites>', [Text.UTF8Encoding]::new($false))
+        $result = & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $script:ActiveAuxiliaryVanessaContext = $null
+            $VanessaFeaturePath = ''
+            $VanessaFilterTags = ''
+            $YAxUnitModule = ''
+            $DevBranchName = 'branch'
+            $script:Fingerprint = 'inputs-1'
+            $script:State = [pscustomobject]@{
+                devBranchName = 'branch'; stateProjectRoot = $root; infoBaseKind = 'file'; devBranchInfoBasePath = (Join-Path $root 'База 1С')
+                lastConfigDesignerFingerprint = 'loaded-1'; configLoadStatus = 'passed'
+            }
+            function Read-DevBranchState { $script:State }
+            function Update-DevBranchState { param([object]$State, [hashtable]$Updates) foreach ($name in $Updates.Keys) { $script:State | Add-Member -NotePropertyName $name -NotePropertyValue $Updates[$name] -Force } }
+            function Get-VerificationFingerprint { $script:Fingerprint }
+            function Get-ItlVerificationExecutionDecision { param([string]$Component) [pscustomobject]@{ component = $Component; run = ($Component -eq 'yaxunit'); reason = 'test' } }
+            function Test-ItlFullVerificationProofEligible { $false }
+            function Assert-VerificationClassificationReady {}
+            function Invoke-YAxUnitVerification { param($State) $script:YAxUnitRuns++ }
+            function Run-DevBranchTests { throw 'Vanessa is outside this fixture' }
+            function Get-VerificationState { [pscustomobject]@{ status = 'passed'; isFreshPassed = $true } }
+            $updates = @{}
+            Add-VerificationComponentEvidenceUpdates -Updates $updates -State $script:State -Component 'yaxunit' -Status 'passed' -ArtifactPaths @($junit)
+            Update-DevBranchState -State $script:State -Updates $updates
+            $passedReceipt = $script:State.lastVerificationComponentEvidence.yaxunit
+            $runs = [ordered]@{}
+            $run = {
+                param([string]$Case, [string[]]$Explicit = @())
+                $script:YAxUnitRuns = 0
+                Start-ItlCheckTiming
+                Invoke-ItlVerificationCycle -Trigger command -ExplicitComponents $Explicit 6>$null
+                $runs[$Case] = [pscustomobject]@{
+                    runs = $script:YAxUnitRuns
+                    reused = [bool](Get-StateValue -State (Get-ItlCheckTimingSnapshot) -Name 'yaxunitReused' -Default $false)
+                    skipped = @($script:State.lastVerificationSkippedComponents)
+                    duration = Format-DevBranchCheckDurationText -Timing (Get-ItlCheckTimingSnapshot)
+                }
+            }
+            & $run 'unchanged'
+            & $run 'named' @('yaxunit')
+            $script:Fingerprint = 'inputs-2'
+            & $run 'changed inputs'
+            $script:Fingerprint = 'inputs-1'
+            $script:State.lastConfigDesignerFingerprint = 'loaded-2'
+            & $run 'other loaded infobase'
+            $script:State.lastConfigDesignerFingerprint = 'loaded-1'
+            $failed = $passedReceipt.PSObject.Copy(); $failed.status = 'failed'
+            $script:State.lastVerificationComponentEvidence = [pscustomobject]@{ yaxunit = $failed }
+            & $run 'failed receipt'
+            $script:State.lastVerificationComponentEvidence = [pscustomobject]@{ yaxunit = $passedReceipt }
+            [IO.File]::AppendAllText($junit, ' ')
+            & $run 'changed report'
+            $runs
+        }
+
+        $result['unchanged'].runs | Should -Be 0
+        $result['unchanged'].reused | Should -BeTrue
+        $result['unchanged'].skipped | Should -Not -Contain 'yaxunit'
+        $result['unchanged'].duration | Should -Match 'YAxUnit переиспользован'
+        foreach ($case in @('named', 'changed inputs', 'other loaded infobase', 'failed receipt', 'changed report')) {
+            $result[$case].runs | Should -Be 1 -Because $case
+            $result[$case].reused | Should -BeFalse -Because $case
+        }
+    }
+
+    It 'assesses a one-off-only branch without inventing a Vanessa test run' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:EventLogCalls = 0
+            $script:Updates = @()
+            $script:ActiveAuxiliaryVanessaContext = $null
+            $VanessaFeaturePath = ''
+            $VanessaFilterTags = ''
+            $DevBranchName = 'branch'
+            function Read-DevBranchState { [pscustomobject]@{ devBranchName = 'branch' } }
+            function Get-ItlVerificationExecutionDecision { param([string]$Component) [pscustomobject]@{ component = $Component; run = $true; reason = 'test' } }
+            function Test-ItlFullVerificationProofEligible { $true }
+            function Get-VanessaFeaturesPath { 'tests/features' }
+            function Get-VanessaApplicationFeatureFiles { @() }
+            function Get-VerificationOneOffObligations { @([pscustomobject]@{ id = 'observed' }) }
+            function Get-VerificationSuiteCatalogPaths { @() }
+            function Get-VerificationSelectionEffectiveTree { '1111111111111111111111111111111111111111' }
+            function Assert-VerificationClassificationReady {}
+            function Invoke-YAxUnitVerification { param($State) }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Assert-DevBranchExtensionInitialized {}
+            function Assert-DevBranchApplicationReady { param([object]$State) $State }
+            function Test-ItlEventLogCurrent { $script:EventLogCalls++ }
+            function Get-CurrentCommit { '2222222222222222222222222222222222222222' }
+            function Get-VerificationFingerprint { 'fingerprint' }
+            function Update-DevBranchState { param([hashtable]$Updates) $script:Updates += ,$Updates }
+            function Get-VerificationState { [pscustomobject]@{ status = 'passed'; isFreshPassed = $true } }
+            function Run-DevBranchTests { throw 'Vanessa must not run for one-off-only coverage' }
+            Invoke-ItlVerificationCycle -Trigger command
+            [pscustomobject]@{ eventLogCalls = $script:EventLogCalls; updates = @($script:Updates) }
+        }
+        $result.eventLogCalls | Should -Be 1
+        @($result.updates | Where-Object { $_.ContainsKey('lastVerificationSelectionMode') -and $_.lastVerificationStatus -eq 'passed' }).Count | Should -Be 1
+    }
+
     It "runs classification preflight before either executable test contour" {
         $modes = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.verification-modes.ps1") -Raw -Encoding UTF8
         $cycle = [regex]::Match($modes, '(?s)function Invoke-ItlVerificationCycle \{(?<body>.*?)\n\}').Groups['body'].Value
         $cycle.IndexOf('Assert-VerificationClassificationReady') | Should -BeGreaterThan -1
         $cycle.IndexOf('Assert-VerificationClassificationReady') | Should -BeLessThan $cycle.IndexOf('Invoke-YAxUnitVerification')
         $cycle.IndexOf('Assert-VerificationClassificationReady') | Should -BeLessThan $cycle.IndexOf('Run-DevBranchTests')
-        $cycle | Should -Match 'classification-required'
+        $resolver = [regex]::Match($modes, '(?s)function Get-ItlVanessaVerificationSelectionPlan \{(?<body>.*?)\n\}').Groups['body'].Value
+        $cycle.IndexOf('Get-ItlVanessaVerificationSelectionPlan') | Should -BeGreaterThan -1
+        $cycle.IndexOf('Get-ItlVanessaVerificationSelectionPlan') | Should -BeLessThan $cycle.IndexOf('Invoke-YAxUnitVerification')
+        $resolver | Should -Match 'classification-required'
+        $resolver | Should -Match 'classify-tests-and-repeat-original-itl-command'
+    }
+
+    It "checks classification before releasing runtime or loading the infobase" {
+        $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1') -Raw -Encoding UTF8
+        $check = [regex]::Match($lifecycle, '(?s)function Invoke-DevBranchCheck \{(?<body>.*?)(?=\nfunction Check-DevBranch)').Groups['body'].Value
+        $check.IndexOf('Assert-VerificationClassificationReady') | Should -BeGreaterThan -1
+        foreach ($next in @('Invoke-DevBranchVanessaRuntimeRelease', 'Use-ItlVerificationRepairAttempt', 'Update-DevBranchBase')) {
+            $check.IndexOf('Assert-VerificationClassificationReady') | Should -BeLessThan $check.IndexOf($next)
+        }
+        $check.IndexOf('Repair-OneCSourceLineEndings') | Should -BeLessThan $check.IndexOf('Assert-VerificationClassificationReady')
     }
 
     It "exposes a static classification validator that never starts 1C" {
@@ -461,25 +898,259 @@ Describe "Branch-first verification suite selection" {
 
     It "makes refresh return agent-owned classification continuation instead of silent full fallback" {
         $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
-        $fastSkill = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md") -Raw -Encoding UTF8
-        $refreshTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template") -Raw -Encoding UTF8
-        $advanced = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md") -Raw -Encoding UTF8
-        $selectionReference = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\verification-suite-selection.md") -Raw -Encoding UTF8
 
         $refresh = [regex]::Match($lifecycle, '(?s)function Invoke-RefreshDevBranchCore \{(?<body>.*?)(?=\nfunction Refresh-DevBranch)').Groups['body'].Value
         $refresh | Should -Match 'Update-VerificationSuiteInventory'
         $refresh | Should -Match 'Set-VerificationClassificationRequiredAction'
         $refresh.IndexOf('Set-VerificationClassificationRequiredAction') | Should -BeLessThan $refresh.IndexOf('Write-DevBranchRunUserReport')
-        foreach ($contract in @($fastSkill, $refreshTemplate)) {
-            $contract | Should -Match 'classify-tests-after-refresh:'
-            $contract | Should -Match 'same task|same agent task|same task'
-            $contract | Should -Match '(?is)do not ask the developer to\s+classify'
+
+    }
+}
+
+Describe 'Classification before infobase preparation' {
+    BeforeAll {
+        $preflightRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        $preflightLib = Join-Path $preflightRoot '.agents\skills\1c-workflow\scripts\lib'
+    }
+
+    BeforeEach {
+        . (Join-Path $preflightLib 'agent-1c.verification-selection.ps1')
+        . (Join-Path $preflightLib 'agent-1c.verification-modes.ps1')
+        . (Join-Path $preflightLib 'agent-1c.lifecycle.ps1')
+        function Get-VerificationModel { 'cumulative' }
+        $script:PreflightCycle = ${function:Invoke-ItlVerificationCycle}
+        $script:PreflightEvents = [Collections.Generic.List[string]]::new()
+        $script:PreflightModes = @{ ITL_YAXUNIT_TESTING = 'auto'; ITL_VANESSA_TESTING = 'off'; ITL_CHECK_EVENT_LOG = 'off' }
+        $script:PreflightState = [pscustomobject]@{ lastVerificationEvidenceKind = 'complete/current-obligations' }
+        $script:PreflightSourceOid = 'current'
+        $script:PreflightDecisionOid = 'stale'
+        $script:PreflightVanessaReady = $true
+        $script:PreflightLateEdit = $false
+        $script:ActiveAuxiliaryVanessaContext = $null
+        $VerificationTrigger = 'command'
+        $ExplicitVerificationComponent = @()
+        $DevBranchName = 'branch1'
+        $RepairSessionId = ''
+        function Get-EnvValue { param($Name, $Default) if ($script:PreflightModes.ContainsKey($Name)) { $script:PreflightModes[$Name] } else { $Default } }
+        function Get-StateValue { param($State, $Name, $Default) if ($State.PSObject.Properties[$Name]) { $State.$Name } else { $Default } }
+        function Read-DevBranchState { $script:PreflightState }
+        function Get-DevBranchKind { 'configuration' }
+        function Get-ExportPath { 'src/cf' }
+        function Assert-ExportPathInsideProject { 'unused' }
+        function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+        function Restore-ConfigDumpInfoLoadSnapshot { $script:PreflightEvents.Add('restore') }
+        function Remove-ConfigDumpInfoLoadSnapshot {}
+        function Assert-ItlVerificationRepairScope {}
+        # Diagnostic filters belong to the Vanessa/YAxUnit owners; this preflight runs unfiltered.
+        function Get-YAxUnitModuleFilter { @() }
+        function Test-ItlVanessaDiagnosticScope { $false }
+        function Test-ItlYAxUnitDiagnosticScope { $false }
+        function Repair-OneCSourceLineEndings { $script:PreflightEvents.Add('normalize') }
+        function Update-VerificationSuiteInventory {
+            $script:PreflightEvents.Add('classify')
+            [pscustomobject]@{
+                vanessaClassificationComplete = $script:PreflightVanessaReady
+                yaxunit = @{ classificationComplete = $script:PreflightDecisionOid -eq $script:PreflightSourceOid }
+                classificationIssues = @('YAxUnit applicability is stale. Current sourceOid=current. Reclassify the exact sourceOid.')
+            }
         }
-        $fastSkill | Should -Match 'split oversized/mixed feature files yourself'
-        $refreshTemplate | Should -Match 'split oversized or mixed feature files yourself'
-        $advanced | Should -Match 'VERIFICATION_SUITE_ACCEPTANCE_SCOPE_TOO_BROAD'
-        $advanced | Should -Match 'Do not merely rename the original file'
-        $selectionReference | Should -Match '(?s)at most eight flat\s+scenarios'
-        $selectionReference | Should -Match 'post-merge scenario baseline'
+        function Update-DevBranchState {}
+        function Get-VerificationClassificationInventoryPath { 'inventory.json' }
+        function Set-RunFailureContext { param($Category, $RequiredAction) $script:PreflightEvents.Add($RequiredAction) }
+        function Invoke-DevBranchVanessaRuntimeRelease { $script:PreflightEvents.Add('release') }
+        function Assert-VanessaVerificationPreflight {}
+        function Test-ItlFullVerificationProofEligible { $true }
+        function Get-ItlMatchingVerificationRepairSession { [pscustomobject]@{ kind = 'canonical-repair' } }
+        function Use-ItlVerificationRepairAttempt {
+            $script:PreflightEvents.Add('attempt')
+            [pscustomobject]@{sessionId='fixture';runId='fixture-attempt'}
+        }
+        function Ensure-DevBranchEventLogBaseline { $script:PreflightEvents.Add('baseline'); $script:PreflightState }
+        function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{ path = 'cursor'; capturedAt = [datetime]'2026-10-24' } }
+        function Update-DevBranchBase { $script:PreflightEvents.Add('load'); if ($script:PreflightLateEdit) { $script:PreflightSourceOid = 'changed-during-load' } }
+        function Invoke-ItlVerificationCycle {
+            if ($script:PreflightLateEdit) { & $script:PreflightCycle -Trigger command }
+            $script:PreflightEvents.Add('verified')
+        }
+        function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
+        function Get-VerificationState { [pscustomobject]@{ isFreshPassed = $true } }
+        function Set-RunFailureContextFromMessage {}
+        function Get-ItlVerificationRepairRunResult { param($Phase) [pscustomobject]@{ phase=$Phase } }
+        function Publish-ItlVerificationRepairRun {
+            param($Ticket, $Result, $Failure, $SessionPassed)
+            if ($null -ne $Failure) {
+                if ($null -ne $Ticket) {
+                    $Result.phase | Should -BeExactly 'verification'
+                    $script:PreflightEvents.Add('repair-failed')
+                } else {
+                    $Result.phase | Should -BeExactly 'preflight'
+                    $script:PreflightEvents.Add('preflight-reported')
+                }
+            } elseif ($SessionPassed) {
+                $script:PreflightEvents.Add('repair-complete')
+            }
+        }
+        function Write-DevBranchVerificationRunUserReport { $script:PreflightEvents.Add('report') }
+        # Run-status liveness belongs to agent-1c.core.ps1, which this fixture
+        # does not load; keep the real owner's body invocation semantics.
+        function Set-RunStage { param($Stage, $Detail) }
+        function Invoke-WithRunStatusHeartbeat { param([scriptblock]$Body) & $Body }
+    }
+
+    It 'rejects stale source classification without load, runtime release, baseline or repair-attempt consumption' {
+        $VerificationTrigger = 'repair'
+        { Invoke-DevBranchCheck } | Should -Throw '*ITL_TEST_CLASSIFICATION_REQUIRED*sourceOid=current*'
+        @($script:PreflightEvents) | Should -Be @('normalize', 'classify', 'classify-tests-and-repeat-original-itl-command', 'restore', 'preflight-reported')
+    }
+
+    It 'continues the original repair after classification is corrected' {
+        $VerificationTrigger = 'repair'
+        { Invoke-DevBranchCheck } | Should -Throw '*ITL_TEST_CLASSIFICATION_REQUIRED*'
+        $script:PreflightDecisionOid = 'current'
+        Invoke-DevBranchCheck
+        @($script:PreflightEvents | Where-Object { $_ -eq 'attempt' }).Count | Should -Be 1
+        @($script:PreflightEvents | Where-Object { $_ -eq 'load' }).Count | Should -Be 1
+        $script:PreflightEvents | Should -Contain 'verified'
+        $script:PreflightEvents | Should -Contain 'report'
+        $script:PreflightEvents[-1] | Should -Be 'repair-complete'
+    }
+
+    It 'preserves the adopted dirty-source baseline through cursor persistence and a failed load (<Model>)' -TestCases @(@{Model='cumulative'},@{Model='change'}) {
+        param($Model)
+        $fixtureRoot = Join-Path $TestDrive 'baseline legacy База'
+        $helper = Join-Path $preflightRoot '.agents\skills\1c-workflow\scripts\agent-1c.ps1'
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixtureRoot 'src/cf/CommonModules/Owned/Ext') | Out-Null
+        & git -C $fixtureRoot init -b master *> $null
+        & git -C $fixtureRoot config user.email 'tests@example.invalid'
+        & git -C $fixtureRoot config user.name 'ITL Tests'
+        $sourcePath = Join-Path $fixtureRoot 'src/cf/CommonModules/Owned/Ext/Module.bsl'
+        Set-Content -LiteralPath $sourcePath -Encoding UTF8 -Value '// committed'
+        & git -C $fixtureRoot add src
+        & git -C $fixtureRoot commit -qm baseline
+        Set-Content -LiteralPath $sourcePath -Encoding UTF8 -Value '// dirty before adoption'
+        & {
+            . $helper -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:ClassificationFixtureModel=$Model
+            function Get-VerificationModel { $script:ClassificationFixtureModel }
+            # Current-plan validity belongs to the model owner tests; keep real
+            # applicability, baseline serialization and event-log persistence here.
+            if ($Model -eq 'change') { function Assert-VerificationChangeReady { param($State) } }
+            $DevBranchName = 'branch1'
+            $VerificationTrigger = 'command'
+            $ExplicitVerificationComponent = @()
+            $script:ActiveAuxiliaryVanessaContext = $null
+            $script:ApplicabilityCatalog = [pscustomobject]@{ groups = @(); assignments = @(); registrationPaths = @(); notApplicable = @() }
+            $eventBaselinePath = Join-Path $fixtureRoot 'event-baseline.json'
+            Write-Utf8TextAtomic -Path $eventBaselinePath -Value '{}'
+            $script:FixtureStatePath = Save-DevBranchState -SafeDevBranchName 'branch1' -State @{
+                devBranchName = 'branch1'; safeDevBranchName = 'branch1'
+                eventLogBaselinePath = $eventBaselinePath
+            }
+            function Read-DevBranchState { Read-DevBranchStateFile -Path $script:FixtureStatePath }
+            $cursorPath = Join-Path $fixtureRoot 'pending-cursor.json'
+            Write-Utf8TextAtomic -Path $cursorPath -Value '{"capturedAt":"2026-10-24T00:00:00Z","sourceKey":"fixture","activeSegment":"segment"}'
+            function Get-DevBranchEventLogPendingCursorPath { $cursorPath }
+            function Get-ItlVerificationExecutionDecision { param($Component) [pscustomobject]@{ run = $Component -eq 'yaxunit' } }
+            function Assert-ItlVerificationRepairScope {}
+            function Get-DevBranchKind { 'configuration' }
+            function Get-ExportPath { 'src/cf' }
+            function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+            function Restore-ConfigDumpInfoLoadSnapshot {}
+            function Remove-ConfigDumpInfoLoadSnapshot {}
+            function Repair-OneCSourceLineEndings {}
+            function Invoke-DevBranchVanessaRuntimeRelease {}
+            function Test-ItlFullVerificationProofEligible { $true }
+            function Get-VerificationAcceptedMasterInput { [pscustomobject]@{ importedPaths = @() } }
+            # Keep real applicability, state serialization and both event-log
+            # owners. The inventory envelope and native load are separate owners.
+            function Update-VerificationSuiteInventory {
+                $applicability = Get-YAxUnitProductionApplicability -Catalog $script:ApplicabilityCatalog
+                [pscustomobject]@{
+                    vanessaClassificationComplete = $true; yaxunit = $applicability
+                    classificationIssues = @($applicability.issues)
+                }
+            }
+            function Update-DevBranchBase { throw 'FIXTURE_LOAD_FAILED' }
+
+            { Invoke-DevBranchCheck } | Should -Throw '*FIXTURE_LOAD_FAILED*'
+            $persisted = Read-DevBranchState
+            $baseline = Get-StateValue -State $persisted -Name 'yaxunitApplicabilityBaseline' -Default $null
+            $baseline | Should -Not -BeNullOrEmpty
+            @($baseline.legacySourceOids).Count | Should -Be 1
+            $persisted.eventLogPendingCursorPath | Should -Be $cursorPath
+            $adoptedOid = $baseline.legacySourceOids[0].sourceOid
+
+            Set-Content -LiteralPath $sourcePath -Encoding UTF8 -Value '// own change after the failed load'
+            $next = Get-YAxUnitProductionApplicability -Catalog $script:ApplicabilityCatalog
+            $next.classificationComplete | Should -BeFalse
+            $next.issues -join ';' | Should -Match 'unclassified or stale'
+            (Read-DevBranchState).yaxunitApplicabilityBaseline.legacySourceOids[0].sourceOid | Should -BeExactly $adoptedOid
+        }
+    }
+
+    It 'preserves component selection for <caseName>' -TestCases @(
+        @{ caseName = 'YAxUnit only'; yaxunit = 'auto'; vanessa = 'off'; sourceReady = $true; vanessaReady = $false; trigger = 'command'; named = @(); assessments = 1 },
+        @{ caseName = 'Vanessa only'; yaxunit = 'off'; vanessa = 'auto'; sourceReady = $false; vanessaReady = $true; trigger = 'command'; named = @(); assessments = 1 },
+        @{ caseName = 'both disabled'; yaxunit = 'off'; vanessa = 'off'; sourceReady = $false; vanessaReady = $false; trigger = 'command'; named = @(); assessments = 0 },
+        @{ caseName = 'named YAxUnit overrides off'; yaxunit = 'off'; vanessa = 'auto'; sourceReady = $true; vanessaReady = $false; trigger = 'explicit'; named = @('yaxunit'); assessments = 1 }
+    ) {
+        param($caseName, $yaxunit, $vanessa, $sourceReady, $vanessaReady, $trigger, $named, $assessments)
+        $script:PreflightModes.ITL_YAXUNIT_TESTING = $yaxunit
+        $script:PreflightModes.ITL_VANESSA_TESTING = $vanessa
+        if ($sourceReady) { $script:PreflightDecisionOid = 'current' }
+        $script:PreflightVanessaReady = $vanessaReady
+        $VerificationTrigger = $trigger
+        $ExplicitVerificationComponent = $named
+        Invoke-DevBranchCheck
+        @($script:PreflightEvents | Where-Object { $_ -eq 'classify' }).Count | Should -Be $assessments
+        $script:PreflightEvents | Should -Contain 'load'
+        $script:PreflightEvents | Should -Contain 'verified'
+    }
+
+    It 'keeps the auxiliary contour outside branch classification' {
+        $script:ActiveAuxiliaryVanessaContext = [pscustomobject]@{ name = 'auxiliary' }
+        Invoke-DevBranchCheck
+        $script:PreflightEvents | Should -Not -Contain 'classify'
+        $script:PreflightEvents | Should -Contain 'verified'
+    }
+
+    It 'rechecks changed inputs in the existing cycle after loading' {
+        $VerificationTrigger = 'repair'
+        $script:PreflightDecisionOid = 'current'
+        $script:PreflightLateEdit = $true
+        { Invoke-DevBranchCheck } | Should -Throw '*ITL_TEST_CLASSIFICATION_REQUIRED*'
+        @($script:PreflightEvents | Where-Object { $_ -eq 'classify' }).Count | Should -Be 2
+        $script:PreflightEvents | Should -Contain 'load'
+        $script:PreflightEvents | Should -Contain 'repair-failed'
+        $script:PreflightEvents | Should -Not -Contain 'verified'
+        $script:PreflightEvents | Should -Not -Contain 'report'
+    }
+}
+
+Describe 'Portable verification proof identities' {
+    It 'preserves exact path case and only removes exact duplicates' {
+        . (Join-Path $PSScriptRoot '../../.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1')
+        (@('a','A','a','а-б','а.б','а_б') | Sort-VerificationIdentityStrings -Unique) -join '|' | Should -BeExactly 'A|a|а-б|а.б|а_б'
+        (@('a','a') | Sort-VerificationIdentityStrings).Count | Should -Be 2
+        $o=[pscustomobject]@{id='x';expectedResult='42';inputPaths=@('src/cf/а-б','src/cf/а.б');admissibleProof=@('event-log','runtime-observation')}
+        $before=Get-VerificationOneOffObligationHash $o
+        [array]::Reverse($o.inputPaths);[array]::Reverse($o.admissibleProof)
+        Get-VerificationOneOffObligationHash $o | Should -BeExactly $before
+    }
+
+    It 'round-trips production begin/complete/assessment across hosts: <First> <Culture>' -TestCases @(
+        @{First='powershell';Second='pwsh';Culture='ru-RU'},@{First='pwsh';Second='powershell';Culture='ru-RU'},
+        @{First='powershell';Second='pwsh';Culture='en-US'},@{First='pwsh';Second='powershell';Culture='en-US'}
+    ) {
+        param($First,$Second,$Culture)
+        $root=Join-Path $TestDrive ("Между host $First $Culture")
+        [void][IO.Directory]::CreateDirectory($root)
+        $module=Join-Path $PSScriptRoot '../../.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1'
+        $support=Join-Path $PSScriptRoot 'VerificationHostIdentitySupport.ps1'
+        foreach($step in @(@($First,'begin'),@($Second,'complete'),@($First,'assess'),@($Second,'changed'),@($First,'legacy'),@($Second,'complete'),@($First,'assess'))){
+            $output=@(& $step[0] -NoProfile -NonInteractive -File $support -ModulePath $module -ProjectRoot $root -Phase $step[1] -Culture $Culture 2>&1)
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join ' ')
+            ($output[-1]|ConvertFrom-Json).status | Should -Be passed
+        }
     }
 }

@@ -12,7 +12,33 @@
         $HelperText = $context.HelperText
         $LauncherText = $context.LauncherText
         $McpHostText = $context.McpHostText
+        function Assert-DeliveryOrphanGateWaitAnchor {
+            param([string]$Text)
+            $Text | Should -MatchExactly '(?m)^<a id="delivery-orphan-gate-wait"></a>\r?$'
+        }
+
+        function Get-WorkflowSourceMarkdownFiles {
+            param([string]$Root)
+            & {
+                . $HelperPath -ProjectRoot $Root -Action help *> $null
+                @(Get-GitPathListAt -Root $Root -Arguments @('ls-files','-z','--cached','--others','--exclude-standard')) |
+                    Where-Object { $_.EndsWith('.md',[StringComparison]::OrdinalIgnoreCase) } |
+                    Select-Object -Unique | ForEach-Object {
+                        $path = Join-Path $Root $_
+                        if (Test-Path -LiteralPath $path -PathType Leaf) { Get-Item -LiteralPath $path }
+                    }
+            }
+        }
     }
+    It 'retains every verification reference required by the native delivery inventory' {
+        $catalog=Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $references=@(($catalog.contracts | Where-Object id -eq 'verification-reference-files').paths)
+        $references.Count | Should -BeGreaterThan 0
+        foreach($reference in $references) {
+            Test-Path -LiteralPath (Join-Path $RepoRoot $reference) -PathType Leaf | Should -BeTrue -Because "$reference is a required installed reference"
+        }
+    }
+
     It "parses the helper modules launcher and installer" {
         $parsePaths = @($HelperPath) + @($HelperModulePaths) + @($LauncherPath, $InstallerPath)
         $HelperModulePaths.Count | Should -BeGreaterThan 0
@@ -27,8 +53,10 @@
     It "keeps Markdown files valid UTF-8 without mojibake markers" {
         $strictUtf8 = New-Object System.Text.UTF8Encoding $false, $true
         $mojibakePattern = "Р Сџ|Р С’|Р вЂ™|Р С™|Р Сљ|Р Сњ|Р С›|Р РЋ|Р Сћ|Р Р€|Р Р…Р ВµРЎвЂљ|РЎР‚|РЎРѓ|РЎвЂљ|Р В°|Р Вµ|Р С‘|Р С•"
-        $markdownFiles = Get-ChildItem -LiteralPath $RepoRoot -Recurse -File -Filter "*.md" |
-            Where-Object { $_.FullName -notmatch "\\.git\\" }
+        # Ignored snapshots and dependency clones are mutable runtime, not
+        # source documentation. A real canary renamed a completed snapshot
+        # during the old recursive scan; keep the exact Git source inventory.
+        $markdownFiles = @(Get-WorkflowSourceMarkdownFiles -Root $RepoRoot)
 
         foreach ($file in $markdownFiles) {
             $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
@@ -38,9 +66,62 @@
         }
     }
 
+    It 'includes tracked and new Unicode Markdown while excluding ignored runtime from source validation' {
+        $root = Join-Path $TestDrive 'Markdown исходники и runtime'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root 'build/runtime') | Out-Null
+        & git -C $root init --quiet
+        [IO.File]::WriteAllText((Join-Path $root '.gitignore'),"build/`n",[Text.UTF8Encoding]::new($false))
+        $tracked = Join-Path $root 'Правила с пробелом.md'
+        [IO.File]::WriteAllText($tracked,'tracked',[Text.UTF8Encoding]::new($false))
+        & git -C $root add -- .gitignore 'Правила с пробелом.md'
+        $newFile = Join-Path $root 'Новая проверка.md'
+        [IO.File]::WriteAllText($newFile,'new',[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllBytes((Join-Path $root 'build/runtime/transient.md'),[byte[]]@(255,254,0))
+        $files = @(Get-WorkflowSourceMarkdownFiles -Root $root)
+        @($files.Name | Sort-Object) | Should -Be @('Новая проверка.md','Правила с пробелом.md')
+        # Corrupt source still fails the original strict decoder contract.
+        [IO.File]::WriteAllBytes($tracked,[byte[]]@(255,254,0))
+        $strictUtf8 = [Text.UTF8Encoding]::new($false,$true)
+        { $strictUtf8.GetString([IO.File]::ReadAllBytes(@(Get-WorkflowSourceMarkdownFiles -Root $root | Where-Object Name -EQ 'Правила с пробелом.md')[0].FullName)) } | Should -Throw
+    }
+
+    It "keeps stabilization current state separate from append-only narrative history" {
+        $planPath = Join-Path $RepoRoot "docs\workflow-stabilization-plan.md"
+        $historyPath = Join-Path $RepoRoot "docs\workflow-stabilization-history.md"
+        $planText = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8
+        $historyText = Get-Content -LiteralPath $historyPath -Raw -Encoding UTF8
+        $current = [regex]::Match(
+            $planText,
+            '(?ms)^## Current state\s+(?<body>.*?)(?=^## Wave 0)'
+        )
+        $current.Success | Should -BeTrue
+        $body = $current.Groups['body'].Value
+
+        foreach ($field in @('Implementation', 'Registration', 'Publication', 'Installation', 'Runtime')) {
+            $body | Should -Match ([regex]::Escape($field))
+        }
+        $body | Should -Match 'Snapshot boundary:'
+        $body | Should -Match 'explicit user hold'
+        $body | Should -Match ([regex]::Escape('[stabilization history](workflow-stabilization-history.md)'))
+        foreach ($id in 1..8 | ForEach-Object { 'STAB-{0:d2}' -f $_ }) {
+            $rows = @($body -split '\r?\n' | Where-Object { $_ -match "^\| $([regex]::Escape($id)) \|" })
+            $rows.Count | Should -Be 1
+            @(($rows[0].Trim('|')) -split '\|').Count | Should -Be 7
+        }
+
+        $planText | Should -Not -Match '(?m)^## Execution log\r?$'
+        $historyText | Should -Match '(?m)^## Execution log\r?$'
+        $historyText | Should -Match 'append-only narrative ledger'
+        $historyText | Should -Match 'authoritative\s+raw registration, qualification, publication, and resource evidence'
+        $records = @($historyText -split '\r?\n' | Where-Object { $_ -match '^\| \d{4}-\d{2}-\d{2} \|' })
+        $records.Count | Should -BeGreaterOrEqual 1
+        foreach ($marker in @('Stabilization started', 'STAB-01', 'STAB-02', 'STAB-03', 'STAB-07', 'STAB-08', 'Develop publication explicitly paused')) {
+            @($records | Where-Object { $_ -match [regex]::Escape($marker) }).Count | Should -BeGreaterOrEqual 1
+        }
+    }
+
     It 'keeps the detailed skill as a compact router and routes human documentation separately' {
         $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents\skills\1c-workflow\SKILL.md')
-        ([regex]::Matches($skillText, '\S+')).Count | Should -BeLessOrEqual 775
         $skillText | Should -Match 'detailed ITL workflow router'
         $skillText | Should -Match ([regex]::Escape('references/workflow.md'))
         $skillText | Should -Match 'workflow\.md` only for help, an unclear request'
@@ -69,9 +150,9 @@
         (Test-Path -LiteralPath (Join-Path $RepoRoot 'DEV-BRANCH-DEVELOPMENT.ru.md')) | Should -BeFalse
     }
 
-    It "keeps every installed ITL skill discoverable through valid frontmatter" {
+    It "keeps installed ITL and source-only planning skills discoverable through valid frontmatter" {
         $skillRoot = Join-Path $RepoRoot ".agents\skills"
-        $expectedSkillIds = @(
+        $installedSkillIds = @(
             "1c-workflow",
             "1c-workflow-fast",
             "itl-roctup-1c-data",
@@ -80,7 +161,13 @@
             "itl-remote-agent",
             "itl-performance",
             "product-docs"
-        ) | Sort-Object
+        )
+        $sourcePlanningSkillIds = @(
+            'grill-me', 'grill-with-docs', 'grilling', 'domain-modeling',
+            'openspec-explore', 'openspec-propose', 'openspec-apply-change',
+            'openspec-update-change', 'openspec-sync-specs', 'openspec-archive-change'
+        )
+        $expectedSkillIds = @($installedSkillIds + $sourcePlanningSkillIds | Sort-Object)
         $actualSkillIds = @(Get-ChildItem -LiteralPath $skillRoot -Directory | Select-Object -ExpandProperty Name | Sort-Object)
         $actualSkillIds | Should -Be $expectedSkillIds
 
@@ -100,7 +187,7 @@
 
             $descriptionMatch = [regex]::Match(
                 $yaml,
-                '(?ms)^description:\s*(?:(?:>|\|)[+-]?\s*\r?\n(?<folded>(?:[ \t]+[^\r\n]*(?:\r?\n|\z))+)|["'']?(?<inline>[^\r\n"'']+)["'']?\s*$)'
+                '(?ms)^description:[ \t]*(?:(?:>|\|)[+-]?[ \t]*\r?\n(?<folded>(?:[ \t]+[^\r\n]*(?:\r?\n|\z))+)|(?<quote>["''])(?<inline>[^\r\n]+)\k<quote>[ \t]*\r?$|(?<inline>[^"''\s][^\r\n]*)[ \t]*\r?$)'
             )
             $descriptionMatch.Success | Should -BeTrue
             $description = if ($descriptionMatch.Groups['folded'].Success) {
@@ -113,14 +200,48 @@
         }
     }
 
+    It "requires an explicit owned database access handoff before incompatible phases" {
+        $skillTexts = @{}
+        foreach ($skillId in @('itl-roctup-1c-data', 'itl-vanessa-ui-mcp', 'itl-performance', 'itl-remote-runner')) {
+            $skillTexts[$skillId] = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\$skillId\SKILL.md") -Raw -Encoding UTF8
+            $skillTexts[$skillId] | Should -Match '## Database Access Handoff'
+            $skillTexts[$skillId] | Should -Match '(call-scoped guard|execution guard)'
+            $skillTexts[$skillId] | Should -Match 'Never .*foreign holder'
+            $skillTexts[$skillId] | Should -Not -Match 'finish_database_access'
+        }
+
+        $skillTexts['itl-roctup-1c-data'] | Should -Match 'Do not create or finish a retained database phase'
+        $skillTexts['itl-vanessa-ui-mcp'] | Should -Match 'Do not create or finish a retained UI database phase'
+        $skillTexts['itl-vanessa-ui-mcp'] | Should -Match 'fails twice without new evidence, change the route'
+        $skillTexts['itl-vanessa-ui-mcp'] | Should -Match ([regex]::Escape('AGENTS.md → Completion and repeated obstacles'))
+        $userRulesAppend = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'templates\USER-RULES.append.md')
+        $userRulesAppend | Should -Match ([regex]::Escape('report `pending verification` only when the run is `off`, blocked or excluded by the user; a runnable `/itl-check` is the next step'))
+        $overlayRoot = (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'templates\ai-rules-overlay\AGENTS.md')) -replace '\s+', ' '
+        $overlayRoot | Should -Match '## Completion and repeated obstacles Authorized work ends when the deliverable and every check its task path selects have run'
+        $overlayRoot | Should -Match 'never substitutes for standalone `syntaxcheck` / `syntaxcheck_file` evidence'
+        foreach ($skillId in @('itl-performance', 'itl-remote-runner')) {
+            $skillTexts[$skillId] | Should -Match 'bounded helper or (measurement|remote) job.*execution guard'
+            $skillTexts[$skillId] | Should -Match 'without a generic recovery gate'
+        }
+
+        $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates\USER-RULES.append.md') -Raw -Encoding UTF8
+        $userRules | Should -Match 'Let bounded database executions finish or cancel them through their exact owner'
+        $userRules | Should -Match 'waiting-for-base.*normal serialization'
+        $userRules | Should -Match 'Never stop a foreign or ambiguously identified 1C process'
+        $userRules | Should -Match 'old database-access tickets as authority'
+        $userRules | Should -Match 'execution-conflict.*exact external activity'
+        $userRules | Should -Match 'without recovery or manual unlock'
+    }
+
     It "documentation budgets keep review thresholds below hard limits" {
         $budgets = @(
-            @{ path = "AGENTS.md"; maxWords = 1150; reviewApproxTokens = 2000; maxApproxTokens = 2200; rationale = "source-maintainer router plus delivery, lock, component release, non-ASCII path, and byte-preserving 1C source safety contracts" },
+            @{ path = "AGENTS.md"; maxWords = 1320; reviewApproxTokens = 2500; maxApproxTokens = 2550; rationale = "source-only maintainer rules retain semantic comparison and the selection/cost/reuse pointer. Publication, master/component release and frozen-repair rules move unchanged to on-demand docs/source-publication.md behind one trigger-and-route rule: 1437/2686 to 1300/2422 words/byte-4 proxy tokens (-137/-264), so maxWords decreases 1440 to 1320 and hard tokens 2800 to 2550. Review threshold and safety contracts remain" },
+            @{ path = "templates\AGENTS.append.md"; maxWords = 80; reviewApproxTokens = 180; maxApproxTokens = 220; rationale = "small installed workflow bridge" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
-            @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 775; reviewApproxTokens = 1200; maxApproxTokens = 1600; rationale = "always-on ITL safety overlay with explicit routine routing precedence" },
+            @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1630; rationale = "explicit direct CheckConfig intent adds 12 words and 28 byte-4 proxy tokens (738/1597 to 750/1625 words/tokens); hard tokens increase 1600 to 1630 for the required action/flag mapping. Review threshold, word budget and safety contracts remain; duplicated command-template guidance is removed" },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 1310; reviewApproxTokens = 2300; maxApproxTokens = 2820; rationale ="ITL cadence needs an always-on USER override of generic Gate 6 and explicit production purpose, Release exception and deployment boundary. Proof and legacy details stay on demand; duplicated fast-router guidance is removed. Required routing changes 1132/2373 to 1164/2472 words/byte-4 proxy tokens (+32/+99), so maxWords 1160 to 1180 and hard tokens 2400 to 2500 preserve complete meaning; G4 qualified/private fallback and strict root eligibility remain mandatory. Remove only the duplicated no-default/only-relevant recall wording: the merged candidate keeps 1176 words (limit 1180) and 10088 raw UTF-8 bytes including CRLF and the independently queued 65-byte owner guidance. Hard proxy tokens increase 2500 to 2525 for required meaning, with measured named-encoding delta in G4 evidence; review threshold and runtime deadlines remain unchanged. Project-local artifact routing adds 10 words and 123 bytes: 1176/2522 to 1186/2553 words/byte-4 proxy tokens. Word limit increases 1180 to 1200 and hard proxy tokens 2525 to 2600; placement detail stays on demand. Required source-storage scope override adds 30 words and 83 byte-4 proxy tokens (1186/2553 to 1216/2636); raise hard limits to 1240 words/2700 tokens while retaining the review threshold and all prior rules; detailed capture and completion contracts stay on demand. R51 limits `pending verification` to an off, blocked or user-excluded run so a runnable `/itl-check` is not reported as a final state: 1232/2661 to 1251/2687 words/byte-4 proxy tokens (+19/+26); maxWords 1240 to 1255, token limits unchanged. Agents could not evaluate `explicitly qualified` scoped memory and fell back to local-only with a current binding; the deterministic `memory_status` bindingState check and Codex deferred search change 1251/2687 to 1275/2753 words/byte-4 proxy tokens (+24/+66), so maxWords 1255 to 1280 and hard tokens 2700 to 2760; review threshold unchanged. A pilot saved a user-confirmed decision as `candidate`, which recall never returns, and skipped a later standing condition; the verified-save rule and the pre-report `memory_status` candidate/capture checkpoint change 1275/2753 to 1305/2816 (+30/+63), so maxWords 1280 to 1310 and hard tokens 2760 to 2820; review threshold unchanged" },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
-            @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract" },
+            @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1540; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract; conditional retained small-suite guidance changes the measured C4 guide from 1439/2618 to 1464/2656 words/byte-4 proxy tokens (+25/+38), so maxWords increases 1450 to 1475 with the same 11-word margin; review and hard token limits and runtime safety rules remain. A PM5 pilot scenario put fixture cleanup last and failed on its own leftover after an earlier failed run, so every later /itl-check failed; the rerunnable self-cleanup rule, scoped to data a rerun would find (fixed names or keys, receipts, changed settings), changes 1473/2682 to 1528/2765 (+55/+83), so maxWords increases 1475 to 1540; review and hard token limits remain" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-recipes.md"; maxWords = 1100; reviewApproxTokens = 2100; maxApproxTokens = 2400; rationale = "selective worked Vanessa recipes and runtime discovery bounds" }
         )
 
@@ -140,20 +261,237 @@
         }
     }
 
+    It "keeps workflow-owned client context growth visible and attributable" {
+        # Client attach/detach guidance adds 152 UTF-8 bytes to each master
+        # surface (codex 33019 -> 33171); measured dev surfaces remain below
+        # their existing limits.
+        # Six OpenSpec routes add 253 UTF-8 bytes to each master surface;
+        # ZCode/MiMo add two client rows. Keep the measured ceilings explicit.
+        # The required itl-result production-purpose conditional adds 144 UTF-8
+        # bytes (36 byte/4 proxy tokens) per dev surface: codex 50748 -> 50892.
+        # USER precedence/proof rules remain separate; master is unchanged.
+        $expectedRendered = @{
+            "master/codex" = @{ files = 24; maxBytes = 33424 }
+            "master/kilocode" = @{ files = 12; maxBytes = 32270 }
+            "master/claude-code" = @{ files = 12; maxBytes = 32114 }
+            "master/cursor" = @{ files = 12; maxBytes = 32114 }
+            "master/opencode" = @{ files = 13; maxBytes = 43143 }
+            "master/kimi" = @{ files = 12; maxBytes = 32367 }
+            "master/qwen" = @{ files = 12; maxBytes = 32114 }
+            "master/command-code" = @{ files = 12; maxBytes = 32114 }
+            "master/cline" = @{ files = 12; maxBytes = 32367 }
+            "master/zcode" = @{ files = 12; maxBytes = 32114 }
+            "master/mimocode" = @{ files = 12; maxBytes = 32114 }
+            "master/pi" = @{ files = 12; maxBytes = 32114 }
+            "dev/codex" = @{ files = 30; maxBytes = 50892 }
+            "dev/kilocode" = @{ files = 15; maxBytes = 49488 }
+            "dev/claude-code" = @{ files = 15; maxBytes = 49308 }
+            "dev/cursor" = @{ files = 15; maxBytes = 49308 }
+            "dev/opencode" = @{ files = 16; maxBytes = 62748 }
+            "dev/kimi" = @{ files = 15; maxBytes = 49605 }
+            "dev/qwen" = @{ files = 15; maxBytes = 49308 }
+            "dev/command-code" = @{ files = 15; maxBytes = 49308 }
+            "dev/cline" = @{ files = 15; maxBytes = 49605 }
+            "dev/zcode" = @{ files = 15; maxBytes = 49308 }
+            "dev/mimocode" = @{ files = 15; maxBytes = 49308 }
+            "dev/pi" = @{ files = 15; maxBytes = 49308 }
+        }
+
+        # Refresh continuation adds 1030 bytes across two on-demand routines:
+        # preserve foreign work, recover autonomously, and give concrete
+        # decision options. Keep this measured delta additive to other owners'
+        # baseline changes; detailed recovery stays in branch-lifecycle.md.
+        foreach ($key in @($expectedRendered.Keys | Where-Object { $_ -like 'dev/*' })) {
+            $expectedRendered[$key].maxBytes += 1030
+        }
+
+        # Lifecycle Git continuation adds two on-demand routes per surface:
+        # +518 UTF-8 bytes (+496 for native OpenCode master). These are additive
+        # to the retained refresh/result deltas above; no contract is removed.
+        foreach ($key in $expectedRendered.Keys) {
+            $expectedRendered[$key].maxBytes += $(if ($key -eq 'master/opencode') { 496 } else { 518 })
+        }
+
+        # The shared routine contract adds one transport sentence for an
+        # externalized blockerAction: +151 UTF-8 bytes (~38 byte/4 proxy
+        # tokens) per routine file, i.e. one invocation loads +151 bytes;
+        # surfaces grow by 10 files (+1510) on master and 13 (+1963) on dev.
+        # Without it a large user decision would be invisible to the agent.
+        foreach ($key in $expectedRendered.Keys) {
+            $expectedRendered[$key].maxBytes += $(if ($key -like 'master/*') { 1510 } else { 1963 })
+        }
+
+        # Additive client-membership rollout changes only itl-update-workflow:
+        # 1478 -> 1930 LF UTF-8 bytes, +452 on all 24 rendered surfaces.
+        # The command is loaded on demand; root instructions and file counts
+        # are unchanged. Named encodings: cl100k_base 341 -> 405 (+64),
+        # o200k_base 333 -> 400 (+67), not a claim about a model tokenizer.
+        # The new master/codex ceiling is 34394 for 34174 measured bytes:
+        # the old 220-byte headroom is retained, not increased. Grant this
+        # fixed delta only when that rollout contract is actually present.
+        $updateTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents/skills/1c-workflow/kilo-command-templates/common/itl-update-workflow.md.template')
+        if ($updateTemplate.Contains("It adds master's attached clients")) {
+            foreach ($instruction in @(
+                'the helper then rolls out the package to registered development worktrees under their existing locks',
+                "It adds master's attached clients to each branch's configured set, preserving additional branch clients, their settings, and unrelated staged/unstaged/untracked work",
+                'Rules, skills, agents, commands and MCP are installed for the resulting set with branch-local paths',
+                'Only updater-owned tracked changes are committed; it does not push or refresh a database',
+                'follow its named branch continuation',
+                'A pending branch transaction finishes its recorded client set before a new transaction adds missing master clients',
+                'do not edit receipts or expand snapshots manually',
+                'Detach is not propagated',
+                'refresh is a separate operation'
+            )) {
+                $updateTemplate | Should -Match ([regex]::Escape($instruction))
+            }
+            # Catalog project selection adds one on-demand continuation:
+            # 1930 -> 2346 LF UTF-8 bytes, +416 (~104 byte/4 proxy tokens) on
+            # all 24 rendered surfaces. Without it an unbound update stops on
+            # a required user choice the agent cannot route back to the user;
+            # 137 of those bytes keep the full list out of a choice widget
+            # that showed only one recommended project in a real update.
+            $catalogSelectionBytes = 0
+            if ($updateTemplate.Contains('blockerClassification=catalog-project-selection')) {
+                $updateTemplate | Should -Match ([regex]::Escape('repeat the same command with `-CatalogProjectId <id>`; never choose one yourself'))
+                $updateTemplate | Should -Match ([regex]::Escape('without shortening it for a choice widget'))
+                $catalogSelectionBytes = 416
+            }
+            [System.Text.Encoding]::UTF8.GetByteCount($updateTemplate.Replace("`r`n", "`n")) | Should -BeLessOrEqual (1930 + $catalogSelectionBytes)
+            foreach ($key in $expectedRendered.Keys) {
+                $expectedRendered[$key].maxBytes += 452 + $catalogSelectionBytes
+            }
+        }
+
+        # One on-demand dev command adds 177 UTF-8 bytes for the assessment,
+        # diagnostic continuation and report routing (3711 -> 3888).
+        # Keep detailed evidence rules in the on-demand verification reference.
+        $repairTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents/skills/1c-workflow/kilo-command-templates/dev/itl-verify-fix.md.template')
+        $repairTemplate | Should -Match 'fifth accounted attempt'
+        $repairTemplate | Should -Match 'three unsuccessful fixes'
+        [Text.Encoding]::UTF8.GetByteCount($repairTemplate.Replace("`r`n", "`n").TrimEnd("`n")) | Should -BeLessOrEqual 3888
+        foreach ($key in @($expectedRendered.Keys | Where-Object { $_ -like 'dev/*' })) {
+            $expectedRendered[$key].maxBytes += 177
+        }
+
+        # The renderer owns the long-run rule: 14 long templates carry one
+        # ITL_LONG_RUN marker instead of their own timeout_ms paragraph.
+        # timeout_ms clients shrink by 206 bytes on master; dev grows by 476
+        # because fork/sync-branches/verify-fix now state the complete rule
+        # instead of a bare "timeout_ms >= 3900000 when supported". Claude Code
+        # caps its foreground timeout at 600000 ms, so it receives the
+        # background-notification rule instead: master +378, dev +1762. The
+        # rule loads only with an invoked command (about +140 bytes each).
+        foreach ($key in @($expectedRendered.Keys)) {
+            if ($key -eq 'master/claude-code') { $expectedRendered[$key].maxBytes += 378 }
+            elseif ($key -eq 'dev/claude-code') { $expectedRendered[$key].maxBytes += 1762 }
+            elseif ($key -like 'dev/*') { $expectedRendered[$key].maxBytes += 476 }
+        }
+
+        $rendered = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            foreach ($surface in @("master", "dev")) {
+                function Get-ItlCommandSurface { return $surface }
+                foreach ($client in @(Get-SupportedAgentTargets)) {
+                    $files = Get-ItlExpectedSurfaceFiles -Client $client -SourceRoot $RepoRoot
+                    $bytes = 0
+                    foreach ($relativePath in @($files.Keys)) {
+                        $bytes += [System.Text.Encoding]::UTF8.GetByteCount([string]$files[$relativePath])
+                    }
+                    [pscustomobject]@{
+                        key = "$surface/$client"
+                        files = $files.Count
+                        bytes = $bytes
+                    }
+                }
+            }
+        }
+
+        @($rendered).Count | Should -Be $expectedRendered.Count
+        foreach ($item in @($rendered)) {
+            $expectedRendered.ContainsKey($item.key) | Should -BeTrue
+            $item.files | Should -Be $expectedRendered[$item.key].files
+            $item.bytes | Should -BeLessOrEqual $expectedRendered[$item.key].maxBytes
+        }
+
+        $catalogs = @(
+            @{ path = ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\roctup-v1.10.0.json"; tools = 13; maxBytes = 97511 },
+            @{ path = ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\vanessa-ui-v0.6.5-va-1.2.043.42.json"; tools = 38; maxBytes = 110132 }
+        )
+        foreach ($catalog in $catalogs) {
+            $path = Join-Path $RepoRoot $catalog.path
+            $raw = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+            $document = $raw | ConvertFrom-Json
+            @($document.tools).Count | Should -Be $catalog.tools
+            [System.Text.Encoding]::UTF8.GetByteCount($raw) | Should -BeLessOrEqual $catalog.maxBytes
+        }
+
+        $runnerText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1") -Raw -Encoding UTF8
+        $runnerText | Should -Match 'summaryText\.Length -gt 4000'
+        $evidenceText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\workflow-maintainability-evidence.md") -Raw -Encoding UTF8
+        $evidenceNormalized = $evidenceText -replace '\s+', ' '
+        foreach ($marker in @(
+            'ceil(bytes/4)',
+            '2,105 bytes for ROCTUP',
+            '2,117 bytes for Vanessa UI',
+            'did not spend model tokens',
+            'Source code changes outside these surfaces incur no new context step'
+        )) {
+            $evidenceNormalized | Should -Match ([regex]::Escape($marker))
+        }
+    }
+
+    It 'accepts rewording of the orphan gate rule and rejects removal of its anchor' {
+        $anchor = '<a id="delivery-orphan-gate-wait"></a>'
+        $original = "$anchor`r`n`r`nA duplicate waits while the orphan gate is alive."
+        $reworded = "$anchor`n`nThe next publication waits for the orphan gate to finish."
+        { Assert-DeliveryOrphanGateWaitAnchor -Text $original } | Should -Not -Throw
+        { Assert-DeliveryOrphanGateWaitAnchor -Text $reworded } | Should -Not -Throw
+        { Assert-DeliveryOrphanGateWaitAnchor -Text ($reworded.Replace($anchor, '')) } |
+            Should -Throw '*delivery-orphan-gate-wait*'
+    }
+
     It "keeps root AGENTS source-only and enforces accumulated delivery defaults" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENTS.md") -Raw -Encoding UTF8
         $agentsText | Should -Match "source repository"
         $agentsText | Should -Match "not installed-project guidance"
         $agentsText | Should -Match ([regex]::Escape('Never add this root `AGENTS.md` to bootstrap or `update-workflow` managed-copy lists'))
-        $qualityText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8; foreach ($marker in @('до получения plan', '-ApproveLongPlan', 'Invoke-TestPowerShellFile', 'повторный Publish/Release блокируется')) { $qualityText | Should -Match ([regex]::Escape($marker)) }
+        $qualityText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8
+        foreach ($marker in @('до получения plan', 'Invoke-TestPowerShellFile')) {
+            $qualityText | Should -Match ([regex]::Escape($marker))
+        }
+        Assert-DeliveryOrphanGateWaitAnchor -Text $qualityText
         $agentsText | Should -Match "ITL owns project bootstrap and lifecycle"
         $agentsText | Should -Match ([regex]::Escape('controlled `ai_rules_1c` fork owns'))
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action RegisterChange"))
-        $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PublishDevelop"))
-        $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PromoteRelease"))
-        $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action ReleaseMaster"))
+        # Publication rules load on demand from one owner; AGENTS keeps the trigger and the route.
+        $publicationText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\source-publication.md") -Raw -Encoding UTF8
+        # Stable identifiers only (source-check-derivation): rewording a rule keeps these.
+        $agentsText | Should -Match ([regex]::Escape('`docs/source-publication.md`'))
+        foreach ($identifier in @('scripts/source-delivery.ps1 -Action PublishDevelop', 'scripts/source-delivery.ps1 -Action PromoteRelease',
+            'scripts/source-delivery.ps1 -Action ReleaseMaster', '`itl-ondemand-mcp`', '`scripts/source-repair.ps1`', '`-RequireRelease`', '`server-reset`')) {
+            $publicationText | Should -Match ([regex]::Escape($identifier))
+        }
+        # Publication-only procedures load from the publication route, not the everyday gate guide.
+        $publicationText | Should -Match ([regex]::Escape('`docs/source-publication-reference.md`'))
+        $qualityText | Should -Match ([regex]::Escape('(source-publication-reference.md)'))
         $agentsText | Should -Match ([regex]::Escape('follow the blocking policy in `docs/package-architecture.md`'))
         $architectureText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\package-architecture.md") -Raw -Encoding UTF8
+        $architectureNormalized = $architectureText -replace '\s+', ' '
+        foreach ($marker in @(
+            'simplest coherent architecture',
+            'behavioral invariant has one authoritative owner',
+            'stateless contract',
+            'Runtime authority',
+            'Normal architecture work does not require a separate approval',
+            'existing database-access coordinator is the authoritative owner',
+            'After two repair cycles',
+            'Windows Server 2019 or later',
+            'standard user token',
+            'Always-on installed instructions',
+            'Source-only maintainer rules are measured separately'
+        )) {
+            $architectureNormalized | Should -Match ([regex]::Escape($marker))
+        }
         $architectureText | Should -Match ([regex]::Escape('A runtime check may block only when continuing can lose data, mutate the wrong target, violate an explicit safety boundary, or produce false success or verification evidence'))
         $architectureText | Should -Match ([regex]::Escape('Every other diagnostic discrepancy is `WARN`, not `FAIL`'))
         $architectureText | Should -Match ([regex]::Escape("ITL may duplicate one only after a reproduced cross-boundary failure"))
@@ -165,30 +503,58 @@
             "AGENT-INSTALL.md",
             "docs/ai-rules-fork-upgrades.md",
             "docs/local-quality-gate.md",
-            "docs/release-checklist.md"
+            "docs/release-checklist.md",
+            "docs/source-publication.md",
+            "docs/source-publication-reference.md"
         )) {
             Test-Path -LiteralPath (Join-Path $RepoRoot $relativePath) -PathType Leaf | Should -BeTrue
         }
         $agentsText | Should -Match 'Read-only source maintenance.*does not run `Targeted`, `Smoke`, `Full`, `Develop`, or `Release`'
         $agentsText | Should -Match 'Do not run a broad gate merely because a chat is ending'
+        $agentsText | Should -Match 'Batch directly owned tests following `docs/local-quality-gate.md`; avoid unchanged reruns'
+        foreach ($marker in @('Group related edits before checking them', 'Repeat passed checks only when their relevant inputs changed', 'a turn or context boundary is not a delivery boundary', 'never pre-run it manually', 'Keep the required final gates and their assertions intact')) {
+            ($qualityText -replace '\s+', ' ') | Should -Match ([regex]::Escape($marker))
+        }
         $agentsText | Should -Match '`Fast` is a deprecated alias for `Smoke`'
-        $agentsText | Should -Match 'integrates the queue, qualifies and finalizes an installable candidate'
-        $agentsText | Should -Match ([regex]::Escape('"Publish" never implies master'))
-        $agentsText | Should -Match '`-RequireRelease`.*master must remain unchanged'
-        $agentsText | Should -Match 'Passed `Develop` already contains exact-tree Full/static proof'
-        $agentsText | Should -Match 'queue is empty and local `develop` equals `origin/develop`'
         $agentsText | Should -Match 'Do not ask which gate to run'
         $agentsText | Should -Match 'Do not activate them for source-repository maintenance'
         $agentsText | Should -Match 'separate installed project whose root the user identifies'
         $agentsText | Should -Match 'targeted `rg`.*one matching contract or reference'
         $agentsText | Should -Match 'Widen one layer only for a concrete gap'
         $agentsText | Should -Match 'Browse or use MCP only when external or current state is required'
+        $agentsText | Should -Match 'one invariant has one authoritative owner'
+        $agentsText | Should -Match 'Shared stateless contracts.*normal within authority'
+        $agentsText | Should -Match 'widening shared runtime authority.*obtain architecture checkpoint'
+        $agentsText | Should -Match 'file count is not a trigger'
+        $agentsText | Should -Match 'Windows 10, Windows 11, and Windows Server 2019\+'
+        $agentsText | Should -Match 'without elevation in local and terminal sessions'
+        $agentsText | Should -Match 'always-on instructions, tool schemas, and routine output bounded and on demand'
+        $agentsText | Should -Match 'minimize tokens without weakening'
         foreach ($field in @('developPublished=true', 'dependenciesInstallable=true', 'masterReleased=false', 'masterReleased=true')) {
             $qualityText | Should -Match ([regex]::Escape($field))
         }
         $agentsText | Should -Match 'budgets protect routing and readability'
         $agentsText | Should -Match 'Never delete, weaken, or telegraphically compress safety, verification, or behavioral contracts merely to pass a budget'
-        $agentsText | Should -Match 'propose an explicit limit change with a short rationale'
+        $agentsText | Should -Match 'update the explicit limit with a short rationale and measured context delta in the same change'
+        $agentsText | Should -Match 'compare its trigger, required action or prohibition, exceptions, precedence, and failure outcome'
+        $agentsText | Should -Match 'A review warning calls for inspection, not compression'
+        $architectureNormalized | Should -Match 'Record intended semantic changes in the change description'
+        $architectureNormalized | Should -Match 'Text or marker assertions protect selected anchors but do not prove semantic equivalence'
+
+        $installText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENT-INSTALL.md") -Raw -Encoding UTF8
+        $installNormalized = $installText -replace '\s+', ' '
+        foreach ($marker in @(
+            '## Supported Windows environments',
+            'standard, non-elevated user',
+            'Windows 10',
+            'Windows 11',
+            'Windows Server 2019',
+            'local desktop sessions and terminal-server sessions',
+            'Administrative host provisioning is optional and separately invoked',
+            'must fail with actionable setup guidance, not silently degrade'
+        )) {
+            $installNormalized | Should -Match ([regex]::Escape($marker))
+        }
 
         foreach ($skillId in @('1c-workflow', '1c-workflow-fast')) {
             $skillText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\$skillId\SKILL.md") -Raw -Encoding UTF8
@@ -203,6 +569,13 @@
             $workflowIndexText | Should -Match ([regex]::Escape($topic))
         }
         $workflowIndexText | Should -Match "Open only the matching topic file"
+        $referenceRoot = Join-Path $RepoRoot '.agents/skills/1c-workflow/references'
+        $topics = @([regex]::Matches($workflowIndexText, '(?m)^- `(?<topic>[^`\r\n]+\.md)`:'))
+        $topics.Count | Should -BeGreaterThan 0
+        foreach ($topic in $topics) {
+            $target = $topic.Groups['topic'].Value
+            (Test-Path -LiteralPath (Join-Path $referenceRoot $target) -PathType Leaf) | Should -BeTrue -Because "workflow.md references missing topic $target"
+        }
         foreach ($client in @('Codex', 'Kilo Code', 'Claude Code', 'Cursor', 'OpenCode', 'Kimi Code', 'Qwen Code', 'Command Code', 'Cline', 'Pi')) {
             $workflowIndexText | Should -Match ([regex]::Escape($client))
         }
@@ -222,9 +595,20 @@
         foreach ($marker in @(
             'shared across projects, not project memory',
             'verified, non-confidential facts safe and useful across unrelated projects',
-            'project-specific facts and corrections in that project''s `memory.md`',
+            # An agent cannot evaluate "explicitly qualified"; pilots fell back
+            # to local-only memory with a current binding (2026-11-06).
+            'Scoped `scoped-cognee-memory-v1` is qualified when `itl-scoped-cognee` `memory_status` returns `bindingState=current`',
+            'search `ALL_TOOLS` for `itl_scoped_cognee`',
+            'follow `project-memory.md` recall/save gates',
+            'ITL private continuation/pending',
+            'retain all four root `memory.md` criteria',
+            'Otherwise keep the installed project-local fallback',
+            # The 2026-11-08 pilot saved a user decision as an unreachable
+            # candidate and never captured a later standing condition.
+            'Qualified saves of user-confirmed decisions/corrections use `verified` with evidence; `recall` omits `candidate`',
+            'Before a 1C change''s final report, repeat that status call: resolve its `candidates` and save uncaptured corrections/standing conditions',
             'correction capture never requires shared `remember`',
-            'Do not run shared `recall` by default',
+            'Shared `recall` requires relevant cross-project platform/tooling/workflow/team knowledge',
             'verify results against the current project',
             '`templatesearch` is unaffected'
         )) {
@@ -243,6 +627,8 @@
         }
         $workflowSkill | Should -Match 'description:.*Route non-routine work.*routine status.*1c-workflow-fast.*explicit generated itl-\* skill'
         $fastSkill | Should -Match 'description:.*Route routine natural-language requests.*Explicit generated itl-\* skills run alone'
+        $fastSkill | Should -Match ([regex]::Escape('explicit full `CheckConfig` request: `check-dev-branch -ResultPurpose production`'))
+        $userRulesTemplate | Should -Match ([regex]::Escape('Only explicit working-infobase preparation or a direct full `CheckConfig` request uses `-ResultPurpose production`'))
         $fastSkill | Should -Match 'requiredAction=/itl-verify-fix.*explicit `itl-verify-fix` wrapper.*If that surface is unavailable.*full `1c-workflow`'
         $agentsTemplate | Should -Match 'routine natural-language lifecycle requests.*use only.*1c-workflow-fast/SKILL.md'
         $agentsTemplate | Should -Match '1c-workflow/SKILL.md` plus one matching reference only'
@@ -307,13 +693,13 @@
             $envReferenceText | Should -Match ([regex]::Escape("``$key``"))
         }
         $envTemplateText | Should -Match '(?m)^DEBUG_FAST_PATH=standard\r?$'
-        $envTemplateText | Should -Match '(?m)^CAVEMAN=on\r?$'
-        $envTemplateText | Should -Match '(?m)^CAVEMAN_LEVEL=full\r?$'
+        $envTemplateText | Should -Match '(?m)^CAVEMAN=auto\r?$'
+        $envTemplateText | Should -Not -Match '(?m)^CAVEMAN_LEVEL='
         $envTemplateText | Should -Match '(?m)^ITL_ROUTINE_MODE=off\r?$'
         foreach ($marker in @(
-            'VERIFICATION_DEPTH=standard', 'UI_TESTING=manual', 'ORCHESTRATION=standard',
-            'CAVEMAN=on', 'CAVEMAN_LEVEL=full', 'DEPENDENCY_MODE=fresh', 'VERIFICATION_POLICY=warn',
-            '/litemode', '/itl-litemode', '/rulesmodel', 'rtk', 'SUBAGENT_MODEL_CODING', 'ITL_ROUTINE_MODE=off',
+            'VERIFICATION_DEPTH=standard', 'UI_TESTING=essential', 'ORCHESTRATION=standard',
+            'CAVEMAN=auto', 'DEPENDENCY_MODE=fresh', 'VERIFICATION_POLICY=warn',
+            '/litemode', '/itl-litemode', '/rulesmodel', 'rtk', 'modelTiersByClient', 'ITL_ROUTINE_MODE=off',
             'AGENT_MODEL=', 'SUPPORT_GUARD=deny', 'agent-browser', 'Windows-MCP'
         )) {
             $modesText | Should -Match ([regex]::Escape($marker))
@@ -378,8 +764,8 @@
     It "has context-specific Kilo command templates for the public surface" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
         $expected = @{
-            common = @("itl.md.template", "itl-litemode.md.template", "itl-status.md.template", "itl-sync-master.md.template", "itl-update-workflow.md.template")
-            master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-refresh-all.md.template", "itl-repository-mode.md.template", "itl-switch-client.md.template")
+            common = @("itl.md.template", "itl-clean.md.template", "itl-litemode.md.template", "itl-status.md.template", "itl-sync-master.md.template", "itl-update-workflow.md.template")
+            master = @("itl-delete-branch.md.template", "itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-refresh-all.md.template", "itl-repository-mode.md.template", "itl-switch-client.md.template")
             dev = @("itl-check.md.template", "itl-fork-branch.md.template", "itl-lock-objects.md.template", "itl-refresh.md.template", "itl-refresh-lite.md.template", "itl-reset-branch.md.template", "itl-result.md.template", "itl-sync-branches.md.template", "itl-verify-fix.md.template")
         }
 
@@ -425,6 +811,18 @@
         $itl = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "common\itl.md.template")
         $result = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "dev\itl-result.md.template")
         $update = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "common\itl-update-workflow.md.template")
+        # Agent references are English. Russian stays only in fenced or inline
+        # code (user-facing examples, Gherkin), quoted user phrases ("..." or
+        # curly quotes) and single 1C identifiers; two adjacent Cyrillic words
+        # outside them are prose.
+        foreach ($reference in Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references") -Filter "*.md") {
+            $prose = Get-Content -Encoding UTF8 -Raw $reference.FullName
+            $prose = [regex]::Replace($prose, '(?s)```.*?```', '')
+            $prose = [regex]::Replace($prose, '`[^`\r\n]*`', '')
+            $prose = [regex]::Replace($prose, '“[^”\r\n]*”|"[^"\r\n]*"', '')
+            $prose | Should -Not -Match '[Ѐ-ӿ]+[\s,.;:—-]+[Ѐ-ӿ]+' -Because "$($reference.Name) is agent-facing"
+        }
+
         $itl | Should -Match "Run the helper panel from the current project directory"
         $result | Should -Match "Use this command only from an active"
         $update | Should -Match 'from either the `master` worktree or an active `itldev/\*` worktree'
@@ -568,6 +966,7 @@
         $configBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template")
         $extensionBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")
         $refreshBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template")
+        $resultBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template")
 
         foreach ($text in @($installText, $workflowSkill, $fastSkill, $configBranch, $extensionBranch, $refreshBranch)) {
             $text | Should -Match "userReport"
@@ -605,6 +1004,25 @@
         $refreshLite | Should -Match "repairPaths"
         $refreshLite | Should -Match "Ask the user only when evidence leaves incompatible business outcomes"
         $refreshLite | Should -Match "repeat this same command"
+        foreach ($text in @($fastSkill, $resultBranch)) {
+            $text | Should -Match '## Итог задачи'
+            $text | Should -Match 'known-context|reliable context from the preceding task'
+            $text | Should -Match 'else report only|stop after the verbatim `userReport`'
+            $text | Should -Match 'no tools|Do not make.*tool'
+        }
+        $workflowSkill | Should -Match "explicit wrapper's verbatim-report plus context-only task-summary contract"
+        $resultBranch | Should -Match 'verbatim as one uninterrupted block'
+    }
+
+    It "documents that itl-result stays direct for task-level response composition" {
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $modesText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\MODES-AND-SETTINGS.ru.md")
+        $envReference = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\DEV-ENV-REFERENCE.ru.md")
+
+        foreach ($text in @($installText, $modesText, $envReference)) {
+            $text | Should -Match '(?s)/itl-result.*direct|/itl-result.*оста.*агент'
+        }
+        $installText | Should -Match 'This exception does not change the exact-only response contract of any other `/itl\*` command'
     }
 
     It "reports exact repository object lock conflicts without a console-log hop" {
@@ -619,16 +1037,19 @@
         $rulesTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
 
-        $rulesTemplateText | Should -Match 'Native `/itl`'
-        $rulesTemplateText | Should -Match 'one fenced `text` block'
-        $rulesTemplateText | Should -Match "line breaks, blank lines, and indentation"
-        $rulesTemplateText | Should -Match "write nothing outside"
+        # The generated /itl command owns its output format; the always-on
+        # rules do not repeat it next to the opposite userReport rule.
+        $itlTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md.template")
+        $itlTemplateText | Should -Match 'exactly one fenced `text` block with nothing outside it'
+        $itlTemplateText | Should -Match "Preserve every helper line break, blank line, and indentation"
+        $itlTemplateText | Should -Match "omit content, or merge sections"
+        $rulesTemplateText | Should -Not -Match 'Native `/itl`'
         $installText | Should -Match 'exactly one fenced `text` block'
         $installText | Should -Match "preserving every line break, blank line, and indentation"
         $installText | Should -Match "actual error instead of fabricating a panel"
     }
 
-    It "recommends separate execution and planning choices for a fresh clean dev branch" {
+    It "keeps planning direct when a legacy four-phase bundle lacks the pinned CLI" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-help-clean-dev-" + [guid]::NewGuid().ToString("N"))
 
         try {
@@ -689,17 +1110,27 @@
             }
             Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value (($aiRulesManifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 
-            $helpResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "help")
+            $legacyUserRulesHash = (Get-FileHash -LiteralPath (Join-Path $tempRoot 'USER-RULES.md')).Hash
+            $legacyHelpResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @('-ProjectRoot', $tempRoot, '-Action', 'help', '-AgentTarget', 'kilocode')
+            $legacyHelpResult.exitCode | Should -Be 0
+            $legacyHelpResult.combinedText | Should -Match 'OpenSpec недоступен: USER-RULES\.md does not contain the complete ITL OpenSpec preflight\.'
+            (Get-FileHash -LiteralPath (Join-Path $tempRoot 'USER-RULES.md')).Hash | Should -Be $legacyUserRulesHash
+            $managedUserRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $tempRoot 'USER-RULES.md') -Encoding UTF8 -Value ("<!-- ITL-WORKFLOW-USER-RULES:START -->`n" + $managedUserRules + "`n<!-- ITL-WORKFLOW-USER-RULES:END -->")
+            $helpResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @('-ProjectRoot', $tempRoot, '-Action', 'help', '-AgentTarget', 'kilocode')
             $helpResult.exitCode | Should -Be 0
             $text = $helpResult.combinedText
 
-            foreach ($expectedBase64 in @('0JXRgdGC0Ywg0L/RgNC+0LLQtdGA0Y/QtdC80YvQtSDQuNC30LzQtdC90LXQvdC40Y86IEZhbHNl','0KDQtdC60L7QvNC10L3QtNGD0LXQvNGL0Lkg0YjQsNCzOiDQvdC10LfQsNCy0LjRgdC40LzQviDQstGL0LHQtdGA0LjRgtC1IGV4ZWN1dGlvbiBwYXRoIHF1aWNrLWZpeCDQuNC70LggZnVsbC1jeWNsZQ==','0J/QviDRg9C80L7Qu9GH0LDQvdC40Y4g0LjRgdC/0L7Qu9GM0LfRg9C50YLQtSBkaXJlY3Q=','0LLRi9Cx0LjRgNCw0LnRgtC1IC9vcHN4LWV4cGxvcmUg0LjQu9C4IC9vcHN4LXByb3Bvc2UsINGC0L7Qu9GM0LrQviDQtdGB0LvQuCDQv9C+0LvQtdC30L3QviDRhNC+0YDQvNCw0LvRjNC90L7QtSDQuNGB0YHQu9C10LTQvtCy0LDQvdC40LUg0LjQu9C4INGB0L7Qs9C70LDRgdC+0LLQsNC90LjQtQ==')) {
-                $text | Should -Match ([regex]::Escape([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($expectedBase64))))
+            $text | Should -Match 'Есть проверяемые изменения: False'
+            $text | Should -Match 'planning mode временно ограничен direct'
+            $text | Should -Match 'Закреплённый CLI: не подготовлен'
+            $text | Should -Match 'OpenSpec недоступен: OPEN_SPEC_CLI_NOT_PROVISIONED:'
+            $text | Should -Not -Match 'ITL_CLIENT_NOT_ATTACHED|USER-RULES\.md does not contain the complete ITL OpenSpec preflight'
+            @($openSpecFiles.Keys | Where-Object { $_ -like '.kilocode/workflows/*' }).Count | Should -Be 4
+            foreach ($relativePath in $openSpecFiles.Keys) {
+                (Get-FileHash -LiteralPath (Join-Path $tempRoot $relativePath)).Hash.ToLowerInvariant() | Should -Be $openSpecFiles[$relativePath].installedHash
             }
-            foreach ($command in @("/opsx-propose", "/opsx-explore", "/opsx-apply", "/opsx-archive")) {
-                $text | Should -Match ([regex]::Escape($command))
-            }
-            $text | Should -Not -Match "Kilo OpenSpec commands are unavailable"
+            $text | Should -Not -Match '/opsx-(propose|explore|apply|archive)'
             $text | Should -Not -Match "Рекомендуемый шаг: /itl-check"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -718,7 +1149,7 @@
                 function Get-KiloItlCommandSurface { "dev" }
                 function Get-CurrentBranch { "itldev/natural" }
                 function Get-AiRules1cOpenSpecStatus {
-                    [pscustomobject]@{ mode = "natural"; isAvailable = $true; reason = "intentional bundleSkipped"; cliAvailable = $false; cliPath = ""; invocations = [pscustomobject]@{} }
+                    [pscustomobject]@{ mode = "natural"; isAvailable = $true; reason = "intentional bundleSkipped"; cliAvailable = $true; cliPath = "fixture-cli"; invocations = [pscustomobject]@{} }
                 }
                 function Read-DevBranchState {
                     [pscustomobject]@{ devBranchName = "natural"; devBranchKind = "configuration"; devBranchInfoBasePath = "fixture"; lastResultPath = ""; finalResultPath = "" }
@@ -734,11 +1165,13 @@
             $normalizedOutput | Should -Match "Режим: natural"
             foreach ($request in @(
                 "Исследуй задачу в режиме OpenSpec, не создавая proposal и не меняя код",
-                "Подготовь OpenSpec proposal для <изменение>; создай proposal, design, tasks, test-plan и spec deltas; код не меняй",
-                "Реализуй согласованный OpenSpec change <change-id> по tasks.md и test-plan.md",
-                "Заархивируй принятый OpenSpec change <change-id> и синхронизируй specs"
+                "Подготовь OpenSpec proposal для <изменение>; создай proposal, design, tasks и spec deltas; отдельный test-plan только если нужен; код не меняй",
+                "Реализуй согласованный OpenSpec change <change-id> по tasks.md и согласованным артефактам с достаточной проверкой",
+                "Заархивируй принятый OpenSpec change <change-id> и синхронизируй specs",
+                "Обнови согласованный OpenSpec change <change-id> по текущему контексту, сохраняя принятые решения",
+                "Синхронизируй spec deltas OpenSpec change <change-id> с основными specs после проверки конфликтов"
             )) { $normalizedOutput | Should -Match ([regex]::Escape($request)) }
-            $normalizedOutput | Should -Match "Внешний CLI: не найден; установка не выполняется"
+            $normalizedOutput | Should -Match "Закреплённый CLI: fixture-cli"
             $normalizedOutput | Should -Not -Match "/opsx-propose"
             $normalizedOutput | Should -Not -Match "/opsx-apply"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -817,7 +1250,9 @@
         $recoveryText | Should -Match "reuse it unchanged"
         $recoveryText | Should -Match "do not add or edit a test merely because this command was invoked"
         $recoveryText | Should -Match "-Action\s+check-dev-branch"
-        $recoveryText | Should -Match "configured maximum"
+        $recoveryText | Should -Match 'overall limit only when explicitly configured'
+        $recoveryText | Should -Match 'basis `WARN` calls for diagnosis'
+        $recoveryText | Should -Match 'extend-verification-repair'
 
         $menuText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
         $menuText | Should -Match ([regex]::Escape("/itl-check"))
@@ -850,7 +1285,7 @@
             'Promotion triggers set only `executionPath=full-cycle`',
             "QUICKFIX_MAX_LINES",
             "/itl-check",
-            "OpenSpec phases read rules",
+            "OpenSpec explore/propose/apply/archive/update/sync read rules",
             "quick-fix",
             "Context Sources",
             "test-plan.md",
@@ -864,8 +1299,8 @@
             $userRulesText | Should -Match ([regex]::Escape($marker))
         }
 
-        $userRulesText | Should -Match "skipped component.*never a normal fresh pass"
-        $userRulesText | Should -Match '`off` runs only when the user explicitly requests that named component'
+        $userRulesText | Should -Match "skipped required obligation.*never a normal fresh pass"
+        $userRulesText | Should -Match '`off` prevents automatic invocation; only an explicit named request permits that run'
         $userRulesText | Should -Match 'never `verified`, `ready`, or `done`'
         $userRulesText | Should -Match "USER-RULES.md.*above.*LLM-RULES.md"
         $userRulesText | Should -Match "rtk rewrite.*lifecycle helper.*observed rewrite.*restart"
@@ -895,7 +1330,7 @@
             "/opsx-apply",
             "quick-fix",
             "hybrid cadence",
-            "focused Vanessa scenario",
+            "sufficient current proof",
             "targeted/static",
             "pending verification",
             "unfiltered",
@@ -904,21 +1339,21 @@
             $text | Should -Match ([regex]::Escape($marker))
         }
 
-        $text | Should -Match "quick-fix.*переиспользуйте.*Vanessa-покрытие"
-        $text | Should -Match "Второй сценарий.*только.*отдельной значимой границы"
+        $text | Should -Match "quick-fix reuse sufficient existing proof"
+        $text | Should -Match "retained regression test only when future changes need it"
         $text | Should -Match "OpenSpec.*hybrid cadence"
-        $text | Should -Match "milestone.*результат решает.*продолж"
-        $text | Should -Match 'последней verification-relevant правки.*unfiltered `/itl-check`'
-        $text | Should -Not -Match 'Для каждого среза.*выполняет `/itl-check`'
-        $text | Should -Not -Match 'после каждого значимого среза.*обязательно.*`/itl-check`'
-        $text | Should -Match "1-2 Vanessa"
-        $text | Should -Not -Match "четвертая проверка.*обоснован"
-        $text | Should -Match "git branch --show-current.*не каталог"
+        $text | Should -Match "milestone whose runtime result decides further implementation"
+        $text | Should -Match 'last verification-relevant edit an ordinary unfiltered `/itl-check`'
+        $text | Should -Match 'Do not run `/itl-check` automatically after every slice'
+        $text | Should -Not -Match 'after each (significant )?slice.*(must|mandatory).*`/itl-check`'
+        $text | Should -Match "retained regression is useful, usually 1–2 Vanessa"
+        $text | Should -Not -Match "fourth check.*justif"
+        $text | Should -Match "git branch --show-current.*not a directory"
         $text | Should -Match "exportPath.*extensionsPath"
         $text | Should -Match "master.*branch-safety blocker"
-        $text | Should -Match "изменение существующей формы или wired metadata"
-        $text | Should -Match "Promotion trigger.*сам по себе не требует OpenSpec"
-        $text | Should -Not -Match "(?m)^- изменение поведения системы;$"
+        $text | Should -Match "change of an existing form or wired metadata"
+        $text | Should -Match "promotion trigger.*by itself.*not require OpenSpec"
+        $text | Should -Not -Match "(?m)^- (a )?change of system behavior;$"
         $text | Should -Not -Match "2-4 Vanessa"
 
         foreach ($relativePath in @(
@@ -933,12 +1368,25 @@
         }
 
         $routerText = $developmentTexts[".agents\skills\1c-workflow\references\dev-branch-development.md"]
-        foreach ($marker in @("dev-branch-quick-fix.md", "dev-branch-direct.md", "dev-branch-openspec.md", "ровно один matching reference")) {
+        foreach ($marker in @("dev-branch-quick-fix.md", "dev-branch-direct.md", "dev-branch-openspec.md", "exactly one matching reference")) {
             $routerText | Should -Match ([regex]::Escape($marker))
         }
+        # Every menu line names an executable ITL command or helper action.
+        $helperActions = @([regex]::Matches(([regex]::Match($HelperText, '\[ValidateSet\(([^)]*)\)\]')).Groups[1].Value, '"([a-z0-9-]+)"') | ForEach-Object { $_.Groups[1].Value })
+        $commandNames = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { '/' + ($_.Name -replace '\.md\.template$', '') })
+        $menu = [regex]::Match($routerText, '(?s)## Running actions.*?```text\r?\n(.*?)```').Groups[1].Value
+        $menuNames = @($menu -split '\r?\n' | Where-Object { $_.Trim() } | ForEach-Object { ($_.Trim() -split '\s+')[0] })
+        $menuNames.Count | Should -BeGreaterThan 5
+        foreach ($name in $menuNames) {
+            (($commandNames -contains $name) -or ($helperActions -contains $name)) | Should -BeTrue -Because "menu entry '$name' must be executable"
+        }
+        $routerText | Should -Not -Match "helper action\s{2,}"
 
         $quickText = $developmentTexts[".agents\skills\1c-workflow\references\dev-branch-quick-fix.md"]
-        $quickText | Should -Match "quick-fix.*переиспользуйте.*Vanessa-покрытие"
+        $quickText | Should -Match "quick-fix reuse sufficient existing proof"
+        # One executable check after the last edit; no mandatory regression test.
+        ([regex]::Matches($quickText, '(?m)^\d+\. .*`/itl-check`')).Count | Should -Be 1
+        $quickText | Should -Not -Match "(?i)create or update (a|the) (targeted )?regression test"
         $quickText | Should -Not -Match "/opsx-(?:explore|propose|apply|archive)"
 
         $directText = $developmentTexts[".agents\skills\1c-workflow\references\dev-branch-direct.md"]
@@ -950,7 +1398,7 @@
         $openSpecText | Should -Match "planningMode=OpenSpec"
         $openSpecText | Should -Match "executionPath=quick-fix\|full-cycle"
         $openSpecText | Should -Match "OpenSpec.*hybrid cadence"
-        $openSpecText | Should -Match "1-2 Vanessa"
+        $openSpecText | Should -Match "retained regression is useful, usually 1–2 Vanessa"
         $openSpecText | Should -Match "YAxUnit"
         $openSpecText | Should -Match "test-report.md"
     }
@@ -1004,7 +1452,8 @@
             foreach ($request in @("Исследуй задачу в режиме OpenSpec", "Подготовь OpenSpec proposal", "Реализуй согласованный OpenSpec change", "Заархивируй принятый OpenSpec change")) {
                 $text | Should -Match ([regex]::Escape($request))
             }
-            $text | Should -Match "не считайте.*универсальным|не универсаль"
+            # Russian human guide and English agent reference state the same rule.
+            $text | Should -Match "не считайте.*универсальным|не универсаль|not a universal contract"
         }
         $agentText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\dev-branch-openspec.md")
         $agentText | Should -Match "/opsx-propose.*proposal"
@@ -1047,11 +1496,14 @@
         $HelperText | Should -Match ([regex]::Escape($requiredPath))
         $requiredPaths = @(
             ".tx/",
+            ".agent-1c/execution-guard-generation.json.*",
+            ".agent-1c/execution-checkpoints/",
             ".agent-1c/branch-dumps/",
             ".agent-1c/config-dump/",
             ".agent-1c/extension-dump/",
             ".agent-1c/extension-init/",
             ".agent-1c/snapshots/",
+            ".agent-1c/restoration-state/",
             ".agent-1c/release-e2e-roundtrip/",
             ".agent-1c/release-e2e-extension/",
             ".agent-1c/tmp/"

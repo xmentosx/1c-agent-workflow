@@ -211,6 +211,59 @@ function compactTool(tool, expected = {}) {
   return result;
 }
 
+function preserveCodeCheckerOutputSchema(tool, expected) {
+  if (!expected.legacyCodeCheckerResult) return tool;
+  const schema = tool.outputSchema;
+  if (!schema || schema.type !== 'object' || !schema.properties) {
+    throw new Error(`Beta CodeChecker tool '${tool.name}' has no object output schema.`);
+  }
+  if (schema.properties.result) return tool;
+  if (!schema.properties.answer || schema.properties.answer.type !== 'string') {
+    throw new Error(`Beta CodeChecker tool '${tool.name}' has no answer string to preserve as result.`);
+  }
+  return {
+    ...tool,
+    outputSchema: {
+      ...schema,
+      properties: { ...schema.properties, result: { type: 'string' } },
+      required: [...new Set([...(schema.required || []), 'result'])],
+    },
+  };
+}
+
+function preserveSyntaxOutputSchema(tool, expected) {
+  if (!expected.legacySyntaxJsonl) return tool;
+  if (tool.name !== 'syntaxcheck') return tool;
+  const schema = tool.outputSchema;
+  if (!schema || schema.type !== 'object' || !schema.properties || !schema.properties.diagnostics) {
+    throw new Error('Beta Syntax tool has no typed diagnostic output schema.');
+  }
+  return {
+    ...tool,
+    outputSchema: {
+      ...schema,
+      properties: { ...schema.properties, result: { type: 'string' } },
+      required: [...new Set([...(schema.required || []), 'result'])],
+    },
+  };
+}
+
+function preserveDocsOutputSchema(tool, expected) {
+  if (!expected.legacyDocsResult || !['docsearch', 'docinfo'].includes(tool.name)) return tool;
+  const schema = tool.outputSchema || { type: 'object', properties: {}, required: [], 'x-fastmcp-wrap-result': true };
+  if (schema.type !== 'object' || !schema.properties) {
+    throw new Error(`Beta Docs tool '${tool.name}' has an incompatible output schema.`);
+  }
+  return {
+    ...tool,
+    outputSchema: {
+      ...schema,
+      properties: { ...schema.properties, result: { type: 'string' } },
+      required: [...new Set([...(schema.required || []), 'result'])],
+    },
+  };
+}
+
 function transformPayload(payload, expected) {
   if (Array.isArray(payload)) return payload.map(item => transformPayload(item, expected));
   if (!payload || typeof payload !== 'object' || !payload.result || !Array.isArray(payload.result.tools)) return payload;
@@ -218,28 +271,119 @@ function transformPayload(payload, expected) {
   if (actual.toolCount !== expected.toolCount || actual.structuralSha256 !== expected.structuralSha256) {
     throw new Error(`MCP tools contract drift: expected ${expected.toolCount}/${expected.structuralSha256}, got ${actual.toolCount}/${actual.structuralSha256}`);
   }
-  return { ...payload, result: { ...payload.result, tools: payload.result.tools.map(tool => compactTool(tool, expected)) } };
+  return { ...payload, result: { ...payload.result, tools: payload.result.tools.map(tool => preserveDocsOutputSchema(preserveSyntaxOutputSchema(preserveCodeCheckerOutputSchema(compactTool(tool, expected), expected), expected), expected)) } };
 }
 
-function transformToolsListResponse(body, contentType, expected) {
+function transformJsonRpcResponse(body, contentType, transform) {
   const text = body.toString('utf8');
   if (String(contentType || '').toLowerCase().includes('text/event-stream')) {
     return Buffer.from(text.split(/(\r?\n)/).map(line => {
       if (!line.startsWith('data:')) return line;
       const data = line.slice(5).trim();
       if (!data || data === '[DONE]') return line;
-      return `data: ${JSON.stringify(transformPayload(JSON.parse(data), expected))}`;
+      return `data: ${JSON.stringify(transform(JSON.parse(data)))}`;
     }).join(''), 'utf8');
   }
-  return Buffer.from(JSON.stringify(transformPayload(JSON.parse(text), expected)), 'utf8');
+  return Buffer.from(JSON.stringify(transform(JSON.parse(text))), 'utf8');
+}
+
+function transformToolsListResponse(body, contentType, expected) {
+  return transformJsonRpcResponse(body, contentType, payload => transformPayload(payload, expected));
+}
+
+function preserveCodeCheckerCallResult(payload) {
+  if (Array.isArray(payload)) return payload.map(preserveCodeCheckerCallResult);
+  if (!payload || !payload.result || payload.result.isError) return payload;
+  const result = payload.result;
+  const structured = result.structuredContent;
+  if (!structured || typeof structured !== 'object') throw new Error('Beta CodeChecker tool returned no structured content.');
+  if (typeof structured.result === 'string') return payload;
+  if (typeof structured.answer !== 'string') throw new Error('Beta CodeChecker tool returned no answer string.');
+  const content = Array.isArray(result.content) ? [...result.content] : [];
+  const textIndex = content.findIndex(item => item && item.type === 'text');
+  if (textIndex < 0) content.unshift({ type: 'text', text: structured.answer });
+  else content[textIndex] = { ...content[textIndex], text: structured.answer };
+  return { ...payload, result: { ...result, content, structuredContent: { ...structured, result: structured.answer } } };
+}
+
+function transformCodeCheckerCallResponse(body, contentType) {
+  return transformJsonRpcResponse(body, contentType, preserveCodeCheckerCallResult);
+}
+
+function transformDocsCallResponse(body, contentType, docsCallIds) {
+  const preserveDocsCallResult = payload => {
+    if (Array.isArray(payload)) return payload.map(preserveDocsCallResult);
+    if (!docsCallIds.has(payload && payload.id) || !payload || !payload.result || payload.result.isError) return payload;
+    const result = payload.result;
+    const structured = result.structuredContent;
+    if (structured && typeof structured === 'object' && typeof structured.result === 'string') return payload;
+    const text = Array.isArray(result.content)
+      ? result.content.find(item => item && item.type === 'text' && typeof item.text === 'string')
+      : null;
+    if (!text) throw new Error('Beta Docs tool returned no text result.');
+    if (structured != null && (typeof structured !== 'object' || Array.isArray(structured))) {
+      throw new Error('Beta Docs tool returned invalid structured content.');
+    }
+    return { ...payload, result: { ...result, structuredContent: { ...(structured || {}), result: text.text } } };
+  };
+  return transformJsonRpcResponse(body, contentType, preserveDocsCallResult);
+}
+
+let syntaxDecoderPromise;
+async function transformSyntaxCallResponse(body, contentType, syntaxCallIds = null) {
+  if (!syntaxDecoderPromise) syntaxDecoderPromise = import('./vendor/toon-4.1.1/index.mjs');
+  const { decode } = await syntaxDecoderPromise;
+  const preserveSyntaxCallResult = payload => {
+    if (Array.isArray(payload)) return payload.map(preserveSyntaxCallResult);
+    if (syntaxCallIds && !syntaxCallIds.has(payload && payload.id)) return payload;
+    if (!payload || !payload.result || payload.result.isError) return payload;
+    const result = payload.result;
+    const structured = result.structuredContent;
+    if (!structured || typeof structured !== 'object' || !Array.isArray(structured.diagnostics)) {
+      throw new Error('Beta Syntax tool returned no typed diagnostics.');
+    }
+    if (typeof structured.result === 'string') return payload;
+    const content = Array.isArray(result.content) ? [...result.content] : [];
+    const textIndex = content.findIndex(item => item && item.type === 'text' && typeof item.text === 'string');
+    if (textIndex < 0) throw new Error('Beta Syntax tool returned no TOON report.');
+    const report = decode(content[textIndex].text);
+    if (!report || !Array.isArray(report.events) || report.events.length === 0 ||
+        report.events.some(event => !event || typeof event !== 'object' || typeof event.type !== 'string')) {
+      throw new Error('Beta Syntax TOON report contains no valid events.');
+    }
+    const jsonl = `${report.events.map(event => JSON.stringify(event)).join('\n')}\n`;
+    content[textIndex] = { ...content[textIndex], text: jsonl };
+    return { ...payload, result: { ...result, content, structuredContent: { ...structured, result: jsonl } } };
+  };
+  return transformJsonRpcResponse(body, contentType, preserveSyntaxCallResult);
 }
 
 function requestMethod(body) {
   try {
     const payload = JSON.parse(body.toString('utf8'));
-    if (Array.isArray(payload)) return payload.some(item => item && item.method === 'tools/list') ? 'tools/list' : '';
+    if (Array.isArray(payload)) {
+      if (payload.some(item => item && item.method === 'tools/call')) return 'tools/call';
+      return payload.some(item => item && item.method === 'tools/list') ? 'tools/list' : '';
+    }
     return payload && payload.method ? payload.method : '';
   } catch (_) { return ''; }
+}
+
+function toolCallIds(body, names) {
+  try {
+    const payload = JSON.parse(body.toString('utf8'));
+    const requests = Array.isArray(payload) ? payload : [payload];
+    return new Set(requests.filter(item => item && item.method === 'tools/call' && item.params && names.includes(item.params.name)).map(item => item.id));
+  } catch (_) { return new Set(); }
+}
+
+function isProtectedTemplateCall(body) {
+  try {
+    const payload = JSON.parse(body.toString('utf8'));
+    const requests = Array.isArray(payload) ? payload : [payload];
+    return requests.some(item => item && item.method === 'tools/call' && item.params &&
+      ['add_template', 'plugin_reload'].includes(item.params.name));
+  } catch (_) { return false; }
 }
 
 function isSafeControlMethod(method) {
@@ -267,6 +411,13 @@ function safeErrorMessage(error) {
 }
 
 async function startProxy(args, expected) {
+  if (args['operator-token-file'] && args['server-id'] !== 'templates') {
+    throw new Error('Only the Templates proxy may use an operator token file.');
+  }
+  const operatorToken = args['operator-token-file']
+    ? fs.readFileSync(args['operator-token-file'], 'utf8').trim()
+    : '';
+  if (args['operator-token-file'] && !operatorToken) throw new Error('Templates operator token file is empty.');
   let upstream = new URL(args['upstream-url']);
   let qualified = false;
   let readinessInFlight = null;
@@ -297,8 +448,13 @@ async function startProxy(args, expected) {
 
   const forwardRequest = (incoming, outgoing, body, attempt = 0) => {
     const method = requestMethod(body);
+    const syntaxIds = method === 'tools/call' && expected.legacySyntaxJsonl ? toolCallIds(body, ['syntaxcheck']) : null;
+    const docsIds = method === 'tools/call' && expected.legacyDocsResult ? toolCallIds(body, ['docsearch', 'docinfo']) : null;
     const transport = upstream.protocol === 'https:' ? https : http;
     const headers = filteredHeaders(incoming.headers);
+    if (operatorToken && !Object.prototype.hasOwnProperty.call(headers, 'authorization') && isProtectedTemplateCall(body)) {
+      headers.authorization = `Bearer ${operatorToken}`;
+    }
     headers.host = upstream.host;
     headers['x-itl-mcp-proxy'] = 'tools-list-proxy';
     if (body.length) headers['content-length'] = body.length;
@@ -321,16 +477,22 @@ async function startProxy(args, expected) {
       }
 
       const responseHeaders = filteredHeaders(upstreamResponse.headers);
-      if (method !== 'tools/list') {
+      if (method !== 'tools/list' && !(method === 'tools/call' && (expected.legacyCodeCheckerResult || (syntaxIds && syntaxIds.size > 0) || (docsIds && docsIds.size > 0)))) {
         outgoing.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
         upstreamResponse.pipe(outgoing);
         return;
       }
       const responseChunks = [];
       upstreamResponse.on('data', chunk => responseChunks.push(chunk));
-      upstreamResponse.on('end', () => {
+      upstreamResponse.on('end', async () => {
         try {
-          const transformed = transformToolsListResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], expected);
+          const transformed = method === 'tools/list'
+            ? transformToolsListResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], expected)
+            : expected.legacySyntaxJsonl
+              ? await transformSyntaxCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], syntaxIds)
+              : expected.legacyDocsResult
+                ? transformDocsCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], docsIds)
+              : transformCodeCheckerCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type']);
           if (responseHeaders['content-type'] && !String(responseHeaders['content-type']).toLowerCase().includes('charset=')) {
             responseHeaders['content-type'] = `${responseHeaders['content-type']}; charset=utf-8`;
           }
@@ -338,7 +500,7 @@ async function startProxy(args, expected) {
           outgoing.writeHead(upstreamResponse.statusCode || 200, responseHeaders);
           outgoing.end(transformed);
         } catch (error) {
-          writeProxyError(outgoing, 502, 'MCP_TOOLS_CONTRACT_DRIFT', error);
+          writeProxyError(outgoing, 502, method === 'tools/list' ? 'MCP_TOOLS_CONTRACT_DRIFT' : 'MCP_TOOL_RESULT_DRIFT', error);
         }
       });
     });
@@ -437,5 +599,8 @@ module.exports = {
   shortenDescription,
   startProxy,
   transformToolsListResponse,
+  transformCodeCheckerCallResponse,
+  transformDocsCallResponse,
+  transformSyntaxCallResponse,
   withoutDescriptions,
 };

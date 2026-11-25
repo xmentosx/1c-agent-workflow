@@ -1,0 +1,1129 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "893ed31fe25bf8b55ac17551812751370e669036",
+  "host": "dev-ermakov.itland.local",
+  "authorizedScope": [
+    "BookStack MCP update",
+    "Mantis MCP update",
+    "SPPR MCP update",
+    "G3 qualification"
+  ],
+  "prohibitedScope": [
+    "G4",
+    "working project migration",
+    "workflow publication",
+    "business registry population/publication"
+  ],
+  "outcome": "THREE_MCP_ACTIVE_NATIVE_SCOPE_PASSED_G3_ACCEPTANCE_OPEN",
+  "remoteStage": "E:/!1c-agent-workflow-mcp/deployments/g3-893ed31f",
+  "sourceArchiveSha256": "b7d8e5f409c940e8e75008c6f9f323d907a6c6f1911f33a46019af10baa98137",
+  "completedUtc": "2026-10-19T21:31:42.8438713Z",
+  "imageBuild": {
+    "strategy": "Exact old image dependencies plus committed Python source overlay; no production dependency upgrade",
+    "images": [
+      {
+        "component": "bookstack",
+        "tag": "itl/bookstack-mcp:g3-893ed31f",
+        "imageId": "sha256:18501e1e1c246a92813ff310ac3cb0a13266dacb3faf68f4b57fdf9421a4029f",
+        "baseImageId": "sha256:31f38ae5c954c8d2e87d97481cce0bd01258ee81650637837245ae249ce8f2dd",
+        "sourceCommit": "893ed31fe25bf8b55ac17551812751370e669036"
+      },
+      {
+        "component": "mantis",
+        "tag": "itl/mantis-mcp:g3-893ed31f",
+        "imageId": "sha256:092dcd497cdfb3dc3226b27e55338b42e3ee39a5e4e46f6db5df3f795c80233a",
+        "baseImageId": "sha256:eeb68cc1dacdf59ade96aeb3677e39a33e0eb7e1bce54501579bc313cb6b5829",
+        "sourceCommit": "893ed31fe25bf8b55ac17551812751370e669036"
+      },
+      {
+        "component": "sppr",
+        "tag": "itl/sppr-mcp:g3-893ed31f",
+        "imageId": "sha256:0a801446cd62f0fbe8e2649d6f3261ad55c2b38e49c3ee6b7325a3cbc981b553",
+        "baseImageId": "sha256:bf2ad95a0093c8d2eb2aad06a071e467366d943b0f7f0e55b510180458b34368",
+        "sourceCommit": "893ed31fe25bf8b55ac17551812751370e669036"
+      }
+    ],
+    "originalSourceSuites": [
+      {
+        "component": "bookstack",
+        "file": "test_server.py",
+        "exitCode": 0,
+        "seconds": 16.982678399999998,
+        "log": "bookstack-test_server.py.log"
+      },
+      {
+        "component": "bookstack",
+        "file": "test_views.py",
+        "exitCode": 0,
+        "seconds": 3.4917151,
+        "log": "bookstack-test_views.py.log"
+      },
+      {
+        "component": "mantis",
+        "file": "test_extract.py",
+        "exitCode": 0,
+        "seconds": 4.9757758999999995,
+        "log": "mantis-test_extract.py.log"
+      },
+      {
+        "component": "mantis",
+        "file": "test_index.py",
+        "exitCode": 0,
+        "seconds": 103.6059324,
+        "log": "mantis-test_index.py.log"
+      },
+      {
+        "component": "mantis",
+        "file": "test_project_scope.py",
+        "exitCode": 0,
+        "seconds": 4.1535972999999995,
+        "log": "mantis-test_project_scope.py.log"
+      },
+      {
+        "component": "mantis",
+        "file": "test_protocol.py",
+        "exitCode": 0,
+        "seconds": 9.671511599999999,
+        "log": "mantis-test_protocol.py-qualified.log",
+        "imageId": "sha256:485989dc529d6942e068dfb64875613d9d3e5b965c199d5ae6ba772305839910"
+      },
+      {
+        "component": "mantis",
+        "file": "test_server.py",
+        "exitCode": 0,
+        "seconds": 3.4840896999999997,
+        "log": "mantis-test_server.py-qualified.log",
+        "imageId": "sha256:092dcd497cdfb3dc3226b27e55338b42e3ee39a5e4e46f6db5df3f795c80233a"
+      },
+      {
+        "component": "mantis",
+        "file": "test_zvec.py",
+        "exitCode": 0,
+        "seconds": 9.033871099999999,
+        "log": "mantis-test_zvec.py-qualified.log",
+        "imageId": "sha256:092dcd497cdfb3dc3226b27e55338b42e3ee39a5e4e46f6db5df3f795c80233a"
+      },
+      {
+        "component": "sppr",
+        "file": "test_sppr.py",
+        "exitCode": 0,
+        "seconds": 36.0550241,
+        "log": "sppr-test_sppr.py-qualified.log",
+        "imageId": "sha256:0a801446cd62f0fbe8e2649d6f3261ad55c2b38e49c3ee6b7325a3cbc981b553"
+      },
+      {
+        "component": "sppr",
+        "file": "test_transport.py",
+        "exitCode": 0,
+        "seconds": 11.262222999999999,
+        "log": "sppr-test_transport.py-qualified.log",
+        "imageId": "sha256:0a801446cd62f0fbe8e2649d6f3261ad55c2b38e49c3ee6b7325a3cbc981b553"
+      }
+    ],
+    "protocolTestOnlyNode": "22.18.0; tools-list-proxy assets from same source commit; absent from production image"
+  },
+  "deployment": {
+    "phase": "all-three-active",
+    "leaseOwner": "existing host-maintenance.lock",
+    "services": [
+      {
+        "component": "bookstack",
+        "name": "itl-bookstack-product-docs",
+        "oldId": "5a74bdd3913bd95869bce0466492c7cb447e978ab00675eef2bf8c7a4a443854",
+        "oldImageId": "sha256:31f38ae5c954c8d2e87d97481cce0bd01258ee81650637837245ae249ce8f2dd",
+        "newId": "fb5e8eb57906456dbbc84351292b95009845b2683a048f05d5d62da32803e30a",
+        "newImageId": "sha256:18501e1e1c246a92813ff310ac3cb0a13266dacb3faf68f4b57fdf9421a4029f",
+        "newImage": "itl/bookstack-mcp:g3-893ed31f",
+        "rollback": "itl-bookstack-product-docs-g3-rollback-893ed31f",
+        "phase": "qualified-active",
+        "oldEnvSha256": "7fe59ee40c85e2cf4d8104cfdb2cbbcc2f607365f70d8c9a6938b92f9bd61297",
+        "newEnvSha256": "32a3717254837a0fbb31cf106eefdc2e8e1c623317acd1e2a189d0a0b5cf63df",
+        "mountsUnchanged": true,
+        "hostConfigUnchanged": true,
+        "intentionalEnvAddition": "BOOKSTACK_VIEWS_JSON: g3-canary-page-13 only",
+        "beforeProof": {
+          "container_id": "5a74bdd3913bd95869bce0466492c7cb447e978ab00675eef2bf8c7a4a443854",
+          "expected_server": "bookstack-product-docs",
+          "observed_servers": [
+            "bookstack-product-docs",
+            "bookstack-product-docs"
+          ],
+          "original_url": "http://dev-ermakov.itland.local:18005/mcp",
+          "qualified_url": "http://dev-ermakov.itland.local:18005/mcp",
+          "status": "matched",
+          "indexing": false,
+          "health_passed": true,
+          "health_error": null,
+          "elapsedSeconds": 2.389
+        },
+        "afterProof": {
+          "container_id": "fb5e8eb57906456dbbc84351292b95009845b2683a048f05d5d62da32803e30a",
+          "expected_server": "bookstack-product-docs",
+          "observed_servers": [
+            "bookstack-product-docs",
+            "bookstack-product-docs"
+          ],
+          "original_url": "http://dev-ermakov.itland.local:18005/mcp",
+          "qualified_url": "http://dev-ermakov.itland.local:18005/mcp",
+          "status": "matched",
+          "indexing": true,
+          "health_passed": true,
+          "health_error": null,
+          "elapsedSeconds": 2.761
+        },
+        "sourceAttestation": {
+          "sourceCommit": "893ed31fe25bf8b55ac17551812751370e669036",
+          "component": "bookstack",
+          "files": {
+            "fragment_index.py": "e2cce0acda88e54fc1be54958e0f26d465352added9d28ded9901a23106ad100",
+            "query_cache.py": "b8fd24ee1b54b35b9c249a594fd8ed70efc62442385dca96057b2105f2d8809f",
+            "server.py": "3ff3b199154ae96a56a764403f7fe5331b5658ac13dbaba1d1ec10c6d849b571",
+            "views.py": "ad69376dc03843e5780101399615864d24c6778611fd747ab687f1ce364fdd13"
+          },
+          "dependencies": {
+            "fastmcp": "2.14.7",
+            "mcp": "1.30.0",
+            "numpy": "2.5.3"
+          }
+        }
+      },
+      {
+        "component": "mantis",
+        "name": "itl-mantis-ticket-mcp",
+        "oldId": "a744031c5fcfec14cd5fe6855ab1334355c118445bef17b51ca3719aed6b6989",
+        "oldImageId": "sha256:eeb68cc1dacdf59ade96aeb3677e39a33e0eb7e1bce54501579bc313cb6b5829",
+        "newId": "7b49029a6d4e35d9746a138d2e00288f6781e39f990f96a62a71d630153dfcda",
+        "newImageId": "sha256:092dcd497cdfb3dc3226b27e55338b42e3ee39a5e4e46f6db5df3f795c80233a",
+        "newImage": "itl/mantis-mcp:g3-893ed31f",
+        "rollback": "itl-mantis-ticket-mcp-g3-rollback-893ed31f",
+        "phase": "qualified-active",
+        "oldEnvSha256": "150fb976b56368b21bdb7b5eb4d48f2c071b066844613e3b74fcbe7b0eb92b6f",
+        "newEnvSha256": "150fb976b56368b21bdb7b5eb4d48f2c071b066844613e3b74fcbe7b0eb92b6f",
+        "mountsUnchanged": true,
+        "hostConfigUnchanged": true,
+        "intentionalEnvAddition": "",
+        "beforeProof": {
+          "container_id": "a744031c5fcfec14cd5fe6855ab1334355c118445bef17b51ca3719aed6b6989",
+          "expected_server": "mantis-ticket",
+          "observed_servers": [
+            "mantis-ticket",
+            "mantis-ticket"
+          ],
+          "original_url": "http://dev-ermakov.itland.local:18006/mcp",
+          "qualified_url": "http://dev-ermakov.itland.local:18006/mcp",
+          "status": "matched",
+          "indexing": false,
+          "health_passed": true,
+          "health_error": null,
+          "elapsedSeconds": 0.748
+        },
+        "afterProof": {
+          "container_id": "7b49029a6d4e35d9746a138d2e00288f6781e39f990f96a62a71d630153dfcda",
+          "expected_server": "mantis-ticket",
+          "observed_servers": [
+            "mantis-ticket",
+            "mantis-ticket"
+          ],
+          "original_url": "http://dev-ermakov.itland.local:18006/mcp",
+          "qualified_url": "http://dev-ermakov.itland.local:18006/mcp",
+          "status": "matched",
+          "indexing": false,
+          "health_passed": true,
+          "health_error": null,
+          "elapsedSeconds": 0.855
+        },
+        "sourceAttestation": {
+          "sourceCommit": "893ed31fe25bf8b55ac17551812751370e669036",
+          "component": "mantis",
+          "files": {
+            "mantis_api.py": "07d6c571961ead21353ddeda452be64f03a01d3e543019952231eb62c8d5e96a",
+            "mantis_extract.py": "73b4fbe8bcedf142265d979d99b9b38b60a2a5bae48ede404c14bba9c48f7e25",
+            "mantis_index.py": "1a2ce9962be0194962038d677037cc63e1db6108703815d79d90090c9ab11814",
+            "mantis_runtime.py": "b944a755922af41b1269c03ed21a66c84a5f9b65e0907659e980c4334a228754",
+            "mantis_state.py": "5cfa3693240ceb654f2058bc8ad3a918a799bbe860ce9a5c3b53e29b3d371992",
+            "mantis_tools.py": "f24a9d5c057bc88e9c41ff2f1c1be92b4ad29913bb04318258590fc778d95951",
+            "mantis_vector_migration.py": "9fb29d70be9b73ded30ee1bcfc0105bce45332ed0537d81307761e1ddf16ec8b",
+            "mantis_write.py": "ba463e801e476b8397909e98a6cd79a13d3c33b4d1c4d187797225226a17f48d",
+            "server.py": "9fe859b3808c9cbb1701e4b9e39487475a736a028c97791fc791f53d5f07d521"
+          },
+          "dependencies": {
+            "fastmcp": "2.14.7",
+            "mcp": "1.30.0",
+            "numpy": "2.2.6"
+          }
+        }
+      },
+      {
+        "component": "sppr",
+        "name": "itl-sppr-knowledge",
+        "oldId": "d7f9acbb9d5f3891d6518b7ed85a39dfdd17026626fd96c77f997a511a2c64a3",
+        "oldImageId": "sha256:bf2ad95a0093c8d2eb2aad06a071e467366d943b0f7f0e55b510180458b34368",
+        "newId": "44f1533ceb6f2e6ec3dd676abf2849d411cbfdfbafc0d77d46115973dcb10f08",
+        "newImageId": "sha256:0a801446cd62f0fbe8e2649d6f3261ad55c2b38e49c3ee6b7325a3cbc981b553",
+        "newImage": "itl/sppr-mcp:g3-893ed31f",
+        "rollback": "itl-sppr-knowledge-g3-rollback-893ed31f",
+        "phase": "qualified-active",
+        "oldEnvSha256": "978ad59c297306cd0e160e6ab2c0dcc8cad7b63832a5b817e1384053e3891b37",
+        "newEnvSha256": "978ad59c297306cd0e160e6ab2c0dcc8cad7b63832a5b817e1384053e3891b37",
+        "mountsUnchanged": true,
+        "hostConfigUnchanged": true,
+        "intentionalEnvAddition": "",
+        "beforeProof": {
+          "container_id": "d7f9acbb9d5f3891d6518b7ed85a39dfdd17026626fd96c77f997a511a2c64a3",
+          "expected_server": "sppr-knowledge",
+          "observed_servers": [
+            "sppr-knowledge",
+            "sppr-knowledge"
+          ],
+          "original_url": "http://dev-ermakov.itland.local:18007/mcp",
+          "qualified_url": "http://dev-ermakov.itland.local:18007/mcp",
+          "status": "matched",
+          "indexing": false,
+          "health_passed": true,
+          "health_error": null,
+          "elapsedSeconds": 1.13
+        },
+        "afterProof": {
+          "container_id": "44f1533ceb6f2e6ec3dd676abf2849d411cbfdfbafc0d77d46115973dcb10f08",
+          "expected_server": "sppr-knowledge",
+          "observed_servers": [
+            "sppr-knowledge",
+            "sppr-knowledge"
+          ],
+          "original_url": "http://dev-ermakov.itland.local:18007/mcp",
+          "qualified_url": "http://dev-ermakov.itland.local:18007/mcp",
+          "status": "matched",
+          "indexing": false,
+          "health_passed": true,
+          "health_error": null,
+          "elapsedSeconds": 9.932
+        },
+        "sourceAttestation": {
+          "sourceCommit": "893ed31fe25bf8b55ac17551812751370e669036",
+          "component": "sppr",
+          "files": {
+            "server.py": "247cba05184c2da05f37b230ae95497d1112150103381c4c9709f1022591f950",
+            "sppr_core.py": "5bcdd725579e0d601bd5a9e9b8181e68a35481272cb07191cd8ced65d9f2414b",
+            "sppr_embeddings.py": "ff7d7bb1c381f8c57bba843e9a9bb792e3a55168e9efe97ecc72e3d72a8f2202",
+            "sppr_links.py": "c4917389aab43e016be5d378564dab79bbebd19d541d5ec5d10ee3b1088a385f",
+            "sppr_odata.py": "653a0eac2c9393eb49032533849f3c7328f3f4eb08034de9def685b829007f08",
+            "sppr_retrieval.py": "31d27fefcad209b5bee26e7a176754236015367ed0dc37105d3f3acc27483eb5",
+            "sppr_service.py": "53fcad7a63b1c32bafa71b29b0145fb08e15eb912ddf9cba2f10aea4b1e7c60e",
+            "sppr_store.py": "8bdc846765d32c63e7347ba42cbf7d01dc3193caed1b109b35818fb9e637d573",
+            "sppr_vectors.py": "1eeae8cf9f7b3484c93ea500c616da00ecb658f99db5663d877abbf5eb7f72ad",
+            "sppr_worker.py": "c13f4258ad1087681113cff17a599a2e0da880eb86af4a8e295e4ba19726d8c6"
+          },
+          "dependencies": {
+            "fastmcp": "2.14.7",
+            "mcp": "1.30.0",
+            "numpy": "2.2.6"
+          }
+        }
+      }
+    ],
+    "unrelatedRunningPreserved": [
+      {
+        "name": "itl-1c-codechecker-stable-20261019-observer-347c9cb1",
+        "containerId": "d08683355d32fc362a82c047b7e51326685d3af0bc4dca2a25a361b117d8d27d",
+        "sameContainer": true
+      },
+      {
+        "name": "itl-1c-ssl-stable-20261019-qwen3-20260929",
+        "containerId": "5aa096bf83382aa2908ac84218507bb1088f24a48267fa722867734b50e710eb",
+        "sameContainer": true
+      },
+      {
+        "name": "itl-1c-docs-stable-20261019-qwen3-20260929",
+        "containerId": "0a72b33215915758bddb73bfc7eb635b5ac0d478bab73c9aa8f87fa84112b816",
+        "sameContainer": true
+      },
+      {
+        "name": "itl-1c-templates-stable-20261019-qwen3-20260929",
+        "containerId": "399c89cc5fcecb21a0144840597140e3b26b03384427bad4230493fbae893068",
+        "sameContainer": true
+      },
+      {
+        "name": "itl-1c-syntax-stable-20261019",
+        "containerId": "2f910d6dbea08c94c9694aad92bfebf35f0cc487e5f2688cfaeab032f8d2726e",
+        "sameContainer": true
+      },
+      {
+        "name": "itl-pm5corp-graph-stable-20261002",
+        "containerId": "c33cd59dc2ea743646dce1132d45129f9eafbe27381cddc802ee20fd58cd9303",
+        "sameContainer": true
+      },
+      {
+        "name": "itl-pm5corp-graph-stable-20261002-neo4j",
+        "containerId": "47f3042596709c87cd12eb533f99306cd95a61d1e5b8ea2332ff8a4db2faa0da",
+        "sameContainer": true
+      },
+      {
+        "name": "itl-pm4corp-graph-stable-20261002",
+        "containerId": "3ca74b1a1d4c079af7b62d2a2ea86b0739633b39500695bf4344014275b99037",
+        "sameContainer": true
+      },
+      {
+        "name": "itl-pm4corp-graph-stable-20261002-neo4j",
+        "containerId": "070e5a611a5c38ac91f39467dc9263b028c3a2e3078e95b615949d738f6e731f",
+        "sameContainer": true
+      },
+      {
+        "name": "itl-pm5corp-code-stable-20261002",
+        "containerId": "6510e8fc9662c35f74955e2b551befe0e1b1c765c220020bb9376039424ad686",
+        "sameContainer": true
+      },
+      {
+        "name": "itl-pm4corp-code-stable-20261002",
+        "containerId": "dd7b5a34c4b8dda9bf641f04e4c71700ddb3b1369a3d1649eda66dc35ea96da2",
+        "sameContainer": true
+      }
+    ],
+    "observedNewForeignContainersUntouched": [
+      "itl-branch8-review-observed-20261019-v2"
+    ]
+  },
+  "handshakes": [
+    {
+      "name": "bookstack",
+      "endpoint": "http://dev-ermakov.itland.local:18005/mcp",
+      "startedUtc": "2026-10-19T21:31:57.777618+00:00",
+      "outcome": "handshake_passed",
+      "toolNames": [
+        "index_status",
+        "list_structure",
+        "read_page",
+        "reindex_docs",
+        "search_docs",
+        "source_info"
+      ],
+      "toolSchemasSha256": "5c4762d1eef56c293b2cb603ec12ac57cec19945df3648350526b91942b3c58a"
+    },
+    {
+      "name": "mantis",
+      "endpoint": "http://dev-ermakov.itland.local:18006/mcp",
+      "startedUtc": "2026-10-19T21:31:57.777493+00:00",
+      "outcome": "handshake_passed",
+      "toolNames": [
+        "execute_write",
+        "get_attachment",
+        "health",
+        "index_control",
+        "mantis_metadata",
+        "read_comments",
+        "read_ticket",
+        "search_tickets",
+        "ticket_history",
+        "write_operation"
+      ],
+      "toolSchemasSha256": "8fef6f9d0327e679d89cbce8638a7722cc1bc66cbfc6458e0632b024155d04a9"
+    },
+    {
+      "name": "sppr",
+      "endpoint": "http://dev-ermakov.itland.local:18007/mcp",
+      "startedUtc": "2026-10-19T21:31:57.780158+00:00",
+      "outcome": "handshake_passed",
+      "toolNames": [
+        "find_sppr_paths",
+        "get_sppr_context",
+        "list_sppr_objects",
+        "list_sppr_projects",
+        "list_sppr_relations",
+        "read_sppr_object",
+        "search_sppr",
+        "sppr_index_status"
+      ],
+      "toolSchemasSha256": "e21741923fe131bf86110986b5ccc3ba82496a356efc0e23a51dd55dd1bf36f3"
+    },
+    {
+      "name": "code",
+      "endpoint": "http://dev-ermakov.itland.local:22100/mcp",
+      "startedUtc": "2026-10-19T21:31:57.778167+00:00",
+      "outcome": "handshake_passed",
+      "toolNames": [
+        "bsl_scope_members",
+        "build_ordinary_form",
+        "codesearch",
+        "compact_call",
+        "compact_metadata",
+        "compact_search",
+        "compact_symbol",
+        "get_form_artifact",
+        "get_metadata_details",
+        "get_method_call_hierarchy",
+        "get_module_structure",
+        "get_report_artifact",
+        "get_role_artifact",
+        "get_xsd_schema",
+        "graph_dependencies",
+        "helpsearch",
+        "inspect_form_layout",
+        "list_artifact_links",
+        "metadatasearch",
+        "plugin_reload",
+        "plugin_state",
+        "register_external_result_link",
+        "reindex",
+        "search_forms",
+        "search_function",
+        "stats",
+        "unpack_ordinary_form",
+        "verify_xml"
+      ],
+      "toolSchemasSha256": "658c64a36df8e95ee04334fd0629c97d45791d5b838f74977874d97e1c29d98a"
+    },
+    {
+      "name": "graph",
+      "endpoint": "http://dev-ermakov.itland.local:22101/mcp/",
+      "startedUtc": "2026-10-19T21:31:57.777207+00:00",
+      "outcome": "handshake_passed",
+      "toolNames": [
+        "affected_subgraph",
+        "answer_metadata_question",
+        "build_ordinary_form",
+        "compare_base_and_extension",
+        "compare_graph_scope",
+        "delete_graph_project",
+        "explain_graph_entity",
+        "explain_graph_evidence",
+        "explain_path",
+        "fetch_graph_nodes",
+        "find_by_guid",
+        "find_form_links",
+        "find_graph_path",
+        "find_object_referrers",
+        "find_objects_using_object",
+        "find_predefined_values",
+        "find_register_movement_docs",
+        "find_test_artifacts",
+        "find_usages_of_object",
+        "get_access_rights",
+        "get_data_links",
+        "get_event_subscriptions",
+        "get_form_structure",
+        "get_graph_capabilities",
+        "get_graph_project_status",
+        "get_graph_schema",
+        "get_graph_stats",
+        "get_graph_tool_schema",
+        "get_indexing_status",
+        "get_metadata_prompt",
+        "get_object_dossier",
+        "get_register_writers",
+        "get_report_dcs_lineage",
+        "health_graph",
+        "list_graph_capabilities",
+        "list_graph_indexes",
+        "list_graph_projects",
+        "list_plugins",
+        "metadata_report",
+        "refresh_extension_layers",
+        "refresh_graph_project",
+        "register_graph_project",
+        "reload_plugins",
+        "resolve_effective_entity",
+        "resolve_graph_entity",
+        "resolve_qualified_name",
+        "run_graph_cypher_template",
+        "search_code",
+        "search_forms",
+        "search_metadata",
+        "search_metadata_by_description",
+        "trace_call_chain",
+        "trace_impact",
+        "unpack_ordinary_form"
+      ],
+      "toolSchemasSha256": "662d168070891ccbff14467ea7b6fcdf2c2c870451a748ca4474235978627fcb"
+    }
+  ],
+  "scopeChecks": [
+    {
+      "name": "bookstack-source-info-advertised",
+      "passed": true,
+      "actual": [
+        "index_status",
+        "list_structure",
+        "read_page",
+        "reindex_docs",
+        "search_docs",
+        "source_info"
+      ]
+    },
+    {
+      "name": "bookstack-global-retained",
+      "passed": true,
+      "actual": {
+        "ok": true,
+        "source": "https://kb.itland.ru",
+        "viewId": "",
+        "binding": "global",
+        "selectors": {},
+        "capabilities": [
+          "product-docs-view-v1",
+          "stable-id-selectors"
+        ]
+      }
+    },
+    {
+      "name": "bookstack-original-nonexistent-book",
+      "passed": true,
+      "actual": {
+        "ok": true,
+        "query": "PM5",
+        "mode": "text",
+        "source": "cache+live",
+        "cursor": 0,
+        "limit": 1,
+        "result_count": 0,
+        "total_matches": 0,
+        "has_more": false,
+        "next_cursor": null,
+        "results": []
+      }
+    },
+    {
+      "name": "bookstack-negative-book-id",
+      "passed": true,
+      "actual": {
+        "ok": false,
+        "error": "book_id must be a positive integer ID",
+        "results": []
+      }
+    },
+    {
+      "name": "bookstack-unknown-view-rejected",
+      "passed": true,
+      "actual": {
+        "httpStatus": 404
+      }
+    },
+    {
+      "name": "bookstack-server-bound-view",
+      "passed": true,
+      "actual": {
+        "ok": true,
+        "source": "https://kb.itland.ru",
+        "viewId": "g3-canary-page-13",
+        "binding": "view",
+        "selectors": {
+          "page_ids": [
+            13
+          ]
+        },
+        "capabilities": [
+          "product-docs-view-v1",
+          "stable-id-selectors"
+        ]
+      }
+    },
+    {
+      "name": "bookstack-view-text",
+      "passed": true,
+      "actual": {
+        "ids": [
+          13
+        ],
+        "source": "cache",
+        "result_count": 1,
+        "error": null
+      }
+    },
+    {
+      "name": "bookstack-view-text-live",
+      "passed": true,
+      "actual": {
+        "ids": [
+          13
+        ],
+        "source": "cache+live",
+        "result_count": 1,
+        "error": null
+      }
+    },
+    {
+      "name": "bookstack-view-semantic",
+      "passed": true,
+      "actual": {
+        "ids": [
+          13
+        ],
+        "source": "cache",
+        "result_count": 1,
+        "error": null
+      }
+    },
+    {
+      "name": "bookstack-view-positive-read",
+      "passed": true,
+      "actual": {
+        "ok": true,
+        "id": null,
+        "error": null
+      }
+    },
+    {
+      "name": "bookstack-view-foreign-read",
+      "passed": true,
+      "actual": {
+        "ok": false,
+        "error": "Page is outside the selected BookStack view"
+      }
+    },
+    {
+      "name": "bookstack-view-structure",
+      "passed": true,
+      "actual": {
+        "ids": [
+          13
+        ],
+        "ok": true
+      }
+    },
+    {
+      "name": "mantis-project-scope-[2147483646, 2147483647]",
+      "passed": true,
+      "actual": {
+        "projects": [],
+        "issueIds": [],
+        "ok": true,
+        "error": null,
+        "keys": [
+          "attachment_extraction",
+          "candidate_limit",
+          "candidate_window_limited",
+          "index",
+          "issues",
+          "local_cache",
+          "mantis",
+          "next_cursor",
+          "ok",
+          "output_char_limit",
+          "project_scope",
+          "query_embedding_cache",
+          "read_view",
+          "semantic_corpus",
+          "semantic_query",
+          "silent_changes",
+          "similar_to",
+          "similarity_mode",
+          "snapshot_at",
+          "timing_ms"
+        ]
+      }
+    },
+    {
+      "name": "mantis-project-scope-[]",
+      "passed": true,
+      "actual": {
+        "projects": [],
+        "issueIds": [],
+        "ok": true,
+        "error": null,
+        "keys": [
+          "attachment_extraction",
+          "candidate_limit",
+          "candidate_window_limited",
+          "index",
+          "issues",
+          "local_cache",
+          "mantis",
+          "next_cursor",
+          "ok",
+          "output_char_limit",
+          "project_scope",
+          "query_embedding_cache",
+          "read_view",
+          "semantic_corpus",
+          "semantic_query",
+          "silent_changes",
+          "similar_to",
+          "similarity_mode",
+          "snapshot_at",
+          "timing_ms"
+        ]
+      }
+    },
+    {
+      "name": "mantis-project-scope-[609, 699]",
+      "passed": true,
+      "actual": {
+        "projects": [
+          699,
+          699
+        ],
+        "issueIds": [
+          62154,
+          62503
+        ],
+        "ok": true,
+        "error": null,
+        "keys": [
+          "attachment_extraction",
+          "candidate_limit",
+          "candidate_window_limited",
+          "index",
+          "issues",
+          "local_cache",
+          "mantis",
+          "next_cursor",
+          "ok",
+          "output_char_limit",
+          "project_scope",
+          "query_embedding_cache",
+          "read_view",
+          "semantic_corpus",
+          "semantic_query",
+          "silent_changes",
+          "similar_to",
+          "similarity_mode",
+          "snapshot_at",
+          "timing_ms"
+        ]
+      }
+    },
+    {
+      "name": "sppr-project-metadata-advertised",
+      "passed": true,
+      "actual": [
+        "find_sppr_paths",
+        "get_sppr_context",
+        "list_sppr_objects",
+        "list_sppr_projects",
+        "list_sppr_relations",
+        "read_sppr_object",
+        "search_sppr",
+        "sppr_index_status"
+      ]
+    },
+    {
+      "name": "sppr-project-metadata-read",
+      "passed": true,
+      "actual": {
+        "generation": "3ee72f1105234a05bbef6952becdf61d",
+        "source": "6c4d866689a8084f5a10221e3dd5486bd5582b01809a23483294373c32b99ab6",
+        "observed_start": "2026-10-18T22:00:11.077537+00:00",
+        "observed_end": "2026-10-18T22:56:31.522419+00:00",
+        "mode": "nightly_reconciliation",
+        "coverage": {
+          "collection_seconds": 3380.499,
+          "fragments": 72333,
+          "odata_requests": 10835,
+          "odata_response_bytes": 5442243,
+          "types": {
+            "Catalog_LCM_Проблемы": 66,
+            "Catalog_LCM_Решения": 5,
+            "Catalog_LCM_ФункциональныеРешения": 84,
+            "Catalog_Идеи": 1913,
+            "Catalog_Процессы": 274,
+            "Catalog_РазделыПроекта": 651,
+            "Catalog_ТехническиеПроекты": 1406,
+            "Catalog_ФункцииСистемы": 5,
+            "Catalog_ЦелевыеЗадачи": 45,
+            "Catalog_ШагиПроцесса": 343,
+            "Document_итлПротоколВстреч": 103
+          },
+          "unavailable_references": 0,
+          "unreadable_fields": 0,
+          "unsupported_references": 0,
+          "vectors": 72333
+        },
+        "coverage_scope": "at collection publication before current policy filtering; current vectors in sppr_index_status",
+        "profile_compatible": true,
+        "current_policy": "95ae3b7ff80b1153cd974c2eb7f061c79ce017d3c1524b5fbcd20bda9ce31f70",
+        "projects": [
+          {
+            "project_id": "76bcfc1f-e8c2-4cd6-80ef-997b99bca476",
+            "name": "",
+            "indexed": true,
+            "scope": "current collector policy"
+          }
+        ],
+        "complete": true,
+        "cursor": null
+      }
+    },
+    {
+      "name": "sppr-scope-76bcfc1f-e8c2-4cd6-80ef-997b99bca476",
+      "passed": true,
+      "actual": {
+        "total": 4895,
+        "generation": "3ee72f1105234a05bbef6952becdf61d",
+        "current_policy": "95ae3b7ff80b1153cd974c2eb7f061c79ce017d3c1524b5fbcd20bda9ce31f70"
+      }
+    },
+    {
+      "name": "sppr-scope-00000000-0000-0000-0000-000000000000",
+      "passed": true,
+      "actual": {
+        "total": 0,
+        "generation": "3ee72f1105234a05bbef6952becdf61d",
+        "current_policy": "95ae3b7ff80b1153cd974c2eb7f061c79ce017d3c1524b5fbcd20bda9ce31f70"
+      }
+    },
+    {
+      "name": "sppr-exact-mantis-link",
+      "passed": true,
+      "actual": {
+        "fields": [
+          {
+            "field": "итлКодMantis",
+            "state": "value",
+            "value": "59095"
+          }
+        ],
+        "generation": "3ee72f1105234a05bbef6952becdf61d"
+      }
+    },
+    {
+      "name": "bookstack-view-cannot-expand-[13, 628]",
+      "passed": true,
+      "actual": {
+        "ids": [
+          13
+        ],
+        "ok": true
+      }
+    },
+    {
+      "name": "bookstack-view-cannot-expand-[628]",
+      "passed": true,
+      "actual": {
+        "ids": [],
+        "ok": true
+      }
+    },
+    {
+      "name": "bookstack-view-cannot-expand-[]",
+      "passed": true,
+      "actual": {
+        "ids": [],
+        "ok": true
+      }
+    },
+    {
+      "name": "mantis-cursor-available",
+      "passed": true,
+      "actual": {
+        "cursorPresent": true
+      }
+    },
+    {
+      "name": "mantis-canonical-union-cursor",
+      "passed": true,
+      "actual": {
+        "projects": [
+          699
+        ],
+        "ids": [
+          62503
+        ]
+      }
+    },
+    {
+      "name": "mantis-changed-scope-cursor-rejected",
+      "passed": true,
+      "actual": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Error calling tool 'search_tickets': Search cursor expired or invalid; restart without cursor"
+          }
+        ],
+        "isError": true
+      }
+    },
+    {
+      "name": "mantis-conflicting-scope-rejected",
+      "passed": true,
+      "actual": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Error calling tool 'search_tickets': project_id conflicts with project_ids"
+          }
+        ],
+        "isError": true
+      }
+    },
+    {
+      "name": "mantis-scalar-compatible",
+      "passed": true,
+      "actual": {
+        "projects": [
+          699
+        ]
+      }
+    },
+    {
+      "name": "mantis-global-compatible",
+      "passed": true,
+      "actual": {
+        "ok": true,
+        "count": 1
+      }
+    }
+  ],
+  "retainedData": {
+    "bookstack": {
+      "cache_pages": 199,
+      "embedded_pages": 198,
+      "fragments": 1495,
+      "ready_pages": 199,
+      "index_in_progress": false,
+      "index_error": ""
+    },
+    "mantis": {
+      "profile": "qwen/qwen3-embedding-8b:4096:chars1800-overlap180-v1",
+      "revision": 27376,
+      "issues": 18786,
+      "embedding_backlog": 0
+    },
+    "sppr": {
+      "generation": "3ee72f1105234a05bbef6952becdf61d",
+      "current_policy": "95ae3b7ff80b1153cd974c2eb7f061c79ce017d3c1524b5fbcd20bda9ce31f70",
+      "visible_objects": 4895,
+      "semantic_progress": {
+        "fragments": 72333,
+        "vectors": 72333,
+        "pending": 0
+      },
+      "semantic_complete": true
+    }
+  },
+  "nativeVectorProfile": {
+    "imageId": "sha256:092dcd497cdfb3dc3226b27e55338b42e3ee39a5e4e46f6db5df3f795c80233a",
+    "scriptSha256": "3e4f7bcd157bd74c6510a4118bd5bcfa54f3bbab09a2c5b2f0ca483ec75d9a2a",
+    "schemaVersion": 1,
+    "dimension": 4096,
+    "foreignVectors": 10001,
+    "targetVectors": 1000,
+    "unscopedWindowHidesTarget": true,
+    "measurements": [
+      {
+        "allowedVectors": 1,
+        "samples": 20,
+        "medianSeconds": 0.00031635950290365145,
+        "p95Seconds": 0.0003888119972543791,
+        "maxSeconds": 0.0004815150023205206,
+        "onlyAllowed": true,
+        "returned": 1
+      },
+      {
+        "allowedVectors": 100,
+        "samples": 20,
+        "medianSeconds": 0.031836730500799604,
+        "p95Seconds": 0.035493992996634915,
+        "maxSeconds": 0.03648232300474774,
+        "onlyAllowed": true,
+        "returned": 100
+      },
+      {
+        "allowedVectors": 1000,
+        "samples": 20,
+        "medianSeconds": 0.39268624200485647,
+        "p95Seconds": 0.4323850520013366,
+        "maxSeconds": 0.4361887300037779,
+        "onlyAllowed": true,
+        "returned": 200
+      }
+    ],
+    "peakWholeProcessRssKiB": 487008,
+    "wholeRunSeconds": 14.145476679987041,
+    "zvecVersion": "0.7.0",
+    "paidEmbeddingCalls": 0,
+    "network": "none",
+    "limitation": "Synthetic native vector profile; not the live whole-task or maximum-size project cost"
+  },
+  "toolSurface": {
+    "measurements": [
+      {
+        "name": "bookstack",
+        "beforeTools": 5,
+        "afterTools": 6,
+        "beforeCanonicalUtf8Bytes": 1971,
+        "afterCanonicalUtf8Bytes": 2172,
+        "deltaBytes": 201
+      },
+      {
+        "name": "mantis",
+        "beforeTools": 10,
+        "afterTools": 10,
+        "beforeCanonicalUtf8Bytes": 5340,
+        "afterCanonicalUtf8Bytes": 5340,
+        "deltaBytes": 0
+      },
+      {
+        "name": "sppr",
+        "beforeTools": 7,
+        "afterTools": 8,
+        "beforeCanonicalUtf8Bytes": 5071,
+        "afterCanonicalUtf8Bytes": 5486,
+        "deltaBytes": 415
+      }
+    ],
+    "limitation": "Full tools/list canonical bytes proxy; model tokens and installed client activation not measured"
+  },
+  "remaining": [
+    "Registry G3.7/AC-39 and memory installed dependency AC-43 remain open",
+    "Full code/graph source identity and exact selected catalog binding AC-08 / task 2.1; serverInfo.version is framework version",
+    "Original PM4/PM5 isolated init/update/branch/fault/offline/concurrent-session canary; actual affected-client reload/discovery",
+    "Windows 10/Server 2019+/terminal matrix; complete four startup/surface scenarios and walkthrough",
+    "Live Mantis text union/cursor/scalar/global plus native synthetic semantic proof do not establish completeness/cost of every live semantic workload or real write routing",
+    "Mandatory first-release registry population AC-36-38 / memory AC-44 is not performed",
+    "Cognee G1/D9/G2 proofs unchanged; no G4, Cognee calls, installed migration, workflow or registry publication"
+  ],
+  "operationalNotes": [
+    "SSH was the only control channel. Transient System.OutOfMemoryException/connection resets resolved enough to inspect unchanged old IDs and complete guarded cutover; root cause not established; no global host settings changed",
+    "Invalid Dockerfile construction and missing Node/adjacent proxy assets were fixture faults; failed logs retained; original source tests unchanged",
+    "Pre-create mount guard initially compared Docker Desktop path spellings/container-specific device numbers. Read-only source/volume/inode proof established equivalence before corrected cutover; rejected attempts did not stop serving containers",
+    "Additional cursor/scalar harness initially expected flat project_id; native cards expose project.id. Raw failed harness retained; equivalent scope assertion corrected and all nine controls passed",
+    "Ignored qualification-native.json was reused by later liveness. Prior tracked bounded evidence intact, but historical raw-file hash cannot now be rechecked at that path; new evidence has unique filenames",
+    "Only environment addition: BookStack qualification view g3-canary-page-13. Existing views/global endpoint, volumes, Mantis write policy and SPPR read-only mounts retained; no business mapping invented",
+    "No explicit reset/reindex/collector configuration or external Mantis/SPPR content write issued. Existing background indexing/sync policy retained"
+  ],
+  "rawEvidence": [
+    {
+      "path": "build/test-results/g3/g3-deploy-manifest.json",
+      "sha256": "16fb6b06ec63d8b93fcee8d7f1cc404226feedef2316272886eda3d12fa3662f"
+    },
+    {
+      "path": "build/test-results/g3/deploy-build-r5.json",
+      "sha256": "d6d80ceafef1a08beb539e247cfd166bdedb2638fdf59bf94e782b0a5902e7e8"
+    },
+    {
+      "path": "build/test-results/g3/deploy-cutover-final.json",
+      "sha256": "29b04b9f902e904e815cebfed5f16bfa0af01adfeb64eb93e253cde6750c9c89"
+    },
+    {
+      "path": "build/test-results/g3/deploy-post-inventory.json",
+      "sha256": "6698ad657d47dc3d7ce4c5813fc8d7080d8bebd01f87431ed0520d3af95d55ef"
+    },
+    {
+      "path": "build/test-results/g3/qualification-post-deploy-native.json",
+      "sha256": "133cf4910829d1f85ee466daec8291942032045696578fe698647d787f0ecbf8"
+    },
+    {
+      "path": "build/test-results/g3/qualification-post-deploy-scopes.json",
+      "sha256": "311e8f7a37cb6c117750613c8d5e018f60a1d29b1a17c6692124d3f4e71bcf5c"
+    },
+    {
+      "path": "build/test-results/g3/qualification-post-deploy-additional.json",
+      "sha256": "f3776d6b117748ad323841f58bcd1c97bfb4fcf51122d6c0a6891ab0662292a1"
+    },
+    {
+      "path": "build/test-results/g3/qualification-post-deploy-additional-r2.json",
+      "sha256": "1ec2719654945cfa479c162b11e5d65d56a26fa6a9a7066d477bcde34c542b7e"
+    },
+    {
+      "path": "build/test-results/g3/native-vector-benchmark-remote.json",
+      "sha256": "eeafd2d8453899075e7512ba2cd73682b3a15bb4d7c4c52937d8f5f1ff5056e9"
+    },
+    {
+      "path": "build/test-results/g3/native-vector-scope-bench.py",
+      "sha256": "3e4f7bcd157bd74c6510a4118bd5bcfa54f3bbab09a2c5b2f0ca483ec75d9a2a"
+    },
+    {
+      "path": "build/test-results/g3/deploy-liveness-2026-10-20.json",
+      "sha256": "b15972a826387b089451b0b6264e9564adad32beaa716f224a7a7748cd6cb7b6"
+    }
+  ]
+}

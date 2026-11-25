@@ -1,0 +1,275 @@
+{
+  "schemaVersion": 1,
+  "observedUtc": "2026-10-21T16:39:01.450805+00:00",
+  "sourceBase": "90926f47accac499043fb4f58998630ce766b8eb",
+  "status": "native-worker-connected-account-sign-in-handoff-required-agent-reads-unverified",
+  "finding": {
+    "id": "G3-CURSOR-NATIVE-AGENT-AUTH",
+    "status": "open",
+    "established": "Same private Cursor profile visibly signed out. Native account session/Agent tool use is separate from MCP transport/config availability.",
+    "notEstablished": [
+      "Cause of automated Log In not opening observed authenticated UI/browser",
+      "Network or callback failure",
+      "Actual Agent access/Code-Graph payloads/signed-in reload"
+    ],
+    "handoff": "User asked to complete normal Log In in retained test window; no credentials requested in chat. No response/complete sign-in observed at evidence cutoff."
+  },
+  "native": {
+    "version": "3.25.9",
+    "exe": "C:\\Users\\xment\\AppData\\Local\\Programs\\cursor\\Cursor.exe",
+    "exeSha256": "192cc1f098757ca961be043fc4426b4878f7b89043d4484d431a8f2829d850b7",
+    "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+    "profile": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\desktop-native-20261021\\Private cursor профиль",
+    "samePreviousProfileAndRoot": true,
+    "ui": {
+      "title": "Customize - Контекст клиента PROF - Cursor",
+      "loginVisible": true,
+      "overlayVisible": true,
+      "screenshot": "cursor-sign-in-handoff.png"
+    },
+    "roles": [
+      {
+        "role": "code",
+        "name": "1c-code-metadata-mcp",
+        "configuredUrl": "http://dev-ermakov.itland.local:22100/mcp",
+        "tools": 28,
+        "status": "connected",
+        "proof": "2026-10-21 19:22:02.794 [info] Server \"project-0-Контекст клиента PROF-1c-code-metadata-mcp\" fingerprint changed: tools=28, status=connected",
+        "originProof": "unchanged project config and native project-0 server identity; no new wire-level URL trace",
+        "agentUse": "unverified"
+      },
+      {
+        "role": "graph",
+        "name": "1c-graph-metadata-mcp",
+        "configuredUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "tools": 54,
+        "status": "connected",
+        "proof": "2026-10-21 19:22:02.925 [info] Server \"project-0-Контекст клиента PROF-1c-graph-metadata-mcp\" fingerprint changed: tools=54, status=connected",
+        "originProof": "unchanged project config and native project-0 server identity; no new wire-level URL trace",
+        "agentUse": "unverified"
+      }
+    ],
+    "commonComputerUse": "connected",
+    "additionalBuiltinObservation": "cursor-ide-browser transitioned to error before sign-in; not diagnosed/repaired; does not qualify whole client.",
+    "agentUserTurns": 0,
+    "agentToolCalls": 0,
+    "successfulAgentPayloadReads": 0,
+    "agentEnablement": "not inferred from config/logs; no private switch API read/write",
+    "businessProjectId": "qual-prof",
+    "productId": "qual-pm5prof",
+    "source": "Intentional typical PM5 CORP via unchanged previous registry/applied context"
+  },
+  "preservation": {
+    "beforeUtc": "2026-10-21T16:21:28.025253+00:00",
+    "afterUtc": "2026-10-21T16:29:41.862473+00:00",
+    "guardPaths": 19,
+    "existingPaths": 16,
+    "absentOpenCodePaths": 3,
+    "physicalClientConfigFiles": 11,
+    "logicalClientFormats": 12,
+    "changed": [],
+    "comparison": "exists+SHA256+bytes+actual mtimeNs",
+    "exeShaUnchanged": true,
+    "historicalDesktopJsonSha256": "656f08591d400e56c10177a60697ad84b9fc94801a72700ed089e2c5172efe6a",
+    "historicalEvidenceUnchanged": true
+  },
+  "handoff": {
+    "cursorPid": 13880,
+    "debuggerAddress": "127.0.0.1",
+    "debuggerPort": 50286,
+    "window": "Customize - Контекст клиента PROF - Cursor",
+    "lifecycle": "deliberately retained for human sign-in; cleanup not passed or claimed",
+    "continuation": [
+      "Normal sign-in in this test profile",
+      "Visible authenticated frontend/exact workspace",
+      "Native Agent controls for two selected project MCPs",
+      "Bounded stats({}) and list_graph_projects({}); inspect actual input/payload/source",
+      "Native reload, usage and fresh preservation",
+      "Ordinary owned Browser.close after completion/cancel"
+    ],
+    "boundaries": [
+      "No signup/account creation",
+      "No credentials copied/imported",
+      "Cursor auth stores/private Agent enablement not read or changed",
+      "No overlay masking/private authentication API",
+      "No other client/direct MCP substitute"
+    ],
+    "earlyProbe": "One CDP connection refused before listener ready; bounded readiness wait reattached same native process/root."
+  },
+  "costs": {
+    "explicitNativeAgentUserTurns": 0,
+    "agentToolCalls": 0,
+    "automaticMcpTrafficAndSchemas": "not measured",
+    "backgroundProviderOrIndexingTraffic": "not measured; no billing or zero-total-traffic claim",
+    "newWorkflowAlwaysOnRules": 0,
+    "newWorkflowToolSchemas": 0,
+    "newStartupProbes": 0,
+    "memoryCalls": 0
+  },
+  "upstreamSources": [
+    {
+      "url": "https://cursor.com/docs/mcp",
+      "supports": "Native MCP configuration/use in Cursor Agent; configuration/discovery is not proof of this agent canary."
+    },
+    {
+      "url": "https://cursor.com/help/troubleshooting/sign-in-domains",
+      "supports": "Vendor sign-in troubleshooting only; no local network cause inferred or configuration changed."
+    }
+  ],
+  "unchangedBoundaries": [
+    "Gate 6 not run/repaired",
+    "G4 and memory consumer4.2 not started",
+    "Working migration and workflow publication not started",
+    "No Code/Graph server changes/deployment/reindex",
+    "Registry/source distinctions and six memory scopes/home/grants/ai_rules_1c unchanged",
+    "Full G3/AC39/3.4/5.4-5.6/installed/platform/CUSTOM/cost and release population AC36-38 open",
+    "Memory4.2/AC43/G5/44 open; no new account/auth storage/registry/probe"
+  ],
+  "rawRefs": [
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/after-login-click-dom.json",
+      "sha256": "17b52b4ae0c4538cfcaf7105f510881d8050b864752dda59b49f46d5a79f8c10",
+      "bytes": 6301
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/after-login-dom-click.json",
+      "sha256": "17b52b4ae0c4538cfcaf7105f510881d8050b864752dda59b49f46d5a79f8c10",
+      "bytes": 6301
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/build-report.py",
+      "sha256": "6dfe86b86bfac4bf76ff2e7995402f12f2acd4c63b92e09290f4406f1b770f17",
+      "bytes": 7000
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/cdp.cjs",
+      "sha256": "7e2340c40445cf40a6b1e140efad132992c2e4e0364c0750c2c7c5bf6342d7e6",
+      "bytes": 3129
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/cursor-launch.json",
+      "sha256": "e864b5849ec88c2a6bea05611d5d6860e18236c9c340089a80c7c84d06eb3e84",
+      "bytes": 1500
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/cursor-login-gate.png",
+      "sha256": "036368ebd0062a715ade5620e30cbba13646ff13a0b94ea00e1b2b85872bb0a6",
+      "bytes": 33943
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/cursor-sign-in-handoff.png",
+      "sha256": "c825fd53b0331032ad044f61c7405ddf062578ecb527f52ecda255630c37b524",
+      "bytes": 33949
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/handoff-snapshot-request.json",
+      "sha256": "1269b4f0562beaf0e978191debca50515c0560fac62d3d5983ca035591ab3c3b",
+      "bytes": 487
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/handoff-state.json",
+      "sha256": "cf9eeaff83604aaa2f8ee6467ddf338ef03bd6217037e5ab1e65a9b1db348754",
+      "bytes": 1421
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/initial-dom.json",
+      "sha256": "b4ea12f8775e83129a3c37b85db9d1dfe19c272ebbb498c37775c6133d286684",
+      "bytes": 5679
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/login-click-request.json",
+      "sha256": "9d852b94e99baf41b060f5a4ebe8bfc40fb5fd7b3d58f1a128af9e4c257c74ee",
+      "bytes": 128
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/login-click.json",
+      "sha256": "d630b1951aac1a1188996041927d38b53aed2e177fbe07c8b85a3aa62553f0fa",
+      "bytes": 31660
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/login-dom-click-request.json",
+      "sha256": "7f2f91e75e01c5e26f9f8582bc4b90b90a322f6b97a2deef5ea1e8e919c8cd0a",
+      "bytes": 206
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/login-dom-click.json",
+      "sha256": "a28fbcd1e43132063a4beb6673b20e5d92b3f15f5915c10d28358c99f1b72d6e",
+      "bytes": 105179
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/login-inspect-request.json",
+      "sha256": "18261d76b89aed4b2d771a5807b6b190d48ab253ae3da197b21620066a9c5f2b",
+      "bytes": 427
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/login-inspect.json",
+      "sha256": "a53c77867c63f57af7935f2f4cb485de1ec10f84db487d7774ea43ff538157d7",
+      "bytes": 549
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/login-parent-request.json",
+      "sha256": "e06924af49235f7ff6810b3aa026c8ea5e594464e608ebf62d04c8fd34f0234d",
+      "bytes": 309
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/login-target-request.json",
+      "sha256": "23dd4ab120846927d12e34e6dcb84a9293be227667dc0220b683c513241aa9bc",
+      "bytes": 295
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/login-target.json",
+      "sha256": "f01d5525cfed660360cc3f2ab502ad3ae6dcc788e57a883c6d8ccfc6837985ef",
+      "bytes": 540
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/native-mcp-allowlist.log",
+      "sha256": "51559a080adc8f6bf68efaa01a36725d13c06867bc109766967552827440ffcc",
+      "bytes": 2117
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/native-mcp-status.log",
+      "sha256": "155b642e785b62214d7e763def507a1b28c9f52efa53de5be517b148221d48ae",
+      "bytes": 301
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/native-tool-catalog.log",
+      "sha256": "cffda7f650a6b17ef23333e94587bec9d0530f0dcc8dea52b0b529663c63be69",
+      "bytes": 8165
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/native-worker.log",
+      "sha256": "e2794b1a224bd6c42d1127479fa4eed96a83e3a9ed98708ff5a3b2b7684c44b3",
+      "bytes": 6828
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/preservation-before.json",
+      "sha256": "670c03a1f1fba24921628964f18219536793577516b577e39ff9d215eb9d5c24",
+      "bytes": 7039
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/preservation-observation.json",
+      "sha256": "3866db5dc8df89fa5f8b23665c6537f141a6dcfd885050534e2977769a9cf16a",
+      "bytes": 7057
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/snapshot-request.json",
+      "sha256": "d1ed511b5b3b28d52bbc1bb792d2722788e0cb6f2346ede334f353aec49855bf",
+      "bytes": 446
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/startup-stderr.log",
+      "sha256": "253087f3927d99116f6e84b0e09af1dc705b558a63d238a859184a092ad24044",
+      "bytes": 5884
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/cursor-auth-qualification-20261021/startup-stdout.log",
+      "sha256": "a8d08c4b135a3cbb96d616064c83046eedd729728515d96152b3f20f73fb9287",
+      "bytes": 646
+    }
+  ],
+  "delivery": {
+    "owner": "common Git source-delivery ledger",
+    "scope": "Source-only qualification investigation; registration cannot close account/native-read blocker",
+    "required": "one coherent local commit/RegisterChange documentation; no publication"
+  }
+}

@@ -1,0 +1,154 @@
+{
+  "tools": [
+    {
+      "name": "search_docs",
+      "description": "Search product docs: hybrid (default), text (no embeddings), or semantic. Start with 3-5 results; follow next_cursor using the same mode.",
+      "inputSchema": {
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "limit": {
+            "default": 5,
+            "type": "integer"
+          },
+          "cursor": {
+            "default": 0,
+            "type": "integer"
+          },
+          "mode": {
+            "default": "hybrid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "_meta": {
+        "_fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "read_page",
+      "description": "Read a bounded page excerpt. Narrow with query/heading; follow next_cursor. Use max_chars=0 only for explicit full reads.",
+      "inputSchema": {
+        "properties": {
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "url": {
+            "default": "",
+            "type": "string"
+          },
+          "format": {
+            "default": "markdown",
+            "type": "string"
+          },
+          "query": {
+            "default": "",
+            "type": "string"
+          },
+          "heading": {
+            "default": "",
+            "type": "string"
+          },
+          "cursor": {
+            "default": 0,
+            "type": "integer"
+          },
+          "max_chars": {
+            "default": 12000,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "_meta": {
+        "_fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "list_structure",
+      "description": "List a compact, bounded BookStack structure. Prefer a specific scope and use only when search is insufficient.",
+      "inputSchema": {
+        "properties": {
+          "scope": {
+            "default": "all",
+            "type": "string"
+          },
+          "limit": {
+            "default": 30,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "_meta": {
+        "_fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "reindex_docs",
+      "description": "Refresh the local BookStack cache and optional semantic embeddings.",
+      "inputSchema": {
+        "properties": {
+          "force": {
+            "default": false,
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "_meta": {
+        "_fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "index_status",
+      "description": "Return local BookStack cache and embedding index status without refreshing the index.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "_meta": {
+        "_fastmcp": {
+          "tags": []
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+﻿"source","originalLine","destination","exactBody"
+"tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1","27","tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1","True"
+"tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1","58","tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1","True"

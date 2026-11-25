@@ -1,0 +1,749 @@
+﻿[CmdletBinding()]
+param(
+    [ValidateSet('','Capture','Verify','Prepare','DisposeCopy')][string]$Action='',
+    [string]$ProjectRoot='',
+    [ValidateSet('Develop','Release')][string]$Phase='Develop',
+    [string]$CandidateRoot='',
+    [string]$AiRulesSource='',
+    [string]$FreshProjectsRoot='C:\itlj',
+    [string]$AgentTarget='',
+    [switch]$Recapture,
+    [switch]$AcknowledgeWorkflowUpdate,
+    [string]$OutputPath='',
+    [string]$FixtureReceiptPath='',
+    [string]$TerminalReportPath='',
+    [string]$DiagnosticRoot='',
+    [string]$CapsulePath='',
+    [string]$CapsuleSha256='',
+    [long]$DatabaseBudgetBytes=0
+)
+Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'git-path-list.ps1')
+. (Join-Path $PSScriptRoot 'source-e2e-manifest-repair.ps1')
+. (Join-Path $PSScriptRoot 'source-e2e-workflow-update.ps1')
+. (Join-Path $PSScriptRoot 'source-proof-json.ps1')
+. (Join-Path $PSScriptRoot 'source-delivery-process.ps1')
+. (Join-Path $PSScriptRoot 'stand-env-identity.ps1')
+$fixtureLib = Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-workflow/scripts/lib'
+. (Join-Path $fixtureLib 'agent-1c.core.ps1')
+. (Join-Path $fixtureLib 'agent-1c.lifecycle.ps1')
+. (Join-Path $fixtureLib 'agent-1c.vanessa.ps1')
+. (Join-Path $fixtureLib 'agent-1c.ai-rules-migration.ps1')
+. (Join-Path $PSScriptRoot 'lifecycle-qualification-fixture.ps1')
+. (Join-Path $PSScriptRoot 'source-e2e-storage.ps1')
+# Bounded below the 900-second stand-preparation budget for each Capture.
+$script:SourceFixtureStandLeaseSeconds=600
+
+function Enter-SourceFixtureStandLease {
+    # update-workflow holds these lifecycle locks from its master copy until the
+    # completed receipts are retained. Proof and admission take the same locks,
+    # so another publisher's in-flight update is awaited instead of read half done.
+    param([string[]]$Roots)
+    # This standalone host has no helper run status; waiting publishes none.
+    foreach($name in @('RunStatusPath','RunStage','RunStageDetail','RunLiveness')){if(-not (Get-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue)){Set-Variable -Name $name -Scope Script -Value ''}}
+    foreach($name in @('LifecycleOperationIsContinuation','LifecycleWaitCancelled')){if(-not (Get-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue)){Set-Variable -Name $name -Scope Script -Value $false}}
+    foreach($name in @('RunNoProgressSeconds','RunTimeoutRemainingSeconds')){if(-not (Get-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue)){Set-Variable -Name $name -Scope Script -Value 0}}
+    if(-not (Get-Variable -Name LifecycleOperationRecord -Scope Script -ErrorAction SilentlyContinue)){$script:LifecycleOperationRecord=$null}
+    $requests=@(foreach($root in $Roots){
+        $full=[IO.Path]::GetFullPath($root).TrimEnd('\','/')
+        $lockPath=Get-Agent1cLifecycleLockPath -WorktreePath $full
+        Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $full
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $lockPath))
+        [pscustomobject]@{worktreePath=$full;lockPath=$lockPath;share=[IO.FileShare]::Read;kind='lifecycle'}
+    })
+    $previousRoot=Get-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue
+    $hadRoot=$null -ne $previousRoot;$previousRootValue=if($hadRoot){$previousRoot.Value}else{$null}
+    try {
+        $script:ProjectRoot=$requests[0].worktreePath
+        return Wait-Agent1cLockSet -RequestedAction 'qualification-fixture-capture' -TimeoutSeconds $script:SourceFixtureStandLeaseSeconds -GetRequests {$requests}.GetNewClosure()
+    } catch {
+        if($_.Exception.Message -match '^LIFECYCLE_LOCK_WAIT_TIMEOUT'){throw "FIXTURE_STAND_BUSY: another lifecycle operation still owns the stand; no capsule or admission changed. Repeat the same Capture after it finishes. $($_.Exception.Message)"}
+        throw
+    } finally {
+        if($hadRoot){$script:ProjectRoot=$previousRootValue}else{Remove-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue}
+    }
+}
+
+function Invoke-SourceFixtureInstalledAction {
+    param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200, [switch]$AllowFailure)
+    # Keep the factory's public call stable across published/frozen candidates.
+    # The guarded continuation owns only its exact existing refresh invocation;
+    # its AllowFailure children go directly to the one native process owner.
+    if(-not $AllowFailure -and $TimeoutSeconds -eq 5400 -and
+        $Action -in @('refresh-dev-branch','refresh-dev-branch-lite') -and
+        $Arguments.Count -eq 4 -and $Arguments[0] -ceq '-DevBranchName' -and
+        $Arguments[2] -ceq '-ExpectedMasterCommit' -and $Arguments[1] -and
+        $Arguments[3] -cmatch '^[a-f0-9]{40}$'){
+        return Invoke-SourceFixtureRefresh -Root $Root -BranchName $Arguments[1] -ExpectedMasterCommit $Arguments[3] -Action $Action -AgentTarget $AgentTarget -LogRoot $LogRoot
+    }
+    return Invoke-SourceFixtureInstalledProcess -Root $Root -Action $Action -Arguments $Arguments -AgentTarget $AgentTarget -LogRoot $LogRoot -TimeoutSeconds $TimeoutSeconds -AllowFailure:$AllowFailure
+}
+
+function Invoke-SourceFixtureInstalledProcess {
+    param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200, [switch]$AllowFailure, [string]$ScriptPath='', [string[]]$ScriptArguments=@())
+    [void][IO.Directory]::CreateDirectory($LogRoot)
+    $token = $Action+'-'+[guid]::NewGuid().ToString('N')
+    $stdout = Join-Path $LogRoot ($token+'.stdout.log'); $stderr = Join-Path $LogRoot ($token+'.stderr.log')
+    $client = Resolve-SourceE2EAgentTarget -ProjectRoot $Root -AgentTarget $AgentTarget
+    $internalAction = $Action -in @('release-e2e-snapshot','release-e2e-restore')
+    $createFixtureBase = $Action -eq 'qualification-create-infobase'
+    $runner = if($createFixtureBase){Join-Path $PSScriptRoot 'source-e2e-create-infobase.ps1'}else{Join-Path $Root $(if($internalAction){'.agents/skills/1c-workflow/scripts/agent-1c.ps1'}else{'.agents/skills/1c-workflow/scripts/run-itl-command.ps1'})}
+    $entryArguments = if($internalAction -or $createFixtureBase){@('-ProjectRoot',$Root)}else{@('--')}
+    $actionArguments = if($createFixtureBase){@()}else{@('-Action',$Action,'-AgentTarget',$client)}
+    if($ScriptPath){$runner=$ScriptPath;$entryArguments=@();$actionArguments=@();$Arguments=$ScriptArguments}
+    $argv = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$runner)+$entryArguments+$actionArguments+$Arguments
+    $line = (@($argv|ForEach-Object { ConvertTo-GitProcessArgument -Value $_ }) -join ' ')
+    $job = Start-DeliveryProcess -ArgumentList $line -WorkingDirectory $Root -StandardOutputPath $stdout -StandardErrorPath $stderr
+    $process = $job.process; $errorText=''; $watch=[Diagnostics.Stopwatch]::StartNew()
+    $lastLength=-1L; $lastProgress=[DateTime]::UtcNow; $lastNotice=[DateTime]::UtcNow
+    try {
+        while (-not $process.WaitForExit(1000)) {
+            $length=0L; foreach($path in @($stdout,$stderr)){if(Test-Path -LiteralPath $path){$length+=(Get-Item -LiteralPath $path).Length}}
+            if($length -ne $lastLength){$lastLength=$length;$lastProgress=[DateTime]::UtcNow}
+            if(([DateTime]::UtcNow-$lastNotice).TotalSeconds -ge 30){
+                Assert-SourceE2ENativeDisk -Process $process -LogPaths @($stdout,$stderr) -EvidencePath (Join-Path $LogRoot ($token+'.disk-full.json')) -VolumePaths @($Root,[IO.Path]::GetTempPath()) -InspectWindows
+            }
+            if($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds -or ([DateTime]::UtcNow-$lastProgress).TotalMinutes -ge 15){throw "FIXTURE_ACTION_TIMEOUT: $Action; retained logs=$LogRoot; repeat the same qualification after diagnosis"}
+            if(([DateTime]::UtcNow-$lastNotice).TotalSeconds -ge 30){Write-Host "Fixture ${Action}: $([int]$watch.Elapsed.TotalSeconds)s; logs=$LogRoot";$lastNotice=[DateTime]::UtcNow}
+        }
+        $process.WaitForExit();$process.Refresh()
+        Assert-SourceE2ENativeDisk -Process $process -LogPaths @($stdout,$stderr) -EvidencePath (Join-Path $LogRoot ($token+'.disk-full.json')) -VolumePaths @($Root,[IO.Path]::GetTempPath())
+        if([int]$process.ExitCode -ne 0 -and -not $AllowFailure){throw "FIXTURE_ACTION_FAILED: $Action exit=$($process.ExitCode); see $stdout and $stderr; repeat the same qualification after diagnosis"}
+        return [pscustomobject]@{exitCode=[int]$process.ExitCode;stdout=$stdout;stderr=$stderr;durationMs=[int64]$watch.ElapsedMilliseconds}
+    } catch {$errorText=$_.Exception.Message;throw}
+    finally {
+        try { Close-DeliveryProcessJob -JobHandle $job.jobHandle -Process $process -PriorErrorMessage $errorText }
+        finally { $process.Dispose(); $watch.Stop() }
+    }
+}
+
+function Invoke-SourceFixtureWorkflowUpdate {
+    param([string]$Root, [string]$CandidateRoot, [string]$AgentTarget, [string]$LogRoot, [int]$TimeoutSeconds=3600)
+    $updateClient=Resolve-SourceE2EAgentTarget -ProjectRoot $Root -AgentTarget $AgentTarget
+    $null=Invoke-SourceE2EWorkflowUpdate -Root $Root -CandidateRoot $CandidateRoot -AgentTarget $updateClient -TimeoutSeconds $TimeoutSeconds -InstalledOperation {
+        param($Budget,$CatalogArguments)
+        Invoke-SourceFixtureInstalledAction -Root $Root -Action 'update-workflow' -Arguments $CatalogArguments -AgentTarget $updateClient -LogRoot $LogRoot -TimeoutSeconds $Budget -AllowFailure
+    } -SourceOperation {
+        param($ScriptPath,$Arguments,$Budget)
+        Invoke-SourceFixtureInstalledProcess -Root $Root -Action 'update-workflow-source-continuation' -AgentTarget $updateClient -LogRoot $LogRoot -TimeoutSeconds $Budget -AllowFailure -ScriptPath $ScriptPath -ScriptArguments $Arguments
+    }
+}
+
+function Invoke-SourceFixtureRefresh {
+    param([string]$Root, [string]$BranchName, [string]$ExpectedMasterCommit, [string]$AgentTarget, [string]$LogRoot,
+        [ValidateSet('refresh-dev-branch','refresh-dev-branch-lite')][string]$Action='refresh-dev-branch')
+    $arguments=@('-DevBranchName',$BranchName,'-ExpectedMasterCommit',$ExpectedMasterCommit)
+    $result=Invoke-SourceFixtureInstalledAction -Root $Root -Action $Action -Arguments $arguments -AgentTarget $AgentTarget -LogRoot $LogRoot -TimeoutSeconds 5400 -AllowFailure
+    $summary=Read-SourceE2ECompactSummary -ProcessResult $result
+    if([int]$result.exitCode -eq 0 -and [string]$summary.action -ceq $Action -and [string]$summary.status -ceq 'succeeded'){return $result}
+    $repaired=Repair-SourceE2EManifestConflict -Root $Root -BranchName $BranchName -ProcessResult $result -Operation $Action
+    if($repaired){
+        $retry=Invoke-SourceFixtureInstalledAction -Root $Root -Action $Action -Arguments $arguments -AgentTarget $AgentTarget -LogRoot $LogRoot -TimeoutSeconds 5400 -AllowFailure
+        $retrySummary=Read-SourceE2ECompactSummary -ProcessResult $retry
+        if([int]$retry.exitCode -eq 0 -and [string]$retrySummary.action -ceq $Action -and [string]$retrySummary.status -ceq 'succeeded'){return $retry}
+        throw "FIXTURE_ACTION_FAILED: $Action continuation exit=$($retry.exitCode); see $($retry.stdout) and $($retry.stderr); original failure retained at $($result.stdout)"
+    }
+    throw "FIXTURE_ACTION_FAILED: $Action exit=$($result.exitCode); see $($result.stdout) and $($result.stderr); semantic repair refused"
+}
+
+function Assert-SourceFixtureGitClean {
+    param([string]$Root)
+    if(@(Get-RepositoryGitPathList -RepositoryRoot $Root -Arguments @('status','--porcelain=v1','--untracked-files=all','-z')).Count){throw "FIXTURE_SEED_DIRTY: preserve changes at $Root and repeat qualification after their owning task finishes"}
+}
+
+function Get-SourceFixtureSemanticState {
+    param([object]$State)
+    $result=[ordered]@{}
+    foreach($p in @($State.PSObject.Properties|Sort-Object Name)){
+        if($p.Name -match '^(pendingMerge|pendingRefresh|lifecycleMerge|eventLogPendingCursor|lastConfigDesigner|lastExtensionDesigner|sourceFingerprint|lastConfigBaseUpdatedCommit|enterpriseNormalization|lastEnterpriseAutoUpdateResultPath|eventLogBaseline|branchSeedBaseline)'){$result[$p.Name]=$p.Value}
+    }
+    return ConvertTo-DeliveryProofJson -InputObject $result -Depth 32 -Compress
+}
+
+function Get-SourceFixtureContextFiles {
+    param([object]$State, [string]$ProjectRoot, [string]$BranchRoot)
+    $records=New-Object Collections.Generic.List[object]
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $registered=@(Get-RepositoryGitPathList -RepositoryRoot $ProjectRoot -Arguments @('worktree','list','--porcelain','-z')|Where-Object {$_ -like 'worktree *'}|ForEach-Object {[IO.Path]::GetFullPath($_.Substring(9)).TrimEnd('\','/')})
+    foreach($property in $State.PSObject.Properties){
+        if($property.Name -notmatch '^(eventLog.*Path|branchSeedBaselinePath|lastEnterpriseAutoUpdateResultPath)$|^(pendingMerge|pendingRefresh).*Path$'){continue}
+        $path=[string]$property.Value
+        if(-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)){continue}
+        $full=[IO.Path]::GetFullPath($path);$role='';$relative=''
+        foreach($pair in @(@{role='branch';root=$BranchRoot},@{role='master';root=$ProjectRoot})){
+            $prefix=$pair.root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+            if($full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){$role=$pair.role;$relative=$full.Substring($prefix.Length).Replace('\','/');break}
+        }
+        $sha=(Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
+        if(-not $role -and $property.Name -ceq 'lastEnterpriseAutoUpdateResultPath'){
+            foreach($root in $registered){
+                $prefix=$root+[IO.Path]::DirectorySeparatorChar
+                if(-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){continue}
+                $receiptRelative=$full.Substring($prefix.Length).Replace('\','/')
+                if($receiptRelative -cnotmatch '^\.agent-1c/runs/auto-update/[^/]+\.result\.json$'){continue}
+                $null=Resolve-QualificationFixtureChild -Root $root -RelativePath $receiptRelative
+                $role='branch';$relative='.agent-1c/runs/qualification-context/'+$sha+'.json';break
+            }
+        }
+        if(-not $role){throw "FIXTURE_CONTEXT_OUTSIDE_SEED: $($property.Name); retain the seed and receipt; use its lifecycle owner to establish a registered context before capture"}
+        $null=Resolve-QualificationFixtureChild -Root $(if($role -eq 'master'){$ProjectRoot}else{$BranchRoot}) -RelativePath $relative
+        if($seen.Add($full)){$records.Add([pscustomobject]@{role=$role;relativePath=$relative;artifact=('context/'+$role+'/'+$relative);sourcePath=$full;sourceSha256=$sha})}
+    }
+    return $records.ToArray()
+}
+
+function Get-SourceFixtureSourceInfoBase {
+    param([string]$ProjectRoot)
+    # Only an in-project file source is fixture content; an external or server
+    # source stays outside every capsule and copy.
+    $root=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
+    $values=@{}
+    foreach($line in @(Read-Utf8Lines -Path (Join-Path $root '.dev.env'))){if($line -match '^(?<key>SOURCE_INFOBASE_(?:PATH|NAME))=(?<value>.*)$'){$values[$Matches.key]=$Matches.value.Trim()}}
+    if(-not $values['SOURCE_INFOBASE_PATH'] -or $values['SOURCE_INFOBASE_NAME']){return $null}
+    $value=$values['SOURCE_INFOBASE_PATH']
+    $path=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($value)){$value}else{Join-Path $root $value})).TrimEnd('\','/')
+    if(-not $path.StartsWith($root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){return $null}
+    $relative=$path.Substring($root.Length+1).Replace('\','/')
+    if(-not $relative.StartsWith('.agent-1c/',[StringComparison]::OrdinalIgnoreCase)){return $null}
+    return [pscustomobject]@{path=(Resolve-QualificationFixtureChild -Root $root -RelativePath $relative);relativePath=$relative}
+}
+
+function Save-SourceFixtureSourceInfoBase {
+    param([string]$ProjectRoot,[string]$Capsule)
+    $source=Get-SourceFixtureSourceInfoBase -ProjectRoot $ProjectRoot
+    if($null -eq $source){return $null}
+    $database=Join-Path $source.path '1Cv8.1CD'
+    if(-not (Test-Path -LiteralPath $database -PathType Leaf)){return $null}
+    $artifact='source-infobase.1cd'
+    $destination=Resolve-QualificationFixtureChild -Root $Capsule -RelativePath $artifact
+    # An exclusive handle proves no 1C session or writer holds the source.
+    try{$input=[IO.File]::Open($database,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)}
+    catch [IO.IOException]{throw 'FIXTURE_SOURCE_INFOBASE_BUSY: close every 1C session of the in-project source infobase and repeat Capture.'}
+    try{$output=[IO.File]::Open($destination,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$input.CopyTo($output)}finally{$output.Dispose()}}finally{$input.Dispose()}
+    return [ordered]@{relativePath=$source.relativePath;artifact=$artifact;sha256=(Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()}
+}
+
+function Get-SourceFixtureSourceInfoBaseRecord {
+    param([object]$Manifest,[string]$Capsule)
+    $property=$Manifest.PSObject.Properties['sourceInfoBase']
+    if($null -eq $property -or $null -eq $property.Value){return $null}
+    $record=$property.Value
+    if(@($Manifest.files|Where-Object {[string]$_.path -ceq [string]$record.artifact -and [string]$_.sha256 -ceq [string]$record.sha256}).Count -ne 1){throw 'FIXTURE_SOURCE_INFOBASE_UNBOUND'}
+    return [pscustomobject]@{relativePath=[string]$record.relativePath;artifactPath=(Resolve-QualificationFixtureChild -Root $Capsule -RelativePath ([string]$record.artifact));sha256=[string]$record.sha256}
+}
+
+function Restore-SourceFixtureSourceInfoBase {
+    param([object]$Record,[string]$TargetProjectRoot)
+    if($null -eq $Record){return}
+    # The installed context already mapped SOURCE_INFOBASE_PATH into the copy.
+    $expected=Get-SourceFixtureSourceInfoBase -ProjectRoot $TargetProjectRoot
+    if($null -eq $expected -or $expected.relativePath -cne $Record.relativePath){throw 'FIXTURE_SOURCE_INFOBASE_TARGET_MISMATCH'}
+    if(Test-Path -LiteralPath $expected.path){throw 'FIXTURE_SOURCE_INFOBASE_TARGET_EXISTS: preserve this attempt; repeat qualification to create a new owned target'}
+    [void][IO.Directory]::CreateDirectory($expected.path)
+    $database=Join-Path $expected.path '1Cv8.1CD'
+    Copy-Item -LiteralPath $Record.artifactPath -Destination $database
+    if((Get-FileHash -LiteralPath $database -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Record.sha256){throw 'FIXTURE_SOURCE_INFOBASE_CHANGED'}
+}
+
+function Export-SourceE2EFixtureCapsule {
+    param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$AgentTarget='')
+    $root=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
+    $configPath=Join-Path $root '.agent-1c/release-e2e.json'
+    $config=Read-QualificationFixtureJson -Path $configPath
+    $name=if($Phase -eq 'Develop'){[string]$config.developDevBranchName}else{[string]$config.devBranchName}
+    $branch=if($Phase -eq 'Develop'){[IO.Path]::GetFullPath([string]$config.developWorktreePath)}else{[IO.Path]::GetFullPath([string]$config.worktreePath)}
+    Assert-SourceFixtureGitClean -Root $root; Assert-SourceFixtureGitClean -Root $branch
+    if((Get-RepositoryCommonGitDirectory -RepositoryRoot $root) -ine (Get-RepositoryCommonGitDirectory -RepositoryRoot $branch)){throw 'FIXTURE_SEED_NOT_REGISTERED'}
+    if((Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('branch','--show-current')).stdout.Trim() -cne 'master' -or
+        (Invoke-RepositoryGit -RepositoryRoot $branch -Arguments @('branch','--show-current')).stdout.Trim() -cne ('itldev/'+$name)){throw 'FIXTURE_SEED_BRANCH_MISMATCH'}
+    $statePath=Join-Path $branch ('.agent-1c/dev-branches/'+$name+'.json')
+    $before=Read-QualificationFixtureJson -Path $statePath
+    if([string]$before.infoBaseKind -cne 'file'){throw 'FIXTURE_SEED_FILE_REQUIRED: server qualification retains its separate declared stand and unverified evidence contract'}
+    $semanticBefore=Get-SourceFixtureSemanticState -State $before
+    # Resolve every declared context before the expensive database snapshot.
+    # A historical normalization receipt may live in another registered worktree;
+    # import only that exact SHA-bound leaf, never its worktree/state or database.
+    $context=@(Get-SourceFixtureContextFiles -State $before -ProjectRoot $root -BranchRoot $branch)
+    $requiredCommits=@($before.PSObject.Properties|Where-Object {$_.Name -match '^(pendingMerge|pendingRefresh|lifecycleMerge).*(Commit|Head)$' -and [string]$_.Value -cmatch '^[a-f0-9]{40}$'}|ForEach-Object {[string]$_.Value}|Sort-Object -Unique)
+    foreach($required in $requiredCommits){
+        if((Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('cat-file','-t',$required)).stdout.Trim() -cne 'commit'){throw 'FIXTURE_PENDING_COMMIT_INVALID'}
+    }
+    $masterCommit=(Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('rev-parse','HEAD')).stdout.Trim()
+    $branchCommit=(Invoke-RepositoryGit -RepositoryRoot $branch -Arguments @('rev-parse','HEAD')).stdout.Trim()
+    $lock=Read-QualificationFixtureJson -Path (Join-Path $root '.agent-1c/dependency-lock.json')
+    $branchLock=Read-QualificationFixtureJson -Path (Join-Path $branch '.agent-1c/dependency-lock.json')
+    $workflow=[string]$lock.dependencies.workflowPackage.commit
+    if($workflow -cne [string]$branchLock.dependencies.workflowPackage.commit){throw 'FIXTURE_UPGRADE_BASELINE_VERSION_MISMATCH: seed master and branch must declare the same published baseline'}
+    $workflowRepository=Split-Path -Parent $PSScriptRoot
+    if($workflow -cnotmatch '^[a-f0-9]{40}$' -or (Invoke-RepositoryGit -RepositoryRoot $workflowRepository -Arguments @('merge-base','--is-ancestor',$workflow,'refs/remotes/origin/develop') -AllowFailure).exitCode -ne 0){throw 'FIXTURE_BASELINE_NOT_PUBLISHED: capture from a published workflow baseline before qualification'}
+    $id=[guid]::NewGuid().ToString('N')
+    $capsule=Resolve-QualificationFixtureChild -Root (Get-RepositoryCommonGitDirectory -RepositoryRoot $root) -RelativePath ('itl/qualification-fixtures/'+$Phase.ToLowerInvariant()+'-'+$id)
+    [void][IO.Directory]::CreateDirectory($capsule)
+    $snapshotRelative='.agent-1c/snapshots/qualification-fixtures/'+$id+'/infobase.dt'
+    $snapshot=Resolve-QualificationFixtureChild -Root $branch -RelativePath $snapshotRelative
+    Write-Host "Capturing $Phase fixture once: $capsule"
+    $snapshotRun=Invoke-SourceFixtureInstalledAction -Root $branch -Action 'release-e2e-snapshot' -Arguments @('-DevBranchName',$name,'-ReleaseSnapshotPath',$snapshotRelative) -AgentTarget $AgentTarget -LogRoot (Join-Path $capsule 'logs')
+    $after=Read-QualificationFixtureJson -Path $statePath
+    if((Get-SourceFixtureSemanticState -State $after) -cne $semanticBefore){throw 'FIXTURE_SNAPSHOT_STATE_MOVED: keep the snapshot and repeat capture from a stable seed'}
+    Copy-Item -LiteralPath $snapshot -Destination (Join-Path $capsule 'infobase.dt')
+    Copy-Item -LiteralPath $statePath -Destination (Join-Path $capsule 'state.json')
+    Copy-Item -LiteralPath (Join-Path $root '.dev.env') -Destination (Join-Path $capsule 'master.env')
+    $sourceInfoBase=Save-SourceFixtureSourceInfoBase -ProjectRoot $root -Capsule $capsule
+    Copy-Item -LiteralPath (Join-Path $branch '.dev.env') -Destination (Join-Path $capsule 'branch.env')
+    Copy-Item -LiteralPath $configPath -Destination (Join-Path $capsule 'release-e2e.json')
+    Invoke-RepositoryGit -RepositoryRoot $root -Arguments (@('bundle','create',(Join-Path $capsule 'source.bundle'),'refs/heads/master',('refs/heads/itldev/'+$name))+$requiredCommits)|Out-Null
+    if((Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('rev-parse','HEAD')).stdout.Trim() -cne $masterCommit -or
+        (Invoke-RepositoryGit -RepositoryRoot $branch -Arguments @('rev-parse','HEAD')).stdout.Trim() -cne $branchCommit){throw 'FIXTURE_GIT_MOVED_DURING_CAPTURE'}
+    Assert-SourceFixtureGitClean -Root $root;Assert-SourceFixtureGitClean -Root $branch
+    foreach($reference in $context){
+        $destination=Resolve-QualificationFixtureChild -Root $capsule -RelativePath $reference.artifact
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+        Copy-Item -LiteralPath $reference.sourcePath -Destination $destination
+        if((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -cne $reference.sourceSha256){throw 'FIXTURE_CONTEXT_MOVED_DURING_CAPTURE: retain the capsule and repeat capture from a stable seed'}
+    }
+    $files=@(Get-ChildItem -LiteralPath $capsule -Recurse -File|Where-Object {$_.FullName -notlike (Join-Path $capsule 'logs/*')}|ForEach-Object{[ordered]@{path=$_.FullName.Substring($capsule.Length+1).Replace('\','/');sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})
+    $databasePath=Join-Path ([string]$after.devBranchInfoBasePath) '1Cv8.1CD'
+    $databaseSha=(Get-FileHash -LiteralPath $databasePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $manifest=[ordered]@{schemaVersion=1;kind='itl-qualification-fixture';status='sealed';phase=$Phase;infoBaseKind='file';sourceProjectRoot=$root;sourceBranchRoot=$branch;branchName=$name;masterCommit=$masterCommit;branchCommit=$branchCommit;requiredCommits=$requiredCommits;workflowCommit=$workflow;semanticState=$semanticBefore;sourceDatabase=[ordered]@{path=$databasePath;sha256=$databaseSha};sourceInfoBase=$sourceInfoBase;files=$files;contextFiles=$context;snapshotDurationMs=$snapshotRun.durationMs;createdAt=[DateTime]::UtcNow.ToString('o')}
+    $manifestPath=Join-Path $capsule 'capsule.json'
+    Write-QualificationFixtureJson -Path $manifestPath -Value $manifest
+    $sha=(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $null=Read-QualificationFixtureCapsule -ManifestPath $manifestPath -Sha256 $sha
+    return [pscustomobject]@{path=$manifestPath;sha256=$sha;workflowCommit=$workflow;phase=$Phase}
+}
+
+# Architecture checkpoint approved 2026-11-17 (docs/package-architecture.md):
+# hashes of retained completed update-workflow backups survive between Capture
+# and Verify processes, one file per stand root in its common Git directory.
+# Callers hold the stand lifecycle lease of that root. A row is reused only
+# while length, last-write and creation time are unchanged; live managed files
+# are never persisted. An unreadable file means a full rehash.
+$script:SourceFixtureChainProofHashHeader='itl-chain-proof-hashes 1'
+
+function Get-SourceFixtureChainProofHashPath {
+    param([string]$Root)
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {$key=([BitConverter]::ToString($sha.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes($Root.ToLowerInvariant())))).Replace('-','').ToLowerInvariant()}
+    finally {$sha.Dispose()}
+    return Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $Root) ('itl/qualification-fixtures/chain-proof-hashes/'+$key+'.tsv')
+}
+
+function Get-SourceFixtureChainProofBackupPrefix {
+    param([string]$Root)
+    return ($Root+'\.agent-1c\snapshots\workflow-update\itl-workflow-update-completed-').ToLowerInvariant()
+}
+
+function Import-SourceFixtureChainProofHashes {
+    # Seeds the owner's path hash cache; returns the creation time of each reused row.
+    param([string]$Root,[hashtable]$Cache)
+    $reused=@{}
+    try {$lines=[IO.File]::ReadAllLines((Get-SourceFixtureChainProofHashPath -Root $Root),[Text.UTF8Encoding]::new($false))} catch {return $reused}
+    if($lines.Count -lt 1 -or $lines[0] -cne $script:SourceFixtureChainProofHashHeader){return $reused}
+    $prefix=Get-SourceFixtureChainProofBackupPrefix -Root $Root
+    for($index=1;$index -lt $lines.Count;$index++){
+        $fields=$lines[$index].Split("`t")
+        if($fields.Count -ne 5 -or $fields[0] -cnotmatch '^[a-f0-9]{64}$'){continue}
+        try {$item=[IO.FileInfo]::new([IO.Path]::Combine($Root,$fields[4]))} catch {continue}
+        $key=$item.FullName.ToLowerInvariant()
+        if(-not $key.StartsWith($prefix,[StringComparison]::Ordinal) -or -not $item.Exists -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){continue}
+        if([string]$item.Length -cne $fields[1] -or [string]$item.LastWriteTimeUtc.Ticks -cne $fields[2] -or [string]$item.CreationTimeUtc.Ticks -cne $fields[3]){continue}
+        $Cache[$key]=@{length=[int64]$item.Length;ticks=[int64]$item.LastWriteTimeUtc.Ticks;hash=$fields[0]}
+        $reused[$key]=@{length=[int64]$item.Length;ticks=[int64]$item.LastWriteTimeUtc.Ticks;creation=$fields[3]}
+    }
+    return $reused
+}
+
+function Save-SourceFixtureChainProofHashes {
+    # Rewritten only after a successful proof: exactly the retained backups seen now.
+    param([string]$Root,[hashtable]$Cache,[hashtable]$Reused)
+    $prefix=Get-SourceFixtureChainProofBackupPrefix -Root $Root
+    $keys=[string[]]@($Cache.Keys|Where-Object {([string]$_).StartsWith($prefix,[StringComparison]::Ordinal)})
+    [Array]::Sort($keys,[StringComparer]::Ordinal)
+    $lines=New-Object Collections.Generic.List[string];$lines.Add($script:SourceFixtureChainProofHashHeader)
+    foreach($key in $keys){
+        $entry=$Cache[$key]
+        $prior=$Reused[$key]
+        if($null -ne $prior -and [int64]$prior.length -eq [int64]$entry.length -and [int64]$prior.ticks -eq [int64]$entry.ticks){$creation=[string]$prior.creation}
+        else {
+            $item=[IO.FileInfo]::new($key)
+            if(-not $item.Exists -or [int64]$item.Length -ne [int64]$entry.length -or [int64]$item.LastWriteTimeUtc.Ticks -ne [int64]$entry.ticks){continue}
+            $creation=[string]$item.CreationTimeUtc.Ticks
+        }
+        $lines.Add(([string]$entry.hash)+"`t"+([string][int64]$entry.length)+"`t"+([string][int64]$entry.ticks)+"`t"+$creation+"`t"+$key.Substring($Root.Length+1))
+    }
+    Write-Utf8TextAtomic -Path (Get-SourceFixtureChainProofHashPath -Root $Root) -Value (($lines -join "`n")+"`n")
+}
+
+function Get-SourceFixtureWorkflowUpdateProof {
+    param([string]$Root,[string]$OriginalCommit,[string]$OriginalEnvPath,[string]$ExpectedBranchRef)
+    $previousRoot=Get-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue
+    $hadRoot=$null -ne $previousRoot;$previousRootValue=if($hadRoot){$previousRoot.Value}else{$null}
+    # The owner's in-memory hash and real-directory caches, unless an enclosing
+    # update-workflow operation already provides them.
+    $hashScope=$null -eq (Get-Variable -Name ItlWorkflowUpdatePathHashCache -Scope Script -ErrorAction SilentlyContinue)
+    if($hashScope){$script:ItlWorkflowUpdatePathHashCache=@{};$script:ItlWorkflowUpdateRealDirectoryCache=@{}}
+    try {
+        $script:ProjectRoot=[IO.Path]::GetFullPath($Root).TrimEnd('\','/')
+        $reusedHashes=Import-SourceFixtureChainProofHashes -Root $script:ProjectRoot -Cache $script:ItlWorkflowUpdatePathHashCache
+        Assert-SourceFixtureGitClean -Root $Root
+        $head=(Invoke-RepositoryGit -RepositoryRoot $Root -Arguments @('rev-parse','HEAD')).stdout.Trim()
+        $branchRef=(Invoke-RepositoryGit -RepositoryRoot $Root -Arguments @('symbolic-ref','--quiet','HEAD')).stdout.Trim()
+        if($branchRef -cne $ExpectedBranchRef){throw 'FIXTURE_SEED_BRANCH_MISMATCH'}
+        $saved=@();$parent=Join-Path $Root '.agent-1c/snapshots/workflow-update'
+        if(Test-Path -LiteralPath $parent){
+            $saved=@(foreach($directory in @(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-completed-*')){
+                try{$projection=Read-QualificationFixtureJson -Path (Join-Path $directory.FullName 'transaction.json')}catch{continue}
+                [pscustomobject]@{id=$directory.Name.Substring('itl-workflow-update-completed-'.Length);receipt=$projection}
+            })
+        }
+        $cursor=$head;$seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $expected=@{};$proof=New-Object Collections.Generic.List[object];$originalEnv=Join-Path $Root '.dev.env'
+        # Every retained hop is re-proven, so a long-lived stand takes minutes
+        # per root (41 hops: 267 s uncached on 2026-11-17). Each verified hop
+        # reports itself; callers' no-progress watchdogs then stop only a proof
+        # that has really stalled.
+        $hopWatch=[Diagnostics.Stopwatch]::StartNew()
+        # A commit's managed path specs are a function of its blobs; each commit
+        # is both the old side of one hop and the new side of the next.
+        $specsByCommit=@{}
+        $static=New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
+        while($cursor -cne $OriginalCommit){
+            if(-not $seen.Add($cursor)){throw 'FIXTURE_WORKFLOW_UPDATE_CHAIN_INVALID: cyclic history'}
+            $selected=@($saved|Where-Object {[string]$_.receipt.completedHead -ceq $cursor -and [string]$_.receipt.preUpdateHead -cne $cursor})
+            if($selected.Count -ne 1){throw 'FIXTURE_WORKFLOW_UPDATE_CHAIN_UNPROVEN: expected one terminal update for every Git hop; retain the capsule and reconcile through update-workflow'}
+            # The update owner validates identity, terminal phase and every backup byte.
+            $completed=Get-WorkflowUpdateCompletedSnapshot -SnapshotId $selected[0].id
+            $receipt=$completed.receipt;$before=ConvertTo-Agent1cHashtable -Object $receipt.beforePathState
+            $after=ConvertTo-Agent1cHashtable -Object $receipt.pathState
+            $old=[string]$receipt.preUpdateHead
+            $parents=(Invoke-RepositoryGit -RepositoryRoot $Root -Arguments @('rev-list','--parents','-n','1',$cursor)).stdout.Trim()
+            if($old -cnotmatch '^[a-f0-9]{40}$' -or [string]$receipt.branchRef -cne $branchRef -or $parents -cne ($cursor+' '+$old)){
+                throw 'FIXTURE_WORKFLOW_UPDATE_CHAIN_INVALID: branch or exact single-parent transition mismatch'
+            }
+            foreach($commit in @($old,$cursor)){if(-not $specsByCommit.ContainsKey($commit)){$specsByCommit[$commit]=@(Get-WorkflowUpdateManagedPathSpecs -AtCommit $commit)}}
+            $oldOwned=@($specsByCommit[$old])
+            $owned=$oldOwned+@($specsByCommit[$cursor])+@(Get-AiRulesOpenSpecScaffoldPaths)
+            $matcher=New-WorkflowUpdatePathMatcher -ManagedPathSpecs $owned
+            $oldMatcher=New-WorkflowUpdatePathMatcher -ManagedPathSpecs $oldOwned
+            $changedPaths=@(Get-RepositoryGitPathList -RepositoryRoot $Root -Arguments @('diff','--name-only','-z',$old,$cursor))
+            $existing=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            if($changedPaths.Count){foreach($path in @(Get-RepositoryGitPathList -RepositoryRoot $Root -Arguments (@('ls-tree','-r','--name-only','-z',$old,'--')+@($changedPaths|ForEach-Object {':(literal)'+$_})))){[void]$existing.Add($path)}}
+            foreach($path in $changedPaths){
+                if($path -cmatch '^src/' -or ($path -cmatch '^tests/' -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $static)) -or
+                    ($existing.Contains($path) -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $oldMatcher) -and
+                        -not (Test-WorkflowUpdateScaffoldClaim -Path $path -Completed $completed -OldCommit $old)) -or
+                    -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $matcher)){
+                    throw "FIXTURE_WORKFLOW_UPDATE_BUSINESS_CHANGE: '$path' is outside the workflow transition"
+                }
+            }
+            if($before.Count -ne $after.Count -or $after.Count -ne @($completed.snapshot.records).Count){throw 'FIXTURE_WORKFLOW_UPDATE_INVENTORY_INVALID'}
+            foreach($record in @($completed.snapshot.records)){
+                $path=[string]$record.relativePath
+                if(-not $before.Contains($path) -or -not $after.Contains($path)){throw 'FIXTURE_WORKFLOW_UPDATE_INVENTORY_INVALID'}
+                if(-not $expected.ContainsKey($path)){$expected[$path]=Get-WorkflowUpdatePathState -RelativePath $path}
+                if([string]$expected[$path] -cne [string]$after[$path]){throw "FIXTURE_WORKFLOW_UPDATE_PATH_CHANGED: '$path'; retain the capsule and reconcile through update-workflow"}
+                $expected[$path]=[string]$before[$path]
+            }
+            $envRecord=@($completed.snapshot.records|Where-Object relativePath -CEQ '.dev.env')
+            if($envRecord.Count -ne 1 -or -not $envRecord[0].existed){throw 'FIXTURE_WORKFLOW_UPDATE_ENV_UNPROVEN'}
+            $originalEnv=[string]$envRecord[0].backupPath
+            $proof.Add([ordered]@{id=$selected[0].id;sha256=(Get-FileHash -LiteralPath $completed.receiptPath -Algorithm SHA256).Hash.ToLowerInvariant()})
+            Write-Host ("FIXTURE_CHAIN_PROOF_PROGRESS root={0} hop={1} snapshot={2} elapsedMs={3}" -f $script:ProjectRoot,$proof.Count,$selected[0].id,$hopWatch.ElapsedMilliseconds)
+            $hopWatch.Restart()
+            $cursor=$old
+        }
+        if((Get-DeliveryStableDotEnvSha256 -Path $originalEnv) -cne (Get-DeliveryStableDotEnvSha256 -Path $OriginalEnvPath)){throw 'FIXTURE_WORKFLOW_UPDATE_ENV_UNPROVEN: first backup differs from the immutable seed'}
+        $result=[ordered]@{root=$Root;head=$head;branchRef=$branchRef;receipts=$proof.ToArray();stableEnvSha256=(Get-DeliveryStableDotEnvSha256 -Path (Join-Path $Root '.dev.env'))}
+        Save-SourceFixtureChainProofHashes -Root $script:ProjectRoot -Cache $script:ItlWorkflowUpdatePathHashCache -Reused $reusedHashes
+        return $result
+    } finally {
+        if($hadRoot){$script:ProjectRoot=$previousRootValue}else{Remove-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue}
+        if($hashScope){foreach($name in @('ItlWorkflowUpdatePathHashCache','ItlWorkflowUpdateRealDirectoryCache')){Remove-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue}}
+    }
+}
+
+function Get-SourceFixtureSeedWorkflowProof {
+    param([string]$ProjectRoot,[object]$Descriptor,[object]$Manifest)
+    $capsule=Split-Path -Parent ([string]$Descriptor.path)
+    if((Get-RepositoryCommonGitDirectory -RepositoryRoot $ProjectRoot) -ine (Get-RepositoryCommonGitDirectory -RepositoryRoot ([string]$Manifest.sourceBranchRoot))){throw 'FIXTURE_SEED_NOT_REGISTERED'}
+    $workflowRepository=Split-Path -Parent $PSScriptRoot
+    if((Invoke-RepositoryGit -RepositoryRoot $workflowRepository -Arguments @('merge-base','--is-ancestor',[string]$Manifest.workflowCommit,'refs/remotes/origin/develop') -AllowFailure).exitCode -ne 0){throw 'FIXTURE_BASELINE_NOT_PUBLISHED'}
+    return [ordered]@{capsuleSha256=[string]$Descriptor.sha256;master=(Get-SourceFixtureWorkflowUpdateProof -Root $ProjectRoot -OriginalCommit ([string]$Manifest.masterCommit) -OriginalEnvPath (Join-Path $capsule 'master.env') -ExpectedBranchRef 'refs/heads/master');branch=(Get-SourceFixtureWorkflowUpdateProof -Root ([string]$Manifest.sourceBranchRoot) -OriginalCommit ([string]$Manifest.branchCommit) -OriginalEnvPath (Join-Path $capsule 'branch.env') -ExpectedBranchRef ('refs/heads/itldev/'+[string]$Manifest.branchName))}
+}
+
+function Test-SourceE2EFixtureWorkflowChain {
+    # Read-only Capture chain proof before a stand update. A write to a managed
+    # path outside an update transaction can still be returned exactly here;
+    # once the next update completes over it, its receipt records the written
+    # bytes as before-state and the gap stays in the seed history.
+    param([string]$ProjectRoot,[ValidateSet('Develop','Release')][string]$Phase)
+    $ProjectRoot=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
+    $config=ConvertFrom-DeliveryProofJson -Json (Read-Utf8Text -Path (Join-Path $ProjectRoot '.agent-1c/release-e2e.json'))
+    $property=$config.PSObject.Properties['qualificationFixtures']
+    if(-not $property -or -not $property.Value.PSObject.Properties[$Phase]){throw 'FIXTURE_EXISTING_CAPSULE_REQUIRED: capture a published baseline first'}
+    $descriptor=$property.Value.$Phase
+    $manifest=Read-QualificationFixtureCapsule -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256)
+    $standLease=Enter-SourceFixtureStandLease -Roots @($ProjectRoot,[string]$manifest.sourceBranchRoot)
+    try {
+        try {$proof=Get-SourceFixtureSeedWorkflowProof -ProjectRoot $ProjectRoot -Descriptor $descriptor -Manifest $manifest}
+        catch {
+            if($_.Exception.Message -clike 'FIXTURE_WORKFLOW_UPDATE_PATH_CHANGED:*'){
+                throw "$($_.Exception.Message). No stand update ran: return that path to the state its last completed update recorded and repeat the same PublishDevelop; a write that cannot be returned exactly needs a reviewed Capture -Recapture."
+            }
+            throw
+        }
+        return [ordered]@{phase=$Phase;capsuleSha256=[string]$descriptor.sha256;proof=$proof}
+    } finally {foreach($handle in @($standLease.handles)){$handle.stream.Dispose()}}
+}
+
+function Get-SourceE2EFixtureCapsule {
+    param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$AgentTarget='', [switch]$Recapture,[switch]$AcknowledgeWorkflowUpdate)
+    $ProjectRoot=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
+    if($Recapture -and $AcknowledgeWorkflowUpdate){throw 'FIXTURE_CAPTURE_OPTIONS_CONFLICT: acknowledge preserves the capsule; recapture replaces it'}
+    $configPath=Join-Path $ProjectRoot '.agent-1c/release-e2e.json'
+    $original=Read-Utf8Text -Path $configPath
+    $config=ConvertFrom-DeliveryProofJson -Json $original
+    $property=$config.PSObject.Properties['qualificationFixtures']
+    if(-not $Recapture -and $property -and $property.Value.PSObject.Properties[$Phase]){
+        $descriptor=$property.Value.$Phase
+        $manifest=Read-QualificationFixtureCapsule -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256)
+        $capsule=Split-Path -Parent ([string]$descriptor.path)
+        $standLease=Enter-SourceFixtureStandLease -Roots @($ProjectRoot,[string]$manifest.sourceBranchRoot)
+        try {
+        $admission=$descriptor.PSObject.Properties['workflowUpdateAdmission']
+        $workflowContinued=$AcknowledgeWorkflowUpdate -or $null -ne $admission
+        $proof=$null
+        if($workflowContinued){
+            $proof=Get-SourceFixtureSeedWorkflowProof -ProjectRoot $ProjectRoot -Descriptor $descriptor -Manifest $manifest
+            if(-not $AcknowledgeWorkflowUpdate -and (ConvertTo-DeliveryProofJson -InputObject $proof -Depth 32 -Compress) -cne (ConvertTo-DeliveryProofJson -InputObject $admission.Value -Depth 32 -Compress)){throw 'FIXTURE_SEED_CHANGED: a new workflow transition needs explicit Capture -AcknowledgeWorkflowUpdate'}
+        }
+        $seedState=Read-QualificationFixtureJson -Path (Join-Path ([string]$manifest.sourceBranchRoot) ('.agent-1c/dev-branches/'+[string]$manifest.branchName+'.json'))
+        $savedConfig=Read-QualificationFixtureJson -Path (Join-Path $capsule 'release-e2e.json')
+        foreach($value in @($config,$savedConfig)){if($value.PSObject.Properties['qualificationFixtures']){$value.PSObject.Properties.Remove('qualificationFixtures')}}
+        $changed=([string]$manifest.sourceProjectRoot -ine [IO.Path]::GetFullPath($ProjectRoot)) -or
+            (-not $workflowContinued -and ((Invoke-RepositoryGit -RepositoryRoot $ProjectRoot -Arguments @('rev-parse','HEAD')).stdout.Trim() -cne [string]$manifest.masterCommit)) -or
+            (-not $workflowContinued -and ((Invoke-RepositoryGit -RepositoryRoot ([string]$manifest.sourceBranchRoot) -Arguments @('rev-parse','HEAD')).stdout.Trim() -cne [string]$manifest.branchCommit)) -or
+            ((Get-SourceFixtureSemanticState -State $seedState) -cne [string]$manifest.semanticState) -or
+            ((ConvertTo-DeliveryProofJson -InputObject $config -Compress -Depth 32) -cne (ConvertTo-DeliveryProofJson -InputObject $savedConfig -Compress -Depth 32)) -or
+            ((Get-FileHash -LiteralPath ([string]$manifest.sourceDatabase.path) -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$manifest.sourceDatabase.sha256) -or
+            (-not $workflowContinued -and ((Get-DeliveryStableDotEnvSha256 -Path (Join-Path $ProjectRoot '.dev.env')) -cne (Get-DeliveryStableDotEnvSha256 -Path (Join-Path $capsule 'master.env')))) -or
+            (-not $workflowContinued -and ((Get-DeliveryStableDotEnvSha256 -Path (Join-Path ([string]$manifest.sourceBranchRoot) '.dev.env')) -cne (Get-DeliveryStableDotEnvSha256 -Path (Join-Path $capsule 'branch.env'))))
+        foreach($reference in @($manifest.contextFiles)){
+            if(-not $reference.PSObject.Properties['sourcePath'] -or -not $reference.PSObject.Properties['sourceSha256'] -or
+                -not (Test-Path -LiteralPath $reference.sourcePath -PathType Leaf) -or
+                (Get-FileHash -LiteralPath $reference.sourcePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$reference.sourceSha256){$changed=$true}
+        }
+        if($changed){throw "FIXTURE_SEED_CHANGED: retain the old capsule/checkpoints; diagnose seed isolation or use Capture -AcknowledgeWorkflowUpdate for exact completed workflow-only updates. Recapture requires a reviewed published baseline and replaces the capsule."}
+        Assert-SourceFixtureGitClean -Root $ProjectRoot;Assert-SourceFixtureGitClean -Root ([string]$manifest.sourceBranchRoot)
+        if($AcknowledgeWorkflowUpdate){
+            if((Read-Utf8Text -Path $configPath) -cne $original){throw 'FIXTURE_CONFIG_MOVED'}
+            $descriptor|Add-Member -NotePropertyName workflowUpdateAdmission -NotePropertyValue $proof -Force
+            $saved=ConvertFrom-DeliveryProofJson -Json $original
+            $saved.qualificationFixtures.$Phase=$descriptor
+            Write-QualificationFixtureJson -Path $configPath -Value $saved
+        }
+        return $descriptor
+        } finally {foreach($handle in @($standLease.handles)){$handle.stream.Dispose()}}
+    }
+    if($AcknowledgeWorkflowUpdate){throw 'FIXTURE_EXISTING_CAPSULE_REQUIRED: capture a published baseline first'}
+    $descriptor=Export-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget
+    if((Read-Utf8Text -Path $configPath) -cne $original){throw 'FIXTURE_CONFIG_MOVED: sealed capsule retained; repeat qualification without overwriting the changed stand configuration'}
+    if(-not $property){$config|Add-Member -NotePropertyName qualificationFixtures -NotePropertyValue ([pscustomobject]@{})}
+    if($config.qualificationFixtures.PSObject.Properties[$Phase]){$config.qualificationFixtures.$Phase=$descriptor}
+    else{$config.qualificationFixtures|Add-Member -NotePropertyName $Phase -NotePropertyValue $descriptor}
+    Write-QualificationFixtureJson -Path $configPath -Value $config
+    return $descriptor
+}
+
+function Invoke-SourceFixtureInitialRestore {
+    param([string]$Root,[string[]]$Arguments,[string]$AgentTarget,[string]$LogRoot)
+    $claim=Read-QualificationFixtureJson -Path (Join-Path (Split-Path -Parent $Root) 'qualification-fixture.json')
+    if([string]$claim.kind -cne 'itl-qualification-fixture-target' -or [string]$claim.status -cne 'materializing' -or [string]$claim.branchRoot -ine $Root){throw 'FIXTURE_INITIAL_RESTORE_OWNERSHIP_INVALID'}
+    $envPath=Resolve-QualificationFixtureChild -Root $Root -RelativePath '.dev.env'
+    $original=[IO.File]::ReadAllBytes($envPath)
+    $text=Read-Utf8Text -Path $envPath
+    $initial=[regex]::Replace($text,'(?m)^[\t ]*IB_(?:USER|PASSWORD)[\t ]*=.*(?:\r?\n|$)','')
+    $user=[Environment]::GetEnvironmentVariable('IB_USER','Process')
+    $password=[Environment]::GetEnvironmentVariable('IB_PASSWORD','Process')
+    Write-Utf8Text -Path $envPath -Value $initial
+    try {
+        [Environment]::SetEnvironmentVariable('IB_USER',$null,'Process')
+        [Environment]::SetEnvironmentVariable('IB_PASSWORD',$null,'Process')
+        Invoke-SourceFixtureInstalledAction -Root $Root -Action 'release-e2e-restore' -Arguments $Arguments -AgentTarget $AgentTarget -LogRoot $LogRoot
+    } finally {
+        [Environment]::SetEnvironmentVariable('IB_USER',$user,'Process')
+        [Environment]::SetEnvironmentVariable('IB_PASSWORD',$password,'Process')
+        $current=Remove-QualificationFixtureRuntimeEnvironmentAssignments -Text (Read-Utf8Text -Path $envPath)
+        $expected=Remove-QualificationFixtureRuntimeEnvironmentAssignments -Text $initial
+        if($current -cne $expected){throw 'FIXTURE_INITIAL_ENV_CHANGED: retain owned target for diagnosis; repeat qualification with a new target'}
+        [IO.File]::WriteAllBytes($envPath,$original)
+    }
+}
+
+function New-SourceE2EFixtureProject {
+    param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$CandidateRoot, [string]$ProjectsRoot='C:\itlj', [string]$AgentTarget='', [string]$AiRulesSource='', [string]$ReceiptPath='', [string]$CapsulePath='', [string]$CapsuleSha256='', [long]$DatabaseBudgetBytes=0)
+    $sealedAdmission=[bool]($CapsulePath -or $CapsuleSha256 -or $DatabaseBudgetBytes)
+    if($sealedAdmission){
+        if($Phase -ne 'Develop' -or -not $CapsulePath -or $CapsuleSha256 -cnotmatch '^[a-f0-9]{64}$' -or $DatabaseBudgetBytes -le 0 -or $DatabaseBudgetBytes -gt ([long]::MaxValue/4)){
+            throw 'FIXTURE_CAPSULE_RECOVERY_INPUT: explicit recovery requires Prepare Develop, capsule path/SHA-256 and a positive bounded DatabaseBudgetBytes; normal Prepare still validates the live seed.'
+        }
+        $descriptor=[pscustomobject]@{path=[IO.Path]::GetFullPath($CapsulePath);sha256=$CapsuleSha256;phase=$Phase}
+    }else{
+        $descriptor=Get-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget
+    }
+    $manifest=Read-QualificationFixtureCapsule -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256)
+    if($sealedAdmission){
+        if([string]$manifest.phase -cne $Phase -or [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/') -ine [IO.Path]::GetFullPath([string]$manifest.sourceProjectRoot).TrimEnd('\','/')){throw 'FIXTURE_CAPSULE_RECOVERY_CONTEXT: use the exact source project and Develop capsule; original seed currentness remains unavailable.'}
+        if($DatabaseBudgetBytes -lt (Get-Item -LiteralPath (Join-Path (Split-Path -Parent $descriptor.path) 'infobase.dt')).Length){throw 'FIXTURE_CAPSULE_RECOVERY_BUDGET: provide a conservative restored-database budget at least as large as the DT; preserve the capsule and repeat Prepare.'}
+        $descriptor|Add-Member -NotePropertyName workflowCommit -NotePropertyValue ([string]$manifest.workflowCommit)
+    }
+    if($Phase -eq 'Develop'){
+        $retentionRoot=if($ReceiptPath){Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ReceiptPath))) 'fixture-retention'}else{Join-Path $CandidateRoot 'build/test-results/fixture-retention'}
+        [void](Remove-CompletedSourceE2ECopies -ProjectsRoot $ProjectsRoot -CandidateRoot $CandidateRoot -DiagnosticRoot $retentionRoot)
+    }
+    if((Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('merge-base','--is-ancestor',[string]$manifest.workflowCommit,'refs/remotes/origin/develop') -AllowFailure).exitCode -ne 0){throw 'FIXTURE_BASELINE_NOT_PUBLISHED: use the capsule captured from a published workflow baseline; preserve the rejected capsule'}
+    $capsule=Split-Path -Parent ([string]$descriptor.path)
+    $sourceInfoBase=Get-SourceFixtureSourceInfoBaseRecord -Manifest $manifest -Capsule $capsule
+    $sourceBytes=if($null -ne $sourceInfoBase){[int64](Get-Item -LiteralPath $sourceInfoBase.artifactPath).Length}else{0L}
+    $databaseBytes=0L
+    if($Phase -eq 'Develop'){
+        $databaseBytes=if($sealedAdmission){$DatabaseBudgetBytes}else{[int64](Get-Item -LiteralPath ([string]$manifest.sourceDatabase.path)).Length}
+        $spaceOptions=@{}
+        if($sealedAdmission){$spaceOptions['Continuation']='Free the reported volume, preserve the capsule and old copies, then repeat the same explicit Prepare with CapsulePath, CapsuleSha256 and DatabaseBudgetBytes.'}
+        Assert-SourceE2ESpace -Operation 'prepare qualification copy' -Allocations @(
+            @{path=$ProjectsRoot;bytes=($databaseBytes+$sourceBytes+(Get-Item -LiteralPath (Join-Path $capsule 'infobase.dt')).Length)},
+            @{path=[IO.Path]::GetTempPath();bytes=$databaseBytes}) @spaceOptions
+    }
+    $commit=(Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+    # Develop repeats from the seed; Release resumes its existing checkpoint.
+    $segment='q '+([string][char]0x041F)+([string][char]0x0440)+([string][char]0x043E)+([string][char]0x0435)+([string][char]0x043A)+([string][char]0x0442)
+    $attempt=if($Phase -eq 'Develop'){'-'+[guid]::NewGuid().ToString('N').Substring(0,8)}else{''}
+    $parent=Resolve-QualificationFixtureChild -Root $ProjectsRoot -RelativePath ($segment+'/'+$Phase.ToLowerInvariant()+'-'+([string]$descriptor.sha256).Substring(0,12)+'-'+$commit.Substring(0,12)+$attempt)
+    if($Phase -eq 'Release' -and $ReceiptPath -and (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)){
+        $previous=Read-QualificationFixtureJson -Path $ReceiptPath
+        if([string]$previous.capsule.sha256 -ceq [string]$descriptor.sha256 -and [string]$previous.claim.candidateCommit -ceq $commit){
+            $previousParent=Split-Path -Parent ([IO.Path]::GetFullPath([string]$previous.projectRoot))
+            $prefix=[IO.Path]::GetFullPath($ProjectsRoot).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+            if(-not $previousParent.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_RECEIPT_TARGET_FOREIGN'}
+            $parent=Resolve-QualificationFixtureChild -Root $ProjectsRoot -RelativePath $previousParent.Substring($prefix.Length)
+        }
+    }
+    $target=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'project'
+    $branch=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'branch'
+    $claimPath=Get-QualificationFixtureClaimPath -ProjectRoot $target
+    if(Test-Path -LiteralPath $claimPath){
+        $claim=Read-QualificationFixtureJson -Path $claimPath
+        if([string]$claim.capsuleSha256 -cne [string]$descriptor.sha256 -or [string]$claim.candidateCommit -cne $commit -or
+            [string]$claim.projectRoot -ine $target -or [string]$claim.branchRoot -ine $branch){throw 'FIXTURE_TARGET_IDENTITY_MISMATCH'}
+        if([string]$claim.status -ceq 'ready'){return [pscustomobject]@{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='continued'}}
+        Write-Host "Retaining incomplete fixture for diagnosis: $parent; preparing another owned target from the same capsule."
+        $parent=$parent+'-'+[guid]::NewGuid().ToString('N').Substring(0,8)
+        $target=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'project';$branch=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'branch'
+        $claimPath=Get-QualificationFixtureClaimPath -ProjectRoot $target
+    }
+    if(Test-Path -LiteralPath $parent){
+        Write-Host "Retaining unfinished factory files: $parent"
+        $parent=$parent+'-'+[guid]::NewGuid().ToString('N').Substring(0,8)
+        $target=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'project';$branch=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'branch'
+        $claimPath=Get-QualificationFixtureClaimPath -ProjectRoot $target
+    }
+    [void][IO.Directory]::CreateDirectory($parent)
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    $claim=[ordered]@{schemaVersion=2;kind='itl-qualification-fixture-target';status='materializing';projectRoot=$target;branchRoot=$branch;capsuleSha256=[string]$descriptor.sha256;capsulePath=[string]$descriptor.path;candidateCommit=$commit;phase=$Phase;copyRoot=$parent;projectsRoot=[IO.Path]::GetFullPath($ProjectsRoot).TrimEnd('\','/');workflowCommonGit=(Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot);databaseBytes=$databaseBytes}
+    if($null -ne $sourceInfoBase){$claim['sourceInfoBase']='project/'+$sourceInfoBase.relativePath}
+    if($Phase -eq 'Develop'){
+        $claim['sourceAdmission']=if($sealedAdmission){'sealed-capsule'}else{'live-seed'}
+        $claim['databaseBytesBasis']=if($sealedAdmission){'declared-capacity-budget'}else{'live-seed-file-size'}
+    }
+    Write-QualificationFixtureJson -Path $claimPath -Value $claim
+    if($ReceiptPath){Write-QualificationFixtureJson -Path $ReceiptPath -Value @{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='materializing'}}
+    $preparationLease=Open-SourceE2EFixtureUse -ProjectRoot $target
+    try {
+    Invoke-RepositoryGit -RepositoryRoot $parent -Arguments @('clone','--no-checkout','--no-hardlinks','--no-tags','--branch','master',(Join-Path $capsule 'source.bundle'),$target)|Out-Null
+    # Only this new disposable repository owns the setting; inherited machine
+    # defaults must not make a sealed Unicode/long-path workload uncheckoutable.
+    Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('config','core.longpaths','true')|Out-Null
+    Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('checkout','--detach',[string]$manifest.masterCommit)|Out-Null
+    Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('checkout','-B','master',[string]$manifest.masterCommit)|Out-Null
+    Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('worktree','add','-b',('itldev/'+[string]$manifest.branchName),$branch,[string]$manifest.branchCommit)|Out-Null
+    foreach($required in @($manifest.requiredCommits)){
+        if([string]$required -cnotmatch '^[a-f0-9]{40}$' -or (Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('cat-file','-t',[string]$required)).stdout.Trim() -cne 'commit'){throw 'FIXTURE_PENDING_OBJECT_MISSING'}
+        Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('update-ref',('refs/itl/qualification-fixture/'+[string]$required),[string]$required)|Out-Null
+    }
+    # Origin is the immutable local bundle, never the seed or a publishing remote.
+    foreach($item in @($target,$branch)){Invoke-RepositoryGit -RepositoryRoot $item -Arguments @('config','user.name','ITL qualification')|Out-Null;Invoke-RepositoryGit -RepositoryRoot $item -Arguments @('config','user.email','qualification@example.invalid')|Out-Null}
+    $context=Install-QualificationFixtureContext -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256) -TargetProjectRoot $target -TargetBranchRoot $branch
+    # Only disposable technical copies receive their published test catalog.
+    # The sealed seed/capsule and existing business bindings stay unchanged.
+    $null=Initialize-SourceE2ECatalog -Root $target -AdditionalRoots @($branch) -RestoreQualificationPublisher
+    Restore-SourceFixtureSourceInfoBase -Record $sourceInfoBase -TargetProjectRoot $target
+    $snapshotRelative='.agent-1c/snapshots/qualification-fixtures/seed.dt'
+    $snapshot=Resolve-QualificationFixtureChild -Root $branch -RelativePath $snapshotRelative
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $snapshot));Copy-Item -LiteralPath (Join-Path $capsule 'infobase.dt') -Destination $snapshot
+    $logs=Join-Path $parent 'preparation-logs'
+    $null=Invoke-SourceFixtureInstalledAction -Root $branch -Action 'qualification-create-infobase' -Arguments @('-DevBranchName',$context.branchName) -AgentTarget $AgentTarget -LogRoot $logs -TimeoutSeconds 420
+    $restore=Invoke-SourceFixtureInitialRestore -Root $branch -Arguments @('-DevBranchName',$context.branchName,'-ReleaseSnapshotPath',$snapshotRelative,'-PreserveReleaseSnapshotApplicationProof') -AgentTarget $AgentTarget -LogRoot $logs
+    $config=Read-QualificationFixtureJson -Path (Join-Path $capsule 'release-e2e.json')
+    $config.developDevBranchName=$context.branchName;$config.developWorktreePath=$branch
+    $config.devBranchName=$context.branchName;$config.worktreePath=$branch
+    # Each phase owns one branch; the unused other phase path remains explicitly distinct.
+    if($Phase -eq 'Develop'){$config.worktreePath=Join-Path $parent 'unused-release'}else{$config.developWorktreePath=Join-Path $parent 'unused-develop'}
+    if($config.PSObject.Properties['qualificationFixtures']){$config.PSObject.Properties.Remove('qualificationFixtures')}
+    Write-QualificationFixtureJson -Path (Join-Path $target '.agent-1c/release-e2e.json') -Value $config
+    if($Phase -eq 'Release'){
+        if(-not $AiRulesSource){throw 'FIXTURE_RULES_SOURCE_REQUIRED: repeat Release with its exact -AiRulesSource'}
+        $previousSource=$env:ITL_WORKFLOW_SOURCE_PATH;$previousRules=$env:ITL_AI_RULES_SOURCE_PATH
+        try{
+            $env:ITL_WORKFLOW_SOURCE_PATH=[IO.Path]::GetFullPath($CandidateRoot);$env:ITL_AI_RULES_SOURCE_PATH=[IO.Path]::GetFullPath($AiRulesSource)
+            Invoke-SourceFixtureWorkflowUpdate -Root $target -CandidateRoot $CandidateRoot -AgentTarget $AgentTarget -LogRoot $logs
+            $installed=Read-QualificationFixtureJson -Path (Join-Path $target '.agent-1c/dependency-lock.json')
+            if([string]$installed.dependencies.workflowPackage.commit -cne $commit){throw 'FIXTURE_INSTALLED_CANDIDATE_MISMATCH'}
+            $workloadChanges=@(Get-RepositoryGitPathList -RepositoryRoot $target -Arguments @('diff','--name-only','-z','HEAD','--','src/cf','src/cfe','tests/features'))
+            if($workloadChanges.Count){throw 'FIXTURE_WORKLOAD_CHANGED_DURING_PREPARATION'}
+            Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('add','--all')|Out-Null
+            if((Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('diff','--cached','--quiet') -AllowFailure).exitCode -ne 0){Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('commit','-m','test: prepare exact release candidate')|Out-Null}
+            $masterHead=(Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('rev-parse','HEAD')).stdout.Trim()
+            # The capsule owns a frozen master tree and one restored branch DB,
+            # not a live source/master DB. Merge that exact prepared master via
+            # the ordinary lite owner, including its native branch load. A full
+            # refresh would resynchronize the immutable workload from a missing
+            # source DB instead of preparing this candidate.
+            $null=Invoke-SourceFixtureInstalledAction -Root $branch -Action 'refresh-dev-branch-lite' -Arguments @('-DevBranchName',$context.branchName,'-ExpectedMasterCommit',$masterHead) -AgentTarget $AgentTarget -LogRoot $logs -TimeoutSeconds 5400
+            $installed=Read-QualificationFixtureJson -Path (Join-Path $branch '.agent-1c/dependency-lock.json')
+            if([string]$installed.dependencies.workflowPackage.commit -cne $commit){throw 'FIXTURE_REFRESHED_CANDIDATE_MISMATCH'}
+        }finally{$env:ITL_WORKFLOW_SOURCE_PATH=$previousSource;$env:ITL_AI_RULES_SOURCE_PATH=$previousRules}
+    }
+    $claim.status='ready';$claim['restoreDurationMs']=$restore.durationMs;$claim['preparationDurationMs']=[int64]$watch.ElapsedMilliseconds
+    Write-QualificationFixtureJson -Path $claimPath -Value $claim
+    return [pscustomobject]@{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='executed'}
+    } catch {
+        $originalError=$_
+        $claim.status='preparation-failed'
+        $claim['preparationFailure']=@{kind='itl-fixture-preparation-failure';error=$originalError.Exception.Message;finishedAt=[DateTime]::UtcNow.ToString('o')}
+        try {
+            Write-QualificationFixtureJson -Path $claimPath -Value $claim
+            if($ReceiptPath){Write-QualificationFixtureJson -Path $ReceiptPath -Value @{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='failed'}}
+        } catch {Write-Warning "Fixture failure receipt could not be persisted: $($_.Exception.Message); original failure: $($originalError.Exception.Message)"}
+        throw $originalError
+    } finally {$preparationLease.Dispose()}
+}
+
+if($Action){
+    $ErrorActionPreference='Stop'
+    $utf8=[Text.UTF8Encoding]::new($false);[Console]::InputEncoding=$utf8;[Console]::OutputEncoding=$utf8;$OutputEncoding=$utf8
+    if(-not $ProjectRoot -or -not $OutputPath){throw 'Fixture operation requires -ProjectRoot and -OutputPath'}
+    if($Recapture -and $Action -ne 'Capture'){throw 'Recapture is an explicit Capture operation, not a target repair'}
+    if($AcknowledgeWorkflowUpdate -and $Action -ne 'Capture'){throw 'AcknowledgeWorkflowUpdate is an explicit Capture operation'}
+    if(($CapsulePath -or $CapsuleSha256 -or $DatabaseBudgetBytes) -and $Action -ne 'Prepare'){throw 'FIXTURE_CAPSULE_RECOVERY_INPUT: sealed-capsule recovery is an explicit Prepare operation only.'}
+    if($Action -eq 'DisposeCopy'){
+        $fixture=Read-QualificationFixtureJson -Path $FixtureReceiptPath
+        if([IO.Path]::GetFullPath($ProjectRoot) -ine [IO.Path]::GetFullPath([string]$fixture.projectRoot)){throw 'FIXTURE_COPY_RECEIPT_TARGET_MISMATCH'}
+        $copyPrefix=(Split-Path -Parent ([IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')))+[IO.Path]::DirectorySeparatorChar
+        if([IO.Path]::GetFullPath($OutputPath).StartsWith($copyPrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_EVIDENCE_INSIDE_TARGET'}
+        $result=Remove-SourceE2EFixtureCopy -Fixture $fixture -CandidateRoot $CandidateRoot -ReportPath $TerminalReportPath -DiagnosticRoot $DiagnosticRoot
+    }
+    elseif($Action -eq 'Capture'){$result=Get-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget -Recapture:$Recapture -AcknowledgeWorkflowUpdate:$AcknowledgeWorkflowUpdate}
+    elseif($Action -eq 'Verify'){$result=Test-SourceE2EFixtureWorkflowChain -ProjectRoot $ProjectRoot -Phase $Phase}
+    else{$result=New-SourceE2EFixtureProject -ProjectRoot $ProjectRoot -Phase $Phase -CandidateRoot $CandidateRoot -ProjectsRoot $FreshProjectsRoot -AgentTarget $AgentTarget -AiRulesSource $AiRulesSource -ReceiptPath $OutputPath -CapsulePath $CapsulePath -CapsuleSha256 $CapsuleSha256 -DatabaseBudgetBytes $DatabaseBudgetBytes}
+    Write-QualificationFixtureJson -Path $OutputPath -Value $result
+}

@@ -1,0 +1,250 @@
+[
+    {
+        "step":  "remember-two-notes",
+        "at":  "2026-11-11T14:50:15.7977797Z",
+        "value":  {
+                      "status":  200,
+                      "error":  null,
+                      "items":  [
+                                    {
+                                        "id":  "bcdb65e8-f515-4423-a7d5-a5f723356acf"
+                                    },
+                                    {
+                                        "id":  "3325bea7-fec4-4b7c-ac3d-4a700f820d9c"
+                                    }
+                                ],
+                      "ms":  20926
+                  }
+    },
+    {
+        "step":  "update-first-as-memory-txt",
+        "at":  "2026-11-11T14:50:26.8955479Z",
+        "value":  {
+                      "status":  200,
+                      "body":  {
+                                   "status":  "incremental",
+                                   "regions":  1,
+                                   "deleted_chunks":  1,
+                                   "added_chunks":  1,
+                                   "reused_chunks":  0,
+                                   "redated_chunks":  0,
+                                   "kept_chunks":  0,
+                                   "reindexed_chunks":  0,
+                                   "total_chunks":  1,
+                                   "data_id":  "3325bea7-fec4-4b7c-ac3d-4a700f820d9c",
+                                   "dataset_id":  "06067f8b-7bc1-51ed-b1cb-cd7b1bdd70e6",
+                                   "duration_seconds":  10.443,
+                                   "pipeline_run_id":  "dc9767ee-9880-4156-b678-4c3216ba4ebd",
+                                   "fallback":  null,
+                                   "error":  null
+                               },
+                      "error":  null,
+                      "ms":  10797
+                  }
+    },
+    {
+        "step":  "update-second-as-memory-txt",
+        "at":  "2026-11-11T14:50:34.6135072Z",
+        "value":  {
+                      "status":  200,
+                      "body":  {
+                                   "status":  "incremental",
+                                   "regions":  1,
+                                   "deleted_chunks":  1,
+                                   "added_chunks":  1,
+                                   "reused_chunks":  0,
+                                   "redated_chunks":  0,
+                                   "kept_chunks":  0,
+                                   "reindexed_chunks":  0,
+                                   "total_chunks":  1,
+                                   "data_id":  "bcdb65e8-f515-4423-a7d5-a5f723356acf",
+                                   "dataset_id":  "06067f8b-7bc1-51ed-b1cb-cd7b1bdd70e6",
+                                   "duration_seconds":  7.357,
+                                   "pipeline_run_id":  "14f756c9-4c0e-4e2b-8bed-1cd8730a8764",
+                                   "fallback":  null,
+                                   "error":  null
+                               },
+                      "error":  null,
+                      "ms":  7716
+                  }
+    },
+    {
+        "step":  "listing-after-same-name-updates",
+        "at":  "2026-11-11T14:50:34.8852065Z",
+        "value":  {
+                      "status":  200,
+                      "ms":  269,
+                      "count":  2,
+                      "items":  [
+                                    {
+                                        "id":  "bcdb65e8-f515-4423-a7d5-a5f723356acf",
+                                        "name":  "memory",
+                                        "createdAt":  "2026-11-11T14:49:56.416802",
+                                        "updatedAt":  "2026-11-11T14:50:35.625910",
+                                        "dataSize":  103
+                                    },
+                                    {
+                                        "id":  "3325bea7-fec4-4b7c-ac3d-4a700f820d9c",
+                                        "name":  "memory",
+                                        "createdAt":  "2026-11-11T14:49:56.415292",
+                                        "updatedAt":  "2026-11-11T14:50:27.910122",
+                                        "dataSize":  102
+                                    }
+                                ]
+                  }
+    },
+    {
+        "step":  "raw-after-same-name-updates",
+        "at":  "2026-11-11T14:50:35.4408597Z",
+        "value":  {
+                      "secondStatus":  200,
+                      "second":  "{\"format\":\"itl-memory-qualification\",\"noteId\":\"s2\",\"fact\":\"Same-name probe, second note, version two.\"}",
+                      "first":  "{\"format\":\"itl-memory-qualification\",\"noteId\":\"s1\",\"fact\":\"Same-name probe, first note, version two.\"}",
+                      "firstStatus":  200,
+                      "firstIsVersionTwoOfFirst":  true,
+                      "secondIsVersionTwoOfSecond":  true
+                  }
+    },
+    {
+        "step":  "add-with-freed-name",
+        "at":  "2026-11-11T14:50:35.9612991Z",
+        "value":  {
+                      "errorBody":  null,
+                      "status":  200,
+                      "error":  null,
+                      "ms":  517
+                  }
+    },
+    {
+        "step":  "add-with-name-in-use",
+        "at":  "2026-11-11T14:50:36.3426789Z",
+        "value":  {
+                      "errorBody":  {
+                                        "error":  "Document already exists; use the update endpoint",
+                                        "detail":  "POST /api/v1/add does not update documents. \u0027memory.txt\u0027 (data_id bcdb65e8-f515-4423-a7d5-a5f723356acf), \u0027memory.txt\u0027 (data_id 3325bea7-fec4-4b7c-ac3d-4a700f820d9c) already exist in dataset 06067f8b-7bc1-51ed-b1cb-cd7b1bdd70e6 with different content. Send the new version to PATCH /api/v1/update?data_id=\u003cdata_id\u003e\u0026dataset_id=06067f8b-7bc1-51ed-b1cb-cd7b1bdd70e6 (multipart field \u0027data\u0027), or cognee.update(...) from the SDK; identical content can be re-added and is a no-op."
+                                    },
+                      "status":  409,
+                      "error":  null,
+                      "ms":  380
+                  }
+    },
+    {
+        "step":  "listing-after-name-reuse",
+        "at":  "2026-11-11T14:50:36.6276820Z",
+        "value":  {
+                      "status":  200,
+                      "ms":  284,
+                      "count":  3,
+                      "items":  [
+                                    {
+                                        "id":  "d055f24b-5b38-4665-affa-595293a628e1",
+                                        "name":  "candidate~first note",
+                                        "createdAt":  "2026-11-11T14:50:36.951184",
+                                        "updatedAt":  "2026-11-11T14:50:36.963878",
+                                        "dataSize":  114
+                                    },
+                                    {
+                                        "id":  "bcdb65e8-f515-4423-a7d5-a5f723356acf",
+                                        "name":  "memory",
+                                        "createdAt":  "2026-11-11T14:49:56.416802",
+                                        "updatedAt":  "2026-11-11T14:50:35.625910",
+                                        "dataSize":  103
+                                    },
+                                    {
+                                        "id":  "3325bea7-fec4-4b7c-ac3d-4a700f820d9c",
+                                        "name":  "memory",
+                                        "createdAt":  "2026-11-11T14:49:56.415292",
+                                        "updatedAt":  "2026-11-11T14:50:27.910122",
+                                        "dataSize":  102
+                                    }
+                                ]
+                  }
+    },
+    {
+        "step":  "add-volume-batch-1",
+        "at":  "2026-11-11T14:50:39.2019815Z",
+        "value":  {
+                      "errorBody":  null,
+                      "status":  200,
+                      "error":  null,
+                      "ms":  2130
+                  }
+    },
+    {
+        "step":  "add-volume-batch-2",
+        "at":  "2026-11-11T14:50:40.8775273Z",
+        "value":  {
+                      "errorBody":  null,
+                      "status":  200,
+                      "error":  null,
+                      "ms":  1672
+                  }
+    },
+    {
+        "step":  "add-volume-batch-3",
+        "at":  "2026-11-11T14:50:42.6205475Z",
+        "value":  {
+                      "errorBody":  null,
+                      "status":  200,
+                      "error":  null,
+                      "ms":  1741
+                  }
+    },
+    {
+        "step":  "add-volume-batch-4",
+        "at":  "2026-11-11T14:50:44.2071954Z",
+        "value":  {
+                      "errorBody":  null,
+                      "status":  200,
+                      "error":  null,
+                      "ms":  1584
+                  }
+    },
+    {
+        "step":  "volume-listing",
+        "at":  "2026-11-11T14:50:45.7525488Z",
+        "value":  {
+                      "defaultPageMs":  503,
+                      "secondPageItems":  20,
+                      "firstName":  "verified~~Volume probe note 120~5519a3b9",
+                      "countMs":  272,
+                      "secondPageMs":  268,
+                      "count":  {
+                                    "count":  120
+                                },
+                      "limit1000Items":  120,
+                      "limit1000Ms":  493,
+                      "defaultPageItems":  100,
+                      "lastName":  "verified~~Volume probe note 016~af2262a7"
+                  }
+    },
+    {
+        "step":  "cleanup-delete-dataset",
+        "at":  "2026-11-11T14:50:48.4474478Z",
+        "value":  {
+                      "status":  200,
+                      "error":  null,
+                      "id":  "06067f8b-7bc1-51ed-b1cb-cd7b1bdd70e6",
+                      "ms":  2692
+                  }
+    },
+    {
+        "step":  "cleanup-delete-dataset",
+        "at":  "2026-11-11T14:50:53.5209086Z",
+        "value":  {
+                      "status":  200,
+                      "error":  null,
+                      "id":  "f70828c1-d115-5ca4-b267-31486149306c",
+                      "ms":  5072
+                  }
+    },
+    {
+        "step":  "cleanup-verify",
+        "at":  "2026-11-11T14:50:53.7818741Z",
+        "value":  {
+                      "remainingQualificationDatasets":  [
+
+                                                         ]
+                  }
+    }
+]

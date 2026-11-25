@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot "TestSupport.ps1")
     $context = Initialize-WorkflowPesterContext
     $script:RepoRoot = $context.RepoRoot
@@ -270,8 +270,10 @@ Describe "Immutable asset download retry policy" {
         $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile($deliveryPath, [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
-        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-DeliveryRemoteAssetState" }, $true)
-        Invoke-Expression $definition.Extent.Text
+        $definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -in @("Get-DeliveryRemoteAssetDigest", "Get-DeliveryRemoteAssetState") }, $true))
+        $definitions.Count | Should -Be 2
+        foreach ($definition in $definitions) { Invoke-Expression $definition.Extent.Text }
 
         Mock Invoke-ItlImmutableFileDownload {
             $script:RequestCount++
@@ -304,13 +306,79 @@ Describe "Immutable asset download retry policy" {
         $readiness = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\test-release-readiness.ps1") -Raw -Encoding UTF8
         $delivery = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\source-delivery-component.ps1") -Raw -Encoding UTF8
         $shards = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
+        $archiveLookup = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\vanessa-source-build-archive.ps1") -Raw -Encoding UTF8
 
-        @([regex]::Matches($vanessa, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 4
-        @([regex]::Matches($roctup, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 2
-        $readiness | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \(\[string\]\$Lock\.url\)'
-        $delivery | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$Url'
-        $delivery | Should -Match 'Get-DeliveryRemoteAssetState.*-AvailabilityAttempts 12'
-        $shards | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$url.*-ExpectedSha256 \$expected'
+        $vanessaTokens = $null
+        $vanessaErrors = $null
+        $vanessaAst = [Management.Automation.Language.Parser]::ParseInput($vanessa, [ref]$vanessaTokens, [ref]$vanessaErrors)
+        @($vanessaErrors).Count | Should -Be 0
+        $acquires = @($vanessaAst.FindAll({ param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Invoke-ItlImmutableFileAcquire'
+        }, $true))
+        $acquireOwners = @($acquires | ForEach-Object {
+            $owner = $_.Parent
+            while ($owner -and $owner -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $owner = $owner.Parent }
+            $owner.Name
+        })
+        $legacyAcquireOwners = @(
+            'Save-VanessaAutomationArchive', 'Install-VanessaAutomation',
+            'Save-VanessaMcpPairedSourceBuildArtifact', 'Save-VanessaMcpArtifact', 'Install-VanessaMcpArtifact'
+        )
+        $acquires.Count | Should -Be 6
+        @($acquireOwners | Where-Object { $_ -cne 'Save-VanessaMcpClientSourceBuildArtifact' } | Sort-Object) |
+            Should -Be @($legacyAcquireOwners | Sort-Object)
+        @($acquireOwners | Where-Object { $_ -ceq 'Save-VanessaMcpClientSourceBuildArtifact' }).Count | Should -Be 1
+
+        # The approved scoped client CFE provider is an additional immutable route,
+        # not a replacement of the five archive/cache/URL routes above.
+        $sourceBuildOwners = @($vanessaAst.FindAll({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Save-VanessaMcpClientSourceBuildArtifact'
+        }, $true))
+        $sourceBuildOwners.Count | Should -Be 1
+        $sourceBuildText = $sourceBuildOwners[0].Body.Extent.Text
+        $sourceBuildText | Should -Match "GetEnvironmentVariable\('ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE', 'Process'\)"
+        $sourceBuildText | Should -Match ([regex]::Escape("`$Definition.lockKey -cne 'clientMcp'"))
+        $sourceBuildText | Should -Match ([regex]::Escape("-Path 'source' -Default '') -cne 'workflow-pinned'"))
+        $sourceBuildText | Should -Match ([regex]::Escape("`$lock -Path 'sha256' -Default ''"))
+        $sourceBuildText | Should -Not -Match 'Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|Copy-Item|Move-Item|WriteAllBytes|WriteAllText|System\.Net\.WebClient'
+        # Routes are derived from the parsed calls, not their spelling: each owner
+        # fetches through the immutable helpers (whose -ExpectedSha256 is mandatory)
+        # and lock-pinned URLs come from the lock entry's url member.
+        function Get-ImmutableRouteCalls([string]$Text, [string]$Name) {
+            $routeTokens = $null; $routeErrors = $null
+            $routeAst = [Management.Automation.Language.Parser]::ParseInput($Text.TrimStart([char]0xFEFF), [ref]$routeTokens, [ref]$routeErrors)
+            @($routeErrors).Count | Should -Be 0
+            @($routeAst.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq $Name }, $true))
+        }
+        function Get-RouteArgument([Management.Automation.Language.CommandAst]$Command, [string]$Parameter) {
+            $elements = @($Command.CommandElements)
+            for ($index = 0; $index -lt $elements.Count - 1; $index++) {
+                if ($elements[$index] -is [Management.Automation.Language.CommandParameterAst] -and $elements[$index].ParameterName -ieq $Parameter) { return $elements[$index + 1] }
+            }
+        }
+        function Test-RouteFromLockUrl([Management.Automation.Language.Ast]$Argument) {
+            $Argument -and @($Argument.FindAll({ param($node) $node -is [Management.Automation.Language.MemberExpressionAst] -and [string]$node.Member -ieq 'url' }, $true)).Count -gt 0
+        }
+        function Get-RouteOwner([Management.Automation.Language.Ast]$Node) { $owner = $Node.Parent; while ($owner -and $owner -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $owner = $owner.Parent }; if ($owner) { $owner.Name } }
+        @(Get-ImmutableRouteCalls $roctup 'Invoke-ItlImmutableFileAcquire').Count | Should -Be 2
+        $deliveryDownloads = @(Get-ImmutableRouteCalls $delivery 'Invoke-ItlImmutableFileDownload')
+        @($deliveryDownloads | Where-Object { (Get-RouteOwner $_) -ceq 'Get-DeliveryRemoteAssetState' }).Count | Should -BeGreaterThan 0
+        @($deliveryDownloads | Where-Object { Test-RouteFromLockUrl (Get-RouteArgument $_ 'Uri') }).Count | Should -BeGreaterThan 0
+        @(Get-ImmutableRouteCalls $delivery 'Get-DeliveryRemoteAssetState' | Where-Object { $attempts = Get-RouteArgument $_ 'AvailabilityAttempts'; $attempts -and $attempts.Extent.Text -ceq '12' }).Count | Should -BeGreaterThan 0
+        # The locked Vanessa archive has one SHA-verified owner; readiness and shards resolve
+        # it with -AllowDownload and never download the locked URL themselves.
+        @(Get-ImmutableRouteCalls $archiveLookup 'Invoke-ItlImmutableFileDownload' | Where-Object { Test-RouteFromLockUrl (Get-RouteArgument $_ 'Uri') }).Count | Should -BeGreaterThan 0
+        foreach ($archiveConsumer in @($readiness, $shards)) {
+            @(Get-ImmutableRouteCalls $archiveConsumer 'Resolve-VanessaSourceBuildArchive' | Where-Object { @($_.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ieq 'AllowDownload' }).Count -gt 0 }).Count | Should -BeGreaterThan 0
+            @(Get-ImmutableRouteCalls $archiveConsumer 'Invoke-ItlImmutableFileDownload').Count | Should -Be 0
+        }
+        $yaxunit = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.yaxunit.ps1") -Raw -Encoding UTF8
+        $yaxunit | Should -Match 'Get-ItlSharedArtifactPath -Family "yaxunit"'
+        @(Get-ImmutableRouteCalls $yaxunit 'Invoke-ItlImmutableFileAcquire' | Where-Object { Test-RouteFromLockUrl (Get-RouteArgument $_ 'Source') }).Count | Should -BeGreaterThan 0
+        $yaxunit | Should -Not -Match 'Invoke-WebRequest|Invoke-RestMethod'
+        $ondemand = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1") -Raw -Encoding UTF8
+        @(Get-ImmutableRouteCalls $ondemand 'Invoke-ItlImmutableFileAcquire').Count | Should -BeGreaterThan 0
+        $ondemand | Should -Not -Match 'Invoke-WebRequest -Uri \$url'
     }
 
     It "maps a helper-only delta to every required consumer integration owner test" {
@@ -318,8 +386,11 @@ Describe "Immutable asset download retry policy" {
         $catalog = Get-QualityContractCatalog -RepositoryRoot $script:RepoRoot
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1")
 
-        @($selection.contracts.id) | Should -Be @("immutable-download")
+        # These consumers call the shared immutable download boundary directly.
+        @($selection.contracts.id | Sort-Object) | Should -Be @("immutable-download", "pester-cache-compatibility", "pester-shard-identity", "release-readiness-tests")
         foreach ($testPath in @(
+            "tests/pester/PesterCacheCompatibility.Tests.ps1",
+            "tests/pester/PesterShardIdentity.Tests.ps1",
             "tests/pester/DependencyLocks.Tests.ps1",
             "tests/pester/GitHubDependencyFallback.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
@@ -327,5 +398,186 @@ Describe "Immutable asset download retry policy" {
             "tests/pester/RoctupPortLifecycle.Tests.ps1",
             "tests/pester/VanessaArtifactIntegration.Tests.ps1"
         )) { @($selection.tests) | Should -Contain $testPath }
+    }
+}
+
+Describe "GitHub release asset API route" {
+    BeforeAll {
+        $script:GitHubUrl = "https://github.com/example-owner/example.repo/releases/download/v1.0%2Bitl/asset%20name.cfe"
+        $script:ApiRepository = "https://api.github.com/repos/example-owner/example.repo"
+        $script:CdnUrl = "https://release-assets.example.invalid/blob?sig=1"
+        function New-ReleaseMetadata {
+            param([string]$Digest = ("sha256:" + $script:PayloadSha256), [string]$Name = "asset name.cfe")
+            return [pscustomobject]@{ assets = @([pscustomobject]@{ name = $Name; url = "$script:ApiRepository/releases/assets/42"; digest = $Digest }) }
+        }
+        function Get-UriText {
+            param($Value)
+            if ($Value -is [Uri]) { return $Value.OriginalString }
+            return [string]$Value
+        }
+        function New-HttpFailure {
+            param([int]$StatusCode, [string]$Message = "HTTP failure")
+            $failure = [Exception]::new($Message)
+            $failure.Data["StatusCode"] = $StatusCode
+            return $failure
+        }
+    }
+
+    BeforeEach {
+        $script:SavedTokens = @{ GITHUB_TOKEN = [Environment]::GetEnvironmentVariable("GITHUB_TOKEN", "Process"); GH_TOKEN = [Environment]::GetEnvironmentVariable("GH_TOKEN", "Process") }
+        [Environment]::SetEnvironmentVariable("GITHUB_TOKEN", $null, "Process")
+        [Environment]::SetEnvironmentVariable("GH_TOKEN", $null, "Process")
+        $script:ApiCalls = New-Object System.Collections.Generic.List[object]
+        $script:RedirectCalls = New-Object System.Collections.Generic.List[object]
+        $script:WebCalls = New-Object System.Collections.Generic.List[string]
+        Mock Start-Sleep {}
+        Mock Invoke-RestMethod { param($Uri, $Headers, $TimeoutSec) $script:ApiCalls.Add([pscustomobject]@{ uri = (Get-UriText $Uri); headers = $Headers.Clone() }) | Out-Null; New-ReleaseMetadata }
+        Mock Get-ItlGitHubAssetRedirectLocation { param($Uri, $Headers, $TimeoutSeconds) $script:RedirectCalls.Add([pscustomobject]@{ uri = (Get-UriText $Uri); headers = $Headers.Clone() }) | Out-Null; $script:CdnUrl }
+        Mock Invoke-WebRequest {
+            param($Uri, $OutFile, $TimeoutSec, $Headers)
+            $script:WebCalls.Add((Get-UriText $Uri)) | Out-Null
+            if ($null -ne $Headers) { throw "body requests must not carry headers" }
+            [IO.File]::WriteAllBytes($OutFile, $script:Payload)
+        }
+    }
+
+    AfterEach {
+        foreach ($name in $script:SavedTokens.Keys) { [Environment]::SetEnvironmentVariable($name, $script:SavedTokens[$name], "Process") }
+    }
+
+    It "downloads through the API without touching a failing web endpoint" {
+        $destination = Join-Path $TestDrive "Кэш с пробелом\api.cfe"
+        $result = Invoke-ItlImmutableFileDownload -Uri $script:GitHubUrl -DestinationPath $destination -ExpectedSha256 $script:PayloadSha256
+
+        $result.route | Should -Be "api"
+        $result.attempts | Should -Be 1
+        $script:ApiCalls[0].uri | Should -BeExactly "$script:ApiRepository/releases/tags/v1.0%2Bitl"
+        $script:RedirectCalls[0].uri | Should -BeExactly "$script:ApiRepository/releases/assets/42"
+        $script:RedirectCalls[0].headers["Accept"] | Should -Be "application/octet-stream"
+        @($script:WebCalls) | Should -Be @($script:CdnUrl)
+        (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $script:PayloadSha256
+    }
+
+    It "keeps non-GitHub HTTPS sources on the direct route" {
+        $result = Invoke-ItlImmutableFileDownload -Uri "https://example.invalid/releases/download/v1/asset.bin" -DestinationPath (Join-Path $TestDrive "direct.bin") -ExpectedSha256 $script:PayloadSha256
+        $result.route | Should -Be "web"
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+        @($script:WebCalls) | Should -Be @("https://example.invalid/releases/download/v1/asset.bin")
+    }
+
+    It "sends no credentials without a token and confines GITHUB_TOKEN to the API host" {
+        [void](Invoke-ItlImmutableFileDownload -Uri $script:GitHubUrl -DestinationPath (Join-Path $TestDrive "anonymous.cfe") -ExpectedSha256 $script:PayloadSha256)
+        $script:ApiCalls[0].headers.ContainsKey("Authorization") | Should -BeFalse
+        $script:RedirectCalls[0].headers.ContainsKey("Authorization") | Should -BeFalse
+
+        $script:ApiCalls.Clear(); $script:RedirectCalls.Clear()
+        [Environment]::SetEnvironmentVariable("GITHUB_TOKEN", "primary-secret", "Process")
+        [Environment]::SetEnvironmentVariable("GH_TOKEN", "secondary-secret", "Process")
+        [void](Invoke-ItlImmutableFileDownload -Uri $script:GitHubUrl -DestinationPath (Join-Path $TestDrive "token.cfe") -ExpectedSha256 $script:PayloadSha256)
+        $script:ApiCalls[0].headers["Authorization"] | Should -BeExactly "Bearer primary-secret"
+        $script:RedirectCalls[0].headers["Authorization"] | Should -BeExactly "Bearer primary-secret"
+        Should -Invoke Invoke-WebRequest -Times 2 -Exactly -ParameterFilter { $null -eq $Headers -and (Get-UriText $Uri) -ceq $script:CdnUrl }
+    }
+
+    It "uses the same token precedence as the core GitHub API headers" {
+        $core = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.core.ps1") -Raw -Encoding UTF8
+        $core | Should -Match '(?s)function Get-GitHubApiHeaders.*?"GITHUB_TOKEN".*?"GH_TOKEN"'
+        [Environment]::SetEnvironmentVariable("GH_TOKEN", "secondary-only", "Process")
+        Get-ItlGitHubApiToken | Should -BeExactly "secondary-only"
+    }
+
+    It "falls back to the locked URL once when the API route fails with <case>" -TestCases @(
+        @{ case = "a rate limit"; mode = "rest"; status = 403 }
+        @{ case = "a secondary limit"; mode = "rest"; status = 429 }
+        @{ case = "a server error"; mode = "rest"; status = 503 }
+        @{ case = "a missing asset"; mode = "missing"; status = 0 }
+        @{ case = "a failed redirect"; mode = "redirect"; status = 502 }
+    ) {
+        param($case, $mode, $status)
+        [Environment]::SetEnvironmentVariable("GITHUB_TOKEN", "fallback-secret", "Process")
+        $script:FailureMode = $mode; $script:FailureStatus = $status
+        Mock Invoke-RestMethod {
+            if ($script:FailureMode -eq "rest") { throw (New-HttpFailure -StatusCode $script:FailureStatus -Message "API refused fallback-secret") }
+            if ($script:FailureMode -eq "missing") { return (New-ReleaseMetadata -Name "other.cfe") }
+            New-ReleaseMetadata
+        }
+        Mock Get-ItlGitHubAssetRedirectLocation { throw (New-HttpFailure -StatusCode $script:FailureStatus -Message "bad gateway") }
+
+        $result = Invoke-ItlImmutableFileDownload -Uri $script:GitHubUrl -DestinationPath (Join-Path $TestDrive "fallback-$mode-$status.cfe") -ExpectedSha256 $script:PayloadSha256 -WarningVariable warnings -WarningAction SilentlyContinue
+
+        $result.route | Should -Be "web"
+        @($script:WebCalls) | Should -Be @($script:GitHubUrl)
+        @($warnings).Count | Should -Be 1
+        [string]$warnings[0] | Should -Match "falling back to the locked release URL"
+        [string]$warnings[0] | Should -Not -Match "fallback-secret"
+    }
+
+    It "fails closed before any body request when the GitHub digest disagrees with the lock" {
+        Mock Invoke-RestMethod { New-ReleaseMetadata -Digest ("sha256:" + ("0" * 64)) }
+        { Invoke-ItlImmutableFileDownload -Uri $script:GitHubUrl -DestinationPath (Join-Path $TestDrive "digest.cfe") -ExpectedSha256 $script:PayloadSha256 } |
+            Should -Throw "*SHA256 mismatch*github-digest*"
+        Should -Invoke Get-ItlGitHubAssetRedirectLocation -Times 0 -Exactly
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+    }
+
+    It "names both routes, keeps the web status and preserves the target when both fail" {
+        $destination = Join-Path $TestDrive "both-fail.cfe"
+        [IO.File]::WriteAllBytes($destination, [byte[]](9, 9, 9))
+        Mock Invoke-RestMethod { throw (New-HttpFailure -StatusCode 503 -Message "api unavailable") }
+        Mock Invoke-WebRequest { $script:WebCalls.Add((Get-UriText $Uri)) | Out-Null; throw (New-HttpFailure -StatusCode 504 -Message "gateway timeout") }
+
+        $failure = $null
+        try { Invoke-ItlImmutableFileDownload -Uri $script:GitHubUrl -DestinationPath $destination -ExpectedSha256 $script:PayloadSha256 -WarningAction SilentlyContinue } catch { $failure = $_ }
+
+        $failure | Should -Not -BeNullOrEmpty
+        $failure.Exception.Message | Should -Match "both routes"
+        $failure.Exception.Message | Should -Match "GitHub API route HTTP 503"
+        $failure.Exception.Message | Should -Match "locked release URL HTTP 504"
+        Get-ItlHttpFailureStatusCode -ErrorRecord $failure | Should -Be 504
+        $script:WebCalls.Count | Should -Be 3
+        [IO.File]::ReadAllBytes($destination) | Should -Be ([byte[]](9, 9, 9))
+
+        Mock Invoke-WebRequest { throw (New-HttpFailure -StatusCode 404 -Message "not found") }
+        $missing = $null
+        try { Invoke-ItlImmutableFileDownload -Uri $script:GitHubUrl -DestinationPath (Join-Path $TestDrive "missing.cfe") -ExpectedSha256 $script:PayloadSha256 -WarningAction SilentlyContinue } catch { $missing = $_ }
+        Get-ItlHttpFailureStatusCode -ErrorRecord $missing | Should -Be 404
+        Test-ItlTransientImmutableDownloadFailure -ErrorRecord $missing | Should -BeFalse
+    }
+}
+
+Describe "GitHub asset redirect primitive" {
+    It "reads the asset redirect without following it and sends API headers to the API endpoint" {
+        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $runspace = [powershell]::Create()
+        try {
+            $port = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
+            [void]$runspace.AddScript({
+                param($Listener)
+                $client = $Listener.AcceptTcpClient()
+                try {
+                    $stream = $client.GetStream()
+                    $buffer = New-Object byte[] 8192
+                    $request = ""
+                    while ($request -notmatch "`r`n`r`n") { $read = $stream.Read($buffer, 0, $buffer.Length); if ($read -le 0) { break }; $request += [Text.Encoding]::ASCII.GetString($buffer, 0, $read) }
+                    $response = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 302 Found`r`nLocation: https://release-assets.example.invalid/blob?sig=1`r`nContent-Length: 0`r`nConnection: close`r`n`r`n")
+                    $stream.Write($response, 0, $response.Length)
+                    $stream.Flush()
+                    return $request
+                } finally { $client.Close() }
+            }).AddArgument($listener)
+            $pending = $runspace.BeginInvoke()
+            $headers = @{ "User-Agent" = "1c-agent-workflow"; "Accept" = "application/octet-stream"; "Authorization" = "Bearer listener-secret"; "X-GitHub-Api-Version" = "2022-11-28" }
+
+            $location = Get-ItlGitHubAssetRedirectLocation -Uri "http://127.0.0.1:$port/repos/o/r/releases/assets/42" -Headers $headers -TimeoutSeconds 10
+            $request = [string]($runspace.EndInvoke($pending) | Select-Object -Last 1)
+
+            $location | Should -BeExactly "https://release-assets.example.invalid/blob?sig=1"
+            $request | Should -Match "(?m)^Authorization: Bearer listener-secret\r?$"
+            $request | Should -Match "(?m)^Accept: application/octet-stream\r?$"
+        } finally {
+            $runspace.Dispose()
+            $listener.Stop()
+        }
     }
 }

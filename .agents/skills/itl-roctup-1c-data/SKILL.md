@@ -1,6 +1,6 @@
 ---
 name: itl-roctup-1c-data
-description: Use for read-only, token-bounded data exploration in the current itldev/* branch through branch-local ROCTUP/1c-mcp-toolkit. Prefer metadata-first queries and use the legacy web Branch Data MCP only when ROCTUP is unavailable or explicitly required.
+description: Use for token-bounded data exploration, probes and data preparation in the current itldev/* branch through branch-local ROCTUP/1c-mcp-toolkit. Prefer metadata-first queries and use the legacy web Branch Data MCP only when ROCTUP is unavailable or explicitly required.
 ---
 
 # ITL ROCTUP 1C Data Skill
@@ -9,7 +9,7 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 
 ## Priority
 
-- Call the pre-registered `itl-roctup-data` MCP server for data exploration in a development branch. It exposes compact `resolve_tool` and `call_tool` gateway tools; the verified full catalog stays inside the facade. Its branch-local backend starts only when `call_tool` invokes an inner tool and stops automatically after inactivity or client exit.
+- Call the pre-registered `itl-roctup-data` MCP server for data exploration in a development branch. It exposes compact `resolve_tool` and `call_tool` gateway tools; the verified full catalog stays inside the facade. Its branch-local backend starts only when `call_tool` invokes an inner tool. Each call owns its exact database execution only until the atomic result and bounded owned cleanup; an idle backend owns no database resource.
 - Use the legacy web-based Branch Data MCP only when ROCTUP is unavailable or the branch is intentionally published and the requested workflow depends on that legacy channel.
 - Do not assume a database is web-published.
 
@@ -26,10 +26,20 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 
 ## Safety
 
-- Do not pass `execute_code` or `restart_1c_session` to `call_tool` unless the user explicitly requests that exact operation. `close_1c_session` may be used without separate confirmation when releasing the current managed dev-branch session for lifecycle recovery; never use it against the source infobase or another branch.
+- The managed dev-branch infobase is the safety boundary. Within the task use `execute_query` to read and `execute_code` for one-off probes, dry runs and data preparation; keep one logical change in one call. A check worth keeping as a regression goes to YAxUnit or Vanessa, not to repeated probes. Ask the user in chat first only before deleting or changing data the user prepared or named as reference, and list the data you changed in the final report. Never rename, split or build dangerous keywords to pass ROCTUP's check.
+- `ROCTUP_DATA_CHANGES=auto` (default) runs `Записать` and privileged mode without a dialog and rejects any other dangerous keyword at once with `ITL_ROCTUP_DANGEROUS_KEYWORDS_REJECTED`; nothing ran. The check is textual, so collection methods such as `Т.Удалить(…)` and rolled-back writes count too. Rebuild an in-memory collection instead of deleting rows; route needed database or file code through the Vanessa `(Расширение)` code step as the error text says. `confirm` opens ROCTUP's dialog per call: `Операция отклонена пользователем` is the user's refusal, so do not repeat it without a new request.
+- `ITL_ONDEMAND_BACKEND_CALL_FAILED` with `callOutcome: unknown` has already stopped the backend; probe the state with a query before repeating a modifying call. The facade performs `close_1c_session` and `restart_1c_session` itself through its owned stop/start; use them without separate confirmation to release or renew the current managed dev-branch session. Ignore any launcher command in upstream tool text: the next call starts a backend automatically.
 - Do not pass a 1C password through ROCTUP startup parameters.
+- Recover facade connection/cleanup failures through its existing owner as described in [local MCP recovery](../1c-workflow/references/mcp.md#availability-recovery-and-return-to-work); do not stop at a static fallback or request a manual reset.
 - Treat ROCTUP and Vanessa artifacts as runtime tooling; they must not be exported as product CF/CFE artifacts.
-- Never start, stop, or call the backend through raw HTTP. If a call returns `ITL_INFOBASE_APPLICATION_NOT_READY`, run the supported `update-dev-branch-base` helper once and repeat the original call once. Report any other structured facade, catalog, or broker error.
+- Never start, stop, or call the backend through raw HTTP. If a call returns `ITL_INFOBASE_APPLICATION_NOT_READY`, report the dependent read as unverified and give the supported `update-dev-branch-base` continuation. Run that helper and repeat the original call only when updating this exact branch infobase is already authorized by the task; read access alone is not permission to load a configuration. Report any other structured facade, catalog, or broker error.
+- For Gate 3a, use `get_metadata` and a bounded read-only `execute_query` only when `TOOL_DATA` permits the provider and the facade identifies the current dev/test branch infobase. Record the branch/infobase identity, ROCTUP provider identity, query and parameter scope, expected result and observed result. Metadata lookup alone cannot prove query execution or result correctness. `execute_code` is not a substitute for this read-only query evidence.
+
+## Database Access Handoff
+
+Do not create or finish a retained database phase. A conflicting lifecycle, test, or measurement execution waits on the exact call-scoped guard and proceeds automatically after the active call's owned cleanup. `close_1c_session` still closes only the backend session it documents; it is not a guard override.
+
+Release only access owned by the current task and facade instance. Never finish or stop a foreign holder; report its owner as the blocker and leave its process and lease intact. Idle timeout or client exit is an abandonment fallback, not a normal handoff.
 
 ## On-Demand References
 

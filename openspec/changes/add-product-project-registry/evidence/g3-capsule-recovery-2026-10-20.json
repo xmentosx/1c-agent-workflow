@@ -1,0 +1,678 @@
+{
+    "schemaVersion":  1,
+    "id":  "G3-CATALOG-RESTORE-FORMAT",
+    "status":  "passed-approved-capsule-native",
+    "observedUtc":  "2026-10-20T16:01:51.0601407Z",
+    "qualificationSourceCommit":  "b4338057d74f88f2577daff6a828602170c7512f",
+    "qualifiedInstalledRuntimeGitBlobs":  {
+                                              ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1":  "bf5841372b16feed8dcc2721bb72d984f2e807e9",
+                                              ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1":  "ce2d975a3323dd63f468f7c5126b2be6b3beac2e",
+                                              ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1":  "86f3f983388cb7828a3fa1173c10237e57754353",
+                                              ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1":  "99cdc8a11a1579edebb3f4ad38d70fbf5165edad",
+                                              ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-console.ps1":  "fc5491158251bf8884080c8ba25585cfba4dbea7"
+                                          },
+    "approval":  "User approved separate PM5 recovery from exact capsule with preservation of old seed and failed copy; no Gate 6/G4/working migration/publication",
+    "sourceAdmission":  {
+                            "mode":  "sealed-capsule",
+                            "normalLiveSeedChecksUnchanged":  true,
+                            "capsulePath":  "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+                            "originalRawSeedRestored":  false,
+                            "artifactsVerified":  11,
+                            "capsuleSha256":  "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+                            "releaseRoute":  false,
+                            "newOwnerOrLock":  false,
+                            "automaticFallback":  false,
+                            "originalRawSeedCurrentness":  "unavailable"
+                        },
+    "preparation":  {
+                        "candidateCommit":  "b4338057d74f88f2577daff6a828602170c7512f",
+                        "wholeMs":  152302,
+                        "sourceRawSeedCurrentness":  "unavailable",
+                        "observedUtc":  "2026-10-20T15:30:09.8237425Z",
+                        "projectRoot":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project",
+                        "capsuleSha256":  "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+                        "branchRoot":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch",
+                        "databaseBytesBasis":  "declared-capacity-budget",
+                        "databaseBudgetBytes":  4294967296,
+                        "sourceAdmission":  "sealed-capsule",
+                        "restoreMs":  76491,
+                        "preparationMs":  150558
+                    },
+    "stand":  {
+                  "initialCallerHook":  false,
+                  "initialBinding":  false,
+                  "initialWorkflowCommit":  "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+                  "projectRoot":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project",
+                  "branchRoot":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch",
+                  "masterHead":  "9f7f2e637c62bde39df0b50b7dd49ea9fb790c87",
+                  "initialRootsClean":  true,
+                  "branchHead":  "df9f63f00c2f3d627aec16b7cab1c1754f6f87c0",
+                  "initialSelection":  false
+              },
+    "update":  {
+                   "observedPrompt":  "Workflow updated. Associate this local project with the catalog: choose / new / later (empty keeps it unchanged)",
+                   "oneUninterruptedFirstCommand":  false,
+                   "uiToolWarning":  "windows-mcp missing uv/uvx; nonblocking; UI/client qualification remains open",
+                   "finalPrivateOffer":  "later",
+                   "firstCompletedUpgradeRootsClean":  true,
+                   "componentReleaseQualified":  false,
+                   "officialPinnedPostCopyResume":  true,
+                   "dependencyRecovery":  {
+                                              "url":  "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.24/itl-ondemand-mcp-windows-amd64.exe",
+                                              "observedUtc":  "2026-10-20T15:39:20.0726215Z",
+                                              "sourceBuildMatch":  true,
+                                              "sourceBuildExpectedSha256":  "b1cf660cff30234d4ab4f27ebb77fc05620c848b00a8edd6ec2da89402affd8a",
+                                              "lockChanged":  false,
+                                              "httpStatus":  404,
+                                              "method":  "curl HEAD followed redirects; read-only probe",
+                                              "sourceBuildOverride":  "existing process-local ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE",
+                                              "publicationStatus":  "unverified; unavailable to this client"
+                                          },
+                   "sourceArtifactBuild":  {
+                                               "actualSha256":  "b1cf660cff30234d4ab4f27ebb77fc05620c848b00a8edd6ec2da89402affd8a",
+                                               "match":  true,
+                                               "expectedSha256":  "b1cf660cff30234d4ab4f27ebb77fc05620c848b00a8edd6ec2da89402affd8a",
+                                               "observedUtc":  "2026-10-20T15:38:35.8405053Z",
+                                               "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\itl-ondemand-mcp-windows-amd64.exe",
+                                               "sourceCommit":  "b4338057d74f88f2577daff6a828602170c7512f"
+                                           },
+                   "attempts":  [
+                                    {
+                                        "attempt":  "first",
+                                        "exitCode":  1,
+                                        "advertisedLogExists":  false,
+                                        "advertisedLogPath":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-first\\console.log",
+                                        "sourceCommit":  "b4338057d74f88f2577daff6a828602170c7512f",
+                                        "durationMs":  96859,
+                                        "statusPath":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-first\\status.json"
+                                    },
+                                    {
+                                        "attempt":  "resume-first",
+                                        "exitCode":  1,
+                                        "advertisedLogExists":  false,
+                                        "advertisedLogPath":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-resume-first\\console.log",
+                                        "sourceCommit":  "b4338057d74f88f2577daff6a828602170c7512f",
+                                        "durationMs":  68486,
+                                        "statusPath":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-resume-first\\status.json"
+                                    },
+                                    {
+                                        "attempt":  "resume-with-pinned-artifact",
+                                        "exitCode":  0,
+                                        "advertisedLogExists":  false,
+                                        "advertisedLogPath":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-resume-with-pinned-artifact\\console.log",
+                                        "sourceCommit":  "b4338057d74f88f2577daff6a828602170c7512f",
+                                        "durationMs":  271643,
+                                        "statusPath":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-resume-with-pinned-artifact\\status.json"
+                                    }
+                                ],
+                   "completedExitCode":  0,
+                   "actualInput":  "later"
+               },
+    "lateSelect":  {
+                       "productId":  "pm5-corp",
+                       "memoryOptIn":  false,
+                       "recordedBeforeFileState":  "file:ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+                       "projectId":  "pm5-core-development",
+                       "legacyEnrolled":  false,
+                       "status":  "configured",
+                       "activeClientContext":  "unverified"
+                   },
+    "restore":  {
+                    "headsUnchanged":  true,
+                    "legacyEnrollment":  false,
+                    "id":  "G3-CATALOG-RESTORE-FORMAT",
+                    "firstUpdateRootsClean":  true,
+                    "privateLaterPreserved":  true,
+                    "memoryOptIn":  false,
+                    "finalRootsClean":  true,
+                    "files":  [
+                                  {
+                                      "root":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project",
+                                      "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\project.json",
+                                      "head":  "9f7f2e637c62bde39df0b50b7dd49ea9fb790c87",
+                                      "bytes":  2793,
+                                      "sha256":  "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df"
+                                  },
+                                  {
+                                      "root":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch",
+                                      "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\project.json",
+                                      "head":  "df9f63f00c2f3d627aec16b7cab1c1754f6f87c0",
+                                      "bytes":  2793,
+                                      "sha256":  "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df"
+                                  }
+                              ],
+                    "preservedOriginalFailure":  {
+                                                     "changed":  [
+                                                                     ".agent-1c/project.json"
+                                                                 ],
+                                                     "root":  "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+                                                     "head":  "308ac59380112deb797e3eaeafbfa115bd605f4a",
+                                                     "descriptorSha256":  "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+                                                     "diffSha256":  "0e9f8753905740798c313a587628e5375e912603b1684eefd4f77e7121c4dc38"
+                                                 },
+                    "descriptorBytesRestored":  true,
+                    "status":  "passed",
+                    "observedUtc":  "2026-10-20T15:46:16.5485010Z"
+                },
+    "nativeChecks":  {
+                         "catalogCommit":  "0e040ccae17caf9b2521d33a3b18b66daa6ba9c4",
+                         "observedUtc":  "2026-10-20T15:49:00.1483757Z",
+                         "memoryOptIn":  false,
+                         "originalRawSeedRestored":  false,
+                         "oldDescriptorGitBlob":  "37a8e07bbf6f68aa20cea5b765f2eae72b3d4ea2",
+                         "originalRawSeedCurrentness":  "unavailable",
+                         "nativeOneCProcessesRemaining":  0,
+                         "catalogChanged":  false,
+                         "sameDescriptorGitContent":  true,
+                         "treesUnchanged":  [
+                                                {
+                                                    "root":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project",
+                                                    "trees":  {
+                                                                  "tests/features":  "420e755eb736eeb581895cc760ba6b91b8d2d8a7",
+                                                                  "src/cf":  "53a9c5c3256d9ee6851ca367a5457dd5b5660a73",
+                                                                  "src/cfe":  null
+                                                              },
+                                                    "head":  "9f7f2e637c62bde39df0b50b7dd49ea9fb790c87",
+                                                    "aiRules":  {
+                                                                    "repo":  "https://github.com/xmentosx/itl_ai_rules_1c.git",
+                                                                    "ref":  "itl-main-5700f54-r43",
+                                                                    "commit":  "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+                                                                    "upstreamRepo":  "https://github.com/comol/ai_rules_1c.git",
+                                                                    "upstreamRef":  "refs/heads/main",
+                                                                    "upstreamCommit":  "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
+                                                                    "downstreamRevision":  43,
+                                                                    "compatibilityStatus":  "passed",
+                                                                    "compatibilityCheckedAt":  "2026-10-16T08:24:32Z"
+                                                                },
+                                                    "workflowCommit":  "b4338057d74f88f2577daff6a828602170c7512f"
+                                                },
+                                                {
+                                                    "root":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch",
+                                                    "trees":  {
+                                                                  "tests/features":  "f5b55f819a8b30180b3efb203fe0738b075a060b",
+                                                                  "src/cf":  "79d912aee1e711c0bcefd4660131902c1b731e3e",
+                                                                  "src/cfe":  null
+                                                              },
+                                                    "head":  "df9f63f00c2f3d627aec16b7cab1c1754f6f87c0",
+                                                    "aiRules":  {
+                                                                    "repo":  "https://github.com/xmentosx/itl_ai_rules_1c.git",
+                                                                    "ref":  "itl-main-5700f54-r43",
+                                                                    "commit":  "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+                                                                    "upstreamRepo":  "https://github.com/comol/ai_rules_1c.git",
+                                                                    "upstreamRef":  "refs/heads/main",
+                                                                    "upstreamCommit":  "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
+                                                                    "downstreamRevision":  43,
+                                                                    "compatibilityStatus":  "passed",
+                                                                    "compatibilityCheckedAt":  "2026-10-16T08:24:32Z"
+                                                                },
+                                                    "workflowCommit":  "b4338057d74f88f2577daff6a828602170c7512f"
+                                                }
+                                            ],
+                         "newDescriptorGitBlob":  "37a8e07bbf6f68aa20cea5b765f2eae72b3d4ea2",
+                         "workingMigration":  false,
+                         "activeClientContext":  "unverified",
+                         "preservedSeedAndFailedCopy":  true,
+                         "publication":  false,
+                         "status":  "passed",
+                         "dataSha256":  "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+                         "gate6Rerun":  false,
+                         "dataUnchangedAcrossRestore":  true,
+                         "dataMatchesOriginalFailedCopy":  true,
+                         "dataBytes":  3295928320
+                     },
+    "preservation":  {
+                         "oldFailedDescriptorNotCleaned":  true,
+                         "originalGate6ArtifactsUnchanged":  7,
+                         "files":  [
+                                       {
+                                           "path":  "D:\\Git\\itl-workflow-e2e-pm5\\.agent-1c\\release-e2e.json",
+                                           "sha256":  "ab2f3a01476c3ef065ed5416f2e1814a2ec38fd006b7d1ff43cccf7eea22db07",
+                                           "bytes":  19274
+                                       },
+                                       {
+                                           "path":  "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight\\.agent-1c\\dev-branches\\workflow-release-e2e-preflight.json",
+                                           "sha256":  "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456",
+                                           "bytes":  21228
+                                       },
+                                       {
+                                           "path":  "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+                                           "sha256":  "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+                                           "bytes":  8643
+                                       },
+                                       {
+                                           "path":  "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\project.json",
+                                           "sha256":  "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+                                           "bytes":  2793
+                                       },
+                                       {
+                                           "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format.diff",
+                                           "sha256":  "0e9f8753905740798c313a587628e5375e912603b1684eefd4f77e7121c4dc38",
+                                           "bytes":  5277
+                                       },
+                                       {
+                                           "path":  "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+                                           "sha256":  "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+                                           "bytes":  3295928320
+                                       },
+                                       {
+                                           "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl",
+                                           "sha256":  "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782",
+                                           "bytes":  844555
+                                       },
+                                       {
+                                           "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml",
+                                           "sha256":  "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa",
+                                           "bytes":  525269
+                                       },
+                                       {
+                                           "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml",
+                                           "sha256":  "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d",
+                                           "bytes":  13917
+                                       },
+                                       {
+                                           "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+                                           "sha256":  "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+                                           "bytes":  2739
+                                       },
+                                       {
+                                           "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result",
+                                           "sha256":  "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+                                           "bytes":  6
+                                       },
+                                       {
+                                           "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log",
+                                           "sha256":  "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+                                           "bytes":  141700
+                                       },
+                                       {
+                                           "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log",
+                                           "sha256":  "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+                                           "bytes":  93
+                                       }
+                                   ],
+                         "capsuleUnchanged":  true,
+                         "roots":  [
+                                       {
+                                           "changed":  [
+
+                                                       ],
+                                           "root":  "D:\\Git\\itl-workflow-e2e-pm5",
+                                           "head":  "9ee1073525eae722222b9696bfa623e757f1bd09",
+                                           "untracked":  [
+
+                                                         ]
+                                       },
+                                       {
+                                           "changed":  [
+
+                                                       ],
+                                           "root":  "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight",
+                                           "head":  "ac9943bacb2d228298e58c0e619a80dc05ca38a6",
+                                           "untracked":  [
+
+                                                         ]
+                                       },
+                                       {
+                                           "changed":  [
+                                                           ".agent-1c/project.json"
+                                                       ],
+                                           "root":  "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+                                           "head":  "308ac59380112deb797e3eaeafbfa115bd605f4a",
+                                           "untracked":  [
+
+                                                         ]
+                                       },
+                                       {
+                                           "changed":  [
+
+                                                       ],
+                                           "root":  "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch",
+                                           "head":  "1db160699bc69643e5d7f926139846b009f2f754",
+                                           "untracked":  [
+
+                                                         ]
+                                       }
+                                   ]
+                     },
+    "focused":  {
+                    "suiteCosts":  {
+                                       "value":  [
+                                                     {
+                                                         "result":  "Success",
+                                                         "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\SourceQualificationFixture.Tests.ps1",
+                                                         "seconds":  179.2675
+                                                     },
+                                                     {
+                                                         "result":  "Success",
+                                                         "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\SourceE2EStorage.Tests.ps1",
+                                                         "seconds":  113.3095
+                                                     }
+                                                 ],
+                                       "Count":  2
+                                   },
+                    "narrowOwnershipAfterMetadataScope":  {
+                                                              "seconds":  17.8619845,
+                                                              "skipped":  0,
+                                                              "failed":  0,
+                                                              "passed":  3
+                                                          },
+                    "fullBatch":  {
+                                      "seconds":  292.57700919999996,
+                                      "skipped":  0,
+                                      "failed":  0,
+                                      "passed":  101
+                                  },
+                    "notUniqueSumOfCases":  true,
+                    "note":  "Final source scopes added claim admission/budget fields to Develop only; qualified Develop path and installed runtime unchanged. Existing Release continuation plus both recovery cases rerun without weakening assertions."
+                },
+    "selectionAndCost":  {
+                             "owners":  [
+                                            "source-qualification-fixture",
+                                            "source-e2e-storage"
+                                        ],
+                             "targeted":  "owned by final RegisterChange ledger; focused/native proofs do not imply final registration",
+                             "storageOverTarget":  true,
+                             "unchangedStorageSuite":  true,
+                             "newScenariosInExistingSuite":  2,
+                             "budgetsSeconds":  {
+                                                    "sourceQualificationFixture":  240,
+                                                    "sourceE2EStorage":  60
+                                                },
+                             "serialRestrictionAdded":  false,
+                             "observedStorageSeconds":  113.3095,
+                             "comparableRetainedPriorCost":  "unavailable; non-reusable owner, no rerun to reconstruct timing",
+                             "reuseClosure":  "explicit real storage/copy-recovery loaded dependencies added",
+                             "memoryOrLLMCallsAdded":  0,
+                             "alwaysOnContextDelta":  0,
+                             "newSuite":  false
+                         },
+    "limits":  {
+                   "activeClientContext":  "unverified",
+                   "workflowOrComponentPublication":  false,
+                   "fullG3Accepted":  false,
+                   "realReleaseCatalogPopulationAccepted":  false,
+                   "gate6Rerun":  false,
+                   "gate6Fixed":  false,
+                   "g4Started":  false,
+                   "aiRulesSourceChanged":  false,
+                   "workingProjectMigration":  false
+               },
+    "harness":  {
+                    "initialReadOnlyValidatorFailure":  "Used copyRoot at result top-level instead of claim.copyRoot; original script/observation retained; corrected read-only validation passed, native operation not replayed",
+                    "parentShellWarning":  "Parent one-off data hash script loaded WinPSCompat under PS7; native helper select/restore and critical inspectors/validators executed in PS5.1; later checks passed independently"
+                },
+    "rawEvidence":  [
+                        {
+                            "sha256":  "4b90aac4a2da06faf76a41b569a5f823e67914520a590d0fbecbe378cc79d595",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\after-final.json"
+                        },
+                        {
+                            "sha256":  "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\after-first-branch.json"
+                        },
+                        {
+                            "sha256":  "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\after-first-project.json"
+                        },
+                        {
+                            "sha256":  "9daf0b3acdff4d4e1907396d7d4d9935380a1b740a33c6815653e2496d17afcd",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\after-first.json"
+                        },
+                        {
+                            "sha256":  "08bf3fd16feaaaf0260e502ee96582fd3c4b7da8c704385e37d31aaa0dc554dd",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\after-late-select.json"
+                        },
+                        {
+                            "sha256":  "7329d4d1a40b889f0277941c4c1601380729f56d3217dd99839b91ce62e4a710",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\before-late.json"
+                        },
+                        {
+                            "sha256":  "00391c14f607e1b883364a210259e45025d89c48101dc0b5b251b90370c51f2d",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\before-update.json"
+                        },
+                        {
+                            "sha256":  "3d2aba35c156a12f17ce9d7e1e30b7cc8d23f72cff8c2da80ad66627bc9b597b",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\before-update.ps1"
+                        },
+                        {
+                            "sha256":  "1e901788eb2a41e19e5c56687585dbb7e9c5ee16972b43217e7f06d200bc87a8",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\capsule-final-validation.json"
+                        },
+                        {
+                            "sha256":  "1e6723a118566ebf2e8b004c2d4c62635d0c8715962e1d2f0f7c18568fe30da0",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\catalog-cli.ps1"
+                        },
+                        {
+                            "sha256":  "5d29e1f54891129b21dcdb258055256c884a849657fce114371fa782c02c547f",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\check-format.ps1"
+                        },
+                        {
+                            "sha256":  "ff2dee7f4f26f1a18af1dcd65afc1e234f2af39dece18baab7f21222a952af21",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\common-before-pinned-artifact.ps1"
+                        },
+                        {
+                            "sha256":  "cf07c3ef68359f8122e1125d0175deb45957b1be4ee187a8603a8be4aa93671a",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\common.ps1"
+                        },
+                        {
+                            "sha256":  "1f714408d2e535f8aeb9fd0ca769052e7081361b6c7a6d7bbb6c6e902f9f0d0f",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\data-after-late-restore.json"
+                        },
+                        {
+                            "sha256":  "a1ad55b560a9b04d0d2cdc2dbb38c937558b5f28f5a274fc5785333f7f1c5dc2",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\data-before-late-restore.json"
+                        },
+                        {
+                            "sha256":  "005e8c87ff7a374a3d1ddeb1e5a197f466cc368e5bb9fc29d14f25e1ff9c7f6b",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\docs-update-harness.json"
+                        },
+                        {
+                            "sha256":  "319073664c44f1ea80fd700b0e83ea48c94eac9a4df2ea01da5e781654347105",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\export-evidence.ps1"
+                        },
+                        {
+                            "sha256":  "f65b68d0f19e9ff97aabbe83b031a0a0066baf9f8161292839eb63e8d8dde853",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\first-foreground-update-result.json"
+                        },
+                        {
+                            "sha256":  "3817174de7ab7a44f27dad591c5566263648f4946758d32f87ee38d0787b5458",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\first-foreground-update.transcript.txt"
+                        },
+                        {
+                            "sha256":  "262e27deb01855e714c98124f387d6f4d43eae23ac8cdde12de068fdca89b5e6",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\focused-suites.json"
+                        },
+                        {
+                            "sha256":  "cb8c1cd09804d0a9faed4f56cf333c299577e0e974909eaf442ffb7a7bed541e",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\focused.json"
+                        },
+                        {
+                            "sha256":  "18f4564016a435024c8a9571b3f86dd688ed52e85619cc8f189e90897456224a",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\focused.log"
+                        },
+                        {
+                            "sha256":  "01d6db7ea6684882918d1d1ed6b892ba593685c9280c433158f20afdd3d406ba",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\focused.xml"
+                        },
+                        {
+                            "sha256":  "30b3cad5d1414d3493a95c53f742aa98a43b9afa37ce8f788be8ae5000245d05",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\inspect.ps1"
+                        },
+                        {
+                            "sha256":  "1be82511ce68447c48ef7a0cfe9ce2ac3fe74fd1450a922ecb4d9804496c68f4",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\late-restore-format-observation.json"
+                        },
+                        {
+                            "sha256":  "69bcb3eb28571aa87f8aca42793d753415dbf1549c64be5f7a787b8ce15d8bea",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\late-restore.transcript.txt"
+                        },
+                        {
+                            "sha256":  "6c1e6db301976f4f88d507f1eaff6ef463396fa83616140130c86e60905fc85b",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\late-select.transcript.txt"
+                        },
+                        {
+                            "sha256":  "ac0368ff6c9e7efaac0feca8670d0e264cf03114681e7abeaac7cc326b7c8891",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\memory-final-validation.log"
+                        },
+                        {
+                            "sha256":  "ac0368ff6c9e7efaac0feca8670d0e264cf03114681e7abeaac7cc326b7c8891",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\memory-plan-validation.log"
+                        },
+                        {
+                            "sha256":  "e502e931db2c4fa7f10941dd4ef0f3f73cfc3c177545081cf20353043bbd9ce6",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\mode-ownership.json"
+                        },
+                        {
+                            "sha256":  "b5e11663a71ab2c2cdfed7d26c018188ecda351d3026580540a46483d5eab6b6",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\mode-ownership.log"
+                        },
+                        {
+                            "sha256":  "19c568623ba193c48471aa6878160ac3384f1e9df9a4874c3d3df4a28b5cabaa",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\mode-ownership.xml"
+                        },
+                        {
+                            "sha256":  "60c048d9b02f3cb20ca706aed03834e65f3a32d7b9ccc35dc3a0a046206c6da1",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\native-final-validation.json"
+                        },
+                        {
+                            "sha256":  "ba6a765dd289c1b62adf7efe2a47b0c7e4a3b625df4b976557e66b3fbeacb03e",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\native-validation-harness-initial.json"
+                        },
+                        {
+                            "sha256":  "98b3689509eddee2a26aeb185a7cb202c0519eedc82cd600bf66c04cf8d1ed24",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\native-validation.log"
+                        },
+                        {
+                            "sha256":  "892cc1169730068158160d80663550d305869d36ca6a64bd7de5c55718ecfb6b",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\ondemand-build-proof.json"
+                        },
+                        {
+                            "sha256":  "3938afc4b78a0f612a905011346adf34bf41652b3e582ca168593fb220bfd49c",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\ondemand-build.log"
+                        },
+                        {
+                            "sha256":  "e2ec02b9e43883d808404a37b5a26322b25747249cecd3a319ae90e69afb02cc",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\pinned-artifact-recovery.json"
+                        },
+                        {
+                            "sha256":  "8e5a1a09cb110f3aa7a2ee848a5d2fa87eae9cfc59c7c8f1460b0f5ecd8ce6a8",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\pm5-copy-receipt.json"
+                        },
+                        {
+                            "sha256":  "39e21641dc72fc468da204f00ac42fc59726ff82b0525f18c3ac8680d969b71f",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\prepare-pm5.ps1"
+                        },
+                        {
+                            "sha256":  "d1fce83a0a7bd7e2c3af804d53f775b3ef85fbb95850e02436773ac6e4728700",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\prepare-result.json"
+                        },
+                        {
+                            "sha256":  "9259136abf22622e8e5ee7f10715c5ff478b57e0453c66cd64429d57b3e3a4d9",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\prepare.log"
+                        },
+                        {
+                            "sha256":  "8440a18e4bf13c89b69286d0a89cfe0548a6c992bc29664c1333e418fa0b3002",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\preserve.ps1"
+                        },
+                        {
+                            "sha256":  "701887b2f10582e9a1eb0d7e326ebc002f2b5ec214f75b9ea558709645602aed",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\preserved-after.json"
+                        },
+                        {
+                            "sha256":  "c6fa88508786d50c91aec4a458d26345693646aa59a0786ec24c2d55fdcc8d3c",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\preserved-before.json"
+                        },
+                        {
+                            "sha256":  "55c0a9360e6774d5f191edc2a2f835964bc440456bca0dd3359480a590bc1515",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\registry-final-validation.log"
+                        },
+                        {
+                            "sha256":  "55c0a9360e6774d5f191edc2a2f835964bc440456bca0dd3359480a590bc1515",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\registry-plan-validation.log"
+                        },
+                        {
+                            "sha256":  "db5d58210ed9b824d5fa3a2fa534eb6b4cde6c49bedc8d724ce08543ba9d1b51",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\resume-first-foreground-update-result.json"
+                        },
+                        {
+                            "sha256":  "f43e0752080ff5d247105be712ad0ba94cb716dbea2a69441f90232886a51695",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\resume-first-foreground-update.transcript.txt"
+                        },
+                        {
+                            "sha256":  "e1605827b10385383bb4310d8877b26a7ae2049f9c29f33a9183f43e65f8294b",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\resume-with-pinned-artifact-foreground-update-result.json"
+                        },
+                        {
+                            "sha256":  "d943d0b90cbb787adf338295b44d3466c34e8d89cf195fa424ff4cedfcb58f76",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\resume-with-pinned-artifact-foreground-update.transcript.txt"
+                        },
+                        {
+                            "sha256":  "e465c76e705419048f7f4d455b6b59627e054d754c7d4a285f09abfcced77366",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\run-focused.ps1"
+                        },
+                        {
+                            "sha256":  "5e04f40c959614e2fa261b6ea9b2ea5981e8f69d352bb5bfbfc2004bf2d47f10",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\run-mode-ownership.ps1"
+                        },
+                        {
+                            "sha256":  "89e79e2553fde87bbaaee49d7fa0fc2623e873478d5ddb3cd4b934a8e6446f46",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\update-foreground.ps1"
+                        },
+                        {
+                            "sha256":  "3aa540dd8c4745d5fd40d7af032cf6fa86d4d5ef5e34210a2191a6121310a47d",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\validate-native-initial.ps1"
+                        },
+                        {
+                            "sha256":  "e01482900abe81a64234835cd8c72d0debd8e0854519e4cffb53290cc960c269",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\validate-native.ps1"
+                        },
+                        {
+                            "sha256":  "1fd21dfe373405971c9def88364a2a53730843e5d29f960c3488ed2ef9af9f6f",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\capsule-recovery-20261020\\verify-capsule.ps1"
+                        },
+                        {
+                            "sha256":  "052eafb89be1c75544728ea406c3fc0bb5115f78fe5481e220c563f2dfad4459",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-first\\status.json"
+                        },
+                        {
+                            "sha256":  "e93cb86f666856cef179f3a226653c7ca4759bc95737bf55531077ccb459ef6d",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-first\\status.json.fresh-77564-d0ffc3ba280241e69e6391f0ec873db7.json"
+                        },
+                        {
+                            "sha256":  "fbbf9400ba4e6e3e6490049022e147b4667c9c324b532419b26063a538160ba6",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-resume-first\\status.json"
+                        },
+                        {
+                            "sha256":  "1e23f5bcc8c293c3fd07b957946528147e14e21ec13644e7cbb5e9983f4809ab",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-resume-first\\status.json.fresh-54388-10297a5ba0614ef795a6a6c028e00ebf.json"
+                        },
+                        {
+                            "sha256":  "44624a9ddfaa4445b1123dcad0e978842ee29539b4d4a1c6e6dfe261c27e9a2c",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-resume-with-pinned-artifact\\status.json"
+                        },
+                        {
+                            "sha256":  "77d9062b8e514ad486b364c14a06682edd3fab9cebec36416fa5d6159eb078d7",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\runs\\g3-capsule-recovery-resume-with-pinned-artifact\\status.json.fresh-38116-44a87147e36b4fe09c60b1697dd95802.json"
+                        },
+                        {
+                            "sha256":  "15d496165d11dad081966547f0ab2ef8f5a80b9dc39ee249bd285d7abfadff09",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\preparation-logs\\create-infobase-52223ca0fc984c17a47995787662019f.log"
+                        },
+                        {
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\preparation-logs\\qualification-create-infobase-4febed53b39045ffb398dab570d82aef.stderr.log"
+                        },
+                        {
+                            "sha256":  "d0ca84781ffdf6255b69415b4650217f7d64634437ebd58155b301cec8d8b26a",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\preparation-logs\\qualification-create-infobase-4febed53b39045ffb398dab570d82aef.stdout.log"
+                        },
+                        {
+                            "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\preparation-logs\\release-e2e-restore-4f2448d355434681992b1580734fea5b.stderr.log"
+                        },
+                        {
+                            "sha256":  "1f3a0d3171f4715f08bcd17d7511454d9e48ff080e2f9a1ea908382907691caf",
+                            "path":  "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\preparation-logs\\release-e2e-restore-4f2448d355434681992b1580734fea5b.stdout.log"
+                        }
+                    ]
+}

@@ -14,7 +14,7 @@
 
 Для защиты от `MAX_PATH=260` абсолютный путь начального корня проекта ограничен 35 символами, а путь нового worktree `<родитель>\<проект>-<ветка>` — 50 символами. Допустимая длина имени ветки вычисляется только как остаток от 50 после родительского пути, имени папки проекта, разделителя и дефиса; содержимое исходников не анализируется. Временные транзакции выгрузки конфигурации, расширения и установки Vanessa используют игнорируемую папку `.tx` внутри проекта.
 
-Workflow-managed Vanessa Automation, ROCTUP и Vanessa UI MCP binaries хранятся вне worktree в immutable-кэше `%LOCALAPPDATA%\ITL\artifacts\<family>\<version>\<sha256>`. `ITL_ARTIFACT_CACHE_ROOT` переопределяет его корень только для maintainer/test сценариев; обычному проекту этот параметр не нужен. `itl-update-workflow` заполняет кэш новых pin-версий, а `itl-refresh`, `itl-refresh-lite` и `itl-refresh-all` проверяют/дозаполняют его и переписывают helper-owned bindings ветки до загрузки 1С.
+Workflow-managed Vanessa Automation, ROCTUP, Vanessa UI MCP и YAxUnit binaries хранятся вне worktree в immutable-кэше `%LOCALAPPDATA%\ITL\artifacts\<family>\<version>\<sha256>`. `ITL_ARTIFACT_CACHE_ROOT` переопределяет его корень только для maintainer/test сценариев; обычному проекту этот параметр не нужен. `itl-update-workflow` заполняет кэш новых pin-версий, а `itl-refresh`, `itl-refresh-lite` и `itl-refresh-all` проверяют/дозаполняют его и переписывают helper-owned bindings ветки до загрузки 1С. Каждое использование EPF Vanessa Automation отмечает её ревизию; после установки удаляются ревизии, которые ни один проект на машине не использовал 30 дней (текущий пин и занятые процессом ревизии сохраняются), а удалённый пин проект восстанавливает при следующем запуске тестов. Закреплённые GitHub release-ассеты сначала скачиваются через GitHub REST API (без ключей), а при отказе API — по URL из lock; решает SHA256 из lock.
 
 ## Платформа, исходная база и хранилище
 
@@ -24,8 +24,15 @@ Workflow-managed Vanessa Automation, ROCTUP и Vanessa UI MCP binaries хран�
 | `PLATFORM_ARGS` | Дополнительные аргументы запуска платформы для upstream-инструментов метаданных | пусто; строка аргументов | user |
 | `IBCMD_ARGS` | Дополнительные аргументы `ibcmd` для upstream-инструментов метаданных | пусто; строка аргументов | user |
 | `ONEC_MAX_CONCURRENT_SESSIONS` | Максимум одновременно запущенных процессов 1С на одну точную информационную базу; учитываются также внешние процессы, а TestManager заранее резервирует заявленные TestClient | целое `0..1024`, default `3`; `0` отключает ограничение | user |
+| `ONEC_DROPDOWN_PROMPT` | Предупреждение с таймером, паузой и отменой перед выбором из списка в скрытом TestClient. Разовый `-DropdownPrompt on/off` или `dropdownPrompt` в MCP имеет приоритет над тегом сценария, затем применяется настройка проекта. Пока список открыт, клавиатура работает в 1С. | `true`/`false`, default `false` | user |
+| `ONEC_WINDOW_MODE` | Окна агентских процессов 1С: `hidden` держит TestClient, TestManager и ROCTUP скрытыми. Для ввода ОС действует таймер согласия, для выбора из списка действует `ONEC_DROPDOWN_PROMPT`; `visible` возвращает видимые окна без помощника; действует со следующего запуска клиента | `hidden`/`visible`, default `hidden` | user |
+| `ONEC_UI_LEASE_COUNTDOWN_SECONDS` | Обратный отсчёт окна согласия перед первой арендой управления в сценарии или вызове vanessa-ui; `0` — без окна, только для безлюдных стендов | `0..600`, default `10` | user |
+| `ONEC_UI_LEASE_PAUSE_LIMIT_SECONDS` | Предел паузы согласия и ожидания паузы ввода пользователя; не дольше тайм-аута шага или вызова | `1..86400`, default `600` | user |
 | `DESIGNER_MAX_WORKING_SET_MB` | Лимит памяти автоматического Designer | default `10240`; `0` отключает guard | user |
 | `DESIGNER_OPERATION_TIMEOUT_SECONDS` | Максимальное ожидание подтвержденного завершения автоматической операции Designer | default `3600`; `1..86400` | user |
+| `ITL_RUNNER_OPERATION_TIMEOUT_SECONDS` | Общий предельный срок monitored lifecycle action; не заменяет проверку живости или результат helper | default `3600`; `1..86400` | user |
+| `ITL_RUNNER_INIT_PROJECT_TIMEOUT_SECONDS` | Предельный срок `init-project` в compact/windowed launcher | default `14400`; `1..86400` | user |
+| `ITL_RUNNER_SYNC_MASTER_TIMEOUT_SECONDS` | Предельный срок `sync-master` в compact launcher | default `14400`; `1..86400` | user |
 | `DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS` | Максимальная длительность одной внутренней пробы завершения Designer; рекурсивное сканирование dump выполняется в отдельном процессе и при превышении останавливается | default `30`; `5..300` | user |
 | `DESIGNER_STALL_WARNING_SECONDS` | Порог предупреждения без роста CPU/log и изменений owned-процессов; не останавливает Designer и не заменяет hard timeout | default `300`; `30..86400` | user |
 | `DESIGNER_STALL_TIMEOUT_SECONDS` | Fail-closed порог без роста CPU/log и изменений owned-процессов; helper останавливает только exact owned Designer | default `600`; `60..86400`, больше warning | user |
@@ -48,6 +55,9 @@ Workflow-managed Vanessa Automation, ROCTUP и Vanessa UI MCP binaries хран�
 | `REPOSITORY_USER` | Пользователь хранилища | строка | user/secret |
 | `REPOSITORY_PASSWORD` | Пароль хранилища | строка | user/secret |
 
+Для срока action сначала проверяется его ключ (`.dev.env`, затем переменная процесса), затем общий ключ в том же порядке, затем default по action. В `status.json` записываются выбранные при старте секунды, источник и deadline; ограниченное продление по фазе отмечается в диагностике runner и в итоговой ошибке. Внешний timeout вызывающего агента должен превышать выбранный срок минимум на 300 секунд; штатный четырёхчасовой `init-project` требует `timeout_ms >= 14700000`.
+Срок action не заменяет отдельный лимит одной операции Designer (`DESIGNER_OPERATION_TIMEOUT_SECONDS`, default 3600). Увеличивайте его отдельно только при подтверждении, что именно Designer штатно работает дольше часа; диагностика застоя Designer при этом сохраняется.
+
 ## Активный контекст ветки
 
 | Ключ | Назначение | Значения/default | Владелец |
@@ -68,17 +78,16 @@ Workflow-managed Vanessa Automation, ROCTUP и Vanessa UI MCP binaries хран�
 | `QUICKFIX_MAX_LINES` | Лимит BSL-строк quick-fix | default `40` | user |
 | `DEBUG_FAST_PATH` | Сокращенный цикл отладки | `standard`/`extended`/`off`, default `standard` | user |
 | `VERIFICATION_DEPTH` | Глубина статических проверок `ai_rules_1c` | `full`/`standard`/`lite`, default `standard` | user/`/litemode` |
-| `UI_TESTING` | Проверка веб-интерфейса по правилам `ai_rules_1c` | `auto`/`manual`/`off`, default `manual` | user/`/litemode` |
+| `UI_TESTING` | Интерактивная проверка UI по правилам `ai_rules_1c`; сохранённые Vanessa-тесты управляются отдельно | `essential`/`auto`/`manual`/`off`, default `essential` | user/`/litemode` |
 | `ORCHESTRATION` | Режим оркестрации | `standard`/`economy`, default `standard` | user/`/economymode` |
 | `AGENT_MODEL` | Профиль правил для точной модели головного агента | `opus5`/`sonnet5`/`fable5`/`gpt56`; пусто = `auto`, управление через `/rulesmodel` | bootstrap/user |
 | `SUPPORT_GUARD` | Реакция upstream-инструментов на изменение заблокированного объекта типовой конфигурации на поддержке | `deny`/`warn`/`off`, default `deny` | user/`support-edit` |
-| `SUBAGENT_MODEL_CODING` | Модель coding tier | model id; пусто = модель клиента | user/installer |
-| `SUBAGENT_MODEL_ANALYSIS` | Модель analysis tier | model id; пусто = модель клиента | user/installer |
-| `SUBAGENT_MODEL_LIGHT` | Модель light tier | model id; пусто = модель клиента | user/installer |
-| `ITL_ROUTINE_MODE` | Делегирование `/itl*` в Kilo/OpenCode routine | `off`/`auto`/`on`, default `off`; `auto` и `on` требуют явный `SUBAGENT_MODEL_LIGHT` для делегирования | user |
+| `SUBAGENT_MODEL_CODING` | Прежнее значение coding tier; при upgrade однократно привязывается к исходному клиенту | model id; после миграции менять `aiRules.modelTiersByClient` | migration |
+| `SUBAGENT_MODEL_ANALYSIS` | Прежнее значение analysis tier | model id; после миграции менять `aiRules.modelTiersByClient` | migration |
+| `SUBAGENT_MODEL_LIGHT` | Прежнее значение light tier | model id; после миграции менять `aiRules.modelTiersByClient` | migration |
+| `ITL_ROUTINE_MODE` | Делегирование `/itl*` в Kilo/OpenCode routine | `off`/`auto`/`on`, default `off`; `auto` и `on` используют явный `modelTiersByClient.<client>.light`; `/itl-result` всегда direct для итоговой композиции текущей задачи | user |
 | `OPENCODE_EXPERIMENTAL_WORKSPACES` | Native worktree workspace API OpenCode | workflow идемпотентно задаёт `true` на уровне пользователя после успешного init/update/switch на OpenCode; требуется перезапуск OpenCode | user |
-| `CAVEMAN` | Автоактивация краткого стиля | `on`/`auto`/`off`, default `on` | user/`/caveman` |
-| `CAVEMAN_LEVEL` | Постоянный уровень краткого стиля | `lite`/`full`/`ultra`, default/invalid `full`; session override имеет приоритет | user/`/caveman persist` |
+| `CAVEMAN` | Автоактивация краткого стиля | `on`/`auto`/`off`, default `auto` | user/`/caveman` |
 
 Для native workspace OpenCode workflow также готовит игнорируемый project-local runtime `.opencode/node_modules` из записи `opencodePlugin` в `.agent-1c/dependency-lock.json`. Требуются Node.js 22+ и npm; после init/update/switch OpenCode Desktop нужно полностью перезапустить, чтобы зарегистрировать ITL workspace tools.
 
@@ -97,9 +106,10 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `ITL_YAXUNIT_TESTING` | Запуск YAxUnit для локальных алгоритмических тестов | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_VANESSA_TESTING` | Запуск Vanessa Automation | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_CHECK_EVENT_LOG` | Проверка журнала регистрации | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
-| `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` | Максимум полных прогонов в одной repair-сессии `/itl-verify-fix`; значение фиксируется при старте сессии | целое `1..100`, default `5` | user |
+| `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` | Явный максимум полных прогонов в новой repair-сессии `/itl-verify-fix`; значение фиксируется при старте сессии | целое `1..100`, без настройки общий предел отсутствует | user |
+| `ITL_VERIFICATION_MODEL` | Модель оценки: текущая правка или прежние накопленные обязательства; обновление однократно записывает default, явный последующий выбор сохраняется | `change`/`cumulative`, default `change` | user |
 | `VERIFICATION_POLICY` | Политика result/close | `warn`/`block`, default `warn` | user |
-| `GITHUB_TOKEN` | GitHub API token | строка или пусто; имеет приоритет | user/secret |
+| `GITHUB_TOKEN` | Необязательный GitHub API token: поднимает лимит API (60 → 5000 запросов в час), в том числе для загрузки ассетов | строка или пусто; имеет приоритет | user/secret |
 | `GH_TOKEN` | Fallback GitHub token | строка или пусто | user/secret |
 
 ## Worktree, порты и защита
@@ -111,6 +121,12 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `DEV_BRANCH_INFOBASE_ROOT` | Корень копий баз | пусто = `.agent-1c/infobases/dev-branches` | user |
 | `BRANCH_SEED_ROOT` | Корень единственного latest-only seed; внутри данные разделяются по hash identity source | пусто = `.agent-1c/branch-seed` | user |
 | `DEV_BRANCH_WORKTREE_ROOT` | Родительский каталог worktree | пусто = рядом с проектом; папка `<project>-<safe-branch>` | user |
+| `ITL_ARTIFACT_CLEANUP_ENABLED` | Автоочистка после успешных операций | `true`/`false`, default `true` | user |
+| `ITL_RESULT_ARTIFACT_KEEP_COUNT` | Последние CF/CFE с манифестами на ветку/контур | целое 1–3650, default `3` | user |
+| `ITL_RECOVERY_ARCHIVE_KEEP_COUNT` | Последние архивы восстановления на ветку/контур | целое 1–3650, default `2` | user |
+| `ITL_RUN_ARTIFACT_KEEP_COUNT` | Минимум завершённых прогонов каждого типа | целое 1–3650, default `3` | user |
+| `ITL_RUNTIME_ARTIFACT_RETENTION_DAYS` | Минимальный возраст лишних завершённых прогонов | дни 1–3650, default `7` | user |
+| `ITL_DIAGNOSTIC_ARTIFACT_RETENTION_DAYS` | Минимальный возраст расходных файлов завершённых диагностик с manifest производителя; оригиналы и активные файлы сохраняются | дни 1–3650, default `7` | user |
 | `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP` | Fallback-подтверждение для копии при отсутствии master-маркера | `manual-confirm`/`skip`, default `manual-confirm` | user/init |
 
 ## Веб-публикация
@@ -143,8 +159,9 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `VANESSA_TEST_FOREIGN_WAIT_MODE` | Реакция на чужие процессы | `warn`/`wait`, default `warn` | user |
 | `VANESSA_TEST_FOREIGN_QUIET_SECONDS` | Quiet period в `wait` | default `60` | user |
 | `VANESSA_TEST_FOREIGN_WAIT_TIMEOUT_SECONDS` | Timeout ожидания | default `600` | user |
-| `VANESSA_TEST_TIMEOUT_SECONDS` | Timeout прогона | default `1800` | user |
+| `VANESSA_TEST_TIMEOUT_SECONDS` | Timeout прогона; если не задан — `1800` или оценка по журналу проверок: 120 с + 1,5 × p90 выбранных feature, не больше `7200` | не задан | user |
 | `VANESSA_TEST_CLIENT_STARTUP_TIMEOUT_SECONDS` | Timeout TestClient | default `300` | user |
+| `VANESSA_TESTCLIENT_CONNECT_TIMEOUT_SECONDS` | Прогон падает `ITL_VANESSA_TESTCLIENT_NOT_STARTED`, если TESTMANAGER за это время не запустил ни одного своего TestClient (например, окно ошибки платформы); `0` отключает | default `300` | user |
 | `VANESSA_TEST_WINDOW_SEARCH_TIMEOUT_SECONDS` | Timeout поиска окна | default `60` | user |
 | `VANESSA_EVENT_LOG_LEVELS` | Уровни журнала | default `Error` | user |
 | `VANESSA_EVENT_LOG_CLOCK_SKEW_SECONDS` | Допуск времени | default `5` | user |
@@ -154,7 +171,6 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
-| `VANESSA_MCP_AUTO_START` | Автозапуск | default `false` | user |
 | `VANESSA_MCP_INSTALL_ROOT` | Явный пользовательский каталог; managed default адресуется через immutable-кэш | default `.agent-1c/tools/vanessa-mcp` как логический managed marker | helper/user |
 | `VANESSA_MCP_CLIENT_CFE_PATH` | Точный путь к client CFE в immutable user-local cache | определяется helper | helper |
 | `VANESSA_MCP_CLIENT_CFE_VERSION` | Версия client CFE | определяется helper | helper |
@@ -172,10 +188,10 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
 | `ROCTUP_MCP_ENABLED` | Доступность integration | default `true` | user |
-| `ROCTUP_MCP_AUTO_START` | Автозапуск | default `false` | user |
 | `ROCTUP_MCP_REQUIRED` | Блокировать без MCP | default `false` | user |
 | `ROCTUP_MCP_INSTALL_ROOT` | Явный пользовательский каталог; managed default адресуется через immutable-кэш | default `.agent-1c/tools/roctup-mcp-toolkit` как логический managed marker | helper/user |
 | `ROCTUP_MCP_PORT_RANGE` | Диапазон портов | default `6003..6102` | user |
+| `ROCTUP_DATA_CHANGES` | Изменение данных через `execute_code` в ИБ ветки: `auto` выполняет `Записать` и привилегированный режим без окна, остальные опасные слова сразу отклоняет; `confirm` спрашивает в окне ROCTUP на каждый вызов | `auto`, `confirm`; default `auto` | user |
 | `ROCTUP_MCP_TOOLKIT_EPF` | Точный путь к toolkit EPF в immutable user-local cache (или явный пользовательский путь) | определяется helper | helper |
 | `ROCTUP_MCP_VERSION` | Установленная версия | определяется helper | helper |
 | `ROCTUP_MCP_SHA256` | SHA256 toolkit | определяется helper | helper |

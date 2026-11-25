@@ -12,7 +12,7 @@ The user never edits `project.json`, `.dev.env`, or MCP client files to connect 
 4. Verification: no automated tests, primary suite, separate contour suite, or both. Propose `tests/auxiliary/<id>` for a separate suite.
 5. Optional extensions: ask for each extension name and its existing project-relative source directory.
 6. Diagnostics: ROCTUP, Vanessa UI MCP, both, or neither. Explain that Vanessa UI MCP is interactive diagnosis and does not replace Vanessa Automation proof.
-7. For an external base only: file/server kind, exact connection path, user, and whether a password exists. Never ask the user to paste a password into chat. If it exists, ask them to copy it to the clipboard and confirm readiness; configure with clipboard password mode. If absent, explicitly clear the stored password.
+7. For an external base: file/server kind, exact connection path, user, and whether a password exists. For a managed file base, the workflow owns the path; its first update loads the configuration and then requires a dedicated infobase user before running an EPF. Never ask the user to paste a password into chat. If it exists, ask them to copy it to the clipboard and confirm readiness; configure with clipboard password mode. If absent, explicitly clear the stored password.
 
 Summarize the selected base-mutation rights, source ownership, test suites, extensions, and MCP before the one configuration call. Invoke `configure-auxiliary-contour` with the resolved values. It preserves unrelated project and `.dev.env` settings, writes each file atomically, rolls back handled failures, validates path ownership and suite separation, and keeps secrets out of tracked files. After success, run `update-auxiliary-contour` only for `managed-file` or an explicitly disposable attached base; a read-only base proceeds to status or requested MCP diagnostics.
 
@@ -48,7 +48,7 @@ Base modes stay deliberately small:
 - `attached-readonly`: external base for status and ROCTUP/Vanessa UI diagnostics; source/base mutation and automated tests are blocked.
 - `attached-disposable`: explicitly disposable external file or server test base; update, tests, and source dump are allowed.
 
-The setup action stores attached connections only in ignored `.dev.env` values:
+The setup action stores auxiliary credentials in ignored `.dev.env` values. An attached base also uses kind and path; a managed file base uses only its user and password:
 
 ```dotenv
 ITL_AUX_EXCHANGE_INFOBASE_KIND=server
@@ -61,14 +61,20 @@ ITL_AUX_EXCHANGE_PASSWORD=secret
 
 ## Operations and proof
 
-Agents route natural-language requests to `configure-auxiliary-contour`, `status-auxiliary-contours`, `update-auxiliary-contour`, `dump-auxiliary-contour`, `check-auxiliary-contour`, `export-auxiliary-contour-result`, or `reset-auxiliary-contour`. These are advanced helper actions, not a new slash-command family. Every mutating or proving action requires an exact contour name; there is no implicit active contour.
+Agents route natural-language requests to `configure-auxiliary-contour`, `status-auxiliary-contours`, `update-auxiliary-contour`, `dump-auxiliary-contour`, `check-auxiliary-contour`, `export-auxiliary-contour-result`, `reset-auxiliary-contour`, or `remove-auxiliary-contour`. Invoke these advanced actions through the local helper. Every mutating or proving action requires an exact contour name; there is no implicit active contour.
 
-Update performs a full configuration load, full declared extension loads, and Enterprise normalization. Equal source and connection fingerprints skip Designer. Before mutation, workflow-owned MCP and exact-infobase sessions are drained. Primary refresh/check/result/reset never updates a contour.
+Update performs a full configuration load, full declared extension loads, and Enterprise normalization. The same run-bound EPF result contract as the primary branch is required before a mutable contour becomes ready; an old ready state without that proof or a failed normalization requires an explicit `update-auxiliary-contour` and is not silently replayed by check. Equal source and connection fingerprints skip Designer only when the normalization proof is valid. Before mutation, only confirmed workflow-owned backends are stopped; other sessions are preserved and waited for. Primary refresh/check/result/reset never updates a contour.
+
+On the first update of a newly created managed file base, ITL loads only the configuration in Designer without an infobase user, then stops before loading extensions or starting Enterprise. This exact first load completed on an empty file base with platform 8.3.27.2074; loading or updating a configuration is still a potentially dangerous platform action, so a failed or challenged Designer load must be investigated rather than marked successful. Loading configuration does not create an infobase user. Open the exact auxiliary base in Configurator, create a dedicated user with the required administrative role, and disable unsafe-action protection for that user. Reconfigure the contour with that user and password mode, then repeat update interactively. The helper confirms the setting for the exact base and user before any subsequent Designer load, extension load, or EPF run. A pre-existing managed base without this confirmation stops before Designer. If an earlier blocked update left an empty base without configuration, reset that managed contour and repeat update to enter the first-load path. The ignored contour state stores only the connection and user identity hashes; a changed target or user invalidates the proof. The first run remains not ready and records normalization as not run. ITL never reuses primary-base confirmation or changes `conf.cfg` automatically.
+
+Update, dump, check, export and reset acquire the common database owner before local lifecycle locks and retain it through cleanup. Standalone maintenance reserves the contour and any recorded backend resources; checks also reserve primary tooling, the pinned service base and every database exposed by the runner profiles. The configured coordinator must be shared for coordination across execution hosts. A wait timeout does not authorize stopping foreign sessions. Uncertain owned cleanup retains recovery debt; do not remove the reservation or replay work to bypass it.
 
 Dump is available only to a `read-write` contour and installs a validated staged dump transactionally. Reset is `managed-file` only and moves the old infobase into ignored `.agent-1c/auxiliary-archives/`. Auxiliary CF and manifest files live under `build/result/auxiliary/<id>/` and never overwrite primary evidence. Export without a fresh contour proof requires the explicit unverified override and records it.
 
 `tests.includePrimary=true` reruns the primary feature suite against the contour. `tests.path` adds a contour-owned suite. Suites run sequentially with cleanup between them; when both are configured, only `all` creates canonical contour proof. `primary` or `contour` alone is diagnostic. Results live under `build/test-results/vanessa/auxiliary/<id>/<suite>/`.
 Suite roots must be disjoint; do not put the contour suite inside `tests/features` when that is the primary root.
+
+Before auxiliary suites start, the runner verifies the pinned `VAExtension` in the exact mutable contour, installs it when absent or stale, disables safe mode through the existing tooling contract, and re-probes runtime readiness. Its proof is contour-local and bound to the connection and artifact hashes. TestClient monitoring, process evidence, diagnostics, and cleanup use an ephemeral auxiliary runtime identity while the shared TestManager remains primary tooling. An implicitly redirected primary profile uses the auxiliary connection credentials; an explicitly named auxiliary profile keeps its own configured credentials. Auxiliary event-log verification is currently unavailable, so the result records an explicit skip and never substitutes primary event-log evidence.
 
 For exchange scenarios that open clients in different bases, use TestClient manifest schema 2:
 
@@ -88,3 +94,11 @@ Schema 1 remains primary-only. Feature paths remain the scenario registry.
 ## MCP
 
 `mcp.roctup` and `mcp.vanessaUi` add `itl-roctup-aux-<id>` and `itl-vanessa-ui-aux-<id>`. Each keeps the compact `resolve_tool`/`call_tool` surface but has its own generated helper wrapper, backend, ports, and exact infobase. Existing primary endpoint arguments remain unchanged. MCP is diagnostic; contour verification still uses Vanessa Automation `TESTMANAGER -> TESTCLIENT`.
+
+### Retire a contour
+
+Run `agent-1c.ps1 -Action remove-auxiliary-contour -AuxiliaryContourName <exact-name>` in its development worktree. The helper removes the registration, its local state, unused connection keys, and proved ITL MCP entries in that worktree. A TestClient profile that names the contour must be reassigned or removed in the reported manifest before repeating the same action. A profile that uses only a credential key retains that key, as does a remaining registration with the same connection reference.
+
+An exclusively owned `managed-file` database moves to the auxiliary archive only after exact-base admission and path revalidation. Attached bases and shared or unproved resources are reported as preserved. If another session holds the database, repeat the same action after the reported session releases it. An interrupted retirement resumes for the same name, including after the definition has disappeared. The report gives the archive path and its retention group. The latest archive in a group remains eligible for recovery even after repeated cleanup.
+
+The helper reconciles the MCP files on disk and reports user changes or unproved entries it preserved. Reload each affected client and open a new chat to use the new settings. The helper reports whether the files changed.

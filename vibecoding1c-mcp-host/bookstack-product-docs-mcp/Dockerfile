@@ -10,9 +10,14 @@ ENV SENTENCE_TRANSFORMERS_HOME=/app/model_cache
 
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY server.py /app/server.py
+COPY fragment_index.py /app/fragment_index.py
+COPY query_cache.py /app/query_cache.py
+COPY views.py /app/views.py
+COPY page_write.py /app/page_write.py
 VOLUME ["/data", "/app/model_cache"]
 
 CMD ["python", "/app/server.py"]

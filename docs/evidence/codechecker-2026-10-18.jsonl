@@ -1,0 +1,20 @@
+{"projection":"Selected metadata from diagnostic stdout; t is seconds since each probe start; payloads omitted","date":"2026-10-18"}
+{"probe":"budget-300","event":"stream_open","t":0.529,"sid":"1","http":200,"ctype":"text/event-stream; charset=utf-8"}
+{"probe":"budget-300","event":"wire_line","t":0.531,"sid":"1","n":3,"role":"assistant","finished":false,"uuidHash":"4227e65b515f"}
+{"probe":"budget-300","event":"wire_line","t":0.662,"sid":"1","n":5,"role":"assistant","finished":true,"uuidHash":"4227e65b515f"}
+{"probe":"budget-300","event":"stream_closed","t":0.663,"sid":"1","summary":{"lines":5,"bytes":1761,"finished":2}}
+{"probe":"budget-300","event":"wire_line","t":0.814,"sid":"2","n":1,"role":"tool","finished":true,"uuidHash":"8e6c6708d7a0","contentStatus":"ok"}
+{"probe":"budget-300","event":"wire_line","t":0.815,"sid":"2","n":3,"role":"assistant","finished":false,"uuidHash":"7bc34e166789"}
+{"probe":"budget-300","event":"wire_line","t":16.12,"sid":"2","n":5,"size":25,"nonJsonLength":25}
+{"probe":"budget-300","event":"wire_line","t":286.15,"sid":"2","n":41,"size":25,"nonJsonLength":25}
+{"probe":"budget-300","event":"stream_closed","t":300.46,"sid":"2","summary":{"lines":42,"bytes":2647,"finished":1}}
+{"probe":"budget-300","event":"call_error","t":300.46,"errorType":"OperationTimeoutError"}
+{"probe":"budget-300","event":"closed","t":300.461}
+{"probe":"budget-20","event":"wire_line","t":0.553,"sid":"1","n":5,"role":"assistant","finished":true,"uuidHash":"e6cba2edf1a2","toolCallsCount":1}
+{"probe":"budget-20","event":"stream_closed","t":0.554,"sid":"1","summary":{"lines":5,"bytes":1761,"finished":2}}
+{"probe":"budget-20","event":"wire_line","t":0.703,"sid":"2","n":1,"role":"tool","finished":true,"contentStatus":"ok","contentChars":346,"structuredContentKeys":1,"contentJsonSha256":"ac55fe49257b30fb77c3d0d9b42f6e31daceb2cc3ec37f05f56b27fd5b809658","structuredContentJsonSha256":"030df8d36ace95e8fff5f6e3838402d97581359b2dddc03180fc353f2e37dc5c"}
+{"probe":"budget-20","event":"wire_line","t":0.704,"sid":"2","n":3,"role":"assistant","finished":false,"uuidHash":"5c7dbbe4f9e8"}
+{"probe":"budget-20","event":"wire_line","t":15.706,"sid":"2","n":5,"size":25,"sseComment":true}
+{"probe":"budget-20","event":"stream_closed","t":20.346,"sid":"2","summary":{"lines":6,"bytes":2197,"finished":1}}
+{"probe":"budget-20","event":"call_error","t":20.346,"errorType":"OperationTimeoutError"}
+{"probe":"budget-20","event":"closed","t":20.346}

@@ -1,0 +1,558 @@
+﻿BeforeAll {
+    . (Join-Path $PSScriptRoot 'SourceDeliveryPlan.TestSupport.ps1')
+    . (Join-Path $RepoRoot 'scripts/source-delivery-process.ps1')
+    . (Join-Path $RepoRoot 'scripts/source-delivery-release-recovery.ps1')
+    . (Join-Path $PSScriptRoot 'FunctionClosure.TestSupport.ps1')
+    # Load the rollout and cleanup owners by call closure; functions this file
+    # defines are its substitutes, so a new real callee needs no fixture edit.
+    $lib='.agents/skills/1c-workflow/scripts/lib/'
+    $null=Import-TestFunctionClosure -Path @(Join-Path $RepoRoot ($lib+'agent-1c.client-adapters.ps1')) -Root @('Get-ItlClientAdapter','Register-ItlClientMcpSemanticChange','Get-ItlClientMcpSemanticChanges') -StubSource $PSCommandPath
+    $null=Import-TestFunctionClosure -Path @((Join-Path $RepoRoot ($lib+'agent-1c.core.ps1')),(Join-Path $RepoRoot ($lib+'agent-1c.lifecycle.ps1'))) -Root @('Resolve-WorkflowUpdateRolloutScope','Invoke-WorkflowDevelopmentBranchRollout','Assert-WorkflowDevelopmentBranchRolloutComplete') -StubSource $PSCommandPath
+    $null=Import-TestFunctionClosure -Path @(Join-Path $RepoRoot 'scripts/source-delivery-component.ps1') -Root @('ConvertTo-DeliveryNativeArgument') -StubSource $PSCommandPath
+    $null=Import-TestFunctionClosure -Path @(Join-Path $RepoRoot 'scripts/source-delivery-cleanup.ps1') -Root @('Invoke-PublishDevelopWithCleanup') -StubSource $PSCommandPath
+    $tokens=$null;$errors=$null
+    $script:publisherAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-candidate.ps1'),[ref]$tokens,[ref]$errors)
+    if ($errors.Count) { throw 'Owner must parse' }
+    $script:prepareDecision=@($script:publisherAst.FindAll({param($n)
+        $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text -match '^if \(-not \$frozenPlan\)'
+    },$true) | Where-Object { $_.Extent.Text -match 'Invoke-DeliveryStandPreparation' })[0]
+    function Write-DevelopPublicationAttempt { param($Attempt) $script:savedAttempt=$Attempt | ConvertTo-Json -Depth 32 | ConvertFrom-Json }
+}
+
+Describe 'Frozen resume does not repeat completed best-effort garbage collection' {
+    BeforeEach {
+        $script:ResumePlan='frozen';$script:cleanupCalls=@()
+        $script:cleanupCheckpoint=[pscustomobject]@{planId='frozen';preOperationCleanup=[pscustomobject]@{status='completed'}}
+        function Read-DevelopPublicationAttempt { $script:cleanupCheckpoint }
+        function Invoke-DeliveryChannelCleanupSafely { param($Channel,$Phase,$ExpectedCommit) $script:cleanupCalls+=@($Phase);[pscustomobject]@{status='completed';phase=$Phase} }
+        function Publish-DevelopDeferringFailingEntries { [pscustomobject]@{commit='candidate'} }
+    }
+    It 'reuses only garbage collection while retaining publication and final cleanup' {
+        $result=Invoke-PublishDevelopWithCleanup
+        $result.commit | Should -Be 'candidate'
+        $result.cleanupRuns[0].status | Should -Be 'reused'
+        $script:cleanupCalls | Should -Be @('post-operation')
+    }
+    It 'runs cleanup again for a new plan, legacy checkpoint or incomplete earlier cleanup' {
+        foreach($case in @('changed','legacy','warning')) {
+            $script:cleanupCalls=@()
+            $script:cleanupCheckpoint=[pscustomobject]@{planId='frozen';preOperationCleanup=[pscustomobject]@{status='completed'}}
+            if($case -eq 'changed'){$script:cleanupCheckpoint.planId='different'}
+            if($case -eq 'legacy'){$script:cleanupCheckpoint.PSObject.Properties.Remove('preOperationCleanup')}
+            if($case -eq 'warning'){$script:cleanupCheckpoint.preOperationCleanup.status='completed-with-warnings'}
+            Invoke-PublishDevelopWithCleanup | Out-Null
+            $script:cleanupCalls | Should -Be @('pre-operation','post-operation')
+        }
+    }
+}
+
+Describe 'Selected workflow rollout remains with the lifecycle owner' {
+    BeforeEach {
+        $script:ProjectRoot=Join-Path $TestDrive 'master'
+        $script:selectedRoot=Join-Path $TestDrive 'selected'
+        $script:otherRoot=Join-Path $TestDrive 'other'
+        @($script:ProjectRoot,$script:selectedRoot,$script:otherRoot) | ForEach-Object { [void][IO.Directory]::CreateDirectory($_) }
+        # Scope-only fixtures have no attached clients. Exercise the real empty
+        # client proof without introducing a second installation into this test.
+        foreach ($root in @($script:ProjectRoot,$script:selectedRoot,$script:otherRoot)) {
+            [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
+            [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":[]}}', [Text.UTF8Encoding]::new($false))
+        }
+        function Get-AgentTargets { @() }
+        $script:selectionScope=[pscustomobject]@{schemaVersion=1;projectRoot=$script:ProjectRoot;sourceCommit='exact';roots=@($script:selectedRoot)}
+        function Get-GitWorktrees { @(@{path=$script:ProjectRoot;branch='master'},@{path=$script:selectedRoot;branch='itldev/selected'},@{path=$script:otherRoot;branch='itldev/other'}) }
+        function Get-WorkflowUpdateWorktreeInventory {
+            param($TargetCommit,[string[]]$SelectedRoot=@())
+            $script:inspectedRoots=@($SelectedRoot)
+            foreach($root in @($script:selectedRoot,$script:otherRoot)) {
+                if ($SelectedRoot -and $root -notin $SelectedRoot) { continue }
+                [pscustomobject]@{kind='development';root=$root;branch=('itldev/'+(Split-Path -Leaf $root));eligibility='eligible';reason='';continuation='';conflictPaths=@();installedWorkflowCommit='old';head='old'}
+            }
+        }
+        function Get-Agent1cLifecycleLockPath { param($WorktreePath) Join-Path $WorktreePath '.agent-1c/locks/lifecycle.lock' }
+        function Ensure-Agent1cLifecycleLocksIgnored {}
+        function Wait-Agent1cLockSet { [pscustomobject]@{handles=@()} }
+        function Get-WorkflowUpdateRootRuntimeBusyReason { '' }
+        function Invoke-InProjectContext { param($Root,$ScriptBlock) $script:updatedRoots+=@($Root); [pscustomobject]@{status='completed';commit='updated'} }
+        function Get-WorkflowUpdateBranchContinuation { '' }
+        function Get-WorkflowDependencySelectionInput { $null }
+        $script:updatedRoots=@()
+    }
+    It 'updates only selected roots and rejects that report as proof of a full rollout' {
+        $source=[pscustomobject]@{root='payload';commit='exact';rolloutScope=$script:selectionScope}
+        $settings = Join-Path $script:selectedRoot (Get-ItlClientAdapter -Client 'claude-code').mcpApprovalPath
+        Register-ItlClientMcpSemanticChange -Client 'claude-code' -Owner 'scoped-memory' -Path $settings -ClaudeMemoryTransition
+        $report=Invoke-WorkflowDevelopmentBranchRollout $source
+        $report.roots[0].claudeMemoryTransition | Should -BeTrue
+        $script:updatedRoots | Should -Be @($script:selectedRoot)
+        $script:inspectedRoots | Should -Be @($script:selectedRoot)
+        $report.roots.root | Should -Be $script:selectedRoot
+        { Assert-WorkflowDevelopmentBranchRolloutComplete exact -RolloutScope $script:selectionScope } | Should -Not -Throw
+        { Assert-WorkflowDevelopmentBranchRolloutComplete exact } | Should -Throw '*SCOPE_MISMATCH*'
+        $script:updatedRoots=@()
+        Invoke-WorkflowDevelopmentBranchRollout ([pscustomobject]@{root='payload';commit='exact'}) | Out-Null
+        $script:updatedRoots | Should -Be @($script:selectedRoot,$script:otherRoot)
+        { Assert-WorkflowDevelopmentBranchRolloutComplete exact } | Should -Not -Throw
+    }
+    It 'resumes the recorded scope without a mutable input file and rejects expansion or source drift' {
+        $file=Join-Path $TestDrive 'scope.json'
+        $script:selectionScope | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $file -Encoding UTF8
+        $saved=Resolve-WorkflowUpdateRolloutScope exact -InputFile $file
+        (Resolve-WorkflowUpdateRolloutScope exact -RecordedScope $saved).roots | Should -Be @($script:selectedRoot)
+        $script:selectionScope.roots+=@($script:otherRoot)
+        $script:selectionScope | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $file -Encoding UTF8
+        { Resolve-WorkflowUpdateRolloutScope exact -RecordedScope $saved -InputFile $file } | Should -Throw '*SCOPE_CHANGED*'
+        { Resolve-WorkflowUpdateRolloutScope changed -RecordedScope $saved } | Should -Throw '*IDENTITY_MISMATCH*'
+    }
+    It 'rejects foreign, absent, duplicate and non-development roots before a writer is called' {
+        foreach($roots in @(@($script:ProjectRoot),@((Join-Path $TestDrive 'missing')),@($script:selectedRoot,$script:selectedRoot))) {
+            $script:selectionScope.roots=$roots
+            { Resolve-WorkflowUpdateRolloutScope exact -RecordedScope $script:selectionScope } | Should -Throw '*WORKFLOW_UPDATE_SCOPE_*'
+        }
+        $script:updatedRoots | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Read-only stand requirements use the checker fixture closure' {
+    It 'selects both capsule branches, excludes context references and detects admission drift without writing' {
+        $script:DeliveryCustomGateBoundary=$false
+        $seed=Join-Path $TestDrive 'inventory seed'
+        [void][IO.Directory]::CreateDirectory((Join-Path $seed '.agent-1c'))
+        & git -C $seed init -q -b master
+        & git -C $seed -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -qm baseline
+        $LASTEXITCODE | Should -Be 0
+        $head=(& git -C $seed rev-parse HEAD).Trim()
+        $branches=@()
+        foreach($name in @('develop','release','context-only')) {
+            $branch=Join-Path $TestDrive ('inventory '+$name)
+            & git -C $seed worktree add -q -b ('itldev/'+$name) $branch
+            $LASTEXITCODE | Should -Be 0
+            [void][IO.Directory]::CreateDirectory((Join-Path $branch '.agent-1c'))
+            $branches+=@($branch)
+        }
+        $config=[ordered]@{developWorktreePath=$branches[0];worktreePath=$branches[1];readOnlyReceiptReference=$branches[2];qualificationFixtures=[ordered]@{}}
+        foreach($phase in @('Develop','Release')) {
+            $branch=if($phase -eq 'Develop'){$branches[0]}else{$branches[1]}
+            $path=Join-Path $seed ($phase+'.capsule.json')
+            [ordered]@{sourceBranchRoot=$branch;masterCommit=$head;branchCommit=$head} | ConvertTo-Json | Set-Content -LiteralPath $path -Encoding UTF8
+            $config.qualificationFixtures[$phase]=[ordered]@{path=$path;sha256=(Get-FileHash $path).Hash}
+        }
+        $configPath=Join-Path $seed '.agent-1c/release-e2e.json'
+        $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $configPath -Encoding UTF8
+        foreach($root in @($seed)+$branches) {
+            '{"dependencies":{"workflowPackage":{"commit":"old"}}}' | Set-Content -LiteralPath (Join-Path $root '.agent-1c/dependency-lock.json') -Encoding UTF8
+        }
+        $script:E2EProjectRoot=$seed
+        $before=(Get-FileHash $configPath).Hash
+        function Invoke-WorktreeGit { param($Root,$Arguments,[switch]$AllowFailure) Invoke-RepositoryGit -RepositoryRoot $Root -Arguments $Arguments -AllowFailure:$AllowFailure }
+        $requirements=Get-DeliveryStandPreparation -CandidateRoot $RepoRoot -BaseCommit HEAD
+        $requirements.roots | Should -Be (@($branches[0],$branches[1]) | Sort-Object)
+        $requirements.roots | Should -Not -Contain $branches[2]
+        $requirements.requiresWorkflowUpdate | Should -BeTrue
+        $requirements.capsules.phase | Should -Be @('Release','Develop')
+        $candidate=(& git -C $RepoRoot rev-parse HEAD).Trim()
+        foreach($root in @($seed)+$branches[0..1]) {
+            @{dependencies=@{workflowPackage=@{commit=$candidate}}} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root '.agent-1c/dependency-lock.json') -Encoding UTF8
+        }
+        $requirements=Get-DeliveryStandPreparation -CandidateRoot $RepoRoot -BaseCommit HEAD
+        $requirements.requiresStateChange | Should -BeFalse
+        & git -C $branches[0] -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -qm drift
+        $LASTEXITCODE | Should -Be 0
+        $requirements=Get-DeliveryStandPreparation -CandidateRoot $RepoRoot -BaseCommit HEAD
+        $requirements.requiresStateChange | Should -BeTrue
+        $requirements.requiresWorkflowUpdate | Should -BeFalse
+        (Get-FileHash $configPath).Hash | Should -Be $before
+        $script:E2EProjectRoot=$null
+    }
+}
+
+Describe 'A compatibility promotion does not make the stand stale' {
+    It 'maps only a compatibility-only promotion to its unpromoted candidate' {
+        $repo=Join-Path $TestDrive ('promotion путь '+[guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $repo 'templates'))
+        & git -C $repo init -q
+        $lockPath=Join-Path $repo 'templates/dependency-lock.json'
+        function Write-FixtureLock { param($Status,$CheckedAt,$Ref) [IO.File]::WriteAllText($lockPath,(@{dependencies=@{aiRules1c=@{ref=$Ref;compatibilityStatus=$Status;compatibilityCheckedAt=$CheckedAt}}}|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false)) }
+        function New-FixtureCommit { param($Message) & git -C $repo add --all; & git -C $repo -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm $Message; (& git -C $repo rev-parse HEAD).Trim() }
+        Write-FixtureLock 'pending' '' 'r1'; Set-Content -LiteralPath (Join-Path $repo 'workflow.ps1') -Value 'one'
+        $candidate=New-FixtureCommit 'candidate'
+        Write-FixtureLock 'passed' '2026-10-28T00:00:00Z' 'r1'
+        $promotion=New-FixtureCommit 'promote'
+        & git -C $repo switch -q --detach $candidate
+        Write-FixtureLock 'passed' '2026-10-28T01:00:00Z' 'r1'
+        $retryPromotion=New-FixtureCommit 'promote again'
+        & git -C $repo switch -q --detach $candidate
+        Write-FixtureLock 'passed' '2026-10-28T00:00:00Z' 'r2'
+        $otherDependency=New-FixtureCommit 'different fork'
+        & git -C $repo switch -q --detach $promotion
+        Set-Content -LiteralPath (Join-Path $repo 'workflow.ps1') -Value 'two'
+        $packageChange=New-FixtureCommit 'package change'
+        function Invoke-WorktreeGit { param($Root,$Arguments,[switch]$AllowFailure) Invoke-RepositoryGit -RepositoryRoot $Root -Arguments $Arguments -AllowFailure:$AllowFailure }
+
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $promotion | Should -Be $candidate
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $retryPromotion | Should -Be $candidate
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $candidate | Should -Be (Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $promotion)
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $otherDependency | Should -Be $otherDependency
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $packageChange | Should -Be $packageChange
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit ('f'*40) | Should -Be ('f'*40)
+    }
+}
+
+Describe 'Stand owners prepare before plan fingerprints are frozen' {
+    BeforeEach {
+        $script:DeliveryCustomGateBoundary=$false
+        $script:standCandidate=Join-Path $TestDrive ('candidate путь '+[guid]::NewGuid().ToString('N'))
+        $script:standRoot=Join-Path $TestDrive ('stand путь '+[guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $script:standCandidate 'scripts'))
+        [void][IO.Directory]::CreateDirectory($script:standRoot)
+        $script:order=Join-Path $script:standRoot 'order.txt'
+        $capsule=Join-Path $script:standRoot 'capsule.json'
+        [IO.File]::WriteAllText($capsule,'immutable baseline',[Text.UTF8Encoding]::new($false))
+        $script:standPreparation=[pscustomobject]@{projectRoot=$script:standRoot;sourceCommit='candidate';roots=@($script:standRoot);requiresWorkflowUpdate=$true;capsules=@([pscustomobject]@{phase='Develop';path=$capsule;sha256=(Get-FileHash $capsule).Hash;root=$script:standRoot;needsAdmission=$false})}
+        $updater=@'
+param($ProjectRoot,$SourceRoot,$WorkflowUpdateBranchRootsFile)
+$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$scope=Get-Content -LiteralPath $WorkflowUpdateBranchRootsFile -Raw -Encoding UTF8 | ConvertFrom-Json
+if($scope.projectRoot -ine $ProjectRoot -or $scope.roots.Count -ne 1 -or $scope.roots[0] -ine $ProjectRoot){throw 'wrong scope'}
+Add-Content -LiteralPath (Join-Path $ProjectRoot 'order.txt') -Value 'update' -Encoding UTF8
+[IO.File]::WriteAllText((Join-Path $ProjectRoot 'installed.txt'),[string]$scope.sourceCommit,[Text.UTF8Encoding]::new($false))
+[Console]::WriteLine($ProjectRoot)
+'@
+        $capture=@'
+param($Action,$ProjectRoot,$Phase,$AgentTarget,[switch]$AcknowledgeWorkflowUpdate,$OutputPath)
+$ErrorActionPreference='Stop'
+# Mirrors the real fixture owner's operation contract.
+if(-not $ProjectRoot -or -not $OutputPath){throw 'Fixture operation requires -ProjectRoot and -OutputPath'}
+# The read-only chain preflight precedes the update; Capture admits it after.
+if($Action -ceq 'Verify'){Add-Content -LiteralPath (Join-Path $ProjectRoot 'order.txt') -Value 'verify' -Encoding UTF8;return}
+if($Action -cne 'Capture' -or -not $AcknowledgeWorkflowUpdate){throw 'wrong owner invocation'}
+Add-Content -LiteralPath (Join-Path $ProjectRoot 'order.txt') -Value 'capture' -Encoding UTF8
+if(Test-Path -LiteralPath (Join-Path $ProjectRoot 'business-drift.txt')){throw 'FIXTURE_SEED_CHANGED'}
+if(-not(Test-Path -LiteralPath (Join-Path $ProjectRoot 'installed.txt'))){throw 'update must finish first'}
+'@
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/source-e2e-fixture.ps1'),$capture,[Text.UTF8Encoding]::new($true))
+        function Get-DeliveryStandPreparation { $script:standPreparation }
+        function Assert-DeliveryReleaseStandReady { Add-Content -LiteralPath $script:order -Value 'readiness' -Encoding UTF8 }
+        $script:AgentTarget='codex';$script:ResumePlan='';$script:Action='PublishDevelop'
+    }
+    It 'warms the gate shard cache with the same candidate and fork only while stand owners run, on success and failure' {
+        $runner=@'
+param($RepositoryRoot,$OutputRoot,$JunitPath,$WorkerCount,$RequestedWorkerCount,[switch]$WorkerCountDefaulted,$AiRulesSource)
+$ErrorActionPreference='Stop'
+$record=[ordered]@{pid=$PID;repositoryRoot=$RepositoryRoot;aiRulesSource=$AiRulesSource;workers=$WorkerCount;defaulted=[bool]$WorkerCountDefaulted}
+[IO.File]::WriteAllText((Join-Path $RepositoryRoot 'prewarm.json'),($record|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+Add-Content -LiteralPath (Join-Path $RepositoryRoot 'prewarm-starts.txt') -Value 'start' -Encoding UTF8
+Start-Sleep -Seconds 300
+'@
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/invoke-pester-shards.ps1'),$runner,[Text.UTF8Encoding]::new($true))
+        [void][IO.Directory]::CreateDirectory((Join-Path $script:standCandidate 'tests'))
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'tests/quality-contracts.json'),'{"pesterWorkers":{"qualificationImplicitDefault":8}}',[Text.UTF8Encoding]::new($false))
+        $rules=Join-Path $TestDrive 'fork путь с пробелом'
+        [void][IO.Directory]::CreateDirectory($rules)
+        $script:AiRulesSource=$rules
+        try {
+            # The updater sees the warmup already running before it mutates the stand.
+            $updater=Get-Content -LiteralPath (Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1') -Raw -Encoding UTF8
+            $updater=$updater.Replace("Add-Content -LiteralPath (Join-Path `$ProjectRoot 'order.txt') -Value 'update'","`$d=[DateTime]::UtcNow.AddSeconds(30);while(-not(Test-Path -LiteralPath (Join-Path `$SourceRoot 'prewarm.json')) -and [DateTime]::UtcNow -lt `$d){Start-Sleep -Milliseconds 100};if(-not(Test-Path -LiteralPath (Join-Path `$SourceRoot 'prewarm.json'))){throw 'prewarm did not start first'};Add-Content -LiteralPath (Join-Path `$ProjectRoot 'order.txt') -Value 'update'")
+            [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+            $attempt=[pscustomobject]@{phase='candidate-built'}
+            Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation $attempt
+            @(Get-Content $script:order) | Should -Be @('verify','update','capture')
+            $started=Get-Content -LiteralPath (Join-Path $script:standCandidate 'prewarm.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $started.repositoryRoot | Should -Be $script:standCandidate
+            $started.aiRulesSource | Should -Be $rules
+            $started.workers | Should -Be '8'
+            $started.defaulted | Should -BeTrue
+            Get-Process -Id ([int]$started.pid) -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+            $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+            $script:savedAttempt.standPreparation.prewarm.completed | Should -BeFalse
+            $script:savedAttempt.standPreparation.prewarm.stopError | Should -BeNullOrEmpty
+            # A failed owner also stops the warmup and keeps the failure.
+            Remove-Item -LiteralPath (Join-Path $script:standCandidate 'prewarm.json')
+            [IO.File]::WriteAllText((Join-Path $script:standRoot 'business-drift.txt'),'unexpected')
+            { Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation $attempt } | Should -Throw '*PREPARATION_FAILED*'
+            $failed=Get-Content -LiteralPath (Join-Path $script:standCandidate 'prewarm.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            Get-Process -Id ([int]$failed.pid) -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+            $script:savedAttempt.standPreparation.status | Should -Be 'running'
+            $script:savedAttempt.standPreparation.prewarm.name | Should -Be 'stand-prewarm'
+            @(Get-Content -LiteralPath (Join-Path $script:standCandidate 'prewarm-starts.txt')).Count | Should -Be 2
+        } finally { Remove-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue }
+    }
+    It 'installs the pinned fork on the stand from the resolved local checkout without leaking it to the publisher' {
+        # A fork release is pushed only after Develop, so the stand update must
+        # not resolve the candidate's pinned tag from the fork remote.
+        $updater=Get-Content -LiteralPath (Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1') -Raw -Encoding UTF8
+        $updater=$updater.Replace("[Console]::WriteLine(`$ProjectRoot)","[IO.File]::WriteAllText((Join-Path `$ProjectRoot 'rules-source.txt'),[string]`$env:ITL_AI_RULES_SOURCE_PATH,[Text.UTF8Encoding]::new(`$false))")
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        $observed=Join-Path $script:standRoot 'rules-source.txt'
+        $previous=$env:ITL_AI_RULES_SOURCE_PATH
+        $env:ITL_AI_RULES_SOURCE_PATH=$null
+        $rules=Join-Path $TestDrive 'форк путь с пробелом'
+        [void][IO.Directory]::CreateDirectory($rules)
+        try {
+            $script:AiRulesSource=$rules
+            Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation ([pscustomobject]@{phase='candidate-built'})
+            [Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($observed)) | Should -BeExactly $rules
+            $env:ITL_AI_RULES_SOURCE_PATH | Should -BeNullOrEmpty
+            $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+            # Without a resolved fork checkout the stand keeps the configured remote.
+            Remove-Variable -Name AiRulesSource -Scope Script
+            Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation ([pscustomobject]@{phase='candidate-built'})
+            [IO.File]::ReadAllText($observed) | Should -BeNullOrEmpty
+        } finally {
+            Remove-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue
+            $env:ITL_AI_RULES_SOURCE_PATH=$previous
+        }
+    }
+    It 'installs unpublished owned assets on the stand from the exact bytes the gate binds' {
+        # Before Develop publishes them, the pinned release URLs return 404; the
+        # gate's discovery finds the locked bytes in the SHA-addressed shared cache.
+        $names=@('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')
+        $updater=Get-Content -LiteralPath (Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1') -Raw -Encoding UTF8
+        $updater=$updater.Replace("[Console]::WriteLine(`$ProjectRoot)","[IO.File]::WriteAllText((Join-Path `$ProjectRoot 'artifacts.json'),(([ordered]@{a=[string]`$env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE;c=[string]`$env:VANESSA_MCP_CLIENT_CFE_PATH;o=[string]`$env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE})|ConvertTo-Json),[Text.UTF8Encoding]::new(`$false))")
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'scripts/source-e2e-artifact-discovery.ps1') -Destination (Join-Path $script:standCandidate 'scripts')
+        & git -C $script:standCandidate init --quiet
+        $common=(& git -C $script:standCandidate rev-parse --path-format=absolute --git-common-dir).Trim()
+        $bytes=@{}; foreach($key in @('vanessa','client','ondemand')){ $bytes[$key]=[Text.Encoding]::UTF8.GetBytes("locked $key "+[guid]::NewGuid()) }
+        $sha=@{}; foreach($key in $bytes.Keys){ $s=[Security.Cryptography.SHA256]::Create(); try { $sha[$key]=([BitConverter]::ToString($s.ComputeHash($bytes[$key]))).Replace('-','').ToLowerInvariant() } finally { $s.Dispose() } }
+        $lock=[ordered]@{dependencies=[ordered]@{
+            vanessaAutomation=[ordered]@{sha256=$sha.vanessa;compatibilityVersion='1.2.043.42';downstreamRevision='itl-r10';assetName='Vanessa Автоматизация.zip'}
+            vanessaMcp=[ordered]@{clientMcp=[ordered]@{sha256=$sha.client;version='0.1.0';assetName='Клиент MCP.cfe'}}
+            itlOndemandMcp=[ordered]@{sha256=$sha.ondemand;version='0.2.0';assetName='itl ondemand.exe'}}}
+        [void][IO.Directory]::CreateDirectory((Join-Path $script:standCandidate 'templates'))
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'templates/dependency-lock.json'),($lock|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+        $expected=[ordered]@{
+            a=Join-Path $common ('itl/dependencies/vanessa-automation/1.2.043.42-itl-r10/'+$sha.vanessa+'-Vanessa Автоматизация.zip')
+            c=Join-Path $script:standCandidate 'build/third-party/client-mcp/Клиент MCP.cfe'
+            o=Join-Path $script:standCandidate 'tools/itl-ondemand-mcp/build/itl ondemand.exe'}
+        foreach($pair in @(@('a','vanessa'),@('c','client'),@('o','ondemand'))){
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $expected[$pair[0]]))
+            [IO.File]::WriteAllBytes($expected[$pair[0]],$bytes[$pair[1]])
+        }
+        $previous=@{}; foreach($name in $names){ $previous[$name]=[Environment]::GetEnvironmentVariable($name,'Process'); [Environment]::SetEnvironmentVariable($name,$null,'Process') }
+        $observed=Join-Path $script:standRoot 'artifacts.json'
+        try {
+            Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation ([pscustomobject]@{phase='candidate-built'})
+            $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+            $seen=[Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($observed)) | ConvertFrom-Json
+            foreach($key in $expected.Keys){ $seen.$key | Should -BeExactly ([IO.Path]::GetFullPath($expected[$key])) }
+            foreach($name in $names){ [Environment]::GetEnvironmentVariable($name,'Process') | Should -BeNullOrEmpty }
+            # Without the exact bytes the stand owner keeps its own pinned resolution.
+            Remove-Item -LiteralPath $expected.o
+            $warned=@(Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation ([pscustomobject]@{phase='candidate-built'}) 3>&1 | Where-Object { $_ -is [Management.Automation.WarningRecord] })
+            $seen=Get-Content -LiteralPath $observed -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach($key in $expected.Keys){ $seen.$key | Should -BeNullOrEmpty }
+            "$warned" | Should -Match 'DELIVERY_STAND_ARTIFACT_BINDING_INCOMPLETE.*ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE'
+        } finally { foreach($name in $names){ [Environment]::SetEnvironmentVariable($name,$previous[$name],'Process') } }
+    }
+    It 'prepares through native owners before freezing, then resumes without replan and blocks unexpected drift' {
+        $RequireRelease=$true;$frozenPlan=$null;$priorAttempt=$null;$Replan='';$remoteBefore='base'
+        $worktree=[pscustomobject]@{path=$script:standCandidate};$attempt=[pscustomobject]@{phase='candidate-built'}
+        $standReadyBeforePlan=$false
+        Mock Invoke-DeliveryReleaseStandRecovery { Add-Content -LiteralPath $script:order -Value 'recovery' -Encoding UTF8 }
+        & ([scriptblock]::Create($script:prepareDecision.Extent.Text))
+        @(Get-Content $script:order) | Should -Be @('recovery','verify','update','capture','readiness')
+        $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+        # The fixture double above is only as strict as the real owner it mirrors.
+        [IO.File]::ReadAllText((Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1')) | Should -Match ([regex]::Escape('Fixture operation requires -ProjectRoot and -OutputPath'))
+        $stdout=Join-Path $script:standCandidate 'build/test-results/delivery/stand-workflow-update.stdout.log'
+        ([Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($stdout))).TrimEnd("`r","`n") | Should -BeExactly $script:standRoot
+        (Get-FileHash $script:standPreparation.capsules[0].path).Hash | Should -Be $script:standPreparation.capsules[0].sha256
+        $plan=[pscustomobject]@{planId='prepared';status='ready';executedBudgetSeconds=1;stages=@();candidate=@{commit='candidate';tree='tree';baseCommit='base'}}
+        $plan | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $TestDrive 'prepared.json') -Encoding UTF8
+        $script:ResumePlan=$plan.planId
+        { Assert-DeliveryQualityPlanMayRun $plan } | Should -Not -Throw
+        $priorAttempt=[pscustomobject]@{planId=$plan.planId};$frozenPlan=$plan
+        & ([scriptblock]::Create($script:prepareDecision.Extent.Text))
+        @(Get-Content $script:order) | Should -HaveCount 5
+        $plan.planId='unexpected-stand-change'
+        Mock Get-DeliveryPlanRoot { $TestDrive }
+        { Assert-DeliveryQualityPlanMayRun $plan } | Should -Throw '*DELIVERY_RESUME_PLAN_MISMATCH*'
+        @(Get-Content $script:order) | Should -HaveCount 5
+    }
+    It 'prepares a pinned plan only when its stand lacks the candidate package, as after a Replan that built a new candidate' {
+        # Mirrors the stand owner: a root is stale when its installed workflow
+        # package differs from the candidate (real comparison covered above).
+        function Get-DeliveryStandPreparation {
+            param($CandidateRoot,$BaseCommit,[switch]$RequireRelease)
+            $installed=Join-Path $script:standRoot 'installed.txt'
+            $current=if(Test-Path -LiteralPath $installed){[IO.File]::ReadAllText($installed)}else{''}
+            $script:standPreparation.requiresWorkflowUpdate=($current -cne [string]$script:standPreparation.sourceCommit)
+            $script:standPreparation
+        }
+        Mock Invoke-DeliveryReleaseStandRecovery { Add-Content -LiteralPath $script:order -Value 'recovery' -Encoding UTF8 }
+        $installed=Join-Path $script:standRoot 'installed.txt'
+        $RequireRelease=$true;$frozenPlan=$null;$remoteBefore='base'
+        $worktree=[pscustomobject]@{path=$script:standCandidate}
+        # (a) Replan: the stand still has the previous candidate; the replacement
+        # attempt is new and the prior attempt pinned the original plan.
+        [IO.File]::WriteAllText($installed,'previous-candidate',[Text.UTF8Encoding]::new($false))
+        $Replan='original-plan';$priorAttempt=[pscustomobject]@{planId='original-plan';candidate='previous-candidate'}
+        $attempt=[pscustomobject]@{phase='candidate-built';candidate='candidate'}
+        $standReadyBeforePlan=$false;$replacementAccepted=$false
+        . ([scriptblock]::Create($script:prepareDecision.Extent.Text))
+        @(Get-Content $script:order) | Should -Be @('recovery','verify','update','capture','readiness')
+        [IO.File]::ReadAllText($installed) | Should -BeExactly 'candidate'
+        $standReadyBeforePlan | Should -BeTrue
+        $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+        $script:savedAttempt.standPreparation.identity.sourceCommit | Should -Be 'candidate'
+        # Preparation alone does not accept the replacement; a later failure
+        # still restores the original checkpoint.
+        $replacementAccepted | Should -BeFalse
+        # (b) Resume of the same candidate on a ready stand: the replacement plan
+        # is pinned (continuation) or the earlier plan is resumed unchanged.
+        foreach($case in @(@('original-plan','replacement-plan'),@('','original-plan'))) {
+            Remove-Item -LiteralPath $script:order -ErrorAction SilentlyContinue
+            $Replan=$case[0];$priorAttempt=[pscustomobject]@{planId=$case[1];candidate='candidate'}
+            $attempt=[pscustomobject]@{phase='develop-qualified';candidate='candidate'}
+            $standReadyBeforePlan=$false;$script:savedAttempt=$null
+            . ([scriptblock]::Create($script:prepareDecision.Extent.Text))
+            Test-Path -LiteralPath $script:order | Should -BeFalse
+            $standReadyBeforePlan | Should -BeFalse
+            $script:savedAttempt | Should -BeNullOrEmpty
+        }
+        # A frozen plan never repairs drift before comparing its inputs.
+        [IO.File]::WriteAllText($installed,'previous-candidate',[Text.UTF8Encoding]::new($false))
+        $frozenPlan=[pscustomobject]@{planId='original-plan'};$Replan=''
+        . ([scriptblock]::Create($script:prepareDecision.Extent.Text))
+        Test-Path -LiteralPath $script:order | Should -BeFalse
+        $standReadyBeforePlan | Should -BeFalse
+    }
+    It 'preserves the unplanned checkpoint and immutable capsule on owner rejection; the same scope can continue' {
+        [IO.File]::WriteAllText((Join-Path $script:standRoot 'business-drift.txt'),'unexpected')
+        $attempt=[pscustomobject]@{phase='candidate-built'}
+        { Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation $attempt } | Should -Throw '*PREPARATION_FAILED*'
+        $script:savedAttempt.standPreparation.status | Should -Be 'running'
+        (Get-FileHash $script:standPreparation.capsules[0].path).Hash | Should -Be $script:standPreparation.capsules[0].sha256
+        Remove-Item -LiteralPath (Join-Path $script:standRoot 'business-drift.txt')
+        { Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation $attempt } | Should -Not -Throw
+        $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+        $script:standPreparation.roots+=@('foreign-root')
+        { Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation $attempt } | Should -Throw '*PREPARATION_CHANGED*'
+    }
+    It 'abandons only a failed branch post-copy of another package before the candidate update and does not repeat it on resume' {
+        $updater=@'
+param($ProjectRoot,$SourceRoot,$WorkflowUpdateBranchRootsFile,$Recovery,$SnapshotId)
+$ErrorActionPreference='Stop'
+$order=Join-Path $SourceRoot 'order.txt'
+if($Recovery -ceq 'abandon'){
+    $parent=Join-Path $ProjectRoot '.agent-1c/snapshots/workflow-update'
+    Rename-Item -LiteralPath (Join-Path $parent ('itl-workflow-update-rollback-'+$SnapshotId)) -NewName ('itl-workflow-update-abandoned-'+$SnapshotId)
+    Add-Content -LiteralPath $order -Value ('abandon '+(Split-Path -Leaf $ProjectRoot)+' '+$SnapshotId) -Encoding UTF8
+} else { Add-Content -LiteralPath $order -Value 'update' -Encoding UTF8 }
+'@
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        $roots=@{}
+        foreach($case in @(@('defective','post-copy-failed'),@('same','candidate'),@('copying','copying'))) {
+            $branch=Join-Path $TestDrive ('ветка '+$case[0]+' '+[guid]::NewGuid().ToString('N'))
+            $id=[guid]::NewGuid().ToString('N')
+            $snapshot=Join-Path $branch ('.agent-1c/snapshots/workflow-update/itl-workflow-update-rollback-'+$id)
+            [void][IO.Directory]::CreateDirectory($snapshot)
+            $phase=if($case[1] -eq 'candidate'){'post-copy-failed'}else{$case[1]}
+            $source=if($case[1] -eq 'candidate'){'candidate'}else{'defective'}
+            [IO.File]::WriteAllText((Join-Path $snapshot 'transaction.json'),(@{phase=$phase;sourceCommit=$source}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+            $roots[$case[0]]=[pscustomobject]@{root=$branch;id=$id}
+        }
+        $preparation=[pscustomobject]@{projectRoot=$script:standRoot;sourceCommit='candidate';roots=@($roots.defective.root,$roots.same.root,$roots.copying.root);requiresWorkflowUpdate=$true;capsules=@()}
+        $attempt=[pscustomobject]@{phase='candidate-built'}
+        Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt
+        $order=Join-Path $script:standCandidate 'order.txt'
+        @(Get-Content -LiteralPath $order -Encoding UTF8) | Should -Be @(('abandon '+(Split-Path -Leaf $roots.defective.root)+' '+$roots.defective.id),'update')
+        @($script:savedAttempt.standPreparation.steps.name) | Should -Be @(('stand-workflow-abandon-'+$roots.defective.id),'stand-workflow-update')
+        $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+        # A resumed preparation finds no pending defective transaction to abandon again.
+        Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt
+        @(Get-Content -LiteralPath $order -Encoding UTF8) | Should -Be @(('abandon '+(Split-Path -Leaf $roots.defective.root)+' '+$roots.defective.id),'update','update')
+    }
+    It 'finishes a master update pinned to a defective earlier candidate through the new exact helper, then installs the candidate' {
+        # 2026-11-20: candidate A failed after the master commit (master-committed,
+        # branches branch-commit-ready). The next candidate's scope was rejected as
+        # WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH and the stand was repaired by hand.
+        # The double mirrors the lifecycle owner: a pending update accepts only its
+        # recorded scope; the newer exact helper then finishes the pinned package
+        # and reports WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING.
+        $updater=@'
+param($ProjectRoot,$SourceRoot,$WorkflowUpdateBranchRootsFile,$Recovery,$SnapshotId)
+$ErrorActionPreference='Stop'
+$order=Join-Path $SourceRoot 'order.txt'
+$scope=Get-Content -LiteralPath $WorkflowUpdateBranchRootsFile -Raw -Encoding UTF8 | ConvertFrom-Json
+$parent=Join-Path $ProjectRoot '.agent-1c/snapshots/workflow-update'
+$pending=@(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue)
+if($pending.Count){
+    $receipt=Get-Content -LiteralPath (Join-Path $pending[0].FullName 'transaction.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if([string]$scope.sourceCommit -cne [string]$receipt.sourceCommit -or (@($scope.roots) -join '|') -cne (@($receipt.rolloutScope.roots) -join '|')){
+        [Console]::Error.WriteLine('WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH: preserve the receipt'); exit 1
+    }
+    if(-not (Test-Path -LiteralPath ([string]$receipt.sourceRoot) -PathType Container)){ [Console]::Error.WriteLine('WORKFLOW_UPDATE_SOURCE_MISSING'); exit 1 }
+    foreach($root in @(@($ProjectRoot) + @($receipt.rolloutScope.roots))){
+        $branchParent=Join-Path $root '.agent-1c/snapshots/workflow-update'
+        foreach($snapshot in @(Get-ChildItem -LiteralPath $branchParent -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue)){
+            Rename-Item -LiteralPath $snapshot.FullName -NewName ($snapshot.Name.Replace('-rollback-','-completed-'))
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'installed.txt'),[string]$receipt.sourceCommit,[Text.UTF8Encoding]::new($false))
+    }
+    Add-Content -LiteralPath $order -Value ('continue '+$receipt.sourceCommit) -Encoding UTF8
+    [Console]::Error.WriteLine("WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING: the interrupted pinned update '$($receipt.sourceCommit)' completed.")
+    exit 1
+}
+foreach($root in @(@($ProjectRoot) + @($scope.roots))){
+    if(@(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue).Count){ throw 'branch still pending' }
+    [IO.File]::WriteAllText((Join-Path $root 'installed.txt'),[string]$scope.sourceCommit,[Text.UTF8Encoding]::new($false))
+}
+Add-Content -LiteralPath $order -Value ('update '+$scope.sourceCommit) -Encoding UTF8
+'@
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        $defective=Join-Path $TestDrive ('itl-source-publish-develop кандидат '+[guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory($defective)
+        $branch=Join-Path $TestDrive ('ветка develop '+[guid]::NewGuid().ToString('N'))
+        [IO.File]::WriteAllText((Join-Path ([IO.Directory]::CreateDirectory($branch).FullName) 'business.txt'),'бизнес-данные ветки',[Text.UTF8Encoding]::new($false))
+        $scopeA=[ordered]@{schemaVersion=1;projectRoot=$script:standRoot;sourceCommit='defective';roots=@($branch)}
+        $ids=@{}
+        foreach($pair in @(@($script:standRoot,'master-committed'),@($branch,'branch-commit-ready'))){
+            $id=[guid]::NewGuid().ToString('N'); $ids[$pair[1]]=$id
+            $snapshot=Join-Path $pair[0] ('.agent-1c/snapshots/workflow-update/itl-workflow-update-rollback-'+$id)
+            [void][IO.Directory]::CreateDirectory($snapshot)
+            [IO.File]::WriteAllText((Join-Path $snapshot 'transaction.json'),([ordered]@{phase=$pair[1];sourceCommit='defective';sourceRoot=$defective;rolloutScope=$scopeA}|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
+        }
+        $preparation=[pscustomobject]@{projectRoot=$script:standRoot;sourceCommit='candidate';roots=@($branch);requiresWorkflowUpdate=$true;capsules=@()}
+        $attempt=[pscustomobject]@{phase='candidate-built'}
+        Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt
+        $order=Join-Path $script:standCandidate 'order.txt'
+        @(Get-Content -LiteralPath $order -Encoding UTF8) | Should -Be @('continue defective','update candidate')
+        @($script:savedAttempt.standPreparation.steps.name) | Should -Be @(('stand-workflow-continue-'+$ids['master-committed']),'stand-workflow-update')
+        $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+        foreach($root in @($script:standRoot,$branch)){ [IO.File]::ReadAllText((Join-Path $root 'installed.txt')) | Should -BeExactly 'candidate' }
+        [IO.File]::ReadAllText((Join-Path $branch 'business.txt')) | Should -BeExactly 'бизнес-данные ветки'
+        Test-Path -LiteralPath (Join-Path $script:standRoot ('.agent-1c/snapshots/workflow-update/itl-workflow-update-completed-'+$ids['master-committed'])) | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $branch ('.agent-1c/snapshots/workflow-update/itl-workflow-update-completed-'+$ids['branch-commit-ready'])) | Should -BeTrue
+        # A resumed preparation has no pinned master update left to continue.
+        Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt
+        @(Get-Content -LiteralPath $order -Encoding UTF8) | Should -Be @('continue defective','update candidate','update candidate')
+    }
+    It 'keeps a pinned master update and its owner failure when the continuation does not finish it' {
+        $updater="param(`$ProjectRoot,`$SourceRoot,`$WorkflowUpdateBranchRootsFile)`n[Console]::Error.WriteLine('WORKFLOW_UPDATE_SOURCE_MISSING: restore the recorded candidate checkout')`nexit 1`n"
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        $id=[guid]::NewGuid().ToString('N')
+        $snapshot=Join-Path $script:standRoot ('.agent-1c/snapshots/workflow-update/itl-workflow-update-rollback-'+$id)
+        [void][IO.Directory]::CreateDirectory($snapshot)
+        $scopeA=[ordered]@{schemaVersion=1;projectRoot=$script:standRoot;sourceCommit='defective';roots=@($script:standRoot)}
+        [IO.File]::WriteAllText((Join-Path $snapshot 'transaction.json'),([ordered]@{phase='master-committed';sourceCommit='defective';sourceRoot='missing';rolloutScope=$scopeA}|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
+        $preparation=[pscustomobject]@{projectRoot=$script:standRoot;sourceCommit='candidate';roots=@();requiresWorkflowUpdate=$true;capsules=@()}
+        $attempt=[pscustomobject]@{phase='candidate-built'}
+        { Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt } | Should -Throw ('*PREPARATION_FAILED*stand-workflow-continue-'+$id+'*')
+        Test-Path -LiteralPath $snapshot | Should -BeTrue
+        $script:savedAttempt.standPreparation.status | Should -Be 'running'
+    }
+    It 'keeps preparation before calculation and saving in the actual publisher' {
+        $publisher=@($script:publisherAst.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Publish-AccumulatedDevelop'},$false))[0]
+        $calls=@($publisher.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst]},$true))
+        $prepare=@($calls | Where-Object { $_.GetCommandName() -ceq 'Invoke-DeliveryStandPreparation' })[0]
+        $calculate=@($calls | Where-Object { $_.GetCommandName() -ceq 'Invoke-DeliveryCandidatePlanCalculation' })[0]
+        $save=@($calls | Where-Object { $_.GetCommandName() -ceq 'Save-DeliveryQualityPlan' })[0]
+        $prepare.Extent.StartOffset | Should -BeLessThan $calculate.Extent.StartOffset
+        $calculate.Extent.StartOffset | Should -BeLessThan $save.Extent.StartOffset
+    }
+}

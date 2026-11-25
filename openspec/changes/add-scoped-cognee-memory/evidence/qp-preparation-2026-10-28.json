@@ -1,0 +1,687 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-28",
+  "authorization": "QP0-QP4 preparation only",
+  "phase": "QP0-QP4 prepared; no normal client cutover",
+  "mode": "first-empty-production-start",
+  "registry": {
+    "registryPinnedRevision": "0274a8ffb5a03ba7b856736c2b4a637ccbe98b73",
+    "registryCurrentMain": "fc2f9f92daa05be117c7fc26e2621d8acb97e7be",
+    "businessInputsEqual": {
+      "catalog/catalog.json": true,
+      "catalog/product-relations.json": true
+    },
+    "sharedProductIds": [
+      "erppm4",
+      "erppm5",
+      "pm4-corp",
+      "pm4-prof",
+      "pm5-corp",
+      "pm5-prof",
+      "unfpm4",
+      "unfpm5"
+    ],
+    "projectIds": [
+      "pm4-corp-development",
+      "pm4-prof-development",
+      "unfpm4-development",
+      "erppm4-development",
+      "pm5-core-development",
+      "pm5-prof-development",
+      "unfpm5-development",
+      "erppm5-development"
+    ],
+    "organizationId": "itland",
+    "sharedScopeCount": 17,
+    "uninstantiatedComponentProducts": [
+      "1c-erp",
+      "1c-unf"
+    ]
+  },
+  "source": {
+    "qualificationOnly": true,
+    "preservedOriginals": 84,
+    "datasets": 25,
+    "nativePending": 0,
+    "localUnsentPending": 2,
+    "workingOriginalsToImport": 0
+  },
+  "backup": {
+    "status": "copied-verified",
+    "fileEntries": 3196,
+    "bytes": 2622497612,
+    "manifestSha256": "6fb3248ee957f7e59f7253dbb4925d8237c0528e9ecb42afa3f27a24bec42525",
+    "pausedSeconds": 22.554,
+    "sourceConfigSha256": "bf21215209ed142164ec998568474e4da27f601098e77a4ab11a222ba3a00f53",
+    "sourceRunning": true,
+    "sourceConfigUnchanged": true,
+    "originalsDeleted": 0,
+    "freeBytes": 15476772864
+  },
+  "restore": {
+    "sourceOriginals": 84,
+    "restoredOriginals": 84,
+    "sameExactIdsAndRawHashes": true,
+    "samePrincipal": true,
+    "restoredNativePending": 0
+  },
+  "candidate": {
+    "id": "25759beab4b078bba20c8f7ffecae1ed70e1c6dd7e964f3a542f86e231ded5cf",
+    "name": "itl-cognee-qwen-prod-v1",
+    "port": 18220,
+    "instanceId": "cognee-qwen-prod-20261028-v1",
+    "profile": "cognee-qwen4096-v1",
+    "organizationId": "itland",
+    "image": "sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820",
+    "state": "empty-candidate-prepared",
+    "datasets": [
+      {
+        "scopeKind": "organization",
+        "scopeId": "itland",
+        "label": "itl_organization_itland_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "d1068619-cbcf-5fba-89dd-b9ada1f8a91b",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "product",
+        "scopeId": "erppm4",
+        "label": "itl_product_erppm4_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "995d4ba0-1592-512f-8cf6-c898993c99a0",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "product",
+        "scopeId": "erppm5",
+        "label": "itl_product_erppm5_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "b753015e-281c-5a3b-9d0b-1b9e31a0fc98",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "product",
+        "scopeId": "pm4-corp",
+        "label": "itl_product_pm4-corp_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "38909b83-566f-55ce-8e81-3cad9d32203a",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "product",
+        "scopeId": "pm4-prof",
+        "label": "itl_product_pm4-prof_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "49e6b470-6450-5394-8256-61000bb1a58d",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "product",
+        "scopeId": "pm5-corp",
+        "label": "itl_product_pm5-corp_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "24d35070-260f-5c8d-b711-b5eda9ebd5e4",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "product",
+        "scopeId": "pm5-prof",
+        "label": "itl_product_pm5-prof_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "23554700-5883-5791-b9f2-3e638643d774",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "product",
+        "scopeId": "unfpm4",
+        "label": "itl_product_unfpm4_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "07674c07-ffc5-549a-a05b-df2509a31329",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "product",
+        "scopeId": "unfpm5",
+        "label": "itl_product_unfpm5_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "320c0c82-0af5-5424-ba6e-9718738108a3",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "project",
+        "scopeId": "pm4-corp-development",
+        "label": "itl_project_pm4-corp-development_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "b6ddd5af-89ff-5e41-9591-ce94258728ea",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "project",
+        "scopeId": "pm4-prof-development",
+        "label": "itl_project_pm4-prof-development_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "e13d2b4d-6366-5cab-bee6-5f4ccfd4abd6",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "project",
+        "scopeId": "unfpm4-development",
+        "label": "itl_project_unfpm4-development_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "81bb3dec-f8c7-544a-ab74-dccbaf7d4280",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "project",
+        "scopeId": "erppm4-development",
+        "label": "itl_project_erppm4-development_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "629674d0-21a0-5fa0-a6a2-6aaa283f2d01",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "project",
+        "scopeId": "pm5-core-development",
+        "label": "itl_project_pm5-core-development_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "d0ebe29e-259b-59b3-9b2b-bf4dff994cef",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "project",
+        "scopeId": "pm5-prof-development",
+        "label": "itl_project_pm5-prof-development_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "e78f30fe-f55c-57b7-a2c2-38ee235c28ee",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "project",
+        "scopeId": "unfpm5-development",
+        "label": "itl_project_unfpm5-development_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "95a8cb24-79b2-5f76-ba63-039b183b367e",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      },
+      {
+        "scopeKind": "project",
+        "scopeId": "erppm5-development",
+        "label": "itl_project_erppm5-development_qwen4096_v1",
+        "state": "verified",
+        "datasetId": "2e6e6d01-b1a9-5fe0-8dc7-8254d0d91c2a",
+        "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "admitted": true
+      }
+    ],
+    "workingOriginals": 0,
+    "clientBindingsChanged": false,
+    "openApiSha256": "41584822e9403d6fd96966f285714c004e5c77fff72c26514d72d99268bbbe8a",
+    "principalId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+    "nativeDatasetCount": 17,
+    "sourceRunning": true
+  },
+  "isolation": {
+    "id": "28d661f64620b2760334dc67702c495fda85e78f68cc4359ad553d958c7b38e4",
+    "name": "itl-cognee-qp-qwen-qualification-20261028",
+    "port": 18222,
+    "image": "sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820",
+    "principalId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+    "data": "/home/mcp/itl-cognee-qp-20261028/qualification/data",
+    "productionCandidateStopped": true,
+    "BGERestoreStopped": true,
+    "loggerWrapper": false,
+    "emptySnapshotBytes": 637899,
+    "emptySnapshotManifestSha256": "abfd718140c7c14e7e2b2d34c1ae6f740a4edadaad399cb21883153c4402d995",
+    "sourceBGERunning": true,
+    "freeBytes": 12839055360
+  },
+  "model": {
+    "embeddingProvider": "openai_compatible",
+    "embeddingModel": "qwen/qwen3-embedding-8b",
+    "embeddingDimensions": 4096,
+    "endpoint": "https://openrouter.ai/api/v1",
+    "cacheSize": 6,
+    "rateLimitEnabled": false,
+    "graphBufferBytes": 268435456,
+    "cpu": 2,
+    "memoryBytes": 5368709120,
+    "memoryAndSwapTotalBytes": 5368709120,
+    "frontendRecallSeconds": 20,
+    "frontendRememberSeconds": 60,
+    "diagnosticWrapper": false
+  },
+  "reusedEvidence": [
+    {
+      "path": "openspec/changes/add-scoped-cognee-memory/evidence/qwen-lru6-recheck-2026-10-28.md",
+      "sha256": "5bf317b85f15373552d7463ecf3e2c85e48da65609a95777ad5db76a7e01e82b"
+    },
+    {
+      "path": "openspec/changes/add-scoped-cognee-memory/evidence/qwen-lru6-codex-answers-2026-10-28.md",
+      "sha256": "50e89030110c6b61e0769971183b8b4f9df6e3802fb7307a7b7066e1cb0cf030"
+    }
+  ],
+  "forbiddenActionsExecuted": {
+    "QP5Cutover": false,
+    "QP6ProductionRollback": false,
+    "Gate6": false,
+    "workingMigration": false,
+    "workflowPublication": false,
+    "push": false,
+    "PR": false
+  },
+  "embeddingMonetaryCost": "unknown; not zero",
+  "registration": {
+    "owner": "scripts/source-delivery.ps1 -Action RegisterChange -QueueId product-project-registry-g2",
+    "Targeted": "only through owner after coherent commit",
+    "authoritativeResult": "shared Git queue ledger for this candidate; separate from native and release proof"
+  },
+  "completedStages": [
+    "QP0",
+    "QP1",
+    "QP2",
+    "QP3",
+    "QP4"
+  ],
+  "nativeIndex": {
+    "originals": 50,
+    "datasets": 12,
+    "fullFrozenPayloadSetEqual": true,
+    "nativeIndexRows": 50,
+    "ru21Seconds": 13.312248,
+    "ru21Rows": 32,
+    "unscopedCalls": 0,
+    "goldExposed": false,
+    "resource": {
+      "utc": "2026-10-28T10:17:03.060165+00:00",
+      "memory.current": "4260368384",
+      "memory.peak": "5092737024",
+      "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "cpu.stat": "usage_usec 717385278\nuser_usec 555774879\nsystem_usec 161610399\ncore_sched.force_idle_usec 0\nnr_periods 24592\nnr_throttled 254\nthrottled_usec 3604148\nnr_bursts 0\nburst_usec 0"
+    }
+  },
+  "costs": {
+    "ingestionStartedUtc": "2026-10-28T09:18:13.305591+00:00",
+    "ingestionFinishedUtc": "2026-10-28T10:15:42.825806+00:00",
+    "wholeSeconds": 3449.520215,
+    "confirmedOriginals": 50,
+    "successfulWriteTimingsCount": 49,
+    "timingsExcludeFailedAndRecoveredRuN26": true,
+    "medianSeconds": 26.403305,
+    "maxSeconds": 271.259213,
+    "over60Seconds": 13,
+    "peakBytes": 5092737024,
+    "nativeOomEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "embeddingMonetaryCost": "unknown"
+  },
+  "sourceFinalParity": {
+    "originals": 84,
+    "datasets": 25,
+    "allExactDatasetDataRawHashesEqual": true,
+    "principalSame": true,
+    "providerBytesSame": true,
+    "credentialBytesSame": true,
+    "nativePending": 0,
+    "oldLocalUnsentPending": 2,
+    "backendMutations": false
+  },
+  "qualificationResultSha256": "0a5c01ecbcbddbf37f21b517618812d6e632ca6958982b0fca457608df7df8bc",
+  "nativeVectorProof": {
+    "nativeLanceSDK": true,
+    "dimensions": [
+      4096
+    ],
+    "tables": 72,
+    "rows": 895,
+    "readOnlyMetadata": true
+  },
+  "controlledRestore": {
+    "oldSnapshotObserved": true,
+    "oldSnapshotNotAdmitted": true,
+    "lateCorrectionReapplied": true,
+    "retirementReapplied": true,
+    "finalCurrentConfirmed": true,
+    "samePrincipal": true,
+    "frozenOriginalsEqualAfterRestore": 50,
+    "productionRollbackQP6Executed": false
+  },
+  "frontend": {
+    "nativeSourceStdio": true,
+    "fixtureOnly": true,
+    "ordinaryCommonAccount": true,
+    "freshProcessExactOriginals": true,
+    "originalRU01QueryAndRoute": "exact recorded lexical tool call; no new question",
+    "ru01Seconds": 3.873038,
+    "ru01CardIds": [
+      "ru-n46",
+      "ru-n01",
+      "ru-n28",
+      "ru-n06",
+      "ru-n29",
+      "ru-n36",
+      "ru-n48",
+      "ru-n02"
+    ],
+    "ru01TokenCounts": {
+      "modelMapping": "unverified until actual client/model G5",
+      "cl100k_base": 1476,
+      "measurement": "measured-encode-ordinary",
+      "o200k_base": 1262
+    },
+    "explicitOffRespected": true,
+    "offLocalStatusAvailable": true,
+    "normalClientReloadExecuted": false
+  },
+  "observedLimitations": {
+    "extraSemanticQuestionProbe": {
+      "seconds": 20.121869,
+      "error": "MEMORY_TRANSPORT_UNCONFIRMED",
+      "retained": true,
+      "thresholdSeconds": 20,
+      "notTheRecordedRU01LexicalCall": true
+    },
+    "embeddingIngestionFailure": {
+      "noteId": "ru-n26",
+      "errorClass": "EmbeddingException",
+      "firstClientTimeoutSeconds": 180.089493,
+      "nativePipelineFailureConfirmed": true,
+      "supportedNativeCognifyContinuation": true,
+      "rememberReplayed": false,
+      "finalSameOriginalCompleted": true
+    },
+    "bulkWritesOver60Seconds": 13,
+    "bulkWriteTimingCountExcludesRecoveredFailure": 49,
+    "allQueriesWithin20SecondsClaimed": false,
+    "ingestionMoneyCost": "unknown"
+  },
+  "storage": {
+    "initialParentFreeBytes": 18112552960,
+    "endOneSampleFreeBytes": 30617600,
+    "currentDirectFreeBytes": 12614455296,
+    "sameFilesystemConfirmed": true,
+    "transientLowFreeCause": "unconfirmed; no attribution to preserved copies",
+    "filesDeleted": 0,
+    "allocationChanged": false,
+    "ownedAllocatedBytes": 5484285952
+  },
+  "productionFinal": {
+    "stopped": true,
+    "emptySnapshotByteEqual": true,
+    "workingOriginals": 0,
+    "clientBindingsChanged": false,
+    "privateProviderPreparedOnly": true,
+    "normalClientEndpointNotActivated": true
+  },
+  "sourceChange": {
+    "admittedProfiles": 2,
+    "legacyProfilePreserved": true,
+    "matchingProfileAndHashRequired": true,
+    "alwaysOnInstructionsDeltaBytes": 0,
+    "toolSchemasDeltaBytes": 0,
+    "additionalBackendCallsPerNormalOperation": 0,
+    "rulesCommit": "a2cbdcef52316db426acedc852f495564189f1ca",
+    "clauseSha256": "d6cd7ce3e81b782a7f1f7c89820110b23f8a3fc8ab820373be60aa1e3bf0ca1b"
+  },
+  "productionScopeMappings": [
+    {
+      "scopeKind": "organization",
+      "scopeId": "itland",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "d1068619-cbcf-5fba-89dd-b9ada1f8a91b",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "product",
+      "scopeId": "erppm4",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "995d4ba0-1592-512f-8cf6-c898993c99a0",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "product",
+      "scopeId": "erppm5",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "b753015e-281c-5a3b-9d0b-1b9e31a0fc98",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "product",
+      "scopeId": "pm4-corp",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "38909b83-566f-55ce-8e81-3cad9d32203a",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "product",
+      "scopeId": "pm4-prof",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "49e6b470-6450-5394-8256-61000bb1a58d",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "product",
+      "scopeId": "pm5-corp",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "24d35070-260f-5c8d-b711-b5eda9ebd5e4",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "product",
+      "scopeId": "pm5-prof",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "23554700-5883-5791-b9f2-3e638643d774",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "product",
+      "scopeId": "unfpm4",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "07674c07-ffc5-549a-a05b-df2509a31329",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "product",
+      "scopeId": "unfpm5",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "320c0c82-0af5-5424-ba6e-9718738108a3",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "project",
+      "scopeId": "pm4-corp-development",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "b6ddd5af-89ff-5e41-9591-ce94258728ea",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "project",
+      "scopeId": "pm4-prof-development",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "e13d2b4d-6366-5cab-bee6-5f4ccfd4abd6",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "project",
+      "scopeId": "unfpm4-development",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "81bb3dec-f8c7-544a-ab74-dccbaf7d4280",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "project",
+      "scopeId": "erppm4-development",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "629674d0-21a0-5fa0-a6a2-6aaa283f2d01",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "project",
+      "scopeId": "pm5-core-development",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "d0ebe29e-259b-59b3-9b2b-bf4dff994cef",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "project",
+      "scopeId": "pm5-prof-development",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "e78f30fe-f55c-57b7-a2c2-38ee235c28ee",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "project",
+      "scopeId": "unfpm5-development",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "95a8cb24-79b2-5f76-ba63-039b183b367e",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    },
+    {
+      "scopeKind": "project",
+      "scopeId": "erppm5-development",
+      "oldProductionDatasetId": null,
+      "newDatasetId": "2e6e6d01-b1a9-5fe0-8dc7-8254d0d91c2a",
+      "ownerId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d"
+    }
+  ],
+  "retainedLocalEvidence": [
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp0-decision.json",
+      "sha256": "3b74dfc168f8186f653a2b51689f9a6fdc720996a03df3890a4388fea0427125"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp1-restore-parity.json",
+      "sha256": "3d33483a9fa08fd43f04181eb147c82c0298d565af90b2ca216aca5f80f5f77b"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp3-index-proof-1.stdout.json",
+      "sha256": "25b22d2dbdf46612775a3c8da5299199afca6c1a308f2a8b82e741ff910abe97"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-initial-r3.result.json",
+      "sha256": "5263e4bc4ce22c25cf0ecb0d7ba91befa23c8f0c694059cebfb3d655262f12b5"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-fresh-r2.result.json",
+      "sha256": "e9e31fdad8802f7e8d5914e9d53e303005b672a79b92084f20e112bdd7e88b2c"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-late.result.json",
+      "sha256": "5978e8eb3cc15c1af00be15265ad8f5688fc715a9b51f32b1aea319e6fb2c892"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-restored-check.result.json",
+      "sha256": "b2a375188a177655bce901b4cacf331771e2b33b770141df886cc3bc1c57ccc5"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-repair.result.json",
+      "sha256": "17a517f854e6a7b4173e5892f1881a8a159387fada99dba8e4fb915e2d753d18"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-final.result.json",
+      "sha256": "00bc3847fda6cb53d3eab8a2abd059c0fccd54d2a06acc60f17c286b94687149"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-off.result.json",
+      "sha256": "44da4ca8df7a2e4786bc47d923a5cce36b1f5dacb51711a618e15988bb74ef00"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-final-preservation-1.stdout.json",
+      "sha256": "de9c792a0a9989e9b7b496a929e3f06a8654f944f67f7b275967deefc0db0943"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-source-parity.json",
+      "sha256": "21a8cef9baa00886a1fdd3832015c99d0a090f9f7ab52155ac34b489a7688c50"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-prepared-provider.json",
+      "sha256": "c9f380f4a6439cfd752e503aa291d653a0c0e45586829bc15b08d8270eecaa45"
+    },
+    {
+      "path": "build/agent-artifacts/memory-qp0-qp4-20261028/evidence/qp4-storage-current-1.stdout.json",
+      "sha256": "ea9c2c271929194778e8696b4d267fec9bfca059819fb32fcefb81c5044331be"
+    }
+  ]
+}

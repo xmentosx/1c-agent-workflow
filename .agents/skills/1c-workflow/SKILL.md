@@ -9,6 +9,8 @@ Detailed ITL workflow router for non-routine work. Explicit generated `itl-*` sk
 
 ## Routing
 
+For a suspected workflow defect or rule conflict, use `references/workflow-incidents.md` to recover or propose a scoped exception and resume the original task.
+
 Use `scripts/agent-1c.ps1` when PowerShell is available. Open only the matching topic below. Open `references/workflow.md` only for help, an unclear request, or the complete client-aware command menu:
 
 - `references/init-setup.md`: init, checks, web publication/Vanessa setup, `update-workflow`, `update-ai-rules`.
@@ -43,13 +45,13 @@ Installed projects must start with the foreground monitored launcher:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
 ```
 
-Do not call the wizard helper directly, preflight with `Test-Path` (raw probes may emit CLIXML), use background PowerShell or `timeout: 0`. If terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. The launcher owns status and needs a positive long timeout (`MaxWaitSeconds 3600`); use `-KeepWindowOnFailure` only for debugging.
+Do not call the wizard helper directly, preflight with `Test-Path` (raw probes may emit CLIXML), use background PowerShell or `timeout: 0`. If terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. The launcher owns status and uses the shared action timeout policy (`init-project` defaults to 14400 seconds); use `-KeepWindowOnFailure` only for debugging.
 
-Long actions default to `timeout_ms >= 3900000`, above Designer's 3600-second limit; raise it with a higher configured limit. Do not use `120000 ms`; status/help do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
+Long actions use a positive long timeout above their action limit: `timeout_ms >= 14700000` for default `init-project`/`sync-master`, `timeout_ms >= 3900000` for other long actions; raise it for a higher limit. A client with a lower foreground cap (Claude Code) runs the same command with `run_in_background: true` and awaits its notification; that is not background PowerShell. Do not use `120000 ms`; status/help do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
 
-If monitored bootstrap is interrupted, repeat the same command with `timeout_ms >= 3900000`; the launcher owns orphan detection and resume. Do not delete Git locks, continue init manually, or edit run status.
+If monitored bootstrap is interrupted, repeat the same command with `timeout_ms >= 14700000` for the default limit, or configured limit plus 300 seconds; the launcher owns orphan detection and resume. Do not delete Git locks, continue init manually, or edit run status.
 
-After any successful compact-runner action with a non-empty `userReport`, the final response must be exactly that Russian Markdown. Exception: on `classify-tests-after-refresh:*`, follow its `advanced-actions.md` continuation before finalizing; never ask the developer or run 1C. Do not translate it, convert it to a table, rename or merge fields, reorder or omit lines, use a code fence, summarize, substitute `requiredAction`, read `console.log`, or lose settings, evidence, MCP/Browser, advice, and actions. New worktree windows need no reload. On `userReportOmitted=true`, follow report recovery in `.agents/skills/1c-workflow/references/advanced-actions.md`; omission never changes the helper result.
+After any successful compact-runner action with a non-empty `userReport`, the final response must be exactly that Russian Markdown. Exceptions: on `classify-tests-after-refresh:*`, follow its `advanced-actions.md` continuation before finalizing; on `export-dev-branch-result`, follow its explicit wrapper's verbatim-report plus context-only task-summary contract. Never ask the developer or run 1C. Do not translate it, convert it to a table, rename or merge fields, reorder or omit lines, use a code fence, summarize, substitute `requiredAction`, read `console.log`, or lose settings, evidence, MCP/Browser, advice, and actions. New worktree windows need no reload. On `userReportOmitted=true`, follow report recovery in `.agents/skills/1c-workflow/references/advanced-actions.md`; omission never changes the helper result.
 
 With default `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm`, create branches through `scripts/run-agent-1c-window.ps1`: a valid source confirmation makes the run question-free, otherwise the copied base is confirmed immediately after repository unbind. Direct helper calls require that source confirmation or explicit automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
 
@@ -57,10 +59,10 @@ Ask setup questions only when the helper cannot collect them. Store secrets only
 
 Use sibling Git worktrees, leave the main folder on `master`, and load only the copied branch infobase. Stop on unexpected dirty Git state before lifecycle changes.
 
-Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs configured YAxUnit unit tests, Vanessa Automation through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
+Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs configured YAxUnit unit tests, Vanessa Automation through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. For change/cumulative proof planning, follow `references/verification-change.md`. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
 
 ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and needs no web publication. Use Vanessa UI MCP only when static analysis cannot answer the UI question; `/itl-check` remains the separate verification runner. vibecoding1c MCP is helper-managed; External MCP is unmanaged. Never paste keys into chat or tracked files.
 
 Read ignored runtime folders only when diagnosing a specific helper run or artifact.
 
-When launching native Windows executables such as `1cv8.exe` through `Start-Process`, pass `-ArgumentList` as one joined and correctly quoted native command-line string, never as a PowerShell array.
+Never start `1cv8.exe` through `Start-Process`: it bypasses the per-infobase session guard. Every 1C launch, including a user request such as "open Designer for base X", goes through `Start-OneCProcessBackground` with any command-line arguments, the exact base, and `-Visible` when the window is for the user (hidden otherwise); see `references/workflow.md`.

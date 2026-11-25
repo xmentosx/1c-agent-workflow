@@ -149,6 +149,96 @@ Scenario: Stored expression is not executed here
         @($warnings | Select-Object -ExpandProperty line) | Should -Be @(5, 6, 11, 16)
     }
 
+    It "warns once for adjacent same-context TestClient code steps only" {
+        $featurePath = Join-Path $script:LintRoot "tests\features\adjacent-code.feature"
+        @"
+Feature: Adjacent code
+Scenario: Two client steps
+    And $script:ClientCodePhrase
+        """bsl
+        A = 1;
+        """
+    # The comment does not separate the steps.
+    And $script:ClientCodePhrase
+        """bsl
+        B = 2;
+        """
+Scenario: Mixed contexts and a step between
+    And $script:ServerExtensionCodePhrase
+        """bsl
+        A = 1;
+        """
+    And $script:ClientCodePhrase
+        """bsl
+        B = 2;
+        """
+    And another action
+    And $script:ClientCodePhrase
+        """bsl
+        C = 3;
+        """
+Scenario: The boundary resets
+    And $script:ClientCodePhrase
+        """bsl
+        D = 4;
+        """
+Scenario: Two server extension steps
+    And $script:ServerExtensionCodePhrase
+        """bsl
+        A = 1;
+        """
+    And $script:ServerExtensionCodePhrase
+        """bsl
+        B = 2;
+        """
+"@ | Set-Content -LiteralPath $featurePath -Encoding UTF8
+
+        $warnings = & {
+            . $HelperPath -ProjectRoot $script:LintRoot -Action help *> $null
+            Get-VanessaAuthoringLintWarnings -FeatureRecords @([pscustomobject]@{ path = 'tests/features/adjacent-code.feature' })
+        }
+
+        @($warnings | Select-Object -ExpandProperty code -Unique) | Should -Be @('ITL_VANESSA_LINT_ADJACENT_CODE_STEPS')
+        @($warnings | Select-Object -ExpandProperty line) | Should -Be @(8, 36)
+    }
+
+    It "warns once per code block that starts a visible console through WScript.Shell.Exec" {
+        $plainCodePhrase = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCw"))
+        $hiddenRunner = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JLQsNC90LXRgdGB0LAu0JLRi9C/0L7Qu9C90LjRgtGM0JrQvtC80LDQvdC00YPQntCh0JHQtdC30J/QvtC60LDQt9Cw0KfQtdGA0L3QvtCz0L7QntC60L3QsA=="))
+        $featurePath = Join-Path $script:LintRoot "tests\features\console.feature"
+        @"
+Feature: Console commands
+Scenario: Polling netstat in the TestManager
+    And $plainCodePhrase
+        """bsl
+        Shell = New COMObject("WScript.Shell");
+        Process = Shell.Exec("netstat -ano");
+        Again = Shell.exec ("netstat -ano");
+        """
+Scenario: Hidden runner, comment and other members
+    And $plainCodePhrase
+        """bsl
+        // WScript.Shell.Exec("netstat") would open a console window
+        Code = $hiddenRunner("netstat -ano > file.txt");
+        Connection.Execute("SELECT 1");
+        """
+Scenario: Server extension block
+    And $script:ServerExtensionCodePhrase
+        """bsl
+        Process = New COMObject("WScript.Shell").Exec("cmd /c dir");
+        """
+"@ | Set-Content -LiteralPath $featurePath -Encoding UTF8
+
+        $warnings = & {
+            . $HelperPath -ProjectRoot $script:LintRoot -Action help *> $null
+            Get-VanessaAuthoringLintWarnings -FeatureRecords @([pscustomobject]@{ path = 'tests/features/console.feature' })
+        }
+
+        @($warnings | Select-Object -ExpandProperty code -Unique) | Should -Be @('ITL_VANESSA_LINT_VISIBLE_CONSOLE')
+        @($warnings | Select-Object -ExpandProperty line) | Should -Be @(6, 19)
+        $warnings[0].message | Should -BeLike "*$hiddenRunner*"
+    }
+
     It "bounds warning output and does not echo feature contents" {
         $featurePath = Join-Path $script:LintRoot "tests\features\bounded.feature"
         $secret = 'secret-marker-that-must-not-be-printed'

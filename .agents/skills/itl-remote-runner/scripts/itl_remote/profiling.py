@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 import zlib
 
 from .common import OwnedProcess, WorkError, beneath, digest, read_json, stamp, write_json
+from .source_mapping import SourceResolver, coverage as source_coverage
 
 RESPONSE = "http://v8.1c.ru/8.3/debugger/debugRDBGRequestResponse"
 DATA = "http://v8.1c.ru/8.3/debugger/debugBaseData"
@@ -24,7 +25,35 @@ ET.register_namespace("response", RESPONSE)
 ET.register_namespace("data", DATA)
 
 
-def prepare_debug_server(target, run, processes, cancelled):
+CLIENT_PROFILE_TYPES = ("ManagedClient", "Client")
+
+
+def profile_client_type(proof):
+    """Keep the native client family; old proofs still require ManagedClient."""
+    kinds = proof.get("targetTypes")
+    if kinds is None:
+        return "ManagedClient"
+    if not isinstance(kinds, dict):
+        raise WorkError("RDBG_TARGET_TYPES_INVALID")
+    clients = [kind for kind in kinds.values() if kind in CLIENT_PROFILE_TYPES]
+    if not clients:
+        raise WorkError("RDBG_OWNED_CLIENT_NOT_DISCOVERED")
+    if len(clients) != 1:
+        raise WorkError("RDBG_OWNED_CLIENT_AMBIGUOUS")
+    return clients[0]
+
+
+def required_profile_types(base_kind, client_type="ManagedClient"):
+    if client_type not in CLIENT_PROFILE_TYPES:
+        raise WorkError("RDBG_CLIENT_TYPE_UNSUPPORTED")
+    if base_kind == "file":
+        return [client_type, "ServerEmulation"]
+    if base_kind == "server":
+        return [client_type, "Server"]
+    raise WorkError("RDBG_INFOBASE_KIND_REQUIRED")
+
+
+def prepare_debug_server(target, run, processes, cancelled, *, resource_context=None):
     """File bases get a job-owned loopback server on the execution host.
 
     Server bases use an explicitly configured endpoint; shared dbgs is never
@@ -56,7 +85,8 @@ def prepare_debug_server(target, run, processes, cancelled):
     if notification.exists():
         raise WorkError("STALE_DBGS_NOTIFICATION")
     command = [str(executable), "--addr=127.0.0.1", "--port=" + str(port), "--notify=" + str(notification)]
-    process = OwnedProcess(command, target["workspace"], Path(run) / "dbgs.log")
+    process = (resource_context.process(command, target["workspace"], Path(run) / "dbgs.log")
+               if resource_context else OwnedProcess(command, target["workspace"], Path(run) / "dbgs.log"))
     processes.append(process)
     deadline = time.monotonic() + config.get("startTimeoutSeconds", 30)
     while not notification.exists():
@@ -93,7 +123,7 @@ def select_runtime_session(targets, alias, seance=None, instance=None, session_n
             raise WorkError("RDBG_SESSION_NUMBER_INVALID") from None
     candidates = []
     for target in targets:
-        if target.get("infoBaseAlias") != alias or target.get("targetType") not in ("ManagedClient", "Server"):
+        if target.get("infoBaseAlias") != alias or target.get("targetType") not in (*CLIENT_PROFILE_TYPES, "Server", "ServerEmulation"):
             continue
         if seance and target.get("seanceId") != seance:
             continue
@@ -112,7 +142,10 @@ def select_runtime_session(targets, alias, seance=None, instance=None, session_n
     ids = [t.get("id") for t in candidates]
     if not all(ids) or len(ids) != len(set(ids)):
         raise WorkError("RDBG_TARGET_IDS_INVALID")
-    if sum(t["targetType"] == "ManagedClient" for t in candidates) != 1:
+    client_count = sum(t["targetType"] in CLIENT_PROFILE_TYPES for t in candidates)
+    if client_count == 0:
+        raise WorkError("RDBG_OWNED_CLIENT_NOT_DISCOVERED")
+    if client_count != 1:
         raise WorkError("RDBG_OWNED_CLIENT_AMBIGUOUS")
     return candidates
 
@@ -157,6 +190,8 @@ def runtime_proof(context_path, client_pid, seance=None, instance=None, observat
         proof["seanceId"] = selected[0]["seanceId"]
         proof["infoBaseInstanceID"] = selected[0]["infoBaseInstanceID"]
         proof["targetIds"] = [t["id"] for t in selected]
+        proof["targetTypes"] = {t["id"]: t["targetType"] for t in selected}
+        proof["requiredTypes"] = required_profile_types(context["target"]["infoBase"]["kind"], profile_client_type(proof))
         if observation_path is not None:
             proof["sessionObservationSha256"] = digest(observation_path)
             proof["sessionNumber"] = session_number
@@ -171,7 +206,8 @@ def fields(element):
     return {child.tag.rsplit("}", 1)[-1]: child.text for child in element}
 
 
-def analyze_raw(paths, session=None, expected=None, source_map=None):
+def analyze_raw(paths, session=None, expected=None, source_map=None, *, source_policy="optional", source_map_root=None, source_modules=None):
+    sources = SourceResolver(source_map, root=source_map_root, policy=source_policy, selection=source_modules)
     packets = {}
     for path in paths:
         root = ET.fromstring(Path(path).read_bytes())
@@ -188,33 +224,33 @@ def analyze_raw(paths, session=None, expected=None, source_map=None):
                              target.get("infoBaseAlias") != expected["infoBaseAlias"] or
                              target.get("infoBaseInstanceID") != expected["infoBaseInstanceID"]):
                 raise WorkError("FOREIGN_PROFILE_PACKET")
+            if expected and expected.get("targetTypes") and expected["targetTypes"].get(target["id"]) != target.get("targetType"):
+                raise WorkError("PROFILE_TARGET_TYPE_MISMATCH")
             hz = float(measure.findtext("{" + MEASURE + "}performanceFrequency", "0"))
             if hz <= 0:
                 raise WorkError("INVALID_PROFILE_FREQUENCY")
             rows = []
+            packet_sources = []
             modules = measure.findall("{" + MEASURE + "}moduleData")
             for module in modules:
-                module_id = fields(module.find("{" + MEASURE + "}moduleID"))
-                mapping = (source_map or {}).get(module_id.get("id", ""))
-                source_match = {"sourceMatched": False}
-                if mapping and mapping.get("moduleVersion") == module_id.get("version"):
-                    source = Path(mapping["path"])
-                    try:
-                        if source.is_file() and digest(source) == mapping["sha256"]:
-                            source_match.update(sourceMatched=True, source=str(source))
-                    except OSError as error:
-                        source_match["sourceIssue"] = str(error)
+                identity_node = module.find("{" + MEASURE + "}moduleID")
+                module_id = fields(identity_node) if identity_node is not None else {}
+                source_match = sources.resolve(module_id)
+                source_module = {"moduleID": module_id, **source_match, "lines": 0, "matchedLines": 0}
                 for line in module.findall("{" + MEASURE + "}lineInfo"):
                     row = {key: float(value) for key, value in fields(line).items()}
                     row.update(moduleID=module_id, seconds=row["durability"] / hz,
                                pureSeconds=row["pureDurability"] / hz, sourceMatched=False)
-                    row.update(source_match)
+                    row.update(sources.line(source_match, row.get("lineNo")))
+                    source_module["lines"] += 1
+                    source_module["matchedLines"] += int(row["sourceMatched"])
                     rows.append(row)
+                packet_sources.append(source_module)
             key = (sid, target["id"])
             packet = {"sessionId": sid, "target": target, "raw": str(path), "sha256": digest(path),
                       "bytes": Path(path).stat().st_size, "frequency": hz,
                       "totalSeconds": float(measure.findtext("{" + MEASURE + "}totalDurability", "0")) / hz,
-                      "modules": len(modules), "lines": len(rows),
+                      "modules": len(modules), "lines": len(rows), "sourceModules": packet_sources,
                       "top": sorted(rows, key=lambda row: row["pureSeconds"], reverse=True)[:30]}
             import hashlib
             packet["measureSha256"] = hashlib.sha256(ET.canonicalize(ET.tostring(measure, encoding="unicode"), strip_text=True).encode("utf-8")).hexdigest()
@@ -227,7 +263,14 @@ def analyze_raw(paths, session=None, expected=None, source_map=None):
     complete = bool(values) and (not expected or (
         {p["target"]["id"] for p in values} == set(expected["targetIds"]) and
         set(expected.get("requiredTypes", [])) <= {p["target"].get("targetType") for p in values}))
-    return {"format": "PerformanceInfoMain", "pff": None, "complete": complete, "packets": values}
+    observed_types = sorted({p["target"].get("targetType", "") for p in values})
+    coverage = {"requiredTypes": sorted(expected.get("requiredTypes", [])) if expected else [],
+                "observedTypes": observed_types,
+                "missingTypes": sorted(set(expected.get("requiredTypes", [])) - set(observed_types)) if expected else [],
+                "missingTargetIds": sorted(set(expected["targetIds"]) - {p["target"]["id"] for p in values}) if expected else [],
+                "ownershipVerified": expected is not None}
+    return {"format": "PerformanceInfoMain", "pff": None, "complete": complete, "coverage": coverage,
+            "sourceAnalysis": source_coverage(values, source_policy, source_modules), "packets": values}
 
 
 class Rdbg:
@@ -321,21 +364,35 @@ class Rdbg:
         try:
             self.call("initSettings")
             targets = self.call("getDbgTargets")
-            observed = {fields(item).get("id"): fields(item) for item in targets.findall("{" + RESPONSE + "}id")}
+            items = [fields(item) for item in targets.findall("{" + RESPONSE + "}id")]
+            observed = {}
             for identifier in self.proof["targetIds"]:
-                item = observed.get(identifier, {})
+                matches = [item for item in items if item.get("id") == identifier]
+                if len(matches) != 1:
+                    raise WorkError("RDBG_TARGET_OWNERSHIP_MISMATCH")
+                item = matches[0]
+                observed[identifier] = item
                 for key in ("seanceId", "infoBaseInstanceID", "infoBaseAlias"):
                     if item.get(key) != self.proof[key]:
                         raise WorkError("RDBG_TARGET_OWNERSHIP_MISMATCH")
+                if self.proof.get("targetTypes") and self.proof["targetTypes"].get(identifier) != item.get("targetType"):
+                    raise WorkError("RDBG_TARGET_TYPE_MISMATCH")
             types = {observed[identifier].get("targetType") for identifier in self.proof["targetIds"]}
             if not set(self.proof.get("requiredTypes", [])) <= types:
                 raise WorkError("RDBG_TARGET_FAMILIES_INCOMPLETE")
-            self.call("attachDetachDbgTargets", attach=True)
+            # A transport failure may follow a successful server-side attach.
+            # Cleanup must detach these already ownership-validated targets too.
             self.attached = True
+            self.call("attachDetachDbgTargets", attach=True)
             self.thread = threading.Thread(target=self._poll, daemon=True)
             self.thread.start()
-        except BaseException:
-            self.close()
+        except BaseException as primary:
+            try:
+                self.close()
+            except Exception as cleanup:
+                combined = WorkError(str(primary) + "; " + str(cleanup))
+                combined.cleanup_errors = [str(cleanup)]
+                raise combined from primary
             raise
 
     def _poll(self):
@@ -357,17 +414,19 @@ class Rdbg:
         self.call("setMeasureMode")
         self.measuring = False
         deadline = time.monotonic() + self.config.get("collectTimeoutSeconds", 30)
-        result = None
+        result = analyze_raw(list(self.raw), self.session, self.proof, source_policy=self.config.get("sourceAnalysis", "none"),
+                             source_modules=self.config.get("sourceAnalysisModules"))
         while time.monotonic() < deadline:
             if self.error:
                 raise self.error
             self.call("pingDebugUIParams")
-            result = analyze_raw(list(self.raw), self.session, self.proof)
+            result = analyze_raw(list(self.raw), self.session, self.proof, source_policy=self.config.get("sourceAnalysis", "none"),
+                                 source_modules=self.config.get("sourceAnalysisModules"))
             if result["complete"]:
                 break
             time.sleep(0.2)
-        if not result or not result["complete"]:
-            raise WorkError("PROFILE_INCOMPLETE")
+        # Retain usable packets and the precise coverage gap. A missing packet is
+        # partial evidence, never a complete server profile or a lost artifact.
         write_json(self.output / "profile.json", result)
         return result
 

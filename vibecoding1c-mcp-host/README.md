@@ -4,6 +4,15 @@ This folder is for the dedicated LAN machine that runs shared vibecoding1c MCP s
 It does not require Codex, Kilo, the workflow agent, or a target 1C project.
 
 For the administrator runbook in Russian, see [`RUNBOOK.ru.md`](RUNBOOK.ru.md).
+For offline acceptance of complete retained CodeChecker answers, see
+[answer acceptance](answer-acceptance/README.md). It preserves raw evidence and
+checks review coverage and source witnesses without calling or modifying servers.
+For `dev-karimov-new` Linux VM upgrades, the durable owner is [the private distribution host package](http://gitlabserv01.itland.local/root/MCP-vibecoding1c/-/tree/main/hosts/dev-karimov-new). Read its `README.md` and `contract.json`, then use the installed `/opt/itl-mcp/host-upgrade/upgrade.py` entrypoint. It uses the existing watchdog maintenance lock and qualifies each new Code image against the crash/resume repair before replacement. Temporary chat handoffs are not required; version-specific full-file overrides must not be carried forward without qualification.
+For native Code/Graph on a dedicated Linux VM with systemd recovery, see
+[the Linux host backend](linux-native-host/README.md).
+For the SPPR Docker reader, Windows collector and project client connection, see [SPPR operations](sppr-mcp/README.md).
+For opt-in Windows capacity checks, accepted snapshot retention and scheduled
+Docker VHD reclaim, see [storage retention](../docs/mcp-storage-retention.md).
 The canonical upstream MCP behavior and environment contract is documented at [OneRPA MCP servers for 1C](https://docs.onerpa.ru/mcp-servery-1c).
 
 ## Setup
@@ -27,11 +36,24 @@ Before creating a new container the installer checks that the configured Docker 
 If the image is missing, it runs `docker pull <image>` and stops with an explicit Docker daemon/registry
 diagnostic if the pull fails.
 
+Endpoint activation resolves the service's canonical MCP path through the existing
+container-bound identity probe, preserving the configured public origin. The second
+identity observation and safe health call qualify that exact URL without redirects.
+Native state, repeated publication and cutover retain the qualified URL; proxy setup
+retains its path in the Docker bridge upstream. A direct `/mcp` endpoint stays `/mcp`.
+This adds one read-only proof before activation (the existing healthy-host measurement
+was 4–15 seconds per proof); indexing and server recovery remain with their owners.
+HTTP redirect failures include the original URL, status and Location. Resolve the
+reported cause through the original setup/proxy/cutover owner, then repeat qualification;
+an unavailable proof preserves the running deployment and does not authorize a guessed
+registry edit. Ordinary nightly MCP connections keep their existing redirect behavior.
+
 The `bookstack` global server is built locally from `bookstack-product-docs-mcp/`.
 Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_ID` and
 `BOOKSTACK_TOKEN_SECRET` in `secrets`, and keep `bookstack` in `enabledServers.global`.
 The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `read_page`,
-`list_structure`, `index_status`, and `reindex_docs`.
+`list_structure`, `index_status`, `reindex_docs`, `source_info`, and the on-demand
+[personal page write](../.agents/skills/product-docs/page-write.md). The host read token stays read-only.
 Search defaults to five compact results and exposes `total_matches`, `has_more`, and
 `next_cursor` for bounded pagination. Multi-term FTS requires every term, exact matches stay
 first, confident semantic matches rank ahead of pages where query terms only occur separately,
@@ -48,12 +70,32 @@ JSON copy in clients that expose both result forms.
 The `mantis` global server is built locally from `mantis-ticket-mcp/`.
 Configure `mantisTicketServer.baseUrl`, set read-only `MANTIS_API_TOKEN` in `secrets`,
 and keep `mantis` in `enabledServers.global`. The MCP publishes as
-`itl-mantis-ticket-mcp` and exposes `read_ticket`, `get_attachment`, and `health`.
+`itl-mantis-ticket-mcp` and preserves `read_ticket`, `get_attachment`, and `health`.
+Optional search and guarded writes add `search_tickets`, `mantis_metadata`,
+`execute_write`, `write_operation`, and `index_control`. The index and write action/project
+allowlists are disabled by default; configure the separate Mantis state volume before
+qualification. Search returns ten cards by default, a cursor, and at most 12,000 characters
+per structured page, without duplicating the JSON in textual MCP content. See the
+[Mantis operator guide](mantis-ticket-mcp/README.md) for identity headers, qualification,
+cost limits, permission coverage, recovery, and rollback.
 Ticket reads return original image attachments as MCP image content. Per-call OCR is disabled by
 default so vision-capable models inspect the original; clients without image support can repeat
 `read_ticket` with `image_ocr=true` to receive the draft OCR fallback alongside the original.
 
-The optional `toolsListProxy` (enabled in the example config) supports all permanently hosted
+BookStack uses its direct MCP endpoint (normally `:18005/mcp`). To remove an existing BookStack
+proxy, first change clients from `:22005/mcp` to the tracked `directUrl`, then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action bookstack-direct -ConfigPath .\host.config.json
+```
+
+The action qualifies the direct tools and `index_status`, publishes its URL in the registry,
+then removes only the BookStack proxy. It retains the running direct container and index.
+On publication failure the proxy and prior host state remain; repeat the same action after
+fixing the reported cause. Startup, `proxy`, and watchdog reconciliation preserve direct mode.
+Keep BookStack in `toolsListProxy.serverIds`: that list also selects watchdog targets.
+
+The optional `toolsListProxy` (enabled in the example config) supports the other permanently hosted
 MCP servers and excludes branch-local on-demand MCP. It forwards MCP sessions and `tools/call`
 unchanged. `tools/list` substitutes only reviewed top-level routing cards whose source-description
 hash still matches `tools-contract.json`; nested JSON Schema descriptions and unapproved or
@@ -107,6 +149,18 @@ proxies, and publishes only qualified endpoints. If qualification still fails, i
 the affected direct runtime and retries once. Missing direct containers require `setup`; reconcile
 does not infer or create untracked runtimes.
 
+Direct endpoints are compared with an in-container MCP identity through the
+shared read-only `mcp-host/endpoint_identity.py`: server name, structural tool
+catalog and the agreed safe health call. Two foreign public responses plus a
+safe, idle internal health proof permit one restart of that immutable container
+ID per run. The published identity and safe call must pass afterward. Timeouts,
+unknown identity and active indexing retain the container and report diagnostics.
+Both reconcile and watchdog use the existing host maintenance lock. Repeat
+`reconcile -ServerId <id>` after maintenance/indexing or route repair completes.
+The normal path adds bounded local MCP reads only, without embedding requests.
+The dedicated Linux backend shares this probe and retains its existing owner,
+timer and lock; see [`mcp-host/linux/README.md`](../mcp-host/linux/README.md).
+
 The supported watchdog is part of the installer and does not require an administrator-written
 wrapper script. Enable the `watchdog` section in `host.config.json`, then install its managed
 Windows Scheduled Task:
@@ -125,7 +179,18 @@ The watchdog probes the Windows Docker Engine directly through its named-pipe `/
 without loading Docker CLI plugins. A timed-out native command terminates its complete child
 process tree. If the engine is unavailable, the watchdog uses the bounded Docker Desktop CLI
 `status` plus `start` or `restart`, then waits for the engine before reconciling containers. A probe
-timeout while Docker Desktop reports `running` is retried but does not trigger a destructive restart.
+timeout while Docker Desktop reports `running` allows a 30-second Engine recovery grace period.
+If Engine remains unavailable, the same owner performs a bounded Desktop restart: `running`
+does not prove Engine health. Recovery attempts are recorded before invoking Desktop in the
+existing `watchdog-state.json` and are spaced at least five minutes apart, including failed or
+interrupted attempts. Cooldown does not block reconciliation when Engine is already healthy.
+If bounded Desktop recovery still leaves Engine unavailable, the same owner may force-stop Desktop,
+reset the WSL VM and start Desktop only when `docker-desktop` is its sole running distribution.
+It checks the UTF-16 WSL inventory again immediately before shutdown; another running distribution
+or an unreadable inventory forbids VM reset. Finish that independent WSL work before repeating
+`watchdog-run`. Engine readiness and normal MCP reconciliation remain required afterward.
+This failure-only fallback adds bounded stop/start, a 45-second WSL command and one configured
+Engine readiness wait; the healthy path does not run WSL commands or add client context.
 If the daemon disappears after that initial probe during any tracked Docker operation, the
 watchdog performs one bounded Docker Desktop recovery and retries the complete tracked
 reconciliation. A failed retry remains bounded; the next scheduled watchdog interval tries again.
@@ -160,7 +225,8 @@ Enable the managed nightly job only for local `sourcePath` configurations that h
   "taskName": "ITL MCP Host Nightly Index",
   "timeoutMinutes": 480,
   "pollSeconds": 15,
-  "configIds": ["pm5corp", "pm4corp"]
+  "configIds": ["pm5corp", "pm4corp"],
+  "aiGatewayRestart": false
 }
 ```
 
@@ -187,6 +253,13 @@ The host maintenance lock makes the watchdog skip reconciliation while a nightly
 Task installation does not start an immediate index run; use `nightly-index-run` for the first
 controlled execution. `<stateRoot>/nightly-index-state.json` records the last result.
 
+On a host that reaches AI APIs through the ITLand AI Gateway Client, set `aiGatewayRestart` to
+`true`. Before indexing, `ai-gateway-maintenance.ps1` asks the client to refresh its published
+policy, restarts the service so the running engine loads the current server pool, and waits up
+to 5 minutes for `AI egress: vpn-auto` with a healthy VPN. The result is stored as `aiGateway` in
+the nightly state. A failure or a host without the client never blocks indexing. The Linux-native
+host uses the same helper through `aiGatewayMaintenance` in the Windows nightly config.
+
 `read_ticket` returns comments, issue-level and comment-level attachments, sanitized
 rendered HTML, formatting spans, and prompt-ready markdown. Image originals are always
 represented as attachment resource handles; OCR text is only draft accompaniment and tells
@@ -200,13 +273,13 @@ For local CPU semantic search, keep the shared embedding setting:
 }
 ```
 
-BookStack MCP receives `EMBEDDING_MODEL`, uses the shared `<stateRoot>/model-cache`
-mounted as `/app/model_cache`, and loads the model locally through `sentence-transformers`.
-Retrieval inputs for E5 models use the required `query:` and `passage:` prefixes. The indexed
-embedding profile is versioned; a changed profile makes unchanged pages eligible for automatic
-reindexing instead of silently reusing incompatible vectors.
-When `embedding.apiKey` is configured instead, the server uses the existing
-OpenAI-compatible `/embeddings` endpoint path.
+BookStack inherits these settings unless `bookStackProductDocsServer.embedding` is supplied.
+That complete override applies only to BookStack; it accepts `model`, `apiBase`, `apiKey`,
+or `credentialFile` pointing to an existing private JSON file with those three fields.
+CPU mode uses `<stateRoot>/model-cache` through `sentence-transformers`; remote mode uses
+the OpenAI-compatible `/embeddings` API without a local-model fallback. See the
+[BookStack migration and recovery procedure](bookstack-product-docs-mcp/README.md) for
+OpenRouter/Qwen, structural fragments, truthful coverage and a cache-preserving switch.
 
 To set up and publish only the BookStack MCP without touching other configured servers:
 
@@ -239,6 +312,7 @@ reindex         Regenerate Report.txt, recreate RESET_DATABASE-capable servers.
 graph-cpu-migrate-model  Validate existing Graph vector dimensions and migrate one legacy CPU model id without rebuilding vectors.
 publish         Publish current host state to the registry repo.
 proxy           Transactionally rebuild and qualify tracked tools-list proxies, then publish.
+bookstack-direct Qualify and publish the existing direct BookStack endpoint, then remove its proxy.
 reconcile       Recover tracked runtimes/proxies and publish only MCP-ready endpoints.
 nightly-index-* Manage or run fresh-dump incremental Code and Graph indexing.
 ```

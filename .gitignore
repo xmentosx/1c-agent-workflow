@@ -17,7 +17,12 @@ temp/
 .agent-1c/event-log-signature-cache/
 .agent-1c/event-log-checks/
 .agent-1c/runs/
+.agent-1c/diagnostic-artifacts/
+.agent-1c/source-exports/
 .agent-1c/source-infobase-unsafe-action-protection.json
+.agent-1c/execution-guard-generation.json
+.agent-1c/execution-guard-generation.json.*
+.agent-1c/execution-checkpoints/
 .agent-1c/vanessa-authoring/
 .agent-1c/verification-repair/
 .agent-1c/verification-selection/
@@ -25,6 +30,8 @@ temp/
 .agent-1c/runtime/
 .agent-1c/branch-dumps/
 .agent-1c/branch-archives/
+.agent-1c/branch-deletions/
+.agent-1c/auxiliary-archives/
 .agent-1c/fork-history/
 .agent-1c/fork-staging/
 .agent-1c/branch-seed/
@@ -33,6 +40,7 @@ temp/
 .agent-1c/extension-init/
 .agent-1c/infobases/
 .agent-1c/snapshots/
+.agent-1c/restoration-state/
 .agent-1c/release-e2e-roundtrip/
 .agent-1c/release-e2e-extension/
 .agent-1c/tmp/
@@ -43,6 +51,7 @@ temp/
 .agent-1c/tools/vanessa-automation/
 .agent-1c/tools/vanessa-mcp/
 .agent-1c/tools/roctup-mcp-toolkit/
+.agent-1c/tools/openspec-cli/
 .agent-1c/mcp/
 .agent-1c/client-surface.json
 build/data-mcp-tools-loader/
@@ -54,6 +63,8 @@ __pycache__/
 .agents/skills/itl/
 .agents/skills/itl-litemode/
 .agents/skills/itl-status/
+.agents/skills/itl-clean/
+.agents/skills/itl-delete-branch/
 .agents/skills/itl-sync-master/
 .agents/skills/itl-new-config-branch/
 .agents/skills/itl-new-extension-branch/

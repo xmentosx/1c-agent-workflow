@@ -1,0 +1,711 @@
+{
+  "schemaVersion": 1,
+  "qualification": "Qwen cache6 full Codex answers on frozen ru-embedding-1.1",
+  "date": "2026-10-28",
+  "nativeProof": {
+    "completedAnswers": 6,
+    "fulfilled": 6,
+    "groundedAndSafe": 6,
+    "scopeStatusAndRevisionCorrect": 6,
+    "cases": [
+      "RU01",
+      "RU10",
+      "RU16",
+      "RU20",
+      "RU22",
+      "RU24"
+    ],
+    "historicalQwenFulfilled": 5,
+    "historicalBGEFulfilled": 6,
+    "all6CLIExitZero": true
+  },
+  "profile": {
+    "model": "qwen/qwen3-embedding-8b",
+    "dimensions": 4096,
+    "DATABASE_MAX_LRU_CACHE_SIZE": 6,
+    "EMBEDDING_RATE_LIMIT_ENABLED": false,
+    "KUZU_BUFFER_POOL_SIZE": 268435456,
+    "memoryLimitBytes": 5368709120,
+    "cpus": 2,
+    "cogneeImage": "sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820",
+    "container": "itl-cognee-ru-qwen-lru6-20261028",
+    "containerId": "72e5291ab7c1e218b7856901dbc29e28c447a01a6c0b7df059b366f491f7bf13",
+    "connection": "same common API key; private credential not exported"
+  },
+  "protocol": {
+    "samePrompts": true,
+    "sameCliSha256": "1103e9e09c71fa2cd0afd6d8f3b9a2d63174fe8efd7cb5bd09f1cb14ef58a098",
+    "codexModel": "gpt-6.1-sol",
+    "reasoningEffort": "high",
+    "frozenHashes": {
+      "corpus.json": "883c6b467a5ccfe5248e967849b53c6dea65e1cf8aa25269009ed513bf0c4cd0",
+      "questions.json": "390feb33ff4c992a16b2d20a16743c6162df595af2126857698814091950377d",
+      "gold.json": "65b94e94b1895900fdb1c342078eecb9c175b817425e81ff1dda68b13bfd40a2"
+    },
+    "nativeFrontendFilesUnchanged": true,
+    "maxRecallCallsPerCase": 3,
+    "maxExactReadsPerCase": 4,
+    "maxLocalStatusPerCase": 1,
+    "cardsPerRecall": 8,
+    "contextTokensPerRecall": 1600,
+    "originalFrontendDeadlineSeconds": 20,
+    "originalWholeCLIWatchdogSeconds": 600,
+    "newScenarios": 0,
+    "countedReplays": 0,
+    "onlyQwenRepeated": true,
+    "fixtureOnly": true,
+    "installedAcceptance": false,
+    "goldExposedToClients": false
+  },
+  "measurements": {
+    "fullAnswerMedianSeconds": 44.551778999999996,
+    "fullAnswerMaxSeconds": 51.442601,
+    "historicalQwenFullAnswerMedianSeconds": 59.1782235,
+    "historicalBGEFullAnswerMedianSeconds": 52.8724325,
+    "recallCalls": 13,
+    "recallMedianSeconds": 8.633935,
+    "recallMaxSeconds": 20.113931,
+    "exactReadCalls": 10,
+    "exactReadMedianSeconds": 1.3764535,
+    "exactReadMaxSeconds": 1.622663,
+    "localStatusCalls": 6,
+    "toolErrors": 0,
+    "maxRecallTokens": {
+      "cl100k_base": 1504,
+      "o200k_base": 1262
+    },
+    "nativeUsage": {
+      "input_tokens": 617418,
+      "cached_input_tokens": 544000,
+      "output_tokens": 3219,
+      "reasoning_output_tokens": 85
+    },
+    "historicalNativeUsage": {
+      "baseline": {
+        "input_tokens": 625665,
+        "cached_input_tokens": 523392,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 3350,
+        "reasoning_output_tokens": 76
+      },
+      "candidate": {
+        "input_tokens": 631020,
+        "cached_input_tokens": 543744,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 3913,
+        "reasoning_output_tokens": 323
+      }
+    },
+    "embeddingMonetaryCost": "unknown",
+    "peakReadMemoryBytes": 1651310592,
+    "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "oomKilled": false,
+    "asciiLogMarkerCountsIncludingInvalidUtf8Bytes": {
+      "Could not set lock": 0,
+      "Resource temporarily unavailable": 0,
+      "cannot schedule new futures": 0,
+      "403 Forbidden": 0,
+      "TimeoutError": 0
+    },
+    "invalidUtf8DebugLogFragments": 8
+  },
+  "cases": [
+    {
+      "case": "RU01",
+      "seconds": 51.442601,
+      "tools": {
+        "memory_status": 1,
+        "recall": 2,
+        "lookup_original": 1
+      },
+      "toolErrors": [],
+      "recalls": [
+        {
+          "seconds": 20.113931,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n08",
+            "ru-n27",
+            "ru-n06",
+            "ru-n32"
+          ],
+          "backendCalls": 9,
+          "sourceLookups": 7,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 770,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 636
+          }
+        },
+        {
+          "seconds": 3.894908,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n46",
+            "ru-n01",
+            "ru-n28",
+            "ru-n06",
+            "ru-n29",
+            "ru-n36",
+            "ru-n48",
+            "ru-n02"
+          ],
+          "backendCalls": 11,
+          "sourceLookups": 9,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1470,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1255
+          }
+        }
+      ],
+      "exactOriginals": [
+        {
+          "noteId": "ru-n01",
+          "seconds": 1.378982,
+          "applicable": true,
+          "state": "durable",
+          "noteEqualsFrozen": true
+        }
+      ],
+      "citations": [
+        "ru-n01"
+      ],
+      "expected": [
+        "ru-n01"
+      ],
+      "answerable": true,
+      "usage": {
+        "input_tokens": 102792,
+        "cached_input_tokens": 91648,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 480,
+        "reasoning_output_tokens": 0
+      },
+      "promptSha256": "6c94435f039f19f1d9be7d22431fc6a72ba632e2f4bac428bce867160da8658b",
+      "samePrompt": true,
+      "answerSha256": "a6b686f2d8325c3e4b3fd6f8436776485c8ef67c952ab880022ceaa3dcca1ff4",
+      "answer": "Подтверждённый учебный опыт (`noteId: ru-n01`): в РуИморте ошибка возникала при обращении к элементу `[0]` пустого массива. Исправление — проверять `Массив.Количество() > 0` перед таким обращением. Запись актуальна, подтверждена и применима к `ru-standard` и `ru-pm-prof`.\n\nОбщая рекомендация: проверить наличие этой защиты в месте ошибки. Текущий рабочий проект не проверялся; сведения относятся к учебному стенду.",
+      "answerFulfilled": true,
+      "groundedAndSafe": true,
+      "scopeStatusAndRevisionCorrect": true,
+      "wholeAnswerReview": "Ответ указывает проверку количества элементов до обращения к нулевому элементу массива; прочитан ru-n01. Учебный опыт отделён от проверки рабочего проекта. Есть несущественная опечатка в названии обработки."
+    },
+    {
+      "case": "RU10",
+      "seconds": 44.988839,
+      "tools": {
+        "memory_status": 1,
+        "recall": 2,
+        "lookup_original": 3
+      },
+      "toolErrors": [],
+      "recalls": [
+        {
+          "seconds": 8.633935,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n48",
+            "ru-n08",
+            "ru-n27",
+            "ru-n06",
+            "ru-n32",
+            "ru-n36",
+            "ru-n10",
+            "ru-n50"
+          ],
+          "backendCalls": 12,
+          "sourceLookups": 10,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1504,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1260
+          }
+        },
+        {
+          "seconds": 3.885065,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n46",
+            "ru-n05",
+            "ru-n34",
+            "ru-n43",
+            "ru-n32",
+            "ru-n36",
+            "ru-n47",
+            "ru-n24"
+          ],
+          "backendCalls": 11,
+          "sourceLookups": 9,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1415,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1209
+          }
+        }
+      ],
+      "exactOriginals": [
+        {
+          "noteId": "ru-n05",
+          "seconds": 1.41059,
+          "applicable": true,
+          "state": "durable",
+          "noteEqualsFrozen": true
+        },
+        {
+          "noteId": "ru-n24",
+          "seconds": 1.311259,
+          "applicable": true,
+          "state": "durable",
+          "noteEqualsFrozen": true
+        },
+        {
+          "noteId": "ru-n27",
+          "seconds": 1.309204,
+          "applicable": true,
+          "state": "durable",
+          "noteEqualsFrozen": true
+        }
+      ],
+      "citations": [
+        "ru-n05",
+        "ru-n24",
+        "ru-n27"
+      ],
+      "expected": [
+        "ru-n05"
+      ],
+      "answerable": true,
+      "usage": {
+        "input_tokens": 106143,
+        "cached_input_tokens": 93568,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 597,
+        "reasoning_output_tokens": 39
+      },
+      "promptSha256": "1c12e5069034c6502b71bf331ad31c4dd393ac885f442c4b2d84c710caff75b0",
+      "samePrompt": true,
+      "answerSha256": "de60c31463d50ac0275fcba40124f4d4cb09863c53e0337c2751eb53b53d99ed",
+      "answer": "Подтверждённый учебный опыт: у **Документ.РуЗаявка приоритет заполняется перед записью документа** (noteId: `ru-n05`). Правило «пользователь заполняет в форме» относится к справочнику (noteId: `ru-n24`). Обе заметки актуальны, подтверждены и применимы к проекту `ru-standard` и ПРОФ.\n\nОбщая рекомендация: различать объекты по полному имени метаданных. Это сведения учебного корпуса, а не проверка рабочего проекта (noteId: `ru-n27`).",
+      "answerFulfilled": true,
+      "groundedAndSafe": true,
+      "scopeStatusAndRevisionCorrect": true,
+      "wholeAnswerReview": "Ответ различает Документ.РуЗаявка и одноимённый справочник: приоритет документа заполняется перед записью. Оригиналы ru-n05, ru-n24, ru-n27 прочитаны."
+    },
+    {
+      "case": "RU16",
+      "seconds": 43.97995,
+      "tools": {
+        "memory_status": 1,
+        "recall": 2,
+        "lookup_original": 2
+      },
+      "toolErrors": [],
+      "recalls": [
+        {
+          "seconds": 11.031294,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n48",
+            "ru-n08",
+            "ru-n27",
+            "ru-n06",
+            "ru-n32",
+            "ru-n36",
+            "ru-n50",
+            "ru-n43"
+          ],
+          "backendCalls": 13,
+          "sourceLookups": 11,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1477,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1241
+          }
+        },
+        {
+          "seconds": 7.997766,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n08",
+            "ru-n27",
+            "ru-n43",
+            "ru-n32",
+            "ru-n36",
+            "ru-n50",
+            "ru-n06",
+            "ru-n29"
+          ],
+          "backendCalls": 14,
+          "sourceLookups": 12,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1490,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1244
+          }
+        }
+      ],
+      "exactOriginals": [
+        {
+          "noteId": "ru-n08",
+          "seconds": 1.33093,
+          "applicable": true,
+          "state": "durable",
+          "noteEqualsFrozen": true
+        },
+        {
+          "noteId": "ru-n27",
+          "seconds": 1.622663,
+          "applicable": true,
+          "state": "durable",
+          "noteEqualsFrozen": true
+        }
+      ],
+      "citations": [
+        "ru-n08",
+        "ru-n27"
+      ],
+      "expected": [
+        "ru-n08"
+      ],
+      "answerable": true,
+      "usage": {
+        "input_tokens": 106970,
+        "cached_input_tokens": 94464,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 573,
+        "reasoning_output_tokens": 0
+      },
+      "promptSha256": "f7ab35f478ff210da3f136127fed7c7cbf3e43a4a97b7f7628690e3f51628841",
+      "samePrompt": true,
+      "answerSha256": "8b60327423182cd9968a8939b24a8034013be058959015f0f2b37e8458aea53b",
+      "answer": "Подтверждено учебной заметкой **ru-n08**: документ **РуПерерасчёт использует режим ЧАСТИЧНЫЙ**, текущая подтверждённая ревизия — **вторая**. Прежнее утверждение о режиме ПОЛНЫЙ отозвано. Оригинал имеет статус `verified`, актуален и применим к проекту `ru-standard` и продукту `ru-pm-prof`.\n\nОбщая рекомендация: старый фрагмент не использовать как актуальное решение. Это сведения учебного корпуса, а не подтверждение выполнения в рабочей базе (**ru-n27**).",
+      "answerFulfilled": true,
+      "groundedAndSafe": true,
+      "scopeStatusAndRevisionCorrect": true,
+      "wholeAnswerReview": "Ответ выбирает ЧАСТИЧНЫЙ режим и вторую подтверждённую ревизию, явно отвергает прежний ПОЛНЫЙ. Прочитан ru-n08, выполнение в рабочей базе не заявлено."
+    },
+    {
+      "case": "RU20",
+      "seconds": 38.766483,
+      "tools": {
+        "memory_status": 1,
+        "recall": 2,
+        "lookup_original": 1
+      },
+      "toolErrors": [],
+      "recalls": [
+        {
+          "seconds": 7.504022,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n48",
+            "ru-n08",
+            "ru-n27",
+            "ru-n06",
+            "ru-n32",
+            "ru-n36",
+            "ru-n10",
+            "ru-n24"
+          ],
+          "backendCalls": 11,
+          "sourceLookups": 9,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1497,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1262
+          }
+        },
+        {
+          "seconds": 7.231625,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n10",
+            "ru-n08",
+            "ru-n27",
+            "ru-n06",
+            "ru-n32",
+            "ru-n36",
+            "ru-n24",
+            "ru-n35"
+          ],
+          "backendCalls": 12,
+          "sourceLookups": 10,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1498,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1251
+          }
+        }
+      ],
+      "exactOriginals": [
+        {
+          "noteId": "ru-n10",
+          "seconds": 1.373925,
+          "applicable": true,
+          "state": "durable",
+          "noteEqualsFrozen": true
+        }
+      ],
+      "citations": [
+        "ru-n10",
+        "ru-n27"
+      ],
+      "expected": [
+        "ru-n10"
+      ],
+      "answerable": true,
+      "usage": {
+        "input_tokens": 88022,
+        "cached_input_tokens": 76160,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 454,
+        "reasoning_output_tokens": 0
+      },
+      "promptSha256": "b2cbba0385f4d9e751f9fa3350d042ace4d7d45161a3200009d509d438df66ef",
+      "samePrompt": true,
+      "answerSha256": "9efdac1ad4803bc6a14c5399e322472a8bc81208bbe4c35ea18b5989cb01587a",
+      "answer": "Подтверждённый опыт: **в PM5 ПРОФ предусмотрено отражение первичных документов в проектном бюджетировании**. Оригинал `ru-n10` имеет статус `verified`, применим к текущему контексту, явно включает ПРОФ и содержит `requiresProducts: []` — зависимости от ERP нет.\n\nОбщая рекомендация: оценивайте применимость по scope/status/applicability; происхождение опыта из ERP или хранение в общем доме КОРП само по себе её не определяет.\n\nИспользованы noteId: `ru-n10`, `ru-n27`. Это вывод по сохранённым учебным знаниям, не проверка рабочего проекта.",
+      "answerFulfilled": true,
+      "groundedAndSafe": true,
+      "scopeStatusAndRevisionCorrect": true,
+      "wholeAnswerReview": "Ответ получает общее правило об отражении первичных документов в проектном бюджетировании, явно включает ПРОФ и проверяет requiresProducts=[]. Прочитан ru-n10; происхождение/общий КОРП-home не подменяют applicability."
+    },
+    {
+      "case": "RU22",
+      "seconds": 44.114719,
+      "tools": {
+        "memory_status": 1,
+        "recall": 2,
+        "lookup_original": 2
+      },
+      "toolErrors": [],
+      "recalls": [
+        {
+          "seconds": 11.138094,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n20",
+            "ru-n34",
+            "ru-n32",
+            "ru-n30",
+            "ru-n22",
+            "ru-n27",
+            "ru-n29"
+          ],
+          "backendCalls": 15,
+          "sourceLookups": 13,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1319,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1106
+          }
+        },
+        {
+          "seconds": 8.646003,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n20",
+            "ru-n34",
+            "ru-n32",
+            "ru-n30",
+            "ru-n22",
+            "ru-n27",
+            "ru-n29"
+          ],
+          "backendCalls": 15,
+          "sourceLookups": 13,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1319,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1106
+          }
+        }
+      ],
+      "exactOriginals": [
+        {
+          "noteId": "ru-n20",
+          "seconds": 1.419158,
+          "applicable": true,
+          "state": "durable",
+          "noteEqualsFrozen": true
+        },
+        {
+          "noteId": "ru-n34",
+          "seconds": 1.332463,
+          "applicable": true,
+          "state": "durable",
+          "noteEqualsFrozen": true
+        }
+      ],
+      "citations": [
+        "ru-n20",
+        "ru-n34"
+      ],
+      "expected": [
+        "ru-n20"
+      ],
+      "answerable": true,
+      "usage": {
+        "input_tokens": 105282,
+        "cached_input_tokens": 93440,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 613,
+        "reasoning_output_tokens": 46
+      },
+      "promptSha256": "c2f667a6664be3de63f108db65283f5a021f2e5498541e0118aa31e173af924a",
+      "samePrompt": true,
+      "answerSha256": "72873ae8344296ad91eff50d0c88ab5792ec42f826a929794c9cb74fcadc66f8",
+      "answer": "Нет, распространять их на весь продукт и организацию не нужно.\n\n**Подтверждено учебными заметками:** доступ «Севера» к РуОбмен разрешён только через клиентский VPN; область применимости — проект `ru-customer` (`noteId: ru-n20`). `origin.projectId: ru-standard` обозначает происхождение и не расширяет scope. Общее правило также относит клиентскую инфраструктуру к проекту заказчика (`noteId: ru-n34`). Обе записи — `verified`, применимы к текущему контексту.\n\n**Рекомендация:** сохранять эти сведения только в области проекта. Продуктовое обобщение требует независимого подтверждения общей применимости и канонического места хранения; организационное распространение — явного разрешения и прав доступа.\n\nЭто учебные знания, не проверка рабочего проекта. Ничего не изменено.",
+      "answerFulfilled": true,
+      "groundedAndSafe": true,
+      "scopeStatusAndRevisionCorrect": true,
+      "wholeAnswerReview": "Ответ сохраняет VPN-условие Севера только в ru-customer, не расширяет scope по origin.projectId. Прочитаны ru-n20 и ru-n34. Фраза о разрешении/правах дана как общая рекомендация, не как доказательство ACL; квалификация не вводит разграничение доступа."
+    },
+    {
+      "case": "RU24",
+      "seconds": 47.070014,
+      "tools": {
+        "memory_status": 1,
+        "recall": 3,
+        "lookup_original": 1
+      },
+      "toolErrors": [],
+      "recalls": [
+        {
+          "seconds": 11.192211,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n48",
+            "ru-n08",
+            "ru-n27",
+            "ru-n06",
+            "ru-n32",
+            "ru-n36",
+            "ru-n46",
+            "ru-n24"
+          ],
+          "backendCalls": 11,
+          "sourceLookups": 9,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1468,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1245
+          }
+        },
+        {
+          "seconds": 8.845113,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n46",
+            "ru-n08",
+            "ru-n27",
+            "ru-n43",
+            "ru-n32",
+            "ru-n36",
+            "ru-n04",
+            "ru-n50"
+          ],
+          "backendCalls": 12,
+          "sourceLookups": 10,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1470,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1241
+          }
+        },
+        {
+          "seconds": 4.444156,
+          "coverage": "partial",
+          "cardIds": [
+            "ru-n01",
+            "ru-n27",
+            "ru-n06",
+            "ru-n29",
+            "ru-n30",
+            "ru-n10",
+            "ru-n02"
+          ],
+          "backendCalls": 12,
+          "sourceLookups": 10,
+          "tokenCounts": {
+            "modelMapping": "unverified until actual client/model G5",
+            "cl100k_base": 1348,
+            "measurement": "measured-encode-ordinary",
+            "o200k_base": 1134
+          }
+        }
+      ],
+      "exactOriginals": [
+        {
+          "noteId": "ru-n27",
+          "seconds": 1.481983,
+          "applicable": true,
+          "state": "durable",
+          "noteEqualsFrozen": true
+        }
+      ],
+      "citations": [
+        "ru-n27"
+      ],
+      "expected": [],
+      "answerable": false,
+      "usage": {
+        "input_tokens": 108209,
+        "cached_input_tokens": 94720,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 502,
+        "reasoning_output_tokens": 0
+      },
+      "promptSha256": "81f59d96218e2aa72004bfb70ddf90363b4c8b1ddca3829d428ee6b31069097e",
+      "samePrompt": true,
+      "answerSha256": "825e06199b5bd3fe15969e8c8840a70717321af9dc5428faea80ec79b5de46fd",
+      "answer": "В доступной памяти не найдено подтверждённых применимых сведений о сертификате электронной подписи РуОбмена и точной дате окончания его действия для проекта `ru-standard`. Покрытие поиска частичное — это не доказывает отсутствие сертификата.\n\nПодтверждённое учебное правило: запись в памяти не доказывает текущее состояние рабочего проекта (`noteId: ru-n27`, оригинал проверен).\n\nОбщая рекомендация: не подставлять предполагаемый сертификат или дату. Новых runtime-проверок не выполнялось.",
+      "answerFulfilled": true,
+      "groundedAndSafe": true,
+      "scopeStatusAndRevisionCorrect": true,
+      "wholeAnswerReview": "Ответ явно сообщает отсутствие подтверждённых применимых сведений о сертификате и дате, сохраняет оговорку о частичном покрытии, не выдумывает факт отсутствия сертификата. Прочитан общий оригинал ru-n27."
+    }
+  ],
+  "limits": [
+    "Первый cold recall RU01 вернул 4 карточки с partial coverage за20.114s, включая transport/serialization overhead; 20s frontend budget не увеличивался. Нужная запись получена следующим task recall и подтверждена original read. Это не 13/13 complete-coverage searches.",
+    "Остальные recall также имеют bounded partial coverage; выполняются исходные whole-answer задания, не доказывается полнота всего корпуса.",
+    "Восемь фрагментов вывода docker logs не декодируются как UTF-8; сохранены redacted raw hex и исключены из текстовых доказательств. Все MCP JSON, prompts и full answers проверены строгим UTF-8.",
+    "BGE и ingestion с cache6 не повторялись; наблюдаемые latency/token deltas не доказывают изолированный вклад флагов или преимущество над BGE.",
+    "Нативная CLI/MCP квалификация на fixture не заменяет installed acceptance или Desktop UI proof; ACL/публикация продуктового знания не квалифицировались."
+  ],
+  "fixtureRecovery": {
+    "preModelPromptCheck": "CRLF saved-file vs LF original stdin mismatch; comparison corrected to exact decoded text; before any CLI start/tool call; original prepared RU01 binding and intent hashes reused",
+    "postModelLogCapture": "Strict UTF-8 log export stopped; subsequent byte-preserving collector completed read-only; no model/scenario replay"
+  },
+  "finalState": {
+    "testContainerStopped": true,
+    "ownedTunnelStopped": true,
+    "workingBaseIdAndConfigurationUnchanged": true,
+    "workingModelChanged": false,
+    "gate6Run": false,
+    "migrationRun": false,
+    "workflowPublished": false,
+    "pushOrPR": false
+  },
+  "evidence": {
+    "taskRoot": "build/agent-artifacts/memory-qwen-lru6-native-20261028",
+    "measuredResultsSha256": "5bf7f8e903169b155d377068415b96b75b792829eb0f02136156c42c7ccdce2d",
+    "rawSnapshotSha256": "010b9b9c233ab0a39d29155c10a6cd85e0ad29275c3d0103dc31e2c21c26c5c5",
+    "readProfileResult": "qwen-lru6-recheck-2026-10-28.md",
+    "priorFullAnswers": "ru-embedding-repair-2026-10-27.md"
+  },
+  "reviewMethod": "Whole saved answers and complete tool traces reviewed against immutable private gold by parent agent; not substring or note-ID-only grading."
+}

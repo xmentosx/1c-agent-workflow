@@ -6,6 +6,7 @@ import asyncio
 import contextvars
 import functools
 import hashlib
+import inspect
 import json
 import logging
 import time
@@ -32,6 +33,9 @@ SCHEMA = "itl.codechecker.telemetry.v1"
 _REQUEST_CONTEXT: contextvars.ContextVar[dict[str, Any] | None] = (
     contextvars.ContextVar("codechecker_request_context", default=None)
 )
+_MODERN_STATE: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "codechecker_modern_state", default=None,
+)
 
 
 def _elapsed_ms(started: float) -> int:
@@ -40,6 +44,17 @@ def _elapsed_ms(started: float) -> int:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _input_hash(value: Any) -> str | None:
+    """Hash arguments without stringifying unknown objects or logging content."""
+    try:
+        text = value if isinstance(value, str) else json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        return _sha256_text(text)
+    except (TypeError, ValueError, UnicodeError):
+        return None
 
 
 def _exception_text(error: BaseException) -> str:
@@ -157,15 +172,31 @@ def observe_tool(
     *,
     mode_resolver: Callable[[], str] | None = None,
     snapshot_argument: str | None = "code",
+    modern: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Log start/end records and establish correlation context for an MCP tool."""
 
     def decorate(function: Callable[..., Any]) -> Callable[..., Any]:
+        signature = inspect.signature(function) if modern else None
         @functools.wraps(function)
         async def wrapped(*args: Any, **kwargs: Any) -> Any:
             snapshot = kwargs.get(snapshot_argument) if snapshot_argument else None
             if snapshot is None and snapshot_argument and args:
                 snapshot = args[0]
+            arguments = None
+            files = None
+            if signature is not None:
+                try:
+                    bound = signature.bind_partial(*args, **kwargs)
+                    bound.apply_defaults()
+                    arguments = dict(bound.arguments)
+                    snapshot = arguments.get(snapshot_argument) if snapshot_argument else None
+                    files = arguments.get("files")
+                    if files and snapshot_argument == "code":
+                        # A file reference is not proof of the loaded file bytes.
+                        snapshot = None
+                except TypeError:
+                    pass
             mode = mode_resolver() if mode_resolver is not None else None
             context = {
                 "requestId": uuid.uuid4().hex,
@@ -173,8 +204,17 @@ def observe_tool(
                 **_transport_correlation(),
             }
             if isinstance(snapshot, str):
-                context["snapshotSha256"] = _sha256_text(snapshot)
+                digest = _input_hash(snapshot) if modern else _sha256_text(snapshot)
+                if digest is not None:
+                    context["snapshotSha256"] = digest
+            if modern:
+                digest = _input_hash(arguments) if arguments is not None else None
+                if digest is not None:
+                    context["inputSha256"] = digest
+                context["inputKind"] = "files" if files else "arguments"
             token = _REQUEST_CONTEXT.set(context)
+            state = {"attempts": 0, "outcome": "returned"} if modern else None
+            state_token = _MODERN_STATE.set(state)
             started = time.perf_counter()
             log_event(
                 "tool_start",
@@ -189,6 +229,7 @@ def observe_tool(
                     mode=mode,
                     outcome="cancelled",
                     elapsedMs=_elapsed_ms(started),
+                    attempts=state["attempts"] if state is not None else None,
                 )
                 raise
             except Exception as error:
@@ -199,23 +240,69 @@ def observe_tool(
                     elapsedMs=_elapsed_ms(started),
                     errorType=type(error).__name__,
                     errorClass=classify_error(error),
+                    attempts=state["attempts"] if state is not None else None,
                 )
                 raise
             else:
                 log_event(
                     "tool_end",
                     mode=mode,
-                    outcome="success",
+                    outcome=state["outcome"] if state is not None else "success",
                     elapsedMs=_elapsed_ms(started),
                     resultChars=len(result) if isinstance(result, str) else None,
+                    attempts=state["attempts"] if state is not None else None,
                 )
                 return result
             finally:
+                _MODERN_STATE.reset(state_token)
                 _REQUEST_CONTEXT.reset(token)
 
         return wrapped
 
     return decorate
+
+
+def observe_condition(outcome: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Record a typed condition even when the adapter returns it as a value."""
+    if outcome not in {"error", "refused"}:
+        raise ValueError("Unknown terminal condition")
+
+    def decorate(function: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(function)
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            result = function(*args, **kwargs)
+            state = _MODERN_STATE.get()
+            if state is not None:
+                state["outcome"] = outcome
+            return result
+        return wrapped
+    return decorate
+
+
+async def observe_upstream_call(route: str, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Observe one existing collector invocation; never add retries or change budgets."""
+    state = _MODERN_STATE.get()
+    if state is None:
+        return await function(*args, **kwargs)
+    state["attempts"] += 1
+    attempt = state["attempts"]
+    payload_index = 1 if route == "prompt" else 2
+    digest = _input_hash(args[payload_index]) if len(args) > payload_index else None
+    fields = {"stage": route, "attempt": attempt, "upstreamInputSha256": digest}
+    started = time.perf_counter()
+    log_event("upstream_attempt_start", **fields)
+    try:
+        result = await function(*args, **kwargs)
+    except asyncio.CancelledError:
+        log_event("upstream_attempt_end", outcome="cancelled", elapsedMs=_elapsed_ms(started), **fields)
+        raise
+    except Exception as error:
+        log_event("upstream_attempt_end", outcome="error", elapsedMs=_elapsed_ms(started),
+                  errorType=type(error).__name__, errorClass=classify_error(error), **fields)
+        raise
+    else:
+        log_event("upstream_attempt_end", outcome="returned", elapsedMs=_elapsed_ms(started), **fields)
+        return result
 
 
 @asynccontextmanager

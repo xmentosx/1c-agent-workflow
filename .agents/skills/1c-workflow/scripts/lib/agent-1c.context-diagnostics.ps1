@@ -4,66 +4,10 @@ $script:KiloContextBenchmarkTimeoutSeconds = 180
 
 function ConvertFrom-ItlJsoncText {
     param([string]$Text)
-
     if ($null -eq $Text) { throw "JSONC text is null." }
-    $builder = New-Object System.Text.StringBuilder
-    $inString = $false
-    $escaped = $false
-    $lineComment = $false
-    $blockComment = $false
-
-    for ($index = 0; $index -lt $Text.Length; $index++) {
-        $character = $Text[$index]
-        $next = if ($index + 1 -lt $Text.Length) { $Text[$index + 1] } else { [char]0 }
-
-        if ($lineComment) {
-            if ($character -eq "`r" -or $character -eq "`n") {
-                $lineComment = $false
-                [void]$builder.Append($character)
-            }
-            continue
-        }
-        if ($blockComment) {
-            if ($character -eq '*' -and $next -eq '/') {
-                $blockComment = $false
-                $index++
-            } elseif ($character -eq "`r" -or $character -eq "`n") {
-                [void]$builder.Append($character)
-            }
-            continue
-        }
-        if ($inString) {
-            [void]$builder.Append($character)
-            if ($escaped) {
-                $escaped = $false
-            } elseif ($character -eq '\') {
-                $escaped = $true
-            } elseif ($character -eq '"') {
-                $inString = $false
-            }
-            continue
-        }
-        if ($character -eq '"') {
-            $inString = $true
-            [void]$builder.Append($character)
-            continue
-        }
-        if ($character -eq '/' -and $next -eq '/') {
-            $lineComment = $true
-            $index++
-            continue
-        }
-        if ($character -eq '/' -and $next -eq '*') {
-            $blockComment = $true
-            $index++
-            continue
-        }
-        [void]$builder.Append($character)
-    }
-
-    if ($inString -or $blockComment) { throw "JSONC text is incomplete." }
-    $json = [regex]::Replace($builder.ToString(), ',(?=\s*[}\]])', '')
-    return ($json | ConvertFrom-Json)
+    # Keep this existing diagnostic API's PSCustomObject projection. The shared
+    # parser owns lexical interpretation; this serialization never writes a file.
+    return (ConvertTo-Json -InputObject (Read-ItlJsoncDocument -Text $Text).Value -Depth 100 -Compress | ConvertFrom-Json)
 }
 
 function Read-ItlJsoncFile {

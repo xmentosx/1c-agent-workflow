@@ -40,17 +40,82 @@ function Get-SourceGateHardBudgetSeconds {
 
     # The child owns the authoritative gate budget. The wrapper only adds time
     # for the child to finalize its summary and exit without racing that budget.
-    return [int]$property.Value + 300
+    $hardSeconds = [int]$property.Value
+    if ($effectiveMode -eq 'Release' -and (Test-Path -LiteralPath (Join-Path $WorkingRoot 'scripts/release-e2e/stages.json') -PathType Leaf)) {
+        $stages = Get-QualityReleaseStageCatalog -RepositoryRoot $WorkingRoot
+        $projection = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $catalog -RequireRelease
+        $hardSeconds = [int]$projection.gateHardSeconds
+    }
+    return $hardSeconds + 300
+}
+
+function Get-SourceGateSupervisionBudgetSeconds {
+    param(
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$WorkingRoot,
+        [int]$PlanBudgetSeconds = 0,
+        [switch]$InjectedGate
+    )
+
+    if ($InjectedGate -and $PlanBudgetSeconds -gt 0) { return $PlanBudgetSeconds }
+    $childAllowance = Get-SourceGateHardBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -AllowMissingCatalog:$InjectedGate
+    return [Math]::Max($childAllowance, $PlanBudgetSeconds)
+}
+
+function Test-DeliveryProcessCreationIdentity {
+    param([int]$ProcessId, [datetime]$CreatedAt)
+    try {
+        $current = Get-Process -Id $ProcessId -ErrorAction Stop
+        return -not $current.HasExited -and $current.StartTime.ToUniversalTime().Ticks -eq $CreatedAt.ToUniversalTime().Ticks
+    } catch { return $false }
+}
+
+function Get-DeliveryDescendantProcessIdentities {
+    param([int]$RootProcessId, [datetime]$RootCreatedAt)
+    if ($env:OS -ne 'Windows_NT' -or -not (Test-DeliveryProcessCreationIdentity -ProcessId $RootProcessId -CreatedAt $RootCreatedAt)) { return @() }
+    try {
+        $rows = @(Get-CimInstance Win32_Process -OperationTimeoutSec 1 -ErrorAction Stop)
+        $knownParents = [Collections.Generic.HashSet[int]]::new()
+        [void]$knownParents.Add($RootProcessId)
+        $descendantIds = [Collections.Generic.List[int]]::new()
+        $changed = $true
+        while ($changed) {
+            $changed = $false
+            foreach ($row in $rows) {
+                $childId = [int]$row.ProcessId
+                if ($knownParents.Contains([int]$row.ParentProcessId) -and $knownParents.Add($childId)) {
+                    $descendantIds.Add($childId) | Out-Null
+                    $changed = $true
+                }
+            }
+        }
+        if (-not (Test-DeliveryProcessCreationIdentity -ProcessId $RootProcessId -CreatedAt $RootCreatedAt)) { return @() }
+        return @($descendantIds | ForEach-Object {
+            $childId = [int]$_
+            try {
+                $child = Get-Process -Id $childId -ErrorAction Stop
+                $createdAt = $child.StartTime.ToUniversalTime()
+                if (-not $child.HasExited -and $createdAt -ge $RootCreatedAt.ToUniversalTime()) {
+                    [pscustomobject]@{ processId=$childId; createdAt=$createdAt }
+                }
+            } catch {}
+        })
+    } catch { return @() }
 }
 
 function Stop-DeliveryProcessTree {
-    param([AllowNull()][object]$Process)
+    param([AllowNull()][object]$Process, [int]$TimeoutMilliseconds = 5000, [object[]]$CapturedDescendants = @())
     if (-not $Process) { return }
-    try { if ($Process.HasExited) { return } } catch { return }
-
-    $processId = [int]$Process.Id
     try {
-        if ($env:OS -eq "Windows_NT") {
+        $processId = [int]$Process.Id
+        $processStartedAt = $Process.StartTime.ToUniversalTime()
+        $processExited = [bool]$Process.HasExited
+        $processExitedAt = if ($processExited) { $Process.ExitTime.ToUniversalTime() } else { [DateTime]::MaxValue }
+    } catch { return }
+    $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(1, $TimeoutMilliseconds))
+    $rootIdentityLive = -not $processExited -and (Test-DeliveryProcessCreationIdentity -ProcessId $processId -CreatedAt $processStartedAt)
+    try {
+        if ($env:OS -eq "Windows_NT" -and $rootIdentityLive -and (Test-DeliveryProcessCreationIdentity -ProcessId $processId -CreatedAt $processStartedAt)) {
             # Use the .NET launcher instead of a PowerShell native-command
             # pipeline: Ctrl+C stops that pipeline, while finally still needs
             # to run taskkill for every descendant owned by the gate.
@@ -66,17 +131,39 @@ function Stop-DeliveryProcessTree {
             try {
                 $stdoutTask = $killer.StandardOutput.ReadToEndAsync()
                 $stderrTask = $killer.StandardError.ReadToEndAsync()
-                $killer.WaitForExit()
-                [void]$stdoutTask.GetAwaiter().GetResult()
-                [void]$stderrTask.GetAwaiter().GetResult()
+                $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+                if (-not $killer.WaitForExit($remaining)) {
+                    try { $killer.Kill() } catch {}
+                    $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+                    try { [void]$killer.WaitForExit($remaining) } catch {}
+                }
+                foreach ($reader in @($stdoutTask, $stderrTask)) {
+                    $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+                    try { [void]$reader.Wait($remaining) } catch {}
+                }
             } finally { $killer.Dispose() }
-        } else {
+        } elseif ($env:OS -ne "Windows_NT" -and $rootIdentityLive) {
             $Process.Kill()
         }
-    } catch {
+    } catch {}
+    try {
+        if ($Process.HasExited) { $processExitedAt = $Process.ExitTime.ToUniversalTime() }
+    } catch {}
+    foreach ($descendant in @($CapturedDescendants | Sort-Object processId -Descending)) {
+        try {
+            $descendantId = [int]$descendant.processId
+            $descendantCreatedAt = ([DateTime]$descendant.createdAt).ToUniversalTime()
+            if ($descendantCreatedAt -lt $processStartedAt -or $descendantCreatedAt -gt $processExitedAt) { continue }
+            if (Test-DeliveryProcessCreationIdentity -ProcessId $descendantId -CreatedAt $descendantCreatedAt) {
+                Stop-Process -Id $descendantId -Force -ErrorAction Stop
+            }
+        } catch {}
+    }
+    if (Test-DeliveryProcessCreationIdentity -ProcessId $processId -CreatedAt $processStartedAt) {
         try { $Process.Kill() } catch {}
     }
-    try { [void]$Process.WaitForExit(15000) } catch {}
+    $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+    try { [void]$Process.WaitForExit($remaining) } catch {}
 }
 
 function Start-DeliveryProcess {
@@ -84,10 +171,23 @@ function Start-DeliveryProcess {
         [Parameter(Mandatory = $true)][string]$ArgumentList,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
         [Parameter(Mandatory = $true)][string]$StandardOutputPath,
-        [Parameter(Mandatory = $true)][string]$StandardErrorPath
+        [Parameter(Mandatory = $true)][string]$StandardErrorPath,
+        [string]$FilePath = 'powershell.exe',
+        [Collections.IDictionary]$EnvironmentOverrides = $null
     )
     if ($env:OS -ne "Windows_NT") {
-        $process = Start-Process -FilePath "powershell.exe" -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -RedirectStandardOutput $StandardOutputPath -RedirectStandardError $StandardErrorPath -PassThru
+        $previousEnvironment = @{}
+        try {
+            if ($EnvironmentOverrides) {
+                foreach ($key in $EnvironmentOverrides.Keys) {
+                    $previousEnvironment[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+                    [Environment]::SetEnvironmentVariable($key, $EnvironmentOverrides[$key], 'Process')
+                }
+            }
+            $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -RedirectStandardOutput $StandardOutputPath -RedirectStandardError $StandardErrorPath -PassThru
+        } finally {
+            foreach ($key in $previousEnvironment.Keys) { [Environment]::SetEnvironmentVariable($key, $previousEnvironment[$key], 'Process') }
+        }
         $null = $process.Handle
         return [pscustomobject]@{ process = $process; jobHandle = [IntPtr]::Zero }
     }
@@ -104,6 +204,8 @@ using System.Text;
 public static class ItlDeliveryProcessJob
 {
     private const UInt32 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const Int32 JobObjectBasicAccountingInformation = 1;
+    private const Int32 JobObjectBasicProcessIdList = 3;
     private const Int32 JobObjectExtendedLimitInformation = 9;
     private const UInt32 EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const UInt32 CREATE_NO_WINDOW = 0x08000000;
@@ -220,11 +322,46 @@ public static class ItlDeliveryProcessJob
         public IntPtr JobHandle;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
+    {
+        public Int64 TotalUserTime;
+        public Int64 TotalKernelTime;
+        public Int64 ThisPeriodTotalUserTime;
+        public Int64 ThisPeriodTotalKernelTime;
+        public UInt32 TotalPageFaultCount;
+        public UInt32 TotalProcesses;
+        public UInt32 ActiveProcesses;
+        public UInt32 TotalTerminatedProcesses;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetInformationJobObject(IntPtr job, Int32 informationClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION information, UInt32 informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TerminateJobObject(IntPtr job, UInt32 exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryInformationJobObject(IntPtr job, Int32 informationClass, out JOBOBJECT_BASIC_ACCOUNTING_INFORMATION information, UInt32 informationLength, IntPtr returnLength);
+
+    [DllImport("kernel32.dll", EntryPoint = "QueryInformationJobObject", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryJobProcessIdList(IntPtr job, Int32 informationClass, IntPtr information, UInt32 informationLength, IntPtr returnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(UInt32 desiredAccess, bool inheritHandle, UInt32 processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsProcessInJob(IntPtr process, IntPtr job, [MarshalAs(UnmanagedType.Bool)] out bool result);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern UInt32 WaitForSingleObject(IntPtr handle, UInt32 milliseconds);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
@@ -272,7 +409,7 @@ public static class ItlDeliveryProcessJob
         return handle;
     }
 
-    private static IntPtr CreateEnvironmentWithout(string excludedName)
+    private static IntPtr CreateEnvironmentWithout(string excludedName, IDictionary overrides = null)
     {
         SortedDictionary<string, string> variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
@@ -281,6 +418,10 @@ public static class ItlDeliveryProcessJob
             if (!String.Equals(name, excludedName, StringComparison.OrdinalIgnoreCase))
                 variables[name] = Convert.ToString(entry.Value);
         }
+        if (overrides != null)
+            foreach (DictionaryEntry entry in overrides)
+                if (entry.Value == null) variables.Remove(Convert.ToString(entry.Key));
+                else variables[Convert.ToString(entry.Key)] = Convert.ToString(entry.Value);
         StringBuilder block = new StringBuilder();
         foreach (KeyValuePair<string, string> variable in variables)
             block.Append(variable.Key).Append('=').Append(variable.Value).Append('\0');
@@ -289,6 +430,11 @@ public static class ItlDeliveryProcessJob
     }
 
     public static StartedProcess Start(string executable, string arguments, string workingDirectory, string standardOutputPath, string standardErrorPath, bool resetPowerShellModulePath)
+    {
+        return Start(executable, arguments, workingDirectory, standardOutputPath, standardErrorPath, resetPowerShellModulePath, null);
+    }
+
+    public static StartedProcess Start(string executable, string arguments, string workingDirectory, string standardOutputPath, string standardErrorPath, bool resetPowerShellModulePath, IDictionary environmentOverrides)
     {
         AssertAtomicJobListSupport();
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
@@ -339,9 +485,14 @@ public static class ItlDeliveryProcessJob
             startupInfo.lpAttributeList = attributeList;
             StringBuilder commandLine = new StringBuilder("\"" + executable + "\" " + arguments);
             UInt32 creationFlags = EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED;
-            if (resetPowerShellModulePath)
+            if (resetPowerShellModulePath && environmentOverrides == null)
             {
                 environment = CreateEnvironmentWithout("PSModulePath");
+                creationFlags |= CREATE_UNICODE_ENVIRONMENT;
+            }
+            else if (environmentOverrides != null)
+            {
+                environment = CreateEnvironmentWithout(resetPowerShellModulePath ? "PSModulePath" : null, environmentOverrides);
                 creationFlags |= CREATE_UNICODE_ENVIRONMENT;
             }
             if (!CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true, creationFlags, environment, workingDirectory, ref startupInfo, out processInformation))
@@ -370,6 +521,105 @@ public static class ItlDeliveryProcessJob
         }
     }
 
+    private static void CaptureJobProcessHandles(IntPtr job, List<IntPtr> handles, Stopwatch watch, Int32 timeoutMilliseconds)
+    {
+        Int32 capacity = 16;
+        while (true)
+        {
+            Int32 length = checked(8 + IntPtr.Size * capacity);
+            IntPtr information = Marshal.AllocHGlobal(length);
+            try
+            {
+                bool complete = QueryJobProcessIdList(job, JobObjectBasicProcessIdList, information, (UInt32)length, IntPtr.Zero);
+                Int32 error = complete ? 0 : Marshal.GetLastWin32Error();
+                if (!complete && error != 234)
+                    throw new Win32Exception(error, "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: owned process-id list query failed.");
+                Int32 assigned = Marshal.ReadInt32(information, 0);
+                Int32 listed = Marshal.ReadInt32(information, 4);
+                if (!complete)
+                {
+                    if (watch.ElapsedMilliseconds >= timeoutMilliseconds)
+                        throw new TimeoutException("DELIVERY_PROCESS_JOB_QUIESCENCE_TIMEOUT: owned process-id list was not complete before the deadline.");
+                    capacity = Math.Max(checked(capacity * 2), assigned);
+                    continue;
+                }
+                if (assigned < 0 || listed < 0 || assigned != listed || listed > capacity)
+                    throw new InvalidOperationException("DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: incomplete owned process-id list.");
+                for (Int32 index = 0; index < listed; index++)
+                {
+                    if (watch.ElapsedMilliseconds >= timeoutMilliseconds)
+                        throw new TimeoutException("DELIVERY_PROCESS_JOB_QUIESCENCE_TIMEOUT: owned process handles were not captured before the deadline.");
+                    UInt32 processId = checked((UInt32)Marshal.ReadIntPtr(information, 8 + IntPtr.Size * index).ToInt64());
+                    IntPtr process = OpenProcess(0x00100000 | 0x00001000, false, processId);
+                    if (process == IntPtr.Zero)
+                        throw new Win32Exception(Marshal.GetLastWin32Error(), "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: could not hold an owned process handle.");
+                    try
+                    {
+                        bool inJob;
+                        if (!IsProcessInJob(process, job, out inJob))
+                            throw new Win32Exception(Marshal.GetLastWin32Error(), "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: process job membership query failed.");
+                        if (!inJob)
+                            throw new InvalidOperationException("DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: captured process no longer belongs to the owned job.");
+                        handles.Add(process);
+                        process = IntPtr.Zero;
+                    }
+                    finally { if (process != IntPtr.Zero) CloseHandle(process); }
+                }
+                return;
+            }
+            finally { Marshal.FreeHGlobal(information); }
+        }
+    }
+
+    public static UInt32 StopAndWait(IntPtr job, Int32 timeoutMilliseconds)
+    {
+        if (job == IntPtr.Zero)
+            throw new ArgumentException("DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: no owned job handle.");
+        if (timeoutMilliseconds < 0) throw new ArgumentOutOfRangeException("timeoutMilliseconds");
+        Stopwatch watch = Stopwatch.StartNew();
+        List<IntPtr> processes = new List<IntPtr>();
+        try
+        {
+            CaptureJobProcessHandles(job, processes, watch, timeoutMilliseconds);
+            if (!TerminateJobObject(job, 1))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: TerminateJobObject failed.");
+            foreach (IntPtr process in processes)
+            {
+                Int64 remaining = Math.Max(0, (Int64)timeoutMilliseconds - watch.ElapsedMilliseconds);
+                UInt32 result = WaitForSingleObject(process, (UInt32)remaining);
+                if (result == 258)
+                    throw new TimeoutException("DELIVERY_PROCESS_JOB_QUIESCENCE_TIMEOUT: an owned process handle is not signaled.");
+                if (result != 0)
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: owned process handle wait failed.");
+            }
+            UInt32 length = (UInt32)Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION));
+            while (true)
+            {
+                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION information;
+                if (!QueryInformationJobObject(job, JobObjectBasicAccountingInformation, out information, length, IntPtr.Zero))
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: QueryInformationJobObject failed.");
+                if (information.ActiveProcesses == 0) return 0;
+                Int64 remaining = (Int64)timeoutMilliseconds - watch.ElapsedMilliseconds;
+                if (remaining <= 0)
+                    throw new TimeoutException("DELIVERY_PROCESS_JOB_QUIESCENCE_TIMEOUT: owned job still has " + information.ActiveProcesses + " active process(es).");
+                System.Threading.Thread.Sleep((Int32)Math.Min(25, remaining));
+            }
+        }
+        finally
+        {
+            foreach (IntPtr process in processes) CloseHandle(process);
+        }
+    }
+
+    public static UInt32 GetActiveProcessCount(IntPtr job)
+    {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION information;
+        UInt32 length = (UInt32)Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION));
+        if (!QueryInformationJobObject(job, JobObjectBasicAccountingInformation, out information, length, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Delivery process job accounting query failed.");
+        return information.ActiveProcesses;
+    }
+
     public static void Close(IntPtr job)
     {
         if (job != IntPtr.Zero && !CloseHandle(job))
@@ -379,10 +629,15 @@ public static class ItlDeliveryProcessJob
 '@
     }
     $powershellPath = (Get-Command "powershell.exe" -ErrorAction Stop).Source
+    $executablePath = if ($FilePath -eq 'powershell.exe') { $powershellPath } else { (Get-Command $FilePath -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source }
     # Native CreateProcess would pass PowerShell Core's PSModulePath through
     # unchanged. Omit it so Windows PowerShell rebuilds its own module roots.
-    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
-    $started = [ItlDeliveryProcessJob]::Start($powershellPath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath, $resetModulePathForWindowsPowerShell)
+    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core" -and [IO.Path]::GetFileName($executablePath) -ieq 'powershell.exe'
+    $started = if ($null -ne $EnvironmentOverrides) {
+        [ItlDeliveryProcessJob]::Start($executablePath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath, $resetModulePathForWindowsPowerShell, $EnvironmentOverrides)
+    } else {
+        [ItlDeliveryProcessJob]::Start($executablePath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath, $resetModulePathForWindowsPowerShell)
+    }
     try {
         $process = $started.Process
         $null = $process.Handle
@@ -390,6 +645,37 @@ public static class ItlDeliveryProcessJob
     } catch {
         try { [ItlDeliveryProcessJob]::Close([IntPtr]$started.JobHandle) } catch {}
         throw
+    }
+}
+
+function Stop-DeliveryProcessJobAndWait {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$JobHandle,
+        [Parameter(Mandatory = $true)][Diagnostics.Process]$Process,
+        [ValidateRange(0, 2147483647)][int]$TimeoutMilliseconds = 5000
+    )
+    if ($env:OS -ne 'Windows_NT' -or $JobHandle -eq [IntPtr]::Zero -or -not ('ItlDeliveryProcessJob' -as [type])) {
+        throw 'DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: an initialized owned Windows job is required.'
+    }
+    $processId = [int]$Process.Id
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    # Accounting zero can precede process-handle signaling. Hold and wait the
+    # current job processes, then confirm zero while the job remains open. The
+    # caller retains its existing finally/Close ownership on every outcome.
+    $activeProcesses = [ItlDeliveryProcessJob]::StopAndWait($JobHandle, $TimeoutMilliseconds)
+    $remaining = [Math]::Max(0, $TimeoutMilliseconds - [int]$watch.ElapsedMilliseconds)
+    if (-not $Process.WaitForExit($remaining)) {
+        throw 'DELIVERY_PROCESS_JOB_QUIESCENCE_TIMEOUT: the owned parent process handle is not signaled.'
+    }
+    $watch.Stop()
+    return [pscustomobject]@{
+        jobHandle = $JobHandle.ToInt64().ToString([Globalization.CultureInfo]::InvariantCulture)
+        processId = $processId
+        activeProcesses = [int]$activeProcesses
+        stopped = $true
+        quiescenceConfirmed = $true
+        processHandleWaitsVerified = $true
+        elapsedMilliseconds = [int64]$watch.ElapsedMilliseconds
     }
 }
 
@@ -406,8 +692,109 @@ function Close-DeliveryProcessJob {
     }
 }
 
+# Source gate admission (architecture checkpoint 2026-11-20): at most
+# ITL_SOURCE_GATE_SLOTS gates of one repository run at once. A slot is a file
+# in the common Git directory held open exclusively by the supervising process;
+# Windows closes it when that process exits, so a dead holder needs no recovery.
+# The holder record inside is for Status only and never grants admission.
+function Get-SourceGateSlotCount {
+    $value = [Environment]::GetEnvironmentVariable('ITL_SOURCE_GATE_SLOTS', 'Process')
+    $count = 0
+    if ($value -and [int]::TryParse($value, [ref]$count) -and $count -ge 1 -and $count -le 8) { return $count }
+    return 2
+}
+
+function Get-SourceGateSlotWaitSeconds {
+    $value = [Environment]::GetEnvironmentVariable('ITL_SOURCE_GATE_SLOT_WAIT_SECONDS', 'Process')
+    $seconds = 0
+    if ($value -and [int]::TryParse($value, [ref]$seconds) -and $seconds -ge 0) { return $seconds }
+    return 7200
+}
+
+function Get-SourceGateSlotRoot { return Join-Path (Get-DeliveryCommonGitDirectory) 'itl\gate-slots' }
+
+function Get-SourceGateSlotStatus {
+    $root = Get-SourceGateSlotRoot
+    $holders = @()
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter 'slot-*.lock' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        $text = ''
+        try {
+            $stream = [IO.File]::Open($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            try { $text = (New-Object IO.StreamReader($stream, [Text.UTF8Encoding]::new($false))).ReadToEnd() } finally { $stream.Dispose() }
+        } catch { continue }
+        if (-not $text.Trim()) { continue }
+        try { $holder = $text | ConvertFrom-Json } catch { continue }
+        # A record left by a killed holder stays in the file; only a live
+        # process with the recorded creation time still holds the slot.
+        if (-not (Test-DeliveryProcessIdentity -ProcessId ([int]$holder.pid) -StartedAt $holder.processStartedAt)) { continue }
+        $holders += [pscustomobject]@{ slot=[int]$holder.slot; mode=[string]$holder.mode; pid=[int]$holder.pid; acquiredAt=[string]$holder.acquiredAt; workingRoot=[string]$holder.workingRoot }
+    }
+    return [pscustomobject]@{ capacity = (Get-SourceGateSlotCount); holders = @($holders) }
+}
+
+function Format-SourceGateSlotHolders {
+    $holders = @((Get-SourceGateSlotStatus).holders)
+    if ($holders.Count -eq 0) { return 'holders are starting or exiting' }
+    return (@($holders | ForEach-Object { "$($_.mode) PID $($_.pid) since $($_.acquiredAt) in '$($_.workingRoot)'" }) -join '; ')
+}
+
+function Enter-SourceGateSlot {
+    param([Parameter(Mandatory = $true)][string]$Mode, [Parameter(Mandatory = $true)][string]$WorkingRoot)
+    $root = Get-SourceGateSlotRoot
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $count = Get-SourceGateSlotCount
+    $limitSeconds = Get-SourceGateSlotWaitSeconds
+    $pollMilliseconds = [int](Get-Variable -Name SourceGateSlotPollMilliseconds -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    if ($pollMilliseconds -le 0) { $pollMilliseconds = 3000 }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $reportedAt = -1.0
+    while ($true) {
+        for ($index = 0; $index -lt $count; $index++) {
+            $path = Join-Path $root "slot-$index.lock"
+            $stream = $null
+            try { $stream = [IO.File]::Open($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read) }
+            catch {
+                # A sharing violation means a live holder; anything else is a real fault.
+                # Windows PowerShell wraps a .NET method fault in MethodInvocationException.
+                $fault = $_.Exception
+                if ($fault -is [Management.Automation.MethodInvocationException] -and $fault.InnerException) { $fault = $fault.InnerException }
+                if ($fault -is [IO.IOException] -and -not ($fault -is [IO.FileNotFoundException] -or $fault -is [IO.DirectoryNotFoundException])) { continue }
+                throw
+            }
+            $waited = [Math]::Round($watch.Elapsed.TotalSeconds, 3)
+            $self = Get-Process -Id $PID
+            $holder = [ordered]@{
+                schemaVersion=1; slot=$index; mode=$Mode; pid=$PID; processStartedAt=$self.StartTime.ToUniversalTime().ToString('o')
+                acquiredAt=[DateTime]::UtcNow.ToString('o'); waitedSeconds=$waited; workingRoot=[IO.Path]::GetFullPath($WorkingRoot)
+            }
+            $bytes = [Text.UTF8Encoding]::new($false).GetBytes((($holder | ConvertTo-Json -Compress) + [Environment]::NewLine))
+            try { $stream.SetLength(0); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush() } catch { $stream.Dispose(); throw }
+            if ($waited -ge 1) { [Console]::Error.WriteLine("ITL source gate slot $index of $count acquired for $Mode after $([int]$waited)s; gate budgets start now.") }
+            return [pscustomobject]@{ stream=$stream; slot=$index; waitedSeconds=$waited }
+        }
+        $elapsed = $watch.Elapsed.TotalSeconds
+        if ($elapsed + ($pollMilliseconds / 1000.0) -gt $limitSeconds) {
+            throw "SOURCE_GATE_SLOT_WAIT_TIMEOUT: $Mode waited $([int]$elapsed)s of $($limitSeconds)s (ITL_SOURCE_GATE_SLOT_WAIT_SECONDS) for one of $count source gate slots (ITL_SOURCE_GATE_SLOTS); held by: $(Format-SourceGateSlotHolders). The gate was not started and no budget was spent; preserved candidates and the shard cache stay valid. Repeat the same command after a holder finishes; source-delivery Status lists gateSlots."
+        }
+        if ($reportedAt -lt 0 -or $elapsed - $reportedAt -ge 60) {
+            [Console]::Error.WriteLine("ITL source gate slot: $Mode waiting $([int]$elapsed)s of $($limitSeconds)s for one of $count slots; held by: $(Format-SourceGateSlotHolders)")
+            $reportedAt = $elapsed
+        }
+        Start-Sleep -Milliseconds $pollMilliseconds
+    }
+}
+
+function Exit-SourceGateSlot {
+    param([object]$Slot)
+    if (-not $Slot -or -not $Slot.stream) { return }
+    try { $Slot.stream.SetLength(0) } catch { }
+    $Slot.stream.Dispose()
+}
+
 function Invoke-SourceGate {
-    param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "", [int]$HardBudgetSeconds = 0)
+    param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "", [int]$HardBudgetSeconds = 0, [string[]]$ReleaseCapability = @(), [string[]]$PrerunReleaseCapability = @(), [datetime]$DeadlineUtc = [DateTime]::MaxValue, [switch]$PassThru)
+    $script:DeliveryLastRunFailure = $null
+    if ([DateTime]::UtcNow -ge $DeadlineUtc) { throw "$Mode source gate has no remaining operation budget; continue the original operation from its preserved checkpoint." }
     $gate = if ($script:GateScript -eq (Join-Path $script:Root "scripts\check.ps1")) { Join-Path $WorkingRoot "scripts\check.ps1" } else { $script:GateScript }
     if (-not (Test-Path -LiteralPath $gate -PathType Leaf)) { throw "Source gate was not found: $gate" }
     $arguments = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $gate, "-Mode", $Mode)
@@ -416,7 +803,22 @@ function Invoke-SourceGate {
     if ($contracts.Count -gt 0) { $arguments += @("-CoverageContract", ($contracts -join ",")) }
     if ($AiRulesSource) { $arguments += @("-AiRulesSource", ([System.IO.Path]::GetFullPath($AiRulesSource))) }
     if ($E2EProjectRoot) { $arguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot))) }
-    if ($Mode -eq "Release") { $arguments += @("-ReleaseResumeMode", $ReleaseResumeMode) }
+    $freshRootSetting = Get-Variable -Name FreshProjectsRoot -ErrorAction SilentlyContinue
+    if ($Mode -in @('Develop','Release') -and $freshRootSetting -and $freshRootSetting.Value) { $arguments += @('-FreshProjectsRoot', [string]$freshRootSetting.Value) }
+    $clientParameter = Get-Variable -Name AgentTarget -ErrorAction SilentlyContinue
+    if ($Mode -in @("Develop", "Release") -and $clientParameter -and -not [string]::IsNullOrWhiteSpace([string]$clientParameter.Value)) {
+        $arguments += @("-AgentTarget", [string]$clientParameter.Value)
+    }
+    if ($Mode -eq "Release") {
+        $arguments += @("-ReleaseResumeMode", $ReleaseResumeMode)
+        if (@($ReleaseCapability).Count -gt 0) { $arguments += @("-ReleaseCapabilities", (@($ReleaseCapability) -join ',')) }
+    }
+    # Only the authoritative gate speculates Release stages for its checkpoint.
+    # A Windows PowerShell null-bound [string[]] has no Count; normalize first.
+    $prerunCapabilities = @($PrerunReleaseCapability | Where-Object { $_ })
+    if ($Mode -eq "Develop" -and $prerunCapabilities.Count -gt 0 -and $gate -eq (Join-Path $WorkingRoot "scripts\check.ps1")) {
+        $arguments += @("-PrerunReleaseCapabilities", ($prerunCapabilities -join ','))
+    }
     $quoted = @($arguments | ForEach-Object {
         $value = [string]$_
         if ($value -notmatch '[\s"]') { $value } else { '"' + $value.Replace('"', '\"') + '"' }
@@ -425,6 +827,11 @@ function Invoke-SourceGate {
     New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
     $stdout = Join-Path $logRoot ("gate-$($Mode.ToLowerInvariant()).stdout.log")
     $stderr = Join-Path $logRoot ("gate-$($Mode.ToLowerInvariant()).stderr.log")
+    # Waiting for admission is not gate time: the caller deadline moves by the
+    # wait and the gate's own budgets start only after the slot is held.
+    $gateSlot = Enter-SourceGateSlot -Mode $Mode -WorkingRoot $WorkingRoot
+    $script:DeliveryLastGateSlotWaitSeconds = [double]$gateSlot.waitedSeconds
+    if ($DeadlineUtc -ne [DateTime]::MaxValue) { $DeadlineUtc = $DeadlineUtc.AddSeconds([double]$gateSlot.waitedSeconds) }
     $gateStartedAt = [DateTime]::UtcNow
     $gateStatus = "failed"; $gateError = ""; $process = $null; $processJob = [IntPtr]::Zero
     try {
@@ -433,14 +840,27 @@ function Invoke-SourceGate {
         $processJob = [IntPtr]$started.jobHandle
         Update-DeliveryOperation -Values @{ mode = $Mode; workingRoot = $WorkingRoot; gatePid = [int]$process.Id; gateProcessStartedAt = $process.StartTime.ToUniversalTime().ToString("o"); gateStatus = "running" }
         $authoritativeGate = Join-Path $WorkingRoot "scripts\check.ps1"
-        $hardSeconds = if ($HardBudgetSeconds -gt 0) { $HardBudgetSeconds } else { Get-SourceGateHardBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -AllowMissingCatalog:($gate -ne $authoritativeGate) }
+        $gateBudgetSeconds = [double](Get-SourceGateSupervisionBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -PlanBudgetSeconds $HardBudgetSeconds -InjectedGate:($gate -ne $authoritativeGate))
+        $hardSeconds = $gateBudgetSeconds
+        $callerDeadlineBinds = $false
+        if ($DeadlineUtc -ne [DateTime]::MaxValue) {
+            $remainingSeconds = ($DeadlineUtc - [DateTime]::UtcNow).TotalSeconds
+            $hardSeconds = [Math]::Min($gateBudgetSeconds, [Math]::Max(0.0, [double]$remainingSeconds))
+            $callerDeadlineBinds = $hardSeconds -lt $gateBudgetSeconds
+        }
         $watch = [Diagnostics.Stopwatch]::StartNew(); $lastLength = -1L; $lastProgress = [DateTime]::UtcNow
         while (-not $process.WaitForExit(5000)) {
             $length = 0L
             foreach ($path in @($stdout, $stderr)) { if (Test-Path $path) { $length += (Get-Item $path).Length } }
             if ($length -ne $lastLength) { $lastLength = $length; $lastProgress = [DateTime]::UtcNow }
-            if ($watch.Elapsed.TotalSeconds -ge $hardSeconds -or ([DateTime]::UtcNow - $lastProgress).TotalMinutes -ge 15) {
+            $noProgress = ([DateTime]::UtcNow - $lastProgress).TotalMinutes -ge 15
+            if ($watch.Elapsed.TotalSeconds -ge $hardSeconds -or $noProgress) {
                 Stop-DeliveryProcessTree -Process $process
+                # A caller deadline shorter than the gate's own budget is the
+                # caller's limit, not evidence that this gate stalled or failed.
+                if ($callerDeadlineBinds -and -not $noProgress) {
+                    throw "SOURCE_GATE_OPERATION_DEADLINE: $Mode source gate was stopped after $([int][Math]::Floor($watch.Elapsed.TotalSeconds)) seconds at its caller's remaining operation budget; its own $([int]$gateBudgetSeconds) second budget was not exhausted and no gate failure was observed. Continue the original operation from its preserved checkpoint. See $stdout and $stderr"
+                }
                 throw "$Mode source gate exceeded its hard/no-progress budget. See $stdout and $stderr"
             }
         }
@@ -456,16 +876,57 @@ function Invoke-SourceGate {
     } catch { $gateError = $_.Exception.Message; throw } finally {
         $jobCloseError = $null
         try { Close-DeliveryProcessJob -JobHandle $processJob -Process $process -PriorErrorMessage $gateError } catch { $jobCloseError = $_ }
-        Stop-DeliveryProcessTree -Process $process
+        # The next admitted gate may start only after this gate's tree is gone.
+        try { Stop-DeliveryProcessTree -Process $process } finally { Exit-SourceGateSlot -Slot $gateSlot }
         $finishedAt = [DateTime]::UtcNow
         $historyError = $null
         try {
-            $runRecordPath = Write-DeliveryRunRecord -Mode $Mode -Status $gateStatus -ErrorMessage $gateError -WorkingRoot $WorkingRoot -StartedAt $gateStartedAt -FinishedAt $finishedAt -ExitCode $(if ($process -and $process.HasExited) { [int]$process.ExitCode } else { -1 })
+            $runRecordPath = Write-DeliveryRunRecord -Mode $Mode -Status $gateStatus -ErrorMessage $gateError -WorkingRoot $WorkingRoot -StartedAt $gateStartedAt -FinishedAt $finishedAt -ExitCode $(if ($process -and $process.HasExited) { [int]$process.ExitCode } else { -1 }) -ReleaseCapability $ReleaseCapability
             Update-DeliveryOperation -Values @{ gatePid = 0; gateProcessStartedAt = ""; gateStatus = $gateStatus; gateFinishedAt = $finishedAt.ToString("o"); runRecordPath = $runRecordPath }
         }
         catch { if ($gateStatus -eq "passed") { $historyError = $_ } else { Write-Warning "Unable to persist failed gate history: $($_.Exception.Message)" } }
         if ($jobCloseError) { throw $jobCloseError }
         if ($historyError) { throw $historyError }
+    }
+    if ($PassThru) { return $runRecordPath }
+}
+
+function Assert-DeliveryReleaseStandReady {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot)
+    if ($script:DeliveryCustomGateBoundary) { return }
+    if (-not $E2EProjectRoot -or -not $AiRulesSource) { throw 'Release stand preflight requires the configured E2E project and exact controlled-fork checkout.' }
+    $runner = Join-Path $CandidateRoot 'scripts\test-release-readiness.ps1'
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "Release stand preflight is missing from the candidate: $runner" }
+    $logRoot = Join-Path $CandidateRoot 'build\test-results\delivery'
+    New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
+    $output = Join-Path $logRoot 'release-stand-preflight.json'
+    Remove-Item -LiteralPath $output -Force -ErrorAction SilentlyContinue
+    $stdout = Join-Path $logRoot 'release-stand-preflight.stdout.log'
+    $stderr = Join-Path $logRoot 'release-stand-preflight.stderr.log'
+    $arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner,
+        '-Mode', 'Release', '-RepositoryRoot', $CandidateRoot, '-E2EProjectRoot', ([IO.Path]::GetFullPath($E2EProjectRoot)),
+        '-AiRulesSource', ([IO.Path]::GetFullPath($AiRulesSource)), '-ResumeMode', $ReleaseResumeMode, '-OutputPath', $output)
+    $quoted = @($arguments | ForEach-Object { ConvertTo-DeliveryNativeArgument -Value ([string]$_) })
+    $process = $null; $job = [IntPtr]::Zero; $priorError = ''
+    try {
+        $started = Start-DeliveryProcess -ArgumentList ($quoted -join ' ') -WorkingDirectory $CandidateRoot -StandardOutputPath $stdout -StandardErrorPath $stderr
+        $process = $started.process; $job = [IntPtr]$started.jobHandle
+        if (-not $process.WaitForExit(300000)) {
+            Stop-DeliveryProcessTree -Process $process
+            throw "Release stand preflight exceeded five minutes. See $stdout and $stderr"
+        }
+        $process.Refresh()
+        if (-not (Test-Path -LiteralPath $output -PathType Leaf)) { throw "Release stand preflight returned without context. See $stdout and $stderr" }
+        $context = Get-Content -LiteralPath $output -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$context.status -cne 'passed' -or [int]$process.ExitCode -ne 0) {
+            $issues = @($context.issues | ForEach-Object { "$($_.code): $($_.message) Recovery: $($_.recovery)" }) -join '; '
+            throw "Release stand is not ready before Develop: $issues. See $output"
+        }
+    } catch { $priorError = $_.Exception.Message; throw } finally {
+        $closeError = $null
+        try { Close-DeliveryProcessJob -JobHandle $job -Process $process -PriorErrorMessage $priorError } catch { $closeError = $_ }
+        Stop-DeliveryProcessTree -Process $process
+        if ($closeError) { throw $closeError }
     }
 }
 
@@ -504,10 +965,21 @@ function Get-DeliveryOperationStatus {
     if (-not $operation) { return $null }
     $ownerAlive = Test-DeliveryProcessIdentity -ProcessId ([int]$operation.ownerPid) -StartedAt $operation.ownerProcessStartedAt
     $gateAlive = Test-DeliveryProcessIdentity -ProcessId ([int]$operation.gatePid) -StartedAt $operation.gateProcessStartedAt
+    $cleanupPidProperty = $operation.PSObject.Properties['cleanupExecutorPid']
+    $cleanupPid = if ($cleanupPidProperty) { [int]$cleanupPidProperty.Value } else { 0 }
+    $cleanupDelegationProperty = $operation.PSObject.Properties['cleanupDelegation']
+    $cleanupDelegation = if ($cleanupDelegationProperty) { $cleanupDelegationProperty.Value } else { $null }
+    $cleanupStartedAt = if ($cleanupDelegation -and $cleanupDelegation.PSObject.Properties['childProcessStartedAt']) { $cleanupDelegation.childProcessStartedAt } else { $null }
+    $cleanupAlive = Test-DeliveryProcessIdentity -ProcessId $cleanupPid -StartedAt $cleanupStartedAt
     return [pscustomobject]@{
         id = [string]$operation.id; action = [string]$operation.action; startedAt = [string]$operation.startedAt
         ownerPid = [int]$operation.ownerPid; ownerAlive = $ownerAlive; gatePid = [int]$operation.gatePid; gateAlive = $gateAlive
-        mode = [string]$operation.mode; candidatePath = [string]$operation.workingRoot; status = $(if ($ownerAlive -or $gateAlive) { "running" } else { "stale" })
+        cleanupExecutorPid = $cleanupPid; cleanupExecutorAlive = $cleanupAlive
+        cleanupExecutor = $(if ($cleanupDelegation) { [pscustomobject]@{
+            channel=[string]$cleanupDelegation.channel; phase=[string]$cleanupDelegation.phase; commit=[string]$cleanupDelegation.commit
+            authorityCommit=[string]$cleanupDelegation.authorityCommit; status=[string]$cleanupDelegation.status
+        } } else { $null })
+        mode = [string]$operation.mode; candidatePath = [string]$operation.workingRoot; status = $(if ($ownerAlive -or $gateAlive -or $cleanupAlive) { "running" } else { "stale" })
     }
 }
 
@@ -515,15 +987,396 @@ function Get-DeliveryFailureClass {
     param([string]$Message, [string]$Stage = "")
     $value = "$Stage $Message"
     if ($value -match '(?i)cleanup|housekeeping|remove stale|could not be removed') { return "cleanup" }
+    # check.ps1 reruns failed Pester files alone; a pass there is a test or
+    # environment defect, not a reproducible product failure. The gate still failed.
+    if ($value -match '(?i)passed alone \(nondeterministic') { return "nondeterministic" }
     if ($value -match '(?i)QUALITY_OWNER_MISSING|quality contract|test contract|assertion contract') { return "test-contract" }
     if ($value -match '(?i)parameter|argument|ValidateSet|requires an explicit|is valid only|invocation') { return "invocation" }
-    if ($value -match '(?i)timeout|timed out|no.progress|port.+(?:busy|occupied)|environment|unavailable|access.+denied') { return "environment" }
+    if ($value -match '(?i)timeout|timed out|no.progress|port.+(?:busy|occupied)|environment|unavailable|access.+denied|remaining (?:mode|operation) budget|waiting for host [a-z/]+ memory') { return "environment" }
     if ($value -match '(?i)DELIVERY_PLAN|supervisor|queue|checkpoint|operation.+lock|publication stage') { return "supervisor" }
     return "product"
 }
 
+$script:DeliveryRunHotIndexCapacity = 2048
+$script:DeliveryRunHotIndexLockTimeoutMilliseconds = 30000
+
+. (Join-Path $PSScriptRoot 'source-proof-json.ps1')
+
+function Get-DeliveryRunHotIndexPath {
+    return Join-Path (Get-DeliveryCommonGitDirectory) "itl\run-index\v1\hot.json"
+}
+
+function Get-DeliveryRunHotIndexPendingRoot {
+    return Join-Path (Split-Path -Parent (Get-DeliveryRunHotIndexPath)) 'pending'
+}
+
+function Write-DeliveryRunHotIndexPendingMarker {
+    param([Parameter(Mandatory = $true)][string]$RawPath)
+    $root = Get-DeliveryRunHotIndexPendingRoot
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $path = Join-Path $root ((Split-Path -Leaf $RawPath) + '.pending')
+    $temporary = Join-Path $root ((Split-Path -Leaf $path) + '.' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        $writer = Get-Process -Id $PID -ErrorAction Stop
+        $payload = [pscustomobject][ordered]@{
+            schemaVersion=1; kind='itl-delivery-run-index-pending'; rawPath=[IO.Path]::GetFullPath($RawPath)
+            writerPid=[int]$PID; writerStartedAt=$writer.StartTime.ToUniversalTime().ToString('o')
+        }
+        [IO.File]::WriteAllText($temporary, (($payload | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporary -Destination $path -Force
+    } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    return $path
+}
+
+function Enter-DeliveryRunHotIndexLock {
+    param([int]$TimeoutMilliseconds = 30000)
+    $path = Join-Path (Split-Path -Parent (Get-DeliveryRunHotIndexPath)) 'write.lock'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(1, $TimeoutMilliseconds))
+    do {
+        try { return [IO.File]::Open($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch [IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) { throw "DELIVERY_RUN_INDEX_LOCK_TIMEOUT: $path" }
+            Start-Sleep -Milliseconds 25
+        }
+    } while ($true)
+}
+
+function Test-DeliveryRunRecordShape {
+    param([Parameter(Mandatory = $true)][object]$Record)
+    $present = $Record.PSObject.Properties["mode"] -and $Record.PSObject.Properties["status"] -and
+        $Record.PSObject.Properties["startedAt"] -and $Record.PSObject.Properties["durationMs"] -and
+        $Record.PSObject.Properties["tree"]
+    if (-not $present) { return $false }
+    try {
+        [void](ConvertTo-DeliveryUtcDateTime -Value $Record.startedAt)
+        $duration = [int64]$Record.durationMs
+        return $duration -ge 0
+    } catch { return $false }
+}
+
+function ConvertTo-DeliveryRunHotIndexEntry {
+    param(
+        [Parameter(Mandatory = $true)][object]$Record,
+        [Parameter(Mandatory = $true)][string]$RawPath
+    )
+    $entry = [pscustomobject][ordered]@{
+        rawPath=[IO.Path]::GetFullPath($RawPath)
+        schemaVersion=$(if($Record.PSObject.Properties["schemaVersion"]){[int]$Record.schemaVersion}else{0})
+        id=$(if($Record.PSObject.Properties["id"]){[string]$Record.id}else{""})
+        mode=[string]$Record.mode; status=[string]$Record.status
+        failureClass=$(if($Record.PSObject.Properties["failureClass"]){[string]$Record.failureClass}else{""})
+        exitCode=$(if($Record.PSObject.Properties["exitCode"]){[int]$Record.exitCode}else{-1})
+        startedAt=[string]$Record.startedAt
+        finishedAt=$(if($Record.PSObject.Properties["finishedAt"]){[string]$Record.finishedAt}else{""})
+        durationMs=[int64]$Record.durationMs
+        commit=$(if($Record.PSObject.Properties["commit"]){[string]$Record.commit}else{""})
+        tree=[string]$Record.tree
+        error=$(if($Record.PSObject.Properties["error"]){[string]$Record.error}else{""})
+        tests=$(if($Record.PSObject.Properties["tests"]){$Record.tests}else{$null})
+        stages=$(if($Record.PSObject.Properties["stages"]){@($Record.stages)}else{@()})
+        releaseE2E=$(if($Record.PSObject.Properties["releaseE2E"]){$Record.releaseE2E}else{$null})
+    }
+    if ($Record.PSObject.Properties['journeyScenarioExecution']) {
+        $entry | Add-Member -NotePropertyName journeyScenarioExecution -NotePropertyValue $Record.journeyScenarioExecution
+    }
+    if ($Record.PSObject.Properties['failure'] -and $Record.failure) {
+        $entry | Add-Member -NotePropertyName failure -NotePropertyValue (Get-DeliveryCompactFailure -Failure $Record.failure)
+    }
+    return $entry
+}
+
+function New-DeliveryRunHotIndex {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [ref]$ProcessedRawPaths
+    )
+    $entries = [Collections.Generic.List[object]]::new()
+    $valid = [Collections.Generic.List[object]]::new()
+    $processed = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $invalidCount = 0
+    if (Test-Path -LiteralPath $RunRoot -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $RunRoot -File -Filter "*.json" | Sort-Object Name -Descending)) {
+            [void]$processed.Add([IO.Path]::GetFullPath($file.FullName))
+            try {
+                $record = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-DeliveryProofJson
+                if (-not (Test-DeliveryRunRecordShape -Record $record)) { $invalidCount++; continue }
+                $entry = ConvertTo-DeliveryRunHotIndexEntry -Record $record -RawPath $file.FullName
+                $valid.Add($entry) | Out-Null
+                if ($entries.Count -lt $script:DeliveryRunHotIndexCapacity) { $entries.Add($entry) | Out-Null }
+            } catch { $invalidCount++ }
+        }
+    }
+    $byMode = @($valid | Group-Object mode | Sort-Object Name | ForEach-Object {
+        [pscustomobject][ordered]@{ mode=$_.Name; count=[int]$_.Count; durationMs=[int64](($_.Group | Measure-Object durationMs -Sum).Sum) }
+    })
+    $directoryStamp = if (Test-Path -LiteralPath $RunRoot -PathType Container) {
+        (Get-Item -LiteralPath $RunRoot).LastWriteTimeUtc.ToString("o")
+    } else { "" }
+    $totalDurationMs = [int64]0
+    foreach ($entry in $valid) { $totalDurationMs += [int64]$entry.durationMs }
+    if ($ProcessedRawPaths) { $ProcessedRawPaths.Value = $processed }
+    return [pscustomobject][ordered]@{
+        schemaVersion=1; kind="itl-delivery-run-hot-index"; capacity=$script:DeliveryRunHotIndexCapacity
+        sourceDirectory=[IO.Path]::GetFullPath($RunRoot); sourceDirectoryLastWriteTimeUtc=$directoryStamp
+        validRunCount=$valid.Count; invalidRunCount=$invalidCount
+        totalDurationMs=$totalDurationMs
+        byMode=$byMode; entries=@($entries); truncated=($valid.Count -gt $script:DeliveryRunHotIndexCapacity)
+        updatedAt=[DateTime]::UtcNow.ToString("o")
+    }
+}
+
+function Get-DeliveryRunHotIndexContentSha256 {
+    param([Parameter(Mandatory = $true)][object]$Index, [switch]$LegacyCore)
+    $content = [pscustomobject][ordered]@{
+        schemaVersion=[int]$Index.schemaVersion; kind=[string]$Index.kind; capacity=[int]$Index.capacity
+        sourceDirectory=[string]$Index.sourceDirectory; sourceDirectoryLastWriteTimeUtc=[string]$Index.sourceDirectoryLastWriteTimeUtc
+        validRunCount=[int64]$Index.validRunCount; invalidRunCount=[int]$Index.invalidRunCount
+        totalDurationMs=[int64]$Index.totalDurationMs; byMode=@($Index.byMode); entries=@($Index.entries)
+        truncated=[bool]$Index.truncated; updatedAt=[string]$Index.updatedAt
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($content | ConvertTo-DeliveryProofJson -Depth 16 -Compress -LegacyCore:$LegacyCore))
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
+function Write-DeliveryRunHotIndex {
+    param([Parameter(Mandatory = $true)][object]$Index)
+    $contentSha = Get-DeliveryRunHotIndexContentSha256 -Index $Index
+    if ($Index.PSObject.Properties['contentSha256']) { $Index.contentSha256 = $contentSha }
+    else { $Index | Add-Member -NotePropertyName contentSha256 -NotePropertyValue $contentSha }
+    $path = Get-DeliveryRunHotIndexPath
+    $parent = Split-Path -Parent $path
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    $temporary = Join-Path $parent ("hot." + [guid]::NewGuid().ToString("N") + ".tmp")
+    try {
+        [IO.File]::WriteAllText($temporary, (($Index | ConvertTo-DeliveryProofJson -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporary -Destination $path -Force
+    } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    return $path
+}
+
+function Read-DeliveryRunHotIndex {
+    param([switch]$IgnoreSourceStamp)
+    $path = Get-DeliveryRunHotIndexPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return [pscustomobject]@{ status="missing"; path=$path; index=$null } }
+    $pendingRoot = Get-DeliveryRunHotIndexPendingRoot
+    if ((Test-Path -LiteralPath $pendingRoot -PathType Container) -and
+        $null -ne (Get-ChildItem -LiteralPath $pendingRoot -File -Filter '*.pending' -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+        return [pscustomobject]@{ status="stale"; path=$path; index=$null; error='pending raw run records require serialized repair' }
+    }
+    try {
+        $index = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-DeliveryProofJson
+        if ([int]$index.schemaVersion -ne 1 -or [string]$index.kind -cne "itl-delivery-run-hot-index" -or
+            [int]$index.capacity -ne $script:DeliveryRunHotIndexCapacity -or @($index.entries).Count -gt $script:DeliveryRunHotIndexCapacity -or
+            [int64]$index.validRunCount -lt @($index.entries).Count -or [string]$index.contentSha256 -notmatch '^[a-f0-9]{64}$') { throw "unsupported or inconsistent index schema" }
+        if ([string]$index.contentSha256 -cne (Get-DeliveryRunHotIndexContentSha256 -Index $index) -and
+            [string]$index.contentSha256 -cne (Get-DeliveryRunHotIndexContentSha256 -Index $index -LegacyCore)) { throw "SHA-mismatched index schema" }
+        $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
+        if ([IO.Path]::GetFullPath([string]$index.sourceDirectory) -cne [IO.Path]::GetFullPath($runRoot)) { throw "source directory mismatch" }
+        if (-not $IgnoreSourceStamp) {
+            $actualStamp = if (Test-Path -LiteralPath $runRoot -PathType Container) { (Get-Item -LiteralPath $runRoot).LastWriteTimeUtc.ToString("o") } else { "" }
+            if ([string]$index.sourceDirectoryLastWriteTimeUtc -cne $actualStamp) { return [pscustomobject]@{ status="stale"; path=$path; index=$null } }
+        }
+        return [pscustomobject]@{ status="ready"; path=$path; index=$index }
+    } catch { return [pscustomobject]@{ status="corrupt"; path=$path; index=$null; error=$_.Exception.Message } }
+}
+
+function Repair-DeliveryRunHotIndex {
+    param([switch]$LockHeld)
+    $lock = $null
+    try {
+        if (-not $LockHeld) { $lock = Enter-DeliveryRunHotIndexLock }
+        $current = Read-DeliveryRunHotIndex
+        if ([string]$current.status -eq "ready") {
+            return [pscustomobject]@{ status="reused"; path=[string]$current.path; validRunCount=[int]$current.index.validRunCount; invalidRunCount=[int]$current.index.invalidRunCount; retained=@($current.index.entries).Count }
+        }
+        $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
+        $pendingRoot = Get-DeliveryRunHotIndexPendingRoot
+        $pending = if (Test-Path -LiteralPath $pendingRoot -PathType Container) { @(Get-ChildItem -LiteralPath $pendingRoot -File -Filter '*.pending') } else { @() }
+        $processedRawPaths = $null
+        $index = New-DeliveryRunHotIndex -RunRoot $runRoot -ProcessedRawPaths ([ref]$processedRawPaths)
+        $path = Write-DeliveryRunHotIndex -Index $index
+        foreach ($marker in $pending) {
+            try {
+                $markerState = Get-Content -LiteralPath $marker.FullName -Raw -Encoding UTF8 | ConvertFrom-DeliveryProofJson
+                if ([int]$markerState.schemaVersion -ne 1 -or [string]$markerState.kind -cne 'itl-delivery-run-index-pending' -or
+                    [int]$markerState.writerPid -le 0 -or -not $markerState.PSObject.Properties['writerStartedAt']) { throw 'invalid marker contract' }
+                $markedRawPath = [IO.Path]::GetFullPath([string]$markerState.rawPath)
+                $expectedLeaf = $marker.Name.Substring(0, $marker.Name.Length - '.pending'.Length)
+                if (-not [string]::Equals((Split-Path -Parent $markedRawPath), [IO.Path]::GetFullPath($runRoot), [StringComparison]::OrdinalIgnoreCase) -or
+                    -not [string]::Equals((Split-Path -Leaf $markedRawPath), $expectedLeaf, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'marker path does not match its owned run filename'
+                }
+            } catch {
+                if ($marker.Name -match '^\d{8}-\d{6}-\d{3}-[a-z0-9-]+-[a-f0-9]{32}\.json\.pending$') {
+                    Remove-Item -LiteralPath $marker.FullName -Force -ErrorAction SilentlyContinue
+                }
+                continue
+            }
+            if ($processedRawPaths.Contains($markedRawPath)) {
+                Remove-Item -LiteralPath $marker.FullName -Force -ErrorAction SilentlyContinue
+            } elseif (-not (Test-Path -LiteralPath $markedRawPath -PathType Leaf) -and
+                -not (Test-DeliveryProcessCreationIdentity -ProcessId ([int]$markerState.writerPid) -CreatedAt (ConvertTo-DeliveryUtcDateTime -Value $markerState.writerStartedAt))) {
+                Remove-Item -LiteralPath $marker.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+        return [pscustomobject]@{ status="rebuilt"; previousStatus=[string]$current.status; path=$path; validRunCount=[int]$index.validRunCount; invalidRunCount=[int]$index.invalidRunCount; retained=@($index.entries).Count }
+    } finally {
+        if ($lock) { $lock.Dispose() }
+    }
+}
+
+function Add-DeliveryRunToHotIndex {
+    param(
+        [Parameter(Mandatory = $true)][object]$PreviousIndexState,
+        [Parameter(Mandatory = $true)][object]$Record,
+        [Parameter(Mandatory = $true)][string]$RawPath
+    )
+    if ([string]$PreviousIndexState.status -ne "ready") { return Repair-DeliveryRunHotIndex -LockHeld }
+    $index = $PreviousIndexState.index
+    if (@($index.entries | Where-Object { [string]$_.rawPath -ceq [IO.Path]::GetFullPath($RawPath) }).Count -gt 0) { return [string]$PreviousIndexState.path }
+    $entry = ConvertTo-DeliveryRunHotIndexEntry -Record $Record -RawPath $RawPath
+    $index.entries = @(@($entry) + @($index.entries) | Sort-Object @{ Expression={ ConvertTo-DeliveryUtcDateTime -Value $_.startedAt }; Descending=$true }, @{ Expression={ [string]$_.rawPath }; Descending=$true } | Select-Object -First $script:DeliveryRunHotIndexCapacity)
+    $index.validRunCount = [int64]$index.validRunCount + 1
+    $index.totalDurationMs = [int64]$index.totalDurationMs + [int64]$entry.durationMs
+    $modes = @($index.byMode)
+    $mode = @($modes | Where-Object { [string]$_.mode -ceq [string]$entry.mode } | Select-Object -First 1)
+    if ($mode.Count) { $mode[0].count = [int]$mode[0].count + 1; $mode[0].durationMs = [int64]$mode[0].durationMs + [int64]$entry.durationMs }
+    else { $modes += [pscustomobject][ordered]@{ mode=[string]$entry.mode; count=1; durationMs=[int64]$entry.durationMs } }
+    $index.byMode = @($modes | Sort-Object mode)
+    $index.truncated = [int64]$index.validRunCount -gt $script:DeliveryRunHotIndexCapacity
+    $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
+    $index.sourceDirectoryLastWriteTimeUtc = (Get-Item -LiteralPath $runRoot).LastWriteTimeUtc.ToString("o")
+    $index.updatedAt = [DateTime]::UtcNow.ToString("o")
+    return Write-DeliveryRunHotIndex -Index $index
+}
+
+$script:DeliveryFailureLogTailLines = 60
+$script:DeliveryFailureLogTailBytes = 8192
+$script:DeliveryFailureMaxLogs = 4
+$script:DeliveryFailureMaxTests = 20
+
+function Get-DeliveryFailureLogPaths {
+    # Gate and stage errors name their logs as "See <path> and <path>"; paths
+    # may contain whitespace and non-ASCII characters.
+    param([AllowEmptyString()][string]$Text)
+    if (-not $Text) { return @() }
+    $pattern = '[A-Za-z]:\\(?:(?!\s+and\s+[A-Za-z]:\\)[^\r\n"])*?\.(?:log|txt)(?=$|[\s"''.,;)])'
+    return @([regex]::Matches($Text, $pattern) | ForEach-Object { $_.Value })
+}
+
+function Get-DeliveryFailureLogTail {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try {
+        $offset = [Math]::Max([int64]0, $stream.Length - $script:DeliveryFailureLogTailBytes)
+        [void]$stream.Seek($offset, [IO.SeekOrigin]::Begin)
+        $buffer = New-Object byte[] ([int]($stream.Length - $offset))
+        $read = 0
+        while ($read -lt $buffer.Length) {
+            $count = $stream.Read($buffer, $read, $buffer.Length - $read)
+            if ($count -le 0) { break }
+            $read += $count
+        }
+    } finally { $stream.Dispose() }
+    $lines = @(([Text.UTF8Encoding]::new($false, $false)).GetString($buffer, 0, $read) -split "\r?\n")
+    if ($offset -gt 0 -and $lines.Count -gt 1) { $lines = @($lines | Select-Object -Skip 1) }
+    while ($lines.Count -gt 0 -and [string]::IsNullOrWhiteSpace([string]$lines[-1])) { $lines = @($lines | Select-Object -SkipLast 1) }
+    return (@($lines | Select-Object -Last $script:DeliveryFailureLogTailLines) -join "`n")
+}
+
+function Get-DeliveryFailedJUnitTests {
+    param([Parameter(Mandatory = $true)][string]$Path, [string]$WorkingRoot = '')
+    $rootPrefix = if ($WorkingRoot) { [IO.Path]::GetFullPath($WorkingRoot).TrimEnd('\') + '\' } else { '' }
+    $document = New-Object Xml.XmlDocument
+    $document.XmlResolver = $null
+    $document.Load($Path)
+    $tests = @()
+    foreach ($case in @($document.SelectNodes('//testcase[failure or error]'))) {
+        $node = $case.SelectSingleNode('failure|error')
+        $message = [string]$node.GetAttribute('message')
+        if (-not $message) { $message = [string]$node.InnerText }
+        $message = (@($message -split "\r?\n" | Where-Object { $_.Trim() }) | Select-Object -First 1)
+        if ($message.Length -gt 300) { $message = $message.Substring(0, 300) }
+        $file = [string]$case.GetAttribute('classname')
+        if ($rootPrefix -and $file.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) { $file = $file.Substring($rootPrefix.Length).Replace('\', '/') }
+        $tests += [pscustomobject][ordered]@{ name = [string]$case.GetAttribute('name'); file = $file; message = [string]$message }
+    }
+    return @($tests)
+}
+
+function Get-DeliveryFailureSummary {
+    # Durable cause of a failed gate: stage, error codes, failed tests and
+    # bounded log tails, so diagnosis does not depend on retained %TEMP% logs.
+    param([AllowEmptyString()][string]$ErrorMessage, [AllowNull()][object]$Summary, [Parameter(Mandatory = $true)][string]$WorkingRoot, [Parameter(Mandatory = $true)][datetime]$StartedAt)
+    $failedStages = @(if ($Summary -and $Summary.PSObject.Properties['stages']) { @($Summary.stages | Where-Object { [string]$_.status -eq 'failed' } | Sort-Object { [string]$_.finishedAt }) })
+    $stage = if ($failedStages.Count) { $failedStages[0] } else { $null }
+    $detail = if ($stage) { [string]$stage.detail } else { '' }
+    $texts = @($failedStages | ForEach-Object { [string]$_.detail }) + @($ErrorMessage)
+    $logs = @()
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in @($texts | ForEach-Object { Get-DeliveryFailureLogPaths -Text $_ })) {
+        if ($logs.Count -ge $script:DeliveryFailureMaxLogs -or -not $seen.Add($path)) { continue }
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        try { $tail = Get-DeliveryFailureLogTail -Path $path } catch { $tail = "<unreadable: $($_.Exception.Message)>" }
+        if ($tail) { $logs += [pscustomobject][ordered]@{ path = $path; tail = $tail } }
+    }
+    $tests = @()
+    $junitPath = Join-Path $WorkingRoot 'build\test-results\local\pester.xml'
+    if ((Test-Path -LiteralPath $junitPath -PathType Leaf) -and (Get-Item -LiteralPath $junitPath).LastWriteTimeUtc -ge $StartedAt.ToUniversalTime().AddSeconds(-2)) {
+        try { $tests = @(Get-DeliveryFailedJUnitTests -Path $junitPath -WorkingRoot $WorkingRoot) } catch { $tests = @() }
+    }
+    # check.ps1's diagnostic isolated rerun: passed, failed or skipped per test.
+    $rerunPath = Join-Path $WorkingRoot 'build\test-results\local\pester-isolated-rerun.json'
+    if ($tests.Count -and (Test-Path -LiteralPath $rerunPath -PathType Leaf) -and (Get-Item -LiteralPath $rerunPath).LastWriteTimeUtc -ge $StartedAt.ToUniversalTime().AddSeconds(-2)) {
+        try {
+            $rerun = Get-Content -LiteralPath $rerunPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($test in $tests) {
+                $outcome = @($rerun.files | Where-Object { [string]$_.path -ceq [string]$test.file } | ForEach-Object { [string]$_.isolatedRerun })
+                $test | Add-Member -NotePropertyName isolatedRerun -NotePropertyValue $(if ($outcome.Count) { $outcome[0] } else { 'skipped' }) -Force
+            }
+        } catch { }
+    }
+    $codeText = (@($texts) + @($logs | ForEach-Object { $_.tail })) -join "`n"
+    $codes = @([regex]::Matches($codeText, '\b([A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+):') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique -First 5)
+    if ($detail.Length -gt 2000) { $detail = $detail.Substring(0, 2000) }
+    return [pscustomobject][ordered]@{
+        stage = $(if ($stage) { [string]$stage.name } else { '' })
+        detail = $detail
+        codes = @($codes)
+        testCount = $tests.Count
+        tests = @($tests | Select-Object -First $script:DeliveryFailureMaxTests)
+        logs = @($logs)
+    }
+}
+
+function Get-DeliveryGateFailureIdentity {
+    # Repeated-failure identity of a gate: its failed stage, error codes and
+    # failed tests. Empty when the gate left none of them; callers then fall
+    # back to the normalized message.
+    param([Parameter(Mandatory = $true)][string]$Mode, [AllowNull()][object]$Failure)
+    if (-not $Failure) { return '' }
+    $codes = @($Failure.codes | ForEach-Object { [string]$_ } | Where-Object { $_ } | Sort-Object -Unique)
+    $tests = @($Failure.tests | ForEach-Object { "$([string]$_.file)::$([string]$_.name)" } | Sort-Object -Unique)
+    if (-not [string]$Failure.stage -and $codes.Count -eq 0 -and $tests.Count -eq 0) { return '' }
+    return "gate:$Mode|stage=$([string]$Failure.stage)|codes=$($codes -join ',')|tests=$($tests -join ';')"
+}
+
+function Get-DeliveryCompactFailure {
+    param([AllowNull()][object]$Failure)
+    if (-not $Failure) { return $null }
+    return [pscustomobject][ordered]@{
+        stage = [string]$Failure.stage
+        codes = @($Failure.codes)
+        testCount = [int]$Failure.testCount
+        tests = @($Failure.tests | Select-Object -First 5 | ForEach-Object { [string]$_.name })
+    }
+}
+
 function Write-DeliveryRunRecord {
-    param([string]$Mode, [string]$Status, [string]$ErrorMessage, [string]$WorkingRoot, [datetime]$StartedAt, [datetime]$FinishedAt, [int]$ExitCode)
+    param([string]$Mode, [string]$Status, [string]$ErrorMessage, [string]$WorkingRoot, [datetime]$StartedAt, [datetime]$FinishedAt, [int]$ExitCode, [string[]]$ReleaseCapability = @())
     $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"; New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
     $summaryPath = Join-Path $WorkingRoot "build\test-results\local\check-summary.json"; $summary = $null
     if (Test-Path -LiteralPath $summaryPath -PathType Leaf) {
@@ -550,42 +1403,112 @@ function Write-DeliveryRunRecord {
             }
         } catch { $releaseE2E = $null }
     }
-    $record = [ordered]@{ schemaVersion = 3; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; failureClass = $(if($Status -eq "passed"){""}else{Get-DeliveryFailureClass -Message $ErrorMessage -Stage $Mode}); exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10) } else { @() }); releaseE2E = $releaseE2E }
+    $record = [ordered]@{ schemaVersion = 3; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; failureClass = $(if($Status -eq "passed"){""}else{Get-DeliveryFailureClass -Message $ErrorMessage -Stage $Mode}); exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; releaseCapabilities = $(if ($summary -and $summary.PSObject.Properties["releaseCapabilities"]) { @($summary.releaseCapabilities) } else { @($ReleaseCapability) }); tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { $slowest = @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10); @($slowest) + @($summary.stages | Where-Object { [string]$_.status -eq 'failed' -and $slowest -notcontains $_ }) } else { @() }); releaseE2E = $releaseE2E }
+    if ($summary -and $summary.PSObject.Properties['journeyScenarioExecution']) {
+        $record['journeyScenarioExecution'] = $summary.journeyScenarioExecution
+    }
+    $script:DeliveryLastRunFailure = $null
+    if ($Status -ne 'passed') {
+        try { $record['failure'] = Get-DeliveryFailureSummary -ErrorMessage $ErrorMessage -Summary $summary -WorkingRoot $WorkingRoot -StartedAt $StartedAt }
+        catch { $record['failure'] = [pscustomobject][ordered]@{ stage = ''; detail = "failure summary unavailable: $($_.Exception.Message)"; codes = @(); testCount = 0; tests = @(); logs = @() } }
+        # The gate's own message is always "exit code 1, see <log>"; the failed
+        # stage detail carries the cause that decides the class.
+        $record['failureClass'] = Get-DeliveryFailureClass -Message ($ErrorMessage + "`n" + [string]$record['failure'].detail) -Stage $Mode
+        $script:DeliveryLastRunFailure = [pscustomobject]@{ mode = $Mode; failureClass = [string]$record['failureClass']; identity = (Get-DeliveryGateFailureIdentity -Mode $Mode -Failure $record['failure']) }
+    }
     $name = "{0}-{1}-{2}.json" -f $StartedAt.ToString("yyyyMMdd-HHmmss-fff"), $Mode.ToLowerInvariant(), $record.id; $target = Join-Path $runRoot $name; $temp = "$target.tmp"
-    [IO.File]::WriteAllText($temp, (($record | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false)); Move-Item -LiteralPath $temp -Destination $target
+    $indexLock = $null
+    $pendingMarker = $null
+    try {
+        try { $indexLock = Enter-DeliveryRunHotIndexLock -TimeoutMilliseconds $script:DeliveryRunHotIndexLockTimeoutMilliseconds }
+        catch {
+            if ($_.Exception.Message -notlike 'DELIVERY_RUN_INDEX_LOCK_TIMEOUT:*') { throw }
+            $pendingMarker = Write-DeliveryRunHotIndexPendingMarker -RawPath $target
+            [IO.File]::WriteAllText($temp, (($record | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false)); Move-Item -LiteralPath $temp -Destination $target
+            return $target
+        }
+        $previousIndexState = Read-DeliveryRunHotIndex
+        $pendingMarker = Write-DeliveryRunHotIndexPendingMarker -RawPath $target
+        [IO.File]::WriteAllText($temp, (($record | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false)); Move-Item -LiteralPath $temp -Destination $target
+        try {
+            [void](Add-DeliveryRunToHotIndex -PreviousIndexState $previousIndexState -Record ([pscustomobject]$record) -RawPath $target)
+            Remove-Item -LiteralPath $pendingMarker -Force -ErrorAction SilentlyContinue
+        } catch {}
+    } finally {
+        Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        if ($pendingMarker -and -not (Test-Path -LiteralPath $target -PathType Leaf)) {
+            Remove-Item -LiteralPath $pendingMarker -Force -ErrorAction SilentlyContinue
+        }
+        if ($indexLock) { $indexLock.Dispose() }
+    }
     return $target
 }
 
 function Get-DeliveryRunHistory {
     param([int]$Limit = 3, [switch]$IncludeDetails)
-    $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"; if (-not (Test-Path -LiteralPath $runRoot)) { return [pscustomobject]@{ root = $runRoot; count = 0; totalDurationMs = 0; byMode = @(); lastRuns = @() } }
-    $runs = @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*.json" | Sort-Object Name -Descending | ForEach-Object {
-        try {
-            $record = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($record.PSObject.Properties["mode"] -and $record.PSObject.Properties["status"] -and
-                $record.PSObject.Properties["startedAt"] -and $record.PSObject.Properties["durationMs"] -and
-                $record.PSObject.Properties["tree"]) { $record }
-        } catch {}
-    })
-    $byMode = @($runs | Group-Object mode | Sort-Object Name | ForEach-Object { [pscustomobject]@{ mode = $_.Name; count = $_.Count; durationMs = [int64](($_.Group | Measure-Object durationMs -Sum).Sum) } })
+    $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
+    $state = Read-DeliveryRunHotIndex
+    if ([string]$state.status -ne "ready") {
+        return [pscustomobject]@{ root=$runRoot; indexPath=[string]$state.path; indexStatus=[string]$state.status; count=0; totalDurationMs=0; byMode=@(); lastRuns=@(); truncated=$false; nextAction="run serialized Cleanup to rebuild the hot index" }
+    }
+    $index = $state.index
+    $runs = @($index.entries)
     $lastRuns = if ($IncludeDetails) { @($runs | Select-Object -First $Limit) } else {
         @($runs | Select-Object -First $Limit | ForEach-Object {
-            [pscustomobject]@{ mode=$_.mode; status=$_.status; failureClass=$(if($_.PSObject.Properties["failureClass"]){$_.failureClass}else{""}); startedAt=$_.startedAt; finishedAt=$_.finishedAt; durationMs=$_.durationMs; commit=$_.commit; error=$_.error }
+            [pscustomobject]@{ mode=$_.mode; status=$_.status; failureClass=$(if($_.PSObject.Properties["failureClass"]){$_.failureClass}else{""}); startedAt=$_.startedAt; finishedAt=$_.finishedAt; durationMs=$_.durationMs; commit=$_.commit; error=$_.error; failure=$(if($_.PSObject.Properties["failure"]){$_.failure}else{$null}); rawPath=$_.rawPath }
         })
     }
-    return [pscustomobject]@{ root = $runRoot; count = $runs.Count; totalDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum); byMode = $byMode; lastRuns = $lastRuns }
+    return [pscustomobject]@{ root=$runRoot; indexPath=[string]$state.path; indexStatus="ready"; count=[int64]$index.validRunCount; invalidCount=[int]$index.invalidRunCount; totalDurationMs=[int64]$index.totalDurationMs; byMode=@($index.byMode); lastRuns=$lastRuns; truncated=[bool]$index.truncated; nextAction="" }
+}
+
+# Unstable tests from the existing bounded run index: a test whose failed run was
+# classified nondeterministic, or whose failing tree later passed unchanged.
+function Get-DeliveryUnstableTests {
+    param([AllowEmptyCollection()][object[]]$Entries = @())
+    $passedTrees = @{}
+    foreach ($entry in @($Entries)) {
+        if ([string]$entry.status -eq 'passed' -and [string]$entry.tree) {
+            $at = [string]$entry.startedAt
+            if (-not $passedTrees.ContainsKey([string]$entry.tree) -or $at -gt $passedTrees[[string]$entry.tree]) { $passedTrees[[string]$entry.tree] = $at }
+        }
+    }
+    $byTest = [ordered]@{}
+    foreach ($entry in @($Entries | Sort-Object { [string]$_.startedAt })) {
+        if ([string]$entry.status -eq 'passed' -or -not $entry.PSObject.Properties['failure'] -or -not $entry.failure) { continue }
+        $tree = [string]$entry.tree
+        $laterPass = $tree -and $passedTrees.ContainsKey($tree) -and $passedTrees[$tree] -gt [string]$entry.startedAt
+        $nondeterministic = [string]$entry.failureClass -ceq 'nondeterministic'
+        if (-not $laterPass -and -not $nondeterministic) { continue }
+        foreach ($name in @($entry.failure.tests | ForEach-Object { [string]$_ } | Where-Object { $_ })) {
+            if (-not $byTest.Contains($name)) { $byTest[$name] = [ordered]@{ test = $name; occurrences = 0; nondeterministic = 0; passedLaterOnSameTree = 0; lastOccurrence = ''; runs = @() } }
+            $item = $byTest[$name]
+            $item.occurrences++
+            if ($nondeterministic) { $item.nondeterministic++ }
+            if ($laterPass) { $item.passedLaterOnSameTree++ }
+            $item.lastOccurrence = [string]$entry.startedAt
+            $item.runs = @(@($item.runs) + @([string]$entry.rawPath) | Select-Object -Last 5)
+        }
+    }
+    return @($byTest.Values | ForEach-Object { [pscustomobject]$_ } | Sort-Object @{ Expression = { $_.occurrences }; Descending = $true }, @{ Expression = { $_.lastOccurrence }; Descending = $true })
 }
 
 function Get-DeliveryQualificationTimingSummary {
     param([Parameter(Mandatory = $true)][string]$Tree, [Parameter(Mandatory = $true)][datetime]$NotBefore, [datetime]$OperationStartedAt = $NotBefore)
-    $history = Get-DeliveryRunHistory -Limit 200 -IncludeDetails
+    $history = Get-DeliveryRunHistory -Limit $script:DeliveryRunHotIndexCapacity -IncludeDetails
     $runs = @($history.lastRuns | Where-Object {
         [string]$_.tree -ceq $Tree -and (ConvertTo-DeliveryUtcDateTime -Value $_.startedAt) -ge $NotBefore.AddSeconds(-2)
     } | Sort-Object { ConvertTo-DeliveryUtcDateTime -Value $_.startedAt })
     $finishedAt = [DateTime]::UtcNow
+    $earliestHot = @($history.lastRuns | Sort-Object { ConvertTo-DeliveryUtcDateTime -Value $_.startedAt } | Select-Object -First 1)
+    $historyComplete = [string]$history.indexStatus -eq "ready" -and (-not [bool]$history.truncated -or
+        ($earliestHot.Count -gt 0 -and (ConvertTo-DeliveryUtcDateTime -Value $earliestHot[0].startedAt) -le $NotBefore.AddSeconds(-2)))
+    $gateDurationMs = [int64]0
+    foreach ($run in $runs) { $gateDurationMs += [int64]$run.durationMs }
     return [pscustomobject]@{
         operationDurationMs = [int64]($finishedAt - $OperationStartedAt).TotalMilliseconds
-        gateDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum)
+        gateDurationMs = $gateDurationMs
+        historyStatus = [string]$history.indexStatus
+        historyComplete = $historyComplete
         gates = @($runs | ForEach-Object { [pscustomobject]@{ mode=$_.mode; status=$_.status; durationMs=$_.durationMs; stages=$_.stages; releaseE2E=$(if ($_.PSObject.Properties["releaseE2E"]) { $_.releaseE2E } else { $null }) } })
     }
 }
@@ -668,23 +1591,60 @@ function Archive-StaleDeliveryOperation {
     Remove-Item -LiteralPath (Get-DeliveryOperationLockPath) -Recurse -Force
 }
 
+function Get-DeliveryOperationWaitSeconds {
+    # A second publisher queues behind a live one instead of failing; the
+    # holder is bounded by its own plan budgets. 0 restores the immediate stop.
+    $value = [Environment]::GetEnvironmentVariable('ITL_DELIVERY_OPERATION_WAIT_SECONDS', 'Process')
+    $seconds = 0
+    if ($value -and [int]::TryParse($value, [ref]$seconds) -and $seconds -ge 0) { return $seconds }
+    return 21600
+}
+
+function Get-DeliveryOperationBlocker {
+    # Returns why the shared lock is unavailable now, or '' after recovering a
+    # stale holder. Registrations never take this lock and are not delayed.
+    $lockPath = Get-DeliveryOperationLockPath
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Container)) { return '' }
+    $status = Get-DeliveryOperationStatus
+    if ($status -and ($status.ownerAlive -or $status.gateAlive)) {
+        return "Delivery operation '$($status.action)' is already active (owner PID $($status.ownerPid), gate PID $($status.gatePid), candidate '$($status.candidatePath)')."
+    }
+    $stale = Read-DeliveryOperation
+    if ($stale) { Archive-StaleDeliveryOperation -Operation $stale; return '' }
+    $lockAge = ([DateTime]::UtcNow - (Get-Item -LiteralPath $lockPath).LastWriteTimeUtc).TotalMinutes
+    if ($lockAge -lt 2) { return "Another delivery operation is acquiring the shared lock." }
+    Remove-Item -LiteralPath $lockPath -Recurse -Force
+    return ''
+}
+
 function Enter-DeliveryOperation {
     param([Parameter(Mandatory = $true)][string]$Action)
     $lockPath = Get-DeliveryOperationLockPath
-    if (Test-Path -LiteralPath $lockPath -PathType Container) {
-        $status = Get-DeliveryOperationStatus
-        if ($status -and ($status.ownerAlive -or $status.gateAlive)) {
-            throw "Delivery operation '$($status.action)' is already active (owner PID $($status.ownerPid), gate PID $($status.gatePid), candidate '$($status.candidatePath)'). Wait for it and inspect Status before retrying."
+    $limitSeconds = Get-DeliveryOperationWaitSeconds
+    $pollSeconds = [int](Get-Variable -Name DeliveryOperationWaitPollSeconds -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    if ($pollSeconds -le 0) { $pollSeconds = 15 }
+    $waitStarted = [DateTime]::UtcNow
+    $reported = ''
+    $reportedAt = [DateTime]::MinValue
+    $script:DeliveryOperationWaitedSeconds = 0
+    while ($true) {
+        $blocker = Get-DeliveryOperationBlocker
+        if (-not $blocker) {
+            try { New-Item -ItemType Directory -Path $lockPath -ErrorAction Stop | Out-Null; break }
+            catch { $blocker = "Another delivery operation acquired the shared lock." }
         }
-        $stale = Read-DeliveryOperation
-        if ($stale) { Archive-StaleDeliveryOperation -Operation $stale }
-        else {
-            $lockAge = ([DateTime]::UtcNow - (Get-Item -LiteralPath $lockPath).LastWriteTimeUtc).TotalMinutes
-            if ($lockAge -lt 2) { throw "Another delivery operation is acquiring the shared lock. Inspect source-delivery Status before retrying." }
-            Remove-Item -LiteralPath $lockPath -Recurse -Force
+        $waited = [int]([DateTime]::UtcNow - $waitStarted).TotalSeconds
+        if ($waited + $pollSeconds -gt $limitSeconds) {
+            throw "$blocker Waited $($waited)s of the $($limitSeconds)s operation wait (ITL_DELIVERY_OPERATION_WAIT_SECONDS). Inspect source-delivery Status before retrying."
         }
+        if ($blocker -cne $reported -or ([DateTime]::UtcNow - $reportedAt).TotalSeconds -ge 300) {
+            [Console]::Error.WriteLine("Waiting for the shared delivery lock ($($waited)s of $($limitSeconds)s): $blocker")
+            $reported = $blocker
+            $reportedAt = [DateTime]::UtcNow
+        }
+        Start-Sleep -Seconds $pollSeconds
     }
-    try { New-Item -ItemType Directory -Path $lockPath -ErrorAction Stop | Out-Null } catch { throw "Another delivery operation acquired the shared lock. Inspect source-delivery Status before retrying." }
+    $script:DeliveryOperationWaitedSeconds = [int]([DateTime]::UtcNow - $waitStarted).TotalSeconds
     $owner = Get-Process -Id $PID
     $operation = [pscustomobject]@{
         schemaVersion = 1; id = [guid]::NewGuid().ToString("N"); action = $Action; startedAt = [DateTime]::UtcNow.ToString("o")

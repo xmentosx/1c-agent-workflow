@@ -1,31 +1,441 @@
 # Controlled ai_rules_1c upgrades
 
-## Current develop candidate
+## Local source cache integrity
 
-The `develop` workflow candidate is pinned to `itl-main-410951e7-r33` at fork commit `9309bfbbc9f8d844a21bce55178c2e0d72eaf965`. Its exact upstream provenance remains `refs/heads/main@410951e74fd3e6b7a763cf49757935b9a34d3f31`; r33 does not intake the later upstream tip. `templates/dependency-lock.json` is the single source of this tag, commit, upstream provenance, downstream revision `33`, and compatibility state; project templates, code, docs, and tests must agree with it. The candidate starts as `pending` and is not publishable until `PublishDevelop` owns its evidence-backed promotion and final qualification.
+`Sync-AiRules1cCheckout` owns the rules source cache under the ITL artifact
+cache (`%LOCALAPPDATA%\ITL\artifacts\ai_rules_1c`, or `ITL_ARTIFACT_CACHE_ROOT`).
+It is never in TEMP: Windows Storage Sense deleted tracked files that had not
+been accessed for seven days from the former per-project TEMP checkouts, so
+every affected project and worktree re-cloned the fork.
 
-Fork `main` mirrors upstream and is never consumed by installed projects. Downstream changes exist only on immutable release branches/tags; the pending r33 pair is `release/itl-main-410951e7-r33` / `itl-main-410951e7-r33`, which must point to the same qualified release commit. Older immutable releases remain published only for provenance. `r33` carries r32 forward, classifies only identity-bearing UUID definitions as collision candidates, accepts exported `Form` descriptors, and lets lifecycle validation scan the explicit merge delta instead of every XML file.
+Each repository identity has one bare `mirror.git` and one standalone checkout
+per exact pinned commit (`<repo16>\<commit12>`), shared by every project and
+worktree pinned to it. The mirror is fetched only when the pinned tag is absent
+locally or resolves to another commit; tag/commit mismatch still fails. A
+published checkout is never fetched, checked out or reconfigured again, so
+projects on different pins never share mutable Git state. A matching HEAD alone
+is insufficient: before reuse and after preparation the owner checks repository
+identity, physical checkout boundaries, index/worktree state without optional
+locks, untracked/ignored files and index flags that can hide missing files. No
+global cache lock is added: a new checkout is prepared in `prepare-<id>` and
+published by an atomic directory move; a concurrent loser uses the winner's
+verified copy.
 
-## Intake discipline
+An invalid copy is preserved while a fresh pinned source is prepared from the
+local mirror (no network) and checked. A recognized physical checkout is then
+moved to `invalid-<id>`. Foreign, linked or unrecognizable directories remain in
+place; that invocation uses its isolated verified preparation. Preparation
+failures preserve both copies and report how to repeat the original operation.
+An existing Git index lock is never removed or bypassed: wait for its owner and
+retry. `ITL_AI_RULES_SOURCE_PATH` retains its clean-source/origin checks, is
+never automatically repaired and is only fetched from into the mirror.
 
-Before an intake, resolve `git ls-remote upstream refs/heads/main`. If it differs from the audited SHA, stop and repeat the audit. Create the upgrade branch directly from the full upstream commit; do not merge or rebase the previous downstream release.
+After each successful preparation, retention removes exact-commit checkouts
+unused for 30 days, `prepare-*` older than one day and all but the two newest
+`invalid-*`; the current checkout is always kept. It also removes, within a
+60-second budget, generated legacy TEMP names (`ai_rules_1c-<64 hex>`,
+`ai_rules_1c-invalid|prepare-<32 hex>`) whose directory and Git state were idle
+for 24 hours, so an older helper still using one is not disturbed. Other TEMP
+entries, including the old shared `ai_rules_1c`, stay untouched.
 
-Use `scripts/build-ai-rules-release.ps1` as the only normal downstream reconstruction path. `templates/ai-rules-overlay/sections.json` is a schema-3 path ledger: every upstream or downstream release path has a requirement id, reason, disposition, and exact upstream/baseline/result SHA-256. `take-upstream` accepts the intake, `carry-forward` must remain byte-equivalent to the previous qualified release, `resolved` records a reviewed result, and `downstream-only` records a new path absent from both inputs. `templates/ai-rules-overlay/AGENTS.md` is the canonical compact root contract.
+On the 2026-10-30 disposable local-Git fixture, three alternating healthy-cache
+runs had median preparation times of 0.40 s before and 0.99 s after these checks.
+This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
+client instructions or tool schemas are added.
 
-`-Mode Prepare` starts from a clean branch based directly on the exact upstream commit, reconstructs each `carry-forward` path from the baseline release, applies managed templates, and leaves `resolved`/`downstream-only` paths for ordinary Git editing. `-Mode Verify` (also available as the compatible `-CheckOnly` alias) validates the already committed candidate: complete path coverage, all three hashes, disposition semantics, managed template equality, a linear history without merge commits, no unresolved merge, and a clean tree. Git path discovery is NUL-delimited so Cyrillic, spaces, and unusual path characters remain unambiguous.
+## Current candidate: scoped memory, local r64
 
-For a new upstream commit, create a new release branch from that commit, update only the path decisions and hashes affected by the audit, and rebuild. Never carry the previous release branch forward. A `resolved` entry is not a custom patch language: Git stores the reviewed merge result and the ledger only verifies its hash. If upstream did not change, increment the downstream revision while retaining the upstream short SHA in the immutable tag.
+The r64 fork at 9bbba3b0b19f5758be113e978562fa26ca48bbd6 applies scoped recall before the first related edit, distinguishes expectations from verified knowledge and routes reusable decisions by lifetime and audience. The memory section replaces generic correction capture when scoped Cognee is qualified. The root grows by 157 UTF-8 bytes, the full-cycle load set by 261.
 
-Run the fork Full gate and preview publication with `publish-fork-release.ps1 -WhatIf`, but do not expose the new branch/tag remotely while the workflow lock is `pending`. Keep the clean exact local release checkout and immutable refs for `PublishDevelop`: it qualifies the pending candidate, promotes only the lock, qualifies the resulting installable candidate, and then its component finalizer publishes exactly one immutable branch/tag before the single workflow push. Never repoint a release tag. Direct `promote-ai-rules-compatibility.ps1` remains a supervised recovery tool, not a separate normal publication step.
+## Earlier candidate: DCS filter evaluation, local r63
 
-## Single-client migration
+`itl-main-2f640143-r63` pins `571ddb0e2b326c99e3c134031283c6057817ec57` over r61. The coding index and DCS design route load the approved v4 filter rule for reports, dynamic lists and workplaces. The rule body is installed with the client rules. The candidate also reproduces the existing workflow appendix for index age and memory recall (+278 root bytes) and records both r61 file identities in the overlay ledger. The filter itself adds 101 bytes to the coding index and is otherwise loaded on demand.
 
-Each project has exactly one of `codex`, `kilocode`, `claude-code`, `cursor`, `opencode`, `kimi`, `qwen`, `command-code`, `cline`, or `pi`. Interactive initialization detects the client executing the bootstrap, offers it first as the recommended default when the answer is left blank, and falls back to `kilocode` only for an unrecognized execution context; configured/JSON initialization still requires an exact client value. Legacy `["codex","kilocode"]` normalizes to `["kilocode"]`; every other multi-client set requires an explicit selection. Generic `other` is not supported.
+## Earlier candidate: Claude root imports, local r61
 
-`update-workflow` supports legacy upstream-to-fork and strictly monotonic controlled-fork upgrades, including `r11` through `r32` to `r33` for every supported single-client installation. Eligibility requires recorded installed commit/provenance, an immutable `itl-*` ref, no genuine `userModified` managed files, supported client state, and upstream ancestry. Before that decision, the workflow clears stale markers only when a managed file is byte-identical or differs solely by LF/CRLF in strict UTF-8 text; invalid UTF-8 and binary-looking files remain byte-strict. It also clears a stale `USER-RULES.md` marker only when removing the exact ITL-managed marker block reproduces the manifest `installedHash`; content changed outside that block remains protected and is listed in the recovery report. A custom repository is preserved with a recovery report. Other blocked managed migrations make `update-workflow` fail instead of reporting a successful dependency update.
+6b4d268380a677225e075013aa84f415da6e4c3a uses a literal YAML block for the Claude entry. Each of the four root imports occupies its own line in the installed file. The installer retains its existing ownership and update checks.
 
-OpenSpec remains an upstream-owned dependency. The host reports `native` only when the manifest owns an intact command/SKILL bundle, `natural` when `bundleSkipped` is intentional and the shared workspace/rules are complete, and `unavailable` otherwise. A damaged native bundle never falls back to natural. The external executable is diagnosed separately; the workflow neither installs it nor runs `openspec update`.
+## Earlier candidate: installed workflow adequacy, local r60
 
-The candidate is installed into a temporary project first. The transactional snapshot includes project/lock/manifest, `.dev.env`, `AGENTS.md`, `USER-RULES.md`, `LLM-RULES.md`, OpenSpec, `.agents`, all client directories, and local MCP configs. Failure restores the snapshot and reports recovery evidence. Repeating the update must be byte-idempotent.
+`itl-main-2f640143-r60` pins
+`2db0058ca7e135715525f48ba35cb454da057118` over r59 on the same audited
+upstream ([plan](installed-workflow-execution-plan.md), tasks F1 and F3).
+The quick-fix gate in `verification-policy.md` now states evidence reuse, the
+retry owner and the missing-validator record itself, so a quick-fix whose
+validators run without a finding no longer loads `verification-gates.md`
+(26.9 KB); the gates' quick-fix checklist item points back to it. The Claude
+Code entry `CLAUDE.md` imports `USER-RULES.md`, `memory.md` and `LLM-RULES.md`,
+which `AGENTS.md` ranks above itself and the installer always places, instead
+of relying on a manual read each session. The installer test checks the
+imports. Fork commands that duplicate ITL routes were reviewed and kept: each
+already redirects to ITL in a managed project.
 
-Active `itldev/*` worktrees are never advanced automatically; update clean `master`, review/commit it, then use `/itl-refresh` per branch. Legacy user-global Codex prompts and RTK hooks are reported/preserved because they are outside project ownership.
+Normalized UTF-8 sizes from the fork validator: root 15,659 (unchanged),
+full-cycle 159,237 -> 159,309 (+72) and subagent start 33,535 (unchanged), all
+within the existing ceilings. `compatibilityStatus` stays `pending` until the
+publication owner qualifies it.
+
+## Earlier candidate: scoped memory content quality, local r59
+
+`itl-main-2f640143-r59` pins
+`d6a65870801af5108302e98464def8985d1c2c0f` over r58 on the same audited
+upstream. In PM5 copies 113 of 116 `remember` calls went to the task level as
+a work log, and one shared note reached 74% of `recall` answers
+([baseline](../openspec/changes/improve-memory-content-quality/evidence/baseline-2026-11-14.md)).
+The root core now keeps a note as reusable knowledge of at most 600
+characters, keeps task progress in the checkpoint, offers the project with
+routing of a base-product knowledge area to its product home, narrows task to
+the user's decisions of the cycle and asks for recall once per topic.
+`project-memory.md` names the calibrated relevance threshold and drops the
+per-turn recall after a transient failure.
+
+Normalized UTF-8 sizes from the fork validator: root 15,676 -> 15,659 (-17),
+full-cycle 159,146 -> 159,237 (+91) and subagent start 33,552 -> 33,535 (-17),
+all within the existing ceilings. The source appendix shrinks 5,215 -> 5,198
+bytes. MCP tool descriptions and initialize instructions grow 2,184 -> 2,454
+bytes and tools/list 3,459 -> 3,729 bytes, within the approved +0.3 KB. The
+policy clause hash, project template and dependency lock bind the candidate;
+`compatibilityStatus` stays `pending` until the publication owner qualifies it.
+
+## Earlier candidate: OpenSpec apply continuation, local r58
+
+`itl-main-2f640143-r58` pins
+`23654440a7e39a22bfad2a4344e6c531d82a93e1` over r57 on the same audited
+upstream. The bundle generator applies the same continuation policy to all
+nine native apply entrypoints. The installed ITL reference reconciles task
+checkboxes with their own current evidence. The pin is pending release
+admission. See [continuation evidence](../openspec/changes/continue-openspec-apply/evidence/acceptance.md)
+for the exact installation and remaining behavioural acceptance.
+
+## Earlier candidate: cross-branch scoped memory, r57
+
+`itl-main-2f640143-r57` pins
+`f84f717a4ecde50dd3cefdbaa442c89c3f9789de` on the published r55 lineage.
+The upstream pin remains `2f640143756ecd01fed42100e412632aa9082385`.
+Local r56 had the same rules and an assertion that rejected paragraph wrapping. The root chooses one scope by
+lifetime and applicability, checks the current branch before claiming a
+recalled fix is present, and calls recall again in the next eligible turn.
+Detailed branch evidence and one bounded recovery after a temporary read
+failure live in `project-memory.md`. The policy clause hash, project template
+and dependency lock bind the same candidate. The publication owner qualifies
+the new pending pin for installed-client compatibility.
+
+Normalized UTF-8 sizes from the fork validator are 15,179 → 15,676 for the
+root (+497), 157,421 → 159,146 for full-cycle (+1,725), and 33,055 → 33,552
+for subagent start (+497). The root and full-cycle ceilings are 15,800 and
+159,360 bytes; the existing 33,792-byte subagent ceiling covers the change.
+The source appendix grows 4,718 → 5,215 bytes. The destination examples
+are in the on-demand ITL reference. MCP tool descriptions and initialize instructions grow
+1,721 to 2,205 bytes. The compact tools/list payload grows 2,955 to 3,439 bytes.
+The input schemas are unchanged.
+
+## Earlier candidate: scoped-memory core in the root appendix, r55
+
+The selected candidate is `itl-main-2f640143-r55`, exact commit
+`ebbbb25ce2260de0b4fd5a04cecb0a06d57f07a1`, continuing r54 with upstream
+unchanged at `2f640143756ecd01fed42100e412632aa9082385`. In 25 PM5 sessions of
+2026-10-28 to 2026-11-11 agents read `project-memory` 24 times and used scoped
+memory in 4: the mandatory steps sat inside an 11 KB on-demand provider policy
+(`openspec/changes/improve-scoped-memory-adoption`).
+
+The ITL appendix now carries a conditional `## Scoped project memory` core that
+applies only when the `memory_status` tool is exposed: when to call
+`memory_status`, `recall`, `remember` and `retire_note`, the organization and
+`host` criteria and the `Memory:` line with counters. It absorbs the former
+three-line memory bullet with its trigger, action, exception and prohibition
+intact; the upstream `## Project memory` section is unchanged and the root stays
+exact upstream plus appendix. `project-memory.md` keeps the upstream text; its
+ITL clause names seven destinations, the `memory_status` index that replaces the
+separate standing query, the standing limits and the refusal continuation, and
+keeps generic provider routing for projects outside managed ITL ones.
+
+Root grows 13,824 -> 15,179 normalized bytes (+1,355, about 339 tokens at
+bytes/4), so its ceiling moves 14 -> 15 KiB. The same growth reaches both load
+sets that include the root: full-cycle 155,696 -> 157,421 (+1,725 with
+`project-memory.md` 10,995 -> 11,365; ceiling 153 -> 154 KiB) and subagent start
+31,700 -> 33,055 (ceiling 31 -> 33 KiB). The fork Full qualification of the
+exact commit passed (186/186 Pester, 19 stages, clean and reusable);
+`tools/validate-rules.ps1` reports the three measured sets; schema-3 Verify
+covers 304 decisions. `compatibilityStatus` is `pending` until the publication
+owner qualifies the exact pin; the scoped-memory policy names the same commit
+and the new clause hash. Only Codex is in the adoption pilot; Cursor, Claude
+and Kilo receive the same root and are not separately accepted.
+
+### Local candidate before publication
+
+Pinning a commit in the lock does not make a local candidate publishable.
+`Get-DeliveryLocalAiRulesSource` checks the fork checkout before any gate, and
+`PublishDevelop` stops there unless all of these hold for the locked commit:
+
+- a clean fork worktree whose `HEAD` is that commit;
+- an annotated tag named as the lock `ref`, with the message
+  `ITL ai_rules_1c release <tag>; upstream=<ref>@<upstream sha>; fork=<commit>`
+  (the fork Full gate reads the upstream provenance from it; a lightweight tag
+  is rejected);
+- a local branch `release/<tag>` at the same commit;
+- the fork's own Full proof, `scripts\check.ps1 -Mode Full` run in that
+  worktree, which writes the ignored
+  `build\test-results\qualification\full.json` for the exact commit and tree.
+
+The fork Pester suite and `tools/validate-rules.ps1` alone are not that proof.
+The r55 candidate was first registered without the tag annotation, the release
+branch and the Full proof; the publication of the whole develop queue stopped
+twice on these checks and the entry had to be deferred.
+
+A deferral is bound to the registered head and is removed only by registering
+a new head of the same QueueId that changes content. A repair made only in the
+fork checkout (tag, release branch, Full proof) changes nothing in the source
+tree: the unchanged head is refused with `There are no commits to register`,
+and a merge of published develop alone with `Targeted mode found no changed
+paths`. Prepare the fork candidate completely before the first registration;
+after a deferral, register a source commit that records the repair.
+
+## Earlier candidate: review evidence and large scope, local r54
+
+The candidate was `itl-main-2f640143-r54`, exact commit
+`934668011ec7117463163c3da38a56340a157833`, continuing r53 with upstream
+unchanged at `2f640143756ecd01fed42100e412632aa9082385`. A separate review of a
+large branch (PM5 `1-branch4`: 76 BSL modules, about 2.7 MB of change text)
+could neither read its scope in one context nor send modules to the MCP
+validators, so almost every gate ended unverified, and the reviewer ignored a
+`/itl-check` the project had already recorded on the current code.
+
+`review-criteria.md → Scope` now relays a range choice the project asks for
+(ITL `get-review-scope` stage `review-scope.range-required`) and reruns with the
+user's choice. `→ Evidence` accepts a pass the project recorded and bound to the
+current content as Gate 1 evidence instead of the author's report; without it
+the review recommends that check in the development chat rather than starting
+it. On a large scope Gates 2–3 run by text on changed procedures chosen by risk
+and the rest is counted as «not checked automatically». The ITL appendix adds
+one line: ITL MCP hosts cannot validate by path (`syntaxcheck_file`, `files`),
+pass text. Root grows 13,742 -> 13,824 normalized bytes (+82, about 21 tokens at
+bytes/4); full-cycle 154,933 -> 155,696 (+763, about 191 tokens) with its
+ceiling 152 -> 153 KiB; subagent start 31,618 -> 31,700 stays within its
+unchanged ceiling. `compatibilityStatus` is `pending` until the publication
+owner qualifies the exact pin; the scoped-memory policy names the same commit.
+
+## Earlier candidate: local minor review fixes, local r53
+
+The earlier candidate is `itl-main-2f640143-r53`, exact commit
+`b09126bf08d6da188c3543539c114afcbd976fbd`, continuing r52 with upstream
+unchanged at `2f640143756ecd01fed42100e412632aa9082385`. After a full-cycle or
+OpenSpec apply review the parent fixed only `critical` / `major` findings and
+listed every `minor` one, so minor defects in code the agent had just written
+stayed open until the user asked again.
+
+`review-criteria.md → Actions by role` now has the parent also fix each `minor`
+finding in lines the current task added or changed when the fix is local (no
+behaviour, file or object outside the task; no check beyond the task's own),
+recheck the affected scope after any fix, and list every other `minor` finding
+with a reason: outside the task, needs checks outside the task, or judgement
+call. A subagent and a separately requested review still only report and mark
+each `minor` finding the same way. Soft gate C, Stage 4b and the severity
+vocabulary in `subagent-core.md` route to that owner instead of calling `minor`
+informational. The full-cycle set grows 154,528 -> 154,933 normalized bytes
+(+405, about 101 tokens at bytes/4); its ceiling moves 151 -> 152 KiB. Subagent
+start 31,558 -> 31,618 and root 13,742 stay within their unchanged ceilings.
+`compatibilityStatus` is `pending` until the publication owner qualifies the
+exact pin; the scoped-memory policy names the same commit.
+
+## Earlier candidate: change-review criteria and scope, local r52
+
+The earlier candidate is `itl-main-2f640143-r52`, exact commit
+`6dff08fee894e1ba8ff5508781c6174bb511c894`, continuing r51 with upstream
+unchanged at `2f640143756ecd01fed42100e412632aa9082385`. The review checklist,
+verdict and report lived only in `1c-code-reviewer`, which the reviewer model
+gate disables without an explicit `analysis` model, and review scope was the
+uncommitted diff; PM5 reviews missed committed branch work and new modules.
+
+`content/rules/review-criteria.md` is now the one owner of scope, 1C criteria
+(reuse, integration into the existing process, architecture proposals,
+end-user readiness, over-complexity), verdict, second opinion, report and
+actions by role. Soft gate C, Stage 4b and OpenSpec apply keep their triggers
+and point to it; `tooling-playbooks → Writing New Code` owns one conditional
+plan check. The ITL appendix adds one line routing a code review, including
+`/ponytail-review`, to the ITL helper action `get-review-scope`, which returns
+everything that differs from the branch transfer scope base by file kind. The
+fork full-cycle set grows 144,957 -> 154,528 normalized bytes (+9,571, about
+2,393 tokens at bytes/4); its ceiling moves 142 -> 151 KiB with the measurement
+in `tools/validate-rules.ps1`. Root 13,742 and subagent start 31,558 stay within
+their unchanged ceilings. `compatibilityStatus` is `pending` until the
+publication owner qualifies the exact pin. The scoped-memory policy names the
+same commit; memory rule bytes are unchanged.
+
+## Earlier candidate: model-neutral completion, local r51
+
+The earlier candidate is `itl-main-2f640143-r51`, exact commit
+`ce865ff710bb2fe5532e130b45ef89fc72588c37`, continuing r50 with upstream
+unchanged at `2f640143756ecd01fed42100e412632aa9082385` (upstream `main` has
+since moved; that intake is a separate audit). The 2026-11-01 PM5 follow-through
+report showed agents on unprofiled models (Grok, DeepSeek, Kimi, unprofiled GPT)
+ending turns after each sub-item with runnable gates, `/itl-check` and UI
+confirmation unrun, and rewriting one Vanessa scenario about fifteen times. The
+completion contract existed only in the gpt6/fable5/sonnet5 profiles.
+
+The exact upstream root stays untouched. The ITL appendix now owns
+`## Completion and repeated obstacles` (required target anchor): the legitimate
+stopping points and the two-attempt route change. The three profiles keep their
+model-specific technique with a pointer, and `model-adaptation` §5 names the
+shared owner. Gate 1 states that a fragment checked as text is interim and that,
+without the file tool, final evidence is the complete saved module text. The
+installed `USER-RULES` block limits `pending verification` to an off, blocked or
+user-excluded run, and the Vanessa skill points to the shared route change. The
+fork full-cycle set grows 144,351 -> 144,957 normalized bytes (+606, about 152
+tokens at bytes/4); its ceiling moves 141 -> 142 KiB with the measurement in
+`tools/validate-rules.ps1`. `compatibilityStatus` is `pending` until the
+publication owner qualifies the exact pin. The scoped-memory policy names the
+same commit; memory rule bytes are unchanged.
+
+## Earlier memory optimization candidate, local r50
+
+The earlier candidate is `itl-main-2f640143-r50`, exact commit
+`a2cbdcef52316db426acedc852f495564189f1ca`, upstream unchanged at
+`2f640143756ecd01fed42100e412632aa9082385`. The dependency lock, project
+template and scoped-memory policy already agree. Version selection is complete;
+`compatibilityStatus: pending` remains the separate release-admission state.
+Retained fork, twelve-client installation and installed PM5 evidence, the existing
+promotion owner and the remaining release steps are described in
+[r50 release readiness](ai-rules-r50-release-readiness.md). No publication,
+working migration or Cognee switch is implied.
+
+## Earlier combined proportionate acceptance and scoped memory, local r49
+
+The local r49 candidate `df91727cc584a9b499cad1d9daa6ac22320486f9`
+continues r48 `b45e2164440b81ab0c68985da086341efa39c4da` and cherry-picks
+the four scoped-memory files from `162f2ea7a5734b65bc1de80943d057e9b7c0a525`
+with provenance in the commit. Upstream remains
+`2f640143756ecd01fed42100e412632aa9082385`. The existing overlay's exact
+r48 policy and memory result hashes are preserved; only the validator's measured
+combined-context ceiling changes from 140 to 141 KiB. The installer pin and scoped-memory
+policy now name this single combined commit. A regression prevents these two
+identities from diverging again. The policy's r47 baseline is historical provenance.
+
+The new pin remains `pending`. Fork Full and twelve-client installation
+compatibility qualify source composition, not native Cognee operation: G5 and
+publication remain pending. Changed memory rule bytes still invalidate affected
+E2E proof under the existing strict fork identity contract; combining candidates
+does not grant reuse by itself. See [r49 qualification](ai-rules-r49-qualification.md).
+
+## Earlier proportionate result acceptance candidate r48
+
+The local r48 candidate `b45e2164440b81ab0c68985da086341efa39c4da`
+continues r47 without changing upstream. Existing triage, UI confirmation and
+OpenSpec DoD select proof by the changed behaviour: internal changes may use
+unit/integration/data evidence, local UI edits need affected-state observation,
+and new workflows need a principal user path. An originally agreed mockup is
+compared only for affected commitments. Unfinished requirements remain defects;
+optional polish does not expand acceptance. No new gate or per-edit UI suite is
+introduced. Exact local checks, context cost and delivery limits are recorded in
+[proportionate acceptance](proportionate-user-acceptance.md). The new pin is
+`pending`; registration does not publish or install this candidate.
+
+## Earlier planning candidate r47 (historical preparation)
+
+The r47 candidate continues the exact r46 intake of upstream
+`2f640143756ecd01fed42100e412632aa9082385` and changes only the common grilling
+and SDD planning instructions. The source lock remains `pending`;
+registration does not publish the fork or update installed projects. Decisions,
+exact checks and remaining native acceptance are recorded in
+[the planning candidate](workflow-acceleration-candidate.md) and
+[the r46 intake](ai-rules-r46-intake.md). Earlier qualification sections below
+retain their historical scope and do not qualify the new candidate.
+
+## Necessary AI verification without numeric approval prompts
+
+The local r43 candidate `987320be139b4ac0d28f1f5b0f2515f63c7f140f` on
+`upgrade/ai-validation-autonomy` removes the downstream requirement for a special
+AI-call grant or finite next allocation during an ordinary authorized task.
+Default 2/3 retry counts are diagnostic checkpoints; substantive corrections
+still require fresh confirmation. Explicit user limits, stop, raw findings,
+one unchanged-input unusable-response recovery and the separate host repair
+session remain binding. Gate selection, false-positive adjudication and fresh
+ITL completion requirements are preserved. This supersedes the prepared task-grant
+policy without introducing an authorization registry or changing installed state.
+
+The dependency lock is **pending**, not published or installed. Focused fork
+tests cover an actual update from r36 and compare all five affected installed
+rules and the direct `1c-validate` skill with a fresh Codex installation while
+preserving user restrictions.
+Decision scenarios cover ordinary continuation beyond 3 calls, compaction,
+explicit caps, stop, separate tasks and repeated unusable responses; their
+presence is not proof of a live model run. Later authorized `PublishDevelop`
+owns candidate qualification and immutable publication; do not patch working
+project copies or describe this local source change as deployed.
+
+Against prepared candidate `27c1d6a`, the six on-demand policy/skill files grow
+from 104,973 to 105,440 normalized UTF-8 bytes (+467 bytes; approximately 117
+tokens using the bytes/4 proxy). The always-on root is unchanged. This small
+increase replaces allocation bookkeeping with explicit continuation and user-limit
+semantics; no model call, registry or runtime collector is added.
+
+## Published baseline and migration candidate
+
+The audited remote workflow `develop` at `c900620e6569ce4cec39e30abfa3f8ce2c150ce1` pins the published controlled rules r41, `itl-main-c1fb8e6-r41` (`84ed7c7a8dcc783159537f41f38196640ffa968c`), against upstream `c1fb8e687be5b9d71d5a05c6f5d32cf6a6919dcb`. Its paired publication and acceptance are recorded in [final Develop acceptance](../openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/final-develop-acceptance-20261009.md). The earlier workflow `master` at `69c0863bfe3bd837543267f122e81a28dcfa5488` still installs r33; it is a separate supported migration baseline, not the current Develop pin.
+
+The next local candidate is r42, `itl-main-5700f54-r42` (`827e5ccaa7e319dc5871555f7e997093478359c4`), reconstructed directly from audited upstream `5700f54a899abb1e8b6483badd6986e5a0e6c1af` with published r41 as the downstream baseline. Its source compatibility remains `pending` until the paired source publication owner qualifies it. See [r42 intake and acceptance](ai-rules-r42-upgrade.md). A local tag and local proof do not make a dependency remotely installable. Do not advertise this candidate as a published release.
+
+Historical r39 (`9ec86f75343ba4eded66e2085f097ff4baab7d67`) and r40 (`25b603215b3893f94fbd382e9a03fa99db4678e5`) retain their exact original evidence and immutable local refs. The earlier [r41 fork qualification](../openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/gate6-r41-qualification.md) passed 166/166 Pester and 18/18 stages; the later final Develop receipt establishes its published status. D13 conditional small-covered-CF validation, bounded legacy assessment, fresh/Vanessa/export/refresh and essential UI contracts remain owned by the same ITL implementation. Historical evidence does not qualify changed r42 bytes.
+
+Fork `main` mirrors upstream. Installed projects consume immutable controlled release refs, never fork `main`. Do not patch installed rules copies. The source root `AGENTS.md` is maintainer guidance and must not enter managed-copy lists.
+
+## Intake and semantic ledger
+
+Before a new intake, resolve `git ls-remote upstream refs/heads/main`. A changed upstream SHA requires an incremental audit before rebuilding. Start the upgrade branch directly from the audited upstream commit; do not merge or rebase the old downstream release into it.
+
+`scripts/build-ai-rules-release.ps1` owns reconstruction. Its schema-3 ledger at `templates/ai-rules-overlay/sections.json` records each changed path's requirement id, disposition, reason, and exact upstream/baseline-release/result SHA-256. `take-upstream` requires equality with the new upstream, `carry-forward` equality with the declared baseline release, `resolved` the reviewed result, and `downstream-only` a new path. These text identities normalize CRLF to LF; they are not raw binary checksums. The r42 ledger covers 267 paths relative to published r41 and its upstream, retaining prior reasons and explicit reconciliations. Historical r41 had 480 decisions relative to its older baseline; the lower incremental count does not remove downstream files or policy. `root-contract.json` maps every current upstream `AGENTS.md` section to `upstream-root`. `targetComposition=append-upstream` preserves the exact upstream root and appends only the ITL ownership text in `templates/ai-rules-overlay/AGENTS.md`; `USER-RULES.md` remains a separate managed target. Do not restore the old full replacement root or obsolete required anchors.
+
+`-Mode Prepare` requires a clean branch at the exact upstream commit. `-Mode Verify` requires a clean committed candidate with linear ancestry and checks path coverage, all three hashes, disposition constraints, and managed target bytes. Git path inventory is NUL-delimited. The planning `path-inventory.json` is not release proof. When a previous disposition changes, preserve its earlier reason and check the semantic owner in `openspec/changes/upgrade-ai-rules-upstream-20a083e5/migration-map.md`; equal hashes alone cannot prove behavior.
+
+## Installed client and rule ownership
+
+The candidate supports a project client set, with one active client per session. Adding or switching a client does not silently remove the existing installed client. Shared files such as `AGENTS.md`, `USER-RULES.md`, OpenSpec workspace and MCP ownership are reconciled once; each client's generated surface is checked separately. Preserve foreign client settings, user-authored rules, `LLM-RULES.md`, memory and project-specific files. A conflicting override is reported with the dependent action; it is not silently rewritten.
+
+The new upstream plugin entrypoint is a separate installation option for a supported host client. Package installation, plugin enable/disable, project initialization and rules update have distinct effects. Session/workspace ensure is read-only; an explicit install or update enters the ITL-owned bootstrap or client operation. The controlled-fork README and AGENT-INSTALL now direct ITL users to its immutable release ref rather than moving upstream `main`; standalone upstream examples are explicitly scoped. Do not claim a host hook works from its manifest alone: verify its runtime and client version. The clean exact-commit compatibility fixture passed init, byte-idempotent update and doctor for all twelve source-supported clients in delegated MCP mode. This is installation-contract evidence, not live client-discovery or MCP execution evidence.
+
+The upstream rules own coding, process, MCP routing and OpenSpec phases. The ITL appendix and project `USER-RULES.md` own branch infobases, lifecycle mutations, verification and recovery. `templatesearch` remains a code-template provider; 1C documentation MCP standards and metadata Template/IntegrationService validation have separate acceptance evidence. New shared memory providers are not enabled implicitly.
+
+## OpenSpec and verification
+
+The official OpenSpec 1.13.1 CLI is pinned as a project-versioned component. Resolve its exact Node executable and JS entrypoint from the installed lock; a missing runtime gives a provisioning continuation rather than a PATH fallback. The CLI owns schema, scaffold and root resolution. This release supports the local `openspec/` home for new and old projects. A registered, declared or global-default external store is reported as `OPEN_SPEC_EXTERNAL_STORE_DEFERRED` before managed writes; it is neither silently replaced by a local home nor supported through direct bundle/CLI commands. External selection and shared writes are the separate `add-external-openspec-store` change. All six phases (explore, propose, apply, archive, update, sync) need local write-path acceptance before release. Source-only planning files remain outside installed managed copies.
+
+The pinned OpenSpec `package-lock.json` must keep its exact LF bytes through Windows Git checkouts. Source and installed `.gitattributes` mark only that lock path `-text`; update snapshots the installed attribute file before changing it. This preserves the SHA check without changing the separate `src/cf/**` and `src/cfe/**` transport contract. `evidence/openspec-lock-transport.md` records the reproduced CRLF failure and a repaired published-r33 canary with a successful local CLI call.
+
+The new scaffold gives `openspec/config.yaml` a YAML mapping. An existing r33/r36 project can retain the old comment-only file because it is user-owned after installation. OpenSpec 1.13.1 may warn that this file is not a valid YAML object while still returning usable JSON and exit zero. Inspect that file before changing it; an updater must not overwrite a customized config or stage it as a workflow-owned edit. The isolated local canary in `evidence/openspec-local-canary.md` records the warning and the corrected scaffold separately.
+
+Verification decisions separate obligation, retention, cadence and invocation permission. A current one-off proof need not become a permanent regression suite merely to count, while an existing approved plan remains binding. Skipped, partial, zero-tests, invalid JUnit and failed runner outcomes stay distinct. The proof freshness key uses relevant runner/component bytes rather than the entire dependency lock and binds a passed result to the target infobase and loaded CF/CFE state. One-off receipts now enter the common readiness assessment and protect their referenced artifacts; fixture checks cover pending, passed, stale and `block` decisions. A full installed proof-to-export run and external/provider requirements remain open. Gate 6/platform fallback is conditional and may not run during file-only workflow update.
+
+## Installed cutover and recovery
+
+For the first upgrade of an installation with an old helper, invoke `scripts/update-installed-workflow.ps1` from an exact clean new source checkout. It delegates to the new helper before any managed file is copied. Direct execution of the old helper cannot be treated as atomic. The new owner snapshots the entire managed write-set, including root rules, lock, env, client contributions and local MCP ownership. Pre-copy and handled post-copy failures retain receipts for exact resume. An abrupt post-copy mismatch now has a scoped preserved-byte report and reviewed hash-bound acknowledgement through the same owner; see the installed workflow-update-recovery reference. One real interrupted r33 update passed that route; other client/commit/branch crash windows remain qualification work. A successful root now retains its before snapshot and expected post-state under ignored `itl-workflow-update-completed-*`; it no longer appears as pending. From that exact clean compatible source, `-Recovery status` lists ids and `-Recovery restore -SnapshotId <id>` returns the package/owned settings in a workflow-only commit. Late owned edits or later HEAD block before writing; interrupted restore and a lost commit acknowledgement resume through the same root transaction. An unresolved business merge must use its compatible original lifecycle recovery before backward rollback. Do not use an old installer over multi-client state. External stores and plugin/CLI caches are outside the project rollback; retained snapshots contain ignored settings and stay in project runtime, never Git.
+
+`update-workflow` then processes the master root and each available registered `itldev/*` worktree with the same exact candidate. A live operation defers its root; an idle root with a stopped or failed lifecycle is eligible if its managed write-set is unmodified. The branch receives a workflow-only commit without merging `src/cf` or `src/cfe` from master and without loading an infobase or starting tests. Existing business index, merge state, target commit, branch env/MCP values and recovery evidence must survive. The per-root report records completed, deferred or blocked, with a continuation; repeating the master update retries incomplete roots. A pending business operation resumes through its original helper command after file update. A failed root does not roll back already completed roots.
+
+The legacy execution-guard transition is per-root and keeps physical runtime evidence while removing obsolete tracked runtime paths. Caveman `on` is migrated once to `auto` with a per-root receipt; `off`, `auto` and a later deliberate `on` are preserved. New projects default to `auto`, with `full` as the session level. A missing immutable rules input in a paused refresh must have an exact recovery instruction, never a silent fallback to moving master.
+
+### Accepted Q23: essential UI policy and one-time transition
+
+Q23 was accepted on 2026-10-02 for the future integration of upstream `c1fb8e687be5b9d71d5a05c6f5d32cf6a6919dcb`. New projects default to `UI_TESTING=essential`: after an authorized change reaches the dev/test infobase, verify the important new or changed user-visible behaviour with actual UI evidence. The setting does not authorize deployment, infobase loading or a repeated test-fix loop. A missing allowed UI route leaves the dependent evidence unverified with its prerequisite; static checks or a saved-suite pass do not manufacture interactive UI evidence.
+
+At the future workflow update of each eligible existing root/worktree, convert its old `UI_TESTING=manual` to `essential` once. Preserve `off`, `auto`, existing `essential`, unrelated dotenv bytes and the independent `ITL_VANESSA_TESTING` saved-suite setting. Scope provenance/version determines eligibility; a missing receipt alone cannot turn a new intentional `manual` into a legacy value. The existing update/snapshot owner records completion even when no setting changed, so repeat update and branches inherited from a migrated baseline preserve a later deliberate `manual`. Settings and the per-root migration receipt share the existing transaction and rollback checks; do not add a coordinator, global scan or a second recovery protocol. Busy/deferred roots keep the existing continuation. Workflow-only update itself starts no infobase, UI runner, tests or Gate 6.
+
+The controlled fork routes essential interactive UI verification in managed projects through the existing ITL Vanessa UI route and respects effective provider policy, exact target authorization and a broader no-UI instruction. Saved Vanessa remains a separate capability; Q23 neither enables it nor changes its setting. Standalone QA integration remains separate. The accepted architecture checkpoint and original acceptance requirements (IM7/EV9, tasks 12.1–12.2 and `test-plan.md`) are preserved; their final r41 scope is recorded in [final Develop acceptance](../openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/final-develop-acceptance-20261009.md). Historical `9ec86f7` qualification does not qualify Q23 or changed r42 bytes. The ready source-only Stage A support plan retains its old pins and scope.
+
+The first supported transition also requires proof from the actual installed rules and their recorded pre-update support state, not just a new workflow pin or executor. If `-SkipAiRules` leaves old rules without essential support, preserve the setting and defer Q23 without a completed receipt. A subsequent rules installation at the same workflow pin must apply the first supported transition once; a later intentional manual still remains. Preserve the dotenv UTF-8 BOM, line endings and all bytes outside the setting value. This happens during the future update, never as an immediate edit of a live project's env from this source task.
+
+Fresh Caveman transitions and the shared settings writer must also preserve the input BOM and unrelated bytes. An already applying Caveman v1 receipt keeps its exact recorded target, including a legacy BOMless target, only after the unchanged before/after SHA checks pass. Completed historical receipts do not authorize a retroactive format rewrite. This compatibility uses the existing migration/snapshot owner and unchanged receipt schema.
+
+For an interrupted legacy update whose parent snapshot did not capture the new policy receipt, post-copy stops before policy writes with `UI_TESTING_POLICY_LEGACY_SNAPSHOT`. Its continuation is `scripts/update-installed-workflow.ps1 -ProjectRoot <exact-root> -Recovery update` from a clean exact new workflow checkout. The new parent admits the added receipt paths to the same existing snapshot atomically before post-copy; the child must not extend it behind an old parent's in-memory copy. Retain the original target, snapshot and recovery chain. A newer recovery executor must skip Q23 when the recorded old package target does not own it. These source-owner compatibility boundaries remain authoritative. Final r41 paired evidence is linked above; strict OpenSpec document validation alone never qualifies an installed workflow.
+
+## Qualification and delivery
+
+Exact fork `9ec86f75343ba4eded66e2085f097ff4baab7d67` (tree `165a89a220820efa5d231c36c9d0d94a698b8b47`) passed Full 137/137 Pester and 18/18 stages, clean reusable qualification and its read-only reuse probe, plus schema-3 Verify/overlay-lock for 472 paths. Local r39 records this exact commit without moving earlier refs. The actual Git CRLF-to-LF regression failed before the repair and passed afterward; unchanged legacy aliases retire while semantic user edits, unowned notes, unknown hashes and invalid UTF-8 survive. Exact artifacts and the final-candidate acceptance boundary are in [alias EOL fork qualification](../openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/fork-alias-eol-qualification.md).
+
+The preceding fork `015cf9856c37fcecdf03df2faa8b8546f84849b4` (tree `a151392df2dcba4e8411359919b3ec2fb5b8d067`) passed Full 137/137 Pester and 18/18 stages, clean reusable qualification and its read-only reuse probe, plus schema-3 Verify/overlay-lock for 472 paths. Its local r38 canary retains its original identity. PL3 exposes a real ensure failure through typed numeric exit status and bounded diagnostics; PowerShell emission and incremental Node decoding preserve exact Unicode paths. This owner proof does not establish native OpenCode/Kilo hook handling, or requalify the earlier native client sessions on that commit. Exact artifacts and the remaining host-rejection limitation are in [PL3 fork qualification](../openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/fork-pl3-qualification.md).
+
+The preceding exact fork `ee9d7b8815bfc32b2182cf7f601d439a843f7a1e` (tree `03fe3e31770d102fb3eaae44f0b8d023ed9094c0`) passed schema-3 Verify for 471 paths, Full 136/136 Pester and 18/18 stages with clean reusable qualification, and isolated exact-commit init/update/doctor for all twelve clients. Its historical qualification remains in `build/test-results/qualification/openspec-r33-alias-final.json`. Actual published-r33 update installed the six canonical Codex OpenSpec skills and retired only unchanged owned aliases. Fresh native Codex sessions exercised all six phases; a separately prepared normative delta passed actual main-spec sync while preserving the pre-existing requirement bytes. Its archive exposed a helper argument-list defect; the source owner repair passed its focused regression, and the same paused fixture received it through normal workflow-only update with all eighteen document/spec inputs preserved. Final native archive continuation is recorded in the canonical-migration evidence. Template descriptors, compatible UUID/payload completion, guarded platform load/check/apply and native snapshot restoration also passed on the earlier disposable 1C base. Current endpoint probes timed out before MCP initialize, so standards retrieval and live validator calls remain unverified. See [native migration evidence](../openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/openspec-canonical-migration.md) and [reused stands and Template evidence](../openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/reused-stands-and-template-platform.md). Other installed lifecycle, proof-to-export, client/provider and runtime-cost acceptance remains tracked in the change tasks.
+
+The preceding qualification snapshot is retained below with its original identities and limitations; it does not qualify the later candidate's bytes.
+
+The earlier clean fork `38d315de9cf611ca211619fec7f9a2254e7ef04e` (tree `3a9ec9b49444c9a6ae47affa83152fb9a30e76da`) passed schema-3 Verify/overlay-lock for 471 paths and exact Full qualification (135/135 Pester, 18/18 stages, clean and reusable). It adds common fork placement and all-client/all-family MCP preflight, with preserved-byte conflict continuation; see the final-set-preflight evidence. The prior clean exact fork commit `2d3e7705f79e37a130349b88ecea78b964adabf5` (tree `c7e11dd602944e462862e3cd3c6e28b8b58c5dfd`) passed schema-3 overlay Verify and overlay-lock, the Full gate (130/130 Pester, 18/18 stages, `worktreeClean=true`, `reusable=true`), and isolated exact-commit init/update/doctor for all twelve clients in delegated MCP mode, including the installed managed-memory boundary. A source-side file transition from the published r33 baseline also passed on this exact fork, with an idempotent repeat; it contained no infobase. A separate Codex CLI 0.158.0-alpha.2.1 temp-profile probe installed and removed the preceding plugin package; its plugin-owned bytes are unchanged in the current candidate. Completed r33 rollback/repeat and one real post-copy interruption/reconciliation/resume passed with clean Git and retained CLI caches; migration evidence is in workflow-rollback-canary and workflow-hard-crash-canary. Remaining release acceptance includes additional legacy/multi-client recovery, live stopped-operation continuation, local OpenSpec native write paths, proof-to-export behavior, live provider/client capabilities and material runtime cost. Shared external OpenSpec writes are deferred to their separate change. Keep failures and unavailable evidence visible; fixture proof does not replace a live MCP or Gate 6 result.
+
+After one coherent source commit, `scripts/source-delivery.ps1 -Action RegisterChange` runs the owned Targeted gate and queues the change locally. Ordinary source work does not push, open a PR, or run Smoke/Full/Develop/Release. A later separately authorized `PublishDevelop` qualifies and publishes the installable candidate using the exact fork/E2E stand; it does not change workflow `master`. Never repoint an immutable rules tag. Preserve the queue and checkpoint on failure.

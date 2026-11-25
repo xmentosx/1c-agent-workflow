@@ -1,19 +1,36 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$OutputDirectory = "",
     [string]$PlatformBin = "C:\Program Files\1cv8\8.3.27.2130\bin",
     [string]$WorkRoot = "C:\itlvabld",
-    [ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8")][string]$DownstreamRevision = "itl-r8",
+    [ValidateSet("1.2.043.28", "1.2.043.42")][string]$UpstreamVersion = "1.2.043.28",
+    [ValidateSet("itl-r1", "itl-r2", "itl-r3", "itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10", "itl-r11", "itl-r12", "itl-r13", "itl-r14", "itl-r15", "itl-r16", "itl-r17", "itl-r18")][string]$DownstreamRevision = "itl-r8",
+    [string]$ResumeWorkDirectory = "",
     [switch]$KeepWork,
     [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
 
 function Get-Sha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-VanessaResumeDiffArguments {
+    param([Parameter(Mandatory = $true)][object]$Manifest)
+
+    # Existing immutable recipes retain their original Git diff format. New
+    # recipes pin full indexes so repository growth cannot change resume proof.
+    $format = if ($Manifest.patch.PSObject.Properties['gitDiffFormat']) { [string]$Manifest.patch.gitDiffFormat } else { 'legacy' }
+    switch ($format) {
+        'legacy' { return @('--binary') }
+        'full-index' { return @('--binary', '--full-index') }
+        default { throw "VANESSA_BUILD_PATCH_DIFF_FORMAT_UNSUPPORTED: $format. Use the format declared by the exact source-controlled component recipe." }
+    }
 }
 
 function New-DeterministicZip {
@@ -113,81 +130,8 @@ function Test-PathInside {
     return $candidateFull.StartsWith($parentFull + "\", [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function Enter-ScopedUnsafeActionProtectionBypass {
-    param(
-        [Parameter(Mandatory = $true)][string]$ConfPath,
-        [Parameter(Mandatory = $true)][string]$BuildToken
-    )
-
-    if ($BuildToken -notmatch "^[0-9a-f]{8}$") {
-        throw "Unsafe qualification-base token: $BuildToken"
-    }
-
-    $confDirectory = Split-Path -Parent $ConfPath
-    New-Item -ItemType Directory -Path $confDirectory -Force | Out-Null
-
-    $originalExists = Test-Path -LiteralPath $ConfPath -PathType Leaf
-    $originalBytes = if ($originalExists) {
-        [System.IO.File]::ReadAllBytes($ConfPath)
-    } else {
-        [byte[]]@()
-    }
-
-    $originalText = if ($originalBytes.Length -gt 0) {
-        [System.Text.Encoding]::UTF8.GetString($originalBytes)
-    } else {
-        ""
-    }
-    $ownedPattern = ".*$BuildToken.*"
-    $settingPattern = "(?m)^(DisableUnsafeActionProtection=)([^\r\n]*)"
-    if ([regex]::IsMatch($originalText, $settingPattern)) {
-        $expectedText = ([regex]::new($settingPattern)).Replace(
-            $originalText,
-            {
-                param($match)
-                $existingPatterns = $match.Groups[2].Value.TrimEnd(";")
-                return $match.Groups[1].Value + $existingPatterns + ";" + $ownedPattern + ";"
-            }
-        )
-    } else {
-        $separator = if ($originalText.Length -gt 0 -and
-            -not $originalText.EndsWith("`n") -and
-            -not $originalText.EndsWith("`r")) {
-            "`r`n"
-        } else {
-            ""
-        }
-        $expectedText = $originalText + $separator + "DisableUnsafeActionProtection=" + $ownedPattern + ";`r`n"
-    }
-    $expectedBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($expectedText)
-    [System.IO.File]::WriteAllBytes($ConfPath, $expectedBytes)
-
-    return [pscustomobject]@{
-        confPath = $ConfPath
-        originalExists = $originalExists
-        originalBytes = $originalBytes
-        expectedSha256 = (Get-Sha256 -Path $ConfPath)
-        ownedPattern = $ownedPattern
-    }
-}
-
-function Exit-ScopedUnsafeActionProtectionBypass {
-    param([Parameter(Mandatory = $true)]$State)
-
-    if (-not (Test-Path -LiteralPath $State.confPath -PathType Leaf)) {
-        throw "Qualification conf.cfg disappeared before restoration: $($State.confPath)"
-    }
-    Assert-Equal (Get-Sha256 -Path $State.confPath) ([string]$State.expectedSha256) "Qualification conf.cfg"
-
-    if ([bool]$State.originalExists) {
-        [System.IO.File]::WriteAllBytes([string]$State.confPath, [byte[]]$State.originalBytes)
-    } else {
-        Remove-Item -LiteralPath ([string]$State.confPath) -Force
-    }
-}
-
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$assetVersion = "1.2.043.28-$DownstreamRevision"
+$assetVersion = "$UpstreamVersion-$DownstreamRevision"
 $assetRoot = Join-Path $repoRoot ("third-party\vanessa-automation\" + $assetVersion)
 $manifestPath = Join-Path $assetRoot "manifest.json"
 $patchPath = Join-Path $assetRoot "file-operations.patch"
@@ -208,6 +152,7 @@ foreach ($requiredPath in @($manifestPath, $patchPath, $noticePath, $licenseNoti
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 Assert-Equal ([string]$manifest.downstreamRevision) $DownstreamRevision "Manifest downstream revision"
+Assert-Equal ([string]$manifest.compatibilityVersion) $UpstreamVersion "Manifest upstream compatibility version"
 $artifactPath = Join-Path $OutputDirectory ([string]$manifest.artifact.fileName)
 $provenancePath = Join-Path $OutputDirectory "candidate.provenance.json"
 if ((Test-Path -LiteralPath $artifactPath) -and -not $Force) {
@@ -224,16 +169,25 @@ $oscriptCommand = Get-Command oscript.exe -ErrorAction Stop
 $opmCommand = Get-Command opm.bat -ErrorAction Stop
 $oscriptVersion = (& $oscriptCommand.Source -version).Trim()
 if ($LASTEXITCODE -ne 0) { throw "oscript -version failed." }
-$opmVersion = (& $opmCommand.Source --version).Trim()
-if ($LASTEXITCODE -ne 0) { throw "opm --version failed." }
+$oneScriptLibrary = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $opmCommand.Source) '..\lib'))
+$opmVersionSource = Join-Path $oneScriptLibrary 'opm\src\core\Модули\КонстантыOpm.os'
+if (-not (Test-Path -LiteralPath $opmVersionSource -PathType Leaf)) { throw "Installed opm version source is missing: $opmVersionSource" }
+$opmVersionMatches = [regex]::Matches((Get-Content -LiteralPath $opmVersionSource -Raw -Encoding UTF8), '(?m)^ВерсияПродукта\s*=\s*"([^"]+)";')
+if ($opmVersionMatches.Count -ne 1) { throw "Installed opm version is ambiguous: $opmVersionSource" }
+$opmVersion = $opmVersionMatches[0].Groups[1].Value
 Assert-Equal $oscriptVersion ([string]$manifest.build.oneScript.version) "OneScript version"
 Assert-Equal $opmVersion ([string]$manifest.build.oneScript.opmVersion) "OPM version"
 
-$opmPackages = (& $opmCommand.Source list) -join "`n"
-if ($LASTEXITCODE -ne 0) { throw "opm list failed." }
 foreach ($property in $manifest.build.oneScript.packages.PSObject.Properties) {
-    $packagePattern = "(?m)^\s*" + [regex]::Escape($property.Name) + "\s*\|\s*" + [regex]::Escape([string]$property.Value) + "\s*\|"
-    if ($opmPackages -notmatch $packagePattern) {
+    # opm list queries the remote package hub even for local packages. Read the
+    # installed package metadata used by this OneScript runtime instead.
+    $packageMetadataPath = Join-Path (Join-Path $oneScriptLibrary $property.Name) 'opm-metadata.xml'
+    if (-not (Test-Path -LiteralPath $packageMetadataPath -PathType Leaf)) {
+        throw "Required OneScript package is absent or has the wrong version: $($property.Name) $($property.Value)."
+    }
+    [xml]$packageMetadata = Get-Content -LiteralPath $packageMetadataPath -Raw -Encoding UTF8
+    if ([string]$packageMetadata.'opm-metadata'.name -cne [string]$property.Name -or
+        [string]$packageMetadata.'opm-metadata'.version -cne [string]$property.Value) {
         throw "Required OneScript package is absent or has the wrong version: $($property.Name) $($property.Value)."
     }
 }
@@ -245,24 +199,14 @@ if (-not (Test-Path -LiteralPath $platformExe -PathType Leaf)) {
 $platformVersion = (Get-Item -LiteralPath $platformExe).VersionInfo.FileVersion
 Assert-Equal $platformVersion ([string]$manifest.build.platform.version) "1C:Enterprise platform version"
 
-$installedPlatformExecutables = @()
-foreach ($platformRoot in @("C:\Program Files\1cv8", "C:\Program Files (x86)\1cv8")) {
-    if (Test-Path -LiteralPath $platformRoot -PathType Container) {
-        $installedPlatformExecutables += Get-ChildItem -LiteralPath $platformRoot -Directory |
-            ForEach-Object { Join-Path $_.FullName "bin\1cv8.exe" } |
-            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
-    }
-}
-$latestPlatformVersion = @($installedPlatformExecutables |
-    ForEach-Object { [version](Get-Item -LiteralPath $_).VersionInfo.FileVersion } |
-    Sort-Object -Descending |
-    Select-Object -First 1)
-if ($latestPlatformVersion.Count -ne 1 -or $latestPlatformVersion[0].ToString() -ne $platformVersion) {
-    throw "Upstream Compile.os selects the latest installed 8.3 platform. The selected version would not be the pinned $platformVersion."
-}
+# Both execution copies explicitly select this manifest-validated executable.
+# Other installed platform versions do not determine the build toolchain.
 
-$workId = [Guid]::NewGuid().ToString("N").Substring(0, 8)
-$workDirectory = Join-Path $WorkRoot $workId
+$workDirectory = $(if ($ResumeWorkDirectory) {
+    [System.IO.Path]::GetFullPath($ResumeWorkDirectory)
+} else {
+    Join-Path $WorkRoot ([Guid]::NewGuid().ToString("N").Substring(0, 8))
+})
 if (-not (Test-PathInside -Candidate $workDirectory -Parent $WorkRoot)) {
     throw "Unsafe work directory: $workDirectory"
 }
@@ -272,13 +216,30 @@ if ($workDirectory.Length -gt 40) {
 
 $sourceDirectory = Join-Path $workDirectory "src"
 $singleBuildDirectory = Join-Path $workDirectory "out"
-$qualificationBase = Join-Path $workDirectory "base"
 $stageDirectory = Join-Path $workDirectory "stage"
 $sourceArchivePath = Join-Path $workDirectory "source.tar"
-$createBaseLog = Join-Path $workDirectory "create-base.log"
+$nativeRuntimeInvoked = $false
+$nativeRuntimeResultPath = Join-Path $workDirectory 'native-runtime-result.json'
 
-New-Item -ItemType Directory -Path $workDirectory -Force | Out-Null
+if ($ResumeWorkDirectory) {
+    if (-not (Test-Path -LiteralPath $workDirectory -PathType Container)) {
+        throw "VANESSA_BUILD_RESUME_WORK_DIRECTORY_MISSING: $workDirectory"
+    }
+    if (Test-Path -LiteralPath $stageDirectory) {
+        throw "VANESSA_BUILD_RESUME_STAGE_ALREADY_EXISTS: $stageDirectory"
+    }
+    if (-not (Test-Path -LiteralPath $nativeRuntimeResultPath -PathType Leaf)) {
+        throw "VANESSA_BUILD_RESUME_RESULT_MISSING: $nativeRuntimeResultPath"
+    }
+    $previousNativeResult = Get-Content -LiteralPath $nativeRuntimeResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not [bool]$previousNativeResult.released) {
+        throw "VANESSA_BUILD_RESUME_NATIVE_OWNERSHIP_UNCONFIRMED: $nativeRuntimeResultPath"
+    }
+} else {
+    New-Item -ItemType Directory -Path $workDirectory | Out-Null
+}
 try {
+    if (-not $ResumeWorkDirectory) {
     Invoke-Native -FilePath "git" -Arguments @(
         "clone", "--filter=blob:none", "--no-checkout",
         [string]$manifest.upstream.repository, $sourceDirectory
@@ -314,22 +275,60 @@ try {
     Invoke-Native -FilePath "git" -Arguments @(
         "-C", $sourceDirectory, "apply", "--whitespace=error-all", $patchPath
     ) -Description "Apply downstream patch"
+    } else {
+        if (-not (Test-Path -LiteralPath (Join-Path $sourceDirectory '.git') -PathType Container)) {
+            throw "VANESSA_BUILD_RESUME_SOURCE_MISSING: $sourceDirectory"
+        }
+        $tagCommit = (& git -C $sourceDirectory rev-parse "$($manifest.upstream.ref)^{commit}").Trim()
+        if ($LASTEXITCODE -ne 0) { throw "Could not resolve the pinned upstream tag in resumed source." }
+        Assert-Equal $tagCommit ([string]$manifest.upstream.commit) "Resumed upstream tag commit"
+        $headCommit = (& git -C $sourceDirectory rev-parse HEAD).Trim()
+        $headTree = (& git -C $sourceDirectory rev-parse "HEAD^{tree}").Trim()
+        Assert-Equal $headCommit ([string]$manifest.upstream.commit) "Resumed upstream HEAD"
+        Assert-Equal $headTree ([string]$manifest.upstream.tree) "Resumed upstream tree"
+        Assert-Equal (Get-Sha256 -Path $sourceArchivePath) ([string]$manifest.upstream.sourceArchive.sha256) "Resumed upstream source archive SHA-256"
+        foreach ($flowFile in $manifest.build.upstreamFlow) {
+            $flowPath = Join-Path $sourceDirectory ([string]$flowFile.path).Replace("/", "\")
+            Assert-Equal (Get-Sha256 -Path $flowPath) ([string]$flowFile.sha256) "Resumed upstream build file $($flowFile.path)"
+        }
+        $resumeDiffPath = Join-Path $workDirectory 'resume-diff.patch'
+        try {
+            Invoke-Native -FilePath "git" -Arguments (@(
+                "-C", $sourceDirectory, "-c", "core.quotepath=false", "diff"
+            ) + @(Get-VanessaResumeDiffArguments -Manifest $manifest) + @("HEAD", "--output=$resumeDiffPath")) -Description "Compare resumed source with pinned patch"
+            Assert-Equal (Get-Sha256 -Path $resumeDiffPath) ([string]$manifest.patch.sha256) "Resumed downstream patch"
+        } finally {
+            Remove-Item -LiteralPath $resumeDiffPath -Force -ErrorAction SilentlyContinue
+        }
+    }
     Invoke-Native -FilePath "git" -Arguments @(
         "-C", $sourceDirectory, "diff", "--check"
     ) -Description "Check patched source whitespace"
 
-    $changedPaths = @(& git -C $sourceDirectory -c core.quotepath=false diff --name-only)
-    if ($LASTEXITCODE -ne 0) { throw "Could not enumerate patched paths." }
+    $sourcePathLists = & {
+        param($SourceRoot, $HelperPath)
+        . $HelperPath -ProjectRoot $SourceRoot -Action help *> $null
+        [pscustomobject]@{
+            changed = @(Get-GitPathList -Arguments @('diff', '--name-only', '-z'))
+            untracked = @(Get-GitPathList -Arguments @('ls-files', '--others', '--exclude-standard', '-z'))
+        }
+    } $sourceDirectory (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1')
+    $changedPaths = @($sourcePathLists.changed)
     $expectedChangedPaths = @($manifest.patch.expectedChangedPaths)
     if (($changedPaths -join "`n") -ne ($expectedChangedPaths -join "`n")) {
         throw "Patch changed an unexpected path set. Expected '$($expectedChangedPaths -join ", ")'; actual '$($changedPaths -join ", ")'."
     }
+    if ($ResumeWorkDirectory -and @($sourcePathLists.untracked).Count -gt 0) {
+        throw "VANESSA_BUILD_RESUME_UNTRACKED_SOURCE: $($sourcePathLists.untracked -join ', ')"
+    }
 
     Push-Location $sourceDirectory
     try {
-        Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
-            (Join-Path $sourceDirectory "lib\packages.os"), "download"
-        ) -Description "Download upstream pinned packages"
+        if (-not $ResumeWorkDirectory) {
+            Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
+                (Join-Path $sourceDirectory "lib\packages.os"), "download"
+            ) -Description "Download upstream pinned packages"
+        }
 
         foreach ($dependency in $manifest.build.upstreamBundledDependencies) {
             $dependencyPath = Join-Path $sourceDirectory ([string]$dependency.path).Replace("/", "\")
@@ -339,48 +338,20 @@ try {
         Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
             (Join-Path $sourceDirectory "tools\onescript\ZipTemplates.os")
         ) -Description "Build upstream templates"
-        Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
-            (Join-Path $sourceDirectory "tools\onescript\Compile.os"), ($sourceDirectory + "\")
-        ) -Description "Run upstream Compile.os"
     } finally {
         Pop-Location
     }
 
-    New-Item -ItemType Directory -Path $qualificationBase -Force | Out-Null
-    $createBaseArguments = @(
-        "CREATEINFOBASE",
-        "File=`"$qualificationBase`"",
-        "/DisableStartupDialogs",
-        "/Out",
-        "`"$createBaseLog`""
-    )
-    $createBaseProcess = Start-Process -FilePath $platformExe -ArgumentList $createBaseArguments -Wait -PassThru -WindowStyle Hidden
-    if ($createBaseProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $qualificationBase "1Cv8.1CD") -PathType Leaf)) {
-        $createBaseDetails = if (Test-Path -LiteralPath $createBaseLog) { Get-Content -LiteralPath $createBaseLog -Raw -Encoding UTF8 } else { "" }
-        throw "Creating the qualification infobase failed with exit code $($createBaseProcess.ExitCode). $createBaseDetails"
-    }
-
-    Push-Location $sourceDirectory
-    try {
-        $userConfPath = Join-Path $env:LOCALAPPDATA "1C\1cv8\conf\conf.cfg"
-        $unsafeActionProtectionState = Enter-ScopedUnsafeActionProtectionBypass `
-            -ConfPath $userConfPath `
-            -BuildToken $workId
-        try {
-            Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
-                (Join-Path $sourceDirectory "tools\onescript\MakeVASingle.os"),
-                $sourceDirectory,
-                $singleBuildDirectory,
-                (Join-Path $sourceDirectory "features\Libraries"),
-                $PlatformBin,
-                $qualificationBase
-            ) -Description "Run upstream MakeVASingle.os"
-        } finally {
-            Exit-ScopedUnsafeActionProtectionBypass -State $unsafeActionProtectionState
-        }
-    } finally {
-        Pop-Location
-    }
+    $nativeRuntimeRequestPath = Join-Path $workDirectory 'native-runtime-request.json'
+    $nativeRuntimeRequest = @{ workRoot = $workDirectory; platformExe = $platformExe; oscriptExe = $oscriptCommand.Source; manifestPath = $manifestPath }
+    [IO.File]::WriteAllText($nativeRuntimeRequestPath, ($nativeRuntimeRequest | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+    $nativeRuntimeInvoked = $true
+    Invoke-Native -FilePath ([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) -Arguments @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repoRoot 'scripts/run-vanessa-build-runtime.ps1'),
+        '-RequestPath', $nativeRuntimeRequestPath
+    ) -Description 'Run guarded upstream Compile.os and MakeVASingle.os with the qualified service template'
+    $nativeRuntimeResult = Get-Content -LiteralPath $nativeRuntimeResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $nativeRuntimeResult.succeeded -or -not $nativeRuntimeResult.released) { throw 'VANESSA_BUILD_RUNTIME_NOT_QUALIFIED' }
 
     $distributionDirectory = Join-Path $singleBuildDirectory "Temp\DistribVanessaAutomationsingle"
     $epfPath = Join-Path $distributionDirectory ([string]$manifest.artifact.entryPoint)
@@ -393,6 +364,12 @@ try {
     Copy-Item -LiteralPath $distributionDirectory -Destination $stageDirectory -Recurse
     Copy-Item -LiteralPath $noticePath -Destination (Join-Path $stageDirectory "ITL-NOTICE.txt")
     Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $stageDirectory "ITL-PROVENANCE.json")
+    if ($manifest.PSObject.Properties['pairedExtension'] -and $manifest.pairedExtension.required) {
+        if (-not $nativeRuntimeResult.PSObject.Properties['pairedExtension']) { throw 'VANESSA_BUILD_PAIRED_EXTENSION_MISSING' }
+        $pairedExtension = $nativeRuntimeResult.pairedExtension
+        Assert-Equal (Get-Sha256 -Path $pairedExtension.path) ([string]$pairedExtension.sha256) 'Paired extension SHA-256'
+        Copy-Item -LiteralPath $pairedExtension.path -Destination (Join-Path $stageDirectory $manifest.pairedExtension.fileName)
+    }
 
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     if (Test-Path -LiteralPath $artifactPath) {
@@ -417,6 +394,7 @@ try {
         platformVersion = $platformVersion
         oneScriptVersion = $oscriptVersion
         opmVersion = $opmVersion
+        nativeRuntime = $nativeRuntimeResult
         builtAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     }
     $candidateProvenanceJson = $candidateProvenance | ConvertTo-Json -Depth 8
@@ -426,7 +404,11 @@ try {
     Write-Host "SHA256: $($candidateProvenance.artifactSha256)"
     Write-Host "Provenance: $provenancePath"
 } finally {
-    if ($KeepWork) {
+    $nativeCleanupConfirmed = -not $nativeRuntimeInvoked
+    if ($nativeRuntimeInvoked -and (Test-Path -LiteralPath $nativeRuntimeResultPath -PathType Leaf)) {
+        try { $nativeCleanupConfirmed = [bool](Get-Content -LiteralPath $nativeRuntimeResultPath -Raw -Encoding UTF8 | ConvertFrom-Json).released } catch { $nativeCleanupConfirmed = $false }
+    }
+    if ($KeepWork -or -not $nativeCleanupConfirmed) {
         Write-Host "Build work directory retained: $workDirectory"
     } elseif (Test-Path -LiteralPath $workDirectory) {
         if (-not (Test-PathInside -Candidate $workDirectory -Parent $WorkRoot)) {

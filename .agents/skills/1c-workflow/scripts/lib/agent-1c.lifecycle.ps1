@@ -265,38 +265,53 @@ function Get-GitPathListAt {
         [string[]]$Arguments
     )
 
-    $stderrPath = New-TimestampedFilePath -Directory ([System.IO.Path]::GetTempPath()) -Prefix "agent-1c-git-stderr-" -Extension ".log"
-    $previousErrorActionPreference = $ErrorActionPreference
+    $callerDirectory = $ExecutionContext.SessionState.Path.CurrentFileSystemLocation.Path
+    # Match PowerShell native invocation: a vanished provider location inherits
+    # process CWD; -C still selects the authoritative target repository.
+    $workingDirectory = if ([IO.Directory]::Exists($callerDirectory)) { $callerDirectory } else { '' }
+    $nativeArguments = @('-C', $Root, '-c', 'core.quotepath=false') + @($Arguments)
+    $phaseVariable = Get-Variable -Name LifecyclePhase -ErrorAction SilentlyContinue
+    $phase = if ($null -ne $phaseVariable -and $phaseVariable.Value) { $phaseVariable.Value } else { '<none>' }
+    $executable = 'git'
     try {
-        $ErrorActionPreference = "Continue"
-        $output = & git -C $Root -c core.quotepath=false @Arguments 2> $stderrPath
-        $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 1 }
-        $stderr = ""
-        if (Test-Path -LiteralPath $stderrPath -PathType Leaf -ErrorAction SilentlyContinue) {
-            $stderr = [System.IO.File]::ReadAllText($stderrPath, (Get-Utf8Encoding))
+        $executable = [string](Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $capture = Invoke-ItlNativeProcessCapture -FilePath $executable -Arguments $nativeArguments -WorkingDirectory $workingDirectory
+    } catch {
+        $nativeCode = ''
+        $failure = $_.Exception
+        for ($inner = $failure; $null -ne $inner; $inner = $inner.InnerException) {
+            if ($null -ne $inner.PSObject.Properties['NativeErrorCode']) { $nativeCode = [string]$inner.NativeErrorCode; break }
         }
-
-        if ($exitCode -ne 0) {
-            $phase = if ($LifecyclePhase) { $LifecyclePhase } else { "<none>" }
-            throw @"
+        throw @"
 Git path collection failed.
 ProjectRoot: $Root
-CurrentDirectory: $((Get-Location).Path)
+CurrentDirectory: $callerDirectory
+NativeWorkingDirectory: $workingDirectory
+InheritedProcessDirectory: $([Environment]::CurrentDirectory)
 LifecyclePhase: $phase
-ExitCode: $exitCode
-Command: git -C "$Root" -c core.quotepath=false $($Arguments -join ' ')
-Stderr:
-$stderr
+ExitCode: not-started
+Executable: $executable
+Command: git $(Join-NativeCommandLineArguments -Arguments $nativeArguments)
+NativeErrorCode: $nativeCode
+ProcessFailure: $($failure.Message)
 "@
-        }
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-        if (Test-Path -LiteralPath $stderrPath -PathType Leaf -ErrorAction SilentlyContinue) {
-            Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
-        }
     }
-
-    $text = (@($output) -join "")
+    $global:LASTEXITCODE = [int]$capture.exitCode
+    if ([int]$capture.exitCode -ne 0) {
+        throw @"
+Git path collection failed.
+ProjectRoot: $Root
+CurrentDirectory: $callerDirectory
+NativeWorkingDirectory: $workingDirectory
+LifecyclePhase: $phase
+ExitCode: $($capture.exitCode)
+Executable: $executable
+Command: git $(Join-NativeCommandLineArguments -Arguments $nativeArguments)
+Stderr:
+$($capture.stderr)
+"@
+    }
+    $text = [string]$capture.stdout
     if (-not $text) {
         return
     }
@@ -311,7 +326,7 @@ function Get-GitPathList {
 }
 
 function Get-GitBlobBytesBatch {
-    param([string[]]$ObjectIds)
+    param([string[]]$ObjectIds, [string]$Root = $script:ProjectRoot)
 
     $uniqueObjectIds = @($ObjectIds | Where-Object { $_ } | Sort-Object -Unique)
     $result = @{}
@@ -326,13 +341,14 @@ function Get-GitBlobBytesBatch {
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = "git"
-    $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments @("-C", $script:ProjectRoot, "cat-file", "--batch")
-    $startInfo.WorkingDirectory = $script:ProjectRoot
+    $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments @("-C", $Root, "cat-file", "--batch")
+    $startInfo.WorkingDirectory = $Root
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -342,13 +358,13 @@ function Get-GitBlobBytesBatch {
             throw "Cannot start git cat-file --batch."
         }
         $started = $true
-        $request = [System.Text.Encoding]::ASCII.GetBytes(($uniqueObjectIds -join "`n") + "`n")
-        $process.StandardInput.BaseStream.Write($request, 0, $request.Length)
-        $process.StandardInput.BaseStream.Flush()
-        $process.StandardInput.Close()
-
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         $output = $process.StandardOutput.BaseStream
         foreach ($objectId in $uniqueObjectIds) {
+            # Drain each response before writing another request: both pipes are bounded.
+            $request = [System.Text.Encoding]::ASCII.GetBytes($objectId + "`n")
+            $process.StandardInput.BaseStream.Write($request, 0, $request.Length)
+            $process.StandardInput.BaseStream.Flush()
             $headerBytes = [System.Collections.Generic.List[byte]]::new()
             while ($true) {
                 $value = $output.ReadByte()
@@ -381,8 +397,9 @@ function Get-GitBlobBytesBatch {
             $result[$objectId] = $bytes
         }
 
+        $process.StandardInput.Close()
         $process.WaitForExit()
-        $stderr = $process.StandardError.ReadToEnd()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne 0) {
             throw "git cat-file --batch failed with exit code $($process.ExitCode): $stderr"
         }
@@ -466,9 +483,13 @@ function Repair-OneCSourceLineEndings {
         [switch]$StageChanges
     )
 
+    if ($PSBoundParameters.ContainsKey('CandidatePaths') -and -not $CandidatePaths) { return @() }
     try {
-        if (-not $ReferenceCommit) {
-            $ReferenceCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
+        if (-not $PSBoundParameters.ContainsKey('ReferenceCommit')) {
+            $state = Read-DevBranchState -Name $DevBranchName
+            $baseline = Get-DevBranchResultTransferBaseline -State $state -RecordedOnly
+            if ($null -eq $baseline) { return @() }
+            $ReferenceCommit = $baseline.commit
         }
         if ($ReferenceCommit -notmatch '^[a-f0-9]{40,64}$' -or -not (Test-GitCommitExists -Commit $ReferenceCommit)) {
             return @()
@@ -620,25 +641,88 @@ function Test-WorkflowHelperChangedSince {
     return (@($changed | Where-Object { $_ }).Count -gt 0)
 }
 
+function Publish-Agent1cFreshProcessRunStatus {
+    param([object]$Process, [object]$Relay, [DateTime]$StartedAtUtc, [DateTime]$DeadlineUtc)
+
+    if (-not $Relay.statusPath) { return }
+    $record = $null
+    if ($Relay.operationId) {
+        $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -ExistingPublication
+        if ($null -eq $record -or [string]$record.operationId -cne $Relay.operationId -or
+            [int]$record.pid -ne $Relay.ownerPid -or [string]$record.startedAt -cne $Relay.operationStartedAt) {
+            throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='fresh wait operation generation changed' operationId='$($Relay.operationId)'"
+        }
+    }
+    $childStatus = $null
+    if (Test-Path -LiteralPath $Relay.childStatusPath -PathType Leaf) {
+        try {
+            $candidate = ConvertTo-Agent1cHashtable (Read-Utf8Text -Path $Relay.childStatusPath | ConvertFrom-Json)
+            $childStartedAt = [DateTime]::Parse([string]$candidate.startedAt).ToUniversalTime()
+            $childUpdatedAt = [DateTime]::Parse([string]$candidate.updatedAt).ToUniversalTime()
+            # An older executor may share its private channel with a nested
+            # continuation. Its final writer is bound by the existing operation
+            # terminal, not by a new process inventory or broader admission.
+            $nestedWriterPid = if ($null -ne $record -and $record.Contains('continuationPid')) { [int]$record['continuationPid'] } else { 0 }
+            $nestedTerminal = $nestedWriterPid -gt 0 -and
+                [string]$record.status -in @('succeeded','failed','cancelled') -and
+                [string]$candidate.status -ceq [string]$record.status -and
+                [int]$candidate.pid -eq $nestedWriterPid -and
+                [int]$candidate.exitCode -eq [int]$record.exitCode
+            if ([int]$candidate.schemaVersion -eq 1 -and ([int]$candidate.pid -eq $Process.Id -or $nestedTerminal) -and
+                [string]$candidate.action -ceq $Relay.action -and
+                $childStartedAt -ge $StartedAtUtc.AddSeconds(-5) -and $childStartedAt -le [DateTime]::UtcNow.AddSeconds(5) -and
+                $childUpdatedAt -ge $childStartedAt -and $childUpdatedAt -le [DateTime]::UtcNow.AddSeconds(5) -and
+                [string]$candidate.status -in @('running','succeeded','failed','cancelled')) {
+                $childStatus = $candidate
+            }
+        } catch { $childStatus = $null }
+    }
+    if ($null -ne $childStatus -and [string]$childStatus.status -ne 'running') {
+        # The original parent is the only external writer. Forward terminal
+        # immediately, including cleanup time, and never replace it with running.
+        $childStatus.pid = $PID
+        $terminalText = ($childStatus | ConvertTo-Json -Depth 10) + [Environment]::NewLine
+        if (-not $Relay["phaseOnly"] -and $terminalText -cne [string]$Relay.terminalText) {
+            Write-Utf8TextAtomic -Path $Relay.statusPath -Value $terminalText
+            $Relay.terminalText = $terminalText
+        }
+        $Relay.terminalStatus = $childStatus
+        $Relay.terminalForwarded = $true
+        return
+    }
+    if ($Relay.terminalForwarded -or $Process.HasExited) { return }
+    $lastPublished = $Relay.monitor.lastPublishedAtUtc
+    Publish-NativeWaitRunStatus -Process $Process -Monitor $Relay.monitor -StartedAtUtc $StartedAtUtc -DeadlineUtc $DeadlineUtc
+    if ($null -ne $childStatus -and $Relay.monitor.lastPublishedAtUtc -ne $lastPublished) {
+        $childStatus.pid = $PID
+        $childStatus.updatedAt = (Get-Date).ToString('o')
+        Write-Utf8TextAtomic -Path $Relay.statusPath -Value (($childStatus | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+    }
+}
+
 function Invoke-Agent1cFreshProcess {
     param(
         [string]$ScriptPath = $script:Agent1cScriptPath,
-        [string[]]$AdditionalArguments = @()
+        [string[]]$AdditionalArguments = @(),
+        [switch]$ReturnExitStatus,
+        [switch]$ResumeParentAfterSuccess
     )
 
     $reexecArguments = [System.Collections.Generic.List[string]]::new()
     foreach ($argument in @($script:Agent1cReexecArguments)) {
         $reexecArguments.Add([string]$argument) | Out-Null
     }
-    if (@($AdditionalArguments) -contains "-LifecyclePhase") {
+    foreach ($overrideName in @('-LifecyclePhase', '-DependencyMode')) {
+      if (@($AdditionalArguments) -contains $overrideName) {
         for ($index = $reexecArguments.Count - 1; $index -ge 0; $index--) {
-            if ($reexecArguments[$index] -eq "-LifecyclePhase") {
+            if ($reexecArguments[$index] -ieq $overrideName) {
                 $reexecArguments.RemoveAt($index)
                 if ($index -lt $reexecArguments.Count) {
                     $reexecArguments.RemoveAt($index)
                 }
             }
         }
+      }
     }
 
     $continuesLifecycleOperation = $null -ne $script:LifecycleOperationRecord -and
@@ -653,26 +737,69 @@ function Invoke-Agent1cFreshProcess {
         $reexecArguments.Add("-OperationContinuation") | Out-Null
     }
 
+    $statusPath = if ($RunStatusPath) { Resolve-RunFilePath -Path $RunStatusPath } else { '' }
+    $childStatusPath = if ($statusPath) { "$statusPath.fresh-$PID-$([guid]::NewGuid().ToString('N')).json" } else { '' }
+    if ($childStatusPath) {
+        # Replace exactly one status argument; nested fresh helpers own their
+        # own private channel and retain the same signed lifecycle generation.
+        for ($index = $reexecArguments.Count - 1; $index -ge 0; $index--) {
+            if ($reexecArguments[$index] -ieq '-RunStatusPath') {
+                $reexecArguments.RemoveAt($index)
+                if ($index -lt $reexecArguments.Count) { $reexecArguments.RemoveAt($index) }
+            }
+        }
+        $reexecArguments.Add('-RunStatusPath') | Out-Null
+        $reexecArguments.Add($childStatusPath) | Out-Null
+    }
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", $ScriptPath
     ) + @($reexecArguments.ToArray()) + @($AdditionalArguments)
 
+    . (Join-Path $script:Agent1cCoreRoot 'itl-runner-timeout.ps1')
+    $deadlineUtc = [DateTime]::UtcNow.AddSeconds((Resolve-ItlRunnerTimeout -ProjectRoot $script:ProjectRoot -Action $Action).seconds)
+    $inheritedDeadline = [Environment]::GetEnvironmentVariable('ITL_RUNNER_DEADLINE_UTC', 'Process')
+    if ($inheritedDeadline) { $deadlineUtc = [DateTime]::Parse($inheritedDeadline).ToUniversalTime() }
+    $launchedAction = $Action
+    for ($index = 0; $index -lt ($arguments.Count - 1); $index++) {
+        if ($arguments[$index] -ieq '-Action') { $launchedAction = [string]$arguments[$index + 1] }
+    }
+    $freshRelay = @{
+        statusPath = $statusPath; childStatusPath = $childStatusPath; terminalForwarded = $false; terminalText = ''; terminalStatus = $null; phaseOnly = [bool]$ResumeParentAfterSuccess
+        action = $launchedAction
+        monitor = New-NativeWaitRunStatusMonitor -LogPaths @($RunLogPath)
+        operationId = $(if ($continuesLifecycleOperation) { $script:LifecycleOperationId } else { '' })
+        ownerPid = $(if ($continuesLifecycleOperation) { $continuationOwnerPid } else { $PID })
+        operationStartedAt = $(if ($continuesLifecycleOperation) { [string]$script:LifecycleOperationRecord.startedAt } else { '' })
+    }
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
-        & powershell @arguments 2>&1 | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) {
-                [Console]::Error.WriteLine([string]$_)
-            } else {
-                Write-Output $_
-            }
+        $nativeResult = $null
+        Invoke-ItlNativeProcessCapture -FilePath 'powershell.exe' -Arguments $arguments -DeadlineUtc $deadlineUtc -OnTimeout {
+            param($process)
+            Stop-ItlUiToolProcessTree -Process $process
+        } -OnWait {
+            param($process, $startedAtUtc, $waitDeadlineUtc)
+            Publish-Agent1cFreshProcessRunStatus -Process $process -Relay $freshRelay -StartedAtUtc $startedAtUtc -DeadlineUtc $waitDeadlineUtc
+        } -OnStdoutLine {
+            param($line)
+            Write-Output $line
+        } -OnStderrLine {
+            param($line)
+            [Console]::Error.WriteLine($line)
+        } | ForEach-Object {
+            if ($null -ne $_.PSObject.Properties['exitCode'] -and $null -ne $_.PSObject.Properties['stdout']) { $nativeResult = $_ }
+            elseif ($ReturnExitStatus) { Write-Host $_ }
+            else { Write-Output $_ }
         }
-        $pipelineSucceeded = $?
-        $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } elseif ($pipelineSucceeded) { 0 } else { 1 }
+        $exitCode = [int]$nativeResult.exitCode
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
+        # The wait monitor's running evidence describes the finished child, not
+        # any later terminal status written by this process.
+        Clear-RunLivenessEvidence
     }
     if ($continuesLifecycleOperation) {
         $terminal = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
@@ -696,7 +823,81 @@ function Invoke-Agent1cFreshProcess {
             }
         }
     }
+    if ($statusPath -and -not $freshRelay.terminalForwarded -and $exitCode -eq 0) {
+        $message = "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='fresh process did not write valid terminal run status' scriptPath='$ScriptPath'. Repeat the original action through its helper."
+        Set-RunFailureContext -Category 'runner'
+        Write-RunStatus -Status 'failed' -ExitCode 1 -ErrorMessage $message
+        [Console]::Error.WriteLine($message)
+        $exitCode = 1
+    }
+    if ($ResumeParentAfterSuccess -and $continuesLifecycleOperation -and $exitCode -eq 0) {
+        # A successful phase has a private child terminal. The same lock and
+        # operation ID remain active until the parent or its final child ends.
+        $terminal['status'] = 'running'
+        $terminal['finishedAt'] = $null
+        $terminal['phase'] = 'continuation'
+        $terminal['detail'] = 'Parent resumed after the guarded child phase.'
+        $terminal['updatedAt'] = (Get-Date).ToString('o')
+        [void]$terminal.Remove('exitCode')
+        [void]$terminal.Remove('continuationPid')
+        Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $terminal
+        $script:LifecycleOperationRecord = $terminal
+        $script:LifecycleOperationTerminalWrittenByContinuation = $false
+    }
+    if ($ReturnExitStatus) {
+        if ($exitCode -eq 0) { Import-Agent1cFreshProcessTerminalResult -Terminal $freshRelay.terminalStatus }
+        return [pscustomobject]@{ exitCode = [int]$exitCode; terminalStatus = $freshRelay.terminalStatus }
+    }
     exit $exitCode
+}
+
+function Import-Agent1cFreshProcessTerminalResult {
+    # A caller that continues after a successful child writes the external
+    # terminal itself. The forwarded child terminal (already the deepest nested
+    # writer's) owns the result; adopt it so 'reexec' and an empty report
+    # cannot replace it. Later stages or reports of this caller still win.
+    param([AllowNull()][object]$Terminal)
+
+    if ($Terminal -isnot [Collections.IDictionary] -or [string]$Terminal['status'] -cne 'succeeded') { return }
+    $fields = [ordered]@{
+        stage = 'RunStage'; stageDetail = 'RunStageDetail'; userReport = 'RunUserReport'
+        resultPath = 'RunResultPath'; resultManifestPath = 'RunResultManifestPath'
+        sourceIntegrityReportPath = 'RunSourceIntegrityReportPath'; refreshMasterCommit = 'RunRefreshMasterCommit'
+        devBranch = 'RunDevBranch'; worktreePath = 'RunWorktreePath'; extensionInitializationStatus = 'RunExtensionInitializationStatus'
+    }
+    foreach ($field in $fields.Keys) {
+        $value = [string]$Terminal[$field]
+        if (-not [string]::IsNullOrWhiteSpace($value)) { Set-Variable -Name $fields[$field] -Scope Script -Value $value }
+    }
+    # A stage and its detail are one observation; never pair the child's stage
+    # with this caller's 'reexec' detail.
+    if (-not [string]::IsNullOrWhiteSpace([string]$Terminal['stage'])) { $script:RunStageDetail = [string]$Terminal['stageDetail'] }
+}
+
+function Import-Agent1cFreshProcessFailure {
+    # The failed child owns its cause and continuation. Adopt them before the
+    # caller wraps the failure, so the parent terminal status cannot hide them.
+    param([Parameter(Mandatory = $true)][object]$Result, [Parameter(Mandatory = $true)][string]$Operation)
+
+    $terminal = Get-StateValue -State $Result -Name 'terminalStatus'
+    $childError = ''
+    if ($terminal -is [Collections.IDictionary]) {
+        $childError = [string]$terminal['errorMessage']
+        $fields = [ordered]@{
+            errorCategory = 'RunErrorCategory'; requiredAction = 'RunRequiredAction'
+            blockerClassification = 'RunBlockerClassification'; blockerRequiresUserDecision = 'RunBlockerRequiresUserDecision'
+            blockerRetryOriginalCommand = 'RunBlockerRetryOriginal'; blockerAction = 'RunBlockerAction'; blockerOwner = 'RunBlockerOwner'
+        }
+        foreach ($field in $fields.Keys) {
+            $value = $terminal[$field]
+            if ($null -ne $value -and -not ($value -is [string] -and [string]::IsNullOrWhiteSpace($value)) -and -not ($value -is [bool] -and -not $value)) {
+                Set-Variable -Name $fields[$field] -Scope Script -Value $value
+            }
+        }
+    }
+    $message = "$Operation failed with exit code $($Result.exitCode); its original terminal operation evidence is retained."
+    if ($childError) { $message += " Child error: $childError" }
+    return $message
 }
 
 function Restart-Agent1cFromMainWorktreeIfNeeded {
@@ -741,8 +942,20 @@ function Restart-Agent1cAfterDevBranchMerge {
     if (-not (Test-Path -LiteralPath $branchHelperPath -PathType Leaf)) {
         throw "DEV_BRANCH_POST_MERGE_HELPER_MISSING operation='$Operation' path='$branchHelperPath'"
     }
-    Write-Host "Development branch merge completed for $Operation. Handing the post-merge phase to the helper from the updated development branch: $branchHelperPath"
-    Invoke-Agent1cFreshProcess -ScriptPath $branchHelperPath -AdditionalArguments @("-LifecyclePhase", "post-merge")
+    $continuationHelperPath = $branchHelperPath
+    if ($Operation -in @("refresh-dev-branch", "refresh-dev-branch-lite") -and
+        (Get-FullPathNormalized $script:Agent1cScriptPath) -ne (Get-FullPathNormalized $branchHelperPath)) {
+        $branchHelperText = Read-Utf8Text -Path $branchHelperPath
+        if ($branchHelperText -notmatch '(?m)^function Test-RefreshManagedDependencyLockChange\s*\{' -or
+            $branchHelperText -notmatch '(?m)^function Test-RefreshIndependentDocumentationPath\s*\{') {
+            $continuationHelperPath = $script:Agent1cScriptPath
+            Write-Host "The merged branch helper predates current post-merge refresh recovery. Continuing the recorded post-merge phase through the current main-worktree helper: $continuationHelperPath"
+        }
+    }
+    if ((Get-FullPathNormalized $continuationHelperPath) -eq (Get-FullPathNormalized $branchHelperPath)) {
+        Write-Host "Development branch merge completed for $Operation. Handing the post-merge phase to the helper from the updated development branch: $branchHelperPath"
+    }
+    Invoke-Agent1cFreshProcess -ScriptPath $continuationHelperPath -AdditionalArguments @("-LifecyclePhase", "post-merge")
 }
 
 function Write-ItlAdditionalHelperActions {
@@ -750,6 +963,7 @@ function Write-ItlAdditionalHelperActions {
     Write-Host "Дополнительные действия:"
     Write-Host "  Данные ROCTUP: используйте MCP-сервер itl-roctup-data; backend ветки запускается и останавливается автоматически."
     Write-Host "  vibecoding1c MCP: попросите выполнить setup, status, select, refresh-registry или update."
+    Write-Host "  MCP другого клиента: sync-client-mcp -Client <client> записывает vibecoding1c, on-demand и UI MCP без смены активного клиента, rules и skills; после записи нужны reload, включение MCP Servers и новый чат."
     Write-Host "  Vanessa UI: используйте MCP-сервер itl-vanessa-ui только для исследования, записи или отладки фактического UI."
     Write-Host "  Ручное профилирование Vanessa: попросите запустить, проверить или остановить постоянную интерактивную пару текущей ветки."
     Write-Host "  Ветки расширений: одна ветка, worktree и база владеют одним CFE; внутри него допустимо несколько функций."
@@ -881,6 +1095,7 @@ function Get-ConfigSourceFingerprint {
         fingerprint = "v2|git-tree-sha256|$treeHash"
         fileCount = $entries.Count
         absoluteExportPath = $absoluteExportPath
+        repoPath = $normalizedExportPath
         treeObjectId = $treeObjectId
     }
 }
@@ -1066,6 +1281,167 @@ function Get-OneCSourceIntegrityCandidatePaths {
     )
 }
 
+function New-OneCTemplateSourceIntegrityIssue {
+    param(
+        [string]$Code,
+        [string]$Path,
+        [string]$TemplateName,
+        [string]$Detail
+    )
+
+    return [pscustomobject]@{
+        validator = "template-aggregate"
+        code = $Code
+        path = $Path
+        symbol = $TemplateName
+        lines = @()
+        detail = $Detail
+    }
+}
+
+function Resolve-OneCTemplateSourceIntegrityScope {
+    param(
+        [string[]]$CandidatePaths,
+        [string]$ProjectRoot
+    )
+
+    $paths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($candidatePath in @($CandidatePaths)) { [void]$paths.Add(([string]$candidatePath).Replace("\", "/")) }
+    $contexts = @{}
+    foreach ($candidatePath in @($CandidatePaths)) {
+        $normalizedPath = ([string]$candidatePath).Replace("\", "/")
+        $ownerStem = ""
+        $templateName = ""
+        if ($normalizedPath -match '^(?<owner>.+)/Templates/(?<name>[^/]+)\.xml$') {
+            $ownerStem = [string]$Matches["owner"]
+            $templateName = [string]$Matches["name"]
+        } elseif ($normalizedPath -match '^(?<owner>.+)/Templates/(?<name>[^/]+)/Ext/Template\.xml$') {
+            $ownerStem = [string]$Matches["owner"]
+            $templateName = [string]$Matches["name"]
+        } else {
+            continue
+        }
+
+        $descriptorRepoPath = "$ownerStem/Templates/$templateName.xml"
+        if (-not $contexts.ContainsKey($descriptorRepoPath)) {
+            $contexts[$descriptorRepoPath] = [pscustomobject]@{
+                name = $templateName
+                ownerRepoPath = "$ownerStem.xml"
+                descriptorRepoPath = $descriptorRepoPath
+                payloadRepoPath = "$ownerStem/Templates/$templateName/Ext/Template.xml"
+            }
+        }
+    }
+
+    $issues = [System.Collections.Generic.List[object]]::new()
+    $xmlPayloadRoots = @{
+        DataCompositionSchema = "DataCompositionSchema"
+        SpreadsheetDocument = "document"
+        HTMLDocument = "Help"
+        GraphicalSchema = "GraphicalSchema"
+    }
+    foreach ($context in @($contexts.Values)) {
+        $descriptorPath = Join-Path $ProjectRoot ($context.descriptorRepoPath.Replace("/", "\"))
+        $ownerPath = Join-Path $ProjectRoot ($context.ownerRepoPath.Replace("/", "\"))
+        $payloadPath = Join-Path $ProjectRoot ($context.payloadRepoPath.Replace("/", "\"))
+
+        if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) {
+            $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-descriptor-missing" -Path $context.descriptorRepoPath -TemplateName $context.name -Detail "Template descriptor is missing for the changed template aggregate.")) | Out-Null
+            continue
+        }
+        [void]$paths.Add($context.descriptorRepoPath)
+
+        $descriptor = [System.Xml.XmlDocument]::new()
+        try {
+            $descriptor.Load($descriptorPath)
+        } catch {
+            # The ordinary XML route reports the parse error for this expanded path.
+            continue
+        }
+        $templateNode = $descriptor.DocumentElement.SelectSingleNode("*[local-name()='Template']")
+        if ($null -eq $templateNode) { continue }
+        $descriptorNameNode = $templateNode.SelectSingleNode("*[local-name()='Properties']/*[local-name()='Name']")
+        $descriptorName = if ($null -ne $descriptorNameNode) { [string]$descriptorNameNode.InnerText } else { "" }
+        if (-not [string]::Equals($descriptorName, [string]$context.name, [System.StringComparison]::Ordinal)) {
+            $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-name-path-mismatch" -Path $context.descriptorRepoPath -TemplateName $context.name -Detail "Template descriptor Name '$descriptorName' does not exactly match path name '$($context.name)'.")) | Out-Null
+        }
+
+        $templateTypeNode = $templateNode.SelectSingleNode("*[local-name()='Properties']/*[local-name()='TemplateType']")
+        $templateType = if ($null -ne $templateTypeNode) { ([string]$templateTypeNode.InnerText).Trim() } else { "" }
+        if ([string]::IsNullOrWhiteSpace($templateType)) {
+            $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-type-missing" -Path $context.descriptorRepoPath -TemplateName $context.name -Detail "Template descriptor has no TemplateType.")) | Out-Null
+        } elseif ($xmlPayloadRoots.ContainsKey($templateType)) {
+            if (-not (Test-Path -LiteralPath $payloadPath -PathType Leaf)) {
+                $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-payload-missing" -Path $context.payloadRepoPath -TemplateName $context.name -Detail "TemplateType '$templateType' requires Ext/Template.xml.")) | Out-Null
+            } else {
+                [void]$paths.Add($context.payloadRepoPath)
+                $payload = [System.Xml.XmlDocument]::new()
+                try {
+                    $payload.Load($payloadPath)
+                    $payloadRoot = [string]$payload.DocumentElement.LocalName
+                    $expectedRoot = [string]$xmlPayloadRoots[$templateType]
+                    if (-not [string]::Equals($payloadRoot, $expectedRoot, [System.StringComparison]::Ordinal)) {
+                        $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-payload-type-mismatch" -Path $context.payloadRepoPath -TemplateName $context.name -Detail "TemplateType '$templateType' expects payload root '$expectedRoot', found '$payloadRoot'.")) | Out-Null
+                    } elseif ($templateType -ne "DataCompositionSchema") {
+                        Write-Warning -Message "template:$($context.payloadRepoPath):[WARN] TEMPLATE_PAYLOAD_VALIDATION_STRUCTURAL_ONLY TemplateType=$templateType root=$payloadRoot" -WarningAction Continue
+                    }
+                } catch {
+                    # The ordinary XML route reports the parse error for this expanded path.
+                }
+            }
+        } else {
+            Write-Warning -Message "template:$($context.descriptorRepoPath):[WARN] TEMPLATE_PAYLOAD_VALIDATION_DESCRIPTOR_ONLY TemplateType=$templateType" -WarningAction Continue
+        }
+
+        if (-not (Test-Path -LiteralPath $ownerPath -PathType Leaf)) {
+            $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-owner-missing" -Path $context.ownerRepoPath -TemplateName $context.name -Detail "Owning metadata object is missing for the template aggregate.")) | Out-Null
+            continue
+        }
+        [void]$paths.Add($context.ownerRepoPath)
+
+        $owner = [System.Xml.XmlDocument]::new()
+        try {
+            $owner.Load($ownerPath)
+        } catch {
+            # The ordinary XML route reports the parse error for this expanded path.
+            continue
+        }
+        $ownerNode = @($owner.DocumentElement.ChildNodes | Where-Object { $_.NodeType -eq [System.Xml.XmlNodeType]::Element } | Select-Object -First 1)
+        if ($ownerNode.Count -eq 0) { continue }
+        $ownerType = [string]$ownerNode[0].LocalName
+        $ownerNameNode = $ownerNode[0].SelectSingleNode("*[local-name()='Properties']/*[local-name()='Name']")
+        $ownerName = if ($null -ne $ownerNameNode) { [string]$ownerNameNode.InnerText } else { "" }
+        $registrationNames = @(
+            $ownerNode[0].SelectNodes("*[local-name()='ChildObjects']/*[local-name()='Template']") |
+                ForEach-Object { ([string]$_.InnerText).Trim() }
+        )
+        $exactRegistrations = @($registrationNames | Where-Object { [string]::Equals($_, [string]$context.name, [System.StringComparison]::Ordinal) })
+        if ($exactRegistrations.Count -ne 1) {
+            $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-owner-registration-invalid" -Path $context.ownerRepoPath -TemplateName $context.name -Detail "Owner must register template '$($context.name)' exactly once; exact registrations found: $($exactRegistrations.Count).")) | Out-Null
+        }
+
+        $mainSchemaNode = $ownerNode[0].SelectSingleNode("*[local-name()='Properties']/*[local-name()='MainDataCompositionSchema']")
+        $mainSchema = if ($null -ne $mainSchemaNode) { ([string]$mainSchemaNode.InnerText).Trim() } else { "" }
+        if ($mainSchema) {
+            $ownerPrefix = "$ownerType.$ownerName.Template."
+            if (-not $mainSchema.StartsWith($ownerPrefix, [System.StringComparison]::Ordinal)) {
+                $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-owner-reference-invalid" -Path $context.ownerRepoPath -TemplateName $context.name -Detail "MainDataCompositionSchema '$mainSchema' does not belong to '$ownerType.$ownerName'.")) | Out-Null
+            } else {
+                $referencedTemplate = $mainSchema.Substring($ownerPrefix.Length)
+                $referenceRegistrations = @($registrationNames | Where-Object { [string]::Equals($_, $referencedTemplate, [System.StringComparison]::Ordinal) })
+                if ($referenceRegistrations.Count -ne 1) {
+                    $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-owner-reference-unresolved" -Path $context.ownerRepoPath -TemplateName $context.name -Detail "MainDataCompositionSchema '$mainSchema' does not resolve to an exactly registered Template.")) | Out-Null
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        paths = @($paths | Sort-Object)
+        issues = @($issues)
+    }
+}
+
 function Get-OneCBslDeclarationRecords {
     param([AllowEmptyString()][string]$Text)
 
@@ -1167,6 +1543,7 @@ function Get-OneCXmlValidationKind {
             switch ([string]$objectNode[0].LocalName) {
                 "Subsystem" { "subsystem"; break }
                 "XDTOPackage" { "xdto"; break }
+                "Template" { ""; break }
                 default { "metadata"; break }
             }
             break
@@ -1247,6 +1624,11 @@ function Assert-OneCConfigurationSourceIntegrity {
                 -AdditionalPaths $AdditionalPaths `
                 -AdditionalRelativePaths $AdditionalRelativePaths
         )
+        $templateScope = Resolve-OneCTemplateSourceIntegrityScope -CandidatePaths $candidatePaths -ProjectRoot $projectRoot
+        $candidatePaths = @($templateScope.paths)
+        foreach ($templateIssue in @($templateScope.issues)) {
+            $issues.Add($templateIssue) | Out-Null
+        }
         $uuidCandidatePaths = @(
             Get-OneCSourceIntegrityCandidatePaths `
                 -ExportPath $ExportPath `
@@ -1306,6 +1688,13 @@ function Assert-OneCConfigurationSourceIntegrity {
                 -ScriptPath $validatorPath `
                 -Arguments $validatorArguments `
                 -SupportsOutFile:$supportsOutFile
+            if ($kind.validator -eq "form") {
+                # Successful validation must not hide advisory findings. Keep
+                # the validator's exit code authoritative for structural errors.
+                foreach ($warning in [regex]::Matches([string]$result.details, '(?m)^\[WARN\][ \t]+[^\r\n]+')) {
+                    Write-Warning -Message "form:${repoPath}:$($warning.Value)" -WarningAction Continue
+                }
+            }
             if ($result.exitCode -ne 0) {
                 $issues.Add([pscustomobject]@{
                     validator = $kind.validator
@@ -1437,16 +1826,20 @@ function New-ConfigLoadListFile {
 }
 
 function New-ConfigDumpInfoLoadSnapshot {
-    param([string]$AbsoluteExportPath)
+    param([string]$AbsoluteExportPath, [ValidateSet('always','on-failure')][string]$RestorationPolicy = 'always')
 
     $dumpInfoPath = Join-Path $AbsoluteExportPath "ConfigDumpInfo.xml"
     $snapshot = [pscustomobject]@{
         path = $dumpInfoPath
         existed = (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf)
         backupPath = ""
+        backupSha256 = ""
         preserveBackup = $false
+        restorationDuty = $null
+        restorationPolicy = $RestorationPolicy
     }
     if (-not $snapshot.existed) {
+        Register-OneCFileRestorationDuty -Snapshot $snapshot
         return $snapshot
     }
 
@@ -1456,11 +1849,13 @@ function New-ConfigDumpInfoLoadSnapshot {
         -Extension ".xml"
     Copy-Item -LiteralPath $dumpInfoPath -Destination $backupPath -Force -ErrorAction Stop
     $snapshot.backupPath = $backupPath
+    $snapshot.backupSha256 = (Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Register-OneCFileRestorationDuty -Snapshot $snapshot
     return $snapshot
 }
 
 function Restore-ConfigDumpInfoLoadSnapshot {
-    param([object]$Snapshot)
+    param([object]$Snapshot, [AllowNull()][object]$Failure = $null)
 
     if (-not $Snapshot) {
         return
@@ -1468,29 +1863,42 @@ function Restore-ConfigDumpInfoLoadSnapshot {
 
     if ($Snapshot.existed) {
         if (-not $Snapshot.backupPath -or -not (Test-Path -LiteralPath $Snapshot.backupPath -PathType Leaf)) {
+            $Snapshot.preserveBackup = $true
             throw "ConfigDumpInfo rollback failed because the snapshot is missing: $($Snapshot.backupPath)"
         }
         try {
+            if ($Snapshot.PSObject.Properties['backupSha256'] -and $Snapshot.backupSha256 -and
+                (Get-FileHash -LiteralPath $Snapshot.backupPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Snapshot.backupSha256) {
+                throw 'ONEC_RESTORATION_SNAPSHOT_CHANGED'
+            }
             Copy-Item -LiteralPath $Snapshot.backupPath -Destination $Snapshot.path -Force -ErrorAction Stop
         } catch {
             $Snapshot.preserveBackup = $true
             throw "ConfigDumpInfo rollback failed for '$($Snapshot.path)'. Recovery snapshot was preserved at '$($Snapshot.backupPath)': $($_.Exception.Message)"
         }
-        return
-    }
-
-    if (Test-Path -LiteralPath $Snapshot.path -PathType Leaf) {
+    } elseif (Test-Path -LiteralPath $Snapshot.path -PathType Leaf) {
         Remove-Item -LiteralPath $Snapshot.path -Force -ErrorAction Stop
+    }
+    if ($null -ne $Failure -and $Failure.Exception.Data.Contains('ItlConfigLoadSnapshotRestored')) {
+        $Failure.Exception.Data['ItlConfigLoadSnapshotRestored'].cursorRestored = $true
     }
 }
 
 function Remove-ConfigDumpInfoLoadSnapshot {
     param([object]$Snapshot)
 
+    if ($Snapshot -and $Snapshot.PSObject.Properties['restorationDuty'] -and
+        $null -ne $Snapshot.restorationDuty -and $Snapshot.restorationDuty.payload.status -eq 'pending' -and
+        -not $Snapshot.preserveBackup) {
+        # Closing the snapshot scope is the completion point. An earlier
+        # restore before checks or a full fallback must not release this duty.
+        Complete-OneCFileRestorationDuty -Snapshot $Snapshot
+    }
     if (-not $Snapshot -or -not $Snapshot.backupPath -or -not (Test-Path -LiteralPath $Snapshot.backupPath -PathType Leaf)) {
         return
     }
-    if ($Snapshot.preserveBackup) {
+    if ($Snapshot.preserveBackup -or ($Snapshot.PSObject.Properties['restorationDuty'] -and
+        $null -ne $Snapshot.restorationDuty -and $Snapshot.restorationDuty.payload.status -eq 'pending')) {
         Write-Warning "ConfigDumpInfo recovery snapshot was retained after a rollback failure: $($Snapshot.backupPath)"
         return
     }
@@ -1498,6 +1906,1007 @@ function Remove-ConfigDumpInfoLoadSnapshot {
         Remove-Item -LiteralPath $Snapshot.backupPath -Force -ErrorAction Stop
     } catch {
         Write-Warning "Could not remove the temporary ConfigDumpInfo snapshot '$($Snapshot.backupPath)': $($_.Exception.Message)"
+    }
+}
+
+function Get-PlatformCheckProfile {
+    # Release qualification is an explicit full-check owner, not a load mode.
+    $actionValue = Get-Variable -Name Action -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $actionValue -and [string]$actionValue.Value -like 'release-e2e-*') { return 'production' }
+    $purpose = Get-Variable -Name ResultPurpose -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $purpose -and [string]$purpose.Value -ieq 'production') { return 'production' }
+    return 'development'
+}
+
+function New-ProductionPlatformLegacyContext {
+    param([object]$State,[object]$ChangeSet,[string]$SourceFingerprint,[string]$InfoBaseKind,[string]$InfoBasePath,[ref]$Assessment)
+    # The last development load is not an origin for the complete release delta.
+    # Reuse the existing seed/lifecycle owner; never create or advance an anchor.
+    $observation = $null
+    $context = New-PlatformGate6LegacyContext -State $State -ChangeSet $ChangeSet -SourceFingerprint $SourceFingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -Assessment ([ref]$observation)
+    if ($null -ne $Assessment) { $Assessment.Value=$observation }
+    if ($null -eq $context) { return $null }
+    if ($ChangeSet.previousTreeObjectId -ceq $ChangeSet.currentTreeObjectId) {
+        if ($null -ne $observation) { $observation.eligible=$false; $observation.reason='PRODUCTION_CANDIDATE_SELF_COMPARISON' }
+        return $null
+    }
+    $originProved = [string](Get-StateValue -State $State -Name 'loadReason' -Default '') -ceq 'branch-copy-seed'
+    if (-not $originProved -and $null -ne (Get-StateValue -State $State -Name 'resultTransferBaseline' -Default $null)) {
+        try {
+            $baseline = Get-DevBranchResultTransferBaseline -State $State
+            $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+            $sourceRoot = [IO.Path]::GetFullPath($ChangeSet.absoluteExportPath)
+            if (-not $sourceRoot.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)) {
+                if ($null -ne $observation) { $observation.eligible=$false; $observation.reason='PRODUCTION_ORIGIN_UNPROVEN'; $observation.detail='Source root is outside the project.' }
+                return $null
+            }
+            $relative = $sourceRoot.Substring($root.Length).Replace('\','/')
+            $tree = (Get-GitOutput @('rev-parse', "$($baseline.commit):$relative")).Trim()
+            $originProved = $tree -ceq [string]$ChangeSet.previousTreeObjectId
+        } catch {
+            if ($null -ne $observation) { $observation.eligible=$false; $observation.reason='PRODUCTION_ORIGIN_UNPROVEN'; $observation.detail=$_.Exception.Message }
+            return $null
+        }
+    }
+    if (-not $originProved) {
+        if ($null -ne $observation) { $observation.eligible=$false; $observation.reason='PRODUCTION_ORIGIN_UNPROVEN' }
+        return $null
+    }
+    return $context
+}
+
+function Get-ItlRepositoryExtensionNames {
+    # Extension sources tracked by this project: each src/cfe directory and the
+    # name its dumped Configuration.xml declares.
+    $root = Resolve-ProjectPath (Get-ExtensionsPath)
+    $names = [Collections.Generic.List[string]]::new()
+    foreach ($directory in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+        $names.Add($directory.Name)
+        $configurationPath = Join-Path $directory.FullName 'Configuration.xml'
+        if (Test-Path -LiteralPath $configurationPath -PathType Leaf) {
+            $match = [regex]::Match((Read-Utf8Text -Path $configurationPath), '<Name>(?<name>[^<]+)</Name>')
+            if ($match.Success) { $names.Add($match.Groups['name'].Value.Trim()) }
+        }
+    }
+    return @($names.ToArray() | Select-Object -Unique)
+}
+
+function Write-ItlGate6ProjectTestsFindingGroups {
+    param([string]$LogPath, [string]$TestsExtensionName)
+
+    # Output only: the diagnostic-only verdict above is unchanged and the full
+    # -AllExtensions findings remain in the native log.
+    try {
+        $text = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($LogPath))
+        $groups = ConvertTo-ItlGate6ExtensionFindingGroups -Text $text -TestsExtensionName $TestsExtensionName `
+            -RepositoryExtensionNames @(Get-ItlRepositoryExtensionNames)
+        foreach ($line in @(Format-ItlGate6ExtensionFindingGroups -Groups $groups -TestsExtensionName $TestsExtensionName -LogPath $LogPath)) {
+            Write-Warning "GATE6_PROJECT_TESTS_ENVIRONMENT: $line"
+        }
+    } catch {
+        Write-Warning "GATE6_PROJECT_TESTS_ENVIRONMENT: findings could not be grouped by extension: $($_.Exception.Message); log=$LogPath"
+    }
+}
+
+function Invoke-DesignerGate6CheckLadder {
+    param(
+        [Parameter(Mandatory = $true)][string]$InfoBasePath,
+        [Parameter(Mandatory = $true)][string]$InfoBaseKind,
+        [string]$ExtensionName = '',
+        [string]$SourceFingerprint = '',
+        [ValidateSet('development','production')][string]$CheckProfile = 'production',
+        [object]$EditableLoad = $null,
+        [ValidateSet('configuration','project-tests')][string]$ValidationPurpose = 'configuration',
+        [AllowNull()][object]$LegacyBaseline = $null,
+        [AllowNull()][object]$ArtifactDiagnosticBaseline = $null,
+        [string]$User = (Get-EnvValue -Name 'IB_USER'),
+        [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD'),
+        [string[]]$RuntimeModes = @('-ThinClient', '-Server', '-ExternalConnection')
+    )
+
+    $allowedModes = @('-ThinClient', '-WebClient', '-Server', '-ExternalConnection', '-ThickClientOrdinaryApplication')
+    $modes = @($RuntimeModes | Where-Object { $_ } | Select-Object -Unique)
+    if ($modes.Count -eq 0 -or @($modes | Where-Object { $_ -cnotin $allowedModes }).Count -gt 0) {
+        throw 'GATE6_RUNTIME_MODES_INVALID: CheckModules needs at least one supported runtime mode.'
+    }
+    $projectTests = $ValidationPurpose -ceq 'project-tests'
+    $extensionArgs = if ($projectTests) { @('-AllExtensions') } elseif ($ExtensionName) { @('-Extension', $ExtensionName) } else { @() }
+    $applicabilityArgs = if ($ExtensionName) { @('-Extension', $ExtensionName) } else { @() }
+    $steps = @(
+        [pscustomobject]@{ name='modules'; args=@('/CheckModules') + $modes + $extensionArgs },
+        $(if ($ExtensionName) { [pscustomobject]@{ name='applicability'; args=@('/CheckCanApplyConfigurationExtensions') + $applicabilityArgs } }),
+        $(if ($CheckProfile -eq 'production') { [pscustomobject]@{ name='configuration'; args=@('/CheckConfig', '-ConfigLogIntegrity', '-IncorrectReferences') + $modes + @('-HandlersExistence', '-ExtendedModulesCheck') + $extensionArgs } })
+    ) | Where-Object { $null -ne $_ }
+    $evidence = [System.Collections.Generic.List[object]]::new()
+    $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
+    New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
+    foreach ($step in $steps) {
+        $resultPath = New-TimestampedFilePath -Directory $logsPath -Prefix "1c-gate6-$($step.name)-" -Extension '.result'
+        if (Test-Path -LiteralPath $resultPath) { Remove-Item -LiteralPath $resultPath -Force }
+        try {
+            $check = Invoke-PlatformGate6NativeCheck -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                -User $User -Password $Password -Arguments $step.args -ResultPath $resultPath
+        } catch {
+            throw "GATE6_CHECK_PROCESS_FAILED: step=$($step.name); result=$resultPath; log=$script:LastLogPath; $($_.Exception.Message)"
+        }
+        $logPath = $check.logPath
+        $verdict = $check.verdict
+        $assessment = $null
+        $artifactAssessment = $false
+        if (-not $verdict.passed -and $step.name -ne 'modules' -and $null -ne $ArtifactDiagnosticBaseline -and
+            @($evidence | Where-Object { $_.step -eq 'modules' -and $_.nativePassed }).Count -eq 1) {
+            $assessment = Get-YAxUnitArtifactDiagnosticAssessment -Baseline $ArtifactDiagnosticBaseline -Step $step.name `
+                -Verdict $verdict -SourceFingerprint $SourceFingerprint -ExtensionName $ExtensionName
+            $platformPath = Get-PlatformPath
+            $platformBuild = ''
+            try { $platformBuild = [Diagnostics.FileVersionInfo]::GetVersionInfo($platformPath).ProductVersion } catch { }
+            $assessment | Add-Member -NotePropertyName context -NotePropertyValue ([pscustomobject]@{
+                infoBaseKind=$InfoBaseKind; infoBasePath=$InfoBasePath; platformPath=$platformPath; platformBuild=$platformBuild; runtimeModes=@($modes)
+            })
+            $assessmentPath = New-TimestampedFilePath -Directory $logsPath -Prefix '1c-gate6-artifact-assessment-' -Extension '.json'
+            Write-Utf8TextAtomic -Path $assessmentPath -Value (($assessment | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+            $assessment = [pscustomobject]@{status=$assessment.status;applyAllowed=[bool]$assessment.applyAllowed;cleanPassed=$false;
+                evidencePath=$assessmentPath;evidenceSha256=(Get-FileHash -LiteralPath $assessmentPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+            $artifactAssessment = $true
+        }
+        if (-not $verdict.passed -and $step.name -eq 'configuration' -and -not $ExtensionName -and $null -ne $LegacyBaseline) {
+            $before = $LegacyBaseline.check.verdict
+            $baselineArtifactsUnchanged = $false
+            try {
+                $baselineArtifactsUnchanged =
+                    (Get-FileHash -LiteralPath $LegacyBaseline.check.logPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $LegacyBaseline.logSha256 -and
+                    (Get-FileHash -LiteralPath $LegacyBaseline.check.resultPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $LegacyBaseline.resultSha256 -and
+                    (Test-CheckedLoadRollbackPointUnchanged -Point $LegacyBaseline.snapshot)
+            } catch { $baselineArtifactsUnchanged = $false }
+            $codesMatch = $before.exitCode -eq $verdict.exitCode -and $before.resultCode -eq $verdict.resultCode -and
+                $verdict.exitCode -in @(0,101) -and $verdict.resultCode -in @(0,101)
+            $bindingMatched = $baselineArtifactsUnchanged -and $codesMatch -and $LegacyBaseline.platformPath -ceq (Get-PlatformPath) -and
+                ([string]::Join('|',[string[]]$LegacyBaseline.runtimeModes) -ceq [string]::Join('|',[string[]]$modes)) -and
+                [string]$LegacyBaseline.context.sourceFingerprint -ceq $SourceFingerprint -and
+                $LegacyBaseline.context.infoBaseKind -ceq $InfoBaseKind -and
+                (Test-ItlOnDemandInfoBaseMatch -First $LegacyBaseline.context.infoBasePath -Second $InfoBasePath) -and
+                (Test-CheckedLoadLegacyBindingMatch -Point $LegacyBaseline.snapshot -EditableLoad $EditableLoad)
+            $assessment = Compare-ItlPlatformStructuralDiagnostics `
+                -Before $LegacyBaseline.parsedDiagnostics `
+                -After (Get-ItlPlatformStructuralDiagnostics -LogPath $logPath) -BindingMatched $bindingMatched `
+                -ChangedOwners $LegacyBaseline.context.changedOwners -UnchangedOwnersProof $LegacyBaseline.context.unchangedOwnersProof `
+                -CompilationPassedAfter (@($evidence | Where-Object { $_.step -eq 'modules' -and $_.nativePassed }).Count -eq 1)
+            $assessmentPath = New-TimestampedFilePath -Directory $logsPath -Prefix '1c-gate6-legacy-assessment-' -Extension '.json'
+            Write-Utf8TextAtomic -Path $assessmentPath -Value (($assessment | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+            $assessment = [pscustomobject]@{status=$assessment.status;applyAllowed=[bool]$assessment.applyAllowed;cleanPassed=$false;
+                evidencePath=$assessmentPath;evidenceSha256=(Get-FileHash -LiteralPath $assessmentPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+        }
+        $diagnosticOnly = $projectTests -and $step.name -in @('modules','configuration')
+        if ($diagnosticOnly -and (-not $verdict.passed)) {
+            # Native diagnostics are retained, not relabelled as passed or proven
+            # unrelated. Missing/malformed results and transport failures block.
+            if ($null -eq $verdict.resultCode -or $verdict.exitCode -notin @(0,101) -or
+                $verdict.resultCode -notin @(0,101) -or
+                @($verdict.reasons | Where-Object { $_ -match 'not written|invalid|cannot be decoded' }).Count -gt 0) {
+                throw "GATE6_CHECK_FAILED: invalid project-test environment evidence; step=$($step.name); $(@($verdict.reasons) -join '; '). Repeat through the original owner."
+            }
+            Write-Warning "GATE6_PROJECT_TESTS_ENVIRONMENT: native $($step.name) did not pass; result=$resultPath; log=$logPath. Installation requires exact applicability, database apply and fresh runtime readiness; test execution remains authoritative for test results."
+            Write-ItlGate6ProjectTestsFindingGroups -LogPath $logPath -TestsExtensionName $ExtensionName
+        } elseif (-not $verdict.passed) {
+            if ($null -eq $assessment -or -not $assessment.applyAllowed) {
+                $assessmentDetail = if ($null -ne $assessment) { "; assessment=$($assessment.evidencePath)" } else { '' }
+                $summary = Get-StateValue -State $verdict -Name diagnosticSummary -Default $null
+                $findingEvidence = Get-StateValue -State $verdict -Name diagnosticsEvidence -Default $null
+                $diagnosticText = if ($null -ne $summary) {
+                    'structural={0} ({1} unique), compiler={2}, unknown={3}; categories={4}' -f `
+                        $summary.structuralOccurrences,$summary.structuralUnique,$summary.compilerOccurrences,$summary.unknownLines,
+                        (@($summary.categories | ForEach-Object { "$($_.category):$($_.occurrences)" }) -join ' | ')
+                } else {
+                    (@($verdict.diagnostics | Select-Object -First 3 | ForEach-Object { ([string]$_).Substring(0,[Math]::Min(256,([string]$_).Length)) }) -join ' | ')
+                }
+                if ($null -ne $summary) {
+                    $examples=@($verdict.diagnostics | Select-Object -Unique | Select-Object -First 3 | ForEach-Object {
+                        ([string]$_).Substring(0,[Math]::Min(256,([string]$_).Length))
+                    }) -join ' | '
+                    $diagnosticText += "; examples=$examples"
+                }
+                if ($null -ne $findingEvidence) { $diagnosticText += "; fullFindings=$($findingEvidence.path)" }
+                $failure = [InvalidOperationException]::new("GATE6_CHECK_FAILED: step=$($step.name); command=$($step.args[0]); $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath; diagnostics=$diagnosticText$assessmentDetail. Do not apply the database configuration; inspect the full findings and legacy-context refusal evidence, correct or adjudicate the source findings, and repeat the original operation.")
+                $failure.Data['ItlGate6Diagnostics'] = $findingEvidence
+                throw $failure
+            }
+            if ($artifactAssessment) {
+                Write-Warning "GATE6_YAXUNIT_VENDOR_DIAGNOSTICS: native $($step.name) did not pass; exact immutable YAxUnit artifact diagnostics permit apply with a non-clean vendor WARN. Assessment: $($assessment.evidencePath)"
+            } else {
+                Write-Warning "GATE6_LEGACY_FINDINGS: native CheckConfig did not pass; unchanged proven outside-scope findings permit apply. Assessment: $($assessment.evidencePath)"
+            }
+        }
+        $evidence.Add([pscustomobject]@{
+            step = $step.name
+            arguments = @($step.args)
+            resultPath = $resultPath
+            resultSha256 = (Get-FileHash -LiteralPath $resultPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            logPath = $logPath
+            logSha256 = (Get-FileHash -LiteralPath $logPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            exitCode = [int]$verdict.exitCode
+            dumpResult = [int]$verdict.resultCode
+            nativePassed = [bool]$verdict.passed
+            diagnosticOnly = [bool]$diagnosticOnly
+            assessment = $assessment
+        })
+    }
+    if ($CheckProfile -eq 'development') {
+        $evidence.Add([pscustomobject]@{ step='configuration'; status='not-required-development'; skipped=$true;
+            nativePassed=$false; exitCode=$null; dumpResult=$null; resultPath=$null; logPath=$null; assessment=$null })
+    }
+    $receipt = [pscustomobject]@{
+        schemaVersion = $(if ($null -ne $LegacyBaseline -or $null -ne $ArtifactDiagnosticBaseline) { 2 } else { 1 })
+        sourceFingerprint = $SourceFingerprint
+        infoBaseKind = $InfoBaseKind
+        infoBasePath = $InfoBasePath
+        extensionName = $ExtensionName
+        validationPurpose = $ValidationPurpose
+        checkProfile = $CheckProfile
+        cleanPassed = ($CheckProfile -eq 'production' -and @($evidence | Where-Object { -not $_.nativePassed }).Count -eq 0)
+        editableLoad = $EditableLoad
+        platformPath = Get-PlatformPath
+        runtimeModes = @($modes)
+        artifactDiagnosticBaseline = $ArtifactDiagnosticBaseline
+        steps = @($evidence.ToArray())
+        legacyBaseline = $(if ($null -ne $LegacyBaseline) { [pscustomobject]@{binding=$LegacyBaseline.context.binding;
+            snapshotSha256=$LegacyBaseline.snapshot.sha256;rollbackPoint=$EditableLoad.rollbackPoint;platformPath=$LegacyBaseline.platformPath;
+            logPath=$LegacyBaseline.check.logPath;logSha256=$LegacyBaseline.logSha256;
+            resultPath=$LegacyBaseline.check.resultPath;resultSha256=$LegacyBaseline.resultSha256;
+            exitCode=$LegacyBaseline.check.verdict.exitCode;dumpResult=$LegacyBaseline.check.verdict.resultCode} } else { $null })
+        completedAt = (Get-Date).ToString('o')
+    }
+    $receiptPath = New-TimestampedFilePath -Directory $logsPath -Prefix '1c-gate6-evidence-' -Extension '.json'
+    Write-Utf8TextAtomic -Path $receiptPath -Value (($receipt | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    $receipt | Add-Member -NotePropertyName evidencePath -NotePropertyValue $receiptPath
+    return $receipt
+}
+
+function Confirm-ProductionPlatformCheck {
+    param([string]$ExportPath,[string]$SourceFingerprint,[string]$InfoBaseKind,[string]$InfoBasePath,
+        [string]$ExtensionName='', [string]$LoadedBaseIdentity='', [AllowNull()][object]$Evidence=$null,
+        [switch]$LoadedThisOperation,
+        [string]$User=(Get-EnvValue -Name 'IB_USER'),[string]$Password=(Get-EnvValue -Name 'IB_PASSWORD'))
+
+    if ((Get-PlatformCheckProfile) -ne 'production') {
+        return [pscustomobject]@{ purpose='development'; status='not-required-development'; evidence=$null; receiptPath=$null; receiptSha256=$null }
+    }
+    $source = Get-ConfigSourceFingerprint -ExportPath $ExportPath
+    if (-not $SourceFingerprint -or $source.fingerprint -cne $SourceFingerprint -or -not $LoadedBaseIdentity) {
+        throw 'PRODUCTION_PLATFORM_SOURCE_UNPROVEN: repeat the original branch preparation with matching loaded-source proof; intermediate development remains available.'
+    }
+    $platform = Get-PlatformPath
+    $build = [Diagnostics.FileVersionInfo]::GetVersionInfo($platform).ProductVersion
+    $platformSha = (Get-FileHash -LiteralPath $platform -Algorithm SHA256).Hash.ToLowerInvariant()
+    $ownerHashes = @('agent-1c.lifecycle.ps1','agent-1c.core.ps1','agent-1c.platform-diagnostics.ps1' | ForEach-Object {
+        (Get-FileHash -LiteralPath (Join-Path $script:Agent1cScriptRoot ('lib/' + $_)) -Algorithm SHA256).Hash.ToLowerInvariant()
+    })
+    $identity = Get-DotEnvPolicyTextHash -Text ($SourceFingerprint + '|' + $LoadedBaseIdentity + '|' + $InfoBaseKind + '|' + $InfoBasePath + '|' + $ExtensionName + '|' + $platform + '|' + $build + '|' + $platformSha + '|' + [string]::Join('|',[string[]]$ownerHashes))
+    $reuse = $false
+    try {
+        if ($null -eq $Evidence -or [string](Get-StateValue -State $Evidence -Name 'checkProfile' -Default '') -cne 'production' -or
+            $Evidence.sourceFingerprint -cne $SourceFingerprint -or $Evidence.infoBaseKind -cne $InfoBaseKind -or
+            -not (Test-ItlOnDemandInfoBaseMatch -First $Evidence.infoBasePath -Second $InfoBasePath) -or
+            $Evidence.extensionName -cne $ExtensionName -or $Evidence.platformPath -cne $platform -or
+            [string]::Join('|',[string[]]$Evidence.runtimeModes) -cne '-ThinClient|-Server|-ExternalConnection') { throw 'different proof' }
+        if (-not $LoadedThisOperation -and (
+            [string](Get-StateValue -State $Evidence -Name 'qualificationFingerprint' -Default '') -cne $identity -or
+            (Get-FileHash -LiteralPath $Evidence.evidencePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Evidence.evidenceSha256)) { throw 'different qualification' }
+        $required = @('modules') + $(if ($ExtensionName) { @('applicability') } else { @() }) + @('configuration')
+        if (@($Evidence.steps).Count -ne $required.Count) { throw 'incomplete proof' }
+        foreach ($name in $required) {
+            $step = @($Evidence.steps | Where-Object step -ceq $name)
+            if ($step.Count -ne 1) { throw 'missing step' }
+            $step = $step[0]
+            if ((Get-FileHash -LiteralPath $step.logPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $step.logSha256 -or
+                (Get-FileHash -LiteralPath $step.resultPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $step.resultSha256) { throw 'changed native artifacts' }
+            $verdict = Get-DesignerBatchCheckVerdict -ExitCode $step.exitCode -ResultPath $step.resultPath -LogPath $step.logPath
+            if (-not $verdict.passed) {
+                if ($name -cne 'configuration' -or $null -eq $step.assessment -or
+                    $step.assessment.status -cne 'accepted-with-preexisting-findings' -or -not $step.assessment.applyAllowed -or
+                    (Get-FileHash -LiteralPath $step.assessment.evidencePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $step.assessment.evidenceSha256) { throw 'not an accepted complete result' }
+                $assessment = Read-Utf8Text -Path $step.assessment.evidencePath | ConvertFrom-Json
+                $before = $Evidence.legacyBaseline
+                if ($null -eq $before -or $assessment.status -cne 'accepted-with-preexisting-findings' -or -not $assessment.applyAllowed -or
+                    (Get-FileHash -LiteralPath $before.logPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $before.logSha256 -or
+                    (Get-FileHash -LiteralPath $before.resultPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $before.resultSha256 -or
+                    $assessment.beforeRawSha256 -cne $before.logSha256 -or $assessment.afterRawSha256 -cne $step.logSha256) { throw 'legacy artifacts changed' }
+            }
+        }
+        $reuse = $true
+    } catch { $reuse = $false }
+    if (-not $reuse) {
+        # No synthetic before-check, historic snapshot restore or last-load baseline.
+        # A clean native check needs no baseline. A failure leaves production unready.
+        $Evidence = Invoke-DesignerGate6CheckLadder -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+            -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -CheckProfile production -User $User -Password $Password
+    }
+    if ((Get-ConfigSourceFingerprint -ExportPath $ExportPath).fingerprint -cne $SourceFingerprint) {
+        throw 'PRODUCTION_PLATFORM_SOURCE_CHANGED: preparation stopped; repeat it for the current candidate.'
+    }
+    $Evidence | Add-Member -NotePropertyName qualificationFingerprint -NotePropertyValue $identity -Force
+    $path = $Evidence.evidencePath
+    $document = $Evidence | Select-Object * -ExcludeProperty evidencePath,evidenceSha256
+    Write-Utf8TextAtomic -Path $path -Value (($document | ConvertTo-Json -Depth 16) + [Environment]::NewLine)
+    $sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $Evidence | Add-Member -NotePropertyName evidenceSha256 -NotePropertyValue $sha -Force
+    $configuration = @($Evidence.steps | Where-Object step -ceq 'configuration')[0]
+    $status = if ($configuration.nativePassed) { 'passed' } else { 'accepted-with-preexisting-findings' }
+    return [pscustomobject]@{purpose='production';status=$status;evidence=$Evidence;receiptPath=$path;receiptSha256=$sha}
+}
+
+function Confirm-DevBranchProductionPreparation {
+    param([object]$State,[string]$ExportPath,[string]$ContentKind,[AllowNull()][object]$LoadResult=$null)
+    if ((Get-PlatformCheckProfile) -ne 'production') {
+        return [pscustomobject]@{purpose='development';status='not-required-development';receiptPath=$null;receiptSha256=$null}
+    }
+    $field = Get-DesignerFingerprintFieldName -ContentKind $ContentKind
+    $fingerprint = [string](Get-StateValue -State $State -Name $field -Default '')
+    $extension = if ($ContentKind -eq 'extension') { Require-DevBranchExtensionName -State $State } else { '' }
+    $evidence = Get-StateValue -State $State -Name 'lastGate6Evidence' -Default $null
+    $loaded = $null -ne $LoadResult -and [bool](Get-StateValue -State $LoadResult -Name 'loaded' -Default $false)
+    if ($loaded) { $evidence = Get-StateValue -State $LoadResult -Name 'gate6Evidence' -Default $null }
+    $result = Confirm-ProductionPlatformCheck -ExportPath $ExportPath -SourceFingerprint $fingerprint `
+        -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath -ExtensionName $extension `
+        -LoadedBaseIdentity (Get-VerificationLoadedBaseIdentity -State $State) -Evidence $evidence -LoadedThisOperation:$loaded
+    Update-DevBranchState -State $State -Updates @{lastGate6Evidence=$result.evidence}
+    $State | Add-Member -NotePropertyName lastGate6Evidence -NotePropertyValue $result.evidence -Force
+    return ($result | Select-Object purpose,status,receiptPath,receiptSha256)
+}
+
+function Test-MainConfigurationGate6Required {
+    param([Parameter(Mandatory = $true)][object]$ChangeSet,
+        [string]$ValidationEvidencePath = '', [string]$SourceFingerprint = '',
+        [string]$InfoBaseKind = '', [string]$InfoBasePath = '')
+    # This gate now selects mandatory compilation, not full CheckConfig.
+    # Neither small/static coverage nor binary-only loads waive compilation.
+    return $true
+}
+
+function Get-PlatformGate6MetadataOwner {
+    param([string]$RelativePath)
+    $parts = $RelativePath.Replace('\','/').Split('/')
+    if ($parts.Count -lt 2) { return '' }
+    $label = Get-ConfigRepositoryMetadataCollectionLabel -Collection $parts[0]
+    if (-not $label -or $label -ceq $parts[0]) { return '' }
+    return $label + '.' + [IO.Path]::GetFileNameWithoutExtension($parts[1])
+}
+
+function Get-PlatformGate6OwnerHashes {
+    param([string]$TreeObjectId)
+    $records = @(Get-GitPathList -Arguments @('ls-tree','-r','-z',$TreeObjectId))
+    $groups = @{}
+    foreach ($record in $records) {
+        if ($record -notmatch '^[0-9]{6} blob (?<blob>[a-f0-9]{40,64})\t(?<path>.+)$') { continue }
+        $path = [string]$Matches.path
+        $blob = [string]$Matches.blob
+        $owner = Get-PlatformGate6MetadataOwner -RelativePath $path
+        if (-not $owner) { continue }
+        if (-not $groups.ContainsKey($owner)) { $groups[$owner] = [Collections.Generic.List[string]]::new() }
+        $groups[$owner].Add($path + [char]0 + $blob)
+    }
+    $hashes = @{}
+    foreach ($owner in $groups.Keys) {
+        $items = [string[]]$groups[$owner].ToArray()
+        [Array]::Sort($items,[StringComparer]::Ordinal)
+        $hashes[$owner] = Get-DotEnvPolicyTextHash -Text ([string]::Join([char]0,$items))
+    }
+    return $hashes
+}
+
+function New-PlatformGate6LegacyContext {
+    param([object]$State,[object]$ChangeSet,[string]$SourceFingerprint,
+        [string]$InfoBaseKind,[string]$InfoBasePath,[ref]$Assessment)
+    # Observation only. The return contract remains context-or-null; no failed
+    # assessment can become a context or authorize a before check or apply.
+    $observation = [ordered]@{schemaVersion=1;eligible=$false;reason='STATE_MISSING';path='';
+        sourceFingerprint=$SourceFingerprint;infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;
+        binding=$null;sourceImpact=$null;detail='';evidencePath='';evidenceSha256=''}
+    try {
+        if ($null -eq $State) { return $null }
+        $beforeFingerprint = [string](Get-StateValue -State $State -Name 'lastConfigDesignerFingerprint' -Default '')
+        $previousTree = [string](Get-StateValue -State $ChangeSet -Name 'previousTreeObjectId' -Default '')
+        $currentTree = [string](Get-StateValue -State $ChangeSet -Name 'currentTreeObjectId' -Default '')
+        $binding = [ordered]@{ previousFingerprint=$beforeFingerprint; previousTree=$previousTree; currentTree=$currentTree }
+        $observation.binding = $binding
+        $observation.reason='PREVIOUS_FINGERPRINT_MISSING_OR_INVALID'
+        if ($beforeFingerprint -notmatch '^v2\|git-tree-sha256\|[a-f0-9]{64}$') { return $null }
+        $observation.reason='PREVIOUS_TREE_MISSING_OR_INVALID'
+        if ($previousTree -notmatch '^[a-f0-9]{40,64}$') { return $null }
+        $observation.reason='CURRENT_TREE_MISSING_OR_INVALID'
+        if ($currentTree -notmatch '^[a-f0-9]{40,64}$') { return $null }
+        $observation.reason='PREVIOUS_LOAD_NOT_PASSED'
+        if ([string](Get-StateValue -State $State -Name 'configLoadStatus' -Default '') -notin @('passed','fallback-succeeded')) { return $null }
+        $observation.reason='INFOBASE_KIND_MISMATCH'
+        if ([string](Get-StateValue -State $State -Name 'infoBaseKind' -Default '') -cne $InfoBaseKind) { return $null }
+        $observation.reason='INFOBASE_TARGET_MISMATCH'
+        if (-not (Test-ItlOnDemandInfoBaseMatch -First ([string](Get-StateValue -State $State -Name 'devBranchInfoBasePath' -Default '')) -Second $InfoBasePath)) { return $null }
+        if ([string](Get-StateValue -State $State -Name 'loadReason' -Default '') -eq 'branch-copy-seed') {
+            $seedFingerprint = [string](Get-StateValue -State $State -Name 'branchSeedConfigurationFingerprint' -Default '')
+            $sourceKey = [string](Get-StateValue -State $State -Name 'branchSeedSourceKey' -Default '')
+            $syncId = [string](Get-StateValue -State $State -Name 'branchSeedSyncId' -Default '')
+            $observation.reason='SEED_FINGERPRINT_MISMATCH'
+            if ($seedFingerprint -cne $beforeFingerprint) { return $null }
+            $observation.reason='SEED_SOURCE_KEY_MISSING'
+            if (-not $sourceKey) { return $null }
+            $observation.reason='SEED_SYNC_ID_MISSING'
+            if (-not $syncId) { return $null }
+            $binding.seedSourceKey=$sourceKey; $binding.seedSyncId=$syncId; $binding.seedConfigurationFingerprint=$seedFingerprint
+        } else {
+            $observation.reason='PREVIOUS_LOAD_TIMESTAMP_MISSING'
+            if (-not [string](Get-StateValue -State $State -Name 'lastConfigDesignerLoadedAt' -Default '')) { return $null }
+        }
+        $observation.reason='PREVIOUS_TREE_READ_FAILED'
+        $previousRecords = @(Get-GitPathList -Arguments @('ls-tree','-r','-z',$previousTree) | Where-Object {
+            $separator = ([string]$_).IndexOf("`t")
+            $separator -ge 0 -and [IO.Path]::GetFileName(([string]$_).Substring($separator + 1)) -ine 'ConfigDumpInfo.xml'
+        })
+        $previousTreeFingerprint = 'v2|git-tree-sha256|' + (Get-DotEnvPolicyTextHash -Text ([string]::Join([char]0,[string[]]$previousRecords)))
+        $observation.reason='PREVIOUS_TREE_FINGERPRINT_MISMATCH'
+        if ($previousTreeFingerprint -cne $beforeFingerprint) { return $null }
+        $observation.reason='SOURCE_IMPACT_EVALUATION_FAILED'
+        $impact = Test-ItlPlatformLegacySourceImpact -ProjectRoot $script:ProjectRoot `
+            -PreviousTreeObjectId $previousTree -CurrentTreeObjectId $currentTree
+        $observation.sourceImpact=$impact
+        if (-not $impact.proven) {
+            $observation.reason=$impact.reason
+            if ([string]$impact.reason -cmatch '^(?:SOURCE_DELETION_UNRESOLVED|SOURCE_OWNER_UNRESOLVED|EXISTING_OBJECT_ADDITION_UNRESOLVED|EXISTING_DESCRIPTOR_OR_PAYLOAD_CHANGED|BSL_SURFACE_CHANGED):(.+)$') {
+                $observation.path=$Matches[1]
+            }
+            return $null
+        }
+        $observation.reason='OWNER_HASH_PROOF_FAILED'
+        $beforeHashes = Get-PlatformGate6OwnerHashes -TreeObjectId $previousTree
+        $afterHashes = Get-PlatformGate6OwnerHashes -TreeObjectId $currentTree
+        $proof = [Collections.Generic.List[object]]::new()
+        foreach ($owner in $afterHashes.Keys) {
+            if ($beforeHashes.ContainsKey($owner) -and $beforeHashes[$owner] -ceq $afterHashes[$owner]) {
+                $proof.Add([pscustomobject]@{owner=$owner;beforeSha256=$beforeHashes[$owner];afterSha256=$afterHashes[$owner]})
+            }
+        }
+        $observation.eligible=$true; $observation.reason='LEGACY_CONTEXT_PROVEN'
+        return [pscustomobject]@{schemaVersion=1;sourceFingerprint=$SourceFingerprint;infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;
+            binding=[pscustomobject]$binding;changedOwners=@($impact.impactOwners);unchangedOwnersProof=@($proof.ToArray());sourceImpact=$impact}
+    } catch {
+        $observation.detail=$_.Exception.Message
+        return $null
+    } finally {
+        if ($null -ne $Assessment) { $Assessment.Value=[pscustomobject]$observation }
+    }
+}
+
+function New-PlatformGate6StaticCoverageContext {
+    param([object]$ChangeSet,[string]$EvidencePath,[string]$SourceFingerprint,[string]$InfoBaseKind,[string]$InfoBasePath)
+    $files = @($ChangeSet.files | Where-Object { [string]$_ -match '(?i)\.(bsl|xml)$' })
+    if (-not $EvidencePath -or $files.Count -eq 0) { return $null }
+    try {
+        $path = Resolve-ItlPlatformEvidencePath -Path $EvidencePath -BaseRoot $script:ProjectRoot -ContainedRoot $script:ProjectRoot
+        $sha256 = Get-ItlPlatformEvidenceHash -Path $path
+        $context = [pscustomobject]@{evidencePath=$path;evidenceSha256=$sha256;sourceRoot=$ChangeSet.absoluteExportPath;
+            sourceFingerprint=$SourceFingerprint;projectRoot=[IO.Path]::GetFullPath($script:ProjectRoot);
+            files=$files;infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath}
+        Assert-PlatformGate6StaticCoverageCurrent -Context $context -SourceFingerprint $SourceFingerprint `
+            -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+        return $context
+    } catch { return $null }
+}
+
+function Assert-PlatformGate6StaticCoverageCurrent {
+    param([object]$Context,[string]$SourceFingerprint,[string]$InfoBaseKind,[string]$InfoBasePath)
+    if ($Context.sourceFingerprint -cne $SourceFingerprint -or $Context.infoBaseKind -cne $InfoBaseKind -or
+        $Context.projectRoot -ine [IO.Path]::GetFullPath($script:ProjectRoot) -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First $Context.infoBasePath -Second $InfoBasePath)) {
+        throw 'GATE6_STATIC_SOURCE_PROOF_CHANGED: target or source binding changed; preserve evidence and repeat the original operation.'
+    }
+    $current = Get-ConfigSourceFingerprint -ExportPath $Context.sourceRoot
+    if ($current.fingerprint -cne $SourceFingerprint) {
+        throw 'GATE6_SOURCE_CHANGED: source tree changed during the MCP-exempt editable load; repeat the original operation with current source evidence.'
+    }
+    try { $sameReceipt = (Get-ItlPlatformEvidenceHash -Path $Context.evidencePath) -ceq $Context.evidenceSha256 }
+    catch { $sameReceipt = $false }
+    if (-not $sameReceipt) {
+        throw 'GATE6_STATIC_SOURCE_PROOF_CHANGED: captured MCP receipt changed; preserve evidence and repeat the original operation.'
+    }
+    $coverage = Test-ItlPlatformSourceCoverage -EvidencePath $Context.evidencePath -SourceRoot $Context.sourceRoot `
+        -SourceFingerprint $SourceFingerprint -Files $Context.files -ProjectRoot $script:ProjectRoot -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+    if (-not $coverage.covered -or (Get-ItlPlatformEvidenceHash -Path $Context.evidencePath) -cne $Context.evidenceSha256) {
+        throw "GATE6_STATIC_SOURCE_PROOF_CHANGED: original complete MCP proof is no longer eligible ($($coverage.reason)); preserve evidence and repeat the original operation."
+    }
+}
+
+function Restore-ConfigLoadPreviousDesignerProof {
+    param([object]$PreviousState,[object]$Failure,[string]$ContentKind,[string]$InfoBaseKind,[string]$InfoBasePath)
+    if ($null -eq $PreviousState -or -not $Failure.Exception.Data.Contains('ItlConfigLoadSnapshotRestored')) { return }
+    $restoration = $Failure.Exception.Data['ItlConfigLoadSnapshotRestored']
+    $previousStatus = [string](Get-StateValue -State $PreviousState -Name 'configLoadStatus' -Default '')
+    $path = [string](Get-StateValue -State $PreviousState -Name 'statePath' -Default '')
+    $fingerprintField = Get-DesignerFingerprintFieldName -ContentKind $ContentKind
+    $treeField = Get-DesignerTreeObjectIdFieldName -ContentKind $ContentKind
+    $loadedAtField = Get-DesignerLoadedAtFieldName -ContentKind $ContentKind
+    $previousFingerprint = [string](Get-StateValue -State $PreviousState -Name $fingerprintField -Default '')
+    # A started database apply invalidates the previous tree proof (D2).
+    if (-not $restoration.cursorRestored -or (Get-StateValue -State $restoration -Name 'applyStarted' -Default $true) -ne $false -or
+        $restoration.infoBaseKind -cne $InfoBaseKind -or
+        $restoration.projectRoot -ine [IO.Path]::GetFullPath($script:ProjectRoot) -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First $restoration.infoBasePath -Second $InfoBasePath) -or
+        [string](Get-StateValue -State $PreviousState -Name 'infoBaseKind' -Default '') -cne $InfoBaseKind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First ([string](Get-StateValue -State $PreviousState -Name 'devBranchInfoBasePath' -Default '')) -Second $InfoBasePath) -or
+        $previousStatus -notin @('passed','fallback-succeeded') -or -not $previousFingerprint -or -not $path) { return }
+    $current = Read-DevBranchStateFile -Path $path
+    # Preserve other current state fields; only the same owner's invalidated
+    # proof may be recovered after a confirmed rollback and cursor restoration.
+    if ([string](Get-StateValue -State $current -Name $fingerprintField -Default '') -or
+        [string](Get-StateValue -State $current -Name $treeField -Default '') -cne [string](Get-StateValue -State $PreviousState -Name $treeField -Default '') -or
+        [string](Get-StateValue -State $current -Name $loadedAtField -Default '') -cne [string](Get-StateValue -State $PreviousState -Name $loadedAtField -Default '') -or
+        [string](Get-StateValue -State $current -Name 'configLoadStatus' -Default '') -notin @('pending','fallback-failed','memory-limit-exceeded','memory-monitor-failed') -or
+        $null -ne (Get-StateValue -State $current -Name 'lastGate6Evidence' -Default $null) -or
+        [string](Get-StateValue -State $current -Name 'infoBaseKind' -Default '') -cne $InfoBaseKind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First ([string](Get-StateValue -State $current -Name 'devBranchInfoBasePath' -Default '')) -Second $InfoBasePath)) { return }
+    Update-DevBranchState -State $current -Updates @{
+        $fingerprintField=$previousFingerprint
+        $treeField=(Get-StateValue -State $PreviousState -Name $treeField -Default '')
+        $loadedAtField=(Get-StateValue -State $PreviousState -Name $loadedAtField -Default '')
+        configLoadStatus=$previousStatus
+        lastGate6Evidence=(Get-StateValue -State $PreviousState -Name 'lastGate6Evidence' -Default $null)
+    }
+}
+
+function Invoke-PlatformGate6NativeCheck {
+    param([string]$InfoBasePath,[string]$InfoBaseKind,[string]$User,[string]$Password,
+        [string[]]$Arguments,[string]$ResultPath)
+    $exitCode = 0
+    $nativeError = ''
+    try {
+        Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+            -DesignerArgs (@($Arguments) + @('/DumpResult',$ResultPath)) | Out-Null
+    } catch {
+        $native = $_.Exception.Data['ItlDesignerBatchResult']
+        if ($null -eq $native -or $Arguments[0] -cnotin @('/CheckConfig','/CheckModules') -or $native.operation -cne $Arguments[0] -or
+            -not $native.ownedProcessesReleased -or $native.infoBaseKind -cne $InfoBaseKind -or
+            -not (Test-ItlOnDemandInfoBaseMatch -First $native.infoBasePath -Second $InfoBasePath)) { throw }
+        $exitCode = [int]$native.exitCode
+        $nativeError = $_.Exception.Message
+    }
+    $logPath = [string]$script:LastLogPath
+    $verdict = Get-DesignerBatchCheckVerdict -ExitCode $exitCode -ResultPath $ResultPath -LogPath $logPath
+    if (-not $verdict.passed) {
+        try {
+            # Complete findings stay in the operation's logs, not in routine output.
+            # This evidence grants no admission and is also available for a failed
+            # before check, before any editable mutation occurs.
+            $path = New-TimestampedFilePath -Directory (Split-Path -Parent $ResultPath) -Prefix '1c-gate6-diagnostics-' -Extension '.json'
+            $document = [ordered]@{schemaVersion=1;kind='itl-gate6-diagnostics';command=$Arguments[0];arguments=@($Arguments);
+                infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;exitCode=$exitCode;dumpResult=$verdict.resultCode;
+                resultPath=$ResultPath;resultSha256=$(if(Test-Path -LiteralPath $ResultPath -PathType Leaf){(Get-FileHash -LiteralPath $ResultPath -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});
+                logPath=$logPath;summary=$verdict.diagnosticSummary;findings=$verdict.parsedDiagnostics;reasons=$verdict.reasons}
+            Write-Utf8TextAtomic -Path $path -Value (($document | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+            $verdict.diagnosticsEvidence=[pscustomobject]@{path=$path;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+        } catch { Write-Warning "Gate 6 diagnostic projection could not be saved; the original native verdict and raw artifacts remain authoritative: $($_.Exception.Message)" }
+    }
+    return [pscustomobject]@{verdict=$verdict;nativeError=$nativeError;logPath=$logPath;resultPath=$ResultPath}
+}
+
+function New-DesignerGate6Snapshot {
+    param([string]$InfoBasePath, [string]$InfoBaseKind, [string]$User, [string]$Password,
+        [AllowNull()][object]$EnclosingSnapshot = $null, [string]$ExtensionName = '',
+        [ValidateSet('','present','absent')][string]$ExtensionPresence = '',
+        [AllowNull()][object]$AppliedProof = $null)
+
+    # Rollback-point factory (enclosing, db-configuration, absent-extension).
+    # The enclosing owner passes its snapshot explicitly because ordinary
+    # lifecycle dispatch does not require a diagnostic native-operation journal.
+    $borrowed = $EnclosingSnapshot
+    if ($null -eq $borrowed) {
+        $journal = Get-Variable -Name OneCNativeOperationJournal -Scope Script -ErrorAction SilentlyContinue
+        if ($journal -and $null -ne $journal.Value) {
+            $pending = @($journal.Value.restorations | Where-Object {
+                $_.payload.kind -eq 'infobase-snapshot' -and $_.payload.status -eq 'pending' -and
+                $_.payload.infoBase.kind -ceq $InfoBaseKind -and
+                (Test-ItlOnDemandInfoBaseMatch -First $_.payload.infoBase.path -Second $InfoBasePath)
+            })
+            if ($pending.Count -gt 0) {
+                $duty = $pending[0]
+                $borrowed = [pscustomobject]@{
+                    path=$duty.payload.snapshotPath; sha256=$duty.payload.snapshotSha256
+                    infoBaseKind=$duty.payload.infoBase.kind; infoBasePath=$duty.payload.infoBase.path; duty=$duty
+                }
+            }
+        }
+    }
+    if ($null -ne $borrowed) {
+        $path = [string](Get-StateValue -State $borrowed -Name 'path' -Default '')
+        $sha256 = [string](Get-StateValue -State $borrowed -Name 'sha256' -Default '')
+        $kind = [string](Get-StateValue -State $borrowed -Name 'infoBaseKind' -Default '')
+        $target = [string](Get-StateValue -State $borrowed -Name 'infoBasePath' -Default '')
+        $duty = Get-StateValue -State $borrowed -Name 'duty' -Default $null
+        if ($kind -cne $InfoBaseKind -or -not $target -or
+            -not (Test-ItlOnDemandInfoBaseMatch -First $target -Second $InfoBasePath)) {
+            throw 'GATE6_SNAPSHOT_CHANGED: enclosing rollback snapshot targets another infobase; no editable load was performed. Preserve the snapshot and repeat the original operation with its exact target.'
+        }
+        if ($sha256 -cnotmatch '^[a-f0-9]{64}$' -or -not (Test-Path -LiteralPath $path -PathType Leaf) -or
+            (Get-Item -LiteralPath $path).Length -le 0 -or
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sha256) {
+            throw 'GATE6_SNAPSHOT_CHANGED: enclosing rollback snapshot is missing or changed; no editable load was performed. Preserve the snapshot and repeat the original operation with its exact target.'
+        }
+        if ($null -ne $duty) {
+            try { Assert-OneCDatabaseRestoreRequest -Duty $duty -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -DesignerArgs @('/RestoreIB',$path) }
+            catch { throw "GATE6_SNAPSHOT_CHANGED: enclosing restoration duty no longer matches its exact snapshot and target; no editable load was performed. $($_.Exception.Message)" }
+        }
+        return [pscustomobject]@{ kind='enclosing'; path=$path; sha256=$sha256; owned=$false; duty=$duty; completed=$false
+            extensionName=$ExtensionName; attemptId=[guid]::NewGuid().ToString('N'); baseIdentity=$sha256; mechanism='enclosing-snapshot'
+            appliedProof=$AppliedProof; unfinishedPreviousRolledBack=$false }
+    }
+    # Without an enclosing snapshot the rollback point is the database
+    # configuration of the same object; no DT is created (D1, D4).
+    $kind = 'db-configuration'
+    if ($ExtensionName) {
+        $recorded = $null -ne $AppliedProof -and ($AppliedProof.previousFingerprint -or $AppliedProof.previousTree)
+        $present = if ($recorded) { $true }
+            elseif ($ExtensionPresence -ceq 'present') { $true }
+            elseif ($ExtensionPresence -ceq 'absent') { $false }
+            else {
+                try { Test-DevBranchExtensionExists -State ([pscustomobject]@{ infoBaseKind=$InfoBaseKind; devBranchInfoBasePath=$InfoBasePath }) -Name $ExtensionName -User $User -Password $Password }
+                catch { throw "GATE6_ROLLBACK_POINT_FAILED: presence of extension '$ExtensionName' in the database configuration is unproven; no editable load was performed. Correct the reported target problem and repeat the original operation. $($_.Exception.Message)" }
+            }
+        if (-not $present) { $kind = 'absent-extension' }
+    }
+    $base = [ordered]@{ infoBaseKind=$InfoBaseKind; infoBasePath=([string]$InfoBasePath).Trim().ToLowerInvariant()
+        contentKind=$(if ($ExtensionName) { 'extension' } else { 'configuration' }); extensionName=$ExtensionName }
+    if ($kind -ceq 'absent-extension') { $base.applied = 'absent' }
+    else {
+        $base.appliedFingerprint = $(if ($null -ne $AppliedProof) { [string]$AppliedProof.previousFingerprint } else { '' })
+        $base.appliedTree = $(if ($null -ne $AppliedProof) { [string]$AppliedProof.previousTree } else { '' })
+    }
+    return [pscustomobject]@{ kind=$kind; path=$null; sha256=$null; owned=$true; duty=$null; completed=$false
+        extensionName=$ExtensionName; attemptId=[guid]::NewGuid().ToString('N')
+        baseIdentity=(Get-StringSha256 (ConvertTo-Json -InputObject $base -Compress))
+        mechanism=$(if ($kind -ceq 'absent-extension') { 'delete-cfg' } else { 'rollback-cfg' })
+        appliedProof=$AppliedProof; unfinishedPreviousRolledBack=$false }
+}
+
+function Get-CheckedLoadRollbackPointRecord {
+    param([object]$Point)
+    # Persisted projection: no state paths or in-memory proof context.
+    return [pscustomobject]@{ kind=$Point.kind; extensionName=$Point.extensionName; attemptId=$Point.attemptId
+        baseIdentity=$Point.baseIdentity; mechanism=$Point.mechanism; unfinishedPreviousRolledBack=[bool]$Point.unfinishedPreviousRolledBack }
+}
+
+function Test-CheckedLoadRollbackPointUnchanged {
+    param([object]$Point)
+    if ($null -eq $Point) { return $false }
+    if ([string](Get-StateValue -State $Point -Name 'path' -Default '')) {
+        return (Get-FileHash -LiteralPath $Point.path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $Point.sha256
+    }
+    $proof = $Point.appliedProof
+    if ($null -eq $proof -or -not $proof.statePath) { return $true }
+    $current = Read-DevBranchStateFile -Path $proof.statePath
+    return [string](Get-StateValue -State $current -Name $proof.treeField -Default '') -ceq [string]$proof.previousTree
+}
+
+function Test-CheckedLoadLegacyBindingMatch {
+    param([object]$Point,[object]$EditableLoad)
+    # The before check and the after check belong to one attempt and one base
+    # content: the exact DT for an enclosing snapshot, otherwise the applied
+    # proof the rollback returns to (D5).
+    if ($null -eq $Point -or $null -eq $EditableLoad) { return $false }
+    if ([string](Get-StateValue -State $Point -Name 'path' -Default '')) {
+        $editableSnapshot = Get-StateValue -State $EditableLoad -Name 'snapshot' -Default $null
+        return [string]$Point.sha256 -and $null -ne $editableSnapshot -and [string]$Point.sha256 -ceq [string]$editableSnapshot.sha256
+    }
+    $record = Get-StateValue -State $EditableLoad -Name 'rollbackPoint' -Default $null
+    return $null -ne $record -and [string]$Point.attemptId -and [string]$Point.baseIdentity -and
+        [string]$Point.attemptId -ceq [string]$record.attemptId -and [string]$Point.baseIdentity -ceq [string]$record.baseIdentity
+}
+
+function Clear-CheckedLoadAppliedTree {
+    param([AllowNull()][object]$AppliedProof)
+    # Only partially loaded objects own a tree proof (D2, D3a).
+    if ($null -eq $AppliedProof -or -not $AppliedProof.statePath) { return }
+    $current = Read-DevBranchStateFile -Path $AppliedProof.statePath
+    Update-DevBranchState -State $current -Updates @{ $AppliedProof.treeField = '' }
+}
+
+function Invoke-CheckedLoadNativeRollback {
+    param([object]$Point,[string]$InfoBasePath,[string]$InfoBaseKind,[string]$User,[string]$Password)
+    $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
+    New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
+    $resultPath = New-TimestampedFilePath -Directory $logsPath -Prefix '1c-gate6-rollback-' -Extension '.result'
+    $arguments = if ($Point.kind -ceq 'absent-extension') { @('/DeleteCfg','-Extension',$Point.extensionName) }
+        elseif ($Point.extensionName) { @('/RollbackCfg','-Extension',$Point.extensionName) }
+        else { @('/RollbackCfg') }
+    Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+        -DesignerArgs (@($arguments) + @('/DumpResult',$resultPath)) | Out-Null
+    $code = if (Test-Path -LiteralPath $resultPath -PathType Leaf) { (Read-Utf8Text -Path $resultPath).Trim() } else { '' }
+    if ($code -cne '0') {
+        throw "$($arguments[0]) returned native result '$code' instead of 0. Result: $resultPath; log: $($script:LastLogPath)"
+    }
+    return [string]$script:LastLogPath
+}
+
+function New-CheckedLoadRollbackFailure {
+    param([string]$Original,[object]$Point,[string]$Stage,[string]$LoadLogPath,[string]$CheckLogPath,[string]$RollbackDetail)
+    Clear-CheckedLoadAppliedTree -AppliedProof $Point.appliedProof
+    $command = if ($Point.kind -ceq 'absent-extension') { '/DeleteCfg -Extension' } elseif ($Point.extensionName) { '/RollbackCfg -Extension' } else { '/RollbackCfg' }
+    return [InvalidOperationException]::new("GATE6_ROLLBACK_RECOVERY_FAILED: $Original $command did not confirm the $Stage rollback of '$(if ($Point.extensionName) { $Point.extensionName } else { 'configuration' })'. Load log: '$LoadLogPath'; check log: '$CheckLogPath'. Rollback: $RollbackDetail The applied tree proof was cleared, so repeating the original operation runs one strict full load that replaces the editable object from sources. If that full load also fails because the branch infobase is damaged, recreate it through reset-dev-branch.")
+}
+
+function Invoke-ConfigLoadDesignerAttempt {
+    param(
+        [string]$InfoBasePath,
+        [string]$InfoBaseKind,
+        [string[]]$DesignerArgs,
+        [string]$ExtensionName = '',
+        [switch]$RequireGate6,
+        [ValidateSet('development','production')][string]$CheckProfile = 'production',
+        [ValidateSet('configuration','project-tests')][string]$ValidationPurpose = 'configuration',
+        [scriptblock]$AfterApply = $null,
+        [AllowNull()][object]$StaticCoverageContext = $null,
+        [AllowNull()][object]$LegacyContext = $null,
+        [AllowNull()][object]$ArtifactDiagnosticBaseline = $null,
+        [string]$SourceFingerprint = '',
+        [string]$User = (Get-EnvValue -Name 'IB_USER'),
+        [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD'),
+        [object]$NativeEffectContract,
+        [AllowNull()][object]$EnclosingSnapshot = $null,
+        # Presence of the extension from the owner's fresh runtime probe (D4).
+        [ValidateSet('','present','absent')][string]$ExtensionPresence = '',
+        # Applied-proof context of a partially loaded object (D0, D2, D3).
+        [AllowNull()][object]$AppliedProof = $null
+    )
+
+    if ($ValidationPurpose -ceq 'project-tests') {
+        if ($null -ne $ArtifactDiagnosticBaseline -or $null -ne $StaticCoverageContext -or $null -ne $LegacyContext) {
+            throw 'GATE6_PROJECT_TESTS_CONTEXT_INVALID: project tests cannot combine another validation exemption.'
+        }
+        Assert-YAxUnitProjectTestsLoadContext -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -DesignerArgs $DesignerArgs
+    }
+    if ($null -ne $AfterApply -and $ValidationPurpose -cne 'project-tests') {
+        throw 'GATE6_PROJECT_TESTS_CONTEXT_INVALID: post-apply readiness belongs to the project-test installation owner.'
+    }
+    if ($null -ne $ArtifactDiagnosticBaseline) {
+        $canonicalBaseline = Get-YAxUnitArtifactDiagnosticBaseline `
+            -PinnedEntry (Get-StateValue -State $ArtifactDiagnosticBaseline -Name 'pin' -Default $null) -ExtensionName $ExtensionName
+        $baselineVersion = Get-StateValue -State $ArtifactDiagnosticBaseline -Name 'version' -Default $null
+        if ($null -eq $canonicalBaseline -or
+            [string](Get-StateValue -State $ArtifactDiagnosticBaseline -Name 'id' -Default '') -cne [string]$canonicalBaseline.id -or
+            ($baselineVersion -isnot [int] -and $baselineVersion -isnot [long]) -or $baselineVersion -ne $canonicalBaseline.version -or
+            [string](Get-StateValue -State $ArtifactDiagnosticBaseline -Name 'extensionName' -Default '') -cne $ExtensionName -or
+            $SourceFingerprint -cne ('sha256:' + [string]$canonicalBaseline.pin.sha256) -or
+            $null -ne $StaticCoverageContext -or $null -ne $LegacyContext -or
+            @($DesignerArgs).Count -ne 5 -or $DesignerArgs[0] -cne '/LoadCfg' -or
+            $DesignerArgs[2] -cne '-Extension' -or $DesignerArgs[3] -cne $ExtensionName -or $DesignerArgs[4] -cne '/UpdateDBCfg') {
+            throw 'GATE6_ARTIFACT_BASELINE_CONTEXT_INVALID: only the dependency-owned immutable YAxUnit CFE load may use its canonical diagnostic baseline. Repeat the original operation with its supported artifact and owner-selected context.'
+        }
+        $ArtifactDiagnosticBaseline = $canonicalBaseline
+        $artifactSha256 = [string]$canonicalBaseline.pin.sha256
+    }
+    if (-not $ExtensionName -and -not $RequireGate6 -and $null -eq $StaticCoverageContext) {
+        Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+            -NativeEffectContract $NativeEffectContract -DesignerArgs $DesignerArgs | Out-Null
+        return $null
+    }
+    if ([string]::IsNullOrWhiteSpace($SourceFingerprint)) {
+        throw 'GATE6_SOURCE_IDENTITY_REQUIRED: checked loads need an exact source or artifact fingerprint before editable mutation.'
+    }
+    if (@($DesignerArgs | Where-Object { $_ -ceq '/UpdateDBCfg' }).Count -ne 1) {
+        throw 'GATE6_LOAD_APPLY_SHAPE_INVALID: checked load must contain exactly one /UpdateDBCfg boundary.'
+    }
+    $snapshot = New-DesignerGate6Snapshot -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+        -EnclosingSnapshot $EnclosingSnapshot -ExtensionName $ExtensionName -ExtensionPresence $ExtensionPresence -AppliedProof $AppliedProof
+    if ($snapshot.kind -cne 'enclosing' -and $null -ne $AppliedProof -and $AppliedProof.unfinished) {
+        # D3: an earlier load of this object stopped before apply. Restore the
+        # editable object to the database configuration before any check.
+        try {
+            [void](Invoke-CheckedLoadNativeRollback -Point $snapshot -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password)
+        } catch {
+            throw (New-CheckedLoadRollbackFailure -Original 'The previous load of this object did not finish; no editable load was performed.' `
+                -Point $snapshot -Stage 'unfinished-load' -LoadLogPath '' -CheckLogPath '' -RollbackDetail $_.Exception.Message)
+        }
+        $AppliedProof.unfinished = $false
+        $snapshot.unfinishedPreviousRolledBack = $true
+        Write-Host "GATE6_UNFINISHED_LOAD_ROLLED_BACK: the editable $(if ($ExtensionName) { "extension '$ExtensionName'" } else { 'configuration' }) was returned to the database configuration before this load; unapplied Designer edits were discarded."
+    }
+    $applySucceeded = $false
+    $applyStarted = $false
+    $applyCompleted = $false
+    $loadLogPath = ''
+    $checkLogPath = ''
+    try {
+    if ($null -ne $StaticCoverageContext) {
+        Assert-PlatformGate6StaticCoverageCurrent -Context $StaticCoverageContext -SourceFingerprint $SourceFingerprint `
+            -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+    }
+    $legacyBaseline = $null
+    if ($CheckProfile -eq 'production' -and -not $ExtensionName -and $RequireGate6 -and $null -ne $LegacyContext) {
+        $baselineLogsPath = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
+        New-Item -ItemType Directory -Force -Path $baselineLogsPath | Out-Null
+        $baselineResultPath = New-TimestampedFilePath -Directory $baselineLogsPath -Prefix '1c-gate6-before-' -Extension '.result'
+        $baseline = Invoke-PlatformGate6NativeCheck -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+            -Arguments @('/CheckConfig','-ConfigLogIntegrity','-IncorrectReferences','-ThinClient','-Server','-ExternalConnection','-HandlersExistence','-ExtendedModulesCheck') -ResultPath $baselineResultPath
+        $baselineParsed = Get-ItlPlatformStructuralDiagnostics -LogPath $baseline.logPath
+        $baselineLogSha256 = (Get-FileHash -LiteralPath $baseline.logPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($baselineParsed.rawSha256 -cne $baselineLogSha256) {
+            throw 'GATE6_BASELINE_CHANGED: the before-load diagnostic log changed while it was captured; no editable load was performed. Repeat the original operation with stable evidence.'
+        }
+        $legacyBaseline = [pscustomobject]@{context=$LegacyContext;snapshot=$snapshot;platformPath=(Get-PlatformPath);
+            runtimeModes=@('-ThinClient','-Server','-ExternalConnection');check=$baseline;parsedDiagnostics=$baselineParsed;
+            logSha256=$baselineLogSha256;resultSha256=(Get-FileHash -LiteralPath $baseline.resultPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+    }
+    $loadArgs = @($DesignerArgs | Where-Object { $_ -cne '/UpdateDBCfg' })
+    if ($null -ne $ArtifactDiagnosticBaseline) {
+        $actualSha = (Get-FileHash -LiteralPath $loadArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha -cne $artifactSha256) {
+            throw "GATE6_SOURCE_CHANGED: pinned YAxUnit CFE changed before editable load. Repeat the original operation with the unchanged official artifact."
+        }
+    }
+    Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+        -NativeEffectContract $NativeEffectContract -DesignerArgs $loadArgs | Out-Null
+    $loadLogPath = [string]$script:LastLogPath
+    $script:ConfigLoadAfterEditableBoundary = $true
+    if ($SourceFingerprint -match '^sha256:([a-f0-9]{64})$' -and $loadArgs[0] -ceq '/LoadCfg') {
+        $expectedSha = $Matches[1]
+        $actualSha = (Get-FileHash -LiteralPath $loadArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha -cne $expectedSha) {
+            throw "GATE6_SOURCE_CHANGED: CFE changed during editable load. Expected $expectedSha, actual $actualSha. Repeat the original operation with one stable artifact."
+        }
+    } elseif ($SourceFingerprint -match '^v2\|git-tree-sha256\|[a-f0-9]{64}$' -and $loadArgs[0] -ceq '/LoadConfigFromFiles') {
+        $loadedSource = Get-ConfigSourceFingerprint -ExportPath $loadArgs[1]
+        if ([string]$loadedSource.fingerprint -cne $SourceFingerprint) {
+            throw "GATE6_SOURCE_CHANGED: source tree changed during editable load. Repeat the original operation with one stable source tree."
+        }
+    }
+    $editableLoad = [pscustomobject]@{
+        arguments = @($loadArgs)
+        sourceFingerprint = $SourceFingerprint
+        snapshot = $(if ($snapshot.kind -ceq 'enclosing') { [pscustomobject]@{ path=$snapshot.path; sha256=$snapshot.sha256; ownedByCheckedLoad=$false } } else { $null })
+        rollbackPoint = Get-CheckedLoadRollbackPointRecord -Point $snapshot
+        logPath = $loadLogPath
+        logSha256 = $(if ($loadLogPath -and (Test-Path -LiteralPath $loadLogPath -PathType Leaf)) {
+            (Get-FileHash -LiteralPath $loadLogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        } else { '' })
+        completedAt = (Get-Date).ToString('o')
+    }
+    $evidence = $null
+    if ($null -ne $StaticCoverageContext) {
+        Assert-PlatformGate6StaticCoverageCurrent -Context $StaticCoverageContext -SourceFingerprint $SourceFingerprint `
+            -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+    }
+    $evidence = Invoke-DesignerGate6CheckLadder -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+            -CheckProfile $CheckProfile `
+            -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -EditableLoad $editableLoad -LegacyBaseline $legacyBaseline -ValidationPurpose $ValidationPurpose `
+            -ArtifactDiagnosticBaseline $ArtifactDiagnosticBaseline -User $User -Password $Password
+    $checkLogPath = [string]$script:LastLogPath
+    if ($null -ne $ArtifactDiagnosticBaseline -and
+        (Get-FileHash -LiteralPath $loadArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant() -cne $artifactSha256) {
+        throw 'GATE6_SOURCE_CHANGED: pinned YAxUnit CFE changed during Gate 6 checks. Repeat the original operation with the unchanged official artifact.'
+    }
+    # Mandatory checks precede this first apply. Project-test environment
+    # diagnostics retain their native failure and do not grant clean proof.
+    $applyArgs = if ($ExtensionName) { @('/UpdateDBCfg', '-Dynamic-', '-WarningsAsErrors', '-Extension', $ExtensionName) } else { @('/UpdateDBCfg') }
+    $contentKind = if ($ExtensionName) { 'extension' } else { 'configuration' }
+    # D2: a started apply can change the database configuration, so the old
+    # applied tree no longer proves a partial retry.
+    Clear-CheckedLoadAppliedTree -AppliedProof $AppliedProof
+    $applyStarted = $true
+    Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+        -NativeEffectContract ([pscustomobject]@{ schemaVersion=1; kind='update-db-cfg'; project=[IO.Path]::GetFullPath($script:ProjectRoot)
+            sourceFingerprint=$SourceFingerprint; contentKind=$contentKind; extensionName=$ExtensionName; gate6=$evidence; staticCoverage=$StaticCoverageContext }) `
+        -DesignerArgs $applyArgs | Out-Null
+    $applyCompleted = $true
+    $applyLogPath = [string]$script:LastLogPath
+    if ($null -ne $AfterApply) {
+        try { & $AfterApply | Out-Null }
+        catch {
+            # D1b: the database already holds the candidate; a native rollback
+            # cannot return the previous version. The owner's proof stays invalid.
+            $postApply = [InvalidOperationException]::new("GATE6_POST_APPLY_FAILED: $($_.Exception.Message) The database apply completed (log: '$applyLogPath'), so no rollback was performed. The candidate passed all mandatory Gate 6 checks before apply but is not recorded as verified; repeat the original operation to reload it fully and repeat the post-apply check.", $_.Exception)
+            throw $postApply
+        }
+    }
+    $applySucceeded = $true
+    return $evidence
+    } catch {
+        # A borrowed snapshot belongs to the enclosing owner. After a completed
+        # apply the database configuration equals the candidate (D1b).
+        if ($applySucceeded -or $applyCompleted -or $snapshot.kind -ceq 'enclosing') { throw }
+        $originalFailure = $_
+        $failureLogPath = $script:LastLogPath
+        try {
+            $rollbackLogPath = Invoke-CheckedLoadNativeRollback -Point $snapshot -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password
+            # Only this confirmed rollback can recover the previous loaded-source
+            # proof, and only before apply. It never marks the candidate passed.
+            $originalFailure.Exception.Data['ItlConfigLoadSnapshotRestored'] = [pscustomobject]@{
+                projectRoot=[IO.Path]::GetFullPath($script:ProjectRoot); infoBaseKind=$InfoBaseKind; infoBasePath=$InfoBasePath
+                mechanism=$snapshot.mechanism; rollbackPoint=(Get-CheckedLoadRollbackPointRecord -Point $snapshot)
+                snapshotPath=$null; snapshotSha256=$null; cursorRestored=$false
+                applyStarted=$applyStarted; sourceFingerprint=$SourceFingerprint; restorationLogPath=$rollbackLogPath
+                nativeOperationsReleased=$true
+            }
+        } catch {
+            $stage = if ($applyStarted) { 'apply-failure' } else { 'check-failure' }
+            throw (New-CheckedLoadRollbackFailure -Original $originalFailure.Exception.Message -Point $snapshot -Stage $stage `
+                -LoadLogPath $loadLogPath -CheckLogPath $(if ($checkLogPath) { $checkLogPath } else { [string]$failureLogPath }) -RollbackDetail $_.Exception.Message)
+        } finally {
+            $script:LastLogPath = $failureLogPath
+        }
+        throw $originalFailure
+    }
+}
+
+function Write-ConfigLoadRejectionEvidence {
+    param([object]$Failure,[AllowNull()][object]$LegacyContextAssessment=$null)
+    # Diagnostic evidence only; it grants no admission, recovery, or verification success.
+    if (-not $Failure.Exception.Data.Contains('ItlConfigLoadSnapshotRestored') -or
+        $Failure.Exception.Message -notmatch '^GATE6_CHECK_FAILED: step=configuration;') { return }
+    $restored = $Failure.Exception.Data['ItlConfigLoadSnapshotRestored']
+    if (-not $restored.cursorRestored -or $restored.applyStarted -or
+        $Failure.Exception.Message -notmatch '; result=(.+?); log=(.+?); diagnostics=') { return }
+    $paths = @($Matches[1], $Matches[2], [string]$restored.restorationLogPath)
+    $findingEvidence = $Failure.Exception.Data['ItlGate6Diagnostics']
+    if ($null -ne $findingEvidence) { $paths += $findingEvidence.path }
+    if ($null -ne $LegacyContextAssessment -and $LegacyContextAssessment.evidencePath) { $paths += $LegacyContextAssessment.evidencePath }
+    $artifacts = @(foreach ($path in $paths) {
+        [ordered]@{path=$path;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+    })
+    $directory = Split-Path -Parent $paths[1]
+    $path = New-TimestampedFilePath -Directory $directory -Prefix '1c-gate6-rejection' -Extension '.json'
+    $journal = Get-Variable -Name OneCNativeOperationJournal -Scope Script -ErrorAction SilentlyContinue
+    # A confirmed native rollback returns only after its native release. The
+    # diagnostic journal is optional in ordinary lifecycle dispatch; when
+    # present it must independently confirm every recorded operation/duty.
+    $nativeReleased = $restored.nativeOperationsReleased -eq $true
+    if ($null -ne $journal -and $null -ne $journal.Value) {
+        $nativeReleased = $nativeReleased -and (Test-OneCNativeOperationJournalReleased -Journal $journal.Value)
+    }
+    $receipt = [ordered]@{schemaVersion=1;kind='itl-gate6-rejection';projectRoot=$restored.projectRoot;
+        infoBaseKind=$restored.infoBaseKind;infoBasePath=$restored.infoBasePath;sourceFingerprint=$restored.sourceFingerprint;
+        rollbackPoint=(Get-StateValue -State $restored -Name 'rollbackPoint' -Default $null);
+        mechanism=[string](Get-StateValue -State $restored -Name 'mechanism' -Default 'restore-ib');rollbackConfirmed=$true;
+        snapshotSha256=(Get-StateValue -State $restored -Name 'snapshotSha256' -Default $null);
+        snapshotRestored=[bool](Get-StateValue -State $restored -Name 'snapshotSha256' -Default $null);cursorRestored=$true;applyStarted=$false;
+        nativeOperationsReleased=[bool]$nativeReleased;failure=$Failure.Exception.Message;artifacts=$artifacts;
+        diagnostics=$findingEvidence;legacyContextAssessment=$LegacyContextAssessment}
+    [IO.File]::WriteAllText($path, ($receipt | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+    Set-RunResultArtifacts -ResultPath $path
+    Write-Host "GATE6_REJECTION_EVIDENCE: $path"
+}
+
+function Invoke-GuardedCfeExtensionApply {
+    param(
+        [Parameter(Mandatory = $true)][string]$InfoBasePath,
+        [Parameter(Mandatory = $true)][string]$InfoBaseKind,
+        [Parameter(Mandatory = $true)][string]$CfePath,
+        [Parameter(Mandatory = $true)][string]$ExtensionName,
+        [ValidateSet('development','production')][string]$CheckProfile = 'production',
+        [AllowNull()][object]$ArtifactDiagnosticBaseline = $null,
+        [ValidateSet('','present','absent')][string]$ExtensionPresence = '',
+        [string]$User = (Get-EnvValue -Name 'IB_USER'),
+        [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD')
+    )
+    if (-not (Test-Path -LiteralPath $CfePath -PathType Leaf)) {
+        throw "GATE6_CFE_MISSING: $CfePath"
+    }
+    $sha = (Get-FileHash -LiteralPath $CfePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+        -CheckProfile $CheckProfile `
+        -User $User -Password $Password -ExtensionName $ExtensionName -SourceFingerprint ("sha256:" + $sha) `
+        -ArtifactDiagnosticBaseline $ArtifactDiagnosticBaseline -ExtensionPresence $ExtensionPresence `
+        -DesignerArgs @('/LoadCfg', $CfePath, '-Extension', $ExtensionName, '/UpdateDBCfg')
+    return [pscustomobject]@{ logPath = [string]$script:LastLogPath; gate6Evidence = $evidence }
+}
+
+function Write-ConfigLoadRootScopeDiagnostic {
+    param([string]$ListFilePath)
+
+    if ([string]::IsNullOrWhiteSpace($ListFilePath)) { return }
+    try {
+        foreach ($entry in (Read-Utf8Lines -Path $ListFilePath)) {
+            if ($entry.Trim().Replace('\', '/') -imatch '^(?:\./)?Configuration\.xml$') {
+                Write-Warning 'PARTIAL_CONFIG_ROOT_SCOPE: -listFile contains Configuration.xml. Designer may read related metadata outside the explicit list; list-scoped validation does not guarantee the same native scope. Follow the original Designer error. If the workflow stops, correct the reported source defect and repeat the same command. Keep the root file when required; existing load-mode and fallback rules apply.'
+                return
+            }
+        }
+    } catch {
+        # Advisory output must not replace the original failure or interrupt recovery.
     }
 }
 
@@ -1509,15 +2918,29 @@ function Invoke-ConfigLoadWithFallback {
         [string]$AbsoluteExportPath,
         [string]$ListFilePath,
         [int]$FileCount,
+        [string]$SourceFingerprint = '',
+        [string]$SourceTreeObjectId = '',
+        [string]$SourceCommit = '',
+        [string]$ExportPath = '',
+        [ValidateSet('configuration','extension')][string]$ContentKind = 'configuration',
         [string]$ExtensionName = "",
+        [switch]$RequireGate6,
+        [ValidateSet('development','production')][string]$CheckProfile = 'production',
+        [AllowNull()][object]$StaticCoverageContext = $null,
+        [AllowNull()][object]$LegacyContext = $null,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
         [ValidateSet("Auto", "Partial", "Full")]
         [string]$Mode = "Auto",
-        [switch]$ResetConfigDumpInfo
+        [switch]$ResetConfigDumpInfo,
+        [AllowNull()][object]$AppliedProof = $null
     )
 
-    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath $AbsoluteExportPath
+    if ($ContentKind -eq 'extension' -and [string]::IsNullOrWhiteSpace($ExtensionName)) {
+        throw 'GATE6_EXTENSION_NAME_REQUIRED: an extension load cannot apply without an exact extension name and its applicability check.'
+    }
+    $script:ConfigLoadAfterEditableBoundary = $false
+    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath $AbsoluteExportPath -RestorationPolicy 'on-failure'
     try {
         if ($ResetConfigDumpInfo -and $Mode -ne "Full") {
             throw "ConfigDumpInfo reset is valid only for a full configuration load."
@@ -1535,19 +2958,25 @@ function Invoke-ConfigLoadWithFallback {
         if ($Mode -eq "Full") {
             Write-Host "Full config load requested explicitly. Changed file count: $FileCount"
             try {
-                Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile $CheckProfile -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
-                    -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
+                    -ExtensionName $ExtensionName -RequireGate6:($RequireGate6 -or $ContentKind -eq 'configuration') -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint -AppliedProof $AppliedProof `
+                    -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
+                        sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
+                        exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='full'}) `
+                    -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg"))
             } catch {
-                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot -Failure $_
                 throw
             }
+            Complete-OneCFileRestorationDuty -Snapshot $dumpInfoSnapshot -Resolution committed
             return [pscustomobject]@{
                 loadModeUsed = "full"
                 partialLogPath = ""
                 fullFallbackLogPath = $script:LastLogPath
                 lastLogPath = $script:LastLogPath
                 configLoadStatus = "passed"
+                gate6Evidence = $gate6Evidence
                 partialError = ""
                 fullFallbackError = ""
             }
@@ -1557,22 +2986,44 @@ function Invoke-ConfigLoadWithFallback {
         Write-Host "Partial config load list: $ListFilePath"
         $partialArgs = $baseArgs + @("-listFile", $ListFilePath, "-partial", "-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")
         $script:LastNativeProcessStarted = $false
+        $partialNativeSucceeded = $false
         try {
-            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password -DesignerArgs $partialArgs | Out-Null
+            $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile $CheckProfile -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+                -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -StaticCoverageContext $StaticCoverageContext -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint -AppliedProof $AppliedProof `
+                -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
+                    sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
+                    exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='partial'}) `
+                -DesignerArgs $partialArgs
+            $partialNativeSucceeded = $true
+            Complete-OneCFileRestorationDuty -Snapshot $dumpInfoSnapshot -Resolution committed
             return [pscustomobject]@{
                 loadModeUsed = "partial"
                 partialLogPath = $script:LastLogPath
                 fullFallbackLogPath = ""
                 lastLogPath = $script:LastLogPath
                 configLoadStatus = "passed"
+                gate6Evidence = $gate6Evidence
                 partialError = ""
                 fullFallbackError = ""
             }
         } catch {
+            # A lost journal ACK after native success is not a failed partial
+            # load and must never trigger a second native mutation.
+            if ($partialNativeSucceeded) { throw }
+            Write-ConfigLoadRootScopeDiagnostic -ListFilePath $ListFilePath
+            if ($script:ConfigLoadAfterEditableBoundary) {
+                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot -Failure $_
+                throw
+            }
             $partialException = $_
             $partialLogPath = $script:LastLogPath
             $partialMessage = $partialException.Exception.Message
-            Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+            Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot -Failure $partialException
+            if ($partialMessage -match '^GATE6_') {
+                # The load succeeded but its platform check did not. A full
+                # load retry cannot repair the source defect or authorize apply.
+                throw
+            }
             $memoryGuardCode = ""
             if ($partialMessage -match '^(DESIGNER_MEMORY_LIMIT_EXCEEDED|DESIGNER_MEMORY_MONITOR_FAILED)\b') {
                 $memoryGuardCode = $Matches[1]
@@ -1598,32 +3049,57 @@ function Invoke-ConfigLoadWithFallback {
                 $contentLabel = if ($ExtensionName) { "extension" } else { "configuration" }
                 Set-RunStage -Stage "config-load.$configLoadStatus" -Detail "$memoryGuardCode stopped the partial $contentLabel load; full fallback is suppressed."
                 Write-Warning "$memoryGuardCode stopped Designer. Full-load fallback is suppressed to avoid submitting the same source files to another process."
-                Write-Warning "Inspect the input XML/source files. Because no infobase snapshot is available, recreate the branch infobase if its state is uncertain. Log: $partialLogPath"
+                if ($RequireGate6 -or $ExtensionName) {
+                    Write-Warning "The checked load rolled the editable object back to the database configuration. Inspect the input XML/source files and repeat the original operation. Log: $partialLogPath"
+                } else {
+                    Write-Warning "Inspect the input XML/source files. Because no infobase snapshot is available, recreate the branch infobase if its state is uncertain. Log: $partialLogPath"
+                }
                 throw
             }
             if ($Mode -eq "Partial" -or -not $script:LastNativeProcessStarted) {
                 throw
             }
 
-            Write-Warning "Partial config load failed after Designer received -listFile. Running one full-load fallback in the same branch infobase. No infobase snapshot is available."
+            if ($RequireGate6 -or $ExtensionName -or $null -ne $StaticCoverageContext) {
+                Write-Warning "Partial config load failed after Designer received -listFile; the editable object was rolled back to the database configuration. Running one checked full-load fallback in the same branch infobase."
+            } else {
+                Write-Warning "Partial config load failed after Designer received -listFile. Running one full-load fallback in the same branch infobase. No infobase snapshot is available."
+            }
             Write-Warning "Partial load log: $partialLogPath"
+            # A full retry cannot reuse partial MCP coverage. Previous-source
+            # comparison needs confirmed restoration of the failed partial's
+            # target and cursor, not only the earlier state declaration.
+            $fullFallbackLegacyContext = $null
+            if ($null -ne $LegacyContext -and $partialException.Exception.Data.Contains('ItlConfigLoadSnapshotRestored') -and
+                $partialException.Exception.Data['ItlConfigLoadSnapshotRestored'].cursorRestored) {
+                $fullFallbackLegacyContext = $LegacyContext
+            }
+            $fullNativeSucceeded = $false
             try {
-                Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile $CheckProfile -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
-                    -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
+                    -ExtensionName $ExtensionName -RequireGate6:($RequireGate6 -or $ContentKind -eq 'configuration') -LegacyContext $fullFallbackLegacyContext -SourceFingerprint $SourceFingerprint -AppliedProof $AppliedProof `
+                    -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
+                        sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
+                        exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='full-fallback'}) `
+                    -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg"))
+                $fullNativeSucceeded = $true
+                Complete-OneCFileRestorationDuty -Snapshot $dumpInfoSnapshot -Resolution committed
                 return [pscustomobject]@{
                     loadModeUsed = "full-fallback"
                     partialLogPath = $partialLogPath
                     fullFallbackLogPath = $script:LastLogPath
                     lastLogPath = $script:LastLogPath
                     configLoadStatus = "fallback-succeeded"
+                    gate6Evidence = $gate6Evidence
                     partialError = $partialException.Exception.Message
                     fullFallbackError = ""
                 }
             } catch {
+                if ($fullNativeSucceeded) { throw }
                 $fullException = $_
                 $fullLogPath = $script:LastLogPath
-                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot -Failure $fullException
                 if ($State) {
                     Update-DevBranchState -State $State -Updates @{
                         configLoadStatus = "fallback-failed"
@@ -1635,11 +3111,16 @@ function Invoke-ConfigLoadWithFallback {
                         lastLogPath = $fullLogPath
                     }
                 }
-                throw "ITL_CONFIG_LOAD_FAILED: partial and full fallback config loads both failed. Partial: $($partialException.Exception.Message) (log: $partialLogPath). Full fallback: $($fullException.Exception.Message) (log: $fullLogPath). Inspect and correct the reported configuration source error, then repeat /itl-check. Do not run refresh-dev-branch or sync-master as recovery."
+                $combinedFailure = [InvalidOperationException]::new("ITL_CONFIG_LOAD_FAILED: partial and full fallback config loads both failed. Partial: $($partialException.Exception.Message) (log: $partialLogPath). Full fallback: $($fullException.Exception.Message) (log: $fullLogPath). Inspect and correct the reported configuration source error, then repeat /itl-check. Do not run refresh-dev-branch or sync-master as recovery.")
+                if ($fullException.Exception.Data.Contains('ItlConfigLoadSnapshotRestored')) {
+                    $combinedFailure.Data['ItlConfigLoadSnapshotRestored'] = $fullException.Exception.Data['ItlConfigLoadSnapshotRestored']
+                }
+                throw $combinedFailure
             }
         }
     } finally {
         Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+        $script:ConfigLoadAfterEditableBoundary = $false
     }
 }
 
@@ -1670,6 +3151,9 @@ function New-LoadStateUpdates {
     }
     if ($LoadResult.PSObject.Properties.Match("configLoadStatus").Count -gt 0 -and $LoadResult.configLoadStatus) {
         $updates["configLoadStatus"] = $LoadResult.configLoadStatus
+    }
+    if ($LoadResult.PSObject.Properties.Match('gate6Evidence').Count -gt 0) {
+        $updates['lastGate6Evidence'] = $LoadResult.gate6Evidence
     }
     if ($LoadResult.loaded) {
         $updates["lastConfigLoadMode"] = $LoadResult.loadModeUsed
@@ -1751,7 +3235,8 @@ function Ensure-DevBranchAutoUpdateEpfs {
         if (-not $needsCopy) {
             $sourceFile = Get-Item -LiteralPath $sourcePath
             $targetFile = Get-Item -LiteralPath $targetPath
-            if ($sourceFile.LastWriteTime -gt $targetFile.LastWriteTime -or $sourceFile.Length -ne $targetFile.Length) {
+            if ($sourceFile.LastWriteTime -gt $targetFile.LastWriteTime -or $sourceFile.Length -ne $targetFile.Length -or
+                (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash) {
                 $needsCopy = $true
             }
         }
@@ -1779,23 +3264,106 @@ function Get-DevBranchAutoUpdateTimeoutSeconds {
 }
 
 function Invoke-DevBranchEnterpriseAutoUpdate {
-    param([object]$State)
+    param(
+        [object]$State,
+        [string]$User = (Get-EnvValue -Name "IB_USER"),
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
+        [ValidateSet("update-dev-branch-base", "update-auxiliary-contour")]
+        [string]$RecoveryAction = "update-dev-branch-base",
+        [string]$ApplicationTitle = ""
+    )
 
     $epfPath = Ensure-DevBranchAutoUpdateEpfs
     $timeoutSeconds = Get-DevBranchAutoUpdateTimeoutSeconds
+    $runId = [guid]::NewGuid().ToString("N")
+    $proofRoot = Resolve-ProjectPath ".agent-1c/runs/auto-update"
+    New-Item -ItemType Directory -Force -Path $proofRoot | Out-Null
+    $paramsPath = Join-Path $proofRoot "$runId.params.json"
+    $resultPath = Join-Path $proofRoot "$runId.result.json"
+    $runParams = [ordered]@{ runId = $runId; outputPath = $resultPath }
+    if ($ApplicationTitle) { $runParams["applicationTitle"] = $ApplicationTitle }
+    Write-Utf8TextAtomic -Path $paramsPath -Value (($runParams | ConvertTo-Json -Compress) + [Environment]::NewLine)
+    $script:LastEnterpriseAutoUpdateResultPath = $resultPath
     Write-Host "Running development branch Enterprise auto-update: $epfPath"
     Write-Host "Development branch Enterprise auto-update timeout: $timeoutSeconds seconds"
-    Invoke-Enterprise `
-        -InfoBasePath $State.devBranchInfoBasePath `
-        -InfoBaseKind $State.infoBaseKind `
-        -EnterpriseArgs @("/Execute", $epfPath) `
-        -TimeoutSeconds $timeoutSeconds | Out-Null
+    $nativeError = $null
+    try {
+        Invoke-Enterprise `
+            -InfoBasePath $State.devBranchInfoBasePath `
+            -InfoBaseKind $State.infoBaseKind `
+            -User $User `
+            -Password $Password `
+            -EnterpriseArgs @("/Execute", $epfPath, "/C$paramsPath") `
+            -RequireOwnedProcessRelease `
+            -TimeoutSeconds $timeoutSeconds | Out-Null
+    } catch {
+        $nativeError = $_.Exception.Message
+    }
 
+    $proof = $null
+    try {
+        if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
+            throw "result file was not created"
+        }
+        $proof = Read-Utf8Text -Path $resultPath | ConvertFrom-Json -ErrorAction Stop
+        if ([int](Get-StateValue -State $proof -Name "schemaVersion" -Default 0) -ne 2 -or
+            [string](Get-StateValue -State $proof -Name "runId" -Default "") -cne $runId) {
+            throw "result schema or run ID does not match this launch"
+        }
+        $status = [string](Get-StateValue -State $proof -Name "status" -Default "")
+        $updateResult = [string](Get-StateValue -State $proof -Name "updateResult" -Default "")
+        if ($status -notin @("passed", "failed") -or ($status -eq "passed" -and $updateResult -notin @("Успешно", "НеТребуется"))) {
+            throw "result status or update outcome is invalid"
+        }
+        $titleStatus = [string](Get-StateValue -State $proof -Name "titleStatus" -Default "")
+        $expectedTitleStatuses = if ($status -ne "passed") { @("not-run") } elseif ($ApplicationTitle) { @("set", "unchanged", "skipped", "failed") } else { @("not-requested") }
+        if ($titleStatus -cnotin $expectedTitleStatuses -or
+            ($titleStatus -in @("set", "unchanged") -and [string](Get-StateValue -State $proof -Name "titleValue" -Default "") -cne $ApplicationTitle)) {
+            throw "application title outcome does not match the requested title"
+        }
+    } catch {
+        $nativeDetail = if ($nativeError) { " nativeError='$nativeError'" } else { "" }
+        throw "ITL_ENTERPRISE_AUTO_UPDATE_PROOF_MISSING: $($_.Exception.Message); result='$resultPath' log='$script:LastLogPath'.$nativeDetail requiredAction=inspect-auto-update-result."
+    }
+    if ($proof.status -ne "passed") {
+        $detail = [string](Get-StateValue -State $proof -Name "errorMessage" -Default "")
+        $detail = ($detail -replace '[\r\n]+', ' ').Replace("'", "")
+        if ($detail.Length -gt 500) { $detail = $detail.Substring(0, 500) }
+        throw "ITL_ENTERPRISE_AUTO_UPDATE_FAILED: updateResult='$($proof.updateResult)' error='$detail' result='$resultPath' log='$script:LastLogPath' requiredAction=fix-update-handler-then-run-${RecoveryAction}."
+    }
+    if ($nativeError) {
+        throw "ITL_ENTERPRISE_AUTO_UPDATE_NATIVE_FAILED: $nativeError result='$resultPath' log='$script:LastLogPath' requiredAction=inspect-auto-update-result."
+    }
+
+    $titleError = ([string](Get-StateValue -State $proof -Name "titleError" -Default "") -replace '[\r\n]+', ' ').Replace("'", "")
+    if ($titleError.Length -gt 500) { $titleError = $titleError.Substring(0, 500) }
     return [pscustomobject]@{
         epfPath = $epfPath
         logPath = $script:LastLogPath
+        resultPath = $resultPath
         updatedAt = (Get-Date).ToString("o")
+        applicationTitle = $ApplicationTitle
+        applicationTitleStatus = [string]$proof.titleStatus
+        applicationTitleError = $titleError
     }
+}
+
+function Get-DevBranchApplicationTitle {
+    param([object]$State)
+
+    $branchName = [string](Get-StateValue -State $State -Name "devBranchName" -Default "")
+    if (-not $branchName) {
+        return ""
+    }
+    # The launcher owns the project display name; reuse it so both 1C entry points agree.
+    $projectRoot = try { Get-MainWorktreePath } catch { $script:ProjectRoot }
+    return "$(Get-LauncherProjectName -ProjectRootForName $projectRoot) [DEV $(ConvertTo-LauncherLabel -Value $branchName)]"
+}
+
+function Test-DevBranchEnterpriseNormalizationProved {
+    param([object]$State)
+    return ([string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -eq "passed" -and
+        [int](Get-StateValue -State $State -Name "enterpriseNormalizationProofVersion" -Default 0) -eq 1)
 }
 
 function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {
@@ -1808,6 +3376,15 @@ function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {
     $normalizationRequired = $LoadResult.PSObject.Properties.Match("normalizationRequired").Count -gt 0 -and [bool]$LoadResult.normalizationRequired
     if (-not $LoadResult.loaded -and -not $normalizationRequired) {
         return
+    }
+    if (-not $LoadResult.loaded -and
+        [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -eq "passed" -and
+        -not (Test-DevBranchEnterpriseNormalizationProved -State $State) -and $Action -ne "update-dev-branch-base") {
+        throw "ITL_ENTERPRISE_NORMALIZATION_PROOF_UNVERIFIED: prior passed state has no run result; requiredAction=update-dev-branch-base. No automatic Enterprise replay was started."
+    }
+    if (-not $LoadResult.loaded -and
+        [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -eq "failed" -and $Action -ne "update-dev-branch-base") {
+        throw "ITL_ENTERPRISE_NORMALIZATION_RETRY_REQUIRED: prior Enterprise normalization failed; requiredAction=update-dev-branch-base. No automatic Enterprise replay was started."
     }
 
     Ensure-DevBranchEnterpriseNormalized -State $State -Reason "config-load" -Updates $Updates | Out-Null
@@ -1846,7 +3423,14 @@ function Ensure-DevBranchEnterpriseNormalized {
     )
 
     $currentStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
-    if ($Reason -eq "legacy-preflight" -and $currentStatus -eq "passed") {
+    if ($Reason -eq "legacy-preflight" -and $currentStatus -eq "passed" -and
+        -not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
+        throw "ITL_ENTERPRISE_NORMALIZATION_PROOF_UNVERIFIED: prior passed state has no run result; requiredAction=update-dev-branch-base. No automatic Enterprise replay was started."
+    }
+    if ($Reason -eq "legacy-preflight" -and $currentStatus -eq "failed") {
+        throw "ITL_ENTERPRISE_NORMALIZATION_RETRY_REQUIRED: prior Enterprise normalization failed; requiredAction=update-dev-branch-base. No automatic Enterprise replay was started."
+    }
+    if ($Reason -eq "legacy-preflight" -and (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
         return $State
     }
 
@@ -1857,23 +3441,39 @@ function Ensure-DevBranchEnterpriseNormalized {
     $canPersistImmediately = $statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)
     $pending = @{
         enterpriseNormalizationStatus = "pending"
+        enterpriseNormalizationProofVersion = 0
         enterpriseNormalizationReason = $Reason
         enterpriseNormalizationError = ""
+        enterpriseNormalizedAt = ""
     }
     if ($canPersistImmediately) {
         Update-DevBranchState -State $State -Updates $pending
     }
 
     try {
-        $autoUpdateResult = Invoke-DevBranchEnterpriseAutoUpdate -State $State
+        $autoUpdateResult = Invoke-DevBranchEnterpriseAutoUpdate -State $State -ApplicationTitle (Get-DevBranchApplicationTitle -State $State)
+        if (-not [string](Get-StateValue -State $autoUpdateResult -Name "resultPath" -Default "")) {
+            throw "ITL_ENTERPRISE_AUTO_UPDATE_PROOF_MISSING: Enterprise normalization returned no run result path."
+        }
+        $titleStatus = [string](Get-StateValue -State $autoUpdateResult -Name "applicationTitleStatus" -Default "")
+        $titleError = [string](Get-StateValue -State $autoUpdateResult -Name "applicationTitleError" -Default "")
+        # The branch title is cosmetic: a failed write is reported and retried by the next normalization, never a barrier.
+        if ($titleStatus -eq "failed") {
+            Write-Warning "ITL_APPLICATION_TITLE_FAILED: error='$titleError' result='$($autoUpdateResult.resultPath)'. The branch stays usable; the next Enterprise normalization (configuration load or branch reset) retries the title."
+        }
         $passed = @{
+            applicationTitle = [string](Get-StateValue -State $autoUpdateResult -Name "applicationTitle" -Default "")
+            applicationTitleStatus = $titleStatus
+            applicationTitleError = $titleError
             enterpriseNormalizationStatus = "passed"
+            enterpriseNormalizationProofVersion = 1
             enterpriseNormalizationReason = $Reason
             enterpriseNormalizationError = ""
             enterpriseNormalizedAt = $autoUpdateResult.updatedAt
             lastEnterpriseAutoUpdateAt = $autoUpdateResult.updatedAt
             lastEnterpriseAutoUpdateLogPath = $autoUpdateResult.logPath
             lastEnterpriseAutoUpdateEpfPath = $autoUpdateResult.epfPath
+            lastEnterpriseAutoUpdateResultPath = $autoUpdateResult.resultPath
         }
         if ($autoUpdateResult.logPath) {
             $passed["lastLogPath"] = $autoUpdateResult.logPath
@@ -1885,12 +3485,19 @@ function Ensure-DevBranchEnterpriseNormalized {
             Update-DevBranchState -State $State -Updates $passed
         }
     } catch {
+        $failed = @{
+            enterpriseNormalizationStatus = "failed"
+            enterpriseNormalizationProofVersion = 0
+            enterpriseNormalizationReason = $Reason
+            enterpriseNormalizationError = $_.Exception.Message
+            lastEnterpriseAutoUpdateResultPath = [string]$script:LastEnterpriseAutoUpdateResultPath
+            lastEnterpriseAutoUpdateLogPath = [string]$script:LastLogPath
+        }
+        if ($null -ne $Updates) {
+            foreach ($key in $failed.Keys) { $Updates[$key] = $failed[$key] }
+        }
         if ($canPersistImmediately) {
-            Update-DevBranchState -State $State -Updates @{
-                enterpriseNormalizationStatus = "failed"
-                enterpriseNormalizationReason = $Reason
-                enterpriseNormalizationError = $_.Exception.Message
-            }
+            Update-DevBranchState -State $State -Updates $failed
         }
         throw
     }
@@ -1933,10 +3540,52 @@ function Assert-DevBranchApplicationReady {
     if ([string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -ne "passed") {
         $State = Ensure-DevBranchEnterpriseNormalized -State $State -Reason "legacy-preflight"
     }
-    if ([string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -ne "passed") {
-        throw "ITL_INFOBASE_APPLICATION_NOT_READY: operation='$Operation' reasons='enterprise-normalization-not-passed' requiredAction=update-dev-branch-base retryAction=repeat-original-operation-once."
+    if (-not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
+        throw "ITL_INFOBASE_APPLICATION_NOT_READY: operation='$Operation' reasons='enterprise-normalization-proof-unverified' requiredAction=update-dev-branch-base retryAction=repeat-original-operation-once."
     }
     return $State
+}
+
+function New-OneCSourceExportEvidence {
+    param([string]$StagedPath, [string]$ExportPath, [string]$ExtensionName = '')
+    $workspace = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/')
+    $target = Assert-ExportPathInsideProject $ExportPath
+    $relative = $target.Substring($workspace.Length).TrimStart('\', '/').Replace('\', '/')
+    $stage = [IO.Path]::GetFullPath($StagedPath).TrimEnd('\', '/')
+    $artifacts = [Collections.Generic.List[object]]::new()
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($path in [IO.Directory]::EnumerateFiles($stage, '*', [IO.SearchOption]::AllDirectories)) {
+            if ([IO.Path]::GetExtension($path) -notin @('.xml', '.bsl')) { continue }
+            $stream = [IO.File]::OpenRead($path)
+            try { $sha = [BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
+            finally { $stream.Dispose() }
+            $name = $relative + '/' + $path.Substring($stage.Length).TrimStart('\', '/').Replace('\', '/')
+            $artifacts.Add([ordered]@{path=$name; sha256=$sha})
+        }
+    } finally { $hash.Dispose() }
+    return [ordered]@{
+        schemaVersion=1; producer='itl-designer-export'; workspace=$workspace
+        snapshotId=[Guid]::NewGuid().ToString('N'); status='captured'; source='checkout-native-export'
+        exportedAtUtc=[DateTime]::UtcNow.ToString('o'); artifacts=@($artifacts)
+        configurations=@([ordered]@{path=$relative; extensionName=$ExtensionName
+            indexXmlBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $stage 'ConfigDumpInfo.xml')))})
+    }
+}
+
+function Save-OneCSourceExportEvidence {
+    param([object]$Evidence)
+    if ($null -eq $Evidence) { return }
+    try {
+        $hash = [Security.Cryptography.SHA256]::Create()
+        try { $key = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$Evidence.configurations[0].path))).Replace('-', '').ToLowerInvariant() }
+        finally { $hash.Dispose() }
+        $directory = Join-Path $script:ProjectRoot '.agent-1c/source-exports'
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+        Write-Utf8TextAtomic -Path (Join-Path $directory ($key + '.json')) -Value ($Evidence | ConvertTo-Json -Depth 8)
+    } catch {
+        Write-Warning ('SOURCE_EXPORT_EVIDENCE_UNAVAILABLE: ' + $_.Exception.Message) -WarningAction Continue
+    }
 }
 
 function Dump-ConfigToFilesFromInfoBase {
@@ -1944,7 +3593,8 @@ function Dump-ConfigToFilesFromInfoBase {
         [string]$InfoBasePath,
         [ValidateSet("file", "server")]
         [string]$InfoBaseKind,
-        [switch]$IncludeRepositoryConnection
+        [switch]$IncludeRepositoryConnection,
+        [switch]$IncrementalFromCurrentExport
     )
 
     $exportPath = Get-ExportPath
@@ -1961,18 +3611,32 @@ function Dump-ConfigToFilesFromInfoBase {
         throw "Configuration dump target is a file: $absoluteExportPath"
     }
 
+    $useIncremental = $IncrementalFromCurrentExport -and $targetExisted -and
+        (Test-Path -LiteralPath (Join-Path $absoluteExportPath "Configuration.xml") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $absoluteExportPath "ConfigDumpInfo.xml") -PathType Leaf)
     try {
         New-Item -ItemType Directory -Force -Path $stagedPath | Out-Null
+        if ($useIncremental) {
+            foreach ($entry in Get-ChildItem -LiteralPath $absoluteExportPath -Force -ErrorAction Stop) {
+                Copy-Item -LiteralPath $entry.FullName -Destination $stagedPath -Recurse -Force -ErrorAction Stop
+            }
+        }
         $designerArgs = @()
         if ($IncludeRepositoryConnection) {
             $designerArgs += New-RepositoryConnectionArgs
         }
         $designerArgs += @("/DumpConfigToFiles", $stagedPath, "-Format", "Hierarchical")
+        if ($useIncremental) { $designerArgs += "-update" }
 
         Invoke-Designer `
             -InfoBasePath $InfoBasePath `
             -InfoBaseKind $InfoBaseKind `
             -DesignerArgs $designerArgs | Out-Null
+
+        if ($script:RunStage -in @("init.dump-config", "sync-master.dump-config")) {
+            $dumpStagePrefix = if ($script:RunStage -eq "init.dump-config") { "init" } else { "sync-master" }
+            Set-RunStage -Stage "$dumpStagePrefix.dump-finalize" -Detail "Designer dump and stability probe completed; validating and publishing the staged dump"
+        }
 
         $dumpState = Get-DesignerDumpArtifactState -Path $stagedPath
         if (-not $dumpState.ready) {
@@ -1984,6 +3648,9 @@ function Dump-ConfigToFilesFromInfoBase {
             throw "1C configuration dump would lose Ext/ParentConfigurations.bin. The existing vendor-support state was preserved and the staged dump was rejected."
         }
 
+        $sourceEvidence = $null
+        try { $sourceEvidence = New-OneCSourceExportEvidence -StagedPath $stagedPath -ExportPath $absoluteExportPath }
+        catch { Write-Warning ('SOURCE_EXPORT_EVIDENCE_UNAVAILABLE: ' + $_.Exception.Message) -WarningAction Continue }
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $absoluteExportPath) | Out-Null
         if ($targetExisted) {
             Move-Item -LiteralPath $absoluteExportPath -Destination $backupPath
@@ -1994,13 +3661,21 @@ function Dump-ConfigToFilesFromInfoBase {
         $stageInstalled = $true
         Write-Agent1cProjectTransactionState -Paths $transaction -Kind "c" -Phase "installed" -Target $absoluteExportPath
 
-        Complete-Agent1cProjectTransactionSlot -Paths $transaction
+        $cleanupWarning = ""
+        try {
+            Complete-Agent1cProjectTransactionSlot -Paths $transaction
+        } catch {
+            $cleanupWarning = $_.Exception.Message
+            Write-Warning "Installed 1C configuration dump was kept, but transaction cleanup is incomplete at '$transactionRoot': $cleanupWarning" -WarningAction Continue
+        }
+        Save-OneCSourceExportEvidence -Evidence $sourceEvidence
 
         return [pscustomobject]@{
             exportPath = $exportPath
             absoluteExportPath = $absoluteExportPath
-            incremental = $false
+            incremental = [bool]$useIncremental
             transactional = $true
+            cleanupWarning = $cleanupWarning
             logPath = $script:LastLogPath
         }
     } catch {
@@ -2021,11 +3696,39 @@ function Dump-ConfigToFilesFromInfoBase {
     }
 }
 
+function Get-SourceConfigurationGenerationId {
+    if ((Get-InfoBaseKind) -ne "file") { return "" }
+    try {
+        $logPath = Invoke-Designer `
+            -InfoBasePath (Get-SourceInfoBasePath) `
+            -InfoBaseKind "file" `
+            -DesignerArgs @("/GetConfigGenerationID")
+        $logText = Read-Utf8Text -Path $logPath
+        $matches = [regex]::Matches($logText, '(?i)(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])')
+        if ($matches.Count -ne 1) {
+            throw "SOURCE_GENERATION_ID_AMBIGUOUS: expected one 40-character identifier in the Designer log, found $($matches.Count)."
+        }
+        return $matches[0].Value.ToLowerInvariant()
+    } catch {
+        Write-Warning "SOURCE_GENERATION_ID_UNAVAILABLE: $($_.Exception.Message). The full export path remains available."
+        return ""
+    }
+}
+
 function Dump-ConfigToFiles {
     return (Dump-ConfigToFilesFromInfoBase `
         -InfoBasePath (Get-SourceInfoBasePath) `
         -InfoBaseKind (Get-InfoBaseKind) `
         -IncludeRepositoryConnection:(Get-SourceUsesRepository))
+}
+
+function Get-ExistingAuthoritativeExportResult {
+    return [pscustomobject]@{
+        exportPath = Get-ExportPath
+        absoluteExportPath = Assert-ExportPathInsideProject (Get-ExportPath)
+        incremental = $false
+        logPath = $script:LastLogPath
+    }
 }
 
 function Dump-ExtensionToFiles {
@@ -2059,6 +3762,10 @@ function Dump-ExtensionToFiles {
         Assert-NormalizedExtensionDump -Path $stagedPath -Name $extensionName
         Invoke-ExtensionLifecycleTool -ScriptPath $tools.validate -Arguments @("-ExtensionPath", $stagedPath)
 
+        $sourceEvidence = $null
+        try { $sourceEvidence = New-OneCSourceExportEvidence -StagedPath $stagedPath -ExportPath $absoluteExportPath -ExtensionName $extensionName }
+        catch { Write-Warning ('SOURCE_EXPORT_EVIDENCE_UNAVAILABLE: ' + $_.Exception.Message) -WarningAction Continue }
+
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $absoluteExportPath) | Out-Null
         if ($targetExisted) {
             Move-Item -LiteralPath $absoluteExportPath -Destination $backupPath
@@ -2071,6 +3778,7 @@ function Dump-ExtensionToFiles {
         $stageInstalled = $true
         Write-Agent1cProjectTransactionState -Paths $transaction -Kind "e" -Phase "installed" -Target $absoluteExportPath
         Complete-Agent1cProjectTransactionSlot -Paths $transaction
+        Save-OneCSourceExportEvidence -Evidence $sourceEvidence
 
         return [pscustomobject]@{
             extensionName = $extensionName
@@ -2096,6 +3804,284 @@ function Dump-ExtensionToFiles {
     }
 }
 
+function Get-ItlSourceDatabasePlan {
+    $source = New-ItlOnDemandDatabaseConnection -Kind (Get-InfoBaseKind) -Path (Get-SourceInfoBasePath)
+    $bases = @($source)
+    $seed = $null
+    if ($source.kind -eq 'file') {
+        # Seed normalization/dump runs Designer against this fixed directory.
+        # Its file-reader/writer lease still protects artifact publication.
+        $seed = New-ItlOnDemandDatabaseConnection -Kind file -Path (Split-Path -Parent (Get-BranchSeedPaths).artifactPath)
+        $bases += $seed
+    }
+    foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $source.path
+    })) {
+        $bases += @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtime -Family ([string]$runtime.family) -FallbackTarget $source)
+    }
+    return [pscustomobject]@{project=[IO.Path]::GetFullPath($script:ProjectRoot);source=$source;seed=$seed;bases=@($bases)}
+}
+
+function Restore-ItlProcessEnvironment {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Snapshot)
+    $current = [Environment]::GetEnvironmentVariables('Process')
+    foreach ($key in @($current.Keys)) {
+        if (-not $Snapshot.Contains($key)) { [Environment]::SetEnvironmentVariable($key, $null, 'Process') }
+    }
+    foreach ($key in $Snapshot.Keys) {
+        $value = [string]$Snapshot[$key]
+        if ($current.Contains($key) -and [string]$current[$key] -ceq $value) { continue }
+        if ($value.Length -eq 0 -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            # .NET Framework treats an empty value as deletion. Native Windows
+            # distinguishes an existing empty value from an absent variable.
+            if (-not ('ItlWorkflow.ProcessEnvironment' -as [type])) {
+                Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace ItlWorkflow {
+    public static class ProcessEnvironment {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetEnvironmentVariable(string name, string value);
+    }
+}
+'@
+            }
+            if (-not [ItlWorkflow.ProcessEnvironment]::SetEnvironmentVariable([string]$key, '')) {
+                throw "PROCESS_ENVIRONMENT_RESTORE_FAILED: $key"
+            }
+        } else { [Environment]::SetEnvironmentVariable($key, $value, 'Process') }
+    }
+}
+
+function Get-ItlMasterDatabasePlan {
+    $mainRoot = Get-MainWorktreePath
+    # Planning precedes lifecycle locks and must leave the calling branch's
+    # process environment intact, including keys absent from its .dev.env.
+    $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
+    try {
+        return Invoke-InProjectContext -Root $mainRoot -ScriptBlock { Get-ItlSourceDatabasePlan }
+    } finally {
+        Restore-ItlProcessEnvironment -Snapshot $environmentBefore
+    }
+}
+
+function Get-BranchSourceSyncScope {
+    param([object]$State)
+    $requestVariable = Get-Variable -Name BranchSyncRequestPath -ErrorAction SilentlyContinue
+    $requestPath = if ($null -ne $requestVariable) { [string]$requestVariable.Value } else { '' }
+    $primaryName = [string]$State.devBranchName
+    $names = [Collections.Generic.List[string]]::new()
+    $names.Add($primaryName)
+    $hash = ''
+    if ($requestPath) {
+        if ($PeerDevBranchName) { throw 'DEV_BRANCH_SOURCE_SYNC_SCOPE_AMBIGUOUS: use either a peer or a group request.' }
+        $requestPath = Resolve-ProjectPath $requestPath
+        $requestBytes = [IO.File]::ReadAllBytes($requestPath)
+        $request = ([Text.UTF8Encoding]::new($false, $true).GetString($requestBytes).TrimStart([char]0xfeff)) | ConvertFrom-Json -ErrorAction Stop
+        if (-not $request -or -not $request.PSObject.Properties['schemaVersion'] -or
+            -not $request.PSObject.Properties['peers'] -or -not $request.PSObject.Properties['recipients'] -or
+            $request.schemaVersion -ne 1 -or $request.peers -isnot [array] -or $request.recipients -isnot [array] -or
+            @($request.peers).Count -eq 0 -or @($request.PSObject.Properties.Name | Where-Object { $_ -notin @('schemaVersion','peers','recipients') }).Count -gt 0) {
+            throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_INVALID: schemaVersion 1, peers and explicit recipients are required.'
+        }
+        $peers = @($request.peers)
+        $recipients = @($request.recipients)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $hash = ([BitConverter]::ToString($sha.ComputeHash($requestBytes))).Replace('-', '').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+    } else {
+        $peers = @(Require-Value 'PeerDevBranchName' $PeerDevBranchName)
+        $recipients = @($primaryName) + $peers
+    }
+    foreach ($peer in $peers) {
+        if ($peer -isnot [string] -or [string]::IsNullOrWhiteSpace($peer)) { throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_INVALID: peer names must be nonempty strings.' }
+        $name = $peer.Trim() -replace '^itldev/', ''
+        if (@($names | Where-Object { $_ -ieq $name }).Count -gt 0) { throw 'DEV_BRANCH_SOURCE_SYNC_SAME_BRANCH: a branch is listed more than once.' }
+        $names.Add($name)
+    }
+    $targets = @()
+    foreach ($recipient in $recipients) {
+        if ($recipient -isnot [string]) { throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_INVALID: recipient names must be strings.' }
+        $name = $recipient.Trim() -replace '^itldev/', ''
+        $matched = @($names | Where-Object { $_ -ieq $name })
+        if ($matched.Count -ne 1 -or $targets -icontains $matched[0]) { throw 'DEV_BRANCH_SOURCE_SYNC_RECIPIENT_INVALID: each recipient must be a distinct participating branch.' }
+        $targets += $matched[0]
+    }
+    if ($targets -inotcontains $primaryName) { throw 'DEV_BRANCH_SOURCE_SYNC_INITIATOR_REQUIRED: include the current branch among recipients.' }
+    $states = @($State)
+    foreach ($name in @($names | Select-Object -Skip 1)) { $states += Read-DevBranchState -Name $name }
+    foreach ($member in $states) {
+        $pending = [string](Get-StateValue $member 'pendingBranchSourceGroupId' '')
+        if ($pending -and (-not $requestPath -or $member.devBranchName -ine $primaryName)) {
+            throw "DEV_BRANCH_SOURCE_SYNC_GROUP_PENDING: continue group $pending from '$($member.worktreePath)' with its original request."
+        }
+    }
+    return [pscustomobject]@{group=[bool]$requestPath;requestPath=$requestPath;requestHash=$hash;names=@($names);recipients=@($targets);states=$states}
+}
+
+function Test-BranchSourceSyncScopeEquivalent {
+    param([AllowNull()][object]$First, [AllowNull()][object]$Second)
+    if ($null -eq $First -or $null -eq $Second) { return $false }
+    if ([bool]$First.group -ne [bool]$Second.group -or
+        [string]$First.requestHash -cne [string]$Second.requestHash -or
+        (@($First.names) -join [char]0) -cne (@($Second.names) -join [char]0) -or
+        (@($First.recipients) -join [char]0) -cne (@($Second.recipients) -join [char]0)) { return $false }
+    $firstPaths = @($First.states | ForEach-Object { (Resolve-Agent1cFullPath -Path ([string]$_.worktreePath)).ToLowerInvariant() })
+    $secondPaths = @($Second.states | ForEach-Object { (Resolve-Agent1cFullPath -Path ([string]$_.worktreePath)).ToLowerInvariant() })
+    return (($firstPaths -join [char]0) -ceq ($secondPaths -join [char]0))
+}
+
+function Get-ItlBranchSourceSyncDatabasePlan {
+    param([object]$State)
+    $scope = Get-BranchSourceSyncScope -State $State
+    $exportPath = Get-DevBranchSourceSyncExportPath -State $State
+    $bases = @(); $participants = @()
+    $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
+    try {
+        foreach ($member in $scope.states) {
+            Assert-DevBranchSourceSyncCompatibility -PrimaryState $State -PeerState $member | Out-Null
+            $memberPlan = Invoke-InProjectContext -Root $member.worktreePath -ScriptBlock {
+                Assert-DevelopmentBranchWorktreeContext -State $member -Operation 'sync-dev-branches'
+                if ((Get-DevBranchSourceSyncExportPath -State $member) -cne $exportPath) { throw 'DEV_BRANCH_SOURCE_SYNC_PATH_MISMATCH: source roots differ between projects.' }
+                Get-ItlDevBranchMutationDatabasePlan -State $member -Operation update-dev-branch-base
+            }
+            $bases += @($memberPlan.bases)
+            $participants += [pscustomobject]@{project=[IO.Path]::GetFullPath($member.worktreePath);branch=[string]$member.devBranch
+                name=[string]$member.devBranchName;target=$memberPlan.target;exportPath=$exportPath}
+            Restore-ItlProcessEnvironment -Snapshot $environmentBefore
+        }
+    } finally { Restore-ItlProcessEnvironment -Snapshot $environmentBefore }
+    $unique = @{}
+    foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
+    return [pscustomobject]@{target=$participants[0].target;bases=@($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] })
+        syncParticipants=$participants;syncScope=$scope}
+}
+
+function Get-ItlDevBranchMutationDatabasePlan {
+    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches', 'initialize-dev-branch-runtime', 'adopt-dev-worktree', 'new-dev-branch', 'new-extension-dev-branch', 'fork-dev-branch', 'init-project')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '', [string]$ServiceReserveGeneration = '')
+    if ($Operation -in @('update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) {
+        return Get-ItlAuxiliaryDatabasePlan -State $State -Operation $Operation -ServiceGeneration $ServiceGeneration
+    }
+    if ($Operation -eq 'sync-dev-branches') { return Get-ItlBranchSourceSyncDatabasePlan -State $State }
+    if ($Operation -in @('sync-master','new-dev-branch','new-extension-dev-branch','init-project')) {
+        $master = if ($Operation -eq 'init-project') { Get-ItlSourceDatabasePlan } else { Get-ItlMasterDatabasePlan }
+        return [pscustomobject]@{target=$master.source;bases=@($master.bases);masterPlan=$master}
+    }
+    if ($Operation -eq 'lock-config-repository-objects') {
+        # Repository ownership changes run against the source base. Branch and
+        # Vanessa manager databases are unrelated to this native operation.
+        $target = [pscustomobject]@{ kind = [string](Get-InfoBaseKind); path = [string](Get-SourceInfoBasePath) }
+        return [pscustomobject]@{ target = $target; bases = @($target) }
+    }
+    if ($Operation -in @('dump-dev-branch-extension', 'loadfrom1cbase', 'getconfigfiles')) {
+        # Read-only native dump does not drain or prepare a Vanessa manager.
+        $target = New-ItlOnDemandDatabaseConnection -Kind ([string](Get-StateValue $State 'infoBaseKind' '')) -Path ([string]$State.devBranchInfoBasePath)
+        return [pscustomobject]@{target=$target;bases=@($target)}
+    }
+    $plan = Get-ItlVanessaCleanupDatabasePlan -State $State
+    $bases = @($plan.bases)
+    $master = $null
+    if ($Operation -eq 'refresh-dev-branch') {
+        $master = Get-ItlMasterDatabasePlan
+        $bases += @($master.bases)
+    }
+    $servicePlan = $null
+    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'deploy-and-test','initialize-dev-branch-runtime','adopt-dev-worktree')) {
+        # Repairs can replace a service generation even when there is no test
+        # suite. Reserve that exact new address before taking lifecycle locks.
+        $servicePlan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $ServiceGeneration
+        $bases += [pscustomobject]@{kind=$servicePlan.kind;path=$servicePlan.path}
+    }
+    $reserve = ''
+    if ($Operation -in @('reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch')) {
+        # A fresh helper after replacing source can require a different service
+        # template. Reserve the replacement address before any database work,
+        # even when the current helper can still reuse the saved generation.
+        $reserve = if ($ServiceReserveGeneration) { $ServiceReserveGeneration } else { [guid]::NewGuid().ToString('N') }
+        if ($reserve -cnotmatch '^[a-f0-9]{32}$') { throw 'NATIVE_CONTINUATION_GENERATION_INVALID' }
+        $bases += [pscustomobject]@{kind='file';path=(Get-VanessaServiceInfoBasePath -State $State -Generation $reserve)}
+    }
+    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'release-e2e-extension-smoke', 'deploy-and-test')) {
+        # Only execution of tests uses their additional profile databases.
+        # Tooling repair must remain available with an invalid test manifest.
+        $manifest = Read-VanessaTestClientManifest
+        if ($null -ne $manifest) {
+            $bases += @(Get-VanessaTestClientDatabaseResources -Topology $manifest -DefaultState $State)
+        }
+    }
+    foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $plan.target.path
+    })) {
+        $bases += @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtime -Family ([string]$runtime.family) -FallbackTarget $plan.target)
+    }
+    $unique = @{}
+    foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
+    return [pscustomobject]@{ target = $plan.target; bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }); servicePlan = $servicePlan; serviceTarget = $plan.target; serviceReserveGeneration = $reserve; masterPlan = $master }
+}
+
+function Get-ItlInitializationExecutionState {
+    param([string]$Operation = 'initialize-dev-branch-runtime')
+    Require-Value 'DevBranchName' $DevBranchName | Out-Null
+    $safe = ConvertTo-SafeName $DevBranchName
+    $path = $DevBranchInfoBasePath
+    if ($Operation -eq 'adopt-dev-worktree') {
+        Require-Value 'RuntimeRoot' $RuntimeRoot | Out-Null
+        Require-Value 'MainWorktreePath' $MainWorktreePath | Out-Null
+        $expected = Resolve-Agent1cFullPath -Path (Join-Path $MainWorktreePath ".agent-1c/workspaces/$safe")
+        if ((Resolve-Agent1cFullPath -Path $RuntimeRoot) -ine $expected) { throw 'WORKSPACE_RUNTIME_ROOT_CHANGED' }
+        $path = Join-Path $expected 'infobase'
+    } elseif (-not $path) {
+        $path = Join-Path (Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)) $safe
+    }
+    $values = @{}
+    $statePath = Find-DevBranchStateFile -SafeDevBranchName $safe
+    if ($statePath) { $values = ConvertTo-Agent1cHashtable -Object (Read-DevBranchStateFile -Path $statePath) }
+    # Derive the future target by the same inputs as Initialize-DevBranchRuntime;
+    # an existing state cannot redirect execution to a different old database.
+    $values['devBranchName'] = $DevBranchName
+    $values['safeDevBranchName'] = $safe
+    $values['devBranch'] = $(if ($DevBranch) { $DevBranch } else { "itldev/$safe" })
+    $values['worktreePath'] = [IO.Path]::GetFullPath($script:ProjectRoot)
+    $values['devBranchInfoBasePath'] = $path
+    $values['infoBaseKind'] = Get-InfoBaseKind
+    $values['devBranchKind'] = $DevBranchKind
+    return [pscustomobject]$values
+}
+
+function Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard {
+    param([Parameter(Mandatory = $true)][object]$Request)
+
+    $state = $Request.state
+    $infoBaseKind = [string]$Request.infoBaseKind
+    $infoBasePath = [string]$Request.infoBasePath
+    $reason = [string]$Request.reason
+    Set-RunStage -Stage 'config-load.stop-owned-runtime' -Detail "Stopping workflow-owned sessions for the exact development branch infobase before $reason."
+    try {
+        Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason $reason | Out-Null
+        Stop-ItlOnDemandBackends -Family 'roctup' -InfoBasePath $infoBasePath -Strict
+        $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $state
+        if ($roctupRuntime.processAlive) {
+            Stop-RoctupMcpForState -State $state -Quiet -RequireOwnership -SkipClientConfig | Out-Null
+        }
+    } catch {
+        throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED: exact owned cleanup is unconfirmed; foreign sessions were preserved. $($_.Exception.Message)"
+    }
+    $remainingOwned = @(Get-OwnVanessaTestProcesses -State $state -RequireInspection)
+    $remainingBackends = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath
+    })
+    if ($remainingOwned.Count -gt 0 -or $remainingBackends.Count -gt 0) {
+        throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED: workflow-owned runtime remains (tests=$($remainingOwned.Count), ondemand=$($remainingBackends.Count))."
+    }
+    $foreign = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath)
+    if ($foreign.Count -gt 0) {
+        $targetDisplay = Format-OneCExecutionGuardTarget -Kind $infoBaseKind -Path $infoBasePath
+        throw "EXECUTION_GUARD_EXTERNAL_CONFLICT: operation='$reason' target='$targetDisplay' has $($foreign.Count) unidentified live session(s); wait for them to exit or cancel the managed operation; no foreign process was stopped."
+    }
+    Write-Host "Workflow-owned sessions stopped before $reason; unidentified processes were not terminated."
+}
+
 function Stop-DevBranchRuntimeBeforeInfobaseMutation {
     param(
         [Parameter(Mandatory = $true)][object]$State,
@@ -2113,51 +4099,8 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
     }
 
     $infoBaseKind = [string](Get-StateValue -State $State -Name "infoBaseKind" -Default "file")
-    Set-RunStage -Stage "config-load.stop-runtime" -Detail "Stopping 1C sessions for the exact development branch infobase before $Reason."
-    $ownedCleanupError = ""
-    try {
-        Invoke-DevBranchVanessaRuntimeRelease -State $State -Reason $Reason | Out-Null
-        Stop-ItlOnDemandBackends -Family "roctup" -InfoBasePath $infoBasePath -Strict
-        $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $State
-        if ($roctupRuntime.processAlive) {
-            Stop-RoctupMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
-        }
-    } catch {
-        $ownedCleanupError = $_.Exception.Message
-        Write-Warning "Workflow-owned cleanup could not prove ownership before exact-infobase cleanup: $ownedCleanupError"
-    }
-
-    try {
-        $sessionCleanup = Stop-OneCInfoBaseSessionProcesses `
-            -InfoBaseKind $infoBaseKind `
-            -InfoBasePath $infoBasePath `
-            -Reason $Reason
-
-        if ($ownedCleanupError) {
-            # Exact-infobase cleanup can recover from an ownership mismatch. In
-            # that case re-run the regular owners only to release stale state.
-            Invoke-DevBranchVanessaRuntimeRelease -State $State -Reason $Reason | Out-Null
-            Stop-ItlOnDemandBackends -InfoBasePath $infoBasePath -Strict
-            $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $State
-            if ($roctupRuntime.processAlive) {
-                Stop-RoctupMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
-            }
-        }
-
-        $remainingSessions = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath)
-        $remainingTests = @(Get-OwnVanessaTestProcesses -State $State -RequireInspection)
-        $remainingOnDemand = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
-            Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath
-        })
-        if ($remainingSessions.Count -gt 0 -or $remainingTests.Count -gt 0 -or $remainingOnDemand.Count -gt 0) {
-            throw "processes remain after cleanup (sessions=$($remainingSessions.Count), tests=$($remainingTests.Count), ondemand=$($remainingOnDemand.Count))."
-        }
-    } catch {
-        $ownedDetail = if ($ownedCleanupError) { " initialOwnedCleanup='$ownedCleanupError'" } else { "" }
-        throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED reason='$Reason' infoBasePath='$infoBasePath' detail='$($_.Exception.Message)'$ownedDetail"
-    }
-
-    Write-Host "Exact development branch infobase sessions stopped before $Reason. Stopped local sessions: $($sessionCleanup.stopped)."
+    $script:OneCExecutionDrainRequest = [pscustomobject]@{state=$State;infoBaseKind=$infoBaseKind;infoBasePath=$infoBasePath;reason=$Reason}
+    Set-RunStage -Stage 'config-load.drain-planned' -Detail "Owned exact-base runtime drain will run after execution guard admission for $Reason."
 }
 
 function Restore-DevBranchInfobaseFromSnapshot {
@@ -2167,12 +4110,22 @@ function Restore-DevBranchInfobaseFromSnapshot {
         [string]$Reason = "infobase snapshot restore"
     )
 
-    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason $Reason
-    Reset-DevBranchToolingProof -State $State -Reason $Reason
-    Invoke-Designer `
-        -InfoBasePath $State.devBranchInfoBasePath `
-        -InfoBaseKind $State.infoBaseKind `
-        -DesignerArgs @("/RestoreIB", $SnapshotPath) | Out-Null
+    $duty = Get-OneCDatabaseRestorationDuty -SnapshotPath $SnapshotPath
+    $arguments = @{InfoBasePath=$State.devBranchInfoBasePath;InfoBaseKind=$State.infoBaseKind;DesignerArgs=@('/RestoreIB',$SnapshotPath)}
+    if ($null -ne $duty) { $arguments.RestorationDuty = $duty }
+    # Prevent a concurrent writer from replacing the verified DT while 1C reads
+    # it. This lease does not prevent the native process from opening it to read.
+    $snapshotReadLease = $null
+    if ($null -ne $duty) { $snapshotReadLease = [IO.File]::Open($SnapshotPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read) }
+    try {
+        if ($null -ne $duty) {
+            Assert-OneCDatabaseRestoreRequest -Duty $duty -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath -DesignerArgs $arguments.DesignerArgs
+        }
+        Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason $Reason
+        Reset-DevBranchToolingProof -State $State -Reason $Reason
+        Invoke-Designer @arguments | Out-Null
+    }
+    finally { if ($null -ne $snapshotReadLease) { $snapshotReadLease.Dispose() } }
 }
 
 function Remove-CompletedInfobaseSnapshot {
@@ -2188,11 +4141,19 @@ function Remove-CompletedInfobaseSnapshot {
         throw "Refusing to remove an infobase snapshot outside the project snapshot directory: $SnapshotPath"
     }
 
+    if ($null -ne (Get-OneCDatabaseRestorationDuty -SnapshotPath $absoluteSnapshotPath)) {
+        throw 'ONEC_RESTORATION_SNAPSHOT_STILL_REQUIRED'
+    }
+
     if (Test-Path -LiteralPath $absoluteSnapshotPath -PathType Leaf -ErrorAction SilentlyContinue) {
         Remove-Item -LiteralPath $absoluteSnapshotPath -Force -ErrorAction Stop
     }
     if (Test-Path -LiteralPath $absoluteSnapshotPath -ErrorAction SilentlyContinue) {
         throw "Infobase snapshot still exists after cleanup: $absoluteSnapshotPath"
+    }
+    foreach ($suffix in @('.recovery.json','.state.json','.env','.project.json')) {
+        $contextPath = $absoluteSnapshotPath + $suffix
+        if (Test-Path -LiteralPath $contextPath -PathType Leaf) { Remove-Item -LiteralPath $contextPath -Force -ErrorAction Stop }
     }
 }
 
@@ -2224,7 +4185,7 @@ function Load-ConfigFromFiles {
     $loadProofInvalidated = (-not $previousFingerprint -and $configLoadStatus -and $configLoadStatus -notin @("passed", "fallback-succeeded"))
 
     if ($Mode -ne "Full" -and $previousFingerprint -and $previousFingerprint -eq $source.fingerprint) {
-        $normalizationRequired = $normalizationStatus -ne "passed"
+        $normalizationRequired = -not (Test-DevBranchEnterpriseNormalizationProved -State $State)
         $reason = if ($normalizationRequired) { "source-fingerprint-match-normalization-required" } else { "source-fingerprint-match" }
         Write-Host "Config source fingerprint unchanged for $ContentKind. Designer skipped."
         Set-RunStage -Stage "config-load.skipped" -Detail "The $ContentKind fingerprint is unchanged; Designer was skipped."
@@ -2232,6 +4193,8 @@ function Load-ConfigFromFiles {
         return [pscustomobject]@{
             loaded = $false
             normalizationRequired = $normalizationRequired
+            infoBasePath = $InfoBasePath
+            infoBaseKind = $InfoBaseKind
             fileCount = $source.fileCount
             listFile = ""
             currentCommit = $currentCommit
@@ -2300,6 +4263,24 @@ function Load-ConfigFromFiles {
             -AdditionalRelativePaths $sourceIntegrityRelativePaths
     }
 
+    # Every editable source load keeps compilation; static MCP coverage does not waive it.
+    $checkProfile = Get-PlatformCheckProfile
+    $requireGate6 = $ContentKind -eq 'configuration' -and (Test-MainConfigurationGate6Required -ChangeSet $changeSet)
+    $staticCoverageContext = $null
+    $legacyContextAssessment = $null
+    $legacyContext = if ($checkProfile -eq 'production' -and $ContentKind -eq 'configuration') { New-ProductionPlatformLegacyContext -State $State -ChangeSet $changeSet `
+        -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -Assessment ([ref]$legacyContextAssessment) } else { $null }
+    if ($null -ne $legacyContextAssessment -and -not $legacyContextAssessment.eligible) {
+        try {
+            $directory = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+            $path = New-TimestampedFilePath -Directory $directory -Prefix '1c-gate6-legacy-context-' -Extension '.json'
+            Write-Utf8TextAtomic -Path $path -Value (($legacyContextAssessment | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            $legacyContextAssessment.evidencePath=$path
+            $legacyContextAssessment.evidenceSha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        } catch { Write-Warning "Legacy-context refusal evidence could not be saved: $($_.Exception.Message)" }
+    }
+
     $listFilePath = ""
     if ($Mode -ne "Full") {
         $listFilePath = New-ConfigLoadListFile -State $State -Files $changeSet.files
@@ -2308,27 +4289,64 @@ function Load-ConfigFromFiles {
     Set-RunStage -Stage "config-load.designer" -Detail "Loading $ContentKind source through Designer in $Mode mode."
     $statePath = if ($State) { [string](Get-StateValue -State $State -Name "statePath" -Default "") } else { "" }
     $canPersistLoadProof = $statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)
+    # D0/D3: the applied-proof context of this partially loaded object is read
+    # before this load clears its fingerprint. An empty fingerprint with a
+    # recorded tree means an earlier load stopped before its apply.
+    $previousTreeObjectId = [string](Get-StateValue -State $State -Name $treeObjectIdField -Default "")
+    $appliedProof = if ($canPersistLoadProof) {
+        [pscustomobject]@{ statePath=$statePath; contentKind=$ContentKind; fingerprintField=$fingerprintField
+            treeField=$treeObjectIdField; previousFingerprint=$previousFingerprint; previousTree=$previousTreeObjectId
+            unfinished=(-not $previousFingerprint -and [bool]$previousTreeObjectId) }
+    } else { $null }
     $loadState = $State
     if ($canPersistLoadProof) {
         $loadStateHash = ConvertTo-Agent1cHashtable -Object $State
         $loadStateHash[$fingerprintField] = ""
         $loadStateHash["configLoadStatus"] = "pending"
+        $loadStateHash["lastGate6Evidence"] = $null
         $loadState = [pscustomobject]$loadStateHash
         Update-DevBranchState -State $loadState -Updates @{
             $fingerprintField = ""
             configLoadStatus = "pending"
+            lastGate6Evidence = $null
         }
     }
-    $orchestration = Invoke-ConfigLoadWithFallback `
+    try {
+    $orchestration = Invoke-ConfigLoadWithFallback -CheckProfile $checkProfile `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
         -State $loadState `
         -AbsoluteExportPath $changeSet.absoluteExportPath `
         -ListFilePath $listFilePath `
         -FileCount $changeSet.files.Count `
+        -SourceFingerprint $source.fingerprint `
+        -SourceTreeObjectId $sourceTreeObjectId `
+        -SourceCommit $currentCommit `
+        -ExportPath ([string](Get-StateValue -State $source -Name "repoPath" -Default $ExportPath)) `
+        -ContentKind $ContentKind `
         -ExtensionName $ExtensionName `
+        -RequireGate6:$requireGate6 `
+        -StaticCoverageContext $staticCoverageContext `
+        -LegacyContext $legacyContext `
         -Mode $Mode `
-        -ResetConfigDumpInfo:($restoreInvalidated -or $Mode -eq "Full")
+        -ResetConfigDumpInfo:($restoreInvalidated -or $Mode -eq "Full") `
+        -AppliedProof $appliedProof
+    } catch {
+        $loadFailure = $_
+        try {
+            Restore-ConfigLoadPreviousDesignerProof -PreviousState $State -Failure $loadFailure `
+                -ContentKind $ContentKind -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+        } catch {
+            Write-Warning "Previous Designer proof was not restored after checked rollback: $($_.Exception.Message). Preserve diagnostics and repeat the original operation through its recovery owner."
+        }
+        if ($null -ne $legacyContextAssessment -and -not $legacyContextAssessment.eligible) {
+            $reason=[string]$legacyContextAssessment.reason
+            Write-Host "GATE6_LEGACY_CONTEXT_UNAVAILABLE: $($reason.Substring(0,[Math]::Min(256,$reason.Length))); evidence=$($legacyContextAssessment.evidencePath). No legacy admission was granted; inspect the missing proof, preserve this repair session, and repeat the original owner operation after correction."
+        }
+        try { Write-ConfigLoadRejectionEvidence -Failure $loadFailure -LegacyContextAssessment $legacyContextAssessment }
+        catch { Write-Warning "Checked-load rejection evidence could not be saved: $($_.Exception.Message)" }
+        throw $loadFailure
+    }
     Set-RunStage -Stage "config-load.loaded" -Detail "Designer completed the $ContentKind source load."
 
     $loadedAt = (Get-Date).ToString("o")
@@ -2338,6 +4356,7 @@ function Load-ConfigFromFiles {
             $treeObjectIdField = $sourceTreeObjectId
             $loadedAtField = $loadedAt
             configLoadStatus = $orchestration.configLoadStatus
+            lastGate6Evidence = $(if ($orchestration.PSObject.Properties['gate6Evidence']) { $orchestration.gate6Evidence } else { $null })
             lastConfigLoadMode = $orchestration.loadModeUsed
             enterpriseNormalizationStatus = "pending"
             enterpriseNormalizationReason = "config-load"
@@ -2348,6 +4367,8 @@ function Load-ConfigFromFiles {
     return [pscustomobject]@{
         loaded = $true
         fileCount = $changeSet.files.Count
+        infoBasePath = $InfoBasePath
+        infoBaseKind = $InfoBaseKind
         listFile = $listFilePath
         currentCommit = $changeSet.currentCommit
         lastLogPath = $orchestration.lastLogPath
@@ -2355,6 +4376,7 @@ function Load-ConfigFromFiles {
         partialLogPath = $orchestration.partialLogPath
         fullFallbackLogPath = $orchestration.fullFallbackLogPath
         configLoadStatus = $orchestration.configLoadStatus
+        gate6Evidence = $(if ($orchestration.PSObject.Properties['gate6Evidence']) { $orchestration.gate6Evidence } else { $null })
         partialError = $orchestration.partialError
         fullFallbackError = $orchestration.fullFallbackError
         normalizationRequired = $true
@@ -2564,7 +4586,103 @@ function ConvertTo-ConfigRepositoryTransferPath {
     }
 }
 
-function Get-DevBranchResultTransferBaseCommit {
+function New-DevBranchResultTransferBaseline {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][ValidateSet('reset-dev-branch', 'refresh-dev-branch', 'refresh-dev-branch-lite', 'fork-dev-branch')][string]$Operation,
+        [Parameter(Mandatory = $true)][string]$BaseCommit,
+        [string]$CompletedHead = (Get-CurrentCommit),
+        [string]$CompletedAt = (Get-Date).ToString('o')
+    )
+    $stateObject = if ($State -is [Collections.IDictionary]) { [pscustomobject]$State } else { $State }
+    $root = [string](Get-StateValue -State $stateObject -Name 'worktreePath' -Default $script:ProjectRoot)
+    if (-not $root) { $root = $script:ProjectRoot }
+    return [ordered]@{
+        schemaVersion = 1
+        status = 'complete'
+        operation = $Operation
+        commit = $BaseCommit
+        completedHead = $CompletedHead
+        completedAt = $CompletedAt
+        branch = [string](Get-StateValue -State $stateObject -Name 'devBranch' -Default '')
+        worktreePath = Get-FullPathNormalized $root
+    }
+}
+
+function Get-DevBranchResultTransferBaseline {
+    param([AllowNull()][object]$State = $null, [switch]$RecordedOnly)
+
+    if ($null -ne $State) {
+        $stateObject = if ($State -is [Collections.IDictionary]) { [pscustomobject]$State } else { $State }
+        Assert-DevelopmentBranchWorktreeContext -State $stateObject -Operation 'configuration repository transfer baseline'
+        $stateValues = ConvertTo-Agent1cHashtable -Object $State
+        if ($stateValues.Contains('resultTransferBaseline')) {
+            $continuation = 'Repeat the original /itl-refresh or /itl-reset-branch recovery command in its owning worktree; for a fork, resume the original /itl-fork request. Then retry the original transfer operation. Do not edit the proof or substitute merge-base.'
+            try {
+                $proof = $stateValues['resultTransferBaseline']
+                $values = ConvertTo-Agent1cHashtable -Object $proof
+                if ($null -eq $proof -or $values.schemaVersion -ne 1 -or $values.status -cne 'complete' -or
+                    $values.operation -cnotin @('reset-dev-branch', 'refresh-dev-branch', 'refresh-dev-branch-lite', 'fork-dev-branch')) {
+                    throw 'missing, unsupported or incomplete lifecycle proof'
+                }
+                $branch = Get-CurrentBranch
+                $root = Get-FullPathNormalized $script:ProjectRoot
+                if ([string]$values.branch -cne $branch -or [string]$values.branch -cne [string]$stateValues.devBranch -or
+                    -not $values.worktreePath -or (Get-FullPathNormalized ([string]$values.worktreePath)) -ine $root) {
+                    throw 'foreign lifecycle branch/worktree proof'
+                }
+                if ([string]$stateValues['initializationStatus'] -and [string]$stateValues['initializationStatus'] -cne 'ready') {
+                    throw 'lifecycle transition is not complete'
+                }
+                $at = [DateTimeOffset]::MinValue
+                if (-not [DateTimeOffset]::TryParse([string]$values.completedAt, [ref]$at)) { throw 'invalid completion time' }
+                foreach ($commit in @([string]$values.commit, [string]$values.completedHead)) {
+                    if ($commit -cnotmatch '^[a-f0-9]{40}$' -or -not (Test-GitCommitExists -Commit $commit)) { throw "missing or invalid commit '$commit'" }
+                }
+                $head = Get-CurrentCommit
+                if (-not (Test-GitCommitIsAncestor -Ancestor ([string]$values.completedHead) -Descendant $head)) {
+                    throw 'completed lifecycle head is not in the current branch history'
+                }
+                if ($values.operation -ceq 'reset-dev-branch') {
+                    if ([string]$stateValues.resetStatus -cne 'complete' -or
+                        [string]$stateValues.resetMasterCommit -cne [string]$values.commit -or
+                        [string]$stateValues.resetNewHead -cne [string]$values.completedHead -or
+                        [string]$stateValues.resetCompletedAt -cne [string]$values.completedAt -or
+                        (Get-GitOutput @('rev-parse', "$($values.commit)^{tree}")).Trim() -cne (Get-GitOutput @('rev-parse', "$($values.completedHead)^{tree}")).Trim()) {
+                        throw 'reset completion/target/tree contradicts its proof'
+                    }
+                } else {
+                    if (-not (Test-GitCommitIsAncestor -Ancestor ([string]$values.commit) -Descendant ([string]$values.completedHead))) {
+                        throw 'lifecycle target is not in the completed head history'
+                    }
+                    if ($values.operation -ceq 'fork-dev-branch') {
+                        if (-not $stateValues.forkId -or [string]$stateValues.forkedFromCommit -cne [string]$values.commit) { throw 'fork source contradicts its proof' }
+                    } elseif ([string]$stateValues.lastRefreshMasterCommit -cne [string]$values.commit -or
+                        [string]$stateValues.lastRefreshAt -cne [string]$values.completedAt) {
+                        throw 'refresh completion/target contradicts its proof'
+                    }
+                }
+                return [pscustomobject]@{ commit = [string]$values.commit; provenance = ('lifecycle:' + [string]$values.operation); completedAt = [string]$values.completedAt }
+            } catch {
+                throw "DEV_BRANCH_TRANSFER_BASELINE_INVALID: $($_.Exception.Message). $continuation"
+            }
+        }
+    }
+
+    if ($RecordedOnly) {
+        # Before the first lifecycle transition the creation commit is the recorded base.
+        # A legacy refresh/reset without its proof cannot safely use the original seed.
+        if ($null -eq $State -or $stateValues['lastRefreshMasterCommit'] -or $stateValues['lastRefreshAt'] -or $stateValues['resetStatus'] -or
+            (Get-DevBranchInitializationStatus -State $stateObject) -ne 'ready') { return $null }
+        $seed = [string]$stateValues['createdFromCommit']
+        if ($seed -match '^[a-f0-9]{40}$' -and (Test-GitCommitIsAncestor -Ancestor $seed -Descendant HEAD)) {
+            return [pscustomobject]@{ commit = $seed; provenance = 'branch-creation'; completedAt = '' }
+        }
+        return $null
+    }
+
+    # No completed lifecycle proof was recorded by an older helper. Do not
+    # infer one from load commits or partially published refresh/reset fields.
     $masterCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
     if (-not $masterCommit) {
         throw "export-dev-branch-result could not resolve the local master commit for configuration repository transfer reporting."
@@ -2573,21 +4691,80 @@ function Get-DevBranchResultTransferBaseCommit {
     if (-not $baseCommit) {
         throw "export-dev-branch-result could not resolve merge-base between HEAD and local master for configuration repository transfer reporting."
     }
-    return $baseCommit
+    return [pscustomobject]@{ commit = $baseCommit; provenance = 'legacy:merge-base-master-no-lifecycle-proof'; completedAt = '' }
+}
+
+function Get-DevBranchResultTransferBaseCommit {
+    param([AllowNull()][object]$State = $null)
+    return [string](Get-DevBranchResultTransferBaseline -State $State).commit
+}
+
+function Get-DevBranchTransferScopeBaseline {
+    param([AllowNull()][object]$State = $null)
+
+    # Scope owner for review, /itl-result and repository lock. Verification and
+    # production keep the recorded proof: a manual master merge has not been
+    # checked in the branch infobase and does not change its loaded tree.
+    $baseline = Get-DevBranchResultTransferBaseline -State $State
+    if (-not ([string]$baseline.provenance).StartsWith('lifecycle:', [StringComparison]::Ordinal)) { return $baseline }
+    $recorded = [string]$baseline.commit
+    $masterCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
+    $mergeBase = if ($masterCommit) { (Get-GitOutput @('merge-base', 'HEAD', $masterCommit)).Trim() } else { '' }
+    if (-not $mergeBase -or (Test-GitCommitIsAncestor -Ancestor $mergeBase -Descendant $recorded)) { return $baseline }
+    if (Test-GitCommitIsAncestor -Ancestor $recorded -Descendant $mergeBase) {
+        return [pscustomobject]@{ commit = $mergeBase; provenance = 'merge-base-after-manual-merge'; completedAt = [string]$baseline.completedAt; recordedCommit = $recorded }
+    }
+    $continuation = 'Run /itl-refresh in this worktree to record a new branch base, then repeat the original command.'
+    if ([string]$baseline.provenance -ceq 'lifecycle:fork-dev-branch') {
+        throw "DEV_BRANCH_MANUAL_MERGE_REFRESH_REQUIRED: master was merged into the fork branch without /itl-refresh; the recorded fork base '$recorded' and merge-base '$mergeBase' are unrelated. $continuation"
+    }
+    throw "DEV_BRANCH_TRANSFER_SCOPE_BASE_DIVERGED: the recorded base '$recorded' and merge-base '$mergeBase' with master are unrelated; master was probably rewritten. $continuation"
+}
+
+function Get-DevBranchTransferScopeUnavailable {
+    param([string]$Message)
+
+    if ([string]$Message -cmatch '^(?<code>DEV_BRANCH_MANUAL_MERGE_REFRESH_REQUIRED|DEV_BRANCH_TRANSFER_SCOPE_BASE_DIVERGED): (?<reason>.*)$') {
+        return [pscustomobject]@{ code = [string]$Matches.code; reason = [string]$Matches.reason }
+    }
+    return $null
 }
 
 function Get-ConfigRepositoryTransferPlan {
     param(
         [string]$ExportPath,
-        [string]$BaseCommit = ""
+        [string]$BaseCommit = "",
+        [AllowNull()][object]$State = $null,
+        [switch]$ForRepositoryLock,
+        # Report-only callers receive an object-less plan instead of the two
+        # scope-base codes; lock and Release E2E still fail on them.
+        [switch]$ForReport
     )
 
     $normalizedExportPath = ([string]$ExportPath).Replace("\", "/").Trim("/")
     if (-not $normalizedExportPath) {
         throw "export-dev-branch-result cannot build a configuration repository transfer plan without an export path."
     }
+    $baseProvenance = 'explicit-base'
     if (-not $BaseCommit) {
-        $BaseCommit = Get-DevBranchResultTransferBaseCommit
+        try {
+            $baseline = Get-DevBranchTransferScopeBaseline -State $State
+        } catch {
+            $unavailable = Get-DevBranchTransferScopeUnavailable -Message $_.Exception.Message
+            if (-not $ForReport -or $null -eq $unavailable) { throw }
+            return [pscustomobject]@{
+                baseCommit = ''
+                baseProvenance = ''
+                exportPath = $normalizedExportPath
+                items = @()
+                unresolvedPaths = @()
+                unavailableCode = $unavailable.code
+                unavailableReason = $unavailable.reason
+                unavailableContinuation = 'Run /itl-refresh, then repeat /itl-result if the object list is needed.'
+            }
+        }
+        $BaseCommit = [string]$baseline.commit
+        $baseProvenance = [string]$baseline.provenance
     }
 
     $tracked = @(Get-GitPathList -Arguments @(
@@ -2639,12 +4816,123 @@ function Get-ConfigRepositoryTransferPlan {
             $item
         }
     )
-    return [pscustomobject]@{
+    $plan = [pscustomobject]@{
         baseCommit = $BaseCommit
+        baseProvenance = $baseProvenance
         exportPath = $normalizedExportPath
         items = $items
         unresolvedPaths = @($unresolved | Sort-Object -Unique)
     }
+    if ($ForRepositoryLock -and $plan.unresolvedPaths.Count -eq 0) {
+        return (Add-ConfigRepositoryRootLockDependency -Plan $plan)
+    }
+    return $plan
+}
+
+function Get-ConfigRepositoryMetadataTypeCollection {
+    param([string]$Type)
+    $irregularCollections = @{ BusinessProcess = 'BusinessProcesses'; FilterCriterion = 'FilterCriteria'; ChartOfAccounts = 'ChartsOfAccounts'; ChartOfCalculationTypes = 'ChartsOfCalculationTypes'; ChartOfCharacteristicTypes = 'ChartsOfCharacteristicTypes' }
+    if ($irregularCollections.ContainsKey($Type)) { return $irregularCollections[$Type] }
+    return ($Type + 's')
+}
+
+function Read-ConfigRepositoryMetadataIdentity {
+    param([string]$Text, [string]$Path)
+    try {
+        $document = [System.Xml.XmlDocument]::new()
+        $document.XmlResolver = $null
+        $document.LoadXml($Text)
+        $nodes = @($document.SelectNodes('/*[local-name()="MetaDataObject"]/*'))
+        if ($nodes.Count -ne 1) { throw 'Expected one metadata object.' }
+        $node = $nodes[0]
+        $collection = Get-ConfigRepositoryMetadataTypeCollection -Type $node.LocalName
+        if (($Path.Replace('\', '/') -split '/')[-2] -cne $collection) { throw 'Metadata type differs from descriptor collection.' }
+        $id = [guid]::Empty
+        if (-not [guid]::TryParse($node.GetAttribute('uuid'), [ref]$id) -or $id -eq [guid]::Empty) { throw 'Missing metadata UUID.' }
+        $nameNodes = @($node.SelectNodes('./*[local-name()="Properties"]/*[local-name()="Name"]'))
+        if ($nameNodes.Count -ne 1 -or -not $nameNodes[0].InnerText) { throw 'Missing metadata name.' }
+        if ([IO.Path]::GetFileNameWithoutExtension($Path) -cne $nameNodes[0].InnerText) { throw 'Metadata name differs from descriptor path.' }
+        return [pscustomobject]@{ uuid = $id.ToString('D'); type = $node.LocalName; name = $nameNodes[0].InnerText; path = $Path }
+    } catch {
+        throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: $Path; $($_.Exception.Message)"
+    }
+}
+
+function Add-ConfigRepositoryRootLockDependency {
+    param([Parameter(Mandatory = $true)][object]$Plan)
+    # Inspect only changed top-level descriptors. A new form or attribute inside
+    # an existing object is not a root addition. Never infer identity from Git A.
+    $exportPath = [string]$Plan.exportPath
+    $prefix = $exportPath.TrimEnd('/') + '/'
+    $candidates = @(@($Plan.items | ForEach-Object { $_.paths }) | Where-Object {
+        $_ -and $_.StartsWith($prefix, [StringComparison]::Ordinal) -and
+        $_.Substring($prefix.Length) -match '^[^/]+/[^/]+\.xml$' -and
+        (Get-ConfigRepositoryMetadataCollectionLabel -Collection ($_.Substring($prefix.Length) -split '/')[0]) -and
+        (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_) -PathType Leaf)
+    } | Sort-Object -Unique)
+    if ($candidates.Count -eq 0) { return $Plan }
+
+    $baseEntries = @(Get-GitPathList -Arguments @('ls-tree', '-r', '-z', [string]$Plan.baseCommit, '--', $exportPath))
+    $descriptors = @(foreach ($entry in $baseEntries) {
+        if ($entry -match '^[0-9]{6} blob (?<id>[a-f0-9]{40,64})\t(?<path>.+)$') {
+            $path = [string]$Matches.path; $id = [string]$Matches.id
+            if ($path.StartsWith($prefix, [StringComparison]::Ordinal) -and $path.Substring($prefix.Length) -match '^[^/]+/[^/]+\.xml$' -and
+                (Get-ConfigRepositoryMetadataCollectionLabel -Collection ($path.Substring($prefix.Length) -split '/')[0])) {
+                [pscustomobject]@{ path = $path; id = $id }
+            }
+        }
+    })
+    $baseById = @{}
+    # Bound the batch input too: do not fill stdin while Git is blocked writing
+    # a large XML blob to stdout.
+    for ($offset = 0; $offset -lt $descriptors.Count; $offset += 32) {
+        $chunk = @($descriptors | Select-Object -Skip $offset -First 32)
+        $blobs = Get-GitBlobBytesBatch -ObjectIds @($chunk.id)
+        foreach ($descriptor in $chunk) {
+            $text = [Text.Encoding]::UTF8.GetString([byte[]]$blobs[$descriptor.id]).TrimStart([char]0xFEFF)
+            $identity = Read-ConfigRepositoryMetadataIdentity -Text $text -Path $descriptor.path
+            if ($baseById.ContainsKey($identity.uuid)) { throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: duplicate baseline UUID $($identity.uuid)." }
+            $baseById[$identity.uuid] = $identity
+        }
+    }
+    $currentById = @{}
+    $additions = @(foreach ($path in $candidates) {
+        $identity = Read-ConfigRepositoryMetadataIdentity -Text (Read-Utf8Text -Path (Join-Path $script:ProjectRoot $path)) -Path $path
+        if ($currentById.ContainsKey($identity.uuid)) { throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: duplicate changed UUID $($identity.uuid)." }
+        $currentById[$identity.uuid] = $identity
+        if ($baseById.ContainsKey($identity.uuid)) {
+            if ($baseById[$identity.uuid].type -cne $identity.type) { throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: metadata type changed for UUID $($identity.uuid)." }
+            $previousPath = [string]$baseById[$identity.uuid].path
+            if ($previousPath -cne $identity.path -and (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $previousPath) -PathType Leaf)) {
+                $previousCurrentIdentity = Read-ConfigRepositoryMetadataIdentity -Text (Read-Utf8Text -Path (Join-Path $script:ProjectRoot $previousPath)) -Path $previousPath
+                if ($previousCurrentIdentity.uuid -eq $identity.uuid) { throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: duplicate current UUID $($identity.uuid)." }
+            }
+            continue
+        }
+        $identity
+    })
+    if ($additions.Count -eq 0) { return $Plan }
+    $rootPath = Join-Path $script:ProjectRoot ($prefix + 'Configuration.xml')
+    try {
+        $configuration = [Xml.XmlDocument]::new(); $configuration.XmlResolver = $null
+        $configuration.LoadXml((Read-Utf8Text -Path $rootPath))
+        $children = @($configuration.SelectNodes('/*[local-name()="MetaDataObject"]/*[local-name()="Configuration"]/*[local-name()="ChildObjects"]/*'))
+        foreach ($addition in $additions) {
+            $matches = @($children | Where-Object { $_.LocalName -ceq $addition.type -and $_.InnerText -ceq $addition.name })
+            if ($matches.Count -ne 1) { throw "New object $($addition.path) is not listed exactly once in the configuration root." }
+        }
+    } catch { throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: $rootPath; $($_.Exception.Message)" }
+
+    $requiredBy = @($additions | ForEach-Object { (ConvertTo-ConfigRepositoryTransferPath -RelativePath $_.path.Substring($prefix.Length)).objectName } | Sort-Object -Unique)
+    $rootItem = @($Plan.items | Where-Object name -eq 'Конфигурация')
+    if ($rootItem.Count -eq 0) {
+        $rootItem = @([pscustomobject]@{ name = 'Конфигурация'; scope = 'partial'; parts = @(); paths = @($prefix + 'Configuration.xml') })
+        $Plan.items = @($Plan.items) + $rootItem
+    }
+    $rootItem[0].scope = 'partial'
+    $rootItem[0].parts = @($rootItem[0].parts) + 'корень без дочерних объектов: добавление объектов верхнего уровня'
+    $Plan | Add-Member -NotePropertyName rootLockRequiredBy -NotePropertyValue $requiredBy -Force
+    return $Plan
 }
 
 function Add-ConfigRepositoryTransferPlanRunUserReportLines {
@@ -2659,7 +4947,15 @@ function Add-ConfigRepositoryTransferPlanRunUserReportLines {
     $unresolved = @($Plan.unresolvedPaths)
     $Lines.Add("")
     $Lines.Add("## Перенос в хранилище конфигурации")
-    Add-RunUserReportLine -Lines $Lines -Label "База сравнения (merge-base master)" -Value ([string]$Plan.baseCommit)
+    $unavailableCode = [string](Get-StateValue -State $Plan -Name 'unavailableCode' -Default '')
+    if ($unavailableCode) {
+        Add-RunUserReportLine -Lines $Lines -Label "Объекты для переноса" -Value "WARN: список не построен ($unavailableCode)"
+        Add-RunUserReportLine -Lines $Lines -Label "Причина" -Value ([string]$Plan.unavailableReason)
+        Add-RunUserReportLine -Lines $Lines -Label "Продолжение" -Value "выполните /itl-refresh и повторите /itl-result, если нужен список объектов"
+        return
+    }
+    Add-RunUserReportLine -Lines $Lines -Label "База сравнения" -Value ([string]$Plan.baseCommit)
+    Add-RunUserReportLine -Lines $Lines -Label "Происхождение базы" -Value ([string](Get-StateValue -State $Plan -Name 'baseProvenance' -Default 'legacy:merge-base-master-no-lifecycle-proof'))
     if (($full.Count + $partial.Count + $unresolved.Count) -eq 0) {
         Add-RunUserReportLine -Lines $Lines -Label "Объекты для переноса" -Value "<нет>"
         return
@@ -2689,6 +4985,7 @@ function Add-ConfigRepositoryTransferPlanRunUserReportLines {
 function New-ResultManifest {
     param(
         [object]$State,
+        [AllowNull()][object]$PlatformPreparation = $null,
         [string]$ResultPath,
         [ValidateSet("cf", "cfe")]
         [string]$ResultKind,
@@ -2759,6 +5056,7 @@ function New-ResultManifest {
             logPath = $verification.logPath
             reason = $verification.reason
         }
+        platformPreparation = $(if ($null -ne $PlatformPreparation) { $PlatformPreparation } else { [ordered]@{purpose='development';status='not-required-development'} })
         latest1cLogPath = [string]$script:LastLogPath
         unverifiedOverride = [bool]$UnverifiedOverride
         manualImportNote = "Import this CF/CFE into the source infobase manually after backup and normal acceptance checks. The ITL helper does not load development branch changes into the source infobase."
@@ -2801,10 +5099,12 @@ function Get-AiRules1cManifestFileEntries {
         return @()
     }
 
-    return @($Manifest.files.PSObject.Properties | ForEach-Object {
+    return @($Manifest.files.PSObject.Properties | Where-Object {
+        -not (Test-AiRulesLegacyUserGlobalPrompt -Path ([string]$_.Name) -ManifestEntry $_.Value)
+    } | ForEach-Object {
         [pscustomobject]@{
             target = [string]$_.Name
-            source = [string]$_.Value.source
+            source = [string](Get-ConfigValueFromObject -Object $_.Value -Path "source" -Default "")
             installedHash = [string](Get-ConfigValueFromObject -Object $_.Value -Path "installedHash" -Default "")
             userModified = [bool](Get-ConfigValueFromObject -Object $_.Value -Path "userModified" -Default $false)
         }
@@ -2825,27 +5125,30 @@ function Sync-AiRules1cManagedIgnoredFilesFromMain {
     }
 
     $branchManifest = Get-AiRules1cProjectManifest
-    $mainManifestPath = Join-Path $mainRoot ".ai-rules.json"
-    if ($null -eq $branchManifest -or -not (Test-Path -LiteralPath $mainManifestPath -PathType Leaf)) {
+    if ($null -eq $branchManifest) {
         return 0
     }
-    try {
-        $mainManifest = Read-Utf8Text -Path $mainManifestPath | ConvertFrom-Json
-    } catch {
-        throw "AI_RULES_MANAGED_IGNORED_MAIN_MANIFEST_INVALID: $mainManifestPath. $($_.Exception.Message)"
+    $mainManifestPath = Join-Path $mainRoot ".ai-rules.json"
+    $mainManifest = $null
+    if (Test-Path -LiteralPath $mainManifestPath -PathType Leaf) {
+        try {
+            $mainManifest = Read-Utf8Text -Path $mainManifestPath | ConvertFrom-Json
+        } catch {
+            Write-Warning "Ignoring invalid main ai_rules_1c manifest while resolving branch-owned bytes: $($_.Exception.Message)"
+        }
     }
-    if ($null -eq $mainManifest.files -or $null -eq $branchManifest.files) {
+    if ($null -eq $branchManifest.files) {
         return 0
     }
     $mainVersion = [string](Get-ConfigValueFromObject -Object $mainManifest -Path "version" -Default "")
     $branchVersion = [string](Get-ConfigValueFromObject -Object $branchManifest -Path "version" -Default "")
-    if ($mainVersion -ne $branchVersion) {
-        throw "AI_RULES_MANAGED_IGNORED_VERSION_MISMATCH: main=$mainVersion branch=$branchVersion"
-    }
+    $mainCanSupply = $null -ne $mainManifest -and $null -ne $mainManifest.files -and $mainVersion -eq $branchVersion
 
     $mainEntries = @{}
-    foreach ($property in @($mainManifest.files.PSObject.Properties)) {
-        $mainEntries[([string]$property.Name).Replace('\', '/')] = $property.Value
+    if ($mainCanSupply) {
+        foreach ($property in @($mainManifest.files.PSObject.Properties)) {
+            $mainEntries[([string]$property.Name).Replace('\', '/')] = $property.Value
+        }
     }
     $mainPrefix = $mainRoot + [IO.Path]::DirectorySeparatorChar
     $branchPrefix = $branchRoot + [IO.Path]::DirectorySeparatorChar
@@ -2860,10 +5163,15 @@ function Sync-AiRules1cManagedIgnoredFilesFromMain {
             continue
         }
 
+        # Mutable project files keep their existing owner; the manifest hash
+        # remains authoritative only for immutable rules/runtime bytes.
+        if ((Test-AiRulesManifestPathOwnedByWorkflow -Path $target) -or
+            (Test-AiRulesPlacedOnceProjectTemplate -Path $target -ManifestEntry $property.Value -Root $branchRoot)) { continue }
+
         $expected = [string](Get-ConfigValueFromObject -Object $property.Value -Path "installedHash" -Default "")
-        if ((Test-Path -LiteralPath $branchPath -PathType Leaf) -and
-            (Test-AiRulesFileMatchesInstalledHash -Path $branchPath -InstalledHash $expected)) {
-            continue
+        if (Test-Path -LiteralPath $branchPath -PathType Leaf) {
+            if (Test-AiRulesFileMatchesInstalledHash -Path $branchPath -InstalledHash $expected) { continue }
+            throw "AI_RULES_MANAGED_IGNORED_USER_MODIFIED: '$target' differs from the branch manifest; preserve it and resolve its ownership before retrying."
         }
 
         $previousPreference = $ErrorActionPreference
@@ -2877,28 +5185,61 @@ function Sync-AiRules1cManagedIgnoredFilesFromMain {
         if (-not $isIgnored) {
             continue
         }
-        if (-not $mainEntries.ContainsKey($target)) {
-            throw "AI_RULES_MANAGED_IGNORED_SOURCE_ENTRY_MISSING: $target"
-        }
-        $mainExpected = [string](Get-ConfigValueFromObject -Object $mainEntries[$target] -Path "installedHash" -Default "")
-        if ($expected -notmatch '^[0-9a-fA-F]{64}$' -or $mainExpected -ne $expected) {
+        if ($expected -notmatch '^[0-9a-fA-F]{64}$') {
             throw "AI_RULES_MANAGED_IGNORED_HASH_CONTRACT_MISMATCH: $target"
         }
-        $mainPath = [IO.Path]::GetFullPath((Join-Path $mainRoot ($target.Replace('/', [IO.Path]::DirectorySeparatorChar))))
-        if (-not $mainPath.StartsWith($mainPrefix, [StringComparison]::OrdinalIgnoreCase) -or
-            -not (Test-AiRulesFileMatchesInstalledHash -Path $mainPath -InstalledHash $expected)) {
-            throw "AI_RULES_MANAGED_IGNORED_SOURCE_DRIFT: $target"
+        $sourcePath = ''
+        $sourceLabel = ''
+        if ($mainEntries.ContainsKey($target)) {
+            $mainExpected = [string](Get-ConfigValueFromObject -Object $mainEntries[$target] -Path "installedHash" -Default "")
+            $mainPath = [IO.Path]::GetFullPath((Join-Path $mainRoot ($target.Replace('/', [IO.Path]::DirectorySeparatorChar))))
+            if ($mainExpected -eq $expected -and $mainPath.StartsWith($mainPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+                (Test-AiRulesFileMatchesInstalledHash -Path $mainPath -InstalledHash $expected)) {
+                $sourcePath = $mainPath
+                $sourceLabel = 'matching main worktree'
+            }
+        }
+        if (-not $sourcePath) {
+            $sourceRelative = ([string](Get-ConfigValueFromObject -Object $property.Value -Path 'source' -Default '')).Replace('\', '/')
+            if ($sourceRelative -match '^(content|adapters)/' -and $sourceRelative -notmatch '(^|/)\.\.(/|$)' -and -not [IO.Path]::IsPathRooted($sourceRelative)) {
+                $branchPin = Get-DependencyLockEntry -Name 'aiRules1c'
+                $pinRepo = [string](Get-ConfigValueFromObject -Object $branchPin -Path 'repo' -Default '')
+                $pinRef = [string](Get-ConfigValueFromObject -Object $branchPin -Path 'ref' -Default '')
+                $pinCommit = [string](Get-ConfigValueFromObject -Object $branchPin -Path 'commit' -Default '')
+                if (-not $pinRepo -or -not $pinRef -or $pinCommit -notmatch '^[0-9a-fA-F]{40}$' -or $branchVersion -cne $pinRef) {
+                    throw "AI_RULES_MANAGED_IGNORED_PIN_MISMATCH: '$target' requires an exact branch-local repo/ref/commit matching manifest version '$branchVersion'. Reconcile the branch lock and manifest before retrying."
+                }
+                try {
+                    $checkout = Sync-AiRules1cCheckout -RepoOverride $pinRepo -RefOverride $pinRef -CommitOverride $pinCommit
+                } catch {
+                    throw "AI_RULES_MANAGED_IGNORED_IMMUTABLE_SOURCE_UNAVAILABLE: cannot resolve the branch-pinned fork for '$target' (branch version=$branchVersion): $($_.Exception.Message) Retry after restoring the exact pinned fork input."
+                }
+                if (-not [string]::Equals([string]$checkout.ref, $pinRef, [StringComparison]::Ordinal) -or
+                    -not [string]::Equals([string]$checkout.commit, $pinCommit, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw "AI_RULES_MANAGED_IGNORED_SOURCE_VERSION_MISMATCH: '$target' requires branch pin '$pinRef@$pinCommit', but the resolved checkout is '$([string]$checkout.ref)@$([string]$checkout.commit)'. Restore that exact immutable input before retrying."
+                }
+                $checkoutRoot = (Resolve-Agent1cFullPath -Path ([string]$checkout.root)).TrimEnd('\', '/')
+                $candidate = [IO.Path]::GetFullPath((Join-Path $checkoutRoot ($sourceRelative.Replace('/', [IO.Path]::DirectorySeparatorChar))))
+                if ($candidate.StartsWith(($checkoutRoot + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase) -and
+                    (Test-AiRulesFileMatchesInstalledHash -Path $candidate -InstalledHash $expected)) {
+                    $sourcePath = $candidate
+                    $sourceLabel = 'branch-pinned immutable fork'
+                }
+            }
+        }
+        if (-not $sourcePath) {
+            throw "AI_RULES_MANAGED_IGNORED_IMMUTABLE_SOURCE_UNAVAILABLE: '$target' requires the branch manifest hash $expected (source '$([string]$property.Value.source)'). Main version=$mainVersion, branch version=$branchVersion. Restore the exact pinned fork input or run update-workflow from master for this branch, then retry the original operation."
         }
         $parent = Split-Path -Parent $branchPath
         if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
             New-Item -ItemType Directory -Force -Path $parent | Out-Null
         }
-        Copy-Item -LiteralPath $mainPath -Destination $branchPath -Force
+        Copy-Item -LiteralPath $sourcePath -Destination $branchPath -Force
         if (-not (Test-AiRulesFileMatchesInstalledHash -Path $branchPath -InstalledHash $expected)) {
             throw "AI_RULES_MANAGED_IGNORED_COPY_VERIFY_FAILED: $target"
         }
         $copied++
-        Write-Host "Synchronized ignored ai_rules_1c managed file from main worktree: $target"
+        Write-Host "Synchronized ignored ai_rules_1c managed file from $sourceLabel : $target"
     }
     return $copied
 }
@@ -2956,6 +5297,7 @@ function Get-AiRules1cOpenSpecBundleValidation {
         # after installer de-duplication. Accept that winner by destination, while
         # retaining source matching for adapter mappings that rewrite destinations.
         $matches = @($entries | Where-Object {
+            if ([string]::IsNullOrWhiteSpace([string]$_.source)) { return $false }
             $_.source.Replace('\', '/') -eq $sourceSuffix -or
             $_.target.Replace('\', '/').TrimStart('/') -eq $relative.TrimStart('/')
         })
@@ -2995,8 +5337,8 @@ function Assert-AiRules1cInstallation {
         throw "ai_rules_1c installer did not activate required tool(s): $($missingTools -join ', ')."
     }
     $unexpectedTools = @($installedTools | Where-Object { $DesiredTools -notcontains $_ })
-    if ($unexpectedTools.Count -gt 0 -or $installedTools.Count -ne 1 -or $DesiredTools.Count -ne 1) {
-        throw "ai_rules_1c installation must contain exactly the configured client. Configured: $($DesiredTools -join ', '). Installed: $($installedTools -join ', ')."
+    if ($unexpectedTools.Count -gt 0 -or $installedTools.Count -ne $DesiredTools.Count) {
+        throw "ai_rules_1c installation must contain the configured client set. Configured: $($DesiredTools -join ', '). Installed: $($installedTools -join ', ')."
     }
 
     foreach ($tool in $DesiredTools) {
@@ -3006,8 +5348,8 @@ function Assert-AiRules1cInstallation {
         }
     }
 
-    $activeClient = @($DesiredTools | Select-Object -First 1)[0]
-    foreach ($skillName in @("grill-me", "grill-with-docs")) {
+    foreach ($activeClient in $DesiredTools) {
+      foreach ($skillName in @("grill-me", "grill-with-docs")) {
         $skillRoot = Get-AiRules1cInstalledSkillRoot -SkillName $skillName -Client $activeClient
         $skillPath = Join-Path $skillRoot "SKILL.md"
         if (-not (Test-Path -LiteralPath $skillPath -PathType Leaf)) {
@@ -3024,32 +5366,24 @@ function Assert-AiRules1cInstallation {
                 throw "ai_rules_1c Codex skill '$skillName' does not expose the exact display_name '$skillName'."
             }
         }
+      }
     }
 
     return $manifest
 }
 
 function Get-ItlOpenSpecCliStatus {
-    $command = @(Get-Command openspec -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ($command.Count -eq 0) {
-        return [pscustomobject]@{ available = $false; path = "" }
-    }
-    $path = [string]$command[0].Path
-    if ([string]::IsNullOrWhiteSpace($path)) { $path = [string]$command[0].Source }
-    return [pscustomobject]@{ available = $true; path = $path }
+    return (Resolve-ItlOpenSpecCli)
 }
 
 function Get-ItlOpenSpecNaturalRequests {
-    function ConvertFrom-ItlUtf8Base64 {
-        param([string]$Value)
-        return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Value))
-    }
-
     return [pscustomobject]@{
-        explore = ConvertFrom-ItlUtf8Base64 "0JjRgdGB0LvQtdC00YPQuSDQt9Cw0LTQsNGH0YMg0LIg0YDQtdC20LjQvNC1IE9wZW5TcGVjLCDQvdC1INGB0L7Qt9C00LDQstCw0Y8gcHJvcG9zYWwg0Lgg0L3QtSDQvNC10L3Rj9GPINC60L7QtA=="
-        propose = ConvertFrom-ItlUtf8Base64 "0J/QvtC00LPQvtGC0L7QstGMIE9wZW5TcGVjIHByb3Bvc2FsINC00LvRjyA80LjQt9C80LXQvdC10L3QuNC1Pjsg0YHQvtC30LTQsNC5IHByb3Bvc2FsLCBkZXNpZ24sIHRhc2tzLCB0ZXN0LXBsYW4g0Lggc3BlYyBkZWx0YXM7INC60L7QtCDQvdC1INC80LXQvdGP0Lk="
-        apply = ConvertFrom-ItlUtf8Base64 "0KDQtdCw0LvQuNC30YPQuSDRgdC+0LPQu9Cw0YHQvtCy0LDQvdC90YvQuSBPcGVuU3BlYyBjaGFuZ2UgPGNoYW5nZS1pZD4g0L/QviB0YXNrcy5tZCDQuCB0ZXN0LXBsYW4ubWQ="
-        archive = ConvertFrom-ItlUtf8Base64 "0JfQsNCw0YDRhdC40LLQuNGA0YPQuSDQv9GA0LjQvdGP0YLRi9C5IE9wZW5TcGVjIGNoYW5nZSA8Y2hhbmdlLWlkPiDQuCDRgdC40L3RhdGA0L7QvdC40LfQuNGA0YPQuSBzcGVjcw=="
+        explore = 'Исследуй задачу в режиме OpenSpec, не создавая proposal и не меняя код'
+        propose = 'Подготовь OpenSpec proposal для <изменение>; создай proposal, design, tasks и spec deltas; отдельный test-plan только если нужен; код не меняй'
+        apply = 'Реализуй согласованный OpenSpec change <change-id> по tasks.md и согласованным артефактам с достаточной проверкой'
+        archive = 'Заархивируй принятый OpenSpec change <change-id> и синхронизируй specs'
+        update = 'Обнови согласованный OpenSpec change <change-id> по текущему контексту, сохраняя принятые решения'
+        sync = 'Синхронизируй spec deltas OpenSpec change <change-id> с основными specs после проверки конфликтов'
     }
 }
 
@@ -3083,7 +5417,8 @@ function New-ItlOpenSpecStatus {
         [ValidateSet("native", "natural", "unavailable")][string]$Mode,
         [string]$Reason = "",
         [AllowNull()][object]$Invocations = $null,
-        [AllowNull()][object]$Cli = $null
+        [AllowNull()][object]$Cli = $null,
+        [AllowNull()][object]$Store = $null
     )
 
     if ($null -eq $Cli) { $Cli = Get-ItlOpenSpecCliStatus }
@@ -3095,16 +5430,49 @@ function New-ItlOpenSpecStatus {
         reason = $Reason
         invocations = [pscustomobject]$Invocations
         cliAvailable = [bool]$Cli.available
+        cliVersion = [string](Get-ConfigValueFromObject -Object $Cli -Path 'version' -Default '')
         cliPath = [string]$Cli.path
+        cliNodePath = [string](Get-ConfigValueFromObject -Object $Cli -Path 'nodePath' -Default '')
+        storeRoot = [string](Get-ConfigValueFromObject -Object $Store -Path 'rootPath' -Default '')
+        storeSource = [string](Get-ConfigValueFromObject -Object $Store -Path 'source' -Default '')
+        storeId = [string](Get-ConfigValueFromObject -Object $Store -Path 'storeId' -Default '')
     }
 }
 
+function Get-AiRulesOpenSpecScaffoldPaths {
+    return @(
+        'openspec/README.md', 'openspec/config.yaml', 'openspec/project.md',
+        'openspec/specs/README.md', 'openspec/changes/README.md'
+    )
+}
+
+function Test-WorkflowUpdateScaffoldClaim {
+    # The ai_rules installer generates and claims an OpenSpec scaffold file
+    # only where EXPORT_PATH exposes metadata, so a branch update can take over
+    # the unclaimed file a master init left. Only this hop's own receipt and
+    # Git-pinned backup prove that the replaced bytes were the old commit's.
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][object]$Completed, [Parameter(Mandatory = $true)][string]$OldCommit)
+    if ($Path -cnotin @(Get-AiRulesOpenSpecScaffoldPaths)) { return $false }
+    $before = ConvertTo-Agent1cHashtable -Object $Completed.receipt.beforePathState
+    $after = ConvertTo-Agent1cHashtable -Object $Completed.receipt.pathState
+    if (-not $before.Contains($Path) -or -not $after.Contains($Path) -or
+        [string]$before[$Path] -notmatch '^file:[a-f0-9]{64}$' -or [string]$after[$Path] -notmatch '^file:[a-f0-9]{64}$') { return $false }
+    $record = @($Completed.snapshot.records | Where-Object relativePath -CEQ $Path)
+    if ($record.Count -ne 1 -or -not $record[0].existed) { return $false }
+    $backupOid = (Get-GitOutput @('hash-object', ('--path=' + $Path), '--', [string]$record[0].backupPath)).Trim()
+    $oldOid = (Get-GitOutput @('rev-parse', ($OldCommit + ':' + $Path))).Trim()
+    return $backupOid -cmatch '^[a-f0-9]{40}$' -and $backupOid -ceq $oldOid
+}
+
 function Get-AiRules1cOpenSpecStatus {
+    param([string]$Client = '')
     $requiredStages = [ordered]@{
         propose = @("openspec-propose", "opsx-propose")
         explore = @("openspec-explore", "opsx-explore")
         apply = @("openspec-apply-change", "opsx-apply")
         archive = @("openspec-archive-change", "opsx-archive")
+        update = @("openspec-update-change", "opsx-update")
+        sync = @("openspec-sync-specs", "opsx-sync")
     }
     $cli = Get-ItlOpenSpecCliStatus
     try {
@@ -3116,23 +5484,9 @@ function Get-AiRules1cOpenSpecStatus {
     if ($null -eq $manifest) {
         return (New-ItlOpenSpecStatus -Mode unavailable -Reason "ai_rules_1c manifest is missing." -Cli $cli)
     }
-    try { $client = Get-ItlActiveClient } catch { return (New-ItlOpenSpecStatus -Mode unavailable -Reason $_.Exception.Message -Cli $cli) }
+    try { $client = Get-ItlActiveClient -Client $Client } catch { return (New-ItlOpenSpecStatus -Mode unavailable -Reason $_.Exception.Message -Cli $cli) }
 
     $entries = @(Get-AiRules1cManifestFileEntries -Manifest $manifest)
-    $requiredWorkspace = @(
-        "openspec/README.md",
-        "openspec/config.yaml",
-        "openspec/project.md",
-        "openspec/specs/README.md",
-        "openspec/changes/README.md"
-    )
-    $missingWorkspace = @($requiredWorkspace | Where-Object {
-        -not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_) -PathType Leaf)
-    })
-    if ($missingWorkspace.Count -gt 0) {
-        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "OpenSpec workspace is incomplete: $($missingWorkspace -join ', ')." -Cli $cli)
-    }
-
     $integrationRuleEntries = @($entries | Where-Object {
         $_.source.Replace('\', '/') -eq "content/rules/sdd-integrations.md"
     })
@@ -3152,10 +5506,31 @@ function Get-AiRules1cOpenSpecStatus {
         return (New-ItlOpenSpecStatus -Mode unavailable -Reason "USER-RULES.md with the ITL OpenSpec preflight is missing." -Cli $cli)
     }
     $userRulesText = Get-Content -LiteralPath $userRulesPath -Raw -Encoding UTF8
-    $requiredRuleTokens = @("ITL-WORKFLOW-USER-RULES:START", "Context Sources", "test-plan.md", "fresh")
+    $requiredRuleTokens = @("ITL-WORKFLOW-USER-RULES:START", "Context Sources", "planningMode=direct|OpenSpec", "one-off proof", "fresh", "OPEN_SPEC_EXTERNAL_STORE_DEFERRED")
     $missingRuleTokens = @($requiredRuleTokens | Where-Object { $userRulesText -notmatch [regex]::Escape($_) })
     if ($missingRuleTokens.Count -gt 0) {
         return (New-ItlOpenSpecStatus -Mode unavailable -Reason "USER-RULES.md does not contain the complete ITL OpenSpec preflight." -Cli $cli)
+    }
+    $planningConflicts = @(Get-ItlManagedRuleOverrideConflicts | Where-Object { $_.policy -eq 'test-plan-is-optional' })
+    if ($planningConflicts.Count -gt 0) {
+        $locations = @($planningConflicts | ForEach-Object { "$($_.path):$($_.line)" }) -join ', '
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "OPEN_SPEC_USER_RULE_CONFLICT: $locations requires a mandatory test-plan.md; preserve user text and reconcile this override before OpenSpec propose/apply." -Cli $cli)
+    }
+    if (-not [bool]$cli.available) {
+        $cliReason = [string](Get-ConfigValueFromObject -Object $cli -Path 'reason' -Default 'OPEN_SPEC_CLI_NOT_PROVISIONED: run -Action provision-openspec-cli.')
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason $cliReason -Cli $cli)
+    }
+    try { $store = Resolve-ItlOpenSpecStore -Cli $cli } catch {
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason $_.Exception.Message -Cli $cli)
+    }
+    if ($store.source -eq 'nearest') {
+        $requiredWorkspace = @(Get-AiRulesOpenSpecScaffoldPaths)
+        $missingWorkspace = @($requiredWorkspace | Where-Object {
+            -not (Test-Path -LiteralPath (Join-Path $store.rootPath $_) -PathType Leaf)
+        })
+        if ($missingWorkspace.Count -gt 0) {
+            return (New-ItlOpenSpecStatus -Mode unavailable -Reason "OpenSpec workspace is incomplete: $($missingWorkspace -join ', ')." -Cli $cli -Store $store)
+        }
     }
 
     $clientBundleEntries = @($entries | Where-Object { $_.source.Replace('\', '/') -like "content/openspec-bundle/$client/*" })
@@ -3163,18 +5538,64 @@ function Get-AiRules1cOpenSpecStatus {
         $skippedProperty = $manifest.integrations.openspec.PSObject.Properties['bundleSkipped']
         $skipped = if ($null -eq $skippedProperty) { @() } else { @($skippedProperty.Value) }
         if ($skipped -contains $client) {
-            return (New-ItlOpenSpecStatus -Mode natural -Reason "the pinned adapter intentionally skipped a native OpenSpec bundle for $client" -Cli $cli)
+            return (New-ItlOpenSpecStatus -Mode natural -Reason "the pinned adapter intentionally skipped a native OpenSpec bundle for $client" -Cli $cli -Store $store)
         }
-        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "the manifest neither owns a native OpenSpec bundle nor records an intentional bundleSkipped entry for $client." -Cli $cli)
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "the manifest neither owns a native OpenSpec bundle nor records an intentional bundleSkipped entry for $client." -Cli $cli -Store $store)
+    }
+    if ($client -eq 'codex') {
+        $legacyTargets = @($clientBundleEntries | Where-Object { $_.target.Replace('\','/') -match '^\.codex/skills/(?:openspec-|opsx-)' })
+        $discoverableLegacy = @(foreach ($tokens in $requiredStages.Values) {
+            foreach ($token in $tokens) {
+                $relative = ".codex/skills/$token/SKILL.md"
+                if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $relative) -PathType Leaf) { $relative }
+            }
+        })
+        $bundleVersion = [string](Get-ConfigValueFromObject -Object $manifest -Path 'integrations.openspec.artifactsBundleVersion' -Default '')
+        if ($bundleVersion -eq '1.13.1') {
+            $legacySkillRoots = @()
+            try {
+                $projectRoot = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($script:ProjectRoot)).TrimEnd('\', '/')
+                foreach ($entry in $clientBundleEntries) {
+                    $source = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$entry.source)
+                    if (-not $source.StartsWith("content/openspec-bundle/$client/", [StringComparison]::OrdinalIgnoreCase) -or
+                        $source -match '(^|/)\.\.?(?:/|$)') { throw "Invalid current-client native skill source: $source" }
+                    $target = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$entry.target)
+                    $targetFull = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables((Join-Path $projectRoot $target)))
+                    if (-not $targetFull.StartsWith(($projectRoot + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
+                        throw "Native skill target escapes the project: $target"
+                    }
+                    Assert-WorkflowManagedTargetPath -Path $targetFull
+                    if ($source -notmatch '/SKILL\.md$' -or $target -notmatch '/SKILL\.md$') { continue }
+                    $targetRelative = $targetFull.Substring($projectRoot.Length + 1).Replace('\', '/')
+                    $skillRoot = (Split-Path -Parent (Split-Path -Parent $targetRelative)).Replace('\', '/')
+                    if ($skillRoot) { $legacySkillRoots += $skillRoot }
+                }
+            } catch {
+                return (New-ItlOpenSpecStatus -Mode unavailable -Reason "OPEN_SPEC_NATIVE_LAYOUT_DRIFT: invalid declared Codex native skill path: $($_.Exception.Message). Reconcile the manifest through the workflow update owner, then repeat the original OpenSpec request." -Cli $cli -Store $store)
+            }
+            # The immutable manifest owns placement. Only the obsolete alias
+            # tokens are version-bound here; this discovery check writes nothing.
+            foreach ($skillRoot in @($legacySkillRoots | Sort-Object -Unique)) {
+                foreach ($stage in $requiredStages.Keys) {
+                    $relative = "$skillRoot/opsx-$stage/SKILL.md"
+                    if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $relative) -PathType Leaf) { $discoverableLegacy += $relative }
+                }
+            }
+        }
+        $legacyPaths = @(@($legacyTargets | ForEach-Object { $_.target }) + $discoverableLegacy | Sort-Object -Unique)
+        if ($legacyPaths.Count -gt 0) {
+            return (New-ItlOpenSpecStatus -Mode unavailable -Reason "OPEN_SPEC_NATIVE_LAYOUT_DRIFT: Codex has legacy .codex/skills targets or discoverable duplicates: $($legacyPaths -join ', '). Preserve modified copies, reconcile their meaning through the workflow update owner into canonical .agents/skills and retire the duplicate files from client discovery, then repeat the original OpenSpec request. Removing manifest entries alone is insufficient." -Cli $cli -Store $store)
+        }
     }
 
     $missing = @()
     $invocations = [ordered]@{}
     foreach ($stage in $requiredStages.Keys) {
         $tokens = @($requiredStages[$stage])
-        $matches = @($entries | Where-Object {
+        $matches = @($clientBundleEntries | Where-Object {
             $source = $_.source.Replace('\', '/')
-            $matchesStage = @($tokens | Where-Object { $source -match ("/" + [regex]::Escape($_) + "(?:/SKILL)?\.md$") }).Count -gt 0
+            $matchesStage = ($source -match ("/commands/opsx/" + [regex]::Escape($stage) + "\.md$")) -or
+                @($tokens | Where-Object { $source -match ("/" + [regex]::Escape($_) + "(?:/SKILL)?\.md$") }).Count -gt 0
             if (-not $matchesStage) { return $false }
             return (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_.target) -PathType Leaf)
         })
@@ -3190,17 +5611,20 @@ function Get-AiRules1cOpenSpecStatus {
             if ($aliasMatches.Count -gt 0) {
                 $matches = $aliasMatches
             }
+        } else {
+            $commandMatches = @($matches | Where-Object { $_.target.Replace('\','/') -match '/(?:commands|command|workflows)/' })
+            if ($commandMatches.Count -gt 0) { $matches = $commandMatches }
         }
         $invocations[$stage] = Get-ItlOpenSpecNativeInvocation -Stage $stage -Client $client -Entry $matches[0]
     }
 
     if ($missing.Count -gt 0) {
-        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "required native OpenSpec phase(s) for $client are missing: $($missing -join ', ')." -Cli $cli)
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "required native OpenSpec phase(s) for $client are missing: $($missing -join ', ')." -Cli $cli -Store $store)
     }
-    return (New-ItlOpenSpecStatus -Mode native -Invocations $invocations -Cli $cli)
+    return (New-ItlOpenSpecStatus -Mode native -Invocations $invocations -Cli $cli -Store $store)
 }
 
-function Get-AiRules1cRepositoryIdentity {
+function Get-ItlGitRepositoryIdentity {
     param([string]$Repo)
 
     if ([string]::IsNullOrWhiteSpace($Repo)) {
@@ -3215,29 +5639,397 @@ function Get-AiRules1cRepositoryIdentity {
 
 function Test-AiRules1cForkRepository {
     param([string]$Repo)
-    return (Get-AiRules1cRepositoryIdentity -Repo $Repo) -eq "https://github.com/xmentosx/itl_ai_rules_1c"
+    return (Get-ItlGitRepositoryIdentity -Repo $Repo) -eq "https://github.com/xmentosx/itl_ai_rules_1c"
 }
 
-function Invoke-AiRules1cFetchWithRetry {
+function Invoke-ItlGitFetchWithRetry {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
-        [int]$MaxAttempts = 3
+        [string[]]$Arguments = @("fetch", "--all", "--tags", "--prune"),
+        [int]$MaxAttempts = 3,
+        [string]$Label = 'ai_rules_1c'
     )
 
     $failure = $null
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         try {
-            Invoke-GitAt -Root $Root -Arguments @("fetch", "--all", "--tags", "--prune")
+            Invoke-GitAt -Root $Root -Arguments $Arguments
             return
         } catch {
             $failure = $_
             if ($attempt -ge $MaxAttempts) { break }
             $delaySeconds = [int][Math]::Pow(2, $attempt)
-            Write-Warning "ai_rules_1c fetch attempt $attempt/$MaxAttempts failed; retrying the same idempotent fetch in $delaySeconds seconds."
+            Write-Warning "$Label fetch attempt $attempt/$MaxAttempts failed; retrying the same idempotent fetch in $delaySeconds seconds."
             Start-Sleep -Seconds $delaySeconds
         }
     }
     throw $failure
+}
+
+function Get-ItlGitSourceCacheState {
+    param([string]$Root, [string]$Repo, [string]$ExpectedCommit = '')
+
+    $owned = $false
+    try {
+        # Never relocate a junction, a linked worktree, or a foreign repository.
+        foreach ($path in @($Root, (Join-Path $Root '.git'))) {
+            $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'not a standalone physical checkout'
+            }
+        }
+        $top = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--show-toplevel')).Trim()
+        $gitDir = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--absolute-git-dir')).Trim()
+        if ((Resolve-Agent1cFullPath -Path $top) -ine $Root -or
+            (Resolve-Agent1cFullPath -Path $gitDir) -ine (Join-Path $Root '.git')) { throw 'checkout boundary mismatch' }
+        $origin = (Get-GitOutputAt -Root $Root -Arguments @('remote', 'get-url', 'origin')).Trim()
+        if ((Get-ItlGitRepositoryIdentity -Repo $origin) -ne (Get-ItlGitRepositoryIdentity -Repo $Repo)) {
+            throw 'repository identity mismatch'
+        }
+        $owned = $true
+        $headCommit = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--verify', 'HEAD^{commit}')).Trim()
+        if ($ExpectedCommit -and $headCommit -cne $ExpectedCommit) { throw 'HEAD does not match the pinned commit' }
+        # Shared exact-commit checkouts are validated by several projects; a
+        # read-only status must never take the index lock another reader sees.
+        $changes = @(Get-GitPathListAt -Root $Root -Arguments @('--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'))
+        if ($changes.Count) { throw "index/worktree changes: $($changes.Count) records; $(@($changes | Select-Object -First 5) -join '; ')" }
+        # A clean status can hide missing files behind sparse/assume-unchanged bits.
+        $hidden = @(Get-GitPathListAt -Root $Root -Arguments @('ls-files', '-v', '-z') | Where-Object { -not $_.StartsWith('H ') })
+        if ($hidden.Count) { throw "nonstandard index flags: $($hidden.Count) records" }
+        return [pscustomobject]@{ valid = $true; owned = $true; reason = 'clean complete checkout' }
+    } catch {
+        return [pscustomobject]@{ valid = $false; owned = $owned; reason = $_.Exception.Message }
+    }
+}
+
+function Get-AiRules1cCacheRoot {
+    # Durable machine-local cache beside the immutable artifact cache. Windows
+    # Storage Sense deletes TEMP files that were not accessed for days, which
+    # left TEMP checkouts with hundreds of missing tracked files.
+    return (Join-Path (Get-ItlSharedArtifactCacheRoot) 'ai_rules_1c')
+}
+
+function New-ItlGitSourceCacheId {
+    return [guid]::NewGuid().ToString('N').Substring(0, 12)
+}
+
+function Test-ItlGitSourceCachePhysicalDirectory {
+    param([string]$Path)
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        return ($item.PSIsContainer -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint))
+    } catch {
+        return $false
+    }
+}
+
+function Get-ItlGitSourceCacheEntryKind {
+    param([string]$Path)
+    # missing | pending (listed but unreadable: delete-pending) | other
+    # (file or reparse point) | checkout (has .git) | remnant (a physical
+    # directory whose .git an interrupted removal already deleted).
+    if (-not (Test-Path -LiteralPath $Path)) { return 'missing' }
+    try { $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop } catch { return 'pending' }
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return 'other' }
+    if (Test-Path -LiteralPath (Join-Path $Path '.git')) { return 'checkout' }
+    return 'remnant'
+}
+
+function Test-ItlGitSourceCacheMirror {
+    param([string]$Root)
+    if (-not (Test-ItlGitSourceCachePhysicalDirectory -Path $Root)) { return $false }
+    try {
+        $bare = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--is-bare-repository')).Trim()
+        $gitDir = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--absolute-git-dir')).Trim()
+        return ($bare -eq 'true' -and (Resolve-Agent1cFullPath -Path $gitDir) -ieq (Resolve-Agent1cFullPath -Path $Root))
+    } catch {
+        return $false
+    }
+}
+
+function Get-AiRules1cMirrorTagCommit {
+    param([string]$Mirror, [string]$Tag)
+    $tagRef = "refs/tags/$Tag"
+    if (-not (Test-GitRefExistsAt -Root $Mirror -Ref $tagRef)) { return '' }
+    return (Get-GitOutputAt -Root $Mirror -Arguments @('rev-parse', "$tagRef^{commit}")).Trim()
+}
+
+function Set-ItlGitSourceCacheLastUsed {
+    param([string]$Root)
+    try {
+        $marker = Join-Path $Root '.git\itl-last-used'
+        if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+            [IO.File]::WriteAllText($marker, '')
+        }
+        [IO.File]::SetLastWriteTimeUtc($marker, [DateTime]::UtcNow)
+    } catch {
+        # Usage time only steers retention; a concurrent reader may own the file.
+    }
+}
+
+function Get-ItlGitSourceCacheLastUsedUtc {
+    param([string]$Root)
+    foreach ($path in @((Join-Path $Root '.git\itl-last-used'), $Root)) {
+        try {
+            if (Test-Path -LiteralPath $path) { return (Get-Item -LiteralPath $path -Force).LastWriteTimeUtc }
+        } catch {
+        }
+    }
+    return [DateTime]::MinValue
+}
+
+function Initialize-ItlGitSourceCacheMirror {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoCache,
+        [Parameter(Mandatory = $true)][string]$SourceRepo,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [Parameter(Mandatory = $true)][string]$CodePrefix
+    )
+
+    $mirror = Join-Path $RepoCache 'mirror.git'
+    if ((Test-Path -LiteralPath $mirror) -and -not (Test-ItlGitSourceCacheMirror -Root $mirror)) {
+        if (-not (Test-ItlGitSourceCachePhysicalDirectory -Path $mirror)) {
+            throw "$($CodePrefix)_CACHE_FOREIGN: '$mirror' is not an ITL $Label mirror. Move it away and repeat the original operation."
+        }
+        $diagnostic = Join-Path $RepoCache ('invalid-' + (New-ItlGitSourceCacheId))
+        Move-WorkflowManagedPathAtomic -SourcePath $mirror -DestinationPath $diagnostic
+        Write-Warning "$($CodePrefix)_CACHE_INVALID path='$mirror' state='not a bare repository' diagnostic='$diagnostic'. Recreating the shared mirror."
+    }
+    if (-not (Test-Path -LiteralPath $mirror)) {
+        $prepare = Join-Path $RepoCache ('prepare-' + (New-ItlGitSourceCacheId))
+        try {
+            Invoke-GitAt -Root $RepoCache -Arguments @('clone', '--bare', '--quiet', $SourceRepo, $prepare)
+        } catch {
+            throw "Failed to clone $Label from '$SourceRepo' into '$prepare': $($_.Exception.Message). Existing caches are preserved; resolve the source/transport failure and repeat the original operation."
+        }
+        try {
+            Move-WorkflowManagedPathAtomic -SourcePath $prepare -DestinationPath $mirror
+        } catch {
+            # A concurrent preparation published the mirror first.
+            if (-not (Test-ItlGitSourceCacheMirror -Root $mirror)) {
+                throw "$($CodePrefix)_CACHE_PUBLISH_FAILED: cannot publish '$prepare' as '$mirror': $($_.Exception.Message). Repeat the original operation."
+            }
+            Remove-Item -LiteralPath $prepare -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return $mirror
+}
+
+function Resolve-AiRules1cMirror {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoCache,
+        [Parameter(Mandatory = $true)][string]$SourceRepo,
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][string]$Commit
+    )
+
+    $mirror = Initialize-ItlGitSourceCacheMirror -RepoCache $RepoCache -SourceRepo $SourceRepo -Label 'ai_rules_1c' -CodePrefix 'AI_RULES'
+    $tagCommit = Get-AiRules1cMirrorTagCommit -Mirror $mirror -Tag $Tag
+    if ($tagCommit -cne $Commit) {
+        # Fetch only when the exact pinned tag is absent or differs locally;
+        # an existing immutable commit needs no network access.
+        try {
+            Invoke-ItlGitFetchWithRetry -Root $mirror -Arguments @('fetch', '--quiet', $SourceRepo, '+refs/heads/*:refs/heads/*', '+refs/tags/*:refs/tags/*')
+        } catch {
+            throw "Failed to update ai_rules_1c in '$mirror': $($_.Exception.Message). Preserve the cache and repeat the original operation after resolving the fetch failure."
+        }
+        $tagCommit = Get-AiRules1cMirrorTagCommit -Mirror $mirror -Tag $Tag
+    }
+    if (-not $tagCommit) {
+        throw "Configured ai_rules_1c ref is not an available tag: $Tag"
+    }
+    if ($tagCommit -cne $Commit) {
+        throw "ai_rules_1c tag/commit mismatch for '$Tag': tag=$tagCommit lock=$Commit"
+    }
+    return $mirror
+}
+
+function Invoke-ItlGitSourceCacheRetention {
+    param(
+        [Parameter(Mandatory = $true)][string]$CacheRoot,
+        [string]$KeepRoot = '',
+        [int]$UnusedDays = 30,
+        # The most recently used exact checkouts that survive any idle time.
+        [int]$KeepRecent = 0
+    )
+
+    $nowUtc = [DateTime]::UtcNow
+    $keep = if ($KeepRoot) { (Resolve-Agent1cFullPath -Path $KeepRoot).TrimEnd('\', '/') } else { '' }
+    foreach ($repoCache in @(Get-ChildItem -LiteralPath $CacheRoot -Directory -Force -ErrorAction SilentlyContinue)) {
+        if ($repoCache.Name -notmatch '^[0-9a-f]{16}$' -or ($repoCache.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+        $children = @(Get-ChildItem -LiteralPath $repoCache.FullName -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $_.FullName.TrimEnd('\', '/') -ine $keep })
+        $expired = [System.Collections.Generic.List[string]]::new()
+        $recent = @($children | Where-Object { $_.Name -match '^[0-9a-f]{12}$' } |
+            Sort-Object { Get-ItlGitSourceCacheLastUsedUtc -Root $_.FullName } -Descending |
+            Select-Object -First ([Math]::Max(0, $KeepRecent)) | ForEach-Object { $_.FullName })
+        foreach ($child in $children) {
+            if ($child.Name -match '^[0-9a-f]{12}$' -and $recent -notcontains $child.FullName -and
+                (Get-ItlGitSourceCacheLastUsedUtc -Root $child.FullName) -lt $nowUtc.AddDays(-$UnusedDays)) {
+                $expired.Add($child.FullName) | Out-Null
+            } elseif ($child.Name -match '^prepare-[0-9a-f]{12}$' -and (Get-ItlGitSourceCacheLastUsedUtc -Root $child.FullName) -lt $nowUtc.AddDays(-1)) {
+                $expired.Add($child.FullName) | Out-Null
+            }
+        }
+        foreach ($child in @($children | Where-Object { $_.Name -match '^invalid-[0-9a-f]{12}$' } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -Skip 2)) {
+            $expired.Add($child.FullName) | Out-Null
+        }
+        foreach ($path in $expired) {
+            try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop } catch { }
+        }
+        $mirror = Join-Path $repoCache.FullName 'mirror.git'
+        $remaining = @(Get-ChildItem -LiteralPath $repoCache.FullName -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(?:[0-9a-f]{12}|(?:prepare|invalid)-[0-9a-f]{12})$' })
+        $repoKept = $keep -and $keep.StartsWith(($repoCache.FullName.TrimEnd('\', '/') + '\'), [StringComparison]::OrdinalIgnoreCase)
+        if (-not $repoKept -and $remaining.Count -eq 0 -and (Test-ItlGitSourceCacheMirror -Root $mirror) -and
+            (Get-Item -LiteralPath $mirror -Force).LastWriteTimeUtc -lt $nowUtc.AddDays(-$UnusedDays)) {
+            try {
+                Remove-Item -LiteralPath $mirror -Recurse -Force -ErrorAction Stop
+                if (@(Get-ChildItem -LiteralPath $repoCache.FullName -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+                    Remove-Item -LiteralPath $repoCache.FullName -Force -ErrorAction Stop
+                }
+            } catch { }
+        }
+    }
+}
+
+function Remove-AiRules1cLegacyTempCaches {
+    param(
+        [Parameter(Mandatory = $true)][string]$TempRoot,
+        [int]$IdleHours = 24,
+        [int]$BudgetSeconds = 60
+    )
+
+    # Project-keyed checkouts from earlier helpers lived directly in TEMP. Only
+    # their exact generated names are removed, and only after a full idle day,
+    # so an older helper still installing from one is never disturbed.
+    $deadlineUtc = [DateTime]::UtcNow.AddSeconds($BudgetSeconds)
+    $cutoffUtc = [DateTime]::UtcNow.AddHours(-$IdleHours)
+    $removed = 0
+    $failed = 0
+    foreach ($directory in @(Get-ChildItem -LiteralPath $TempRoot -Directory -Force -Filter 'ai_rules_1c-*' -ErrorAction SilentlyContinue)) {
+        if ([DateTime]::UtcNow -gt $deadlineUtc) { break }
+        if ($directory.Name -notmatch '^ai_rules_1c-(?:[0-9a-f]{64}|(?:invalid|prepare)-[0-9a-f]{32})$') { continue }
+        if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        $gitDir = Join-Path $directory.FullName '.git'
+        $gitItem = Get-Item -LiteralPath $gitDir -Force -ErrorAction SilentlyContinue
+        if ($null -ne $gitItem -and (-not $gitItem.PSIsContainer -or ($gitItem.Attributes -band [IO.FileAttributes]::ReparsePoint))) { continue }
+        if ($null -eq $gitItem -and $directory.Name -notmatch '^ai_rules_1c-prepare-') { continue }
+        $recent = @(foreach ($path in @($directory.FullName, $gitDir, (Join-Path $gitDir 'index'), (Join-Path $gitDir 'HEAD'), (Join-Path $gitDir 'FETCH_HEAD'))) {
+            try { (Get-Item -LiteralPath $path -Force -ErrorAction Stop).LastWriteTimeUtc } catch { }
+        }) | Where-Object { $_ -gt $cutoffUtc }
+        if (@($recent).Count) { continue }
+        try {
+            Remove-Item -LiteralPath $directory.FullName -Recurse -Force -ErrorAction Stop
+            $removed++
+        } catch {
+            $failed++
+        }
+    }
+    if ($removed -or $failed) {
+        Write-Host "Removed $removed legacy ai_rules_1c TEMP checkout(s) from '$TempRoot'; $failed left for a later run."
+    }
+}
+
+function Invoke-AiRules1cCacheMaintenance {
+    param([string]$CacheRoot, [string]$KeepRoot)
+    try { Invoke-ItlGitSourceCacheRetention -CacheRoot $CacheRoot -KeepRoot $KeepRoot } catch { }
+    try { Remove-AiRules1cLegacyTempCaches -TempRoot (Get-Agent1cTempRoot) } catch { }
+}
+
+function Publish-ItlGitSourceCacheCheckout {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoCache,
+        [Parameter(Mandatory = $true)][string]$Mirror,
+        [Parameter(Mandatory = $true)][string]$Repo,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [Parameter(Mandatory = $true)][string]$RefLabel,
+        [Parameter(Mandatory = $true)][string]$CodePrefix
+    )
+
+    # Returns a verified clean checkout of the exact commit: the published
+    # <repo16>\<commit12> copy, or a private preparation while a reader still
+    # holds a damaged published copy.
+    $target = Join-Path $RepoCache $Commit.Substring(0, 12)
+    $targetState = $null
+    if (Test-Path -LiteralPath $target) {
+        $targetState = Get-ItlGitSourceCacheState -Root $target -Repo $Repo -ExpectedCommit $Commit
+        if ($targetState.owned -and (Test-Path -LiteralPath (Join-Path $target '.git/index.lock'))) {
+            throw "$($CodePrefix)_CACHE_BUSY: preserve '$target' and its Git lock. Wait for the owning Git operation to finish, then repeat the original operation. $(Get-GitIndexLockRecoveryHint -Root $target)"
+        }
+        if ($targetState.valid) {
+            Set-ItlGitSourceCacheLastUsed -Root $target
+            return $target
+        }
+        Write-Warning "$($CodePrefix)_CACHE_INVALID path='$target' expectedCommit='$Commit' state='$($targetState.reason)'. Preparing a verified source before installation."
+    }
+
+    # Prepare beside the published copy. Failure/interruption leaves both the
+    # partial preparation and any damaged copy intact for diagnosis.
+    $prepare = Join-Path $RepoCache ('prepare-' + (New-ItlGitSourceCacheId))
+    try {
+        Invoke-GitAt -Root $RepoCache -Arguments @("-c", "core.longpaths=true", "clone", "--quiet", "--no-checkout", "--config", "core.longpaths=true", $Mirror, $prepare)
+        Invoke-GitAt -Root $prepare -Arguments @("remote", "set-url", "origin", $Repo)
+        Invoke-GitAt -Root $prepare -Arguments @("-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", $Commit)
+    } catch {
+        throw "Failed to prepare $Label '$RefLabel' in '$prepare': $($_.Exception.Message). Previous cache '$target' is preserved; resolve the failure and repeat the original operation."
+    }
+    $ready = Get-ItlGitSourceCacheState -Root $prepare -Repo $Repo -ExpectedCommit $Commit
+    if (-not $ready.valid) {
+        throw "$($CodePrefix)_SOURCE_NOT_READY: path='$prepare' expectedCommit='$Commit' state='$($ready.reason)'. Preserve this diagnostic copy, resolve the source integrity failure and repeat the original operation; this source was not used."
+    }
+    Set-ItlGitSourceCacheLastUsed -Root $prepare
+
+    $root = $prepare
+    $diagnostic = $target
+    # A scanner or indexer briefly holding a file interrupts a retention or
+    # Storage Sense removal: the target stays delete-pending, or remains as a
+    # remnant without .git that outlives the holder. Wait a bounded time for the
+    # holder instead of reporting the exact cached path as busy; a reader that
+    # keeps holding it still gets the verified private preparation. Only an
+    # atomic rename is used: Move-Item falls back to moving item by item and
+    # leaves both the preparation and the exact path incomplete.
+    $waitVariable = Get-Variable -Name ItlGitSourceCacheReleaseWaitSeconds -ValueOnly -ErrorAction SilentlyContinue
+    $deadlineUtc = [DateTime]::UtcNow.AddSeconds($(if ($null -ne $waitVariable) { [double]$waitVariable } else { 15 }))
+    while ($true) {
+        $entry = Get-ItlGitSourceCacheEntryKind -Path $target
+        if ($entry -eq 'missing') {
+            try {
+                [IO.Directory]::Move($prepare, $target)
+                $root = $target
+                break
+            } catch {
+                # A concurrent preparation published first, or the removed
+                # entry is still delete-pending; the next pass tells them apart.
+            }
+        } elseif ($entry -ne 'pending') {
+            $current = Get-ItlGitSourceCacheState -Root $target -Repo $Repo -ExpectedCommit $Commit
+            if ($current.valid) {
+                Remove-Item -LiteralPath $prepare -Recurse -Force -ErrorAction SilentlyContinue
+                $root = $target
+                Set-ItlGitSourceCacheLastUsed -Root $target
+                break
+            }
+            # Recheck physical ownership before each move of a damaged copy;
+            # unknown directories and foreign repositories stay untouched.
+            if (-not ($entry -eq 'remnant' -or ($entry -eq 'checkout' -and $current.owned))) { break }
+            $candidate = Join-Path $RepoCache ('invalid-' + (New-ItlGitSourceCacheId))
+            try {
+                [IO.Directory]::Move($target, $candidate)
+                $diagnostic = $candidate
+                continue
+            } catch {
+                # A reader still holds the damaged copy.
+            }
+        }
+        if ([DateTime]::UtcNow -ge $deadlineUtc) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($null -ne $targetState) {
+        Write-Warning "$($CodePrefix)_CACHE_RECOVERED path='$target' expectedCommit='$Commit' result='verified source ready' source='$root' diagnostic='$diagnostic'. Unknown directories remain untouched."
+    }
+    return $root
 }
 
 function Sync-AiRules1cCheckout {
@@ -3247,38 +6039,15 @@ function Sync-AiRules1cCheckout {
         [string]$CommitOverride = ""
     )
 
-    $lockedEntry = Get-DependencyLockEntry -Name "aiRules1c"
-    $repo = $(if ($RepoOverride) { $RepoOverride } else { Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/xmentosx/itl_ai_rules_1c.git" })
-    $configuredRef = $(if ($RefOverride) { $RefOverride } else { [string](Get-ConfigValue -Path "aiRules.ref" -Default "") })
-    $dependencyMode = Get-DependencyMode
-    $lockedRef = ""
-    $lockedCommit = ""
-    if ($CommitOverride) {
-        $lockedCommit = $CommitOverride
+    $lockedEntry = Get-WorkflowDependencyEntry -Name aiRules1c
+    $repo = if ($RepoOverride) {$RepoOverride} else {[string](Get-ConfigValueFromObject $lockedEntry 'repo' '')}
+    $configuredRef = if ($RefOverride) {$RefOverride} else {[string](Get-ConfigValueFromObject $lockedEntry 'ref' '')}
+    $lockedCommit = if ($CommitOverride) {$CommitOverride} else {[string](Get-ConfigValueFromObject $lockedEntry 'commit' '')}
+    if (-not $repo -or -not $configuredRef -or $lockedCommit -notmatch '^[a-f0-9]{40}$') {
+        throw 'DEPENDENCY_RULES_PIN_REQUIRED: the selected rules require repo, immutable ref and exact commit. Complete update-workflow with the dependency decision.'
     }
-    if ($dependencyMode -eq "locked" -and -not $RepoOverride) {
-        $lockedRepo = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "repo" -Default "")
-        $lockedRef = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "ref" -Default "")
-        $lockedCommit = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "commit" -Default "")
-        if ($lockedRepo) {
-            $repo = $lockedRepo
-        }
-        if (-not $lockedRef -and -not $lockedCommit) {
-            throw "Dependency mode is locked, but aiRules1c.ref and aiRules1c.commit are empty in .agent-1c/dependency-lock.json."
-        }
-    } elseif ($configuredRef -and -not $CommitOverride) {
-        $baselineRepo = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "repo" -Default "")
-        $baselineRef = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "ref" -Default "")
-        if ((Get-AiRules1cRepositoryIdentity -Repo $baselineRepo) -eq (Get-AiRules1cRepositoryIdentity -Repo $repo) -and $baselineRef -eq $configuredRef) {
-            $lockedCommit = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "commit" -Default "")
-        }
-    }
-    if ($RefOverride) {
-        $lockedRef = $RefOverride
-    }
-
-    if ((Test-AiRules1cForkRepository -Repo $repo) -and -not ($configuredRef -or $lockedRef)) {
-        throw "The controlled ai_rules_1c fork requires an immutable configured tag in aiRules.ref; fork main is not allowed."
+    if ((Test-AiRules1cForkRepository -Repo $repo) -and $configuredRef -notlike "itl-*") {
+        throw "Controlled fork ref must be an immutable ITL tag matching 'itl-*': $configuredRef"
     }
 
     $checkoutRepo = $repo
@@ -3290,7 +6059,7 @@ function Sync-AiRules1cCheckout {
             throw "ITL_AI_RULES_SOURCE_PATH is not a Git checkout: $sourceRoot"
         }
         $sourceOrigin = (Get-GitOutputAt -Root $sourceRoot -Arguments @("remote", "get-url", "origin")).Trim()
-        if ((Get-AiRules1cRepositoryIdentity -Repo $sourceOrigin) -ne (Get-AiRules1cRepositoryIdentity -Repo $repo)) {
+        if ((Get-ItlGitRepositoryIdentity -Repo $sourceOrigin) -ne (Get-ItlGitRepositoryIdentity -Repo $repo)) {
             throw "ITL_AI_RULES_SOURCE_PATH origin does not match configured ai_rules_1c repo: source='$sourceOrigin' configured='$repo'."
         }
         if (@(Get-GitPathListAt -Root $sourceRoot -Arguments @("status", "--porcelain=v1", "-z", "--untracked-files=all")).Count -gt 0) {
@@ -3299,82 +6068,26 @@ function Sync-AiRules1cCheckout {
         $checkoutRepo = $sourceRoot
     }
 
-    $tempRoot = Get-Agent1cTempRoot
-    $rulesDir = Resolve-Agent1cFullPath -Path (Join-Path $tempRoot "ai_rules_1c")
-
-    if (Test-Path -LiteralPath $rulesDir) {
-        try {
-            $currentOrigin = (Get-GitOutputAt -Root $rulesDir -Arguments @("remote", "get-url", "origin")).Trim()
-            if ($currentOrigin -ne $checkoutRepo) {
-                Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $checkoutRepo)
-            }
-            try {
-                Invoke-AiRules1cFetchWithRetry -Root $rulesDir
-            } finally {
-                if ($checkoutRepo -ne $repo) {
-                    Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
-                }
-            }
-        } catch {
-            throw "Failed to update ai_rules_1c in $rulesDir"
-        }
-    } else {
-        try {
-            Invoke-GitAt -Root $tempRoot -Arguments @("clone", $checkoutRepo, $rulesDir)
-            if ($checkoutRepo -ne $repo) {
-                Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
-            }
-        } catch {
-            throw "Failed to clone ai_rules_1c from $repo"
-        }
+    # One bare mirror per repository and one immutable checkout per exact
+    # commit, shared by every project and worktree pinned to that commit.
+    $cacheRoot = Resolve-Agent1cFullPath -Path (Get-AiRules1cCacheRoot)
+    $repoKey = (Get-StringSha256 -Value (Get-ItlGitRepositoryIdentity -Repo $repo)).Substring(0, 16)
+    $repoCache = Join-Path $cacheRoot $repoKey
+    try {
+        [void][IO.Directory]::CreateDirectory($repoCache)
+    } catch {
+        throw "AI_RULES_CACHE_UNAVAILABLE: cannot create '$repoCache': $($_.Exception.Message). Make the ITL artifact cache writable or set ITL_ARTIFACT_CACHE_ROOT, then repeat the original operation."
     }
+    $mirror = Resolve-AiRules1cMirror -RepoCache $repoCache -SourceRepo $checkoutRepo -Tag $configuredRef -Commit $lockedCommit
 
-    $resolvedRef = ""
-    $effectiveTagRef = $(if ($configuredRef) { $configuredRef } elseif (Test-AiRules1cForkRepository -Repo $repo) { $lockedRef } else { "" })
-    if ($effectiveTagRef) {
-        if ((Test-AiRules1cForkRepository -Repo $repo) -and $effectiveTagRef -notlike "itl-*") {
-            throw "Controlled fork ref must be an immutable ITL tag matching 'itl-*': $effectiveTagRef"
-        }
-        $tagRef = "refs/tags/$effectiveTagRef"
-        if (-not (Test-GitRefExistsAt -Root $rulesDir -Ref $tagRef)) {
-            throw "Configured ai_rules_1c ref is not an available tag: $effectiveTagRef"
-        }
-        $tagCommit = (Get-GitOutputAt -Root $rulesDir -Arguments @("rev-parse", "$tagRef^{commit}")).Trim()
-        if ($lockedCommit -and $tagCommit -ne $lockedCommit) {
-            throw "ai_rules_1c tag/commit mismatch for '$effectiveTagRef': tag=$tagCommit lock=$lockedCommit"
-        }
-        try {
-            Invoke-GitAt -Root $rulesDir -Arguments @("checkout", "--detach", $tagCommit)
-        } catch {
-            throw "Failed to checkout pinned ai_rules_1c tag '$effectiveTagRef' in $rulesDir"
-        }
-        $resolvedRef = $effectiveTagRef
-    } elseif ($dependencyMode -eq "locked" -or $lockedCommit) {
-        $checkoutTarget = $(if ($lockedCommit) { $lockedCommit } else { $lockedRef })
-        try {
-            Invoke-GitAt -Root $rulesDir -Arguments @("checkout", "--detach", $checkoutTarget)
-        } catch {
-            throw "Failed to checkout locked ai_rules_1c revision '$checkoutTarget' in $rulesDir"
-        }
-        $resolvedRef = $checkoutTarget
-    } else {
-        try {
-            $originHead = (Get-GitOutputAt -Root $rulesDir -Arguments @("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")).Trim()
-            if (-not $originHead) {
-                $originHead = "origin/HEAD"
-            }
-            Invoke-GitAt -Root $rulesDir -Arguments @("checkout", "--detach", $originHead)
-            $resolvedRef = $originHead
-        } catch {
-            throw "Failed to checkout latest ai_rules_1c origin HEAD in $rulesDir"
-        }
-    }
+    $root = Publish-ItlGitSourceCacheCheckout -RepoCache $repoCache -Mirror $mirror -Repo $repo -Commit $lockedCommit -Label 'ai_rules_1c' -RefLabel $configuredRef -CodePrefix 'AI_RULES'
+    Invoke-AiRules1cCacheMaintenance -CacheRoot $cacheRoot -KeepRoot $root
 
     return [pscustomobject]@{
-        root = $rulesDir
+        root = $root
         repo = $repo
-        ref = $resolvedRef
-        commit = (Get-GitOutputAt -Root $rulesDir -Arguments @("rev-parse", "HEAD")).Trim()
+        ref = $configuredRef
+        commit = (Get-GitOutputAt -Root $root -Arguments @("rev-parse", "HEAD")).Trim()
     }
 }
 
@@ -3388,12 +6101,25 @@ function Invoke-AiRules1cInstaller {
     $rulesDir = Resolve-Agent1cFullPath -Path ([string]$checkout.root)
     $desiredTools = @(Get-AiRules1cTools)
     Assert-AiRules1cToolAdapters -RulesDir $rulesDir -Tools $desiredTools
+    if ($desiredTools.Count -gt 0) { Invoke-AiRules1cManagedMcpConfigReconcile -Operation "ai_rules_1c $Command preflight" -PlanOnly | Out-Null }
+    Initialize-ItlClientModelTiers | Out-Null
     $installScript = Join-Path $rulesDir "install.ps1"
     if (-not (Test-Path -LiteralPath $installScript)) {
         throw "ai_rules_1c install.ps1 was not found: $installScript"
     }
 
     $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
+    if ($desiredTools.Count -eq 0) {
+        foreach ($tool in @(Get-AiRules1cManifestToolNames)) {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript remove -Tool $tool -ProjectRoot $script:ProjectRoot -Source $rulesDir -McpMode delegated -AssumeYes
+            if ($LASTEXITCODE -ne 0) { throw "ai_rules_1c detach '$tool' failed with exit code $LASTEXITCODE" }
+        }
+        if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+            throw 'ITL_CLIENT_DETACH_INCOMPLETE: ai_rules_1c manifest still exists after all clients were detached.'
+        }
+        Write-Host 'No AI client is attached. Project workflow and user-owned files remain available for a later attach.'
+        return
+    }
     $effectiveCommand = $Command
     if ($Command -eq "update" -and -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         Write-Host "ai_rules_1c manifest was not found; running init instead of update."
@@ -3402,22 +6128,25 @@ function Invoke-AiRules1cInstaller {
 
     if ($effectiveCommand -eq "update") {
         $installedToolsBeforeUpdate = @(Get-AiRules1cManifestToolNames)
-        $toolDifference = @(Compare-Object -ReferenceObject @($desiredTools) -DifferenceObject @($installedToolsBeforeUpdate))
-        if ($toolDifference.Count -gt 0) {
-            if (Test-AiRulesManifestHasUserChanges) {
-                throw "Cannot replace the active ai_rules_1c client because managed files are marked userModified. Resolve those files explicitly first."
-            }
-            Write-Host "Replacing ai_rules_1c client set transactionally: [$($installedToolsBeforeUpdate -join ', ')] -> [$($desiredTools -join ', ')]."
+        $toAdd = @($desiredTools | Where-Object { $installedToolsBeforeUpdate -notcontains $_ })
+        $toDetach = @($installedToolsBeforeUpdate | Where-Object { $desiredTools -notcontains $_ })
+        if ($toAdd.Count -gt 0 -or $toDetach.Count -gt 0) {
+            Write-Host "Reconciling ai_rules_1c clients: [$($installedToolsBeforeUpdate -join ', ')] -> [$($desiredTools -join ', ')]."
             Push-Location (Resolve-Agent1cFullPath -Path $script:ProjectRoot)
             try {
-                & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript remove -ProjectRoot $script:ProjectRoot -Source $rulesDir -McpMode delegated -AssumeYes
-                if ($LASTEXITCODE -ne 0) {
-                    throw "ai_rules_1c remove failed with exit code $LASTEXITCODE"
+                # Add before detach so an ordinary replacement never drops the
+                # last manifest owner or its user-owned project templates.
+                foreach ($tool in $toAdd) {
+                    & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript add -Tool $tool -ProjectRoot $script:ProjectRoot -Source $rulesDir -McpMode delegated -AssumeYes
+                    if ($LASTEXITCODE -ne 0) { throw "ai_rules_1c add '$tool' failed with exit code $LASTEXITCODE" }
+                }
+                foreach ($tool in $toDetach) {
+                    & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript remove -Tool $tool -ProjectRoot $script:ProjectRoot -Source $rulesDir -McpMode delegated -AssumeYes
+                    if ($LASTEXITCODE -ne 0) { throw "ai_rules_1c detach '$tool' failed with exit code $LASTEXITCODE" }
                 }
             } finally {
                 Pop-Location
             }
-            $effectiveCommand = "init"
         }
     }
 
@@ -3447,8 +6176,8 @@ function Invoke-AiRules1cInstaller {
     Assert-AiRules1cInstallation -RulesDir $rulesDir -DesiredTools $desiredTools | Out-Null
 
     $configuredRaw = @(ConvertTo-AgentToolList -Value (Get-ConfigValue -Path "aiRules.tools" -Default @()))
-    if ($configuredRaw.Count -ne 1 -or $configuredRaw[0] -ne $desiredTools[0]) {
-        Set-ProjectAiRulesClient -Client $desiredTools[0]
+    if (@(Compare-Object -ReferenceObject @($configuredRaw | Sort-Object) -DifferenceObject @($desiredTools | Sort-Object)).Count -gt 0) {
+        Set-ProjectAiRulesClients -Clients $desiredTools
         Read-ProjectConfig
     }
 
@@ -3621,8 +6350,9 @@ function Remove-AiRules1cManagedMcpConfig {
 
 function Get-AiRules1cMcpClientConfigPaths {
     try {
-        $adapter = Get-ItlClientAdapter -Client ([string](@(Get-AgentTargets) | Select-Object -First 1))
-        return @((Join-Path $script:ProjectRoot $adapter.mcpPath))
+        return @(Get-AgentTargets | ForEach-Object {
+            Get-ItlClientMcpConfigPaths -Client ([string]$_)
+        } | Select-Object -Unique)
     } catch {
         return @()
     }
@@ -3670,6 +6400,9 @@ function Restore-AiRules1cMcpConfigSnapshot {
 function Get-AiRules1cMcpReconcileSnapshotPaths {
     return @(
         @(Get-AiRules1cMcpClientConfigPaths) +
+        # Legacy installers also emitted defaults for inactive Codex/Kilo.
+        # Their owned cleanup is part of the same preflight and rollback scope.
+        @((Join-Path $script:ProjectRoot '.codex/config.toml'), (Join-Path $script:ProjectRoot '.kilo/kilo.json')) +
         @(Get-ItlManagedMcpStatePath)
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
 }
@@ -3685,10 +6418,15 @@ function Get-AiRules1cMcpExpectedClientKeys {
 }
 
 function Assert-AiRules1cMcpReconcileIntegrity {
-    param([string[]]$ExpectedClientNames)
+    param([string[]]$ExpectedClientNames, [hashtable]$PlannedOwnedKeys = @{})
 
-    $client = Get-ItlActiveClient
+    foreach ($client in @(Get-AgentTargets)) {
     $expectedKeys = @(Get-AiRules1cMcpExpectedClientKeys -ClientNames $ExpectedClientNames -Client $client)
+    # Required ready endpoints remain mandatory. Additional owned keys come
+    # only from the authoritative writer's preflight, never from actual state.
+    if ($PlannedOwnedKeys.ContainsKey($client)) {
+        $expectedKeys = @(@($expectedKeys) + @($PlannedOwnedKeys[$client]) | Select-Object -Unique)
+    }
     $actualKeys = @(Get-ItlClientMcpEndpointKeys -Client $client)
     $managedKeys = @(Get-ItlManagedMcpOwnerKeys -Client $client -Owner "vibecoding1c")
     $missingActual = @($expectedKeys | Where-Object { $actualKeys -notcontains $_ })
@@ -3696,6 +6434,7 @@ function Assert-AiRules1cMcpReconcileIntegrity {
     $unexpectedManaged = @($managedKeys | Where-Object { $expectedKeys -notcontains $_ })
     if ($missingActual.Count -gt 0 -or $missingManaged.Count -gt 0 -or $unexpectedManaged.Count -gt 0) {
         throw "ITL_MCP_RECONCILE_INTEGRITY_FAILED: client=$client missingClient=[$($missingActual -join ', ')] missingManaged=[$($missingManaged -join ', ')] unexpectedManaged=[$($unexpectedManaged -join ', ')]."
+    }
     }
 }
 
@@ -3793,14 +6532,11 @@ function Remove-StaleAiRules1cDataMcpConfig {
 }
 
 function Invoke-AiRules1cManagedMcpConfigReconcile {
-    param([string]$Operation = "MCP reconcile")
+    param([string]$Operation = "MCP reconcile", [switch]$PlanOnly)
 
     $managedServerIds = @(Get-AiRules1cManagedMcpServerIds)
-    $selection = Read-Vibecoding1cMcpSelection
-    $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
-    $selectionPath = Get-Vibecoding1cMcpSelectionPath
-    if (-not (Test-Path -LiteralPath $selectionPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("vibecoding1c MCP selection file is missing")
+    if (-not (Test-Vibecoding1cMcpLegacySelectionPresent)) {
+        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("legacy vibecoding1c MCP selection is missing; catalog-only preferences do not enable legacy setup")
         return [pscustomobject]@{
             reconciled = $false
             preserved = $true
@@ -3808,6 +6544,8 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             pruned = @()
         }
     }
+    $selection = Read-Vibecoding1cMcpSelection
+    $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
 
     try {
         $selectedClientNames = @(Get-Vibecoding1cMcpSelectedClientConfigNames)
@@ -3818,12 +6556,13 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
 
     $missingReadyClientNames = @($selectedClientNames | Where-Object { $readyClientNames -notcontains $_ })
     if (-not $selectionCompleteness.isComplete -or $missingReadyClientNames.Count -gt 0) {
-        $client = Get-ItlActiveClient
-        $expectedKeys = @(Get-AiRules1cMcpExpectedClientKeys -ClientNames $selectedClientNames -Client $client)
-        $actualKeys = @(Get-ItlClientMcpEndpointKeys -Client $client)
-        $missingActual = @($expectedKeys | Where-Object { $actualKeys -notcontains $_ })
-        if ($missingActual.Count -gt 0) {
-            throw "ITL_MCP_RECONCILE_INTEGRITY_FAILED: selected MCP replacements are not ready and the current $client config is already incomplete. notReady=[$($missingReadyClientNames -join ', ')] missingClient=[$($missingActual -join ', ')] selection=[$(@($selectionCompleteness.reasons) -join '; ')]."
+        foreach ($client in @(Get-AgentTargets)) {
+            $expectedKeys = @(Get-AiRules1cMcpExpectedClientKeys -ClientNames $selectedClientNames -Client $client)
+            $actualKeys = @(Get-ItlClientMcpEndpointKeys -Client $client)
+            $missingActual = @($expectedKeys | Where-Object { $actualKeys -notcontains $_ })
+            if ($missingActual.Count -gt 0) {
+                throw "ITL_MCP_RECONCILE_INTEGRITY_FAILED: selected MCP replacements are not ready and the current $client config is already incomplete. notReady=[$($missingReadyClientNames -join ', ')] missingClient=[$($missingActual -join ', ')] selection=[$(@($selectionCompleteness.reasons) -join '; ')]."
+            }
         }
         $preserveReasons = @($selectionCompleteness.reasons)
         if ($missingReadyClientNames.Count -gt 0) {
@@ -3840,12 +6579,35 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
 
     $replacementServerIds = @($readyClientNames | Where-Object { $managedServerIds -contains $_ } | Select-Object -Unique)
 
+    if ($PlanOnly) {
+        Write-Vibecoding1cMcpClientConfig -Clients @(Get-AgentTargets) -ReplaceAiRulesServerIds $replacementServerIds -AdditionalInputPaths (Get-AiRules1cMcpReconcileSnapshotPaths) -PlanOnly
+        return [pscustomobject]@{planned=$true;reconciled=$false;preserved=$true;replacements=@($replacementServerIds);pruned=@()}
+    }
+
     $snapshot = New-AiRules1cMcpConfigSnapshot -Paths (Get-AiRules1cMcpReconcileSnapshotPaths)
     try {
-        $removed = @(Remove-AiRules1cManagedMcpConfig -ServerIds $replacementServerIds)
-        Write-Vibecoding1cMcpClientConfig
-        $pruned = @(Remove-StaleAiRules1cDataMcpConfig)
-        Assert-AiRules1cMcpReconcileIntegrity -ExpectedClientNames $readyClientNames
+        $clients = @(Get-AgentTargets)
+        # This reconcile replaces ai_rules/vibecoding defaults only. Explicit
+        # sync-client-mcp/package setup owns changes to facade/UI families.
+        $plannedOwnedKeys = @{}
+        $captureClaims = {
+            param($prepared)
+            foreach ($claim in @($prepared.ownedKeys)) {
+                if ([string]$claim.ownerKey -cmatch '^([^/]+)/vibecoding1c$') {
+                    $clientKey = $Matches[1]
+                    $plannedOwnedKeys[$clientKey] = @(@($plannedOwnedKeys[$clientKey]) + @([string]$claim.name) | Where-Object { $_ } | Select-Object -Unique)
+                }
+            }
+        }.GetNewClosure()
+        Write-Vibecoding1cMcpClientConfig -Clients $clients -ReplaceAiRulesServerIds $replacementServerIds -AdditionalInputPaths (Get-AiRules1cMcpReconcileSnapshotPaths) -OnPrepared $captureClaims
+        $protection = Get-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
+        $removed = @()
+        $pruned = @()
+        if ($null -eq $protection -or -not $protection.Value) {
+            $removed = @(Remove-AiRules1cManagedMcpConfig -ServerIds $replacementServerIds)
+            $pruned = @(Remove-StaleAiRules1cDataMcpConfig)
+        }
+        Assert-AiRules1cMcpReconcileIntegrity -ExpectedClientNames $readyClientNames -PlannedOwnedKeys $plannedOwnedKeys
         Write-Host "Reconciled ai_rules_1c MCP client entries with ITL vibecoding1c MCP config: $($replacementServerIds -join ', ')."
         return [pscustomobject]@{
             reconciled = $true
@@ -3856,6 +6618,9 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
         }
     } catch {
         $errorMessage = $_.Exception.Message
+        if (Test-ItlMcpFailurePreservesCurrentState -Message $errorMessage) {
+            throw "$Operation stopped: $errorMessage Current MCP files were preserved. Resolve the reported ownership conflict or review the late edit, then repeat the original reconciliation; do not restore over user changes."
+        }
         try {
             Restore-AiRules1cMcpConfigSnapshot -Snapshot $snapshot
         } catch {
@@ -3883,7 +6648,9 @@ function Update-AiRules1c {
     Invoke-AiRules1cInstaller -Command "update"
     Update-AgentGuidanceBridge
     Update-UserRules
-    Sync-KiloItlCommandSurface
+    # Workflow file post-copy generates the surface once after this install.
+    $deferred = Get-Variable -Name ItlWorkflowPostCopyDefersClientSurfaces -Scope Script -ErrorAction SilentlyContinue
+    if ($null -eq $deferred -or -not $deferred.Value) { Sync-KiloItlCommandSurface }
 }
 
 function Get-WorkflowPackageDefaultRepo {
@@ -3903,15 +6670,55 @@ function Get-WorkflowPackageRepo {
 }
 
 function Get-WorkflowPackageRef {
+    if ($DependencyHotfixOnly) {
+        if (-not $DependencySelectionFile) { throw 'DEPENDENCY_SELECTION_FILE_REQUIRED: use -DependencySelectionFile with -DependencyHotfixOnly.' }
+        $installed = [string](Get-ConfigValueFromObject (Get-DependencyLockEntry -Name 'workflowPackage') 'commit' '')
+        if ($installed -notmatch '^[a-f0-9]{40}$') { throw 'DEPENDENCY_WORKFLOW_IDENTITY_REQUIRED: the installed workflow commit is missing. Complete a normal update-workflow before applying a hotfix.' }
+        return $installed
+    }
     $ref = [string](Get-EnvValue -Name "ITL_WORKFLOW_REF" -Default "")
+    if ([string]::IsNullOrWhiteSpace($ref)) {
+        $ref = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'ref' -Default '')
+    }
     if ([string]::IsNullOrWhiteSpace($ref)) {
         return (Get-WorkflowPackageDefaultRef)
     }
     return $ref
 }
 
-function Get-WorkflowPackageTempRoot {
+function Get-WorkflowPackageLegacyTempRoot {
+    # Former shared checkout. Storage Sense deleted its tracked files while a
+    # rollout copied from it, so only legacy cleanup still reads this path.
     return (Resolve-Agent1cFullPath -Path (Join-Path (Join-Path (Get-Agent1cTempRoot) "1c-agent-workflow") "workflow-package"))
+}
+
+function Get-WorkflowPackageCacheRoot {
+    return (Resolve-Agent1cFullPath -Path (Join-Path (Get-ItlSharedArtifactCacheRoot) 'workflow-package'))
+}
+
+function Get-WorkflowPackageCacheRepoRoot {
+    param([Parameter(Mandatory = $true)][string]$Repo)
+    $repoKey = (Get-StringSha256 -Value (Get-ItlGitRepositoryIdentity -Repo $Repo)).Substring(0, 16)
+    return (Join-Path (Get-WorkflowPackageCacheRoot) $repoKey)
+}
+
+function Test-WorkflowPackageCacheCheckoutPath {
+    param([string]$Root)
+
+    # Only an entry the cache owner generated: <cache>\<repo16>\<commit12|prepare-id>.
+    if ([string]::IsNullOrWhiteSpace($Root)) { return $false }
+    $full = (Resolve-Agent1cFullPath -Path $Root).TrimEnd('\', '/')
+    $cache = (Get-WorkflowPackageCacheRoot).TrimEnd('\', '/')
+    if (-not $full.StartsWith(($cache + '\'), [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    $parts = $full.Substring($cache.Length + 1).Split('\')
+    return ($parts.Count -eq 2 -and $parts[0] -match '^[0-9a-f]{16}$' -and $parts[1] -match '^(?:[0-9a-f]{12}|prepare-[0-9a-f]{12})$')
+}
+
+function Set-WorkflowPackageCacheUse {
+    param([string]$Root)
+    # Retention spares checkouts that a rollout or recovery still reads; a
+    # user-owned ITL_WORKFLOW_SOURCE_PATH is never marked.
+    if (Test-WorkflowPackageCacheCheckoutPath -Root $Root) { Set-ItlGitSourceCacheLastUsed -Root $Root }
 }
 
 function Test-GitRefExistsAt {
@@ -3929,6 +6736,93 @@ function Test-GitRefExistsAt {
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
+}
+
+function Get-GitCommitAt {
+    param([string]$Root, [string]$Revision)
+
+    # Empty when the revision does not name a commit in this repository.
+    $resolvedRoot = Resolve-Agent1cFullPath -Path $Root
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = @(& git -C $resolvedRoot rev-parse --verify --quiet ($Revision + '^{commit}'))
+        if ($LASTEXITCODE -ne 0 -or $output.Count -ne 1 -or [string]$output[0] -notmatch '^[a-f0-9]{40}$') { return '' }
+        return [string]$output[0]
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
+function Resolve-WorkflowPackageCacheCheckout {
+    param(
+        [Parameter(Mandatory = $true)][string]$Repo,
+        [string]$Ref = '',
+        [string]$Commit = ''
+    )
+
+    # One bare mirror per repository and one immutable checkout per exact
+    # commit under the ITL artifact cache: a rollout reads stable bytes, and
+    # Storage Sense never ages the package out of TEMP mid-rollout.
+    $repoCache = Get-WorkflowPackageCacheRepoRoot -Repo $Repo
+    try {
+        [void][IO.Directory]::CreateDirectory($repoCache)
+    } catch {
+        throw "WORKFLOW_PACKAGE_CACHE_UNAVAILABLE: cannot create '$repoCache': $($_.Exception.Message). Make the ITL artifact cache writable or set ITL_ARTIFACT_CACHE_ROOT, then repeat the original operation."
+    }
+    $label = 'ITL workflow package'
+    $mirror = Initialize-ItlGitSourceCacheMirror -RepoCache $repoCache -SourceRepo $Repo -Label $label -CodePrefix 'WORKFLOW_PACKAGE'
+    $fetch = {
+        try {
+            Invoke-ItlGitFetchWithRetry -Root $mirror -Label $label -Arguments @('fetch', '--quiet', '--prune', $Repo, '+refs/heads/*:refs/heads/*', '+refs/tags/*:refs/tags/*')
+        } catch {
+            throw "Failed to update the $label mirror '$mirror': $($_.Exception.Message). The cache is preserved; resolve the fetch failure and repeat the original operation."
+        }
+    }
+    if ($Commit) {
+        # A recorded exact source needs no network access while its commit is local.
+        if ($Commit -notmatch '^[a-f0-9]{40}$') { throw "WORKFLOW_PACKAGE_COMMIT_INVALID: '$Commit' is not an exact commit." }
+        if (-not (Get-GitCommitAt -Root $mirror -Revision $Commit)) { & $fetch }
+        $resolved = Get-GitCommitAt -Root $mirror -Revision $Commit
+        if ($resolved -cne $Commit) {
+            throw "WORKFLOW_PACKAGE_COMMIT_UNAVAILABLE: commit '$Commit' is not available from '$Repo'. Restore access to that repository and repeat the original operation."
+        }
+        $refLabel = $Commit
+    } else {
+        Write-Host "Updating ITL workflow package mirror: $mirror"
+        & $fetch
+        # A branch wins over a same-named tag, as the former checkout did.
+        $resolved = if (Test-GitRefExistsAt -Root $mirror -Ref "refs/heads/$Ref") { Get-GitCommitAt -Root $mirror -Revision "refs/heads/$Ref" } else { Get-GitCommitAt -Root $mirror -Revision $Ref }
+        if (-not $resolved) { throw "Configured ITL workflow ref was not found in '$Repo': $Ref" }
+        $refLabel = $Ref
+    }
+    $root = Publish-ItlGitSourceCacheCheckout -RepoCache $repoCache -Mirror $mirror -Repo $Repo -Commit $resolved -Label $label -RefLabel $refLabel -CodePrefix 'WORKFLOW_PACKAGE'
+    # Removed checkouts are rebuilt from the mirror on demand, so retention can
+    # stay tight; maintenance failure never blocks the update.
+    try { Invoke-ItlGitSourceCacheRetention -CacheRoot (Get-WorkflowPackageCacheRoot) -KeepRoot $root -UnusedDays 1 -KeepRecent 3 } catch { }
+    try { Remove-WorkflowPackageLegacyTempCache } catch { }
+    return $root
+}
+
+function Remove-WorkflowPackageLegacyTempCache {
+    param([int]$IdleDays = 7)
+
+    # Only the exact former checkout, only when it is a physical Git checkout
+    # whose working tree and Git state have been idle, so a pending update that
+    # still records it keeps its source for a week.
+    $root = Get-WorkflowPackageLegacyTempRoot
+    $item = Get-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or -not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+    $gitDir = Join-Path $root '.git'
+    $gitItem = Get-Item -LiteralPath $gitDir -Force -ErrorAction SilentlyContinue
+    if ($null -eq $gitItem -or -not $gitItem.PSIsContainer -or ($gitItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+    $cutoffUtc = [DateTime]::UtcNow.AddDays(-$IdleDays)
+    $recent = @(foreach ($path in @($root, $gitDir, (Join-Path $gitDir 'index'), (Join-Path $gitDir 'HEAD'), (Join-Path $gitDir 'FETCH_HEAD'))) {
+        try { (Get-Item -LiteralPath $path -Force -ErrorAction Stop).LastWriteTimeUtc } catch { }
+    }) | Where-Object { $_ -gt $cutoffUtc }
+    if (@($recent).Count) { return }
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop
+    Write-Host "Removed the idle legacy ITL workflow package TEMP checkout '$root'."
 }
 
 function Assert-WorkflowPackageSourceRoot {
@@ -3968,33 +6862,25 @@ function Resolve-WorkflowPackageSource {
         }
         $sourceKind = "path"
     } else {
-        $root = Get-WorkflowPackageTempRoot
-        $parent = Split-Path -Parent $root
-        New-Item -ItemType Directory -Force -Path $parent | Out-Null
-
-        if (-not (Test-Path -LiteralPath $root -PathType Container -ErrorAction SilentlyContinue)) {
-            Write-Host "Cloning ITL workflow package: $repo"
-            Invoke-GitAt -Root $parent -Arguments @("clone", $repo, $root)
-        } elseif (-not (Test-Path -LiteralPath (Join-Path $root ".git") -PathType Container -ErrorAction SilentlyContinue)) {
-            throw "Managed ITL workflow package checkout exists but is not a Git repository: $root. Remove it or set ITL_WORKFLOW_SOURCE_PATH."
-        }
-
-        Write-Host "Updating ITL workflow package checkout: $root"
-        Invoke-GitAt -Root $root -Arguments @("fetch", "--all", "--tags", "--prune")
-        # This checkout is workflow-owned; force restores tracked damage in the shared cached copy.
-        $remoteRef = "refs/remotes/origin/$ref"
-        if (Test-GitRefExistsAt -Root $root -Ref $remoteRef) {
-            Invoke-GitAt -Root $root -Arguments @("checkout", "--force", "-B", $ref, "origin/$ref")
-        } else {
-            Invoke-GitAt -Root $root -Arguments @("checkout", "--force", "--detach", $ref)
-        }
+        $root = Resolve-WorkflowPackageCacheCheckout -Repo $repo -Ref $ref
     }
 
     Assert-WorkflowPackageSourceRoot -SourceRoot $root
+    if ($DependencyHotfixOnly -and -not (Test-Path -LiteralPath (Join-Path $root '.agents/skills/1c-workflow/scripts/lib/agent-1c.dependencies.ps1') -PathType Leaf)) {
+        throw 'DEPENDENCY_WORKFLOW_UPDATE_REQUIRED: the installed workflow cannot consume qualified hotfixes. Complete a normal source-side update-workflow with the new workflow, then repeat the hotfix operation.'
+    }
     $commit = ""
     # A linked worktree stores .git as a file, while a primary checkout uses a directory.
     if (Test-Path -LiteralPath (Join-Path $root ".git") -ErrorAction SilentlyContinue) {
+        if ($sourceKind -eq 'path' -and
+            [string](Get-EnvValue -Name 'ITL_WORKFLOW_REQUIRE_CLEAN_SOURCE' -Default '') -eq 'true' -and
+            @(Get-GitPathListAt -Root $root -Arguments @('status', '--porcelain=v1', '-z', '--untracked-files=all')).Count -gt 0) {
+            throw "WORKFLOW_SOURCE_DIRTY: exact source checkout has changed or untracked files: $root. Commit and qualify that package before update-workflow."
+        }
         $commit = (Get-GitOutputAt -Root $root -Arguments @("rev-parse", "HEAD")).Trim()
+    }
+    if ($DependencyHotfixOnly -and $commit -cne $ref) {
+        throw "DEPENDENCY_HOTFIX_SOURCE_MISMATCH: selected source '$commit' differs from installed workflow '$ref'. Use its exact source checkout, or remove -DependencyHotfixOnly for a normal update."
     }
 
     return [pscustomobject]@{
@@ -4009,6 +6895,19 @@ function Resolve-WorkflowPackageSource {
 function Assert-WorkflowManagedTargetPath {
     param([string]$Path)
 
+    # A lexical full path under the lexical root is accepted by the normalized
+    # check below as well; skip its per-path disk resolution (a snapshot
+    # receipt holds ~1000 records). Environment-variable text keeps the full
+    # check because normalization expands it.
+    if (-not [string]::IsNullOrWhiteSpace($Path) -and -not [string]::IsNullOrWhiteSpace([string]$script:ProjectRoot) -and
+        $Path.IndexOf('%') -lt 0 -and ([string]$script:ProjectRoot).IndexOf('%') -lt 0) {
+        $lexicalRoot = [System.IO.Path]::GetFullPath([string]$script:ProjectRoot).TrimEnd('\')
+        $lexicalTarget = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+        if ([string]::Equals($lexicalTarget, $lexicalRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $lexicalTarget.StartsWith(($lexicalRoot + '\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+            return
+        }
+    }
     $root = Get-FullPathNormalized $script:ProjectRoot
     $target = Get-FullPathNormalized $Path
     if ($target -eq $root) {
@@ -4024,8 +6923,10 @@ function Assert-WorkflowSourceOutsideProject {
 
     $projectRoot = Get-FullPathNormalized $script:ProjectRoot
     $sourceRoot = Get-FullPathNormalized $SourceRoot
-    if ($sourceRoot -eq $projectRoot -or $sourceRoot.StartsWith(($projectRoot + "\"), [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "ITL workflow source must be outside the target project root for update-workflow: $SourceRoot"
+    if ($sourceRoot -eq $projectRoot -or
+        $sourceRoot.StartsWith(($projectRoot + "\"), [System.StringComparison]::OrdinalIgnoreCase) -or
+        $projectRoot.StartsWith(($sourceRoot + "\"), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "ITL workflow source and target project must be separate directories for update-workflow: $SourceRoot"
     }
 }
 
@@ -4078,8 +6979,10 @@ function ConvertTo-WorkflowUpdateRepoPath {
 }
 
 function Get-WorkflowUpdateClientSurfacePaths {
+    param([AllowNull()][object]$State = (Read-ItlClientSurfaceState))
+
     $paths = [System.Collections.Generic.List[string]]::new()
-    $state = Read-ItlClientSurfaceState
+    $state = ConvertTo-Vibecoding1cMcpHashtable -Object $State
     $clients = ConvertTo-Vibecoding1cMcpHashtable -Object $state["clients"]
     foreach ($client in @($clients.Keys)) {
         $entry = ConvertTo-Vibecoding1cMcpHashtable -Object $clients[$client]
@@ -4092,6 +6995,35 @@ function Get-WorkflowUpdateClientSurfacePaths {
         }
     }
     return @($paths | Select-Object -Unique)
+}
+
+function Get-WorkflowUpdateClientConfigRelativePaths {
+    param([string]$Client)
+    $root = (Get-FullPathNormalized $script:ProjectRoot).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    return @(Get-ItlClientMcpConfigPaths -Client $Client | ForEach-Object {
+        $absolute = Get-FullPathNormalized ([string]$_)
+        if (-not $absolute.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Invalid project client config path outside '$script:ProjectRoot': '$absolute'."
+        }
+        ConvertTo-WorkflowUpdateRepoPath -Path $absolute.Substring($root.Length)
+    })
+}
+
+function Get-WorkflowUpdateExpectedClientWritePaths {
+    param([Parameter(Mandatory = $true)][string]$SourceRoot, [AllowEmptyCollection()][string[]]$Clients = @(Get-AgentTargets))
+
+    $paths = [System.Collections.Generic.List[string]]::new()
+    foreach ($client in $Clients) {
+        foreach ($mcpPath in @(Get-WorkflowUpdateClientConfigRelativePaths -Client $client)) {
+            if (-not $paths.Contains($mcpPath)) { $paths.Add($mcpPath) }
+        }
+        $files = Get-ItlExpectedSurfaceFiles -Client $client -SourceRoot $SourceRoot
+        foreach ($relative in @($files.Keys)) {
+            $normalized = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$relative)
+            if (-not $paths.Contains($normalized)) { $paths.Add($normalized) }
+        }
+    }
+    return @($paths)
 }
 
 function Get-WorkflowUpdateTrackedInstalledClientConfigPaths {
@@ -4108,9 +7040,28 @@ function Get-WorkflowUpdateTrackedInstalledClientConfigPaths {
 function Get-WorkflowUpdateManagedPathSpecs {
     param(
         [string[]]$AiRulesPathsBefore = @(),
-        [string[]]$ClientSurfacePathsBefore = @()
+        [string[]]$ClientSurfacePathsBefore = @(),
+        [string]$AtCommit = '',
+        [switch]$StaticOnly
     )
 
+    $clientPaths = @()
+    $rulesEntries = @()
+    if ($StaticOnly) {
+        # Used when a retained manifest's ownership claim must be checked
+        # against this package's fixed write-set, without reading that claim.
+    } elseif ($AtCommit) {
+        $manifestText = Get-GitBlobTextAtCommit -Commit $AtCommit -RepoPath '.ai-rules.json'
+        if ($manifestText) { $rulesEntries = @(Get-AiRules1cManifestFileEntries -Manifest ($manifestText | ConvertFrom-Json -ErrorAction Stop)) }
+        $surfaceText = Get-GitBlobTextAtCommit -Commit $AtCommit -RepoPath '.agent-1c/client-surface.json'
+        if ($surfaceText) {
+            $surface = $surfaceText | ConvertFrom-Json -ErrorAction Stop
+            foreach ($client in @($surface.clients.PSObject.Properties)) { $clientPaths += @($client.Value.files.PSObject.Properties.Name) }
+        }
+    } else {
+        $clientPaths = @(Get-WorkflowUpdateClientSurfacePaths)
+        $rulesEntries = @(Get-AiRules1cManifestFileEntries)
+    }
     $paths = [System.Collections.Generic.List[string]]::new()
     foreach ($path in @(
         ".agents/skills/1c-workflow",
@@ -4129,17 +7080,18 @@ function Get-WorkflowUpdateManagedPathSpecs {
         ".agent-1c/project.json",
         ".agent-1c/dependency-lock.json",
         ".gitignore",
+        ".gitattributes",
         ".ai-rules.json",
         "AGENTS.md",
         "USER-RULES.md",
         "LLM-RULES.md",
         "memory.md"
-    ) + @($AiRulesPathsBefore) + @($ClientSurfacePathsBefore) + @(Get-WorkflowUpdateClientSurfacePaths) + @(Get-WorkflowUpdateTrackedInstalledClientConfigPaths)) {
+    ) + @($AiRulesPathsBefore) + @($ClientSurfacePathsBefore) + @($clientPaths) + @(Get-WorkflowUpdateTrackedInstalledClientConfigPaths)) {
         if ([string]::IsNullOrWhiteSpace([string]$path)) { continue }
         $normalized = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$path)
         if (-not $paths.Contains($normalized)) { $paths.Add($normalized) }
     }
-    foreach ($entry in @(Get-AiRules1cManifestFileEntries)) {
+    foreach ($entry in $rulesEntries) {
         if ([string]::IsNullOrWhiteSpace([string]$entry.target)) { continue }
         $normalized = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$entry.target)
         if (-not $paths.Contains($normalized)) { $paths.Add($normalized) }
@@ -4148,32 +7100,55 @@ function Get-WorkflowUpdateManagedPathSpecs {
 }
 
 function Get-WorkflowUpdateDeletedLegacyPaths {
-    $deleted = [System.Collections.Generic.List[string]]::new()
-    foreach ($relativePath in @(Get-LegacyWorkflowManagedFileHashes).Keys) {
-        $output = @(& git -C $script:ProjectRoot -c core.quotepath=false diff --name-status -- $relativePath)
-        if ($LASTEXITCODE -ne 0) {
-            throw "Cannot inspect legacy workflow deletion status: $relativePath"
-        }
-        if (@($output | Where-Object { ([string]$_).StartsWith("D`t", [System.StringComparison]::Ordinal) }).Count -gt 0) {
-            $deleted.Add((ConvertTo-WorkflowUpdateRepoPath -Path $relativePath))
-        }
+    return @(Get-WorkflowUpdateEligibleLegacyPaths -DeletedOnly)
+}
+
+function New-WorkflowUpdatePathMatcher {
+    param([string[]]$ManagedPathSpecs)
+
+    $exact = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $directory = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($spec in @($ManagedPathSpecs)) {
+        $normalizedSpec = ConvertTo-WorkflowUpdateRepoPath -Path $spec
+        [void]$exact.Add($normalizedSpec)
+        [void]$directory.Add($normalizedSpec.TrimEnd("/"))
     }
-    return @($deleted)
+    return [pscustomobject]@{ Exact = $exact; Directory = $directory }
+}
+
+function New-WorkflowUpdateCommitPathMatcher {
+    param([string[]]$ManagedPathSpecs)
+    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $ManagedPathSpecs
+    # Capturing a layered client config for rollback never makes its user
+    # content Git-owned, even under a positive directory spec such as .opencode.
+    $excluded = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in @(Get-WorkflowUpdateClientConfigRelativePaths -Client 'opencode')) { [void]$excluded.Add($path) }
+    $matcher | Add-Member -NotePropertyName Excluded -NotePropertyValue $excluded
+    return $matcher
 }
 
 function Test-WorkflowUpdatePathAllowed {
     param(
         [string]$Path,
-        [string[]]$ManagedPathSpecs
+        [string[]]$ManagedPathSpecs,
+        [object]$Matcher
     )
 
     $normalizedPath = ConvertTo-WorkflowUpdateRepoPath -Path $Path
-    foreach ($spec in @($ManagedPathSpecs)) {
-        $normalizedSpec = ConvertTo-WorkflowUpdateRepoPath -Path $spec
-        if ($normalizedPath.Equals($normalizedSpec, [System.StringComparison]::OrdinalIgnoreCase) -or
-            $normalizedPath.StartsWith(($normalizedSpec.TrimEnd("/") + "/"), [System.StringComparison]::OrdinalIgnoreCase)) {
+    if ($null -eq $Matcher) {
+        $Matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $ManagedPathSpecs
+    }
+    if ($Matcher.PSObject.Properties['Excluded'] -and $Matcher.Excluded.Contains($normalizedPath)) { return $false }
+    if ($Matcher.Exact.Contains($normalizedPath)) {
+        return $true
+    }
+    $slash = $normalizedPath.LastIndexOf("/")
+    while ($slash -ge 0) {
+        if ($Matcher.Directory.Contains($normalizedPath.Substring(0, $slash))) {
             return $true
         }
+        if ($slash -eq 0) { break }
+        $slash = $normalizedPath.LastIndexOf("/", $slash - 1)
     }
     return $false
 }
@@ -4193,38 +7168,77 @@ function Refresh-WorkflowUpdateManagedIndexStat {
         return
     }
 
+    $matcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $pathSpecs
     $trackedManagedPaths = @(Get-GitPathList -Arguments @("ls-files", "-z") |
-        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $pathSpecs })
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher })
     if ($trackedManagedPaths.Count -gt 0) {
-        $pathspecPath = New-TimestampedFilePath -Directory ([System.IO.Path]::GetTempPath()) -Prefix "itl-workflow-index-refresh-" -Extension ".paths"
-        try {
-            [System.IO.File]::WriteAllText(
-                $pathspecPath,
-                (($trackedManagedPaths -join [string][char]0) + [string][char]0),
-                (New-Object System.Text.UTF8Encoding $false)
-            )
-            $treeBefore = (Get-GitOutput @("write-tree")).Trim()
-            Invoke-Git @("add", "--update", "--pathspec-from-file=$pathspecPath", "--pathspec-file-nul")
-            $treeAfter = (Get-GitOutput @("write-tree")).Trim()
-            if ($treeAfter -cne $treeBefore) {
-                Invoke-Git @("reset", "--quiet", "HEAD", "--pathspec-from-file=$pathspecPath", "--pathspec-file-nul")
-                throw "update-workflow detected a real managed-file change after commit; the index was restored and the worktree change was preserved."
-            }
-        } finally {
-            if (Test-Path -LiteralPath $pathspecPath -PathType Leaf -ErrorAction SilentlyContinue) {
-                Remove-Item -LiteralPath $pathspecPath -Force -ErrorAction SilentlyContinue
-            }
+        $literalPaths = @($trackedManagedPaths | Select-Object -Unique | ForEach-Object { ':(literal)' + $_ })
+        # Only entries already equal to HEAD may be refreshed/restored. Other
+        # business entries may be staged or unmerged; never write-tree/reset them.
+        if (@(Get-WorkflowGitLiteralPathRecords -Arguments @('diff', '--cached', '--name-only', '-z', 'HEAD') -LiteralPaths $literalPaths).Count -gt 0) {
+            throw 'update-workflow cannot refresh changed managed index entries; preserve the index and reconcile the owned paths before repeating the update.'
+        }
+        $before = @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-files', '--stage', '-z') -LiteralPaths $literalPaths)
+        Invoke-WorkflowGitLiteralPathMutation -Arguments @('add', '--update') -LiteralPaths $literalPaths
+        $after = @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-files', '--stage', '-z') -LiteralPaths $literalPaths)
+        if (-not [string]::Equals(($before -join "`0"), ($after -join "`0"), [StringComparison]::Ordinal)) {
+            Invoke-WorkflowGitLiteralPathMutation -Arguments @('reset', '--quiet', 'HEAD') -LiteralPaths $literalPaths
+            throw "update-workflow detected a real managed-file change after commit; the index was restored and the worktree change was preserved."
         }
     }
 
-    $statusArguments = @("-C", $script:ProjectRoot, "status", "--porcelain=v1", "-z", "--untracked-files=no", "--") + $pathSpecs
-    $statusOutput = @(& git @statusArguments 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "update-workflow could not verify managed tracked status in a fresh Git process."
-    }
-    if ([string]::Concat(@($statusOutput)) -ne "") {
+    if ($trackedManagedPaths.Count -eq 0) { return }
+    $statusOutput = @(Get-WorkflowGitLiteralPathRecords -Arguments @(
+        "status", "--porcelain=v1", "-z", "--untracked-files=no"
+    ) -LiteralPaths @($trackedManagedPaths | ForEach-Object { ':(literal)' + $_ }))
+    if ($statusOutput.Count -gt 0) {
         throw "update-workflow refreshed only equivalent managed index entries, but a fresh Git process still reports tracked changes."
     }
+}
+
+function Get-WorkflowUpdateCommitMessage {
+    param([Parameter(Mandatory = $true)][object]$Source)
+    $sourceRef = [string]$Source.ref
+    $sourceCommit = [string]$Source.commit
+    $shortCommit = $(if ($sourceCommit.Length -ge 7) { $sourceCommit.Substring(0, 7) } else { $sourceCommit })
+    if ($sourceRef -and $shortCommit) { return "chore: update ITL workflow to $sourceRef@$shortCommit" }
+    if ($shortCommit) { return "chore: update ITL workflow to $shortCommit" }
+    return 'chore: update ITL workflow from local source'
+}
+
+function Assert-WorkflowUpdateMasterCommitCheckpoint {
+    param(
+        [Parameter(Mandatory = $true)][object]$Receipt,
+        [Parameter(Mandatory = $true)][object]$Source
+    )
+    $before = [string](Get-ConfigValueFromObject -Object $Receipt -Path 'preCommitHead' -Default '')
+    if ($before -notmatch '^[a-f0-9]{40}$') {
+        throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: preCommitHead is missing.'
+    }
+    $head = Get-CurrentCommit
+    if ($head -ceq $before) { return [pscustomobject]@{ committed = $false; commit = $head } }
+    $parents = @(Get-GitCommitParents -Commit $head)
+    $subject = (Get-GitOutput @('show', '-s', '--format=%s', $head)).Trim()
+    if ($parents.Count -ne 1 -or $parents[0] -cne $before -or
+        $subject -cne (Get-WorkflowUpdateCommitMessage -Source $Source)) {
+        throw "WORKFLOW_UPDATE_MASTER_HEAD_CHANGED: master HEAD '$head' is not the one workflow commit after '$before'. Preserve the snapshot and reconcile before repeating update-workflow."
+    }
+    $planned = @((Get-ConfigValueFromObject -Object $Receipt -Path 'plannedChangePaths' -Default @()) |
+        ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_) })
+    if ($planned.Count -eq 0) {
+        throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: planned change paths are missing.'
+    }
+    $actual = @(Get-GitPathList -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', $head, '--') |
+        ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_) })
+    $unexpected = @($actual | Where-Object { $planned -cnotcontains $_ })
+    if ($unexpected.Count -gt 0 -or $actual.Count -eq 0) {
+        throw "WORKFLOW_UPDATE_MASTER_COMMIT_PATHS_CHANGED: HEAD contains unplanned or empty workflow changes: $($unexpected -join ', '). Preserve the snapshot for reconciliation."
+    }
+    $dirty = @(Get-WorkflowUpdateTrackedChangePaths)
+    if ($dirty.Count -gt 0) {
+        throw "WORKFLOW_UPDATE_MASTER_COMMIT_DIRTY: tracked paths changed after the workflow commit: $($dirty -join ', '). Preserve the snapshot for reconciliation."
+    }
+    return [pscustomobject]@{ committed = $true; commit = $head }
 }
 
 function Commit-WorkflowUpdate {
@@ -4234,19 +7248,44 @@ function Commit-WorkflowUpdate {
         [string[]]$ClientSurfacePathsBefore = @()
     )
 
+    # An interrupted rules/client writer may already have advanced the current
+    # manifest. The root transaction's original literal write-set still owns
+    # retired files and tracked client config; never infer it from planned paths.
+    $snapshotOwnedPaths = @()
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    if ($null -ne $pending -and [string]$pending.receipt.phase -in @('master-commit-ready', 'master-committed')) {
+        if ([string]$pending.receipt.sourceCommit -cne [string]$Source.commit) {
+            throw 'WORKFLOW_UPDATE_SOURCE_CHANGED: master commit must continue the snapshot exact source; preserve its before/current/candidate and repeat that source.'
+        }
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+        $before = Get-WorkflowUpdateSnapshotBeforeState -Snapshot $pending.snapshot
+        $recordedBefore = ConvertTo-Agent1cHashtable -Object $pending.receipt.beforePathState
+        if ($before.Count -ne $recordedBefore.Count) {
+            throw 'WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: original root write-set and saved before-state differ; preserve the snapshot and recover its exact before backups.'
+        }
+        foreach ($record in @($pending.snapshot.records)) {
+            $relative = [string]$record.relativePath
+            if (-not $recordedBefore.Contains($relative) -or [string]$before[$relative] -cne [string]$recordedBefore[$relative]) {
+                throw "WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: '$relative' before backup changed; preserve the snapshot and recover its exact before bytes before committing."
+            }
+        }
+        $snapshotOwnedPaths = @($pending.snapshot.records | ForEach-Object { [string]$_.relativePath })
+    }
+    $runtimeTracked = @(Get-WorkflowTrackedExecutionRuntimePaths)
     $managedPathSpecs = @(
         @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore $AiRulesPathsBefore -ClientSurfacePathsBefore $ClientSurfacePathsBefore) +
-        @(Get-WorkflowUpdateDeletedLegacyPaths)
+        @(Get-WorkflowUpdateDeletedLegacyPaths) + @($runtimeTracked) + @($snapshotOwnedPaths)
     ) | Select-Object -Unique
+    $commitMatcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $managedPathSpecs
     $trackedChanges = @(Get-WorkflowUpdateTrackedChangePaths)
-    $unexpectedTracked = @($trackedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
+    $unexpectedTracked = @($trackedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher) })
     if ($unexpectedTracked.Count -gt 0) {
         throw "update-workflow produced tracked changes outside its managed allowlist and will not commit them: $($unexpectedTracked -join ', ')"
     }
 
     $managedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
-        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
-    $changes = @($trackedChanges + $managedUntracked | Select-Object -Unique)
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher })
+    $changes = @($trackedChanges + $managedUntracked + $runtimeTracked | Select-Object -Unique)
     if ($changes.Count -eq 0) {
         return [pscustomobject]@{
             created = $false
@@ -4255,51 +7294,385 @@ function Commit-WorkflowUpdate {
         }
     }
 
-    $sourceRef = [string]$Source.ref
-    $sourceCommit = [string]$Source.commit
-    $shortCommit = $(if ($sourceCommit.Length -ge 7) { $sourceCommit.Substring(0, 7) } else { $sourceCommit })
-    $message = if ($sourceRef -and $shortCommit) {
-        "chore: update ITL workflow to $sourceRef@$shortCommit"
-    } elseif ($shortCommit) {
-        "chore: update ITL workflow to $shortCommit"
-    } else {
-        "chore: update ITL workflow from local source"
-    }
+    $message = Get-WorkflowUpdateCommitMessage -Source $Source
     $unstagedManagedTracked = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z") |
-        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
-    if ($unstagedManagedTracked.Count -gt 0) {
-        Invoke-Git (@("add", "--update", "--") + $unstagedManagedTracked)
-    }
-    if ($managedUntracked.Count -gt 0) {
-        Invoke-Git (@("add", "--") + $managedUntracked)
-    }
-    $stagedChanges = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
-    $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
-    if ($unexpectedStaged.Count -gt 0) {
-        throw "update-workflow found staged changes outside its managed allowlist and will not commit them: $($unexpectedStaged -join ', ')"
-    }
-    if ($stagedChanges.Count -eq 0) {
-        throw "update-workflow found managed changes but could not stage any of them."
-    }
-    Invoke-Git @("commit", "--quiet", "-m", $message)
-    Write-Host "Committed: $message"
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher })
+    return Invoke-WithRunStatusHeartbeat {
+        Set-RunStage -Stage "workflow-update.commit" -Detail "Staging the managed workflow update in master."
+        if ($unstagedManagedTracked.Count -gt 0) {
+            Invoke-Git (@("add", "--update", "--") + $unstagedManagedTracked)
+        }
+        if ($managedUntracked.Count -gt 0) {
+            Invoke-Git (@("add", "--") + $managedUntracked)
+        }
+        if ($runtimeTracked.Count -gt 0) {
+            $runtimeLiterals = @($runtimeTracked | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
+            Invoke-Git (@('rm', '-r', '-f', '--cached', '--ignore-unmatch', '--') + $runtimeLiterals)
+        }
+        $stagedChanges = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
+        $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher) })
+        if ($unexpectedStaged.Count -gt 0) {
+            throw "update-workflow found staged changes outside its managed allowlist and will not commit them: $($unexpectedStaged -join ', ')"
+        }
+        if ($stagedChanges.Count -eq 0) {
+            throw "update-workflow found managed changes but could not stage any of them."
+        }
+        Set-RunStage -Stage "workflow-update.commit" -Detail "Creating the managed workflow update commit in master."
+        Invoke-Git @("commit", "--quiet", "-m", $message)
+        Write-Host "Committed: $message"
 
-    Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs $managedPathSpecs
+        Set-RunStage -Stage "workflow-update.commit" -Detail "Verifying the managed workflow update commit left master clean."
+        Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs $managedPathSpecs
 
-    $remainingTracked = @(Get-WorkflowUpdateTrackedChangePaths)
-    if ($remainingTracked.Count -gt 0) {
-        throw "update-workflow created its commit but the tracked master worktree is still dirty: $($remainingTracked -join ', ')"
+        $remainingTracked = @(Get-WorkflowUpdateTrackedChangePaths)
+        if ($remainingTracked.Count -gt 0) {
+            throw "update-workflow created its commit but the tracked master worktree is still dirty: $($remainingTracked -join ', ')"
+        }
+        $remainingManagedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
+            Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher })
+        if ($remainingManagedUntracked.Count -gt 0) {
+            throw "update-workflow created its commit but managed files remain untracked: $($remainingManagedUntracked -join ', ')"
+        }
+
+        [pscustomobject]@{
+            created = $true
+            commit = Get-CurrentCommit
+            message = $message
+        }
     }
-    $remainingManagedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
-        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
-    if ($remainingManagedUntracked.Count -gt 0) {
-        throw "update-workflow created its commit but managed files remain untracked: $($remainingManagedUntracked -join ', ')"
+}
+
+function Get-WorkflowPackageCopyDirectoryPaths {
+    return @(
+        ".agents\skills\1c-workflow",
+        ".agents\skills\1c-workflow-fast",
+        ".agents\skills\product-docs",
+        ".agents\skills\itl-roctup-1c-data",
+        ".agents\skills\itl-vanessa-ui-mcp",
+        ".agents\skills\itl-remote-runner",
+        ".agents\skills\itl-remote-agent",
+        ".agents\skills\itl-performance",
+        "docs\itl-workflow",
+        "templates"
+    )
+}
+
+function Get-WorkflowPackageCopyFilePaths {
+    return @(
+        "install-agent-1c-workflow.ps1",
+        "AGENT-INSTALL.md"
+    )
+}
+
+function New-WorkflowUpdateCopyStagingRoot {
+    $tmpRoot = Join-Path $script:ProjectRoot ".agent-1c\tmp"
+    New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
+    $stagingRoot = Join-Path $tmpRoot ("workflow-copy-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+    return $stagingRoot
+}
+
+function Remove-WorkflowUpdateCopyStagingRoot {
+    param([string]$StagingRoot)
+
+    if ([string]::IsNullOrWhiteSpace($StagingRoot)) { return }
+    $tmpRoot = Get-FullPathNormalized (Join-Path $script:ProjectRoot ".agent-1c\tmp")
+    $normalized = Get-FullPathNormalized $StagingRoot
+    if (-not $normalized.StartsWith(($tmpRoot + "\"), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove an invalid workflow copy staging path: $StagingRoot"
+    }
+    if (Test-Path -LiteralPath $normalized -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $normalized -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-WorkflowManagedPathReplace {
+    param(
+        [string]$SourcePath,
+        [string]$TargetPath,
+        [switch]$Directory,
+        [switch]$PackageContentOnly
+    )
+
+    Assert-WorkflowManagedTargetPath -Path $TargetPath
+    # A copied file can keep its source timestamp; never reuse an older hash.
+    Clear-WorkflowUpdatePathHashCache -Path $TargetPath
+    $parent = Split-Path -Parent $TargetPath
+    if ($parent) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }
 
-    return [pscustomobject]@{
-        created = $true
-        commit = Get-CurrentCommit
-        message = $message
+    $stagingRoot = New-WorkflowUpdateCopyStagingRoot
+    $backupRoot = New-WorkflowUpdateCopyStagingRoot
+    $name = Split-Path -Leaf $TargetPath
+    $stagingPath = Join-Path $stagingRoot $name
+    $backupPath = Join-Path $backupRoot $name
+    $movedAside = $false
+    try {
+        if ($Directory) {
+            if ($PackageContentOnly) {
+                Copy-WorkflowPackageDirectoryContent -SourcePath $SourcePath -DestinationPath $stagingPath
+            } else {
+                Copy-Item -LiteralPath $SourcePath -Destination $stagingPath -Recurse -Force -ErrorAction Stop
+            }
+        } else {
+            Copy-Item -LiteralPath $SourcePath -Destination $stagingPath -Force -ErrorAction Stop
+        }
+        if (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue) {
+            Move-WorkflowManagedPathAtomic -SourcePath $TargetPath -DestinationPath $backupPath
+            $movedAside = $true
+        }
+        try {
+            Move-WorkflowManagedPathAtomic -SourcePath $stagingPath -DestinationPath $TargetPath
+        } catch {
+            if ($movedAside -and -not (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $backupPath -ErrorAction SilentlyContinue)) {
+                Move-WorkflowManagedPathAtomic -SourcePath $backupPath -DestinationPath $TargetPath
+                $movedAside = $false
+            }
+            throw
+        }
+        if (Test-Path -LiteralPath $backupPath -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop
+        }
+    } finally {
+        Remove-WorkflowUpdateCopyStagingRoot -StagingRoot $stagingRoot
+        # A moved-aside original that could not return stays as the only copy.
+        if (-not $movedAside -or (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue)) {
+            Remove-WorkflowUpdateCopyStagingRoot -StagingRoot $backupRoot
+        }
+    }
+}
+
+function Move-WorkflowManagedPathAtomic {
+    param([Parameter(Mandatory = $true)][string]$SourcePath, [Parameter(Mandatory = $true)][string]$DestinationPath)
+
+    # Windows PowerShell Move-Item falls back to copy-and-delete when a rename
+    # is refused, which strips a directory whose child is another process's
+    # working directory. A rename either moves the whole item or nothing.
+    # Scanners briefly hold freshly written files, so a refusal is retried
+    # for a bounded time; a live holder still fails after the budget.
+    $isDirectory = Test-Path -LiteralPath $SourcePath -PathType Container -ErrorAction SilentlyContinue
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $delayMilliseconds = 50
+    while ($true) {
+        try {
+            if ($isDirectory) { [IO.Directory]::Move($SourcePath, $DestinationPath) } else { [IO.File]::Move($SourcePath, $DestinationPath) }
+            return
+        } catch {
+            if (-not (Test-WorkflowUpdatePathInUseError -Exception $_.Exception) -or [DateTime]::UtcNow -ge $deadline) { throw }
+            Start-Sleep -Milliseconds $delayMilliseconds
+            $delayMilliseconds = [Math]::Min(1000, $delayMilliseconds * 2)
+        }
+    }
+}
+
+function Remove-WorkflowManagedPathAtomic {
+    param([Parameter(Mandatory = $true)][string]$TargetPath)
+
+    Assert-WorkflowManagedTargetPath -Path $TargetPath
+    Clear-WorkflowUpdatePathHashCache -Path $TargetPath
+    if (-not (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue)) { return }
+    $removalRoot = New-WorkflowUpdateCopyStagingRoot
+    try {
+        Move-WorkflowManagedPathAtomic -SourcePath $TargetPath -DestinationPath (Join-Path $removalRoot (Split-Path -Leaf $TargetPath))
+    } finally {
+        Remove-WorkflowUpdateCopyStagingRoot -StagingRoot $removalRoot
+    }
+}
+
+function Test-WorkflowUpdatePathInUseError {
+    param([AllowNull()][Exception]$Exception)
+
+    for ($current = $Exception; $null -ne $current; $current = $current.InnerException) {
+        # Access denied (5), sharing (32) and lock (33) violations: a rename
+        # refused because a live process holds the item or a descendant.
+        if (($current -is [IO.IOException] -or $current -is [UnauthorizedAccessException]) -and
+            ($current.HResult -band 0xFFFF) -in @(5, 32, 33)) { return $true }
+    }
+    return $false
+}
+
+function Assert-WorkflowUpdateWriteSetPathNoReparse {
+    param([Parameter(Mandatory = $true)][string]$RelativePath)
+
+    $relative = ConvertTo-WorkflowUpdateRepoPath -Path $RelativePath
+    # Within one update-workflow operation an ancestor directory proven real is
+    # not re-read for each of ~1000 snapshot records; the final component is
+    # always checked. Managed replace/remove drops entries under its target.
+    $realDirectories = Get-Variable -Name ItlWorkflowUpdateRealDirectoryCache -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    $rootKey = '<root>|' + [string]$script:ProjectRoot
+    $cursor = if ($null -ne $realDirectories -and $realDirectories.ContainsKey($rootKey)) { [string]$realDirectories[$rootKey] } else { Get-FullPathNormalized $script:ProjectRoot }
+    if ($null -ne $realDirectories -and -not $realDirectories.ContainsKey($rootKey)) { $realDirectories[$rootKey] = $cursor }
+    $parts = $relative.Split('/')
+    for ($index = 0; $index -lt $parts.Count; $index++) {
+        $cursor = [IO.Path]::Combine($cursor, $parts[$index])
+        $isLeaf = $index -eq $parts.Count - 1
+        $key = $cursor.ToLowerInvariant()
+        if (-not $isLeaf -and $null -ne $realDirectories -and $realDirectories.ContainsKey($key)) { continue }
+        $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue
+        if ($null -eq $item) { continue }
+        if (($item.PSIsContainer -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) -or
+            [string]$item.LinkType -in @('SymbolicLink', 'Junction')) {
+            throw "WORKFLOW_UPDATE_REPARSE_PATH: '$relative' traverses a symlink or junction at '$cursor'. Preserve it and choose a real project path before update-workflow."
+        }
+        if (-not $isLeaf -and $item.PSIsContainer -and $null -ne $realDirectories) { $realDirectories[$key] = $true }
+    }
+}
+
+function Test-WorkflowExecutionRuntimePath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $relative = ConvertTo-WorkflowUpdateRepoPath -Path $Path
+    return $relative -ceq '.agent-1c/execution-guard-generation.json' -or
+        $relative -cmatch '^\.agent-1c/execution-guard-generation\.json\.[^/]+$' -or
+        $relative -cmatch '^\.agent-1c/execution-checkpoints/.+$'
+}
+
+function Get-WorkflowTrackedExecutionRuntimePaths {
+    $pathSpecs = @(
+        ':(literal).agent-1c/execution-guard-generation.json',
+        ':(glob).agent-1c/execution-guard-generation.json.*',
+        ':(glob).agent-1c/execution-checkpoints/**'
+    )
+    return @(Get-GitPathList -Arguments (@('ls-files', '-z', '--') + $pathSpecs) |
+        Where-Object { Test-WorkflowExecutionRuntimePath -Path $_ } | Select-Object -Unique)
+}
+
+function New-WorkflowUpdateRollbackSnapshot {
+    param(
+        [string[]]$RelativePaths,
+        [string]$SnapshotParent = ([System.IO.Path]::GetTempPath())
+    )
+
+    # Capture and receipt fingerprints can outlive the status watchdog. Keep
+    # the existing PID-owned heartbeat while every snapshot/SHA guard runs.
+    return Invoke-WithRunStatusHeartbeat {
+        foreach ($relativePath in $RelativePaths) {
+            Assert-WorkflowManagedTargetPath -Path (Join-Path $script:ProjectRoot $relativePath)
+            Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relativePath
+        }
+        $tempRoot = Get-FullPathNormalized $SnapshotParent
+        New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+        $snapshotRoot = Join-Path $tempRoot ("itl-workflow-update-rollback-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Force -Path $snapshotRoot | Out-Null
+        $preparationPath = Join-Path $snapshotRoot 'preparation.json'
+        $records = @()
+        $parentStates = @{}
+        $index = 0
+
+        try {
+            # Until the prepared transaction receipt is armed, this function only
+            # reads project paths. A crash while copying backups can therefore be
+            # recovered by discarding this private snapshot on the next update.
+            Write-Utf8TextAtomic -Path $preparationPath -Value (([ordered]@{
+                schemaVersion = 1
+                operation = 'update-workflow'
+                projectRoot = [string]$script:ProjectRoot
+                snapshotRoot = [string]$snapshotRoot
+                phase = 'capturing'
+            } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+            foreach ($relativePath in $RelativePaths) {
+                $targetPath = Join-Path $script:ProjectRoot $relativePath
+                Assert-WorkflowManagedTargetPath -Path $targetPath
+                Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relativePath
+
+                $parent = Split-Path -Parent $targetPath
+                while ($parent -and (Get-FullPathNormalized $parent) -ne (Get-FullPathNormalized $script:ProjectRoot)) {
+                    $parentFull = Get-FullPathNormalized $parent
+                    if (-not $parentStates.ContainsKey($parentFull)) {
+                        $parentStates[$parentFull] = Test-Path -LiteralPath $parentFull -PathType Container -ErrorAction SilentlyContinue
+                    }
+                    $parent = Split-Path -Parent $parentFull
+                }
+
+                $existed = Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue
+                $backupPath = ""
+                $wasDirectory = $false
+                if ($existed) {
+                    $wasDirectory = Test-Path -LiteralPath $targetPath -PathType Container -ErrorAction SilentlyContinue
+                    $backupPath = Join-Path $snapshotRoot ("item-{0}" -f $index)
+                    if ($wasDirectory) {
+                        Copy-Item -LiteralPath $targetPath -Destination $backupPath -Recurse -Force
+                    } else {
+                        Copy-Item -LiteralPath $targetPath -Destination $backupPath -Force
+                    }
+                }
+                $records += [pscustomobject]@{
+                    relativePath = $relativePath
+                    targetPath = $targetPath
+                    existed = [bool]$existed
+                    wasDirectory = [bool]$wasDirectory
+                    backupPath = $backupPath
+                }
+                $index++
+            }
+            Write-Utf8TextAtomic -Path $preparationPath -Value (([ordered]@{
+                schemaVersion = 1
+                operation = 'update-workflow'
+                projectRoot = [string]$script:ProjectRoot
+                snapshotRoot = [string]$snapshotRoot
+                phase = 'captured'
+            } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+        } catch {
+            $snapshotError = $_.Exception.Message
+            try {
+                Remove-WorkflowUpdateRollbackSnapshot -Snapshot ([pscustomobject]@{ root = $snapshotRoot; tempRoot = $tempRoot })
+            } catch {
+                throw "WORKFLOW_UPDATE_SNAPSHOT_PREPARE_FAILED: $snapshotError Snapshot cleanup also failed at '$snapshotRoot': $($_.Exception.Message)"
+            }
+            throw
+        }
+
+        return [pscustomobject]@{
+            root = $snapshotRoot
+            tempRoot = $tempRoot
+            targetRoot = $script:ProjectRoot
+            records = @($records)
+            parentStates = $parentStates
+        }
+    }
+
+}
+
+function Restore-WorkflowUpdateRollbackSnapshot {
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+
+    foreach ($record in @($Snapshot.records)) {
+        Assert-WorkflowManagedTargetPath -Path $record.targetPath
+        $relative = [string]$record.relativePath
+        Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relative
+        # A path the failed step never replaced keeps its bytes and its live
+        # handles; every other path returns through the same rename owner.
+        $before = $(if ($record.existed) { Get-WorkflowUpdatePathState -RelativePath $relative -PhysicalPath ([string]$record.backupPath) } else { 'absent' })
+        if ((Get-WorkflowUpdatePathState -RelativePath $relative) -ceq $before) { continue }
+        if ($record.existed) {
+            Invoke-WorkflowManagedPathReplace -SourcePath ([string]$record.backupPath) -TargetPath ([string]$record.targetPath) -Directory:([bool]$record.wasDirectory)
+        } else {
+            Remove-WorkflowManagedPathAtomic -TargetPath ([string]$record.targetPath)
+        }
+    }
+
+    foreach ($entry in @($Snapshot.parentStates.GetEnumerator() | Sort-Object { ([string]$_.Key).Length } -Descending)) {
+        $parentPath = [string]$entry.Key
+        $existed = [bool]$entry.Value
+        Assert-WorkflowManagedTargetPath -Path $parentPath
+        if (-not $existed -and
+            (Test-Path -LiteralPath $parentPath -PathType Container -ErrorAction SilentlyContinue) -and
+            @(Get-ChildItem -LiteralPath $parentPath -Force -ErrorAction Stop).Count -eq 0) {
+            Remove-Item -LiteralPath $parentPath -Force -ErrorAction Stop
+        }
+    }
+}
+
+function Remove-WorkflowUpdateRollbackSnapshot {
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+
+    $snapshotRoot = Get-FullPathNormalized ([string]$Snapshot.root)
+    $tempRoot = Get-FullPathNormalized ([string]$Snapshot.tempRoot)
+    if ((Split-Path -Parent $snapshotRoot) -ne $tempRoot -or (Split-Path -Leaf $snapshotRoot) -notlike "itl-workflow-update-rollback-*") {
+        throw "Refusing to remove an invalid workflow update rollback snapshot path: $snapshotRoot"
+    }
+    if (Test-Path -LiteralPath $snapshotRoot -PathType Container -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $snapshotRoot -Recurse -Force -ErrorAction Stop
     }
 }
 
@@ -4315,15 +7688,7 @@ function Copy-WorkflowManagedDirectory {
         throw "Workflow package managed directory is missing: $RelativePath"
     }
 
-    Assert-WorkflowManagedTargetPath -Path $targetPath
-    $parent = Split-Path -Parent $targetPath
-    if ($parent) {
-        New-Item -ItemType Directory -Force -Path $parent | Out-Null
-    }
-    if (Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue) {
-        Remove-Item -LiteralPath $targetPath -Recurse -Force
-    }
-    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Recurse -Force
+    Invoke-WorkflowManagedPathReplace -SourcePath $sourcePath -TargetPath $targetPath -Directory -PackageContentOnly
     Write-Host "Updated workflow directory: $RelativePath"
 }
 
@@ -4339,13 +7704,79 @@ function Copy-WorkflowManagedFile {
         throw "Workflow package managed file is missing: $RelativePath"
     }
 
-    Assert-WorkflowManagedTargetPath -Path $targetPath
-    $parent = Split-Path -Parent $targetPath
-    if ($parent) {
-        New-Item -ItemType Directory -Force -Path $parent | Out-Null
-    }
-    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+    Invoke-WorkflowManagedPathReplace -SourcePath $sourcePath -TargetPath $targetPath
     Write-Host "Updated workflow file: $RelativePath"
+}
+
+function Copy-WorkflowPackageManagedContent {
+    param([Parameter(Mandatory = $true)][object]$Source)
+
+    # The only package copy used by master and development worktrees. A thrown
+    # error leaves the caller's copy rollback to restore the pre-copy paths.
+    foreach ($relativePath in @(Get-WorkflowPackageCopyDirectoryPaths)) {
+        Copy-WorkflowManagedDirectory -SourceRoot ([string]$Source.root) -RelativePath $relativePath
+    }
+    foreach ($relativePath in @(Get-WorkflowPackageCopyFilePaths)) {
+        Copy-WorkflowManagedFile -SourceRoot ([string]$Source.root) -RelativePath $relativePath
+    }
+    Remove-LegacyWorkflowManagedFiles
+    Assert-WorkflowPackageCopyComplete -Source $Source
+}
+
+function Get-WorkflowPackageContentInventory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Relative path -> SHA-256 of the package content under one managed path,
+    # with the same Python-cache exclusion as the package copy.
+    $inventory = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::OrdinalIgnoreCase)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return $inventory }
+    $files = if ($item.PSIsContainer) { @(Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction Stop) } else { @($item) }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($file in $files) {
+            $relative = if ($item.PSIsContainer) { $file.FullName.Substring($item.FullName.TrimEnd('\').Length).TrimStart('\').Replace('\', '/') } else { '' }
+            if ($relative -and -not (Test-WorkflowPackageContentPath -RelativePath $relative)) { continue }
+            $stream = [IO.File]::OpenRead($file.FullName)
+            try { $inventory[$relative] = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') } finally { $stream.Dispose() }
+        }
+    } finally {
+        $sha.Dispose()
+    }
+    return $inventory
+}
+
+function Assert-WorkflowPackageCopyComplete {
+    param([Parameter(Mandatory = $true)][object]$Source)
+
+    # copy-complete is recorded only for a complete package. A file missing
+    # from the source is missing from the copy too, so an exact cached source
+    # must still be a clean complete checkout of its commit; the copied managed
+    # paths must then equal the source byte for byte.
+    $root = [string]$Source.root
+    if (Test-WorkflowPackageCacheCheckoutPath -Root $root) {
+        $state = Get-ItlGitSourceCacheState -Root $root -Repo ([string]$Source.repo) -ExpectedCommit ([string]$Source.commit)
+        if (-not $state.valid) {
+            throw "WORKFLOW_PACKAGE_SOURCE_INCOMPLETE: cached source '$root' of commit '$($Source.commit)' is no longer a clean complete checkout ($($state.reason)). The copy was not accepted and the managed paths are restored; repeat the same update-workflow, which rebuilds the cached source."
+        }
+    }
+    $differences = [System.Collections.Generic.List[string]]::new()
+    foreach ($relativePath in @(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths)) {
+        $expected = Get-WorkflowPackageContentInventory -Path (Join-Path $root $relativePath)
+        $actual = Get-WorkflowPackageContentInventory -Path (Join-Path $script:ProjectRoot $relativePath)
+        $prefix = $relativePath.Replace('\', '/')
+        foreach ($key in $expected.Keys) {
+            $name = if ($key) { "$prefix/$key" } else { $prefix }
+            if (-not $actual.ContainsKey($key)) { $differences.Add("missing $name") }
+            elseif ($actual[$key] -cne $expected[$key]) { $differences.Add("changed $name") }
+        }
+        foreach ($key in $actual.Keys) {
+            if (-not $expected.ContainsKey($key)) { $differences.Add("unexpected $(if ($key) { "$prefix/$key" } else { $prefix })") }
+        }
+    }
+    if ($differences.Count) {
+        throw "WORKFLOW_PACKAGE_COPY_INCOMPLETE: $($differences.Count) managed file(s) differ from source '$root': $(@($differences | Select-Object -First 5) -join '; '). The copy was not accepted and the managed paths are restored; repeat the same update-workflow."
+    }
 }
 
 function Get-LegacyWorkflowManagedFileHashes {
@@ -4358,6 +7789,100 @@ function Get-LegacyWorkflowManagedFileHashes {
             "099725AFCA5A715D40906325B3CDB12217046FB76D6AA8B1F610357C9E8AE58F",
             "A96050FCDE0A5F97071AF1926752E88D117B5836DBDD537A898718DF43A6D57F"
         )
+    }
+}
+
+function Get-WorkflowUpdateKnownLegacyGitEntries {
+    param([string]$Commit = 'HEAD', [string]$Root = $script:ProjectRoot)
+
+    $knownFiles = Get-LegacyWorkflowManagedFileHashes
+    $literals = @($knownFiles.Keys | ForEach-Object { ':(literal)' + $_ })
+    $entries = @(Get-GitPathListAt -Root $Root -Arguments (@('ls-tree', '-z', $Commit, '--') + $literals))
+    foreach ($entry in $entries) {
+        if ($entry -notmatch '^(100644|100755) blob ([a-f0-9]{40,64})\t(.+)$') { continue }
+        $mode = $Matches[1]; $objectId = $Matches[2]; $relative = $Matches[3]
+        if (@($knownFiles.Keys) -cnotcontains $relative) { continue }
+        $blobs = Get-GitBlobBytesBatch -ObjectIds @($objectId) -Root $Root
+        $utf8 = [Text.UTF8Encoding]::new($false, $true)
+        try { $text = $utf8.GetString([byte[]]$blobs[$objectId]).Replace("`r`n", "`n") } catch { continue }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            foreach ($candidate in @($text, $text.Replace("`n", "`r`n"))) {
+                $hash = ([BitConverter]::ToString($sha.ComputeHash($utf8.GetBytes($candidate)))).Replace('-', '')
+                if (@($knownFiles[$relative]) -contains $hash) {
+                    [pscustomobject]@{path=$relative;mode=$mode;objectId=$objectId}
+                    break
+                }
+            }
+        } finally { $sha.Dispose() }
+    }
+}
+
+function Get-WorkflowUpdateLegacyRetirementPaths {
+    param([string]$OldCommit, [string]$NewCommit, [string]$Root = $script:ProjectRoot)
+
+    $old = @(Get-WorkflowUpdateKnownLegacyGitEntries -Commit $OldCommit -Root $Root)
+    if ($old.Count -eq 0) { return @() }
+    $remaining = @(Get-GitPathListAt -Root $Root -Arguments (@('ls-tree', '--name-only', '-z', $NewCommit, '--') +
+        @($old | ForEach-Object { ':(literal)' + $_.path })))
+    return @($old | Where-Object { $_.path -cnotin $remaining } | ForEach-Object path)
+}
+
+function Get-WorkflowUpdateEligibleLegacyPaths {
+    param([string]$Root = $script:ProjectRoot, [switch]$DeletedOnly)
+
+    $knownFiles = Get-LegacyWorkflowManagedFileHashes
+    $headEntries = $null
+    foreach ($relative in @($knownFiles.Keys)) {
+        $path = Join-Path $Root $relative
+        if (Test-Path -LiteralPath $path) {
+            if (-not $DeletedOnly -and (Test-Path -LiteralPath $path -PathType Leaf) -and
+                @($knownFiles[$relative]) -contains (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash) {
+                $relative
+            }
+            continue
+        }
+        # Older updates could remove a known file without committing retirement.
+        # Only a known parent blob and its unchanged stage-zero entry qualify.
+        if (-not (Test-Path -LiteralPath (Join-Path $Root '.git'))) { continue }
+        if ($null -eq $headEntries) {
+            try { $headEntries = @(Get-WorkflowUpdateKnownLegacyGitEntries -Root $Root) }
+            catch { $headEntries = @() } # A new repository may not have HEAD yet.
+        }
+        $head = @($headEntries | Where-Object { $_.path -ceq $relative })
+        if ($head.Count -ne 1) { continue }
+        $index = @(Get-GitPathListAt -Root $Root -Arguments @('ls-files', '--stage', '-z', '--', (':(literal)' + $relative)))
+        if ($index.Count -eq 1 -and $index[0] -ceq "$($head[0].mode) $($head[0].objectId) 0`t$relative") { $relative }
+    }
+}
+
+function Assert-WorkflowUpdateLegacyRetirementSnapshot {
+    param([Parameter(Mandatory = $true)][object]$Snapshot, [string]$BeforeCommit, [AllowNull()][object]$CapturedPathState = $null, [switch]$RequireOriginalIndex)
+
+    $knownFiles = Get-LegacyWorkflowManagedFileHashes
+    $records = @($Snapshot.records | Where-Object { @($knownFiles.Keys) -ccontains [string]$_.relativePath })
+    if ($records.Count -eq 0) { return }
+    $original = @(Get-WorkflowUpdateKnownLegacyGitEntries -Commit $BeforeCommit)
+    foreach ($record in $records) {
+        $relative = [string]$record.relativePath
+        $entry = @($original | Where-Object path -CEQ $relative)
+        $knownBefore = if ($record.existed -and -not $record.wasDirectory) {
+            @($knownFiles[$relative]) -contains (Get-FileHash -LiteralPath $record.backupPath -Algorithm SHA256).Hash
+        } else { -not $record.existed -and $entry.Count -eq 1 }
+        if (-not $knownBefore) { continue }
+        $indexChanged = $false
+        if ($RequireOriginalIndex) {
+            # This protects a user edit staged during package copying. It is
+            # not required on ready-receipt replay after the commit succeeded.
+            $index = @(Get-GitPathList -Arguments @('ls-files', '--stage', '-z', '--', (':(literal)' + $relative)))
+            $expected = @(if ($entry.Count -eq 1) { "$($entry[0].mode) $($entry[0].objectId) 0`t$relative" })
+            $indexChanged = $index.Count -ne $expected.Count -or ($index -join "`0") -cne ($expected -join "`0")
+        }
+        if ($indexChanged -or (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $relative)) -or
+            ($null -ne $CapturedPathState -and [string]$CapturedPathState[$relative] -cne 'absent')) {
+            $id = (Split-Path -Leaf ([string]$Snapshot.root)).Substring('itl-workflow-update-rollback-'.Length)
+            throw "WORKFLOW_UPDATE_LEGACY_RETIREMENT_CHANGED: '$relative' changed after its known legacy snapshot. Preserve current user bytes and index; inspect this pending snapshot with -Recovery status -SnapshotId $id, reconcile the retired-file output through -Recovery reconcile, then repeat the same update. No user text was adopted into the package commit."
+        }
     }
 }
 
@@ -4552,10 +8077,14 @@ function Assert-DevelopmentBranchWorktreeContext {
         Assert-CurrentProjectRootMatchesDevBranchState -State $State -Operation $Operation
         $resetStatus = [string](Get-StateValue -State $State -Name "resetStatus" -Default "")
         if ($resetStatus -eq "resetting" -and $Operation -ne "reset-dev-branch") {
-            $archivePath = [string](Get-StateValue -State $State -Name "resetArchivePath" -Default "")
-            throw "DEV_BRANCH_RESET_IN_PROGRESS: repeat /itl-reset-branch to resume the interrupted reset. Archive: $archivePath"
+            $oldHead = [string](Get-StateValue -State $State -Name "resetOldHead" -Default "")
+            throw "DEV_BRANCH_RESET_IN_PROGRESS: repeat /itl-reset-branch to resume the interrupted reset. Previous HEAD: $oldHead"
         }
         $pendingBranchSyncId = [string](Get-StateValue -State $State -Name "pendingBranchSyncId" -Default "")
+        $pendingGroup = [string](Get-StateValue -State $State -Name 'pendingBranchSourceGroupId' -Default '')
+        if ($pendingGroup -and $Operation -ne 'sync-dev-branches') {
+            throw "DEV_BRANCH_SOURCE_SYNC_GROUP_PENDING: continue source synchronization group $pendingGroup through its original helper request."
+        }
         if ($pendingBranchSyncId -and $Operation -ne "sync-dev-branches") {
             $primaryBranch = [string](Get-StateValue -State $State -Name "pendingBranchSyncPrimaryBranch" -Default "")
             throw "DEV_BRANCH_SOURCE_SYNC_IN_PROGRESS: repeat /itl-sync-branches from '$primaryBranch' to finish the interrupted source-only synchronization."
@@ -4622,13 +8151,90 @@ function Get-WorkflowActiveDevBranchStates {
     return @($states)
 }
 
+function Get-WorkflowFixedDefectHandoffMatches {
+    # Informational only: fixed known-defects keys still declared by an
+    # unclosed handoff report. Closure is per handoffs directory.
+    param(
+        [string]$RegistryPath,
+        [string[]]$Roots
+    )
+
+    if (-not (Test-Path -LiteralPath $RegistryPath -PathType Leaf)) { return @() }
+    $registry = Read-Utf8Text -Path $RegistryPath | ConvertFrom-Json -ErrorAction Stop
+    $fixedIn = @{}
+    foreach ($entry in @($registry.entries)) {
+        # Schema 2 lists fixed defects only; a schema 1 entry names its status.
+        $status = [string](Get-ConfigValueFromObject $entry 'status' 'fixed')
+        if ($status -ceq 'fixed' -and [string]$entry.incidentKey) {
+            $fixedIn[[string]$entry.incidentKey] = [string]$entry.fixedIn
+        }
+    }
+    if ($fixedIn.Count -eq 0) { return @() }
+
+    $pattern = '(?im)^[\s>*_`\-0-9.]*incident(Key|Closed)[*_`]*\s*:\s*[*_`]*([A-Za-z0-9_.\-]+@[A-Za-z0-9_.\-]+)'
+    $unclosed = [System.Collections.Generic.List[object]]::new()
+    foreach ($root in @($Roots | Where-Object { $_ } | Select-Object -Unique)) {
+        $directory = Join-Path $root 'handoffs'
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
+        $opened = [ordered]@{}
+        $closed = @{}
+        foreach ($file in @(Get-ChildItem -LiteralPath $directory -Filter '*.md' -File -ErrorAction Stop | Sort-Object Name)) {
+            foreach ($match in [regex]::Matches((Read-Utf8Text -Path $file.FullName), $pattern)) {
+                $key = $match.Groups[2].Value
+                if (-not $fixedIn.ContainsKey($key)) { continue }
+                if ($match.Groups[1].Value -ieq 'Closed') {
+                    $closed[$key] = $true
+                } else {
+                    if (-not $opened.Contains($key)) { $opened[$key] = [System.Collections.Generic.List[string]]::new() }
+                    if (-not $opened[$key].Contains($file.FullName)) { $opened[$key].Add($file.FullName) }
+                }
+            }
+        }
+        foreach ($key in @($opened.Keys)) {
+            if ($closed.ContainsKey($key)) { continue }
+            $unclosed.Add([pscustomobject]@{ incidentKey = $key; fixedIn = $fixedIn[$key]; reports = @($opened[$key]) })
+        }
+    }
+    return @($unclosed)
+}
+
+function Add-WorkflowFixedDefectHandoffReportLines {
+    param(
+        [System.Collections.Generic.List[string]]$Lines,
+        [object]$BranchReport
+    )
+
+    $roots = @($script:ProjectRoot) + @(@($BranchReport.roots) | ForEach-Object { [string](Get-ConfigValueFromObject $_ 'root' '') })
+    try {
+        $registryPath = Join-Path $script:ProjectRoot '.agents/skills/1c-workflow/references/known-defects.json'
+        $found = @(Get-WorkflowFixedDefectHandoffMatches -RegistryPath $registryPath -Roots $roots)
+    } catch {
+        $Lines.Add("- Сверка handoffs с реестром известных дефектов ITL пропущена: $($_.Exception.Message)")
+        return
+    }
+    if ($found.Count -eq 0) { return }
+    $Lines.Add('- Исправлены известные дефекты ITL, по которым в проекте есть незакрытые handoff-отчёты (информационно, обновление завершено):')
+    foreach ($item in $found) {
+        $Lines.Add("  - $($item.incidentKey) (fixedIn: $($item.fixedIn)): $(@($item.reports) -join '; ')")
+    }
+    $Lines.Add('  Закройте каждый отчёт supplement-ом со строкой `incidentClosed: <incidentKey>` после проверки, что обход больше не нужен.')
+}
+
+function Test-WorkflowClaudeMemoryTransition {
+    param([string]$Root)
+    $settings = Join-Path $Root (Get-ItlClientAdapter -Client 'claude-code').mcpApprovalPath
+    return @((Get-ItlClientMcpSemanticChanges -Owner 'scoped-memory') | Where-Object {
+        $_.path -eq $settings -and (Get-ConfigValueFromObject $_ 'claudeMemoryTransition' $false)
+    }).Count -gt 0
+}
+
 function Write-WorkflowUpdateFollowUp {
     param(
         [object]$Source,
-        [object]$CommitResult
+        [object]$CommitResult,
+        [object]$BranchReport
     )
 
-    $states = @(Get-WorkflowActiveDevBranchStates)
     $sourceRef = [string]$Source.ref
     $sourceCommit = [string]$Source.commit
     $reportLines = [System.Collections.Generic.List[string]]::new()
@@ -4638,6 +8244,21 @@ function Write-WorkflowUpdateFollowUp {
     Add-RunUserReportLine -Lines $reportLines -Label "Коммит master" -Value ([string]$CommitResult.commit)
     Add-RunUserReportLine -Lines $reportLines -Label "Новый коммит создан" -Value $(if ($CommitResult.created) { "да" } else { "нет, workflow уже актуален" })
     Add-RunUserReportLine -Lines $reportLines -Label "Tracked-состояние master" -Value "clean"
+    foreach ($policy in @('caveman', 'ui-testing', 'verification-model')) {
+        $policyDescriptor = Get-DotEnvPolicyTransitionDescriptor -Policy $policy
+        $masterPolicyReceiptPath = Get-DotEnvPolicyReceiptPath -Descriptor $policyDescriptor
+        if (Test-Path -LiteralPath $masterPolicyReceiptPath -PathType Leaf) {
+            try {
+                $masterPolicyReceipt = Read-Utf8Text -Path $masterPolicyReceiptPath | ConvertFrom-Json -ErrorAction Stop
+                $policyText = Get-DotEnvPolicyReceiptReportText -Descriptor $policyDescriptor -Receipt $masterPolicyReceipt
+                Add-RunUserReportLine -Lines $reportLines -Label "$([string]$policyDescriptor.label) master" -Value $policyText
+            } catch {
+                Add-RunUserReportLine -Lines $reportLines -Label "$([string]$policyDescriptor.label) master" -Value "receipt повреждён: $masterPolicyReceiptPath"
+            }
+        } else {
+            Add-RunUserReportLine -Lines $reportLines -Label "$([string]$policyDescriptor.label) master" -Value "receipt отсутствует: $masterPolicyReceiptPath"
+        }
+    }
     $reportLines.Add("")
     $reportLines.Add("## Следующие действия")
     if ($script:RunRequiredAction) {
@@ -4651,36 +8272,119 @@ function Write-WorkflowUpdateFollowUp {
         $reportLines.Add("- Откройте новую задачу Codex, чтобы обновился список skills и стали видны команды `$grill-me` и `$grill-with-docs`.")
     }
     $reportLines.Add("- Push из проекта не выполнялся: созданный коммит остаётся в локальном `master`.")
-    $reportLines.Add("- Workflow обновлён только в локальном `master`; каждую активную `itldev/*` обновите отдельно через `/itl-refresh` или `/itl-refresh-lite`.")
-    if ($states.Count -gt 0) {
-        $reportLines.Add("- Найдены активные ветки разработки:")
-        foreach ($state in ($states | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "devBranchName" -Default "" } })) {
-            $name = Get-StateValue -State $state -Name "devBranchName" -Default (Get-StateValue -State $state -Name "safeDevBranchName" -Default "<unknown>")
-            $worktreePath = Get-StateValue -State $state -Name "worktreePath" -Default (Get-StateValue -State $state -Name "stateProjectRoot" -Default "")
-            $reportLines.Add("  - $name → $worktreePath")
+    if ([string](Get-ConfigValueFromObject $BranchReport 'scope' '') -ceq 'master-only') {
+        $reportLines.Add('- Legacy recovery: восстановлен только master; рабочие ветки и инфобазы не обновлялись. Snapshot хранит наблюдавшуюся копию, историческое состояние до сбоя неизвестно.')
+    }
+    $outcomes = @($BranchReport.roots)
+    if ($outcomes.Count -gt 0) {
+        $reportLines.Add("- Рабочие ветки:")
+        foreach ($outcome in @($outcomes | Sort-Object branch)) {
+            $reportLines.Add("  - $($outcome.branch): $($outcome.status); $($outcome.root)")
+            if ([string]$outcome.status -eq 'completed') {
+                foreach ($policy in @('caveman', 'ui-testing', 'verification-model')) {
+                    $policyDescriptor = Get-DotEnvPolicyTransitionDescriptor -Policy $policy
+                    $branchPolicyReceiptPath = Get-DotEnvPolicyReceiptPath -Descriptor $policyDescriptor -Root ([string]$outcome.root)
+                    if (Test-Path -LiteralPath $branchPolicyReceiptPath -PathType Leaf) {
+                        try {
+                            $branchPolicyReceipt = Read-Utf8Text -Path $branchPolicyReceiptPath | ConvertFrom-Json -ErrorAction Stop
+                            $branchPolicyText = Get-DotEnvPolicyReceiptReportText -Descriptor $policyDescriptor -Receipt $branchPolicyReceipt
+                            $reportLines.Add("    $([string]$policyDescriptor.label): $branchPolicyText")
+                        } catch {
+                            $reportLines.Add("    $([string]$policyDescriptor.label): receipt повреждён: $branchPolicyReceiptPath")
+                        }
+                    } else {
+                        $reportLines.Add("    $([string]$policyDescriptor.label): receipt отсутствует: $branchPolicyReceiptPath")
+                    }
+                }
+            }
+            if ([string]$outcome.status -ne 'completed') {
+                $reportLines.Add("    Причина: $($outcome.reason)")
+                $reportLines.Add("    Продолжение: $($outcome.continuation)")
+            }
+        }
+        if (@($outcomes | Where-Object { [string]$_.status -ne 'completed' }).Count -gt 0) {
+            $reportLines.Add('- После устранения названных препятствий повторите update-workflow из master; завершённые ветки не требуют refresh.')
         }
     } else {
-        $reportLines.Add("- Активных веток разработки нет.")
+        $reportLines.Add("- Зарегистрированных рабочих веток для обновления нет.")
     }
+    $memoryRoots = @(if (Test-WorkflowClaudeMemoryTransition $script:ProjectRoot) { $script:ProjectRoot }
+        foreach ($outcome in $outcomes) {
+            if (Get-ConfigValueFromObject $outcome 'claudeMemoryTransition' $false) { $outcome.root }
+        })
+    if ($memoryRoots.Count -gt 0) {
+        $reportLines.Add("- Настройки памяти Claude изменились в $($memoryRoots -join ', '). В открытом ранее чате может сохраняться инструкция писать в личную память. Текущую задачу можно продолжить, знания сохраняйте через Cognee remember. Следующую самостоятельную задачу начните в новом чате Claude.")
+    }
+    Add-WorkflowFixedDefectHandoffReportLines -Lines $reportLines -BranchReport $BranchReport
     Write-AndSetRunUserReport -Lines $reportLines
 }
 
 function Set-ItlOnDemandMcpSemanticReloadRequiredAction {
     param([string]$Operation)
 
-    $changes = @(Get-ItlClientMcpSemanticChanges -Owner "ondemand-facade")
+    $changes = @(Get-ItlClientMcpSemanticChanges)
     if ($changes.Count -eq 0) { return $false }
 
-    $client = [string](Get-ItlActiveClient)
-    if ($client -eq "kilocode") {
-        $script:RunRequiredAction = "До следующего вызова ROCTUP или Vanessa UI обязательно выполните /reload, чтобы Kilo перечитал обновлённую команду MCP."
-    } else {
-        $adapter = Get-ItlClientAdapter -Client $client
-        $fallbackInstruction = [string](Get-StateValue -State $adapter -Name "reloadUserReport" -Default "Перезапустите активный AI-клиент.")
-        $instruction = [string](Get-StateValue -State $adapter -Name "mcpReloadUserReport" -Default $fallbackInstruction)
-        $script:RunRequiredAction = "$instruction Причина: операция '$Operation' семантически изменила команду запуска ITL on-demand MCP."
+    foreach ($client in @($changes | Select-Object -ExpandProperty client -Unique | Sort-Object)) {
+        $clientChanges = @($changes | Where-Object { [string]$_.client -ceq [string]$client })
+        if ($client -eq "kilocode") {
+            $instruction = "До следующего вызова изменённых MCP выполните /reload, чтобы Kilo перечитал их настройки; остальные инструменты и независимая работа доступны."
+        } else {
+            $adapter = Get-ItlClientAdapter -Client $client
+            $fallbackInstruction = [string](Get-StateValue -State $adapter -Name "reloadUserReport" -Default "Перезапустите AI-клиент.")
+            $instruction = [string](Get-StateValue -State $adapter -Name "mcpReloadUserReport" -Default $fallbackInstruction)
+        }
+        $action = "$client`: $instruction Причина: операция '$Operation' изменила настройки управляемых MCP ($(@($clientChanges.owner | Sort-Object -Unique) -join ', '))."
+        if ($script:RunRequiredAction -and ([string]$script:RunRequiredAction).Contains($action)) { continue }
+        if ($script:RunRequiredAction) { $script:RunRequiredAction += "; $action" } else { $script:RunRequiredAction = $action }
     }
     return $true
+}
+
+function Retain-WorkflowUpdateRollbackSnapshot {
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+
+    $parent = Get-FullPathNormalized (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
+    $root = Get-FullPathNormalized ([string]$Snapshot.root)
+    $name = Split-Path -Leaf $root
+    if ((Split-Path -Parent $root) -cne $parent -or $name -notmatch '^itl-workflow-update-rollback-([a-f0-9]{32})$') {
+        throw "WORKFLOW_UPDATE_RETENTION_SCOPE_INVALID: refusing to retain snapshot outside this project's workflow-update directory: $root"
+    }
+    $retained = Join-Path $parent ('itl-workflow-update-completed-' + $matches[1])
+    if ((Split-Path -Parent (Get-FullPathNormalized $retained)) -cne $parent) {
+        throw 'WORKFLOW_UPDATE_RETENTION_SCOPE_INVALID: completed snapshot destination escaped the project.'
+    }
+    $receiptPath = Join-Path $root 'transaction.json'
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+        if (Test-Path -LiteralPath $retained -PathType Container) { return $retained }
+        throw "WORKFLOW_UPDATE_RETENTION_MISSING: completed snapshot is absent at '$root' and '$retained'."
+    }
+    foreach ($path in @($parent, $root)) {
+        if (((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "WORKFLOW_UPDATE_RETENTION_REPARSE: preserve the snapshot; '$path' is a reparse point."
+        }
+    }
+    $receipt = Read-Utf8Text -Path $receiptPath | ConvertFrom-Json -ErrorAction Stop
+    if ([int]$receipt.schemaVersion -ne 1 -or [string]$receipt.operation -cne 'update-workflow' -or
+        [string]$receipt.phase -cne 'post-copy-complete' -or [string]$receipt.projectRoot -cne [string]$script:ProjectRoot -or
+        [string]$receipt.snapshotRoot -cne $root -or $null -eq $receipt.PSObject.Properties['beforePathState']) {
+        throw "WORKFLOW_UPDATE_RETENTION_RECEIPT_INVALID: terminal receipt does not identify this snapshot: $receiptPath"
+    }
+    Assert-WorkflowUpdateSnapshotCurrentState -Pending ([pscustomobject]@{ snapshot=$Snapshot; receipt=$receipt; receiptPath=$receiptPath })
+    $before = Get-WorkflowUpdateSnapshotBeforeState -Snapshot $Snapshot
+    $recordedBefore = ConvertTo-Agent1cHashtable -Object $receipt.beforePathState
+    if ($before.Count -ne $recordedBefore.Count) { throw 'WORKFLOW_UPDATE_RETENTION_BACKUP_INVALID: before-state inventory is incomplete.' }
+    foreach ($relative in @($before.Keys)) {
+        if (-not $recordedBefore.Contains($relative) -or [string]$before[$relative] -cne [string]$recordedBefore[$relative]) {
+            throw "WORKFLOW_UPDATE_RETENTION_BACKUP_INVALID: '$relative' backup changed; preserve the snapshot for reconciliation."
+        }
+    }
+    if (Test-Path -LiteralPath $retained) { throw "WORKFLOW_UPDATE_RETENTION_COLLISION: preserve both snapshots at '$root' and '$retained'." }
+    # Both absolute paths are checked above. Renaming within one directory is
+    # atomic and leaves the terminal receipt and relative backup names intact.
+    # Its original snapshotRoot identifies the same id for the rollback reader.
+    Move-Item -LiteralPath $root -Destination $retained -ErrorAction Stop
+    return $retained
 }
 
 function Write-WorkflowPackageStatusLines {
@@ -4711,6 +8415,7 @@ function Write-WorkflowPackageStatusLines {
 }
 
 function Assert-WorkflowPackageUpdateContext {
+    param([switch]$DeferCleanCheck)
     if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue)) {
         throw "update-workflow requires an initialized Git repository."
     }
@@ -4732,7 +8437,23 @@ function Assert-WorkflowPackageUpdateContext {
         throw "update-workflow must be run from '$masterBranch'. Current branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })."
     }
 
-    Assert-WorkflowTrackedGitClean
+    if (-not $DeferCleanCheck) { Assert-WorkflowTrackedGitClean }
+}
+
+function Invoke-WorkflowLocalPatchStep {
+    param([ValidateSet('Plan','Bind','Retire','Complete','Undo')][string]$Step, [string]$Operation, [object]$Plan,
+        [string]$TargetCommit = '', [object]$Source = $null)
+    if ($Step -eq 'Plan') {
+        if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-incidents/active.json'))) { return }
+    } elseif ($null -eq $Plan) { return }
+    . (Join-Path $PSScriptRoot 'agent-1c.local-patch.ps1')
+    switch ($Step) {
+        'Plan' { Get-WorkflowPatchRetirementPlan -Operation $Operation -TargetCommit $TargetCommit -Source $Source }
+        'Bind' { Get-WorkflowPatchRetirementBinding -Plan $Plan }
+        'Retire' { Start-WorkflowPatchRetirement -Plan $Plan }
+        'Complete' { Complete-WorkflowPatchRetirement -Plan $Plan }
+        'Undo' { Undo-WorkflowPatchRetirement -Plan $Plan }
+    }
 }
 
 function Assert-WorkflowSourceAiRulesInstallable {
@@ -4744,7 +8465,9 @@ function Assert-WorkflowSourceAiRulesInstallable {
         throw "Workflow source dependency lock is missing before update: $lockPath"
     }
     $lock = Read-Utf8Text -Path $lockPath | ConvertFrom-Json
-    $entry = Get-ConfigValueFromObject -Object $lock -Path "dependencies.aiRules1c" -Default $null
+    $plan = Get-WorkflowDependencyPlan -SourceRoot $SourceRoot
+    Assert-WorkflowDependencyPlan -Plan $plan
+    $entry = Get-ConfigValueFromObject -Object $plan.manifest -Path "dependencies.aiRules1c" -Default $null
     $ref = [string](Get-ConfigValueFromObject -Object $entry -Path "ref" -Default "")
     $commit = [string](Get-ConfigValueFromObject -Object $entry -Path "commit" -Default "")
     $status = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityStatus" -Default "")
@@ -4753,84 +8476,3561 @@ function Assert-WorkflowSourceAiRulesInstallable {
     }
 }
 
+function Enable-WorkflowExecutionGuardForCurrentRoot {
+    $relative = '.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1'
+    $cutoverPath = Join-Path $script:ProjectRoot $relative
+    $executorRoot = Get-FullPathNormalized (Join-Path $script:Agent1cScriptRoot '../../../..')
+    if (-not (Test-Path -LiteralPath $cutoverPath -PathType Leaf)) {
+        # A newer exact executor may finish an immutable pre-cutover payload.
+        # Use that executor's same guard owner; never repair the installed tree
+        # or treat a missing file in a modern candidate as legacy compatibility.
+        $pending = Get-WorkflowUpdatePendingSnapshot
+        if ($null -eq $pending -or [string]$pending.receipt.phase -notin @('master-committed', 'branch-commit-ready')) {
+            throw 'EXECUTION_GUARD_CUTOVER_ENTRYPOINT_MISSING'
+        }
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+        Assert-WorkflowUpdateRecordedSource -Receipt $pending.receipt
+        if (Test-Path -LiteralPath (Join-Path ([string]$pending.receipt.sourceRoot) $relative) -PathType Leaf) {
+            throw 'EXECUTION_GUARD_CUTOVER_ENTRYPOINT_MISSING'
+        }
+    }
+    if ((Get-FullPathNormalized $script:ProjectRoot) -cne $executorRoot) {
+        # The validated source helper owns this transition even when its payload
+        # is a different exact published commit. Keep guard code with its caller.
+        Assert-WorkflowSourceOutsideProject -SourceRoot $executorRoot
+        $executorCommit = (Get-GitOutputAt -Root $executorRoot -Arguments @('rev-parse', 'HEAD')).Trim()
+        Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{sourceRoot=$executorRoot;sourceCommit=$executorCommit})
+        $cutoverPath = Join-Path $executorRoot $relative
+        if (-not (Test-Path -LiteralPath $cutoverPath -PathType Leaf)) { throw 'EXECUTION_GUARD_CUTOVER_ENTRYPOINT_MISSING' }
+    }
+    # The legacy entrypoint owns the per-root generation marker and live
+    # runtime check. Its old cross-worktree package-copy mode is not invoked.
+    & $cutoverPath -ProjectRoot $script:ProjectRoot | Out-Null
+}
+
+function Get-WorkflowUpdateSnapshotRelativePaths {
+    param(
+        [string]$SourceRoot = '',
+        [string[]]$AiRulesPathsBefore = @(),
+        [string[]]$AiRulesPathsAfter = @(),
+        [string[]]$ClientSurfacePathsBefore = @(),
+        [AllowEmptyCollection()][string[]]$Clients
+    )
+
+    $directoryPaths = @(
+        @(Get-WorkflowPackageCopyDirectoryPaths) + @('tests/features/Libraries/ITL')
+    ) | ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path $_ }
+    $paths = @(
+        @(Get-WorkflowPackageCopyDirectoryPaths) +
+        @(Get-WorkflowPackageCopyFilePaths) +
+        @(Get-WorkflowUpdateEligibleLegacyPaths) +
+        @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore $AiRulesPathsBefore -ClientSurfacePathsBefore $ClientSurfacePathsBefore) +
+        @($AiRulesPathsAfter) +
+        $(if ($SourceRoot) {
+            $clientInput = if ($PSBoundParameters.ContainsKey('Clients')) { @{Clients=@($Clients)} } else { @{} }
+            @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot $SourceRoot @clientInput)
+        }) +
+        @('.dev.env', '.agent-1c/client-surface.json', '.agent-1c/mcp/client-managed.json',
+          '.agent-1c/migrations/caveman-auto-v1.json', '.agent-1c/migrations/ui-testing-essential-v1.json', '.agent-1c/migrations/verification-model-change-v1.json')
+    ) | ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path $_ } | Select-Object -Unique
+    return @($paths | Where-Object {
+        $path = [string]$_
+        -not @($directoryPaths | Where-Object {
+            $path -cne $_ -and $path.StartsWith(($_ + '/'), [StringComparison]::OrdinalIgnoreCase)
+        }).Count
+    })
+}
+
+# One update-workflow operation fingerprints the same ~1000 snapshot paths at
+# every receipt phase and check. Within that operation a file whose full path,
+# length and last-write time (100 ns) are unchanged keeps its hash, as a Git
+# index entry does. Writers that may preserve an older timestamp drop entries:
+# the managed path replace/remove owner for its target, and post-copy installers
+# for the whole cache. Outside the operation every call hashes the bytes.
+function Get-WorkflowUpdateFileSha256 {
+    param([Parameter(Mandatory = $true)][IO.FileInfo]$Item)
+    $cache = Get-Variable -Name ItlWorkflowUpdatePathHashCache -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -eq $cache) { return (Get-FileHash -LiteralPath $Item.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+    $key = $Item.FullName.ToLowerInvariant()
+    $length = [int64]$Item.Length
+    $ticks = [int64]$Item.LastWriteTimeUtc.Ticks
+    $entry = $cache[$key]
+    if ($null -ne $entry -and [int64]$entry.length -eq $length -and [int64]$entry.ticks -eq $ticks) { return [string]$entry.hash }
+    $hash = (Get-FileHash -LiteralPath $Item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $cache[$key] = @{ length = $length; ticks = $ticks; hash = $hash }
+    return $hash
+}
+
+function Clear-WorkflowUpdatePathHashCache {
+    param([string]$Path = '')
+    foreach ($name in @('ItlWorkflowUpdatePathHashCache', 'ItlWorkflowUpdateRealDirectoryCache')) {
+        $cache = Get-Variable -Name $name -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -eq $cache) { continue }
+        if (-not $Path) { $cache.Clear(); continue }
+        $prefix = [IO.Path]::GetFullPath($Path).TrimEnd('').ToLowerInvariant()
+        foreach ($key in @($cache.Keys)) {
+            if ($key -ceq $prefix -or $key.StartsWith($prefix + '', [StringComparison]::Ordinal)) { $cache.Remove($key) }
+        }
+    }
+}
+
+function Get-WorkflowUpdatePathState {
+    param([Parameter(Mandatory = $true)][string]$RelativePath, [string]$PhysicalPath = '')
+
+    $relative = ConvertTo-WorkflowUpdateRepoPath -Path $RelativePath
+    $target = Join-Path $script:ProjectRoot $relative
+    Assert-WorkflowManagedTargetPath -Path $target
+    Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relative
+    $path = $(if ($PhysicalPath) { $PhysicalPath } else { $target })
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return 'absent' }
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw "WORKFLOW_UPDATE_REPARSE_PATH: cannot fingerprint a junction or symlink in the update write-set: $relative"
+    }
+    if (-not $item.PSIsContainer) {
+        return ('file:' + (Get-WorkflowUpdateFileSha256 -Item $item))
+    }
+    $parts = [System.Collections.Generic.List[string]]::new()
+    # Sort-Object uses the host's culture/runtime collation. The pre-copy
+    # process and the fresh Windows PowerShell continuation must fingerprint
+    # an identical directory in exactly the same order.
+    $children = [System.Collections.Generic.SortedDictionary[string, object]]::new([StringComparer]::Ordinal)
+    foreach ($child in @(Get-ChildItem -LiteralPath $path -Force -Recurse -ErrorAction Stop)) {
+        $children.Add([string]$child.FullName, $child)
+    }
+    foreach ($child in $children.Values) {
+        if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "WORKFLOW_UPDATE_REPARSE_PATH: cannot fingerprint a junction or symlink in the update write-set: $($child.FullName)"
+        }
+        $childRelative = $child.FullName.Substring($path.Length).TrimStart('\', '/').Replace('\', '/')
+        $parts.Add($(if ($child.PSIsContainer) { "d:$childRelative" } else {
+            "f:$childRelative`:$(Get-WorkflowUpdateFileSha256 -Item $child)"
+        }))
+    }
+    $bytes = (Get-Utf8Encoding).GetBytes(($parts -join "`n"))
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ('directory:' + ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()) }
+    finally { $sha.Dispose() }
+}
+
+function Get-WorkflowUpdateSnapshotPathState {
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+    $state = [ordered]@{}
+    foreach ($record in @($Snapshot.records)) {
+        $relative = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$record.relativePath)
+        $state[$relative] = Get-WorkflowUpdatePathState -RelativePath $relative
+    }
+    return $state
+}
+
+function Get-WorkflowUpdateSnapshotBeforeState {
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+    $state = [ordered]@{}
+    foreach ($record in @($Snapshot.records)) {
+        $relative = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$record.relativePath)
+        $state[$relative] = $(if ($record.existed) {
+            Get-WorkflowUpdatePathState -RelativePath $relative -PhysicalPath ([string]$record.backupPath)
+        } else { 'absent' })
+    }
+    return $state
+}
+
+function Get-WorkflowUpdateRetainedMasterCommitDetails {
+    param([Parameter(Mandatory = $true)][object]$Pending)
+
+    $receipt = $Pending.receipt
+    if ([string]$receipt.phase -cne 'master-committed' -or
+        [string]$receipt.preUpdateHead -notmatch '^[a-f0-9]{40}$' -or
+        [string]$receipt.branchRef -cne ('refs/heads/' + (Get-MasterBranch)) -or
+        (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim() -cne [string]$receipt.branchRef) {
+        throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: retained-detail recovery requires this original committed master snapshot; preserve it and repeat its exact source-side recovery.'
+    }
+    Assert-WorkflowUpdateRecordedSource -Receipt $receipt
+    Assert-WorkflowUpdateSnapshotCurrentState -Pending $Pending
+    $workflow = Get-DependencyLockEntry -Name 'workflowPackage'
+    if ([string](Get-ConfigValueFromObject -Object $workflow -Path 'commit' -Default '') -cne [string]$receipt.sourceCommit -or
+        [string](Get-ConfigValueFromObject -Object $workflow -Path 'ref' -Default '') -cne [string]$receipt.sourceRef) {
+        throw 'WORKFLOW_UPDATE_SOURCE_CHANGED: retained commit details require the installed lock of the recorded package; restore that exact binding before repeating recovery.'
+    }
+    $before = ConvertTo-Agent1cHashtable -Object $receipt.beforePathState
+    $actualBefore = Get-WorkflowUpdateSnapshotBeforeState -Snapshot $Pending.snapshot
+    if ($before.Count -ne $actualBefore.Count) {
+        throw 'WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: retained-detail recovery requires the complete original before-state inventory.'
+    }
+    foreach ($relative in @($actualBefore.Keys)) {
+        if (-not $before.Contains($relative) -or [string]$before[$relative] -cne [string]$actualBefore[$relative]) {
+            throw "WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: '$relative' before backup changed; preserve the snapshot and recover its exact before bytes."
+        }
+    }
+    $manifests = @{}
+    foreach ($relative in @('.ai-rules.json','.agent-1c/client-surface.json')) {
+        $records = @($Pending.snapshot.records | Where-Object { [string]$_.relativePath -ceq $relative })
+        if ($records.Count -ne 1 -or -not $before.Contains($relative)) {
+            throw "WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: original ownership manifest '$relative' was not captured; preserve the snapshot for exact reconciliation."
+        }
+        if ($records[0].existed) {
+            if ($records[0].wasDirectory -or [string]$before[$relative] -notmatch '^file:[a-f0-9]{64}$') {
+                throw "WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: '$relative' is not a hash-bound original file."
+            }
+            $manifests[$relative] = Read-Utf8Text -Path $records[0].backupPath | ConvertFrom-Json -ErrorAction Stop
+        } elseif ([string]$before[$relative] -ceq 'absent') {
+            $manifests[$relative] = $null
+        } else {
+            throw "WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: '$relative' has no proved original absent state."
+        }
+    }
+    $rulesBefore = @(Get-AiRules1cManifestFileEntries -Manifest $manifests['.ai-rules.json'] | ForEach-Object {
+        ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.target)
+    })
+    $surfaceBefore = @()
+    if (($null -ne $manifests['.ai-rules.json'] -and $null -eq $manifests['.ai-rules.json'].PSObject.Properties['files']) -or
+        ($null -ne $manifests['.agent-1c/client-surface.json'] -and
+        ([int](Get-ConfigValueFromObject -Object $manifests['.agent-1c/client-surface.json'] -Path 'schemaVersion' -Default 0) -ne 1 -or
+        $null -eq $manifests['.agent-1c/client-surface.json'].PSObject.Properties['clients']))) {
+        throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: original manifest ownership fields are missing; preserve the before backups for exact reconciliation.'
+    }
+    $surfaceBefore = @(Get-WorkflowUpdateClientSurfacePaths -State $manifests['.agent-1c/client-surface.json'])
+    $source = [pscustomobject]@{root=[string]$receipt.sourceRoot;commit=[string]$receipt.sourceCommit;ref=[string]$receipt.sourceRef;repo=[string]$receipt.sourceRepo;source=[string]$receipt.sourceKind}
+    $head = Get-CurrentCommit
+    $parents = @(Get-GitCommitParents -Commit $head)
+    if ($parents.Count -ne 1 -or $parents[0] -cne [string]$receipt.preUpdateHead -or
+        (Get-GitOutput @('show','-s','--format=%s',$head)).Trim() -cne (Get-WorkflowUpdateCommitMessage -Source $source)) {
+        throw 'WORKFLOW_UPDATE_MASTER_HEAD_CHANGED: retained details cannot be recovered from a different parent, merge or commit subject; preserve the snapshot for exact reconciliation.'
+    }
+    $paths = @(Get-GitPathList -Arguments @('diff-tree','--no-commit-id','--name-only','-r','-z',[string]$receipt.preUpdateHead,$head,'--') |
+        ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_) })
+    $fixed = @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
+    $fixedMatcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $fixed
+    $oldMatcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs @($fixed + $rulesBefore + $surfaceBefore + @('.ai-rules.json','.agent-1c/client-surface.json'))
+    $snapshotMatcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs @($Pending.snapshot.records | ForEach-Object { [string]$_.relativePath })
+    $retired = @(Get-WorkflowUpdateLegacyRetirementPaths -OldCommit ([string]$receipt.preUpdateHead) -NewCommit $head)
+    foreach ($path in $paths) {
+        $business = Test-OneCSourceRepoPath -RepoPath $path
+        $businessTests = @(@('tests',(Get-VanessaConfiguredFeaturesPath),(Get-YAxUnitTestsPath)) | Where-Object {
+            Test-RepoPathUnderRoot -RepoPath $path -Root $_
+        }).Count -gt 0 -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $fixedMatcher)
+        $newLiteral = @($Pending.snapshot.records | Where-Object {
+            [string]$_.relativePath -ceq $path -and -not $_.existed -and [string]$before[$path] -ceq 'absent'
+        }).Count -eq 1
+        if ($business -or $businessTests -or -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $snapshotMatcher) -or
+            (-not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $oldMatcher) -and -not $newLiteral -and $path -cnotin $retired)) {
+            throw "WORKFLOW_UPDATE_MASTER_COMMIT_PATHS_CHANGED: '$path' has no immutable before/snapshot workflow ownership; preserve the original commit and snapshot for reconciliation."
+        }
+    }
+    $details = @{preCommitHead=[string]$receipt.preUpdateHead;aiRulesPathsBefore=@($rulesBefore);clientSurfacePathsBefore=@($surfaceBefore | Select-Object -Unique);plannedChangePaths=@($paths)}
+    Assert-WorkflowUpdateMasterCommitCheckpoint -Receipt ([pscustomobject]$details) -Source $source | Out-Null
+    return $details
+}
+
+function Save-WorkflowUpdateSnapshotReceipt {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][object]$Source,
+        [Parameter(Mandatory = $true)][ValidateSet('prepared', 'copying', 'copy-complete', 'post-copy-running', 'post-copy-failed', 'branch-commit-ready', 'master-commit-ready', 'master-committed', 'rollback-restoring', 'rollback-commit-ready', 'post-copy-complete')][string]$Phase,
+        [hashtable]$Details = @{}
+    )
+
+    # Capture and receipt fingerprints can outlive the status watchdog. Keep
+    # the existing PID-owned heartbeat while every snapshot/SHA guard runs.
+    return Invoke-WithRunStatusHeartbeat {
+        if ($Phase -eq 'prepared' -and $Details.ContainsKey('dependencyPlan')) {
+            $expectedLockExists = Get-ConfigValueFromObject $Details.dependencyPlan 'inputLockExists' $null
+            $actualLockExists = Test-Path -LiteralPath (Get-DependencyLockPath) -PathType Leaf
+            if ($null -ne $expectedLockExists -and [bool]$expectedLockExists -ne [bool]$actualLockExists) {
+                throw 'DEPENDENCY_PREFLIGHT_DRIFT: the dependency lock appeared or disappeared after planning. Preserve it and repeat update-workflow.'
+            }
+            $expectedLockHash = [string](Get-ConfigValueFromObject $Details.dependencyPlan 'inputLockSha256' '')
+            if ($expectedLockHash -and (Get-FileHash -LiteralPath (Get-DependencyLockPath) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedLockHash) {
+                throw 'DEPENDENCY_PREFLIGHT_DRIFT: the dependency lock changed after planning. Preserve it and repeat update-workflow.'
+            }
+        }
+        $pathState = Get-WorkflowUpdateSnapshotPathState -Snapshot $Snapshot
+        $receiptPath = Join-Path $Snapshot.root 'transaction.json'
+        $prior = if (Test-Path -LiteralPath $receiptPath -PathType Leaf) { Read-Utf8Text -Path $receiptPath | ConvertFrom-Json -ErrorAction Stop } else { $null }
+        if ($null -ne $prior -and ([string]$prior.operation -cne 'update-workflow' -or
+            [string]$prior.projectRoot -cne [string]$Snapshot.targetRoot -or [string]$prior.snapshotRoot -cne [string]$Snapshot.root)) {
+            throw "WORKFLOW_UPDATE_RECEIPT_INVALID: refusing to replace another transaction at '$receiptPath'."
+        }
+        $recoveredDetails = @{}
+        if ($null -ne $prior -and [string]$prior.phase -ceq 'master-committed') {
+            $missing = @(@('preCommitHead','aiRulesPathsBefore','clientSurfacePathsBefore','plannedChangePaths') | Where-Object {
+                $null -eq $prior.PSObject.Properties[$_]
+            })
+            if ($missing.Count -gt 0 -and $missing.Count -ne 4) {
+                throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: only a fully lost detail set can be reconstructed; preserve the partially missing receipt for exact reconciliation.'
+            }
+            if ($missing.Count -eq 4) {
+                if ([string](Get-ConfigValueFromObject -Object $prior -Path 'recoveryExecutorRoot' -Default '') -eq '' -or
+                    [string](Get-ConfigValueFromObject -Object $prior -Path 'recoveryExecutorCommit' -Default '') -notmatch '^[a-f0-9]{40}$') {
+                    throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: missing details have no recorded executor-rebinding provenance; preserve the receipt for exact reconciliation.'
+                }
+                if ([string]$Source.root -cne [string]$prior.sourceRoot -or [string]$Source.commit -cne [string]$prior.sourceCommit) {
+                    throw 'WORKFLOW_UPDATE_SOURCE_CHANGED: retained-detail recovery cannot substitute another package source.'
+                }
+                $recoveredDetails = Get-WorkflowUpdateRetainedMasterCommitDetails -Pending ([pscustomobject]@{snapshot=$Snapshot;receipt=$prior;receiptPath=$receiptPath})
+            }
+        }
+        $beforeState = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['beforePathState']) {
+            ConvertTo-Agent1cHashtable -Object $prior.beforePathState
+        } else { Get-WorkflowUpdateSnapshotBeforeState -Snapshot $Snapshot }
+        $hasGit = Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.git')
+        $preUpdateHead = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['preUpdateHead']) { [string]$prior.preUpdateHead } elseif ($hasGit) { Get-CurrentCommit } else { '' }
+        $branchRef = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['branchRef']) { [string]$prior.branchRef } elseif ($hasGit) { (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim() } else { '' }
+        if ($Phase -in @('branch-commit-ready', 'master-commit-ready')) {
+            Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $Snapshot -BeforeCommit $preUpdateHead -CapturedPathState $pathState
+        }
+        if ($Phase -eq 'prepared') {
+            $clientConfigState = [string](Get-ConfigValueFromObject $Details 'clientMembership.beforeConfigState' '')
+            if ($clientConfigState -and [string]$beforeState['.agent-1c/project.json'] -cne $clientConfigState) {
+                throw 'WORKFLOW_UPDATE_PREPARE_DRIFT: client membership changed after planning. Preserve project.json and repeat update-workflow to plan its current additive set.'
+            }
+            foreach ($relative in @($beforeState.Keys)) {
+                if ([string]$pathState[$relative] -cne [string]$beforeState[$relative]) {
+                    throw "WORKFLOW_UPDATE_PREPARE_DRIFT: '$relative' changed between the before snapshot and receipt. Preserve the project file and retry after resolving its owner."
+                }
+            }
+            $pathState = $beforeState
+            # Mark the private snapshot armed before the transaction can be
+            # created. An armed snapshot without its receipt is ambiguous: the
+            # receipt may have been removed after project copying began.
+            Write-Utf8TextAtomic -Path (Join-Path $Snapshot.root 'preparation.json') -Value (([ordered]@{
+                schemaVersion = 1
+                operation = 'update-workflow'
+                projectRoot = [string]$script:ProjectRoot
+                snapshotRoot = [string]$Snapshot.root
+                phase = 'armed'
+            } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+        }
+        $receipt = [ordered]@{
+            schemaVersion = 1
+            operation = 'update-workflow'
+            phase = $Phase
+            projectRoot = [string]$Snapshot.targetRoot
+            snapshotRoot = [string]$Snapshot.root
+            sourceRoot = [string]$Source.root
+            sourceCommit = [string]$Source.commit
+            sourceRepo = [string](Get-ConfigValueFromObject -Object $Source -Path 'repo' -Default (Get-StateValue -State $prior -Name 'sourceRepo' -Default ''))
+            sourceRef = [string](Get-ConfigValueFromObject -Object $Source -Path 'ref' -Default (Get-StateValue -State $prior -Name 'sourceRef' -Default ''))
+            sourceKind = [string](Get-ConfigValueFromObject -Object $Source -Path 'source' -Default (Get-StateValue -State $prior -Name 'sourceKind' -Default ''))
+            records = @($Snapshot.records | ForEach-Object {
+                [ordered]@{
+                    relativePath = [string]$_.relativePath
+                    existed = [bool]$_.existed
+                    wasDirectory = [bool]$_.wasDirectory
+                    backupName = $(if ($_.backupPath) { Split-Path -Leaf ([string]$_.backupPath) } else { '' })
+                }
+            })
+            parentStates = $Snapshot.parentStates
+            beforePathState = $beforeState
+            pathState = $pathState
+            preUpdateHead = $preUpdateHead
+            branchRef = $branchRef
+            completedHead = $(if ($Phase -eq 'post-copy-complete' -and $hasGit) { Get-CurrentCommit } else { '' })
+            updatedAt = (Get-Date).ToString('o')
+        }
+        $reserved = @($receipt.Keys)
+        if ($null -ne $prior) {
+            foreach ($property in @($prior.PSObject.Properties)) {
+                if ($reserved -notcontains [string]$property.Name) { $receipt[[string]$property.Name] = $property.Value }
+            }
+        }
+        foreach ($name in @($recoveredDetails.Keys)) { $receipt[[string]$name] = $recoveredDetails[$name] }
+        foreach ($name in @($Details.Keys)) {
+            if ($reserved -contains [string]$name) {
+                throw "WORKFLOW_UPDATE_RECEIPT_DETAIL_CONFLICT: '$name' is a reserved receipt field."
+            }
+            $receipt[[string]$name] = $Details[$name]
+        }
+        Write-Utf8TextAtomic -Path $receiptPath -Value (($receipt | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
+    }
+
+}
+
+function Get-WorkflowUpdatePendingSnapshot {
+    $parent = Get-FullPathNormalized (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { return $null }
+    $snapshotRoots = @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction Stop |
+        Where-Object Name -Like 'itl-workflow-update-rollback-*')
+    if ($snapshotRoots.Count -eq 0) { return $null }
+    if ($snapshotRoots.Count -ne 1) {
+        throw "WORKFLOW_UPDATE_SNAPSHOT_AMBIGUOUS: $($snapshotRoots.Count) snapshots exist under '$parent'. Preserve them and reconcile the exact update before proceeding."
+    }
+    $snapshotRoot = Get-FullPathNormalized $snapshotRoots[0].FullName
+    $receiptPath = Join-Path $snapshotRoot 'transaction.json'
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+        $preparationPath = Join-Path $snapshotRoot 'preparation.json'
+        if (Test-Path -LiteralPath $preparationPath -PathType Leaf) {
+            try { $preparation = Read-Utf8Text -Path $preparationPath | ConvertFrom-Json -ErrorAction Stop }
+            catch { throw "WORKFLOW_UPDATE_RECEIPT_MISSING: invalid preparation marker in '$snapshotRoot'. Preserve the snapshot for exact reconciliation. $($_.Exception.Message)" }
+            if ([int]$preparation.schemaVersion -eq 1 -and
+                [string]$preparation.operation -ceq 'update-workflow' -and
+                [string]$preparation.projectRoot -ceq [string]$script:ProjectRoot -and
+                [string]$preparation.snapshotRoot -ceq $snapshotRoot -and
+                [string]$preparation.phase -in @('capturing', 'captured')) {
+                Remove-WorkflowUpdateRollbackSnapshot -Snapshot ([pscustomobject]@{
+                    root = $snapshotRoot
+                    tempRoot = $parent
+                })
+                Write-Host 'Discarded an interrupted backup-only workflow snapshot; no project copy had started.'
+                return $null
+            }
+        }
+        throw "WORKFLOW_UPDATE_RECEIPT_MISSING: snapshot exists without transaction.json: $snapshotRoot"
+    }
+    return Read-WorkflowUpdateSnapshot -SnapshotRoot $snapshotRoot
+}
+
+function Read-WorkflowUpdateSnapshot {
+    param([Parameter(Mandatory = $true)][string]$SnapshotRoot, [switch]$Completed)
+
+    $parent = Get-FullPathNormalized (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
+    $snapshotRoot = Get-FullPathNormalized $SnapshotRoot
+    $name = Split-Path -Leaf $snapshotRoot
+    $pattern = if ($Completed) { '^itl-workflow-update-completed-([a-f0-9]{32})$' } else { '^itl-workflow-update-rollback-([a-f0-9]{32})$' }
+    if ((Split-Path -Parent $snapshotRoot) -cne $parent -or $name -notmatch $pattern) {
+        throw "WORKFLOW_UPDATE_RECEIPT_INVALID: snapshot is outside the expected project scope: $snapshotRoot"
+    }
+    $originalRoot = if ($Completed) { Join-Path $parent ('itl-workflow-update-rollback-' + $matches[1]) } else { $snapshotRoot }
+    foreach ($path in @($parent, $snapshotRoot)) {
+        if (((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "WORKFLOW_UPDATE_REPARSE_PATH: snapshot path '$path' is a reparse point."
+        }
+    }
+    $receiptPath = Join-Path $snapshotRoot 'transaction.json'
+    try { $receipt = Read-Utf8Text -Path $receiptPath | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw "WORKFLOW_UPDATE_RECEIPT_INVALID: $receiptPath $($_.Exception.Message)" }
+    if ([int]$receipt.schemaVersion -ne 1 -or [string]$receipt.operation -cne 'update-workflow' -or
+        [string]$receipt.projectRoot -cne [string]$script:ProjectRoot -or
+        [string]$receipt.snapshotRoot -cne $originalRoot -or
+        [string]$receipt.phase -notin @('prepared', 'copying', 'copy-complete', 'post-copy-running', 'post-copy-failed', 'branch-commit-ready', 'master-commit-ready', 'master-committed', 'rollback-restoring', 'rollback-commit-ready', 'post-copy-complete')) {
+        throw "WORKFLOW_UPDATE_RECEIPT_INVALID: identity or phase mismatch in '$receiptPath'."
+    }
+    $records = @($receipt.records | ForEach-Object {
+        $relative = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)
+        $target = Join-Path $script:ProjectRoot $relative
+        Assert-WorkflowManagedTargetPath -Path $target
+        $backupName = [string]$_.backupName
+        if ($backupName -and $backupName -notmatch '^item-[0-9]+$') {
+            throw "WORKFLOW_UPDATE_RECEIPT_INVALID: backup name is invalid for '$relative'."
+        }
+        [pscustomobject]@{
+            relativePath = $relative
+            targetPath = $target
+            existed = [bool]$_.existed
+            wasDirectory = [bool]$_.wasDirectory
+            backupPath = $(if ($backupName) { Join-Path $snapshotRoot $backupName } else { '' })
+        }
+    })
+    $snapshot = [pscustomobject]@{
+        root = $snapshotRoot
+        tempRoot = $parent
+        targetRoot = $script:ProjectRoot
+        records = $records
+        parentStates = ConvertTo-Agent1cHashtable -Object $receipt.parentStates
+    }
+    return [pscustomobject]@{ snapshot = $snapshot; receipt = $receipt; receiptPath = $receiptPath }
+}
+
+function Get-WorkflowUpdateCompletedSnapshot {
+    param([Parameter(Mandatory = $true)][string]$SnapshotId)
+
+    if ($SnapshotId -notmatch '^[a-f0-9]{32}$') { throw 'WORKFLOW_UPDATE_ROLLBACK_ID_INVALID: select the exact completed snapshot id.' }
+    $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+    $completed = Read-WorkflowUpdateSnapshot -SnapshotRoot (Join-Path $parent ('itl-workflow-update-completed-' + $SnapshotId)) -Completed
+    if ([string]$completed.receipt.phase -cne 'post-copy-complete' -or $null -eq $completed.receipt.PSObject.Properties['beforePathState']) {
+        throw "WORKFLOW_UPDATE_ROLLBACK_RECEIPT_INVALID: snapshot '$SnapshotId' has no qualified terminal/before state."
+    }
+    $recorded = ConvertTo-Agent1cHashtable -Object $completed.receipt.beforePathState
+    $actual = Get-WorkflowUpdateSnapshotBeforeState -Snapshot $completed.snapshot
+    if ($recorded.Count -ne $actual.Count) { throw 'WORKFLOW_UPDATE_ROLLBACK_BACKUP_INVALID: before-state inventory is incomplete.' }
+    foreach ($relative in @($actual.Keys)) {
+        if (-not $recorded.Contains($relative) -or [string]$actual[$relative] -cne [string]$recorded[$relative]) {
+            throw "WORKFLOW_UPDATE_ROLLBACK_BACKUP_INVALID: '$relative' backup changed. Preserve current/before/candidate for reconciliation."
+        }
+    }
+    return $completed
+}
+
+function Get-WorkflowUpdateRecoveryStatus {
+    param([string]$SnapshotId = '')
+
+    if ($SnapshotId) { return (Export-WorkflowUpdateReconciliationReport -SnapshotId $SnapshotId) }
+    $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+    $rows = @()
+    if (Test-Path -LiteralPath $parent -PathType Container) {
+        foreach ($directory in @(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-completed-*' | Sort-Object Name)) {
+            $saved = Read-WorkflowUpdateSnapshot -SnapshotRoot $directory.FullName -Completed
+            $rows += [pscustomobject]@{
+                id=$directory.Name.Substring('itl-workflow-update-completed-'.Length)
+                sourceCommit=[string]$saved.receipt.sourceCommit
+                beforeHead=[string]$saved.receipt.preUpdateHead
+                completedHead=[string]$saved.receipt.completedHead
+                beforeBoundary=[string](Get-ConfigValueFromObject $saved.receipt 'legacyCopyRecovery.beforeBoundary' 'pre-update snapshot')
+                updatedAt=[string]$saved.receipt.updatedAt
+            }
+        }
+    }
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    $pendingSummary = if ($null -ne $pending) { [pscustomobject]@{
+        id=(Split-Path -Leaf $pending.snapshot.root).Substring('itl-workflow-update-rollback-'.Length)
+        phase=[string]$pending.receipt.phase
+        sourceCommit=[string]$pending.receipt.sourceCommit
+        continuation='Repeat the recorded exact-source update; for ambiguous post-copy use -Recovery status -SnapshotId <id> to preserve and inspect before/current/candidate.'
+    } } else { $null }
+    return [pscustomobject]@{ projectRoot=[string]$script:ProjectRoot; retainedCount=$rows.Count; snapshots=@($rows | Select-Object -Last 10); pending=$pendingSummary }
+}
+
+function Assert-WorkflowUpdateReconciliationScope {
+    param([Parameter(Mandatory = $true)][object]$Pending, [Parameter(Mandatory = $true)][string]$SnapshotId,
+        # Abandon writes only saved before bytes; the candidate may be gone.
+        [switch]$BeforeOnly)
+
+    if ($SnapshotId -notmatch '^[a-f0-9]{32}$' -or
+        (Split-Path -Leaf $Pending.snapshot.root) -cne ('itl-workflow-update-rollback-' + $SnapshotId) -or
+        [string]$Pending.receipt.phase -notin @('post-copy-running', 'post-copy-failed')) {
+        throw 'WORKFLOW_UPDATE_RECONCILIATION_SCOPE_INVALID: select this root pending post-copy snapshot; copy, commit and rollback phases retain their own continuation.'
+    }
+    if (-not $BeforeOnly) { Assert-WorkflowUpdateRecordedSource -Receipt $Pending.receipt }
+    if ([string]$Pending.receipt.preUpdateHead -notmatch '^[a-f0-9]{40}$' -or
+        (Get-CurrentCommit) -cne [string]$Pending.receipt.preUpdateHead -or
+        (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim() -cne [string]$Pending.receipt.branchRef) {
+        throw 'WORKFLOW_UPDATE_RECONCILIATION_HEAD_CHANGED: preserve the snapshot and use the original commit phase; file reconciliation cannot acknowledge a later HEAD.'
+    }
+    $busy = Get-WorkflowUpdateRootRuntimeBusyReason -Root $script:ProjectRoot
+    if ($busy) { throw "WORKFLOW_UPDATE_RECONCILIATION_RUNTIME_BUSY: $busy. Stop the owned runtime and repeat the same recovery command." }
+    $before = ConvertTo-Agent1cHashtable -Object $Pending.receipt.beforePathState
+    $actualBefore = Get-WorkflowUpdateSnapshotBeforeState -Snapshot $Pending.snapshot
+    if ($before.Count -ne $actualBefore.Count) { throw 'WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: preserve the incomplete before-state proof.' }
+    foreach ($relative in @($actualBefore.Keys)) {
+        if (-not $before.Contains($relative) -or [string]$actualBefore[$relative] -cne [string]$before[$relative]) {
+            throw "WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: '$relative' before backup changed; preserve the snapshot."
+        }
+    }
+}
+
+function Export-WorkflowUpdateReconciliationReport {
+    param([Parameter(Mandatory = $true)][string]$SnapshotId)
+
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    if ($null -eq $pending) { throw 'WORKFLOW_UPDATE_RECONCILIATION_PENDING_MISSING: this root has no pending update.' }
+    Assert-WorkflowUpdateReconciliationScope -Pending $pending -SnapshotId $SnapshotId
+    $receiptHash = (Get-FileHash -LiteralPath $pending.receiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $recorded = ConvertTo-Agent1cHashtable -Object $pending.receipt.pathState
+    $before = ConvertTo-Agent1cHashtable -Object $pending.receipt.beforePathState
+    $actualBefore = Get-WorkflowUpdateSnapshotBeforeState -Snapshot $pending.snapshot
+    $actual = Get-WorkflowUpdateSnapshotPathState -Snapshot $pending.snapshot
+    $reportRoot = Join-Path $pending.snapshot.root ('reconciliation-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $reportRoot | Out-Null
+    $rows = @()
+    $ordinal = 0
+    foreach ($record in @($pending.snapshot.records)) {
+        $relative = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$record.relativePath)
+        if (-not $recorded.Contains($relative) -or -not $before.Contains($relative) -or
+            [string]$actualBefore[$relative] -cne [string]$before[$relative]) {
+            throw "WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: before/recorded proof changed for '$relative'; preserve the snapshot."
+        }
+        if ([string]$actual[$relative] -ceq [string]$recorded[$relative]) { continue }
+        $currentCopy = Join-Path $reportRoot ('current-' + $ordinal)
+        if ([string]$actual[$relative] -cne 'absent') {
+            Copy-Item -LiteralPath $record.targetPath -Destination $currentCopy -Recurse -Force
+            if ((Get-WorkflowUpdatePathState -RelativePath $relative -PhysicalPath $currentCopy) -cne [string]$actual[$relative]) {
+                throw "WORKFLOW_UPDATE_RECONCILIATION_CHANGED: '$relative' changed while preserving current bytes; regenerate the report."
+            }
+        } else { $currentCopy = '' }
+        $candidate = Join-Path ([string]$pending.receipt.sourceRoot) $relative
+        $candidateCopy = ''
+        $candidateState = ''
+        if (Test-Path -LiteralPath $candidate) {
+            $candidateState = Get-WorkflowUpdatePathState -RelativePath $relative -PhysicalPath $candidate
+            $candidateCopy = Join-Path $reportRoot ('source-candidate-' + $ordinal)
+            Copy-Item -LiteralPath $candidate -Destination $candidateCopy -Recurse -Force
+            if ((Get-WorkflowUpdatePathState -RelativePath $relative -PhysicalPath $candidateCopy) -cne $candidateState) {
+                throw "WORKFLOW_UPDATE_RECONCILIATION_CHANGED: exact source candidate changed for '$relative'."
+            }
+        }
+        $rows += [pscustomobject]@{
+            relativePath=$relative; recordedState=[string]$recorded[$relative]; observedState=[string]$actual[$relative]
+            beforeState=[string]$before[$relative]; beforePath=[string]$record.backupPath; currentPath=$currentCopy
+            sourceCandidatePath=$candidateCopy; sourceCandidateState=$candidateState
+            beforeRelativePath=$(if ($record.backupPath) { '../' + (Split-Path -Leaf $record.backupPath) } else { '' })
+            currentRelativePath=$(if ($currentCopy) { Split-Path -Leaf $currentCopy } else { '' })
+            sourceCandidateRelativePath=$(if ($candidateCopy) { Split-Path -Leaf $candidateCopy } else { '' })
+            candidateMeaning='Exact source bytes only; generated client/settings outputs require review against their post-copy owner.'
+        }
+        $ordinal++
+    }
+    foreach ($relative in @($actual.Keys)) {
+        if ((Get-WorkflowUpdatePathState -RelativePath $relative) -cne [string]$actual[$relative]) {
+            throw "WORKFLOW_UPDATE_RECONCILIATION_CHANGED: '$relative' changed during report capture; regenerate the report."
+        }
+    }
+    if ((Get-FileHash -LiteralPath $pending.receiptPath).Hash -ine $receiptHash) { throw 'WORKFLOW_UPDATE_RECONCILIATION_RECEIPT_CHANGED: regenerate the report for the current transaction.' }
+    $report = [ordered]@{
+        schemaVersion=1; snapshotId=$SnapshotId; projectRoot=[string]$script:ProjectRoot
+        sourceCommit=[string]$pending.receipt.sourceCommit; receiptSha256=$receiptHash
+        phase=[string]$pending.receipt.phase; head=Get-CurrentCommit; paths=$rows
+        continuation='Review every changed path using preserved bytes and its owner. A decision file may acknowledge only confirmed interrupted helper output with decision=resume-confirmed-helper-output and a concrete reason. Genuine later edits stay blocked for semantic reconciliation. -Recovery reconcile -SnapshotId <id> -ReconciliationFile <file> changes only the receipt; then repeat the recorded exact-source update.'
+    }
+    $reportPath = Join-Path $reportRoot 'report.json'
+    Write-Utf8TextAtomic -Path $reportPath -Value (($report | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    return [pscustomobject]@{ snapshotId=$SnapshotId; changedPathCount=$rows.Count; reportPath=$reportPath; reportSha256=(Get-FileHash -LiteralPath $reportPath).Hash.ToLowerInvariant(); continuation=$report.continuation }
+}
+
+function Complete-WorkflowUpdateReconciliation {
+    param([Parameter(Mandatory = $true)][string]$SnapshotId, [Parameter(Mandatory = $true)][string]$DecisionFile)
+
+    $source = Resolve-WorkflowPackageSource
+    Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$source.root)
+    if ((Get-FullPathNormalized $script:Agent1cScriptRoot) -cne (Get-FullPathNormalized (Join-Path $source.root '.agents/skills/1c-workflow/scripts'))) {
+        throw 'WORKFLOW_UPDATE_RECONCILIATION_SOURCE_HELPER_REQUIRED: use the source-side compatible recovery helper; it does not replace the recorded update candidate.'
+    }
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    if ($null -eq $pending) { throw 'WORKFLOW_UPDATE_RECONCILIATION_PENDING_MISSING: this root has no pending update.' }
+    Assert-WorkflowUpdateReconciliationScope -Pending $pending -SnapshotId $SnapshotId
+    $decision = Read-Utf8Text -Path $DecisionFile | ConvertFrom-Json -ErrorAction Stop
+    $reportPath = Get-FullPathNormalized ([string]$decision.reportPath)
+    $reportParent = Split-Path -Parent $reportPath
+    if ((Split-Path -Parent $reportParent) -cne (Get-FullPathNormalized $pending.snapshot.root) -or
+        (Split-Path -Leaf $reportParent) -notmatch '^reconciliation-[a-f0-9]{32}$' -or
+        (Split-Path -Leaf $reportPath) -cne 'report.json' -or
+        ((Get-Item -LiteralPath $reportParent -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        ((Get-Item -LiteralPath $reportPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        (Get-FileHash -LiteralPath $reportPath).Hash -ine [string]$decision.reportSha256) {
+        throw 'WORKFLOW_UPDATE_RECONCILIATION_REPORT_INVALID: use the unchanged report inside this pending snapshot.'
+    }
+    $report = Read-Utf8Text -Path $reportPath | ConvertFrom-Json -ErrorAction Stop
+    if ([int]$decision.schemaVersion -ne 1 -or [int]$report.schemaVersion -ne 1 -or
+        [string]$report.snapshotId -cne $SnapshotId -or [string]$report.projectRoot -cne [string]$script:ProjectRoot -or
+        [string]$report.sourceCommit -cne [string]$pending.receipt.sourceCommit -or
+        [string]$report.phase -cne [string]$pending.receipt.phase -or [string]$report.head -cne (Get-CurrentCommit) -or
+        (Get-FileHash -LiteralPath $pending.receiptPath).Hash -ine [string]$report.receiptSha256) {
+        throw 'WORKFLOW_UPDATE_RECONCILIATION_STALE: transaction/source/HEAD moved; preserve the decisions and regenerate the report.'
+    }
+    $reviewed = @{}
+    foreach ($row in @($decision.paths)) {
+        $relative = [string]$row.relativePath
+        if ($reviewed.ContainsKey($relative) -or [string]$row.decision -cne 'resume-confirmed-helper-output' -or
+            [string]::IsNullOrWhiteSpace([string]$row.reason)) {
+            throw 'WORKFLOW_UPDATE_RECONCILIATION_DECISION_INVALID: every path needs one confirmed-helper-output decision and its concrete review reason; later edits cannot be silently acknowledged.'
+        }
+        $reviewed[$relative] = $row
+    }
+    if ($reviewed.Count -ne @($report.paths).Count -or $reviewed.Count -eq 0) { throw 'WORKFLOW_UPDATE_RECONCILIATION_DECISION_INVALID: review exactly all changed paths from this report.' }
+    $expected = ConvertTo-Agent1cHashtable -Object $pending.receipt.pathState
+    foreach ($row in @($report.paths)) {
+        $relative = [string]$row.relativePath
+        if (-not $reviewed.ContainsKey($relative) -or [string]$reviewed[$relative].observedState -cne [string]$row.observedState -or
+            -not $expected.Contains($relative) -or [string]$expected[$relative] -cne [string]$row.recordedState) {
+            throw "WORKFLOW_UPDATE_RECONCILIATION_DECISION_INVALID: decision does not bind observed/recorded bytes for '$relative'."
+        }
+        $expected[$relative] = [string]$row.observedState
+    }
+    foreach ($relative in @($expected.Keys)) {
+        if ((Get-WorkflowUpdatePathState -RelativePath $relative) -cne [string]$expected[$relative]) {
+            throw "WORKFLOW_UPDATE_RECONCILIATION_CHANGED: '$relative' changed after review; no receipt or project file was replaced. Regenerate and review this path."
+        }
+    }
+    # Persist reviewed hashes, never a fresh capture of potentially later bytes.
+    $receipt = ConvertTo-Agent1cHashtable -Object $pending.receipt
+    $receipt['pathState'] = $expected
+    $receipt['updatedAt'] = (Get-Date).ToString('o')
+    $audit = @{ schemaVersion=1; snapshotId=$SnapshotId; reportSha256=[string]$decision.reportSha256; decisions=$decision.paths; compatibleHelperCommit=[string]$source.commit }
+    Write-Utf8TextAtomic -Path (Join-Path $reportParent 'accepted-decisions.json') -Value (($audit | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    if ((Get-FileHash -LiteralPath $pending.receiptPath).Hash -ine [string]$report.receiptSha256) { throw 'WORKFLOW_UPDATE_RECONCILIATION_STALE: receipt changed before acknowledgement; repeat report review.' }
+    Write-Utf8TextAtomic -Path $pending.receiptPath -Value (($receipt | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+    Write-Host 'Confirmed interrupted helper outputs recorded; project files, HEAD and business index did not change. Repeat the original update with its recorded exact source.'
+}
+
+function Abandon-PendingWorkflowBranchUpdate {
+    param([Parameter(Mandatory = $true)][string]$SnapshotId)
+
+    $source = Resolve-WorkflowPackageSource
+    Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$source.root)
+    if ((Get-FullPathNormalized $script:Agent1cScriptRoot) -cne (Get-FullPathNormalized (Join-Path $source.root '.agents/skills/1c-workflow/scripts'))) {
+        throw 'WORKFLOW_UPDATE_ABANDON_SOURCE_HELPER_REQUIRED: use scripts/update-installed-workflow.ps1 from a clean compatible source checkout with -Recovery abandon -SnapshotId; abandon restores the installed helper itself.'
+    }
+    $abandoned = Join-Path $script:ProjectRoot ('.agent-1c/snapshots/workflow-update/itl-workflow-update-abandoned-' + $SnapshotId)
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    if ($null -eq $pending -and $SnapshotId -match '^[a-f0-9]{32}$' -and (Test-Path -LiteralPath (Join-Path $abandoned 'abandon-result.json') -PathType Leaf)) {
+        Write-Host "Workflow update $SnapshotId was already abandoned; no files changed."
+        return
+    }
+    if ($null -eq $pending) { throw 'WORKFLOW_UPDATE_RECONCILIATION_PENDING_MISSING: this root has no pending update.' }
+    # Same scope as reconciliation, but only saved before bytes are written, so
+    # a defective or removed candidate checkout cannot keep the branch locked.
+    Assert-WorkflowUpdateReconciliationScope -Pending $pending -SnapshotId $SnapshotId -BeforeOnly
+    if ([string]$pending.receipt.branchRef -ceq ('refs/heads/' + (Get-MasterBranch))) {
+        throw 'WORKFLOW_UPDATE_ABANDON_SCOPE_INVALID: master post-copy keeps its recorded continuation; abandon only returns a development branch whose rollout did not commit.'
+    }
+    if ($null -ne (Get-ConfigValueFromObject $pending.receipt 'localPatchRetirement' $null)) {
+        throw 'WORKFLOW_UPDATE_ABANDON_LOCAL_PATCH: the retired local patch is bound to this candidate; repeat update-workflow from master so its owner finishes the exact transaction.'
+    }
+    if (@(Get-GitPathList -Arguments @('ls-files', '--unmerged', '-z')).Count -gt 0) {
+        throw 'WORKFLOW_UPDATE_ABANDON_PENDING_MERGE: preserve the business merge and use its original lifecycle recovery before abandoning the package update.'
+    }
+    $matcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs @($pending.snapshot.records | ForEach-Object { [string]$_.relativePath })
+    $ownedStaged = @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z') | Where-Object {
+        Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher
+    })
+    if ($ownedStaged.Count -gt 0) { throw "WORKFLOW_UPDATE_ABANDON_INDEX_CHANGED: owned index paths are staged: $($ownedStaged -join ', '). Preserve them for reconciliation." }
+    # Every path must still be the recorded failed state or already its saved
+    # before bytes; a repeated abandon after interruption therefore converges.
+    Restore-WorkflowUpdateOwnedPaths -Target $pending -AllowedCurrentState (ConvertTo-Agent1cHashtable -Object $pending.receipt.pathState)
+    Write-Utf8TextAtomic -Path (Join-Path $pending.snapshot.root 'abandon-result.json') -Value (([ordered]@{
+        schemaVersion=1; snapshotId=$SnapshotId; sourceCommit=[string]$pending.receipt.sourceCommit; phase=[string]$pending.receipt.phase
+        head=Get-CurrentCommit; executorCommit=[string]$source.commit; abandonedAt=(Get-Date).ToString('o')
+    } | ConvertTo-Json) + [Environment]::NewLine)
+    # Renaming keeps the failed transaction as evidence outside the pending set.
+    Move-Item -LiteralPath $pending.snapshot.root -Destination $abandoned -ErrorAction Stop
+    Write-Host "Abandoned the uncommitted branch update to '$($pending.receipt.sourceCommit)'; owned paths are back at their saved before bytes and HEAD did not change. Evidence: $abandoned. Repeat update-workflow from master with the intended source."
+}
+
+function Assert-WorkflowUpdateRollbackTarget {
+    param([Parameter(Mandatory = $true)][object]$Completed, [string]$ExpectedHead = '')
+
+    $receipt = $Completed.receipt
+    if ([string]$receipt.completedHead -notmatch '^[a-f0-9]{40}$' -or
+        [string]$receipt.preUpdateHead -notmatch '^[a-f0-9]{40}$' -or
+        [string]$receipt.branchRef -cne (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim()) {
+        throw 'WORKFLOW_UPDATE_ROLLBACK_GIT_IDENTITY_INVALID: this snapshot is not bound to the current branch and a qualified Git transition.'
+    }
+    if (-not $ExpectedHead) { $ExpectedHead = [string]$receipt.completedHead }
+    if ((Get-CurrentCommit) -cne $ExpectedHead) {
+        throw "WORKFLOW_UPDATE_ROLLBACK_HEAD_CHANGED: expected '$ExpectedHead'; later commits require scoped reconciliation before rollback. The saved snapshot is preserved."
+    }
+    $busy = Get-WorkflowUpdateRootRuntimeBusyReason -Root $script:ProjectRoot
+    if ($busy) { throw "WORKFLOW_UPDATE_ROLLBACK_RUNTIME_BUSY: $busy. Stop the owned runtime and repeat the same source-side recovery command." }
+    if (@(Get-GitPathList -Arguments @('ls-files', '--unmerged', '-z')).Count -gt 0) {
+        throw 'WORKFLOW_UPDATE_ROLLBACK_PENDING_MERGE: preserve the business merge and use its original lifecycle recovery with the compatible source helper before backward package rollback.'
+    }
+}
+
+function Restore-WorkflowUpdateOwnedPaths {
+    param([Parameter(Mandatory = $true)][object]$Target, [Parameter(Mandatory = $true)][Collections.IDictionary]$AllowedCurrentState)
+
+    $desired = ConvertTo-Agent1cHashtable -Object $Target.receipt.beforePathState
+    $original = $AllowedCurrentState
+    if ($desired.Count -ne $original.Count) { throw 'WORKFLOW_UPDATE_ROLLBACK_INVENTORY_CHANGED: retained and restoring snapshots have different write sets.' }
+    # Validate the whole set before the first write, then each path again at its
+    # mutation boundary. Atomic path replacement exposes only exact before,
+    # exact post, or the recorded absent intermediate after interruption.
+    foreach ($record in @($Target.snapshot.records)) {
+        $relative = [string]$record.relativePath
+        if (-not $original.Contains($relative) -or -not $desired.Contains($relative)) { throw "WORKFLOW_UPDATE_ROLLBACK_INVENTORY_CHANGED: '$relative' is missing." }
+        Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relative
+        $actual = Get-WorkflowUpdatePathState -RelativePath $relative
+        if ($actual -cne [string]$original[$relative] -and $actual -cne [string]$desired[$relative] -and $actual -cne 'absent') {
+            throw "WORKFLOW_UPDATE_ROLLBACK_RECONCILIATION_REQUIRED: '$relative' is neither the recorded pre-rollback nor saved target bytes. Preserve current/before/candidate and resolve this path before repeating recovery."
+        }
+    }
+    foreach ($record in @($Target.snapshot.records)) {
+        $relative = [string]$record.relativePath
+        Assert-WorkflowManagedTargetPath -Path ([string]$record.targetPath)
+        Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relative
+        $actual = Get-WorkflowUpdatePathState -RelativePath $relative
+        if ($actual -ceq [string]$desired[$relative]) { continue }
+        if ($actual -cne [string]$original[$relative] -and $actual -cne 'absent') {
+            throw "WORKFLOW_UPDATE_ROLLBACK_RECONCILIATION_REQUIRED: '$relative' changed during recovery; preserve it and repeat after scoped reconciliation."
+        }
+        if ($record.existed) {
+            Invoke-WorkflowManagedPathReplace -SourcePath ([string]$record.backupPath) -TargetPath ([string]$record.targetPath) -Directory:([bool]$record.wasDirectory)
+        } else {
+            Remove-WorkflowManagedPathAtomic -TargetPath ([string]$record.targetPath)
+        }
+    }
+}
+
+function Restore-CompletedWorkflowUpdate {
+    param([Parameter(Mandatory = $true)][string]$SnapshotId)
+
+    $source = Resolve-WorkflowPackageSource
+    Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$source.root)
+    $compatibleHelperRoot = Get-FullPathNormalized (Join-Path $source.root '.agents/skills/1c-workflow/scripts')
+    if ((Get-FullPathNormalized $script:Agent1cScriptRoot) -cne $compatibleHelperRoot) {
+        throw 'WORKFLOW_UPDATE_ROLLBACK_SOURCE_HELPER_REQUIRED: use scripts/update-installed-workflow.ps1 from the exact clean compatible source checkout with -Recovery restore -SnapshotId; the installed helper may be replaced during rollback.'
+    }
+    # Local runtime survives restoration of an older tracked .gitignore.
+    Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $script:ProjectRoot
+    Assert-WorkflowUpdateCommitIdentity
+    $target = Get-WorkflowUpdateCompletedSnapshot -SnapshotId $SnapshotId
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    $details = @{ transitionKind='rollback'; rollbackSnapshotId=$SnapshotId }
+    $resultPath = Join-Path $target.snapshot.root 'rollback-result.json'
+    if ($null -eq $pending -and (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
+        $result = Read-Utf8Text -Path $resultPath | ConvertFrom-Json -ErrorAction Stop
+        if ([int]$result.schemaVersion -ne 1 -or [string]$result.snapshotId -cne $SnapshotId -or
+            [string]$result.commit -notmatch '^[a-f0-9]{40}$') { throw 'WORKFLOW_UPDATE_ROLLBACK_RESULT_INVALID: preserve the completed rollback receipt for reconciliation.' }
+        $returned = Get-WorkflowUpdateCompletedSnapshot -SnapshotId ([string]$result.recoverySnapshotId)
+        if ([string]$returned.receipt.completedHead -cne [string]$result.commit -or
+            [string]$returned.receipt.transitionKind -cne 'rollback' -or [string]$returned.receipt.rollbackSnapshotId -cne $SnapshotId) {
+            throw 'WORKFLOW_UPDATE_ROLLBACK_RESULT_INVALID: terminal root proof does not match the selected rollback.'
+        }
+        Assert-WorkflowUpdateRollbackTarget -Completed $target -ExpectedHead ([string]$result.commit)
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $returned
+        Write-Host "Workflow rollback already completed at $($result.commit); no files or commits changed."
+        return
+    }
+    if ($null -eq $pending) {
+        Assert-WorkflowUpdateRollbackTarget -Completed $target
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $target
+        $specs = @($target.snapshot.records | ForEach-Object { [string]$_.relativePath })
+        $commitMatcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $specs
+        $ownedStaged = @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z') | Where-Object {
+            Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher
+        })
+        if ($ownedStaged.Count -gt 0) { throw "WORKFLOW_UPDATE_ROLLBACK_INDEX_CHANGED: owned index paths changed after update: $($ownedStaged -join ', '). Preserve them for reconciliation." }
+        $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths $specs -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase rollback-restoring -Details $details
+        $pending = Get-WorkflowUpdatePendingSnapshot
+    } else {
+        if ([string]$pending.receipt.phase -notin @('rollback-restoring', 'rollback-commit-ready', 'post-copy-complete') -or
+            $null -eq $pending.receipt.PSObject.Properties['rollbackSnapshotId'] -or [string]$pending.receipt.rollbackSnapshotId -cne $SnapshotId) {
+            throw "WORKFLOW_UPDATE_ROLLBACK_OTHER_TRANSACTION: preserve '$($pending.snapshot.root)' and continue its original update before selecting another rollback."
+        }
+        Assert-WorkflowUpdateRecordedSource -Receipt $pending.receipt
+        if ([string]$pending.receipt.sourceCommit -cne [string]$source.commit) { throw 'WORKFLOW_UPDATE_ROLLBACK_SOURCE_CHANGED: resume with the recorded exact compatible source checkout.' }
+    }
+    if ([string]$pending.receipt.phase -eq 'post-copy-complete') {
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+        Retain-WorkflowUpdateRollbackSnapshot -Snapshot $pending.snapshot | Out-Null
+        Write-Host 'Completed rollback snapshot retention; no project files changed.'
+        return
+    }
+    if ([string]$pending.receipt.phase -eq 'rollback-restoring') {
+        Assert-WorkflowUpdateRollbackTarget -Completed $target
+        try { Restore-WorkflowUpdateOwnedPaths -Target $target -AllowedCurrentState (ConvertTo-Agent1cHashtable -Object $pending.receipt.beforePathState) }
+        catch { throw "WORKFLOW_UPDATE_ROLLBACK_INCOMPLETE: $($_.Exception.Message) Repeat the same source-side command with -Recovery restore -SnapshotId $SnapshotId; the recovery snapshot is preserved." }
+        $plan = New-WorkflowBranchCommitPlan -ManagedPathSpecs @($target.snapshot.records | ForEach-Object { [string]$_.relativePath }) `
+            -Message ("chore: restore ITL workflow before snapshot " + $SnapshotId.Substring(0, 7)) -AllowMaster `
+            -RestoreTrackedFromCommit $(if ([string](Get-ConfigValueFromObject $target.receipt 'legacyCopyRecovery.scope' '') -ceq 'master-only') { '' } else { [string]$target.receipt.preUpdateHead })
+        Save-WorkflowBranchCommitPlanReceipt -Snapshot $pending.snapshot -Plan $plan
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source $source -Phase rollback-commit-ready -Details $details
+        $pending = Get-WorkflowUpdatePendingSnapshot
+    }
+    Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+    $plan = Read-WorkflowBranchCommitPlanReceipt -Snapshot $pending.snapshot
+    if ($null -eq $plan) { throw 'WORKFLOW_UPDATE_ROLLBACK_COMMIT_PLAN_MISSING: preserve the rollback snapshot and reconcile its owned commit.' }
+    $commit = Apply-WorkflowBranchCommitPlan -Plan $plan
+    $recoveryId = (Split-Path -Leaf $pending.snapshot.root).Substring('itl-workflow-update-rollback-'.Length)
+    Write-Utf8TextAtomic -Path $resultPath -Value (([ordered]@{ schemaVersion=1; snapshotId=$SnapshotId; commit=[string]$commit.commit; recoverySnapshotId=$recoveryId } | ConvertTo-Json) + [Environment]::NewLine)
+    Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source $source -Phase post-copy-complete -Details $details
+    Retain-WorkflowUpdateRollbackSnapshot -Snapshot $pending.snapshot | Out-Null
+    Write-Host "Workflow files and owned settings restored in commit $($commit.commit). CLI caches and external stores remain outside the project transition. Reopen or reload the project's client context; this command did not load an infobase or run tests."
+}
+
+function Assert-WorkflowUpdateSnapshotCurrentState {
+    param([Parameter(Mandatory = $true)][object]$Pending)
+
+    $receipt = $Pending.receipt
+    $recorded = ConvertTo-Agent1cHashtable -Object $receipt.pathState
+    if ($recorded.Count -ne @($Pending.snapshot.records).Count) {
+        throw "WORKFLOW_UPDATE_RECEIPT_INVALID: path-state inventory is incomplete in '$($Pending.receiptPath)'."
+    }
+    foreach ($record in @($Pending.snapshot.records)) {
+        $relative = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$record.relativePath)
+        if (-not $recorded.Contains($relative)) {
+            throw "WORKFLOW_UPDATE_RECEIPT_INVALID: no path-state for '$relative'."
+        }
+        $actual = Get-WorkflowUpdatePathState -RelativePath $relative
+        if ($actual -cne [string]$recorded[$relative]) {
+            if ([string]$receipt.phase -eq 'prepared') {
+                throw "WORKFLOW_UPDATE_PRE_COPY_INTERRUPTED: '$relative' changed after the pre-copy snapshot. Preserve current/before/candidate and reconcile this path before repeating update-workflow. Receipt: $($Pending.receiptPath)"
+            }
+            $continuation = if ([string]$receipt.phase -in @('post-copy-running', 'post-copy-failed')) {
+                $snapshotId = (Split-Path -Leaf $Pending.snapshot.root).Substring('itl-workflow-update-rollback-'.Length)
+                Set-RunFailureContext -Category 'runner' -RequiredAction "Use scripts/update-installed-workflow.ps1 from a clean compatible source with -Recovery status -SnapshotId $snapshotId; inspect preserved before/current/candidate and review each changed path before -Recovery reconcile."
+                " Use the compatible source-side helper with -Recovery status -SnapshotId $snapshotId; review its preserved-byte report before -Recovery reconcile."
+            } else { '' }
+            throw "WORKFLOW_UPDATE_RECONCILIATION_REQUIRED: '$relative' changed after the recorded $($receipt.phase) state. Preserve current/before/candidate and reconcile this path before repeating update-workflow.$continuation Receipt: $($Pending.receiptPath)"
+        }
+    }
+}
+
+function Test-WorkflowUpdateInterruptedLockWrite {
+    param(
+        [Parameter(Mandatory = $true)][object]$Pending,
+        [Parameter(Mandatory = $true)][object]$Record
+    )
+
+    if (-not $Record.existed -or -not (Test-Path -LiteralPath $Record.targetPath -PathType Leaf)) { return $false }
+    try {
+        $before = ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $Record.backupPath | ConvertFrom-Json -ErrorAction Stop)
+        $current = ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $Record.targetPath | ConvertFrom-Json -ErrorAction Stop)
+        $dependencies = ConvertTo-Agent1cHashtable -Object $before['dependencies']
+        $workflow = ConvertTo-Agent1cHashtable -Object $dependencies['workflowPackage']
+        foreach ($entry in @(
+            @{ key='repo'; value=[string]$Pending.receipt.sourceRepo },
+            @{ key='ref'; value=[string]$Pending.receipt.sourceRef },
+            @{ key='commit'; value=[string]$Pending.receipt.sourceCommit },
+            @{ key='source'; value=[string]$Pending.receipt.sourceKind }
+        )) {
+            $workflow[[string]$entry.key] = [string]$entry.value
+        }
+        $dependencies['workflowPackage'] = $workflow
+        $before['dependencies'] = $dependencies
+        $expectedComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $before) -Depth 100 -Compress
+        $actualComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $current) -Depth 100 -Compress
+        return $expectedComparable -ceq $actualComparable
+    } catch { return $false }
+}
+
+function Restore-WorkflowUpdateInterruptedPackageCopy {
+    param([Parameter(Mandatory = $true)][object]$Pending)
+
+    if ([string]$Pending.receipt.phase -cne 'copying') {
+        throw 'WORKFLOW_UPDATE_COPY_RECOVERY_PHASE_INVALID: only an interrupted package-copy receipt may use this recovery.'
+    }
+    $sourceRoot = [string]$Pending.receipt.sourceRoot
+    $sourceCommit = [string]$Pending.receipt.sourceCommit
+    if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container) -or
+        $sourceCommit -notmatch '^[a-f0-9]{40}$' -or
+        (Get-GitOutputAt -Root $sourceRoot -Arguments @('rev-parse', 'HEAD')).Trim() -cne $sourceCommit -or
+        @(Get-GitPathListAt -Root $sourceRoot -Arguments @('status', '--porcelain=v1', '-z', '--untracked-files=all')).Count -gt 0) {
+        throw "WORKFLOW_UPDATE_COPY_SOURCE_CHANGED: interrupted package copy requires clean exact source '$sourceCommit' at '$sourceRoot'. Restore that checkout before repeating update-workflow; the project snapshot is preserved."
+    }
+    $packagePaths = @(
+        @(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths) |
+            ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path $_ }
+    )
+    $before = Get-WorkflowUpdateSnapshotBeforeState -Snapshot $Pending.snapshot
+    $current = Get-WorkflowUpdateSnapshotPathState -Snapshot $Pending.snapshot
+    foreach ($relative in @($before.Keys)) {
+        $actual = [string]$current[$relative]
+        if ($actual -ceq [string]$before[$relative]) { continue }
+        if ($relative -ceq '.agent-1c/dependency-lock.json') {
+            $lockRecord = @($Pending.snapshot.records | Where-Object { [string]$_.relativePath -ceq $relative }) | Select-Object -First 1
+            if ($null -ne $lockRecord -and (Test-WorkflowUpdateInterruptedLockWrite -Pending $Pending -Record $lockRecord)) { continue }
+        }
+        if ($packagePaths -cnotcontains $relative) {
+            throw "WORKFLOW_UPDATE_COPY_RECONCILIATION_REQUIRED: '$relative' changed outside the package-copy step. Preserve current/before/candidate bytes and resolve its owner before repeating update-workflow. Snapshot: $($Pending.snapshot.root)"
+        }
+        $candidatePath = Join-Path $sourceRoot $relative
+        $candidate = Get-WorkflowUpdatePathState -RelativePath $relative -PhysicalPath $candidatePath
+        if ($actual -cne $candidate -and $actual -cne 'absent') {
+            throw "WORKFLOW_UPDATE_COPY_RECONCILIATION_REQUIRED: '$relative' is neither the before nor exact candidate package bytes. Preserve current/before/candidate and resolve it before repeating update-workflow. Snapshot: $($Pending.snapshot.root)"
+        }
+    }
+    Restore-WorkflowUpdateRollbackSnapshot -Snapshot $Pending.snapshot
+    Remove-WorkflowUpdateRollbackSnapshot -Snapshot $Pending.snapshot
+    Write-Host 'Recovered an interrupted package copy from its exact before snapshot; restarting normal update preflight.'
+}
+
+function Test-WorkflowSourceUiTestingPolicy {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$SourceRoot)
+    if (-not $SourceRoot) { return $false }
+    $path = Join-Path $SourceRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    # Recovery may use a newer executor while the package target stays pinned.
+    # The recorded package owner, not the executor version, enables this policy.
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput((Read-Utf8Text -Path $path), [ref]$tokens, [ref]$parseErrors)
+    if (@($parseErrors).Count -gt 0) { return $false }
+    return $null -ne $ast.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ieq 'Invoke-UiTestingPolicyTransition'
+    }, $true)
+}
+function Test-WorkflowSourceVerificationModelPolicy {
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$SourceRoot)
+    if (-not $SourceRoot) { return $false }
+    $path = Join-Path $SourceRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    $tokens=$null; $errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseInput((Read-Utf8Text -Path $path),[ref]$tokens,[ref]$errors)
+    if (@($errors).Count -gt 0) { return $false }
+    return $null -ne $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Invoke-VerificationModelPolicyTransition'},$true)
+}
+
+function Test-WorkflowSourceLayeredOpenCodeConfig {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$SourceRoot)
+    if (-not $SourceRoot) { return $false }
+    $path = Join-Path $SourceRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    $tokens = $null; $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput((Read-Utf8Text -Path $path), [ref]$tokens, [ref]$parseErrors)
+    if (@($parseErrors).Count -gt 0) { return $false }
+    return $null -ne $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ieq 'Get-ItlClientMcpConfigPaths'
+    }, $true)
+}
+
+function Assert-WorkflowUpdateMcpConfigSnapshot {
+    param([AllowNull()][object]$Pending)
+    if ($null -eq $Pending -or 'opencode' -notin @(Get-AgentTargets -AllowUnconfigured) -or
+        -not (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$Pending.receipt.sourceRoot))) { return }
+    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @($Pending.snapshot.records | ForEach-Object { [string]$_.relativePath })
+    $missing = @(Get-WorkflowUpdateClientConfigRelativePaths -Client 'opencode' | Where-Object {
+        -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher)
+    })
+    if ($missing.Count -eq 0) { return }
+    $continuation = "From a clean exact new workflow Git checkout, run scripts/update-installed-workflow.ps1 for project '$script:ProjectRoot' with -Recovery update. Its parent captures all OpenCode project config inputs in the existing transaction before repeating the same post-copy. Preserve current files and the pending snapshot; do not edit its receipt manually. Original candidate: '$($Pending.receipt.sourceRoot)'."
+    Set-RunFailureContext -Category runner -RequiredAction $continuation
+    throw "WORKFLOW_UPDATE_MCP_LEGACY_SNAPSHOT: missing OpenCode input backups: $($missing -join ', '). No post-copy config has been written. $continuation"
+}
+
+function Add-WorkflowDotEnvPolicySnapshotPaths {
+    param([Parameter(Mandatory = $true)][object]$Snapshot, [Parameter(Mandatory = $true)][object]$Pending)
+    $policies = @('caveman')
+    if (Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$Pending.receipt.sourceRoot)) { $policies += 'ui-testing' }
+    if (Test-WorkflowSourceVerificationModelPolicy -SourceRoot ([string]$Pending.receipt.sourceRoot)) { $policies += 'verification-model' }
+    $admissions = @($policies | ForEach-Object {
+        [pscustomobject]@{ relativePath = '.agent-1c/migrations/' + [string](Get-DotEnvPolicyTransitionDescriptor -Policy $_).migrationId + '.json'; policy = [string]$_ }
+    })
+    if ('opencode' -in @(Get-AgentTargets -AllowUnconfigured) -and (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$Pending.receipt.sourceRoot))) {
+        $admissions += @(Get-WorkflowUpdateClientConfigRelativePaths -Client 'opencode' | ForEach-Object {
+            [pscustomobject]@{ relativePath = [string]$_; policy = '' }
+        })
+    }
+    $missing = @($admissions | Where-Object {
+        $relative = [string]$_.relativePath
+        @($Snapshot.records | Where-Object {
+            $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)
+            $relative -ceq $owned -or $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase)
+        }).Count -eq 0
+    })
+    if ($missing.Count -eq 0) { return }
+    Assert-WorkflowUpdateSnapshotCurrentState -Pending $Pending
+    $receipt = ConvertTo-Agent1cHashtable -Object $Pending.receipt
+    $receipt.beforePathState = ConvertTo-Agent1cHashtable -Object $receipt.beforePathState
+    $receipt.pathState = ConvertTo-Agent1cHashtable -Object $receipt.pathState
+    $records = @($Snapshot.records)
+    $parents = ConvertTo-Agent1cHashtable -Object $Snapshot.parentStates
+    $added = $false
+    foreach ($admission in $admissions) {
+        $relative = [string]$admission.relativePath
+        $covered = @($records | Where-Object {
+            $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)
+            $relative -ceq $owned -or $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase)
+        }).Count -gt 0
+        if ($covered) { continue }
+        $target = Join-Path $script:ProjectRoot $relative
+        Assert-WorkflowManagedTargetPath -Path $target
+        Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relative
+        $before = Get-WorkflowUpdatePathState -RelativePath $relative
+        $existed = Test-Path -LiteralPath $target
+        $backup = ''
+        if ($existed) {
+            if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+                throw "WORKFLOW_UPDATE_POLICY_RECEIPT_INVALID: '$target' is not an admitted file; preserve it and resolve its owner before repeating the source-side update."
+            }
+            if ($admission.policy) {
+                $descriptor = Get-DotEnvPolicyTransitionDescriptor -Policy ([string]$admission.policy)
+                $policyReceipt = Read-Utf8Text -Path $target | ConvertFrom-Json -ErrorAction Stop
+                if ([string]$policyReceipt.migrationId -cne [string]$descriptor.migrationId -or [string]$policyReceipt.status -notin @('applying','completed')) {
+                    throw "WORKFLOW_UPDATE_POLICY_RECEIPT_INVALID: '$target' does not belong to this policy; preserve it and resolve its owner before repeating the source-side update."
+                }
+            }
+            $index = $records.Count
+            do { $backup = Join-Path $Snapshot.root ('item-' + $index); $index++ } while (Test-Path -LiteralPath $backup)
+            Copy-Item -LiteralPath $target -Destination $backup -Force
+            if ((Get-WorkflowUpdatePathState -RelativePath $relative -PhysicalPath $backup) -cne $before) {
+                throw "WORKFLOW_UPDATE_POLICY_RECEIPT_CHANGED: '$target' changed during capture; preserve the update snapshot and repeat the source-side update after resolving the writer."
+            }
+        }
+        if ((Get-WorkflowUpdatePathState -RelativePath $relative) -cne $before) {
+            throw "WORKFLOW_UPDATE_POLICY_RECEIPT_CHANGED: '$target' changed during capture; preserve the update snapshot and repeat the source-side update after resolving the writer."
+        }
+        $parent = Split-Path -Parent $target
+        while ($parent -and (Get-FullPathNormalized $parent) -ne (Get-FullPathNormalized $script:ProjectRoot)) {
+            $parent = Get-FullPathNormalized $parent
+            if (-not $parents.Contains($parent)) { $parents[$parent] = Test-Path -LiteralPath $parent -PathType Container }
+            $parent = Split-Path -Parent $parent
+        }
+        $records += [pscustomobject]@{relativePath=$relative;targetPath=$target;existed=[bool]$existed;wasDirectory=$false;backupPath=$backup}
+        $receipt.beforePathState[$relative] = $before
+        $receipt.pathState[$relative] = $before
+        $added = $true
+    }
+    if (-not $added) { return }
+    # This runs only in the new parent, before spawning post-copy. One atomic
+    # receipt owns records and both state maps; a crash cannot split their scope.
+    Assert-WorkflowUpdateSnapshotCurrentState -Pending ([pscustomobject]@{
+        snapshot = [pscustomobject]@{root=$Snapshot.root;records=$records}; receipt=$receipt; receiptPath=$Pending.receiptPath
+    })
+    $receipt.records = @($records | ForEach-Object {
+        [ordered]@{relativePath=[string]$_.relativePath;existed=[bool]$_.existed;wasDirectory=[bool]$_.wasDirectory;backupName=$(if ($_.backupPath) {Split-Path -Leaf $_.backupPath} else {''})}
+    })
+    $receipt.parentStates = $parents
+    Write-Utf8TextAtomic -Path $Pending.receiptPath -Value (($receipt | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    $Snapshot.records = $records
+    $Snapshot.parentStates = $parents
+}
+
+function Assert-WorkflowLegacyRecoveryMasterProof {
+    param([Parameter(Mandatory = $true)][object]$Receipt)
+    if ([string](Get-ConfigValueFromObject $Receipt 'legacyCopyRecovery.scope' '') -cne 'master-only') { return }
+    if ([string]$Receipt.phase -cne 'post-copy-complete') {
+        throw 'WORKFLOW_UPDATE_LEGACY_MASTER_UNCONFIRMED: a successful child exit is not terminal master proof. Preserve the snapshot and repeat the same source-side legacy-copy recovery command.'
+    }
+    $proof = Assert-WorkflowUpdateMasterCommitCheckpoint -Receipt $Receipt -Source ([pscustomobject]@{ref=[string]$Receipt.sourceRef;commit=[string]$Receipt.sourceCommit})
+    if (-not $proof.committed -or [string]$proof.commit -cne [string]$Receipt.completedHead) {
+        throw 'WORKFLOW_UPDATE_LEGACY_MASTER_UNCONFIRMED: the terminal receipt has no exact owner commit. Preserve it and inspect the master commit checkpoint before continuing.'
+    }
+}
+
+function Complete-WorkflowUpdatePostCopyFromSnapshot {
+    param([Parameter(Mandatory = $true)][object]$Snapshot, [Parameter(Mandatory = $true)][object]$Source)
+
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    if ($null -eq $pending -or [string]$pending.snapshot.root -cne [string]$Snapshot.root) {
+        throw "WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING: preserve '$($Snapshot.root)' and repeat the original update after reconciliation."
+    }
+    $masterOnly = [string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -ceq 'master-only'
+    $savedRolloutScope = Get-ConfigValueFromObject $pending.receipt 'rolloutScope' $null
+    $repeatAction = if ($masterOnly) { 'Repeat the same source-side -Recovery legacy-copy command with its pinned decision file' } else { 'Repeat update-workflow' }
+    $childScript = $script:Agent1cScriptPath
+    $executorRoot = [string](Get-ConfigValueFromObject $pending.receipt 'recoveryExecutorRoot' '')
+    if ($executorRoot) {
+        $executorCommit = [string](Get-ConfigValueFromObject $pending.receipt 'recoveryExecutorCommit' '')
+        if ($executorCommit -notmatch '^[a-f0-9]{40}$') {
+            throw 'WORKFLOW_UPDATE_LEGACY_EXECUTOR_REQUIRED: restore the exact recorded current workflow checkout and repeat its source-side update; preserve the pending snapshot.'
+        }
+        Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{
+            sourceRoot=$executorRoot
+            sourceCommit=$executorCommit
+        })
+        $childScript = Join-Path $executorRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    }
+    if ([string]$pending.receipt.phase -notin @('master-commit-ready', 'master-committed')) {
+        Add-WorkflowDotEnvPolicySnapshotPaths -Snapshot $Snapshot -Pending $pending
+        # Complete the existing owner-controlled settings handoff before an old
+        # installed child reads env/project/lock. The pinned intent stays intact
+        # in the same snapshot; ordinary current-package updates keep their order.
+        if ((Get-WorkflowDependencyWireFormat).mode -eq 'locked') {
+            Sync-WorkflowManagedDependencyLockEntries | Out-Null
+        }
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-running
+    }
+    $childArguments = @()
+    $previousDependencyMode = [Environment]::GetEnvironmentVariable('DEPENDENCY_MODE', 'Process')
+    $legacyDependencyWire = (Get-WorkflowDependencyWireFormat).mode -eq 'locked'
+    try {
+        if ($legacyDependencyWire -and -not $SkipAiRules -and
+            [string]$pending.receipt.phase -notin @('master-commit-ready', 'master-committed')) {
+            # The old child cannot interpret the admitted bundle transition.
+            # Let the existing migration owner consume that exact intent here;
+            # its standalone monotonic and ownership checks remain authoritative.
+            $migration = Invoke-AiRulesBaselineMigration
+            Assert-AiRulesBaselineMigrationResult -Migration $migration
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-running
+        }
+        if ($legacyDependencyWire) {
+            # Dotenv import preserves inherited process values. Serialize this
+            # handoff in both channels, including an explicit caller argument.
+            [Environment]::SetEnvironmentVariable('DEPENDENCY_MODE', 'locked', 'Process')
+            $childArguments += @('-DependencyMode', 'locked')
+        }
+        try {
+            $child = Invoke-Agent1cFreshProcess -ScriptPath $childScript -AdditionalArguments (@('-LifecyclePhase', 'post-copy') + $childArguments) -ReturnExitStatus
+        } finally {
+            if ($legacyDependencyWire) { [Environment]::SetEnvironmentVariable('DEPENDENCY_MODE', $previousDependencyMode, 'Process') }
+        }
+        if ([int]$child.exitCode -ne 0) { throw (Import-Agent1cFreshProcessFailure -Result $child -Operation 'Fresh workflow post-copy process') }
+        if ($masterOnly) {
+            $current = Get-WorkflowUpdatePendingSnapshot
+            if ($null -ne $current) { Assert-WorkflowLegacyRecoveryMasterProof -Receipt $current.receipt }
+        }
+    } catch {
+        $postCopyError = $_.Exception.Message
+        $current = Get-WorkflowUpdatePendingSnapshot
+        if ($null -eq $current) {
+            # The child can finish master and remove its snapshot before it
+            # reports deferred/blocked branches. Do not recreate a failed
+            # receipt after that terminal checkpoint or recopy master files.
+            $rolloutFailure = ''
+            try { if (-not $masterOnly) { Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$Source.commit) -RolloutScope $savedRolloutScope | Out-Null } }
+            catch { $rolloutFailure = $_.Exception.Message }
+            if ($rolloutFailure -match '^WORKFLOW_UPDATE_BRANCHES_INCOMPLETE:') {
+                throw $rolloutFailure
+            }
+            throw "WORKFLOW_UPDATE_POST_COPY_TERMINAL_UNCONFIRMED: the fresh process failed after the update snapshot disappeared. Preserve master and branch files and inspect the rollout report before repeating update-workflow. Original error: $postCopyError Rollout check: $rolloutFailure"
+        }
+        if ([string]$current.receipt.phase -eq 'post-copy-complete') {
+            throw "WORKFLOW_UPDATE_SNAPSHOT_CLEANUP_REQUIRED: post-copy reached its terminal receipt at '$($Snapshot.root)' but the child reported an error. $repeatAction for cleanup only. $postCopyError"
+        }
+        if ($null -ne $current -and [string]$current.receipt.phase -in @('master-commit-ready', 'master-committed')) {
+            throw "WORKFLOW_UPDATE_POST_COPY_INCOMPLETE: master commit checkpoint is preserved at '$($Snapshot.root)'. $repeatAction to resume the exact recorded scope without replaying file post-copy; if the recorded candidate itself is defective, repeat it from a newer exact clean source with that recorded scope so its helper finishes the pinned package. $postCopyError"
+        }
+        try {
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-failed
+        } catch {
+            throw "WORKFLOW_UPDATE_POST_COPY_INCOMPLETE: snapshot preserved at '$($Snapshot.root)', but failed to record its current file state for safe resume. Original error: $postCopyError Receipt error: $($_.Exception.Message)"
+        }
+        throw "WORKFLOW_UPDATE_POST_COPY_INCOMPLETE: snapshot and receipt preserved at '$($Snapshot.root)'. $repeatAction to resume this exact state. $postCopyError"
+    }
+    try {
+        if ($null -eq (Get-WorkflowUpdatePendingSnapshot)) {
+            $id = (Split-Path -Leaf ([string]$Snapshot.root)).Substring('itl-workflow-update-rollback-'.Length)
+            $completed = Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id
+            Assert-WorkflowLegacyRecoveryMasterProof -Receipt $completed.receipt
+            if ([string]$completed.receipt.sourceCommit -cne [string]$Source.commit -or
+                -not [string]::Equals([string]$completed.receipt.sourceRoot,[string]$Source.root,[StringComparison]::OrdinalIgnoreCase)) {
+                throw 'WORKFLOW_UPDATE_POST_COPY_TERMINAL_UNCONFIRMED: child retained a different source identity.'
+            }
+            if (-not $masterOnly) { Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$Source.commit) -RolloutScope $savedRolloutScope | Out-Null }
+        } else {
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-complete
+            Retain-WorkflowUpdateRollbackSnapshot -Snapshot $Snapshot | Out-Null
+        }
+    } catch {
+        throw "WORKFLOW_UPDATE_SNAPSHOT_CLEANUP_REQUIRED: post-copy completed, but its snapshot could not be finalized at '$($Snapshot.root)'. Preserve the receipt and repeat update-workflow for cleanup only. $($_.Exception.Message)"
+    }
+}
+
+function Get-WorkflowUpdateRootBusyReason {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath $Root
+    if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
+        $handle = $null
+        try {
+            $handle = [IO.File]::Open($lockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+        } catch [IO.IOException] {
+            return 'active-lifecycle-lock'
+        } catch [UnauthorizedAccessException] {
+            return 'lifecycle-lock-inaccessible'
+        } finally {
+            if ($null -ne $handle) { $handle.Dispose() }
+        }
+    }
+    return (Get-WorkflowUpdateRootRuntimeBusyReason -Root $Root)
+}
+
+function Get-WorkflowUpdateRootRuntimeBusyReason {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    # An on-demand service can outlive the lifecycle lock. A live PID recorded
+    # for this root defers file replacement even when ownership proof is stale;
+    # the existing runtime owner must classify/stop it before a retry.
+    $runtimeRoot = Join-Path $Root '.agent-1c/mcp/ondemand'
+    if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { return '' }
+    # VAParams is the runtime owner's launch input, not a process-state record.
+    foreach ($statePath in @(Get-ItlOnDemandRuntimeRecordFiles -RuntimeRoot $runtimeRoot | Select-Object -ExpandProperty FullName)) {
+        try { $runtimeState = Read-Utf8Text -Path $statePath | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw "WORKFLOW_UPDATE_RUNTIME_STATE_INVALID: '$statePath' cannot establish whether a runtime process is active; inspect it through the existing runtime owner before repeating update-workflow. $($_.Exception.Message)" }
+        foreach ($field in @('pid', 'testClientPid')) {
+            $processId = 0
+            if (-not [int]::TryParse([string]$runtimeState.$field, [ref]$processId) -or $processId -le 0) { continue }
+            if ($null -ne (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
+                return 'runtime-process-active-or-unconfirmed'
+            }
+        }
+    }
+    return ''
+}
+
+function Test-WorkflowUpdateMergeParentMetadata {
+    param([string]$RelativePath, [string]$Current, [string]$Parent)
+    if ($RelativePath -in @('.ai-rules.json','.agent-1c/dependency-lock.json')) {
+        # Unlike dependency compatibility, provenance preserves timestamps and
+        # every value. Only JSON whitespace and object property order differ.
+        $left = ConvertTo-Json -InputObject (ConvertTo-ItlMcpSemanticCanonicalValue ($Current | ConvertFrom-Json)) -Depth 100 -Compress
+        $right = ConvertTo-Json -InputObject (ConvertTo-ItlMcpSemanticCanonicalValue ($Parent | ConvertFrom-Json)) -Depth 100 -Compress
+        return $left -ceq $right
+    }
+    if ($RelativePath -eq '.gitignore') {
+        $left = ($Current -replace "`r`n","`n").TrimEnd("`n")
+        $right = ($Parent -replace "`r`n","`n").TrimEnd("`n")
+        return $left -ceq ($right + "`n" + 'build/agent-artifacts/')
+    }
+    return $false
+}
+
+function Test-WorkflowUpdateManifestParentUnion {
+    param([object]$Candidate, [object]$Branch, [object]$Target)
+    $current = ConvertTo-ItlMcpSemanticCanonicalValue $Candidate
+    $parents = @((ConvertTo-ItlMcpSemanticCanonicalValue $Branch), (ConvertTo-ItlMcpSemanticCanonicalValue $Target))
+    $clients = @($parents[0].foreignFiles.Keys + $parents[1].foreignFiles.Keys | Sort-Object -Unique)
+    $union = [ordered]@{}
+    foreach ($client in $clients) {
+        $known = @(@($parents[0].foreignFiles[$client]) + @($parents[1].foreignFiles[$client]) | Where-Object { $null -ne $_ } | Sort-Object -Unique)
+        if (-not $current.foreignFiles.Contains($client)) { return $false }
+        $current.foreignFiles[$client] = @($current.foreignFiles[$client] | Sort-Object -Unique)
+        if (@($current.foreignFiles[$client] | Where-Object { $_ -cnotin $known }).Count) { return $false }
+        $missing = @($known | Where-Object { $_ -cnotin $current.foreignFiles[$client] })
+        if ($missing.Count) {
+            # A development surface retires master-only commands. Derive that
+            # exact set from the existing template producer, never a path prefix.
+            $adapter = Get-ItlClientAdapter -Client $client
+            $retired = @(foreach ($template in Get-ChildItem -LiteralPath (Join-Path $script:Agent1cScriptRoot '../kilo-command-templates/master') -File -Filter 'itl*.md.template') {
+                $relative = Get-ItlCommandRelativePath -Adapter $adapter -FileName $template.Name.Substring(0,$template.Name.Length-9)
+                $relative
+                if ($client -eq 'codex') { $relative.Replace('/SKILL.md','/agents/openai.yaml') }
+            })
+            if (@($missing | Where-Object { $_ -cnotin $retired }).Count) { return $false }
+        }
+        $union[$client] = $current.foreignFiles[$client]
+    }
+    $actual = ConvertTo-Json -InputObject (ConvertTo-ItlMcpSemanticCanonicalValue $current) -Depth 100 -Compress
+    foreach ($parent in $parents) {
+        $parent.foreignFiles = $union
+        $expected = ConvertTo-Json -InputObject (ConvertTo-ItlMcpSemanticCanonicalValue $parent) -Depth 100 -Compress
+        if ($actual -ceq $expected) { return $true }
+    }
+    return $false
+}
+
+function Get-WorkflowUpdateRootWriteSetConflicts {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    # Inspect only the files this operation can replace. A stopped merge or
+    # unrelated business edits are not a reason to defer a file-only update.
+    $managed = @(
+        @(Get-WorkflowPackageCopyDirectoryPaths) +
+        @(Get-WorkflowPackageCopyFilePaths) +
+        @(Get-WorkflowUpdateEligibleLegacyPaths -Root $Root | Where-Object { Test-Path -LiteralPath (Join-Path $Root $_) -PathType Leaf }) +
+        @('.agent-1c/project.json', '.agent-1c/dependency-lock.json',
+          '.agent-1c/client-surface.json', '.agent-1c/mcp/client-managed.json',
+          '.gitignore', '.ai-rules.json', 'AGENTS.md', 'USER-RULES.md',
+          'LLM-RULES.md', 'memory.md', '.kilo/kilo.json')
+    ) | ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path $_ }
+    $ownedContentConflicts = [System.Collections.Generic.List[string]]::new()
+    $surfacePath = Join-Path $Root '.agent-1c/client-surface.json'
+    if (Test-Path -LiteralPath $surfacePath -PathType Leaf) {
+        try {
+            $surface = Read-Utf8Text -Path $surfacePath | ConvertFrom-Json
+            foreach ($client in @($surface.clients.PSObject.Properties)) {
+                foreach ($file in @($client.Value.files.PSObject.Properties)) {
+                    $relative = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$file.Name)
+                    $managed += $relative
+                    $actualPath = Join-Path $Root $relative
+                    if ((Test-Path -LiteralPath $actualPath -PathType Leaf) -and
+                        ((Get-FileHash -LiteralPath $actualPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$file.Value)) {
+                        $ownedContentConflicts.Add($relative)
+                    }
+                }
+            }
+        } catch {
+            throw "WORKFLOW_UPDATE_CLIENT_SURFACE_INVALID: '$surfacePath' cannot be inspected before replacing client-owned paths. type=$($_.Exception.GetType().FullName); id=$($_.FullyQualifiedErrorId). Preserve the file and resolve its JSON/ownership conflict before repeating update-workflow."
+        }
+    }
+    $rulesManifestPath = Join-Path $Root '.ai-rules.json'
+    if (Test-Path -LiteralPath $rulesManifestPath -PathType Leaf) {
+        try {
+            $rulesManifest = Read-Utf8Text -Path $rulesManifestPath | ConvertFrom-Json
+            foreach ($file in @(Get-AiRules1cManifestFileEntries -Manifest $rulesManifest)) {
+                $relative = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$file.target)
+                $managed += $relative
+            }
+        } catch {
+            throw "WORKFLOW_UPDATE_RULES_MANIFEST_INVALID: '$rulesManifestPath' cannot be inspected before replacing rules-owned paths. type=$($_.Exception.GetType().FullName); id=$($_.FullyQualifiedErrorId). Preserve the file and resolve its JSON/ownership conflict before repeating update-workflow."
+        }
+    }
+    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @($managed | Select-Object -Unique)
+    $unstaged = @(Get-GitPathListAt -Root $Root -Arguments @('diff', '--name-only', '-z'))
+    $staged = @(Get-GitPathListAt -Root $Root -Arguments @('diff', '--cached', '--name-only', '-z'))
+    $changed = @(
+        @($unstaged) + @($staged) +
+        @(Get-GitPathListAt -Root $Root -Arguments @('ls-files', '--others', '--exclude-standard', '-z'))
+    ) | Select-Object -Unique
+    $mergeOwned = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $stateDirectory = Join-Path $Root '.agent-1c/dev-branches'
+    if ($staged.Count -gt 0 -and (Test-Path -LiteralPath $stateDirectory -PathType Container)) {
+        try {
+            $head = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', 'HEAD')).Trim()
+            $branch = (Get-GitOutputAt -Root $Root -Arguments @('branch', '--show-current')).Trim()
+            $mergePath = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--path-format=absolute', '--git-path', 'MERGE_HEAD')).Trim()
+            $states = @(Get-ChildItem -LiteralPath $stateDirectory -File -Filter '*.json' | ForEach-Object { Read-DevBranchStateFile -Path $_.FullName } |
+                Where-Object { [string](Get-StateValue -State $_ -Name 'devBranch' -Default '') -ceq $branch })
+            if ($states.Count -eq 1 -and (Test-Path -LiteralPath $mergePath -PathType Leaf)) {
+                $pending = Get-PendingDevBranchMergeTransaction -State $states[0]
+                if ($null -ne $pending -and $pending.branch -ceq $branch -and
+                    $pending.stage -in @('conflicts', 'prepared') -and $pending.branchCommit -ceq $head -and
+                    [string]::Equals((Get-FullPathNormalized ([string](Get-StateValue -State $states[0] -Name 'worktreePath' -Default ''))), (Get-FullPathNormalized $Root), [StringComparison]::OrdinalIgnoreCase) -and
+                    $pending.targetCommit -match '^[a-f0-9]{40}$' -and
+                    (Read-Utf8Text -Path $mergePath).Trim() -ceq $pending.targetCommit) {
+                    $original = if ($pending.originalBranchCommit) { $pending.originalBranchCommit } else { $pending.branchCommit }
+                    $paths = @($staged | Where-Object { $_ -cnotin $unstaged -and $_ -cin $pending.allowedPaths -and
+                        (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher) })
+                    foreach ($relative in $paths) {
+                        $literal = ':(literal)' + $relative
+                        $indexRecord = @(Get-GitPathListAt -Root $Root -Arguments @('ls-files', '--stage', '-z', '--', $literal))
+                        if ($indexRecord.Count -ne 1 -or $indexRecord[0] -notmatch '^(\d+) ([a-f0-9]{40}) 0\t') { continue }
+                        $mode = $Matches[1]; $blob = $Matches[2]
+                        $parentMatch = $false
+                        foreach ($parent in @($original, $pending.targetCommit)) {
+                            $records = @(Get-GitPathListAt -Root $Root -Arguments @('ls-tree', '-r', '-z', $parent, '--', $literal))
+                            if ($records.Count -eq 1 -and $records[0] -match '^(\d+) blob ([a-f0-9]{40})\t' -and
+                                $Matches[1] -ceq $mode) {
+                                if ($Matches[2] -ceq $blob) { $parentMatch = $true }
+                                elseif (Test-WorkflowUpdateMergeParentMetadata -RelativePath $relative -Current (Read-Utf8Text -Path (Join-Path $Root $relative)) -Parent ((Get-GitOutputAt -Root $Root -Arguments @('show', "${parent}:$relative")) -join "`n")) { $parentMatch = $true }
+                            }
+                        }
+                        if ($parentMatch) { [void]$mergeOwned.Add($relative); continue }
+                        if ($relative -ceq '.agent-1c/dependency-lock.json' -and
+                            (Invoke-InProjectContext -Root $Root -ScriptBlock { Test-RefreshDependencyLockSemanticMergeResult -BranchCommit $original -TargetCommit $pending.targetCommit })) {
+                            [void]$mergeOwned.Add($relative)
+                            continue
+                        }
+                        if ($relative -ceq '.ai-rules.json') {
+                            $branchManifest = Get-GitOutputAt -Root $Root -Arguments @('show', "${original}:.ai-rules.json") | ConvertFrom-Json
+                            $targetManifest = Get-GitOutputAt -Root $Root -Arguments @('show', "$($pending.targetCommit):.ai-rules.json") | ConvertFrom-Json
+                            if ((Test-WorkflowUpdateManifestParentUnion -Candidate $rulesManifest -Branch $branchManifest -Target $targetManifest) -or
+                                (Test-AiRulesPendingMergeManifestProvenance -Root $Root -Candidate $rulesManifest -Branch $branchManifest -Target $targetManifest)) {
+                                [void]$mergeOwned.Add($relative)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch {
+            # Unknown or moved merge provenance remains a normal write-set
+            # conflict. Never allow a partially inspected set after failure.
+            $mergeOwned.Clear()
+        }
+    }
+    return @(@($changed | Where-Object { (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher) -and -not $mergeOwned.Contains($_) }) +
+        @($ownedContentConflicts) | Select-Object -Unique)
+}
+
+function Get-WorkflowUpdateWorktreeInventory {
+    param([string]$TargetCommit = '', [string[]]$SelectedRoot = @())
+
+    $mainRoot = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/')
+    $worktrees = @(Get-GitWorktrees)
+    if (@($worktrees | Where-Object {
+        [string]::Equals(([IO.Path]::GetFullPath([string]$_.path).TrimEnd('\', '/')), $mainRoot, [StringComparison]::OrdinalIgnoreCase) -and
+        [string]$_.branch -eq (Get-MasterBranch)
+    }).Count -ne 1) {
+        throw "WORKFLOW_UPDATE_MASTER_INVENTORY_MISSING: '$mainRoot' must be the registered master worktree."
+    }
+    $inventory = @()
+    foreach ($worktree in $worktrees) {
+        $root = [IO.Path]::GetFullPath([string]$worktree.path).TrimEnd('\', '/')
+        if ($SelectedRoot -and $root -notin $SelectedRoot) { continue }
+        $branch = [string]$worktree.branch
+        $kind = if ([string]::Equals($root, $mainRoot, [StringComparison]::OrdinalIgnoreCase)) { 'master' } elseif ($branch -like 'itldev/*') { 'development' } else { 'other' }
+        $available = Test-Path -LiteralPath $root -PathType Container
+        $busyReason = ''
+        if ($available -and $kind -ne 'other') {
+            try { $busyReason = Get-WorkflowUpdateRootBusyReason -Root $root }
+            catch { $busyReason = "runtime-inspection-failed: $($_.Exception.Message)" }
+        }
+        $writeSetConflicts = @()
+        $inspectionError = ''
+        $hasPendingUpdate = $available -and $kind -eq 'development' -and
+            (Test-Path -LiteralPath (Join-Path $root '.agent-1c/snapshots/workflow-update') -PathType Container) -and
+            @(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction Stop).Count -gt 0
+        if ($available -and $kind -ne 'other' -and -not $busyReason -and -not $hasPendingUpdate) {
+            try { $writeSetConflicts = @(Get-WorkflowUpdateRootWriteSetConflicts -Root $root) }
+            catch { $inspectionError = $_.Exception.Message }
+        }
+        $record = $null
+        if ($available -and $kind -ne 'other') {
+            $operationPath = Get-Agent1cLifecycleOperationStatePath -WorktreePath $root
+            if (Test-Path -LiteralPath $operationPath -PathType Leaf) {
+                $record = Read-Agent1cLifecycleOperationRecord -Path $operationPath
+                if ($null -eq $record -or [string]$record['status'] -notin @('running', 'failed', 'succeeded', 'cancelled') -or
+                    ([string]$record['status'] -in @('running', 'failed') -and -not [string]$record['action'])) {
+                    $inspectionError = "WORKFLOW_UPDATE_OPERATION_STATE_INVALID: '$operationPath' cannot be classified; preserve it and inspect the interrupted lifecycle operation before updating this root."
+                }
+            }
+        }
+        $pendingAction = if ($null -ne $record -and [string]$record['status'] -in @('running', 'failed')) { [string]$record['action'] } else { '' }
+        $installedCommit = ''
+        if ($available -and $kind -ne 'other' -and -not $inspectionError) {
+            $lockPath = Join-Path $root '.agent-1c/dependency-lock.json'
+            if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
+                try {
+                    $branchLock = Read-Utf8Text -Path $lockPath | ConvertFrom-Json -ErrorAction Stop
+                    $installedCommit = [string](Get-ConfigValueFromObject -Object $branchLock -Path 'dependencies.workflowPackage.commit' -Default '')
+                } catch {
+                    $inspectionError = "WORKFLOW_UPDATE_LOCK_INVALID: '$lockPath' cannot be inspected; preserve it and repair the recorded dependency lock before repeating update-workflow. $($_.Exception.Message)"
+                }
+            }
+        }
+        # A matching lock is only a claim of the target pin. A failed update can
+        # write it before the rules/client files, so it is never completion proof.
+        $eligibility = if ($kind -eq 'other') { 'outside-scope' } elseif (-not $available -or $busyReason) { 'deferred' } elseif ($inspectionError -or $writeSetConflicts.Count -gt 0) { 'blocked' } else { 'eligible' }
+        $reason = if (-not $available) { 'worktree-missing' } elseif ($busyReason) { $busyReason } elseif ($inspectionError) { $inspectionError } elseif ($writeSetConflicts.Count -gt 0) { 'workflow-write-set-conflict' } else { '' }
+        $continuation = switch ($eligibility) {
+            'eligible' { 'Continue this root through the same update-workflow owner; resume a pending lifecycle action separately by repeating its original command after the update.' }
+            'deferred' { 'Restore access or let the active owner finish, then repeat update-workflow from the master worktree.' }
+            'blocked' { 'Preserve the current/before/candidate bytes and resolve the named workflow write-set or state conflict, then repeat update-workflow from the master worktree.' }
+            default { 'This worktree is outside the managed workflow rollout.' }
+        }
+        $inventory += [pscustomobject]@{
+            root = $root
+            branch = $branch
+            kind = $kind
+            available = [bool]$available
+            eligibility = $eligibility
+            reason = $reason
+            conflictPaths = @($writeSetConflicts)
+            pendingAction = $pendingAction
+            head = [string]$worktree.head
+            installedWorkflowCommit = $installedCommit
+            targetWorkflowCommit = $TargetCommit
+            continuation = $continuation
+        }
+    }
+    return @($inventory)
+}
+
+function Get-DotEnvPolicyTransitionDescriptor {
+    param([Parameter(Mandatory = $true)][ValidateSet('caveman', 'ui-testing', 'verification-model')][string]$Policy)
+    if ($Policy -eq 'verification-model') {
+        return [pscustomobject]@{
+            migrationId='verification-model-change-v1'; key='ITL_VERIFICATION_MODEL'; fromValue=''; toValue='change'
+            errorPrefix='VERIFICATION_MODEL_POLICY'; newScopeDefault=$true; defaultExistingScope=$true
+            preserveValueWhitespace=$true; preserveUtf8Bom=$true; label='Verification model'; reportTransition='default -> change (once)'
+            notice='Verification model default recorded once: change. Explicit cumulative remains supported.'
+        }
+    }
+    if ($Policy -eq 'caveman') {
+        return [pscustomobject]@{
+            migrationId = 'caveman-auto-v1'; key = 'CAVEMAN'; fromValue = 'on'; toValue = 'auto'
+            errorPrefix = 'CAVEMAN_POLICY'; newScopeDefault = $false; preserveValueWhitespace = $false; preserveUtf8Bom = $true
+            label = 'Caveman'; reportTransition = 'On → auto (однократно)'
+            notice = 'Caveman project policy migrated once: on -> auto (session level full).'
+        }
+    }
+    return [pscustomobject]@{
+        migrationId = 'ui-testing-essential-v1'; key = 'UI_TESTING'; fromValue = 'manual'; toValue = 'essential'
+        errorPrefix = 'UI_TESTING_POLICY'; newScopeDefault = $true; preserveValueWhitespace = $true; preserveUtf8Bom = $true
+        label = 'UI_TESTING'; reportTransition = 'manual → essential (однократно)'
+        notice = 'UI_TESTING project policy migrated once: manual -> essential.'
+    }
+}
+
+function Get-DotEnvPolicyReceiptPath {
+    param([Parameter(Mandatory = $true)][object]$Descriptor, [string]$Root = $script:ProjectRoot)
+    return (Join-Path $Root ('.agent-1c\migrations\' + [string]$Descriptor.migrationId + '.json'))
+}
+
+function Get-CavemanPolicyReceiptPath {
+    param([string]$Root = $script:ProjectRoot)
+    return (Get-DotEnvPolicyReceiptPath -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy caveman) -Root $Root)
+}
+
+function Get-UiTestingPolicyReceiptPath {
+    param([string]$Root = $script:ProjectRoot)
+    return (Get-DotEnvPolicyReceiptPath -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing) -Root $Root)
+}
+
+function Get-DotEnvPolicyTextHash {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    $bytes = (Get-Utf8Encoding).GetBytes($Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
+function Get-CavemanPolicyTextHash {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    return (Get-DotEnvPolicyTextHash -Text $Text)
+}
+
+function Complete-DotEnvPolicyReceipt {
+    param([Parameter(Mandatory = $true)][object]$Receipt, [Parameter(Mandatory = $true)][string]$Path)
+    $Receipt.status = 'completed'
+    $Receipt.completedAt = (Get-Date).ToString('o')
+    Write-Utf8TextAtomic -Path $Path -Value (($Receipt | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+}
+
+function Complete-CavemanPolicyReceipt {
+    param([Parameter(Mandatory = $true)][object]$Receipt, [Parameter(Mandatory = $true)][string]$Path)
+    Complete-DotEnvPolicyReceipt -Receipt $Receipt -Path $Path
+}
+
+function Get-DotEnvPolicyPreviousWorkflowCommit {
+    param([Parameter(Mandatory = $true)][object]$Descriptor)
+    $errorPrefix = [string]$Descriptor.errorPrefix
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    if ($null -eq $pending) {
+        throw "${errorPrefix}_SNAPSHOT_MISSING: repeat update-workflow through its transaction owner; do not migrate .dev.env from a standalone post-copy call."
+    }
+    $lockRecords = @($pending.snapshot.records | Where-Object {
+        (ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)) -ceq '.agent-1c/dependency-lock.json'
+    })
+    if ($lockRecords.Count -ne 1) {
+        throw "${errorPrefix}_PROVENANCE_MISSING: the update snapshot does not contain the previous dependency lock. Preserve the transaction for reconciliation."
+    }
+    $record = $lockRecords[0]
+    if (-not [bool]$record.existed) { return '' }
+    if ([bool]$record.wasDirectory -or -not [string]$record.backupPath -or
+        -not (Test-Path -LiteralPath ([string]$record.backupPath) -PathType Leaf)) {
+        throw "${errorPrefix}_PROVENANCE_MISSING: previous dependency lock backup is unavailable. Preserve the transaction for reconciliation."
+    }
+    try { $beforeLock = Read-Utf8Text -Path ([string]$record.backupPath) | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw "${errorPrefix}_PROVENANCE_INVALID: previous dependency lock cannot be read. $($_.Exception.Message)" }
+    return [string](Get-ConfigValueFromObject -Object $beforeLock -Path 'dependencies.workflowPackage.commit' -Default '')
+}
+
+function Get-CavemanPolicyPreviousWorkflowCommit {
+    return (Get-DotEnvPolicyPreviousWorkflowCommit -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy caveman))
+}
+
+function Get-UiTestingPolicyPreviousWorkflowCommit {
+    return (Get-DotEnvPolicyPreviousWorkflowCommit -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing))
+}
+
+function Get-AiRulesUiTestingPolicySupportState {
+    param([AllowNull()][object]$Snapshot = $null, [AllowNull()][object]$BeforePathState = $null)
+
+    # Only local manifest-owned bytes declare this capability. Desired pins,
+    # checkout caches and a newer recovery executor are not installed proof.
+    try {
+        if ($null -ne $Snapshot) {
+            $manifestRecords = @($Snapshot.records | Where-Object {
+                (ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)) -ceq '.ai-rules.json'
+            })
+            if ($manifestRecords.Count -ne 1) { return 'unknown' }
+            $manifestRecord = $manifestRecords[0]
+            $before = ConvertTo-Agent1cHashtable -Object $BeforePathState
+            if (-not $before.Contains('.ai-rules.json')) { return 'unknown' }
+            if (-not [bool]$manifestRecord.existed) {
+                if ([string]$before['.ai-rules.json'] -cne 'absent') { return 'unknown' }
+                return 'unsupported'
+            }
+            if ([bool]$manifestRecord.wasDirectory -or -not [string]$manifestRecord.backupPath -or
+                -not (Test-Path -LiteralPath ([string]$manifestRecord.backupPath) -PathType Leaf)) { return 'unknown' }
+            $actualBefore = 'file:' + (Get-FileHash -LiteralPath ([string]$manifestRecord.backupPath) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualBefore -cne [string]$before['.ai-rules.json']) { return 'unknown' }
+        }
+        $resolveFile = {
+            param([string]$RelativePath)
+            $relative = ConvertTo-WorkflowUpdateRepoPath -Path $RelativePath
+            if ($relative.Split('/') -contains '..') { return '' }
+            $target = Join-Path $script:ProjectRoot $relative
+            Assert-WorkflowManagedTargetPath -Path $target
+            if ($null -eq $Snapshot) { return $target }
+            foreach ($record in @($Snapshot.records)) {
+                $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$record.relativePath)
+                $exact = $relative -ieq $owned
+                if (-not $exact -and (-not [bool]$record.wasDirectory -or
+                    -not $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase))) { continue }
+                if (-not [bool]$record.existed -or -not [string]$record.backupPath) { return '' }
+                if ($exact) { return [string]$record.backupPath }
+                $backupRoot = Get-FullPathNormalized ([string]$record.backupPath)
+                $backup = Get-FullPathNormalized (Join-Path $backupRoot $relative.Substring($owned.Length + 1))
+                if ($backup.StartsWith(($backupRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) { return $backup }
+                return ''
+            }
+            return ''
+        }
+        $manifestPath = & $resolveFile '.ai-rules.json'
+        if (-not $manifestPath -or -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            if ($null -eq $Snapshot) { return 'unsupported' }
+            return 'unknown'
+        }
+        $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $manifest -or $null -eq $manifest.files -or $manifest.files -isnot [pscustomobject]) { return 'unknown' }
+        $entries = @(Get-AiRules1cManifestFileEntries -Manifest $manifest)
+        # The environment rule owns policy semantics; native command placement
+        # is optional and differs across supported clients.
+        foreach ($source in @('content/rules/dev-standards-env.md')) {
+            $sourceEntries = @($entries | Where-Object { $_.source -ceq $source })
+            if ($sourceEntries.Count -eq 0) { return 'unsupported' }
+            $supported = $false
+            $verified = $false
+            foreach ($entry in @($sourceEntries | Where-Object { -not $_.userModified })) {
+                $path = & $resolveFile ([string]$entry.target)
+                if (-not $path -or -not (Test-AiRulesFileMatchesInstalledHash -Path $path -InstalledHash ([string]$entry.installedHash))) { continue }
+                $text = Read-Utf8Text -Path $path
+                $verified = $true
+                $pattern = '(?m)^\|[^\r\n]*`\{UI_TESTING\}`[^\r\n]*`essential`[^\r\n]*\|[ \t]*\r?$'
+                if ($text -match $pattern) { $supported = $true; break }
+            }
+            if (-not $supported) {
+                if ($verified) { return 'unsupported' }
+                return 'unknown'
+            }
+        }
+        return 'supported'
+    } catch {
+        # This optional migration stays pending when its installed provenance
+        # cannot establish support; normal rules ownership retains diagnostics.
+        return 'unknown'
+    }
+}
+
+function Test-AiRulesUiTestingPolicySupport {
+    param([AllowNull()][object]$Snapshot = $null)
+    return (Get-AiRulesUiTestingPolicySupportState -Snapshot $Snapshot) -ceq 'supported'
+}
+
+function Get-DotEnvPolicyAssignmentMatches {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text, [Parameter(Mandatory = $true)][object]$Descriptor)
+    $pattern = '(?im)^[ \t]*' + [regex]::Escape([string]$Descriptor.key) + '[ \t]*=[ \t]*([^\r\n#]*)(?:[ \t]*#.*)?\r?$'
+    return @([regex]::Matches($Text, $pattern))
+}
+
+function Get-DotEnvPolicyAssignmentValue {
+    param([Parameter(Mandatory = $true)][object]$Descriptor, [object]$Assignment = $null)
+    if ($null -eq $Assignment) { return '' }
+    $value = $Assignment.Groups[1].Value.Trim()
+    # Keep Caveman's existing quoted-value behavior; UI settings use the dotenv parser's quotes.
+    if ([bool]$Descriptor.preserveValueWhitespace -and $value.Length -ge 2 -and
+        (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))) {
+        $value = $value.Substring(1, $value.Length - 2).Trim()
+    }
+    return $value
+}
+
+function Get-DotEnvPolicyTransitionText {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][object]$Descriptor,
+        [object]$Assignment = $null,
+        [switch]$Utf8Bom
+    )
+    # Read-Utf8Text strips the preamble; the no-BOM atomic writer encodes this target-only prefix.
+    $targetPrefix = if ($Utf8Bom -and [bool]$Descriptor.preserveUtf8Bom) { [string][char]0xFEFF } else { '' }
+    if ($null -ne $Assignment) {
+        $valueGroup = $Assignment.Groups[1]
+        $valueIndex = $valueGroup.Index
+        $valueLength = $valueGroup.Length
+        if ([bool]$Descriptor.preserveValueWhitespace) {
+            $leadingWhitespace = $valueGroup.Value.Length - $valueGroup.Value.TrimStart().Length
+            $valueIndex += $leadingWhitespace
+            $trimmedValue = $valueGroup.Value.Trim()
+            $valueLength = $trimmedValue.Length
+            if ($trimmedValue.Length -ge 2 -and
+                (($trimmedValue.StartsWith('"') -and $trimmedValue.EndsWith('"')) -or ($trimmedValue.StartsWith("'") -and $trimmedValue.EndsWith("'")))) {
+                $innerValue = $trimmedValue.Substring(1, $trimmedValue.Length - 2)
+                $valueIndex += 1 + $innerValue.Length - $innerValue.TrimStart().Length
+                $valueLength = $innerValue.Trim().Length
+            }
+        }
+        return ($targetPrefix + $Text.Substring(0, $valueIndex) + [string]$Descriptor.toValue + $Text.Substring($valueIndex + $valueLength))
+    }
+    $newLine = if ($Text.Contains("`r`n")) { "`r`n" } elseif ($Text.Contains("`n")) { "`n" } else { [Environment]::NewLine }
+    $separator = if (-not $Text -or $Text.EndsWith("`n")) { '' } else { $newLine }
+    return ($targetPrefix + $Text + $separator + [string]$Descriptor.key + '=' + [string]$Descriptor.toValue + $newLine)
+}
+
+function Invoke-DotEnvPolicyTransition {
+    param(
+        [Parameter(Mandatory = $true)][object]$Descriptor,
+        [switch]$NewScope,
+        [switch]$EvaluatePackageEligibility,
+        [switch]$FirstSupportedRules,
+        [string]$PreviousWorkflowCommit = ''
+    )
+
+    $receiptPath = Get-DotEnvPolicyReceiptPath -Descriptor $Descriptor
+    $errorPrefix = [string]$Descriptor.errorPrefix
+    $key = [string]$Descriptor.key
+    $envPath = Join-Path $script:ProjectRoot '.dev.env'
+    if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) {
+        throw "${errorPrefix}_ENV_MISSING: $envPath. Restore the project's .dev.env, then repeat update-workflow."
+    }
+    $envText = Read-Utf8Text -Path $envPath
+    $actualHash = (Get-FileHash -LiteralPath $envPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hasUtf8Bom = $false
+    if ([bool]$Descriptor.preserveUtf8Bom) {
+        [byte[]]$bomPrefix = 0, 0, 0
+        $stream = [System.IO.File]::OpenRead($envPath)
+        try {
+            $hasUtf8Bom = $stream.Read($bomPrefix, 0, 3) -eq 3 -and
+                $bomPrefix[0] -eq 0xEF -and $bomPrefix[1] -eq 0xBB -and $bomPrefix[2] -eq 0xBF
+        } finally { $stream.Dispose() }
+    }
+    if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
+        $receipt = Read-Utf8Text -Path $receiptPath | ConvertFrom-Json
+        if ([string]$receipt.migrationId -cne [string]$Descriptor.migrationId) {
+            throw "${errorPrefix}_RECEIPT_INVALID: $receiptPath"
+        }
+        if ([string]$receipt.status -eq 'completed') { return $receipt }
+        if ([string]$receipt.status -ne 'applying') {
+            throw "${errorPrefix}_RECEIPT_INVALID: unexpected status '$($receipt.status)' in $receiptPath"
+        }
+        if ($actualHash -ceq [string]$receipt.afterSha256) {
+            Complete-DotEnvPolicyReceipt -Receipt $receipt -Path $receiptPath
+            return $receipt
+        }
+        if ($actualHash -cne [string]$receipt.beforeSha256) {
+            throw "${errorPrefix}_CONFLICT: .dev.env changed while the one-time policy transition was pending. Preserve it and reconcile $receiptPath before repeating update-workflow."
+        }
+        if ([bool]$receipt.converted) {
+            $pendingMatches = @(Get-DotEnvPolicyAssignmentMatches -Text $envText -Descriptor $Descriptor)
+            $pendingAssignment = if ($pendingMatches.Count -eq 1) { $pendingMatches[0] } else { $null }
+            $pendingValue = Get-DotEnvPolicyAssignmentValue -Descriptor $Descriptor -Assignment $pendingAssignment
+            $sourceMatches = $pendingMatches.Count -eq 1 -and $pendingValue -ieq [string]$Descriptor.fromValue
+            $newDefault = [bool]$Descriptor.newScopeDefault -and
+                ([string]$receipt.scopeKind -eq 'new' -or [string]$receipt.eligibility -eq 'first-supported-ai-rules' -or [bool](Get-ConfigValueFromObject -Object $Descriptor -Path 'defaultExistingScope' -Default $false)) -and
+                $pendingMatches.Count -le 1 -and -not $pendingValue
+            if (-not $sourceMatches -and -not $newDefault) {
+                throw "${errorPrefix}_CONFLICT: source setting no longer matches $receiptPath"
+            }
+            $afterText = Get-DotEnvPolicyTransitionText -Text $envText -Descriptor $Descriptor -Assignment $pendingAssignment -Utf8Bom:$hasUtf8Bom
+            if ([string]$Descriptor.migrationId -ceq 'caveman-auto-v1' -and $hasUtf8Bom -and
+                (Get-DotEnvPolicyTextHash -Text $afterText) -cne [string]$receipt.afterSha256) {
+                # Old Caveman v1 prepared a no-BOM target. Resume only its exact
+                # immutable hash after the unchanged before/source checks above.
+                $legacyAfterText = Get-DotEnvPolicyTransitionText -Text $envText -Descriptor $Descriptor -Assignment $pendingAssignment -Utf8Bom:$false
+                if ((Get-DotEnvPolicyTextHash -Text $legacyAfterText) -ceq [string]$receipt.afterSha256) {
+                    $afterText = $legacyAfterText
+                }
+            }
+            if ((Get-DotEnvPolicyTextHash -Text $afterText) -cne [string]$receipt.afterSha256) {
+                throw "${errorPrefix}_CONFLICT: the pending target bytes no longer match $receiptPath"
+            }
+            Write-Utf8TextAtomic -Path $envPath -Value $afterText
+        }
+        Complete-DotEnvPolicyReceipt -Receipt $receipt -Path $receiptPath
+        return $receipt
+    }
+
+    $matches = @(Get-DotEnvPolicyAssignmentMatches -Text $envText -Descriptor $Descriptor)
+    if ($matches.Count -gt 1) {
+        throw "${errorPrefix}_AMBIGUOUS: .dev.env has more than one $key assignment; resolve the duplicate before update-workflow."
+    }
+    $assignment = if ($matches.Count -eq 1) { $matches[0] } else { $null }
+    $beforeValue = Get-DotEnvPolicyAssignmentValue -Descriptor $Descriptor -Assignment $assignment
+    $targetWorkflowCommit = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'commit' -Default '')
+    $eligibility = if ($NewScope) { 'new-scope' } elseif ($FirstSupportedRules) { 'first-supported-ai-rules' } elseif (-not $EvaluatePackageEligibility) { 'direct-legacy-transition' } elseif ($PreviousWorkflowCommit -and $PreviousWorkflowCommit -ceq $targetWorkflowCommit) { 'already-current-package' } elseif ($PreviousWorkflowCommit) { 'older-package' } else { 'legacy-unpinned-package' }
+    $convert = (-not $NewScope -and $beforeValue -ieq [string]$Descriptor.fromValue -and $eligibility -ne 'already-current-package') -or
+        (($NewScope -or $FirstSupportedRules -or [bool](Get-ConfigValueFromObject -Object $Descriptor -Path 'defaultExistingScope' -Default $false)) -and [bool]$Descriptor.newScopeDefault -and -not $beforeValue)
+    $afterText = $envText
+    if ($convert) {
+        $afterText = Get-DotEnvPolicyTransitionText -Text $envText -Descriptor $Descriptor -Assignment $assignment -Utf8Bom:$hasUtf8Bom
+    }
+    $receipt = [pscustomobject]@{
+        schemaVersion = 1
+        migrationId = [string]$Descriptor.migrationId
+        status = 'applying'
+        scopeKind = $(if ($NewScope) { 'new' } else { 'existing' })
+        workflowCommit = $targetWorkflowCommit
+        previousWorkflowCommit = $PreviousWorkflowCommit
+        eligibility = $eligibility
+        beforeValue = $beforeValue
+        afterValue = $(if ($convert) { [string]$Descriptor.toValue } else { $beforeValue })
+        converted = [bool]$convert
+        beforeSha256 = $actualHash
+        afterSha256 = $(if ($convert) { Get-DotEnvPolicyTextHash -Text $afterText } else { $actualHash })
+        startedAt = (Get-Date).ToString('o')
+        completedAt = ''
+    }
+    Write-Utf8TextAtomic -Path $receiptPath -Value (($receipt | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+    if ($convert) { Write-Utf8TextAtomic -Path $envPath -Value $afterText }
+    Complete-DotEnvPolicyReceipt -Receipt $receipt -Path $receiptPath
+    if ($convert) {
+        if ($NewScope) { Write-Host "$key new-project default: $([string]$Descriptor.toValue)." }
+        elseif ([bool]$Descriptor.newScopeDefault -and -not $beforeValue) { Write-Host "$key default: $([string]$Descriptor.toValue)." }
+        else { Write-Host ([string]$Descriptor.notice) }
+    }
+    return $receipt
+}
+
+function Invoke-CavemanPolicyTransition {
+    param([switch]$NewScope, [switch]$EvaluatePackageEligibility, [string]$PreviousWorkflowCommit = '')
+    return (Invoke-DotEnvPolicyTransition -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy caveman) `
+        -NewScope:$NewScope -EvaluatePackageEligibility:$EvaluatePackageEligibility -PreviousWorkflowCommit $PreviousWorkflowCommit)
+}
+
+function Invoke-UiTestingPolicyTransition {
+    param([switch]$NewScope, [switch]$EvaluatePackageEligibility, [switch]$FirstSupportedRules, [string]$PreviousWorkflowCommit = '')
+    return (Invoke-DotEnvPolicyTransition -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing) `
+        -NewScope:$NewScope -EvaluatePackageEligibility:$EvaluatePackageEligibility -FirstSupportedRules:$FirstSupportedRules -PreviousWorkflowCommit $PreviousWorkflowCommit)
+}
+
+function Invoke-VerificationModelPolicyTransition {
+    param([switch]$NewScope)
+    return (Invoke-DotEnvPolicyTransition -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy verification-model) -NewScope:$NewScope)
+}
+
+function Copy-DotEnvPolicyReceiptToWorktree {
+    param([Parameter(Mandatory = $true)][object]$Descriptor, [Parameter(Mandatory = $true)][string]$WorktreePath)
+    $errorPrefix = [string]$Descriptor.errorPrefix
+    $key = [string]$Descriptor.key
+    $source = Get-DotEnvPolicyReceiptPath -Descriptor $Descriptor
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { return }
+    $receipt = Read-Utf8Text -Path $source | ConvertFrom-Json
+    if ([string]$receipt.migrationId -cne [string]$Descriptor.migrationId -or [string]$receipt.status -ne 'completed') {
+        throw "${errorPrefix}_RECEIPT_INCOMPLETE: finish the source root's workflow update before creating a branch. Receipt: $source"
+    }
+    $target = Get-DotEnvPolicyReceiptPath -Descriptor $Descriptor -Root $WorktreePath
+    if (Test-Path -LiteralPath $target -PathType Leaf) {
+        $existing = Read-Utf8Text -Path $target | ConvertFrom-Json
+        if ([string]$existing.migrationId -cne [string]$Descriptor.migrationId -or [string]$existing.status -ne 'completed') {
+            throw "${errorPrefix}_RECEIPT_INCOMPLETE: preserve the branch receipt and resume its original transition: $target"
+        }
+        return
+    }
+    $branchEnv = Join-Path $WorktreePath '.dev.env'
+    if (-not (Test-Path -LiteralPath $branchEnv -PathType Leaf)) {
+        throw "${errorPrefix}_ENV_MISSING: branch .dev.env is absent at '$branchEnv'; restore it before creating its policy receipt."
+    }
+    $envText = Read-Utf8Text -Path $branchEnv
+    $matches = @(Get-DotEnvPolicyAssignmentMatches -Text $envText -Descriptor $Descriptor)
+    if ($matches.Count -gt 1) {
+        throw "${errorPrefix}_AMBIGUOUS: branch .dev.env has more than one $key assignment; resolve the duplicate before creating its policy receipt."
+    }
+    $assignment = if ($matches.Count -eq 1) { $matches[0] } else { $null }
+    $value = Get-DotEnvPolicyAssignmentValue -Descriptor $Descriptor -Assignment $assignment
+    $hash = (Get-FileHash -LiteralPath $branchEnv -Algorithm SHA256).Hash.ToLowerInvariant()
+    $now = (Get-Date).ToString('o')
+    $branchReceipt = [ordered]@{
+        schemaVersion = 1
+        migrationId = [string]$Descriptor.migrationId
+        status = 'completed'
+        scopeKind = 'new'
+        workflowCommit = [string]$receipt.workflowCommit
+        previousWorkflowCommit = [string]$receipt.previousWorkflowCommit
+        eligibility = 'inherited-completed-policy'
+        inheritedReceiptSha256 = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+        beforeValue = $value
+        afterValue = $value
+        converted = $false
+        beforeSha256 = $hash
+        afterSha256 = $hash
+        startedAt = $now
+        completedAt = $now
+    }
+    Write-Utf8TextAtomic -Path $target -Value (($branchReceipt | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+}
+
+function Copy-CavemanPolicyReceiptToWorktree {
+    param([Parameter(Mandatory = $true)][string]$WorktreePath)
+    Copy-DotEnvPolicyReceiptToWorktree -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy caveman) -WorktreePath $WorktreePath
+}
+
+function Copy-UiTestingPolicyReceiptToWorktree {
+    param([Parameter(Mandatory = $true)][string]$WorktreePath)
+    Copy-DotEnvPolicyReceiptToWorktree -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing) -WorktreePath $WorktreePath
+}
+
+function Get-DotEnvPolicyReceiptReportText {
+    param([Parameter(Mandatory = $true)][object]$Descriptor, [Parameter(Mandatory = $true)][object]$Receipt)
+    if ([string]$Receipt.status -ne 'completed') { return 'переход не завершён' }
+    if ([bool]$Receipt.converted) {
+        if ([bool]$Descriptor.newScopeDefault -and [string]$Receipt.scopeKind -eq 'new') {
+            return "$([string]$Descriptor.toValue) по умолчанию (новый проект)"
+        }
+        if ([bool]$Descriptor.newScopeDefault -and -not [string]$Receipt.beforeValue) {
+            return "$([string]$Descriptor.toValue) по умолчанию"
+        }
+        return [string]$Descriptor.reportTransition
+    }
+    return "сохранён $([string]$Receipt.afterValue)"
+}
+
+function Assert-UiTestingPolicyUpdateSnapshot {
+    param([object]$Pending = (Get-WorkflowUpdatePendingSnapshot))
+    if ($null -eq $pending) {
+        throw 'UI_TESTING_POLICY_SNAPSHOT_MISSING: repeat update-workflow through its transaction owner; UI policy cannot be applied by a standalone post-copy call.'
+    }
+    if (-not (Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$pending.receipt.sourceRoot))) { return }
+    $relative = '.agent-1c/migrations/ui-testing-essential-v1.json'
+    foreach ($record in @($pending.snapshot.records)) {
+        $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$record.relativePath)
+        if ($relative -ceq $owned -or $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase)) { return }
+    }
+    # The old parent still holds its original snapshot in memory and can rewrite
+    # transaction.json after a failed child. Extending it here would lose the new
+    # record again. Re-enter the existing source-side owner before pre-copy instead.
+    $snapshotId = (Split-Path -Leaf $pending.snapshot.root).Substring('itl-workflow-update-rollback-'.Length)
+    $sourceRoot = [string]$pending.receipt.sourceRoot
+    $continuation = "From a clean exact new workflow Git checkout, run scripts/update-installed-workflow.ps1 for project '$script:ProjectRoot' with -Recovery update. Its new parent admits the policy receipts to the existing snapshot before it resumes the same post-copy; do not restore or edit a pending receipt manually. SnapshotId: $snapshotId. Original candidate: '$sourceRoot'. The original workflow target, snapshot and recovery are preserved."
+    Set-RunFailureContext -Category runner -RequiredAction $continuation
+    throw "UI_TESTING_POLICY_LEGACY_SNAPSHOT: the old updater did not capture the new UI receipt. No UI policy has been written. $continuation"
+}
+
+function Assert-VerificationModelPolicyUpdateSnapshot {
+    param([object]$Pending = (Get-WorkflowUpdatePendingSnapshot))
+    if ($null -eq $pending) {
+        throw 'VERIFICATION_MODEL_POLICY_SNAPSHOT_MISSING: repeat update-workflow through its transaction owner; verification model policy cannot be applied by a standalone post-copy call.'
+    }
+    if (-not (Test-WorkflowSourceVerificationModelPolicy -SourceRoot ([string]$pending.receipt.sourceRoot))) { return }
+    $relative = '.agent-1c/migrations/verification-model-change-v1.json'
+    foreach ($record in @($pending.snapshot.records)) {
+        $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$record.relativePath)
+        if ($relative -ceq $owned -or $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase)) { return }
+    }
+    # The old parent still holds its original snapshot in memory and can rewrite
+    # transaction.json after a failed child. Extending it here would lose the new
+    # record again. Re-enter the existing source-side owner before pre-copy instead.
+    $snapshotId = (Split-Path -Leaf $pending.snapshot.root).Substring('itl-workflow-update-rollback-'.Length)
+    $sourceRoot = [string]$pending.receipt.sourceRoot
+    $continuation = "From a clean exact new workflow Git checkout, run scripts/update-installed-workflow.ps1 for project '$script:ProjectRoot' with -Recovery update. Its new parent admits the policy receipts to the existing snapshot before it resumes the same post-copy; do not restore or edit a pending receipt manually. SnapshotId: $snapshotId. Original candidate: '$sourceRoot'. The original workflow target, snapshot and recovery are preserved."
+    Set-RunFailureContext -Category runner -RequiredAction $continuation
+    throw "VERIFICATION_MODEL_POLICY_LEGACY_SNAPSHOT: the old updater did not capture the new UI receipt. No verification model policy has been written. $continuation"
+}
+
+function Invoke-WorkflowPackageFilePostCopy {
+    Invoke-Vibecoding1cMcpRegistryOperation { Invoke-WorkflowPackageFilePostCopyCore }
+}
+
+function Invoke-WorkflowPackageFilePostCopyCore {
+    $previousMcpProtection = Get-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
+    $previousMcpProtectionValue = if ($null -ne $previousMcpProtection) { $previousMcpProtection.Value } else { $null }
+    $previousOpenCodeMode = Get-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -ErrorAction SilentlyContinue
+    $previousOpenCodeModeValue = if ($null -ne $previousOpenCodeMode) { $previousOpenCodeMode.Value } else { $null }
+    $previousSurfaceDeferral = Get-Variable -Name ItlWorkflowPostCopyDefersClientSurfaces -Scope Script -ErrorAction SilentlyContinue
+    $previousSurfaceDeferralValue = if ($null -ne $previousSurfaceDeferral) { $previousSurfaceDeferral.Value } else { $null }
+    try {
+        $script:ItlMcpPreserveUserChanges = $true
+        $script:ItlWorkflowPostCopyDefersClientSurfaces = $true
+        Remove-Variable -Name ItlProductProjectPostCopyVerification -Scope Script -ErrorAction SilentlyContinue
+        $policyPending = Get-WorkflowUpdatePendingSnapshot
+        . Import-ItlProductProjectSetup
+        $catalogTransition=$null
+        $script:ItlOpenCodeOperationConfigPathsMode = if ($null -eq $policyPending -or (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$policyPending.receipt.sourceRoot))) { 'layered' } else { 'legacy-root' }
+        Assert-WorkflowUpdateMcpConfigSnapshot -Pending $policyPending
+        Assert-UiTestingPolicyUpdateSnapshot -Pending $policyPending
+        Assert-VerificationModelPolicyUpdateSnapshot -Pending $policyPending
+        $applyUiTestingPolicy = Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)
+        $beforeUiTestingSupport = if ($applyUiTestingPolicy) {
+            Get-AiRulesUiTestingPolicySupportState -Snapshot $policyPending.snapshot -BeforePathState $policyPending.receipt.beforePathState
+        } else { 'unknown' }
+        Restore-UnfinishedForkCopiedMcpOwnership | Out-Null
+        if(-not (Get-ItlProductProjectBinding) -and $policyPending -and
+            (Test-ItlProductProjectTransitionSource -SourceRoot ([string]$policyPending.receipt.sourceRoot))){
+            # Admit/recover the original snapshot first. Required selection may
+            # not hide an older owner's diagnostic or alter its receipt before
+            # admission. Package processing still waits for this same selection.
+            try {$catalogTransition=Get-ItlProductProjectTransitionSelection -RecordedSelection (Get-ConfigValueFromObject $policyPending.receipt 'catalogSelection' $null)}
+            catch {
+                if($_.Exception.Message -cmatch '^CATALOG_PROJECT_REQUIRED:'){
+                    throw "$($_.Exception.Message) Original candidate: '$($policyPending.receipt.sourceRoot)'. Repeat the same source-side update with the explicit published project; preserve the pending snapshot."
+                }
+                throw
+            }
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $policyPending.snapshot -Source ([pscustomobject]@{root=$policyPending.receipt.sourceRoot;commit=$policyPending.receipt.sourceCommit}) -Phase post-copy-running -Details @{catalogSelection=$catalogTransition}
+        }
+        if (Test-WorkflowSourceVerificationModelPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)) { Invoke-VerificationModelPolicyTransition | Out-Null }
+        Ensure-OneCSessionLimitDotEnv | Out-Null
+        $aiRulesPathsBefore = @(Get-AiRules1cManifestFileEntries | ForEach-Object { [string]$_.target })
+        $clientSurfacePathsBefore = @(Get-WorkflowUpdateClientSurfacePaths)
+        # Native installer diagnostics must remain visible without becoming part
+        # of this structured result on the already-current rules route.
+        & {
+        Write-RunStepMarker 'workflow-update.dependencies'
+        try {
+        Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $script:ProjectRoot
+        Ensure-GitIgnore
+        Ensure-ItlPinnedOpenSpecGitAttributes | Out-Null
+        Sync-ItlVanessaLibraries
+        Update-UserRules
+        Sync-WorkflowManagedDependencyLockEntries | Out-Null
+        Install-YAxUnit | Out-Null
+        Update-RoctupMcp
+        Sync-VanessaAutomationDependencyLock | Out-Null
+        Install-VanessaAutomation
+        Update-VanessaMcpArtifacts
+        Sync-ItlOnDemandMcpDependencyLock | Out-Null
+        Install-ItlOnDemandMcp | Out-Null
+        } finally { Write-RunStepMarker 'workflow-update.dependencies' -End }
+
+        # The client surface is generated once below, after the final rules
+        # installation, guidance bridge and UI tool preparation.
+        Write-RunStepMarker 'workflow-update.ai-rules'
+        try {
+        if ($SkipAiRules) {
+            Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
+            $migrationPlan = Get-AiRulesMigrationPlan
+            if ($migrationPlan.status -eq "eligible") {
+                Write-Host "ai_rules_1c migration remains pending because -SkipAiRules was specified: $($migrationPlan.target.ref)"
+            }
+        } else {
+            $migration = Invoke-AiRulesBaselineMigration
+            Assert-AiRulesBaselineMigrationResult -Migration $migration
+            if (-not $migration.migrated -and -not $migration.suppressRegularUpdate) {
+                Update-AiRules1c
+            }
+        }
+        # ai_rules_1c owns the installed root. A pre-installer bridge edit would
+        # invalidate its recorded hash and prevent new upstream AGENTS.md install.
+        Update-AgentGuidanceBridge
+        } finally { Write-RunStepMarker 'workflow-update.ai-rules' -End }
+
+        Install-ItlUiTools -BestEffort
+        # Catalog-only selection does not enter the legacy MCP refresh below.
+        # Reconcile it inside file post-copy, after snapshot validation, using
+        # this operation's pinned registry and existing client-set writer.
+        Write-RunStepMarker 'workflow-update.catalog'
+        try {
+        if ($catalogTransition) {
+            $associate={Invoke-ItlProductProjectAssociation $script:PreparedCatalogCandidate -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces}
+            if($script:LifecycleOperationIsContinuation -and (Test-InteractiveInputAvailable)){
+                . (Join-Path $PSScriptRoot 'agent-1c.product-project-console.ps1')
+                & { Invoke-ItlProductProjectCallerInput -Body $associate } | Out-Host
+            }else{& $associate | Out-Host}
+        } elseif (Get-ConfigValue -Path productProject -Default $null) {
+            . Import-ItlProductProject
+            Initialize-ItlProductProjectContext -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces
+        }
+        } finally { Write-RunStepMarker 'workflow-update.catalog' -End }
+        Write-RunStepMarker 'workflow-update.client-surfaces'
+        try {
+        Sync-ItlClientSurfaces
+        foreach ($client in @(Get-AgentTargets)) {
+            Sync-ItlClientUserEnvironment -Client $client
+        }
+        } finally { Write-RunStepMarker 'workflow-update.client-surfaces' -End }
+        $previousPolicyWorkflowCommit = Get-CavemanPolicyPreviousWorkflowCommit
+        Invoke-CavemanPolicyTransition -EvaluatePackageEligibility -PreviousWorkflowCommit $previousPolicyWorkflowCommit | Out-Null
+        if ($applyUiTestingPolicy) {
+            if ($beforeUiTestingSupport -ceq 'unknown') {
+                Write-Host 'UI_TESTING transition remains pending: the original update snapshot cannot prove the previous rules capability. Preserve its manifest and backups for reconciliation; no UI policy has been written.'
+            } elseif (Test-AiRulesUiTestingPolicySupport) {
+                Invoke-UiTestingPolicyTransition -EvaluatePackageEligibility -FirstSupportedRules:($beforeUiTestingSupport -ceq 'unsupported') -PreviousWorkflowCommit $previousPolicyWorkflowCommit | Out-Null
+            } else {
+                Write-Host 'UI_TESTING transition remains pending: installed ai_rules_1c does not prove support for essential. Update the rules through normal update-workflow without -SkipAiRules; the one-time transition will then resume.'
+            }
+        }
+        } | Out-Host
+        # Rules, library and artifact installers above may copy files with
+        # their source timestamps; the next receipt hashes every path again.
+        Clear-WorkflowUpdatePathHashCache
+
+        # Capture refreshed client configs in the same post-copy checkpoint.
+        # Ready/committed continuations must keep their already recorded bytes.
+        Write-RunStepMarker 'workflow-update.mcp-client-config'
+        try {
+        if (Test-Vibecoding1cMcpLegacySelectionPresent) {
+            $mcpRegistryRefreshed = $false
+            try {
+                Refresh-Vibecoding1cMcpRegistry
+                $mcpRegistryRefreshed = $true
+            } catch {
+                Write-Warning "MCP registry refresh failed during update-workflow; existing client connections are preserved. $($_.Exception.Message)"
+            }
+            if ($mcpRegistryRefreshed) {
+                $mcpSelection = Read-Vibecoding1cMcpSelection
+                $mcpSelectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $mcpSelection
+                if ($mcpSelectionCompleteness.isComplete) {
+                    Write-Vibecoding1cMcpClientConfig -Clients @(Get-AgentTargets) -IncludeClientSurfaces -PreserveUserChanges
+                } else {
+                    Write-Warning "MCP client connection update deferred because the saved selection is incomplete: $(@($mcpSelectionCompleteness.reasons) -join '; '). Existing client connections are preserved."
+                }
+            }
+        }
+        } finally { Write-RunStepMarker 'workflow-update.mcp-client-config' -End }
+
+        return [pscustomobject]@{
+            aiRulesPathsBefore = @($aiRulesPathsBefore)
+            clientSurfacePathsBefore = @($clientSurfacePathsBefore)
+        }
+    } finally {
+        Remove-Variable -Name ItlProductProjectPostCopyVerification -Scope Script -ErrorAction SilentlyContinue
+        if ($null -ne $previousMcpProtection) {
+            $script:ItlMcpPreserveUserChanges = $previousMcpProtectionValue
+        } else {
+            Remove-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $previousOpenCodeMode) {
+            Set-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -Value $previousOpenCodeModeValue
+        } else {
+            Remove-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $previousSurfaceDeferral) {
+            Set-Variable -Name ItlWorkflowPostCopyDefersClientSurfaces -Scope Script -Value $previousSurfaceDeferralValue
+        } else {
+            Remove-Variable -Name ItlWorkflowPostCopyDefersClientSurfaces -Scope Script -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Assert-WorkflowUpdateDevelopmentBranchRoot {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    $root = Get-FullPathNormalized $script:ProjectRoot
+    $recordedRoot = [string](Get-StateValue -State $State -Name 'worktreePath' -Default '')
+    if (-not (Test-DevBranchStateUsesWorktree -State $State) -or -not $recordedRoot -or
+        $root -eq (Get-FullPathNormalized $recordedRoot)) {
+        Assert-CurrentProjectRootMatchesDevBranchState -State $State -Operation 'update-workflow'
+        return
+    }
+
+    # Git can move a legacy worktree without rewriting its ignored runtime state.
+    # Only this package-file owner may use that registration; no state/IB path is
+    # rebound and the ordinary lifecycle guard remains strict.
+    try {
+        $branch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
+        if ($branch -notlike 'itldev/*' -or $branch -cne (Get-CurrentBranch)) {
+            throw 'The saved development branch differs from the current Git branch.'
+        }
+        if ([string](Get-StateValue -State $State -Name 'workspaceProvider' -Default 'external') -ne 'external') {
+            throw 'A provider-owned workspace requires its original topology owner.'
+        }
+        $stateRoot = [string](Get-StateValue -State $State -Name 'stateProjectRoot' -Default '')
+        $statePath = [string](Get-StateValue -State $State -Name 'statePath' -Default '')
+        $expectedStatePath = Join-Path $root ('.agent-1c/dev-branches/' + (ConvertTo-SafeName $branch.Substring(7)) + '.json')
+        if (-not $stateRoot -or -not $statePath -or (Get-FullPathNormalized $stateRoot) -ne $root -or
+            (Get-FullPathNormalized $statePath) -ne (Get-FullPathNormalized $expectedStatePath)) {
+            throw 'The development state is not owned by the current worktree.'
+        }
+        $mainRoot = [string](Get-StateValue -State $State -Name 'mainWorktreePath' -Default '')
+        if (-not $mainRoot) { throw 'The development state has no owning main worktree.' }
+        $worktrees = @(Get-GitWorktrees)
+        $current = @($worktrees | Where-Object {
+            [string]$_.branch -ceq $branch -and (Get-FullPathNormalized ([string]$_.path)) -eq $root
+        })
+        $main = @($worktrees | Where-Object {
+            [string]$_.branch -ceq (Get-MasterBranch) -and
+            (Get-FullPathNormalized ([string]$_.path)) -eq (Get-FullPathNormalized $mainRoot)
+        })
+        if ($current.Count -ne 1 -or $main.Count -ne 1) {
+            throw 'Git does not register this branch and its saved main worktree in the current repository.'
+        }
+        $currentCommon = ([string](Get-GitOutputAt -Root $root -Arguments @('rev-parse', '--path-format=absolute', '--git-common-dir'))).Trim()
+        $mainCommon = ([string](Get-GitOutputAt -Root $mainRoot -Arguments @('rev-parse', '--path-format=absolute', '--git-common-dir'))).Trim()
+        if (-not $currentCommon -or -not $mainCommon -or
+            (Get-FullPathNormalized $currentCommon) -ne (Get-FullPathNormalized $mainCommon)) {
+            throw 'The current and saved main worktrees have different common Git directories.'
+        }
+    } catch {
+        throw "WORKFLOW_UPDATE_WORKTREE_IDENTITY_MISMATCH: '$root' cannot use saved worktree '$recordedRoot': $($_.Exception.Message) Preserve state and runtime paths; reconcile the named Git/worktree identity, then repeat update-workflow from the owning master."
+    }
+}
+
+function Invoke-WorkflowDevelopmentBranchUpdate {
+    param([Parameter(Mandatory = $true)][object]$Source, [object]$LocalPatchPlan = $null,
+        [AllowEmptyCollection()][string[]]$MasterClients)
+
+    if (-not $PSBoundParameters.ContainsKey('MasterClients')) {
+        return Invoke-WorkflowDevelopmentBranchUpdateCore -Source $Source -LocalPatchPlan $LocalPatchPlan
+    }
+    # A pending receipt owns its original files and client set. Finish it before
+    # planning additions; never expand a live snapshot from the latest master.
+    $recovered = $null
+    if ($null -ne (Get-WorkflowUpdatePendingSnapshot)) {
+        $recovered = Invoke-WorkflowDevelopmentBranchUpdateCore -Source $Source -LocalPatchPlan $LocalPatchPlan
+        # Retirement belongs to the recovered transaction, not its successor.
+        $LocalPatchPlan = $null
+    }
+    Read-ProjectConfig
+    $current = @(Get-AgentTargets)
+    $target = @(ConvertTo-AgentToolList -Value @($current + $MasterClients))
+    if ($null -ne $recovered -and @($target | Where-Object { $_ -notin $current }).Count -eq 0) { return $recovered }
+    if ($SkipAiRules -and @($target | Where-Object { $_ -notin $current }).Count) {
+        throw 'WORKFLOW_UPDATE_CLIENTS_REQUIRE_RULES: preserve the completed package and repeat update-workflow without -SkipAiRules to install the added clients completely.'
+    }
+    if (@($target | Where-Object { $_ -notin $current }).Count) {
+        foreach ($client in @($target | Where-Object { $_ -notin $current })) { Assert-ItlClientConfigWritable -Client $client }
+        $modified = @(Get-AiRulesManifestUserModifiedPaths)
+        if ($modified.Count) {
+            throw "WORKFLOW_UPDATE_CLIENT_RULES_USER_MODIFIED: preserve or reconcile the named rules files, then repeat update-workflow from master: $($modified -join ', ')."
+        }
+    }
+    return Invoke-WorkflowDevelopmentBranchUpdateCore -Source $Source -LocalPatchPlan $LocalPatchPlan -TargetClients $target
+}
+
+function Get-WorkflowUpdateRecordedClientTarget {
+    param([Parameter(Mandatory = $true)][object]$Membership)
+    $before = @(ConvertTo-AgentToolList -Value $Membership.before)
+    $target = @(ConvertTo-AgentToolList -Value $Membership.target)
+    if ([int]$Membership.schemaVersion -ne 1 -or
+        @($before | Where-Object { $_ -notin $target }).Count -or
+        @($target | Where-Object { $_ -notin (Get-SupportedAgentTargets) }).Count) {
+        throw 'WORKFLOW_UPDATE_CLIENT_RECEIPT_INVALID: preserve the exact snapshot and reconcile its recorded client set before repeating update-workflow.'
+    }
+    return $target
+}
+
+function Invoke-WorkflowDevelopmentBranchUpdateCore {
+    param([Parameter(Mandatory = $true)][object]$Source, [object]$LocalPatchPlan = $null,
+        [AllowEmptyCollection()][string[]]$TargetClients)
+
+    Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$Source.root)
+    if((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container)){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot ([string]$Source.root)}
+    $registeredState = Read-DevBranchState -Name ''
+    Assert-WorkflowUpdateDevelopmentBranchRoot -State $registeredState
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    $recordClientMembership = $PSBoundParameters.ContainsKey('TargetClients')
+    if ($null -ne $pending) {
+        $recordedMembership = Get-ConfigValueFromObject $pending.receipt 'clientMembership' $null
+        if ($null -ne $recordedMembership) {
+            $TargetClients = @(Get-WorkflowUpdateRecordedClientTarget -Membership $recordedMembership)
+            $recordClientMembership = $true
+        }
+        if ([string]$pending.receipt.sourceCommit -cne [string]$Source.commit -or
+            -not [string]::Equals([string]$pending.receipt.sourceRoot, [string]$Source.root, [StringComparison]::OrdinalIgnoreCase)) {
+            # The current rollout owner can recover the immutable old payload
+            # with its current code before installing the requested new package.
+            # It holds the same branch lease throughout; no business command or
+            # nested guard is launched by this continuation.
+            $recordedSource = [pscustomobject]@{
+                root=[string]$pending.receipt.sourceRoot;commit=[string]$pending.receipt.sourceCommit
+                repo=[string]$pending.receipt.sourceRepo;ref=[string]$pending.receipt.sourceRef;source=[string]$pending.receipt.sourceKind
+            }
+            if ([string]$pending.receipt.phase -eq 'prepared') {
+                Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+                Remove-WorkflowUpdateRollbackSnapshot -Snapshot $pending.snapshot
+            } elseif ([string]$pending.receipt.phase -eq 'copying') {
+                Restore-WorkflowUpdateInterruptedPackageCopy -Pending $pending
+            } elseif ([string]$pending.receipt.phase -eq 'post-copy-complete') {
+                Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+                Retain-WorkflowUpdateRollbackSnapshot -Snapshot $pending.snapshot | Out-Null
+            } else {
+                Assert-WorkflowUpdateRecordedSource -Receipt $pending.receipt
+                Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{sourceRoot=[string]$Source.root;sourceCommit=[string]$Source.commit})
+                Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source $recordedSource -Phase ([string]$pending.receipt.phase) `
+                    -Details @{recoveryExecutorRoot=[string]$Source.root;recoveryExecutorCommit=[string]$Source.commit}
+                $previousOverride = [Environment]::GetEnvironmentVariable('ITL_WORKFLOW_SOURCE_PATH','Process')
+                $hadOverride = Test-Path Env:ITL_WORKFLOW_SOURCE_PATH
+                try {
+                    $env:ITL_WORKFLOW_SOURCE_PATH = [string]$recordedSource.root
+                    Invoke-WorkflowDevelopmentBranchUpdate -Source $recordedSource -LocalPatchPlan $LocalPatchPlan | Out-Null
+                } finally {
+                    if ($hadOverride) {$env:ITL_WORKFLOW_SOURCE_PATH=$previousOverride} else {Remove-Item Env:ITL_WORKFLOW_SOURCE_PATH -ErrorAction SilentlyContinue}
+                }
+            }
+            $pending = $null
+            if ($recordClientMembership) { $TargetClients = @(ConvertTo-AgentToolList -Value @(@(Get-AgentTargets) + $TargetClients)) }
+            Write-Host "Recovered the stopped branch package '$($recordedSource.commit)' through the current update owner; now applying '$($Source.commit)'."
+        }
+        if ($null -ne $pending -and [string]$pending.receipt.phase -eq 'copying') {
+            Restore-WorkflowUpdateInterruptedPackageCopy -Pending $pending
+            $pending = $null
+        } elseif ($null -ne $pending -and [string]$pending.receipt.phase -eq 'prepared') {
+            Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+            Remove-WorkflowUpdateRollbackSnapshot -Snapshot $pending.snapshot
+            $pending = $null
+        } elseif ($null -ne $pending -and [string]$pending.receipt.phase -eq 'post-copy-complete') {
+            Retain-WorkflowUpdateRollbackSnapshot -Snapshot $pending.snapshot | Out-Null
+            return [pscustomobject]@{ status = 'completed'; commit = Get-CurrentCommit }
+        } elseif ($null -ne $pending) {
+            Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+        }
+    }
+
+    if ($null -eq $pending) {
+        $conflicts = @(Get-WorkflowUpdateRootWriteSetConflicts -Root $script:ProjectRoot)
+        if ($conflicts.Count -gt 0) {
+            throw "WORKFLOW_UPDATE_BRANCH_WRITE_SET_CONFLICT: '$script:ProjectRoot' has user changes in owned paths: $($conflicts -join ', '). Preserve them and repeat update-workflow after resolving the named paths."
+        }
+        if ($recordClientMembership) {
+            $clientConfigState = Get-WorkflowUpdatePathState -RelativePath '.agent-1c/project.json'
+            Read-ProjectConfig
+            $TargetClients = @(ConvertTo-AgentToolList -Value @(@(Get-AgentTargets) + $TargetClients))
+        }
+        $legacyExecutor = Resolve-WorkflowUpdateLegacyExecutor -Source $Source
+        $dependencyPlan = Get-WorkflowDependencyPlan -SourceRoot ([string]$Source.root)
+        Assert-WorkflowDependencyPlan -Plan $dependencyPlan
+        $candidateRulesPaths = @()
+        if (-not $SkipAiRules) {
+            $rulesTarget = Get-AiRulesBaselineTarget -TemplateRoot ([string]$Source.root)
+            if (-not $rulesTarget.isConfigured) { throw "WORKFLOW_UPDATE_BRANCH_RULES_TARGET_INVALID: $($rulesTarget.reason)" }
+            Write-RunStepMarker 'workflow-update.branch-rules-inventory'
+            try {
+                Assert-WorkflowUpdateRulesRootReady -SourceRoot ([string]$Source.root)
+                $rulesCheckout = Sync-AiRules1cCheckout -RepoOverride $rulesTarget.repo -RefOverride $rulesTarget.ref -CommitOverride $rulesTarget.commit
+                $rulesClients = if ($recordClientMembership) { @($TargetClients) } else { @(Get-AgentTargets) }
+                $candidateRulesPaths = @(Get-AiRulesCandidateInstallInventory -Checkout $rulesCheckout -Tools $rulesClients)
+            } finally { Write-RunStepMarker 'workflow-update.branch-rules-inventory' -End }
+        }
+        $clientSnapshotInput = if ($recordClientMembership) { @{Clients=@($TargetClients)} } else { @{} }
+        Write-RunStepMarker 'workflow-update.branch-snapshot'
+        try {
+            $snapshot = New-WorkflowUpdateRollbackSnapshot `
+                -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot ([string]$Source.root) -AiRulesPathsAfter $candidateRulesPaths @clientSnapshotInput) `
+                -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
+        } finally { Write-RunStepMarker 'workflow-update.branch-snapshot' -End }
+        try {
+            $snapshotDetails = @{ dependencyPlan=$dependencyPlan }
+            if ($recordClientMembership) {
+                $snapshotDetails.clientMembership = [ordered]@{ schemaVersion=1; before=@(Get-AgentTargets); target=@($TargetClients)
+                    beforeConfigState=$clientConfigState; rulePaths=@($candidateRulesPaths) }
+            }
+            if ($null -ne $LocalPatchPlan) {
+                $snapshotDetails.localPatchRetirement = Invoke-WorkflowLocalPatchStep -Step Bind -Plan $LocalPatchPlan
+            }
+            if ($null -ne $legacyExecutor) {
+                $snapshotDetails.recoveryExecutorRoot = [string]$legacyExecutor.root
+                $snapshotDetails.recoveryExecutorCommit = [string]$legacyExecutor.commit
+            }
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase prepared -Details $snapshotDetails
+        }
+        catch {
+            Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+            throw
+        }
+        $copyCompleted = $false
+        $rollbackSucceeded = $false
+        try {
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase copying
+            Write-RunStepMarker 'workflow-update.branch-copy'
+            try {
+                Copy-WorkflowPackageManagedContent -Source $Source
+            } finally { Write-RunStepMarker 'workflow-update.branch-copy' -End }
+            Update-WorkflowPackageLockEntry -Source $Source | Out-Null
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase copy-complete
+            $copyCompleted = $true
+        } catch {
+            $copyException = $_.Exception
+            $copyError = $copyException.Message
+            try {
+                Restore-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+                $rollbackSucceeded = $true
+            } catch {
+                throw "WORKFLOW_UPDATE_BRANCH_COPY_ROLLBACK_FAILED: $copyError Rollback: $($_.Exception.Message)"
+            } finally {
+                if ($rollbackSucceeded) { Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot }
+            }
+            if (Test-WorkflowUpdatePathInUseError -Exception $copyException) {
+                throw "WORKFLOW_UPDATE_BRANCH_PATH_IN_USE: $copyError The branch package files were restored unchanged."
+            }
+            throw
+        }
+        $pending = [pscustomobject]@{ snapshot = $snapshot; receipt = [pscustomobject]@{ phase = 'copy-complete' } }
+    }
+
+    $snapshot = $pending.snapshot
+    if ([string]$pending.receipt.phase -ne 'branch-commit-ready') {
+        Add-WorkflowDotEnvPolicySnapshotPaths -Snapshot $snapshot -Pending (Get-WorkflowUpdatePendingSnapshot)
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase post-copy-running
+        try {
+            $membership = Get-ConfigValueFromObject (Get-WorkflowUpdatePendingSnapshot).receipt 'clientMembership' $null
+            if ($null -ne $membership) {
+                $target = @(Get-WorkflowUpdateRecordedClientTarget -Membership $membership)
+                $current = @(Get-AgentTargets)
+                if (@($current | Where-Object { $_ -notin $target }).Count) {
+                    throw 'WORKFLOW_UPDATE_CLIENT_RECEIPT_INVALID: preserve the exact snapshot and reconcile its recorded client set before repeating update-workflow.'
+                }
+                Initialize-ItlClientModelTiers | Out-Null
+                Set-ProjectAiRulesClients -Clients $target
+                Read-ProjectConfig
+            }
+            $fileResult = Invoke-WorkflowPackageFilePostCopy
+            if ($null -ne $membership) {
+                foreach ($relative in @(Get-ConfigValueFromObject $membership 'rulePaths' @())) {
+                    if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $relative) -PathType Leaf)) {
+                        throw "WORKFLOW_UPDATE_CLIENTS_INCOMPLETE: planned rules file '$relative' is missing. Preserve the snapshot and repeat update-workflow to finish the pinned client set."
+                    }
+                }
+                if (-not (Test-WorkflowRolloutClients -Root $script:ProjectRoot -Clients $target -RequiredClients $target -SourceRoot ([string]$Source.root))) {
+                    throw 'WORKFLOW_UPDATE_CLIENTS_INCOMPLETE: preserve the snapshot and repeat update-workflow to finish the pinned rules, commands and MCP files before commit.'
+                }
+            }
+            Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $snapshot -BeforeCommit ([string](Get-WorkflowUpdatePendingSnapshot).receipt.preUpdateHead) -RequireOriginalIndex
+            $ownedPaths = @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore @($fileResult.aiRulesPathsBefore) `
+                -ClientSurfacePathsBefore @($fileResult.clientSurfacePathsBefore)) +
+                @(Get-WorkflowUpdateDeletedLegacyPaths) +
+                @($snapshot.records | ForEach-Object { [string]$_.relativePath })
+            $plan = New-WorkflowBranchCommitPlan -ManagedPathSpecs $ownedPaths
+            Save-WorkflowBranchCommitPlanReceipt -Snapshot $snapshot -Plan $plan
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase branch-commit-ready
+        } catch {
+            $errorText = $_.Exception.Message
+            try { Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase post-copy-failed }
+            catch { throw "WORKFLOW_UPDATE_BRANCH_POST_COPY_UNRECORDED: $errorText Receipt: $($_.Exception.Message) Snapshot: $($snapshot.root)" }
+            throw "WORKFLOW_UPDATE_BRANCH_POST_COPY_INCOMPLETE: $errorText Snapshot: $($snapshot.root)"
+        }
+    }
+
+    $plan = Read-WorkflowBranchCommitPlanReceipt -Snapshot $snapshot
+    if ($null -eq $plan) { throw "WORKFLOW_UPDATE_BRANCH_COMMIT_RECEIPT_MISSING: $($snapshot.root)" }
+    $state = Read-DevBranchState -Name ''
+    Write-RunStepMarker 'workflow-update.branch-commit'
+    try { $result = Apply-WorkflowBranchCommitPlan -Plan $plan -PendingMergeState $state }
+    finally { Write-RunStepMarker 'workflow-update.branch-commit' -End }
+    Enable-WorkflowExecutionGuardForCurrentRoot
+    Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation 'update-workflow' | Out-Null
+    # Keep the pending transaction (and its retirement binding) until the patch
+    # owner completes. A new process can resume even after the branch commit.
+    Invoke-WorkflowLocalPatchStep -Step Complete -Plan $LocalPatchPlan
+    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase post-copy-complete
+    Retain-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot | Out-Null
+    return [pscustomobject]@{ status = 'completed'; commit = [string]$result.commit }
+}
+
+function Assert-WorkflowUpdateRulesRootReady {
+    param([Parameter(Mandatory = $true)][string]$SourceRoot)
+
+    $target = Get-AiRulesBaselineTarget -TemplateRoot $SourceRoot
+    if (-not $target.isConfigured) { return }
+    $installed = Get-DependencyLockEntry -Name 'aiRules1c'
+    if ([string](Get-ConfigValueFromObject -Object $installed -Path 'commit' -Default '') -ceq [string]$target.commit) { return }
+    $currentRepo = [string](Get-ConfigValue -Path 'aiRules.repo' -Default 'https://github.com/comol/ai_rules_1c.git')
+    $currentIdentity = Get-ItlGitRepositoryIdentity -Repo $currentRepo
+    $targetIdentity = Get-ItlGitRepositoryIdentity -Repo ([string]$target.repo)
+    if ($currentIdentity -notin @($targetIdentity, 'https://github.com/comol/ai_rules_1c') -and -not $target.explicitWorkflowAdoption) { return }
+
+    $manifestPath = Join-Path $script:ProjectRoot '.ai-rules.json'
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return }
+    $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json -ErrorAction Stop
+    $blocking = [System.Collections.Generic.List[string]]::new()
+    # Legacy installers may not set userModified until their next run. Inspect
+    # every installed entry, not only the manifest's possibly stale markers.
+    $paths = @(
+        @(Get-AiRulesManifestUserModifiedPaths) +
+        @(Get-AiRules1cManifestFileEntries -Manifest $manifest | ForEach-Object { [string]$_.target })
+    ) | Select-Object -Unique
+    foreach ($path in $paths) {
+        $relative = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$path)
+        if (Test-AiRulesManifestPathOwnedByWorkflow -Path $relative) { continue }
+        $actualPath = [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot ($relative.Replace('/', '\'))))
+        Assert-WorkflowManagedTargetPath -Path $actualPath
+        # MCP ownership is established by the existing client-config reconciliation.
+        # Its legacy marker may describe workflow-managed entries, so that decision
+        # remains inside the snapshotted post-copy transaction.
+        if ($relative -in @('.codex/config.toml', '.kilo/kilo.json')) { continue }
+        $entry = @($manifest.files.PSObject.Properties | Where-Object {
+            ([string]$_.Name).Replace('\', '/') -ceq $relative
+        } | Select-Object -First 1)
+        if ($entry.Count -eq 1 -and
+            (Test-AiRulesPlacedOnceProjectTemplate -Path $relative -ManifestEntry $entry[0].Value)) { continue }
+        if ($relative -eq 'AGENTS.md' -and $entry.Count -eq 1 -and
+            (Test-Path -LiteralPath $actualPath -PathType Leaf) -and
+            (Test-AiRulesFileMatchesInstalledHash -Path $actualPath -InstalledHash ([string]$entry[0].Value.installedHash))) { continue }
+        if ($relative -eq 'USER-RULES.md' -and $entry.Count -eq 1 -and
+            (Test-AiRulesUserRulesContainsOnlyWorkflowOverlayChange -ManifestEntry $entry[0].Value)) { continue }
+        if ($relative -ne 'AGENTS.md' -and $entry.Count -eq 1 -and
+            (Test-AiRulesFileMatchesInstalledHash -Path $actualPath -InstalledHash ([string]$entry[0].Value.installedHash))) { continue }
+        $blocking.Add($relative)
+    }
+    if ($blocking.Count -gt 0) {
+        $paths = @($blocking | Sort-Object -Unique) -join ', '
+        Set-RunFailureContext -Category 'ai-rules-migration-blocked' -RequiredAction 'Preserve or reconcile the named user-modified rules files, commit the resolution, then retry update-workflow.'
+        throw "WORKFLOW_UPDATE_RULES_USER_MODIFIED: changed managed paths relative to the installed ai_rules_1c manifest: $paths. Preserve or reconcile the named local policy, commit the resolution, then repeat update-workflow. No workflow package files were copied."
+    }
+}
+
+function Get-WorkflowUpdateBranchContinuation {
+    param([Parameter(Mandatory = $true)][string]$Status, [string]$Reason, [string]$Default)
+    if ($Status -eq 'completed') { return 'Repeat the original pending lifecycle command separately if one was stopped.' }
+    if ($Reason -match '^WORKFLOW_UPDATE_BRANCH_PATH_IN_USE') {
+        return 'Stop the branch process that holds the named path through its owner (its facade session or 1C client), then repeat update-workflow from master.'
+    }
+    if ($Status -eq 'deferred') { return 'Let the active owner finish or restore the unavailable worktree, then repeat update-workflow from master.' }
+    if ($Reason -match 'WORKFLOW_UPDATE_BRANCH_POST_COPY_INCOMPLETE|WORKFLOW_UPDATE_BRANCH_COMMIT_RECEIPT_MISSING') {
+        return 'Preserve the branch snapshot and repeat update-workflow from master to resume this exact candidate. If that candidate itself is defective, first run scripts/update-installed-workflow.ps1 -ProjectRoot <branch root> -Recovery abandon -SnapshotId <pending id> from a clean compatible source.'
+    }
+    if ($Reason -match 'WORKFLOW_UPDATE_BRANCH_SOURCE_CHANGED|WORKFLOW_UPDATE_COPY_SOURCE_CHANGED|WORKFLOW_UPDATE_SOURCE_(?:MISSING|CHANGED)') {
+        return 'Restore the exact recorded source checkout, then repeat update-workflow from master.'
+    }
+    if ($Reason -match 'WORKFLOW_UPDATE_BRANCH_INDEX_CHANGED|WORKFLOW_UPDATE_BRANCH_HEAD_CHANGED|WORKFLOW_UPDATE_RECONCILIATION_REQUIRED|WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID') {
+        return 'Preserve current, before, and candidate evidence; reconcile the named path or Git state, then repeat update-workflow from master.'
+    }
+    return $(if ($Default) { $Default } else { 'Resolve the reported branch conflict, then repeat update-workflow from master.' })
+}
+
+function Resolve-WorkflowUpdateRolloutScope {
+    param([string]$SourceCommit, [object]$RecordedScope, [string]$InputFile = '')
+    $requested = $null
+    if ($InputFile) { $requested = Read-Utf8Text -Path $InputFile | ConvertFrom-Json -ErrorAction Stop }
+    $scopes = @($RecordedScope, $requested | Where-Object { $null -ne $_ })
+    $normalized = @()
+    foreach ($scope in $scopes) {
+        if ([int]$scope.schemaVersion -ne 1 -or [string]$scope.sourceCommit -cne $SourceCommit -or
+            [IO.Path]::GetFullPath([string]$scope.projectRoot).TrimEnd('\','/') -ine [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\','/')) {
+            throw "WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH: preserve the receipt; scope source '$([string]$scope.sourceCommit)' differs from expected '$SourceCommit' or names another project root. A pending update continues only with its recorded scope; a newer exact source may execute it, reports WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING, and then the new scope applies."
+        }
+        $roots = @($scope.roots | ForEach-Object { [IO.Path]::GetFullPath([string]$_).TrimEnd('\','/') } | Sort-Object)
+        if ($roots.Count -eq 0 -or @($roots | Sort-Object -Unique).Count -ne $roots.Count) {
+            throw 'WORKFLOW_UPDATE_SCOPE_INVALID: select a non-empty set of distinct registered development roots.'
+        }
+        $registered = @(Get-GitWorktrees | Where-Object { $_.branch -like 'itldev/*' } | ForEach-Object { [IO.Path]::GetFullPath([string]$_.path).TrimEnd('\','/') })
+        if (@($roots | Where-Object { $_ -notin $registered -or -not (Test-Path -LiteralPath $_ -PathType Container) }).Count) {
+            throw 'WORKFLOW_UPDATE_SCOPE_UNREGISTERED: scope must contain only existing registered development worktrees; repair registration through its owner.'
+        }
+        $normalized += [pscustomobject][ordered]@{schemaVersion=1;projectRoot=[IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\','/');sourceCommit=$SourceCommit;roots=$roots}
+    }
+    if ($normalized.Count -eq 2 -and ($normalized[0] | ConvertTo-Json -Depth 8 -Compress) -ine ($normalized[1] | ConvertTo-Json -Depth 8 -Compress)) {
+        throw 'WORKFLOW_UPDATE_SCOPE_CHANGED: pending update retains its original scope; resume without changing the roots file.'
+    }
+    if ($normalized.Count) { return $normalized[0] }
+    return $null
+}
+
+function Get-WorkflowRolloutClients {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $config = Read-Utf8Text -Path (Join-Path $Root '.agent-1c/project.json') | ConvertFrom-Json -ErrorAction Stop
+    return @(ConvertTo-AgentToolList -Value (Get-ConfigValueFromObject $config 'aiRules.tools' @()))
+}
+
+function Test-WorkflowRolloutClients {
+    param([Parameter(Mandatory = $true)][string]$Root, [AllowEmptyCollection()][string[]]$Clients,
+        [AllowEmptyCollection()][string[]]$RequiredClients, [string]$SourceRoot)
+    try {
+        $actual = @(Get-WorkflowRolloutClients -Root $Root)
+        if ((@($actual | Sort-Object) -join ',') -cne (@($Clients | Sort-Object) -join ',') -or
+            @($RequiredClients | Where-Object { $_ -notin $actual }).Count) { return $false }
+        if ($actual.Count -eq 0) { return $true }
+        return Invoke-InProjectContext -Root $Root -ScriptBlock {
+            $manifest = Read-Utf8Text -Path (Join-Path $script:ProjectRoot '.ai-rules.json') | ConvertFrom-Json -ErrorAction Stop
+            if (@(Get-AiRulesManifestUserModifiedPaths).Count) { return $false }
+            if ((@(ConvertTo-AgentToolList -Value $manifest.tools | Sort-Object) -join ',') -cne (@($Clients | Sort-Object) -join ',')) { return $false }
+            $entries = @(Get-AiRules1cManifestFileEntries -Manifest $manifest)
+            if ($entries.Count -eq 0) { return $false }
+            $paths = @($entries | ForEach-Object { [string]$_.target }) +
+                @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot $SourceRoot -Clients $Clients)
+            foreach ($relative in $paths) {
+                $path = Join-Path $script:ProjectRoot $relative
+                Assert-WorkflowManagedTargetPath -Path $path
+                if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+            }
+            return $true
+        }
+    } catch { return $false }
+}
+
+function Get-WorkflowDevelopmentBranchCompletedProof {
+    param([Parameter(Mandatory = $true)][object]$Source, [string[]]$MasterClients)
+
+    # A pin can be written before post-copy. Only the update owner's terminal
+    # capsule, exact HEAD, backups, current bytes and client set prove completion.
+    if ($null -ne (Get-WorkflowUpdatePendingSnapshot)) { return $null }
+    $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { return $null }
+    $head = Get-CurrentCommit
+    foreach ($directory in @(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-completed-*' | Sort-Object LastWriteTime -Descending)) {
+        $saved = Read-WorkflowUpdateSnapshot -SnapshotRoot $directory.FullName -Completed
+        if ([string]$saved.receipt.sourceCommit -cne [string]$Source.commit -or
+            [string]$saved.receipt.completedHead -cne $head) { continue }
+        $id = $directory.Name.Substring('itl-workflow-update-completed-'.Length)
+        $qualified = Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id
+        $clients = @(Get-WorkflowRolloutClients -Root $script:ProjectRoot)
+        if (@($MasterClients | Where-Object { $_ -notin $clients }).Count) { return $null }
+        $clientPaths = @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot ([string]$Source.root) -Clients $clients)
+        $missing = @($qualified.snapshot.records | Where-Object {
+            $_.relativePath -cin $clientPaths -and
+            [string]$qualified.receipt.pathState.PSObject.Properties[[string]$_.relativePath].Value -like 'file:*' -and
+            -not (Test-Path -LiteralPath $_.targetPath -PathType Leaf)
+        } | ForEach-Object relativePath)
+        if ($missing.Count) {
+            foreach ($record in @($qualified.snapshot.records | Where-Object { $_.relativePath -cnotin $missing })) {
+                $expected = [string]$qualified.receipt.pathState.PSObject.Properties[[string]$record.relativePath].Value
+                if ((Get-WorkflowUpdatePathState -RelativePath $record.relativePath) -cne $expected) {
+                    Assert-WorkflowUpdateSnapshotCurrentState -Pending $qualified
+                }
+            }
+            return $null
+        }
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $qualified
+        if (-not (Test-WorkflowRolloutClients -Root $script:ProjectRoot -Clients $clients -RequiredClients $MasterClients -SourceRoot ([string]$Source.root))) {
+            return $null
+        }
+        Write-Host "Workflow branch $(Get-CurrentBranch): already completed; verified retained capsule $id; no package or settings writes."
+        return [pscustomobject]@{status='completed';commit=$head;completedSnapshotId=$id}
+    }
+    return $null
+}
+
+function Save-WorkflowDevelopmentBranchRolloutReport {
+    param([object]$Source, [string[]]$MasterClients, [object]$Scope,
+        [AllowEmptyCollection()][object[]]$Outcomes, [AllowEmptyCollection()][string[]]$ExpectedRoots)
+    $report = [ordered]@{schemaVersion=1;sourceCommit=[string]$Source.commit;sourceRoot=[string]$Source.root
+        mainRoot=[string]$script:ProjectRoot;masterClients=@($MasterClients);updatedAt=(Get-Date).ToString('o')
+        rolloutScope=$Scope;inventoryComplete=($Outcomes.Count -eq $ExpectedRoots.Count);expectedRoots=@($ExpectedRoots);roots=@($Outcomes)}
+    $reportPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
+    Write-Utf8TextAtomic -Path $reportPath -Value (($report | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    return $report
+}
+
+function Invoke-WorkflowDevelopmentBranchItemUpdate {
+    param([Parameter(Mandatory = $true)][string]$BranchRoot, [Parameter(Mandatory = $true)][object]$Source,
+        [AllowEmptyCollection()][string[]]$MasterClients = @())
+
+    # One development worktree under its own lifecycle lease. The rollout runs
+    # it in process or through an update-workflow-branch child helper; both
+    # return the same outcome. A busy branch is deferred without waiting.
+    $status = ''
+    $reason = ''
+    $commit = ''
+    $appliedClients = @()
+    $lease = $null
+    try {
+        $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath $BranchRoot
+        Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $BranchRoot
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+        $lease = Wait-Agent1cLockSet -RequestedAction 'update-workflow' -TimeoutSeconds 0 -GetRequests {
+            [pscustomobject]@{ worktreePath = $BranchRoot; lockPath = $lockPath; share = [IO.FileShare]::Read; kind = 'lifecycle' }
+        }
+        $runtimeBusy = Get-WorkflowUpdateRootRuntimeBusyReason -Root $BranchRoot
+        if ($runtimeBusy) {
+            $status = 'deferred'
+            $reason = $runtimeBusy
+        } else {
+            $updated = Invoke-InProjectContext -Root $BranchRoot -ScriptBlock {
+                $completedProof = Get-WorkflowDevelopmentBranchCompletedProof -Source $Source -MasterClients $MasterClients
+                if ($null -ne $completedProof) { return $completedProof }
+                # Revalidate under the branch lease. The existing patch
+                # owner preserves exact before/after bytes and staging.
+                $branchPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow-branch' -Source $Source
+                if ($null -ne $branchPatchPlan -and $branchPatchPlan.preserve) {
+                    throw 'WORKFLOW_PATCH_PACKAGE_UNCHANGED: the recorded local patch remains active; preserve it and select a confirmed replacement package.'
+                }
+                try {
+                    if (-not (Get-ConfigValueFromObject -Object $branchPatchPlan -Path 'resuming' -Default $false)) {
+                        Invoke-WorkflowLocalPatchStep -Step Retire -Plan $branchPatchPlan
+                    }
+                    $branchResult = Invoke-WorkflowDevelopmentBranchUpdate -Source $Source -LocalPatchPlan $branchPatchPlan -MasterClients $MasterClients
+                    $branchResult
+                } catch {
+                    $branchError = $_
+                    if (Get-ConfigValueFromObject -Object $branchPatchPlan -Path 'resuming' -Default $false) {
+                        # Leave the exact interrupted transaction with
+                        # its owner; never reapply a patch over new bytes.
+                        throw $branchError
+                    }
+                    $installedCommit = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'commit' -Default '')
+                    if ($installedCommit -ceq [string]$Source.commit) {
+                        Invoke-WorkflowLocalPatchStep -Step Complete -Plan $branchPatchPlan
+                    } else {
+                        Invoke-WorkflowLocalPatchStep -Step Undo -Plan $branchPatchPlan
+                    }
+                    throw $branchError
+                }
+            }
+            $status = [string]$updated.status
+            $commit = [string]$updated.commit
+            if ($status -eq 'completed') {
+                $appliedClients = @(Get-WorkflowRolloutClients -Root $BranchRoot)
+                if (-not (Test-WorkflowRolloutClients -Root $BranchRoot -Clients $appliedClients -RequiredClients $MasterClients -SourceRoot ([string]$Source.root))) {
+                    throw 'WORKFLOW_UPDATE_CLIENTS_INCOMPLETE: preserve the branch files and repeat update-workflow from master to reconcile the recorded clients and their rules, commands and MCP files.'
+                }
+            }
+        }
+    } catch {
+        $reason = $_.Exception.Message
+        $status = if ($reason -match '^(?:LIFECYCLE_LOCK_WAIT_TIMEOUT|WORKFLOW_UPDATE_BRANCH_PATH_IN_USE)') { 'deferred' } else { 'blocked' }
+    } finally {
+        if ($null -ne $lease) {
+            foreach ($handle in @($lease.handles)) { $handle.stream.Dispose() }
+        }
+    }
+    return [pscustomobject]@{ status = $status; reason = $reason; commit = $commit; clients = @($appliedClients)
+        claudeMemoryTransition = ($status -eq 'completed' -and (Test-WorkflowClaudeMemoryTransition $BranchRoot)) }
+}
+
+function Get-WorkflowUpdateAvailableMemoryBytes {
+    try { return [int64](Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).FreePhysicalMemory * 1KB }
+    catch { return [int64]-1 }
+}
+
+function Start-WorkflowDevelopmentBranchChild {
+    param([Parameter(Mandatory = $true)][object]$Item, [Parameter(Mandatory = $true)][object]$Source,
+        [AllowEmptyCollection()][string[]]$MasterClients = @(), [Parameter(Mandatory = $true)][string]$OutputRoot,
+        [Parameter(Mandatory = $true)][string]$RunInputsPath)
+
+    $runner = Join-Path $script:Agent1cScriptRoot 'run-itl-command.ps1'
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "WORKFLOW_BRANCH_RUNNER_MISSING: $runner" }
+    $safe = ConvertTo-SafeName ([string]$Item.branch)
+    $requestPath = Join-Path $OutputRoot "$safe.request.json"
+    $resultPath = Join-Path $OutputRoot "$safe.result.json"
+    $stdout = Join-Path $OutputRoot "$safe.stdout.json"
+    $stderr = Join-Path $OutputRoot "$safe.stderr.log"
+    if (Test-Path -LiteralPath $resultPath -PathType Leaf) { Remove-Item -LiteralPath $resultPath -Force }
+    $request = [ordered]@{
+        schemaVersion = 1; mainRoot = [string]$script:ProjectRoot; branchRoot = [string]$Item.root; branch = [string]$Item.branch
+        source = [ordered]@{ root = [string]$Source.root; repo = [string]$Source.repo; ref = [string]$Source.ref; commit = [string]$Source.commit
+            source = [string]$Source.source; rolloutScope = (Get-ConfigValueFromObject $Source 'rolloutScope' $null) }
+        masterClients = @($MasterClients); runInputsPath = $RunInputsPath; resultPath = $resultPath
+    }
+    Write-Utf8TextAtomic -Path $requestPath -Value (($request | ConvertTo-Json -Depth 16) + [Environment]::NewLine)
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, '--',
+        '-Action', 'update-workflow-branch', '-WorkflowBranchRequestPath', $requestPath)
+    # The child must decide exactly like the in-process rollout: same client,
+    # rules, catalog decision, dependency selection and MCP selection inputs.
+    foreach ($name in @('AgentTarget', 'CatalogDecision', 'DependencyMode', 'DependencySelectionFile', 'McpScope', 'McpServerId', 'McpProvider', 'McpConfigId', 'McpHostId', 'McpLocalScope')) {
+        $value = [string](Get-Variable -Name $name -ValueOnly -ErrorAction SilentlyContinue)
+        if (-not [string]::IsNullOrWhiteSpace($value)) { $arguments += @("-$name", $value.Trim()) }
+    }
+    foreach ($name in @('SkipAiRules', 'Force', 'DependencyHotfixOnly')) {
+        $value = Get-Variable -Name $name -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -ne $value -and [bool]$value) { $arguments += "-$name" }
+    }
+    $process = Start-Process -FilePath 'powershell' `
+        -ArgumentList (Join-NativeCommandLineArguments -Arguments $arguments) `
+        -WorkingDirectory ([string]$Item.root) `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $stdout `
+        -RedirectStandardError $stderr `
+        -PassThru
+    return [pscustomobject]@{ item = $Item; process = $process; stdout = $stdout; stderr = $stderr; resultPath = $resultPath; startedAt = Get-Date; index = -1 }
+}
+
+function Receive-WorkflowDevelopmentBranchChild {
+    param([Parameter(Mandatory = $true)][object]$Entry)
+
+    # HasExited can precede the redirected stream flush; the parameterless
+    # wait completes it and releases the handles before the files are read.
+    $Entry.process.WaitForExit()
+    $stdoutText = if (Test-Path -LiteralPath $Entry.stdout -PathType Leaf) { Read-Utf8Text -Path $Entry.stdout } else { '' }
+    $summary = $null
+    try { if ($stdoutText) { $summary = $stdoutText | ConvertFrom-Json } } catch {}
+    $statusPath = [string](Get-StateValue -State $summary -Name 'statusPath' -Default '')
+    $logPath = if ($statusPath) { Join-Path (Split-Path -Parent $statusPath) 'console.log' } else { '' }
+    $result = $null
+    if (Test-Path -LiteralPath $Entry.resultPath -PathType Leaf) {
+        try { $result = Read-Utf8Text -Path $Entry.resultPath | ConvertFrom-Json -ErrorAction Stop } catch {}
+    }
+    if ($null -ne $result -and [string]$result.status -in @('completed', 'deferred', 'blocked')) {
+        return [pscustomobject]@{ status = [string]$result.status; reason = [string]$result.reason; commit = [string]$result.commit
+            clients = @($result.clients | Where-Object { $_ }); logPath = $logPath
+            claudeMemoryTransition = [bool](Get-ConfigValueFromObject $result 'claudeMemoryTransition' $false) }
+    }
+    # No branch outcome: the child stopped before or outside the branch owner.
+    $stderrText = if (Test-Path -LiteralPath $Entry.stderr -PathType Leaf) { Read-Utf8Text -Path $Entry.stderr } else { '' }
+    $detail = [string](Get-StateValue -State $summary -Name 'error' -Default '')
+    if (-not $detail) { $detail = ($stderrText.Trim() + ' ' + $stdoutText.Trim()).Trim() }
+    if ($detail.Length -gt 2000) { $detail = $detail.Substring(0, 2000) }
+    return [pscustomobject]@{ status = 'blocked'; reason = "WORKFLOW_BRANCH_CHILD_FAILED: no branch outcome from the child helper. $detail"; commit = ''; clients = @(); logPath = $logPath }
+}
+
+function Invoke-WorkflowDevelopmentBranchChildren {
+    param([Parameter(Mandatory = $true)][object[]]$Items, [Parameter(Mandatory = $true)][object]$Source,
+        [AllowEmptyCollection()][string[]]$MasterClients = @(), [Parameter(Mandatory = $true)][int]$Limit,
+        [Parameter(Mandatory = $true)][scriptblock]$OnOutcome)
+
+    $runRoot = if ($RunStatusPath) { Split-Path -Parent (Resolve-RunFilePath -Path $RunStatusPath) } else { Join-Path $script:ProjectRoot '.agent-1c\runs' }
+    $outputRoot = Join-Path $runRoot 'workflow-branches'
+    New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+    $runInputsPath = Join-Path $outputRoot 'run-inputs.json'
+    Export-WorkflowUpdateRunSharedInputs -Path $runInputsPath -SourceCommit ([string]$Source.commit)
+    # A branch helper needs a few hundred MB; never start the next one into a
+    # machine that would swap. The first branch always starts.
+    $minimumFreeBytes = [int64]1536 * 1MB
+    $pending = [System.Collections.Generic.Queue[object]]::new()
+    foreach ($item in $Items) { $pending.Enqueue($item) }
+    $running = [System.Collections.Generic.List[object]]::new()
+    $completed = 0
+    $memoryWaitAnnounced = $false
+    $lastProgress = ''
+    while ($pending.Count -gt 0 -or $running.Count -gt 0) {
+        while ($pending.Count -gt 0 -and $running.Count -lt $Limit) {
+            if ($running.Count -gt 0) {
+                $available = Get-WorkflowUpdateAvailableMemoryBytes
+                if ($available -ge 0 -and $available -lt $minimumFreeBytes) {
+                    if (-not $memoryWaitAnnounced) {
+                        Write-Host ("Workflow branches: waiting for free memory before the next branch ({0} MB free, {1} MB required); {2} running." -f [int64]($available / 1MB), [int64]($minimumFreeBytes / 1MB), $running.Count)
+                        $memoryWaitAnnounced = $true
+                    }
+                    break
+                }
+            }
+            $memoryWaitAnnounced = $false
+            $next = $pending.Dequeue()
+            $stepName = 'workflow-update.branch ' + [string]$next.item.branch
+            Write-RunStepMarker $stepName
+            try {
+                $entry = Start-WorkflowDevelopmentBranchChild -Item $next.item -Source $Source -MasterClients $MasterClients -OutputRoot $outputRoot -RunInputsPath $runInputsPath
+                $entry.index = [int]$next.index
+                $running.Add($entry) | Out-Null
+                Write-Host "Workflow branch $($next.item.branch): started in a separate helper process."
+            } catch {
+                Write-RunStepMarker $stepName -End
+                & $OnOutcome ([int]$next.index) ([pscustomobject]@{ status = 'blocked'; reason = "WORKFLOW_BRANCH_CHILD_START_FAILED: $($_.Exception.Message)"; commit = ''; clients = @() })
+                $completed++
+            }
+        }
+        $progress = "parallel={0}; running={1}; pending={2}; complete={3}" -f $Limit, $running.Count, $pending.Count, $completed
+        if ($progress -cne $lastProgress) {
+            Set-RunStage -Stage 'workflow-update.branches' -Detail $progress
+            $lastProgress = $progress
+        }
+        foreach ($entry in @($running)) {
+            $entry.process.Refresh()
+            if (-not $entry.process.HasExited) { continue }
+            $outcome = Receive-WorkflowDevelopmentBranchChild -Entry $entry
+            Write-RunStepMarker ('workflow-update.branch ' + [string]$entry.item.branch) -End
+            $elapsed = (Get-Date) - $entry.startedAt
+            Write-Host ("Workflow branch {0}: {1} in {2:mm\:ss}. Log: {3}" -f $entry.item.branch, $outcome.status, $elapsed, $(if ($outcome.logPath) { $outcome.logPath } else { $entry.stderr }))
+            & $OnOutcome ([int]$entry.index) $outcome
+            $completed++
+            [void]$running.Remove($entry)
+        }
+        if ($running.Count -gt 0) { Start-Sleep -Milliseconds 500 }
+    }
+}
+
+function Invoke-WorkflowDevelopmentBranchChild {
+    # update-workflow-branch: one development worktree of a parallel rollout.
+    # The parent rollout owns the request, the report and the continuation.
+    if ([string]::IsNullOrWhiteSpace($WorkflowBranchRequestPath) -or -not (Test-Path -LiteralPath $WorkflowBranchRequestPath -PathType Leaf)) {
+        throw 'WORKFLOW_BRANCH_REQUEST_REQUIRED: update-workflow-branch is started only by the update-workflow rollout; repeat update-workflow from master.'
+    }
+    $request = Read-Utf8Text -Path $WorkflowBranchRequestPath | ConvertFrom-Json -ErrorAction Stop
+    if ([int]$request.schemaVersion -ne 1 -or
+        -not [string]::Equals((Resolve-Agent1cFullPath -Path ([string]$request.branchRoot)), [string]$script:ProjectRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        [string]$request.source.commit -notmatch '^[a-f0-9]{40}$' -or [string]::IsNullOrWhiteSpace([string]$request.resultPath)) {
+        throw "WORKFLOW_BRANCH_REQUEST_INVALID: '$WorkflowBranchRequestPath' does not describe this development worktree; repeat update-workflow from master."
+    }
+    $source = [pscustomobject]@{ root = [string]$request.source.root; repo = [string]$request.source.repo; ref = [string]$request.source.ref
+        commit = [string]$request.source.commit; source = [string]$request.source.source; rolloutScope = $request.source.rolloutScope }
+    Set-WorkflowPackageCacheUse -Root ([string]$source.root)
+    Set-RunStage -Stage 'workflow-update.branch' -Detail "Updating development worktree '$($request.branch)' with workflow candidate $($source.commit)."
+    $outcome = @(Invoke-WithRunStatusHeartbeat {
+        Invoke-WorkflowUpdateRunSharedInputs {
+            $imported = Import-WorkflowUpdateRunSharedInputs -Path ([string]$request.runInputsPath) -SourceCommit ([string]$source.commit)
+            Write-Host "Shared update inputs reused from the master pass: $imported."
+            Invoke-WorkflowDevelopmentBranchItemUpdate -BranchRoot ([string]$script:ProjectRoot) -Source $source -MasterClients @($request.masterClients | Where-Object { $_ })
+        }
+    }) | Select-Object -Last 1
+    $payload = [ordered]@{ schemaVersion = 1; branch = [string]$request.branch; status = [string]$outcome.status; reason = [string]$outcome.reason
+        commit = [string]$outcome.commit; clients = @($outcome.clients)
+        claudeMemoryTransition = [bool](Get-ConfigValueFromObject $outcome 'claudeMemoryTransition' $false) }
+    Write-Utf8TextAtomic -Path ([string]$request.resultPath) -Value (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+    if ([string]$outcome.status -ne 'completed') {
+        throw "WORKFLOW_BRANCH_$(([string]$outcome.status).ToUpperInvariant()): $($outcome.reason)"
+    }
+    Set-RunStage -Stage 'workflow-update.branch-complete' -Detail "Development worktree '$($request.branch)' updated at $($outcome.commit)."
+}
+
+function Invoke-WorkflowDevelopmentBranchRollout {
+    param([Parameter(Mandatory = $true)][object]$Source)
+
+    # The parent compact runner still owns this status while a branch performs
+    # synchronous preflight/post-copy work. Reuse its PID-bound heartbeat for
+    # the whole rollout, including the already-current-master resume route.
+    return Invoke-WithRunStatusHeartbeat {
+    $mainRoot = [string]$script:ProjectRoot
+    $masterClients = @(Get-AgentTargets)
+    $reportPath = Join-Path $mainRoot '.agent-1c/snapshots/workflow-update-rollout.json'
+    $prior = $null
+    if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+        try { $prior = Read-Utf8Text -Path $reportPath | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw "WORKFLOW_UPDATE_BRANCH_REPORT_INVALID: preserve '$reportPath' for exact reconciliation. $($_.Exception.Message)" }
+        if ([int]$prior.schemaVersion -ne 1 -or [string]$prior.mainRoot -cne $mainRoot) {
+            throw "WORKFLOW_UPDATE_BRANCH_REPORT_INVALID: root or schema differs at '$reportPath'."
+        }
+    }
+    $scope = Get-ConfigValueFromObject $Source 'rolloutScope' $null
+    $scope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$Source.commit) -RecordedScope $scope
+    $selected = @(if ($null -ne $scope) { $scope.roots })
+    $inventory = @(Get-WorkflowUpdateWorktreeInventory -TargetCommit ([string]$Source.commit) -SelectedRoot $selected)
+    $expectedRoots = @($inventory | Where-Object kind -EQ development | ForEach-Object root)
+    $slots = [System.Collections.Generic.List[object]]::new()
+    $eligible = [System.Collections.Generic.List[object]]::new()
+    foreach ($item in @($inventory | Where-Object kind -EQ development)) {
+        $status = [string]$item.eligibility
+        $reason = [string]$item.reason
+        $commit = ''
+        $appliedClients = @()
+        if ($status -eq 'blocked' -and $reason -eq 'workflow-write-set-conflict') {
+            try {
+                $patchPlan = Invoke-InProjectContext -Root ([string]$item.root) -ScriptBlock {
+                    Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow-branch' -Source $Source
+                }
+                if ($null -ne $patchPlan -and -not $patchPlan.preserve -and @($item.conflictPaths).Count -gt 0 -and
+                    @($item.conflictPaths | Where-Object { $_ -cnotin $patchPlan.paths }).Count -eq 0) {
+                    $status = 'eligible'
+                    $reason = ''
+                }
+            } catch { $reason = $_.Exception.Message }
+        }
+        $earlier = @()
+        if ($null -ne $prior) {
+            $earlier = @($prior.roots | Where-Object { [string]$_.root -ceq [string]$item.root -and
+                [string]$_.branch -ceq [string]$item.branch -and [string]$_.status -ceq 'completed' } | Select-Object -First 1)
+        }
+        if ($null -ne $prior -and [string]$prior.sourceCommit -ceq [string]$Source.commit -and
+            $null -eq (Get-WorkflowDependencySelectionInput -Root ([string]$item.root)) -and
+            $earlier.Count -eq 1 -and [string]$item.installedWorkflowCommit -ceq [string]$Source.commit -and
+            [string]$item.head -ceq [string]$earlier[0].commit -and
+            @($(if (Test-Path -LiteralPath (Join-Path ([string]$item.root) '.agent-1c/snapshots/workflow-update') -PathType Container) {
+                Get-ChildItem -LiteralPath (Join-Path ([string]$item.root) '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*'
+            })).Count -eq 0 -and
+            @($item.conflictPaths).Count -eq 0 -and
+            $null -ne $earlier[0].PSObject.Properties['clients'] -and
+            (Test-WorkflowRolloutClients -Root ([string]$item.root) -Clients @($earlier[0].clients) -RequiredClients $masterClients -SourceRoot ([string]$Source.root))) {
+            $status = 'completed'
+            $reason = ''
+            $commit = [string]$earlier[0].commit
+            $appliedClients = @($earlier[0].clients)
+        }
+        $slots.Add([pscustomobject]@{ item = $item; outcome = $(if ($status -eq 'eligible') { $null } else {
+            [pscustomobject]@{ status = $status; reason = $reason; commit = $commit; clients = @($appliedClients) } }) }) | Out-Null
+        if ($status -eq 'eligible') { $eligible.Add([pscustomobject]@{ index = $slots.Count - 1; item = $item }) | Out-Null }
+    }
+    $saveReport = {
+        $outcomes = @(foreach ($slot in $slots) {
+            if ($null -eq $slot.outcome) { continue }
+            $slotStatus = [string]$slot.outcome.status
+            $slotReason = [string]$slot.outcome.reason
+            [pscustomobject]@{
+                root = [string]$slot.item.root; branch = [string]$slot.item.branch
+                status = $slotStatus; reason = $slotReason; commit = [string]$slot.outcome.commit; clients = @($slot.outcome.clients)
+                claudeMemoryTransition = [bool](Get-ConfigValueFromObject $slot.outcome 'claudeMemoryTransition' $false)
+                continuation = Get-WorkflowUpdateBranchContinuation -Status $slotStatus -Reason $slotReason -Default $(if ($slotStatus -eq 'blocked' -and [string]$slot.item.eligibility -eq 'eligible') {
+                    'Inspect the reported branch failure and its preserved snapshot, then repeat update-workflow from master.'
+                } else { [string]$slot.item.continuation })
+            }
+        })
+        Save-WorkflowDevelopmentBranchRolloutReport -Source $Source -MasterClients $masterClients -Scope $scope -Outcomes $outcomes -ExpectedRoots $expectedRoots
+    }
+    $recordOutcome = { param([int]$Index, [object]$Outcome) $slots[$Index].outcome = $Outcome; & $saveReport | Out-Null }
+    $inProcess = { param([object]$Next)
+        $stepName = 'workflow-update.branch ' + [string]$Next.item.branch
+        Write-RunStepMarker $stepName
+        try { $branchOutcome = Invoke-WorkflowDevelopmentBranchItemUpdate -BranchRoot ([string]$Next.item.root) -Source $Source -MasterClients $masterClients }
+        finally { Write-RunStepMarker $stepName -End }
+        & $recordOutcome ([int]$Next.index) $branchOutcome
+    }
+    $queue = @($eligible.ToArray())
+    $limitVariable = Get-Variable -Name MaxParallelWorkflowBranches -ValueOnly -ErrorAction SilentlyContinue
+    $limit = if ($null -ne $limitVariable -and [int]$limitVariable -ge 1) { [int]$limitVariable } else { 1 }
+    if ($limit -gt 1 -and $queue.Count -gt 1 -and
+        (-not (Test-WorkflowUpdateRunSharedInputsActive) -or $script:ItlWorkflowUpdateRunInputs.Count -eq 0)) {
+        # Children reuse the machine inputs this process verified for master.
+        # The resume route verified nothing yet: one in-process branch does it.
+        & $inProcess $queue[0]
+        $queue = @($queue | Select-Object -Skip 1)
+    }
+    if ($limit -gt 1 -and $queue.Count -gt 1) {
+        Invoke-WorkflowDevelopmentBranchChildren -Items $queue -Source $Source -MasterClients $masterClients -Limit $limit -OnOutcome $recordOutcome
+    } else {
+        foreach ($next in $queue) { & $inProcess $next }
+    }
+    return (& $saveReport)
+    }
+}
+
+function Assert-WorkflowDevelopmentBranchRolloutComplete {
+    param([Parameter(Mandatory = $true)][string]$SourceCommit, [object]$RolloutScope = $null)
+    $reportPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
+    if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+        throw "WORKFLOW_UPDATE_BRANCH_REPORT_MISSING: repeat update-workflow to classify every development worktree. $reportPath"
+    }
+    try { $report = Read-Utf8Text -Path $reportPath | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw "WORKFLOW_UPDATE_BRANCH_REPORT_INVALID: $reportPath $($_.Exception.Message)" }
+    if ([int]$report.schemaVersion -ne 1 -or [string]$report.sourceCommit -cne $SourceCommit -or
+        [string]$report.mainRoot -cne [string]$script:ProjectRoot) {
+        throw "WORKFLOW_UPDATE_BRANCH_REPORT_INVALID: source or root identity differs at $reportPath"
+    }
+    if ($null -ne $report.PSObject.Properties['inventoryComplete'] -and
+        (-not [bool]$report.inventoryComplete -or
+         (@($report.roots | ForEach-Object root | Sort-Object) -join "`0") -cne (@($report.expectedRoots | Sort-Object) -join "`0"))) {
+        throw 'WORKFLOW_UPDATE_BRANCH_REPORT_INCOMPLETE: repeat update-workflow to classify the remaining roots; retained completed roots are verified without replaying their installation.'
+    }
+    $actualScope = Get-ConfigValueFromObject $report 'rolloutScope' $null
+    if (($actualScope | ConvertTo-Json -Depth 8 -Compress) -ine ($RolloutScope | ConvertTo-Json -Depth 8 -Compress)) {
+        throw 'WORKFLOW_UPDATE_BRANCH_SCOPE_MISMATCH: a selected-root report cannot prove a complete ordinary rollout; repeat the original scoped update or run an ordinary update for all roots.'
+    }
+    if ($null -ne $RolloutScope -and (@($report.roots.root | Sort-Object) -join "`0") -ine (@($RolloutScope.roots | Sort-Object) -join "`0")) {
+        throw 'WORKFLOW_UPDATE_BRANCH_SCOPE_INCOMPLETE: retain the report and repeat the original update.'
+    }
+    $incomplete = @($report.roots | Where-Object { [string]$_.status -cne 'completed' })
+    if ($incomplete.Count -gt 0) {
+        $details = @($incomplete | ForEach-Object { "$($_.branch)=$($_.status): $($_.reason)" }) -join '; '
+        throw "WORKFLOW_UPDATE_BRANCHES_INCOMPLETE: master is updated; repeat update-workflow when the named branches are available or repaired. $details Report: $reportPath"
+    }
+    foreach ($root in @($report.roots)) {
+        if ($null -eq $root.PSObject.Properties['clients'] -or
+            -not (Test-WorkflowRolloutClients -Root ([string]$root.root) -Clients @($root.clients) -RequiredClients @(Get-AgentTargets) -SourceRoot ([string]$report.sourceRoot))) {
+            throw "WORKFLOW_UPDATE_CLIENTS_INCOMPLETE: the report does not prove the current client set in '$($root.branch)'; preserve it and repeat update-workflow from master."
+        }
+    }
+    return $report
+}
+
+function Assert-WorkflowUpdateRecordedSource {
+    param([Parameter(Mandatory = $true)][object]$Receipt)
+
+    $root = [string]$Receipt.sourceRoot
+    $commit = [string]$Receipt.sourceCommit
+    $repo = [string](Get-StateValue -State $Receipt -Name 'sourceRepo' -Default '')
+    if ($commit -match '^[a-f0-9]{40}$' -and $repo -and (Test-WorkflowPackageCacheCheckoutPath -Root $root) -and
+        [string]::Equals((Resolve-Agent1cFullPath -Path $root), (Join-Path (Get-WorkflowPackageCacheRepoRoot -Repo $repo) $commit.Substring(0, 12)), [StringComparison]::OrdinalIgnoreCase)) {
+        # Retention may have removed, or damage replaced, the recorded exact
+        # cached source; rebuild that same path from the mirror.
+        $rebuilt = Resolve-WorkflowPackageCacheCheckout -Repo $repo -Commit $commit
+        if (-not [string]::Equals($rebuilt, $root, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "WORKFLOW_UPDATE_SOURCE_BUSY: the recorded cached source '$root' is still held by another reader; a verified copy is at '$rebuilt'. Close that reader and repeat update-workflow."
+        }
+    }
+    Set-WorkflowPackageCacheUse -Root $root
+    if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) {
+        throw "WORKFLOW_UPDATE_SOURCE_MISSING: pending update requires its recorded source at '$root'. Restore that exact source before repeating update-workflow."
+    }
+    Assert-WorkflowSourceOutsideProject -SourceRoot $root
+    Assert-WorkflowPackageSourceRoot -SourceRoot $root
+    if (-not $commit) { return }
+    if ($commit -notmatch '^[a-f0-9]{40}$' -or
+        -not (Test-Path -LiteralPath (Join-Path $root '.git')) -or
+        (Get-GitOutputAt -Root $root -Arguments @('rev-parse', 'HEAD')).Trim() -cne $commit -or
+        @(Get-GitPathListAt -Root $root -Arguments @('status', '--porcelain=v1', '-z', '--untracked-files=all')).Count -gt 0) {
+        throw "WORKFLOW_UPDATE_SOURCE_CHANGED: pending update requires clean exact source commit '$commit' at '$root'. Restore that checkout before repeating update-workflow."
+    }
+}
+
+function Resolve-WorkflowUpdateRecoveryExecutor {
+    param([Parameter(Mandatory = $true)][object]$RecordedSource)
+
+    $override = [string](Get-EnvValue -Name 'ITL_WORKFLOW_SOURCE_PATH' -Default '')
+    if (-not $override -or [string]::Equals((Resolve-Agent1cFullPath -Path $override),[string]$RecordedSource.root,[StringComparison]::OrdinalIgnoreCase)) { return $null }
+    $expectedHelper = Join-Path (Resolve-Agent1cFullPath -Path $override) '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    if (-not [string]::Equals((Resolve-Agent1cFullPath -Path $script:Agent1cScriptPath),$expectedHelper,[StringComparison]::OrdinalIgnoreCase)) {
+        throw 'WORKFLOW_UPDATE_RECOVERY_SOURCE_HELPER_REQUIRED: repeat scripts/update-installed-workflow.ps1 from the exact clean newer source. The recorded package candidate and snapshot remain pinned.'
+    }
+    $executor = Resolve-WorkflowPackageSource
+    Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$executor.root)
+    if (-not [string]::Equals([string]$executor.root,(Resolve-Agent1cFullPath -Path $override),[StringComparison]::OrdinalIgnoreCase)) {
+        throw 'WORKFLOW_UPDATE_RECOVERY_EXECUTOR_INVALID: the executing helper is not from the selected exact source.'
+    }
+    return $executor
+}
+
+function Get-WorkflowLegacyCopyEvidence {
+    param([Parameter(Mandatory = $true)][string]$SourceRoot)
+
+    Assert-WorkflowPackageUpdateContext -DeferCleanCheck
+    $busy = Get-WorkflowUpdateRootRuntimeBusyReason -Root $script:ProjectRoot
+    if ($busy) { throw "WORKFLOW_UPDATE_MASTER_RUNTIME_BUSY: $busy. Stop it through its existing owner before legacy recovery." }
+    $head = Get-CurrentCommit
+    $legacy = (Get-GitOutput @('show', ($head + ':.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'))) -join [Environment]::NewLine
+    if ($legacy -match 'function Save-WorkflowUpdateSnapshotReceipt\s*\{' -or
+        $legacy -notmatch 'function Update-WorkflowPackage\s*\{' -or $legacy -notmatch '"post-copy"') {
+        throw 'WORKFLOW_UPDATE_LEGACY_BASELINE_INVALID: HEAD is not a pre-transaction updater. Use its existing transaction recovery.'
+    }
+    if (@(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z', 'HEAD', '--')).Count -gt 0 -or
+        @(Get-GitPathList -Arguments @('ls-files', '--unmerged', '-z')).Count -gt 0) {
+        throw 'WORKFLOW_UPDATE_LEGACY_INDEX_CHANGED: preserve staging/merge state and resolve it through its owner before recovery.'
+    }
+    $root = Resolve-Agent1cFullPath -Path $SourceRoot
+    $lock = Read-DependencyLockManifest
+    $entry = Get-ConfigValueFromObject -Object $lock -Path 'dependencies.workflowPackage' -Default $null
+    if ($null -eq $entry) { throw 'WORKFLOW_UPDATE_LEGACY_SOURCE_INVALID: the copied package has no workflow lock entry.' }
+    $source = [pscustomobject]@{root=$root;commit=[string]$entry.commit;repo=[string]$entry.repo;ref=[string]$entry.ref;source=[string]$entry.source}
+    Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{sourceRoot=$root;sourceCommit=$source.commit})
+    if ((Get-FullPathNormalized (Get-GitOutputAt -Root $root -Arguments @('rev-parse','--show-toplevel')).Trim()) -cne (Get-FullPathNormalized $root)) {
+        throw 'WORKFLOW_UPDATE_LEGACY_SOURCE_INVALID: select the exact candidate Git checkout root.'
+    }
+    if ($source.commit -notmatch '^[a-f0-9]{40}$') { throw 'WORKFLOW_UPDATE_LEGACY_SOURCE_INVALID: the copied package needs an immutable lock pin.' }
+    # The legacy writer changes only these workflow fields. All other dependency
+    # values must still match HEAD; a lock pin alone is not installation proof.
+    $beforeLock = Get-GitOutput @('show', ($head + ':.agent-1c/dependency-lock.json')) | ConvertFrom-Json -ErrorAction Stop
+    $beforeEntry = $beforeLock.dependencies.workflowPackage
+    foreach ($name in @('repo','ref','commit','source','updatedAt')) {
+        $beforeEntry.PSObject.Properties.Remove($name)
+        $entry.PSObject.Properties.Remove($name)
+    }
+    if ((ConvertTo-Agent1cHashtable $beforeLock | ConvertTo-Json -Depth 30 -Compress) -cne
+        (ConvertTo-Agent1cHashtable $lock | ConvertTo-Json -Depth 30 -Compress)) {
+        throw 'WORKFLOW_UPDATE_LEGACY_LOCK_CHANGED: non-workflow dependency fields differ from HEAD; preserve the lock for its owner.'
+    }
+    $copySpecs = @(@(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths))
+    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $copySpecs
+    $packagePaths = @(Get-GitPathListAt -Root $root -Arguments @('ls-files', '-z') | Where-Object {
+        Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher
+    })
+    if ($packagePaths.Count -eq 0) { throw 'WORKFLOW_UPDATE_LEGACY_SOURCE_INVALID: candidate copy inventory is empty.' }
+    foreach ($relative in $packagePaths) {
+        $expected = Get-WorkflowUpdatePathState -RelativePath $relative -PhysicalPath (Join-Path $root $relative)
+        if ($expected -notlike 'file:*' -or (Get-WorkflowUpdatePathState -RelativePath $relative) -cne $expected) {
+            throw "WORKFLOW_UPDATE_LEGACY_PAYLOAD_CHANGED: '$relative' is not the exact raw candidate. Preserve it; do not adopt post-copy or user output as a package copy."
+        }
+    }
+    foreach ($relative in @(Get-WorkflowUpdateTrackedChangePaths)) {
+        if ($relative -ne '.agent-1c/dependency-lock.json' -and $relative -cnotin $packagePaths) {
+            throw "WORKFLOW_UPDATE_LEGACY_FOREIGN_CHANGE: '$relative' is outside the verified copied payload. Preserve it for its owner."
+        }
+    }
+    $writeSpecs = @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot $root)
+    $writeMatcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $writeSpecs
+    foreach ($relative in @(Get-GitPathList -Arguments @('ls-files', '-z', '--others', '--exclude-standard'))) {
+        if ((Test-WorkflowUpdatePathAllowed -Path $relative -Matcher $writeMatcher) -and $relative -cnotin $packagePaths) {
+            throw "WORKFLOW_UPDATE_LEGACY_UNTRACKED_OWNER: '$relative' has no proven package writer. Preserve it outside the update write set before requesting a fresh review."
+        }
+    }
+    $states = [ordered]@{}
+    foreach ($relative in $writeSpecs) { $states[$relative] = Get-WorkflowUpdatePathState -RelativePath $relative }
+    $status = @(Get-GitPathList -Arguments @('status', '--porcelain=v1', '-z', '--untracked-files=all'))
+    $indexPath = (Get-GitOutput @('rev-parse', '--git-path', 'index')).Trim()
+    if (-not [IO.Path]::IsPathRooted($indexPath)) { $indexPath = Join-Path $script:ProjectRoot $indexPath }
+    return [ordered]@{
+        schemaVersion=1; operation='legacy-workflow-copy-review'; projectRoot=[string]$script:ProjectRoot
+        head=$head; branch=(Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim()
+        source=$source; indexSha256=(Get-FileHash -LiteralPath $indexPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        status=$status
+        pathState=$states; scope='master-only'; beforeBoundary='observed-legacy-copy; historical pre-copy bytes unavailable'
+    }
+}
+
+function Start-WorkflowLegacyCopyRecovery {
+    param([switch]$Review)
+
+    # Execute only the exact clean source helper; the immutable copied payload
+    # can be older and is kept separately pinned throughout normal post-copy.
+    $executor = Resolve-WorkflowPackageSource
+    Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{sourceRoot=$executor.root;sourceCommit=$executor.commit})
+    if ((Get-FullPathNormalized (Join-Path $executor.root '.agents/skills/1c-workflow/scripts')) -cne
+        (Get-FullPathNormalized $script:Agent1cScriptRoot)) {
+        throw 'WORKFLOW_UPDATE_RECOVERY_SOURCE_HELPER_REQUIRED: use the clean fixed source-side launcher with explicit -SourceRoot.'
+    }
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    if ($Review) {
+        if ($null -ne $pending) { throw 'WORKFLOW_UPDATE_LEGACY_PENDING: use normal recovery for the existing transaction.' }
+        $evidence = Get-WorkflowLegacyCopyEvidence -SourceRoot $WorkflowUpdateLegacySourceRoot
+        $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+        $path = Join-Path $parent ('legacy-copy-review-' + [guid]::NewGuid().ToString('N') + '.json')
+        Write-Utf8TextAtomic -Path $path -Value (($evidence | ConvertTo-Json -Depth 30) + [Environment]::NewLine)
+        return [pscustomobject]@{reportPath=$path;reportSha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();scope='master-only';nextAction='Review every path and the limited before boundary; pin reportPath/reportSha256 and decision=adopt-observed-legacy-copy in a decision JSON, then use -Recovery legacy-copy -ReconciliationFile <decision.json>.'}
+    }
+    $decision = Read-Utf8Text -Path $WorkflowUpdateReconciliationFile | ConvertFrom-Json -ErrorAction Stop
+    $reportPath = [string]$decision.reportPath
+    $reportHash = (Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ([string]$decision.decision -cne 'adopt-observed-legacy-copy' -or [string]$decision.reportSha256 -cne $reportHash) {
+        throw 'WORKFLOW_UPDATE_LEGACY_REVIEW_CHANGED: the decision must pin the unmodified reviewed report and explicitly adopt its observed copy.'
+    }
+    $report = Read-Utf8Text -Path $reportPath | ConvertFrom-Json -ErrorAction Stop
+    if ([int]$report.schemaVersion -ne 1 -or [string]$report.operation -cne 'legacy-workflow-copy-review' -or
+        [string]$report.projectRoot -cne [string]$script:ProjectRoot -or [string]$report.scope -cne 'master-only') {
+        throw 'WORKFLOW_UPDATE_LEGACY_REVIEW_INVALID: select this root''s unmodified legacy review.'
+    }
+    if ($null -ne $pending) {
+        if ([string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.reportSha256' '') -cne $reportHash) {
+            throw 'WORKFLOW_UPDATE_LEGACY_PENDING: another transaction owns this root; continue it through its source helper.'
+        }
+        return 'pending'
+    }
+    $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+    foreach ($directory in @(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-completed-*')) {
+        $completed = Read-WorkflowUpdateSnapshot -SnapshotRoot $directory.FullName -Completed
+        if ([string](Get-ConfigValueFromObject $completed.receipt 'legacyCopyRecovery.reportSha256' '') -ceq $reportHash) {
+            Assert-WorkflowUpdateSnapshotCurrentState -Pending $completed
+            Assert-WorkflowLegacyRecoveryMasterProof -Receipt $completed.receipt
+            Write-Host 'Legacy recovery already completed master only; no post-copy or commit repeated. Development worktrees remain outside this recovery.'
+            return 'completed'
+        }
+    }
+    $actual = Get-WorkflowLegacyCopyEvidence -SourceRoot ([string]$report.source.root)
+    if ((ConvertTo-Agent1cHashtable $report | ConvertTo-Json -Depth 30 -Compress) -cne
+        (ConvertTo-Agent1cHashtable $actual | ConvertTo-Json -Depth 30 -Compress)) {
+        throw 'WORKFLOW_UPDATE_LEGACY_REVIEW_CHANGED: HEAD, index, source or current bytes changed since review. Preserve them and request a fresh legacy-status review.'
+    }
+    $dependencyPlan = Get-WorkflowDependencyPlan -SourceRoot ([string]$report.source.root)
+    Assert-WorkflowDependencyPlan -Plan $dependencyPlan
+    Assert-WorkflowSourceAiRulesInstallable -SourceRoot ([string]$report.source.root)
+    if (-not $SkipAiRules) { Assert-WorkflowUpdateRulesRootReady -SourceRoot ([string]$report.source.root) }
+    $candidateRulesPaths = @(Get-WorkflowUpdateCandidateRulesPaths -SourceRoot ([string]$report.source.root))
+    $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot ([string]$report.source.root) -AiRulesPathsAfter $candidateRulesPaths) `
+        -SnapshotParent $parent
+    # This is a NEW recovery transaction. Its before backups are the observed
+    # raw copy and current custom settings, never fabricated historical bytes.
+    $actual = Get-WorkflowLegacyCopyEvidence -SourceRoot ([string]$report.source.root)
+    if ((ConvertTo-Agent1cHashtable $report | ConvertTo-Json -Depth 30 -Compress) -cne
+        (ConvertTo-Agent1cHashtable $actual | ConvertTo-Json -Depth 30 -Compress)) {
+        Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+        throw 'WORKFLOW_UPDATE_LEGACY_REVIEW_CHANGED: inputs changed during backup. Preserve them and request a fresh review.'
+    }
+    Copy-Item -LiteralPath (Get-GitOutput @('rev-parse','--path-format=absolute','--git-path','index')).Trim() -Destination (Join-Path $snapshot.root 'observed-index')
+    Copy-Item -LiteralPath $reportPath -Destination (Join-Path $snapshot.root 'legacy-copy-review.json')
+    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $report.source -Phase prepared -Details @{
+        dependencyPlan=$dependencyPlan; recoveryExecutorRoot=[string]$executor.root;recoveryExecutorCommit=[string]$executor.commit
+        legacyCopyRecovery=@{reportSha256=$reportHash;scope='master-only';beforeBoundary=[string]$report.beforeBoundary;observedHead=[string]$report.head;observedIndexSha256=[string]$report.indexSha256}
+    }
+    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $report.source -Phase copy-complete
+    return 'pending'
+}
+
+function Get-WorkflowUpdateCandidateRulesPaths {
+    param([string]$SourceRoot)
+    if ($SkipAiRules) { return @() }
+    $rulesTarget = Get-AiRulesBaselineTarget -TemplateRoot $SourceRoot
+    if (-not $rulesTarget.isConfigured) {
+        throw "WORKFLOW_UPDATE_RULES_TARGET_INVALID: $($rulesTarget.reason). Qualify the exact fork candidate before copying managed files."
+    }
+    $rulesCheckout = Sync-AiRules1cCheckout -RepoOverride $rulesTarget.repo -RefOverride $rulesTarget.ref -CommitOverride $rulesTarget.commit
+    return @(Get-AiRulesCandidateInstallInventory -Checkout $rulesCheckout -Tools @(Get-AgentTargets))
+}
+
+function Resolve-WorkflowUpdateLegacyExecutor {
+    param([Parameter(Mandatory = $true)][object]$Source)
+
+    $templatePath = Join-Path ([string]$Source.root) 'templates/dependency-lock.json'
+    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) { return $null }
+    $template = Read-Utf8Text -Path $templatePath | ConvertFrom-Json
+    if ((Get-WorkflowDependencyWireFormat -Template $template).mode -ne 'locked') { return $null }
+
+    # Keep code and payload separate only for the legacy transition. Reuse an
+    # exact source checkout already owned by update-workflow, never the copied
+    # old helper or an unversioned backup of the installed scripts.
+    $executingRoot = [IO.Path]::GetFullPath((Join-Path $script:Agent1cCoreRoot '..\..\..\..\..'))
+    $candidates = @()
+    $reason = ''
+    if (-not [string]::Equals($executingRoot, [string]$script:ProjectRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        $candidates += [pscustomobject]@{root=$executingRoot;commit=''}
+    } else {
+        $installedCommit = [string](Get-ConfigValueFromObject (Get-DependencyLockEntry -Name 'workflowPackage') 'commit' '')
+        $reportPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
+        if ($installedCommit -match '^[a-f0-9]{40}$' -and (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+            $report = Read-Utf8Text -Path $reportPath | ConvertFrom-Json -ErrorAction Stop
+            if ([int]$report.schemaVersion -eq 1 -and [string]$report.mainRoot -ceq [string]$script:ProjectRoot -and
+                [string]$report.sourceCommit -ceq $installedCommit) {
+                $candidates += [pscustomobject]@{root=[string]$report.sourceRoot;commit=$installedCommit}
+            }
+        }
+    }
+    foreach ($candidate in $candidates) {
+        if (-not $candidate.root -or [string]::Equals([string]$candidate.root, [string]$Source.root, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        try {
+            $commit = [string]$candidate.commit
+            if (-not $commit) { $commit = (Get-GitOutputAt -Root $candidate.root -Arguments @('rev-parse','HEAD')).Trim() }
+            Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{sourceRoot=$candidate.root;sourceCommit=$commit})
+            foreach ($relative in @('agent-1c.ps1','lib/agent-1c.lifecycle.ps1','lib/agent-1c.dependencies.ps1')) {
+                $verified = Join-Path $candidate.root ('.agents/skills/1c-workflow/scripts/' + $relative)
+                $executing = Join-Path (Split-Path -Parent $script:Agent1cCoreRoot) $relative
+                if ((Get-FileHash -LiteralPath $verified).Hash -ine (Get-FileHash -LiteralPath $executing).Hash) {
+                    throw 'The exact source does not match the executing update owner.'
+                }
+            }
+            return [pscustomobject]@{root=[string]$candidate.root;commit=$commit}
+        } catch { $reason = $_.Exception.Message }
+    }
+    throw "WORKFLOW_UPDATE_LEGACY_EXECUTOR_REQUIRED: before copying an old package, run scripts/update-installed-workflow.ps1 from a clean exact current workflow checkout with -ProjectRoot '$script:ProjectRoot' -SourceRoot '$($Source.root)'. Keep that current checkout unchanged until master and branch rollout finish. No package files have been copied. $reason"
+}
+
 function Update-WorkflowPackage {
+    if (-not (Test-WorkflowUpdateRunSharedInputsActive)) {
+        # Master and all development worktrees of this process share one set of
+        # verified machine-scoped inputs; branch-local writes stay per root.
+        # Re-enter this exact definition, never a same-named one in scope.
+        $updateWorkflowEntry = $MyInvocation.MyCommand.ScriptBlock
+        Invoke-WorkflowUpdateRunSharedInputs { & $updateWorkflowEntry }
+        return
+    }
     Write-Section "Update ITL workflow package"
+    if ($LifecyclePhase -ne 'post-copy' -and $WorkflowUpdateRecovery -eq 'legacy-status') {
+        Start-WorkflowLegacyCopyRecovery -Review | ConvertTo-Json -Depth 5
+        return
+    }
+    if ($LifecyclePhase -ne 'post-copy' -and $WorkflowUpdateRecovery -eq 'legacy-copy') {
+        if ((Start-WorkflowLegacyCopyRecovery) -eq 'completed') { return }
+    }
+    if ($WorkflowUpdateRecovery -eq 'status') {
+        Get-WorkflowUpdateRecoveryStatus -SnapshotId $WorkflowUpdateSnapshotId | ConvertTo-Json -Depth 5
+        return
+    }
+    if ($WorkflowUpdateRecovery -eq 'restore') {
+        Restore-CompletedWorkflowUpdate -SnapshotId $WorkflowUpdateSnapshotId
+        return
+    }
+    if ($WorkflowUpdateRecovery -eq 'reconcile') {
+        Complete-WorkflowUpdateReconciliation -SnapshotId $WorkflowUpdateSnapshotId -DecisionFile $WorkflowUpdateReconciliationFile
+        return
+    }
+    if ($WorkflowUpdateRecovery -eq 'abandon') {
+        Abandon-PendingWorkflowBranchUpdate -SnapshotId $WorkflowUpdateSnapshotId
+        return
+    }
     if ($LifecyclePhase -notin @("", "pre-copy", "post-copy")) {
         throw "update-workflow does not support LifecyclePhase '$LifecyclePhase'."
+    }
+    if ($LifecyclePhase -ne 'post-copy' -and $DependencySelectionFile) {
+        $selectionRoots = @(Get-GitWorktrees | Where-Object { $_.branch -eq (Get-MasterBranch) -or $_.branch -like 'itldev/*' } | ForEach-Object { $_.path })
+        Assert-WorkflowDependencySelectionScopes -Roots $selectionRoots
+    }
+
+    $rolloutScope = $null
+    $scopeInput = Get-Variable -Name WorkflowUpdateBranchRootsFile -ValueOnly -ErrorAction SilentlyContinue
+    if ($LifecyclePhase -eq 'post-copy') {
+        if (-not $OperationContinuation) {
+            throw 'WORKFLOW_UPDATE_POST_COPY_NOT_CONTINUATION: post-copy may only run as the fresh-process continuation of update-workflow.'
+        }
+        $pendingPostCopy = Get-WorkflowUpdatePendingSnapshot
+        if ($null -eq $pendingPostCopy -or [string]$pendingPostCopy.receipt.phase -notin @('post-copy-running', 'master-commit-ready', 'master-committed')) {
+            throw 'WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING: a legacy updater may have copied this package without a transaction. Preserve all current files; do not commit the incomplete package or repeat the dirty installed updater. Use a clean fixed source scripts/update-installed-workflow.ps1 with -Recovery legacy-status -LegacySourceRoot <exact-copied-payload-checkout>, then follow its reviewed recovery.'
+        }
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $pendingPostCopy
+        $rolloutScope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$pendingPostCopy.receipt.sourceCommit) -RecordedScope (Get-ConfigValueFromObject $pendingPostCopy.receipt 'rolloutScope' $null) -InputFile $scopeInput
     }
 
     if ($LifecyclePhase -ne "post-copy") {
         Set-RunStage -Stage "workflow-update.preflight" -Detail "Validating the master worktree and workflow source."
-        Assert-WorkflowPackageUpdateContext
-        Assert-WorkflowUpdateCommitIdentity
-
-        $source = Resolve-WorkflowPackageSource
-        Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
-        Set-RunStage -Stage "workflow-update.ai-rules-preflight" -Detail "Validating that the target ai_rules_1c release is installable."
-        Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root
-
-        Set-RunStage -Stage "workflow-update.copy" -Detail "Copying the managed workflow package files."
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\product-docs"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-roctup-1c-data"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-vanessa-ui-mcp"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-remote-runner"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-remote-agent"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-performance"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "docs\itl-workflow"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
-        foreach ($relativePath in @("install-agent-1c-workflow.ps1", "AGENT-INSTALL.md")) {
-            Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
+        Assert-WorkflowPackageUpdateContext -DeferCleanCheck
+        $masterRuntimeBusy = Get-WorkflowUpdateRootRuntimeBusyReason -Root $script:ProjectRoot
+        if ($masterRuntimeBusy) {
+            throw "WORKFLOW_UPDATE_MASTER_RUNTIME_BUSY: $masterRuntimeBusy. Stop the owned runtime through its existing helper, then repeat update-workflow."
         }
-        Remove-LegacyWorkflowManagedFiles
+        $pending = Get-WorkflowUpdatePendingSnapshot
+        if ($null -ne $pending) {
+            $rolloutScope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$pending.receipt.sourceCommit) -RecordedScope (Get-ConfigValueFromObject $pending.receipt 'rolloutScope' $null) -InputFile $scopeInput
+            if ($scopeInput -and $null -eq (Get-ConfigValueFromObject $pending.receipt 'rolloutScope' $null)) { throw 'WORKFLOW_UPDATE_SCOPE_CHANGED: an existing ordinary transaction cannot become scoped.' }
+            if ([string]$pending.receipt.phase -notin @('prepared', 'post-copy-complete')) {
+                Assert-WorkflowUpdateRecordedSource -Receipt $pending.receipt
+            }
+            if ([string]$pending.receipt.phase -eq 'copying') {
+                Restore-WorkflowUpdateInterruptedPackageCopy -Pending $pending
+                $pending = $null
+            } else {
+                Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+            }
+            if ($null -ne $pending -and [string]$pending.receipt.phase -eq 'prepared') {
+                if ([string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -ceq 'master-only') {
+                    Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source ([pscustomobject]@{root=$pending.receipt.sourceRoot;commit=$pending.receipt.sourceCommit}) -Phase copy-complete
+                    $pending = Get-WorkflowUpdatePendingSnapshot
+                } else {
+                    Remove-WorkflowUpdateRollbackSnapshot -Snapshot $pending.snapshot
+                    Write-Host 'An interrupted pre-copy snapshot had no changed managed paths; restarting the normal update preflight.'
+                    $pending = $null
+                }
+            }
+        }
+        if ($null -ne $pending) {
+            if ([string]$pending.receipt.phase -eq 'post-copy-complete') {
+                $completedSourceCommit = [string]$pending.receipt.sourceCommit
+                Assert-WorkflowLegacyRecoveryMasterProof -Receipt $pending.receipt
+                Retain-WorkflowUpdateRollbackSnapshot -Snapshot $pending.snapshot | Out-Null
+                Write-Host 'Retained the completed workflow update snapshot for guarded rollback; no project files changed.'
+                if ([string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -cne 'master-only') {
+                    Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit $completedSourceCommit -RolloutScope $rolloutScope | Out-Null
+                }
+                return
+            }
+            $recordedSource = [pscustomobject]@{
+                root = [string]$pending.receipt.sourceRoot
+                commit = [string]$pending.receipt.sourceCommit
+            }
+            $executor = Resolve-WorkflowUpdateRecoveryExecutor -RecordedSource $recordedSource
+            Set-RunStage -Stage 'workflow-update.resume-post-copy' -Detail 'Resuming the verified file-only update state.'
+            $previousOverride = [Environment]::GetEnvironmentVariable('ITL_WORKFLOW_SOURCE_PATH','Process')
+            $hadOverride = Test-Path Env:ITL_WORKFLOW_SOURCE_PATH
+            try {
+                if ($null -ne $executor) {
+                    Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source $recordedSource -Phase ([string]$pending.receipt.phase) `
+                        -Details @{recoveryExecutorRoot=[string]$executor.root;recoveryExecutorCommit=[string]$executor.commit}
+                    $env:ITL_WORKFLOW_SOURCE_PATH = [string]$recordedSource.root
+                    Write-Host "Continuing the pinned package '$($recordedSource.commit)' through newer exact helper '$($executor.commit)'; no candidate bytes are replaced during this recovery."
+                }
+                Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot $pending.snapshot -Source $recordedSource
+            } finally {
+                if ($hadOverride) {$env:ITL_WORKFLOW_SOURCE_PATH=$previousOverride} else {Remove-Item Env:ITL_WORKFLOW_SOURCE_PATH -ErrorAction SilentlyContinue}
+            }
+            if ([string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -cne 'master-only') {
+                Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$recordedSource.commit) -RolloutScope $rolloutScope | Out-Null
+            }
+            if ($null -ne $executor -and [string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -cne 'master-only') {
+                throw "WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING: the interrupted pinned update '$($recordedSource.commit)' completed using helper '$($executor.commit)'. Repeat the same source-side update to install the requested new candidate; the completed root will not replay old post-copy."
+            }
+            return
+        }
+        $source = Resolve-WorkflowPackageSource
+        $rolloutScope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$source.commit) -RecordedScope $rolloutScope -InputFile $scopeInput
+        $source | Add-Member -NotePropertyName rolloutScope -NotePropertyValue $rolloutScope -Force
+        Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
+        if((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container)){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot $source.root}
+        . Import-ItlProductProjectSetup
+        $catalogSelection=$null
+        if(-not (Get-ItlProductProjectBinding) -and (Test-ItlProductProjectTransitionSource -SourceRoot $source.root)){
+            $catalogSelection=Get-ItlProductProjectTransitionSelection
+        }
+        $legacyExecutor = Resolve-WorkflowUpdateLegacyExecutor -Source $source
+        $previousRolloutPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
+        if (Test-Path -LiteralPath $previousRolloutPath -PathType Leaf) {
+            try { $previousRollout = Read-Utf8Text -Path $previousRolloutPath | ConvertFrom-Json -ErrorAction Stop }
+            catch { throw "WORKFLOW_UPDATE_BRANCH_REPORT_INVALID: preserve '$previousRolloutPath' and reconcile its exact update. $($_.Exception.Message)" }
+            $installedPin = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'commit' -Default '')
+            if ([int]$previousRollout.schemaVersion -eq 1 -and
+                $null -eq (Get-WorkflowDependencySelectionInput) -and
+                [string]$previousRollout.sourceCommit -ceq [string]$source.commit -and
+                [string]$previousRollout.sourceRoot -ceq [string]$source.root -and
+                $installedPin -ceq [string]$source.commit) {
+                Assert-WorkflowTrackedGitClean
+                Set-RunStage -Stage 'workflow-update.resume-branches' -Detail 'Master is complete; retrying only deferred or blocked development worktrees.'
+                Invoke-WorkflowDevelopmentBranchRollout -Source $source | Out-Null
+                Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$source.commit) -RolloutScope (Get-ConfigValueFromObject $source 'rolloutScope' $null) | Out-Null
+                return
+            }
+        }
+        $localPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow' -Source $source
+        if ($null -ne $localPatchPlan -and $localPatchPlan.preserve) {
+            Set-RunStage -Stage 'workflow-update.patch-preserved' -Detail "Package change: $($localPatchPlan.reason). Temporary patch retained; no managed files copied."
+            Write-Warning "Workflow package change: $($localPatchPlan.reason). Temporary patch retained; package copying skipped. Report: $($localPatchPlan.receipt.reportPath)"
+            return
+        }
+        $copyCompleted = $false
+        try {
+            Invoke-WorkflowLocalPatchStep -Step Retire -Plan $localPatchPlan
+            Assert-WorkflowTrackedGitClean
+            Assert-WorkflowUpdateCommitIdentity
 
-        Update-WorkflowPackageLockEntry -Source $source | Out-Null
+            Set-RunStage -Stage "workflow-update.ai-rules-preflight" -Detail "Validating that the target ai_rules_1c release is installable."
+            $dependencyPlan = Get-WorkflowDependencyPlan -SourceRoot ([string]$source.root)
+            Assert-WorkflowDependencyPlan -Plan $dependencyPlan
+            Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root
+            if (-not $SkipAiRules) { Assert-WorkflowUpdateRulesRootReady -SourceRoot ([string]$source.root) }
+
+            Set-RunStage -Stage "workflow-update.copy" -Detail "Copying the managed workflow package files."
+            $candidateRulesPaths = @(Get-WorkflowUpdateCandidateRulesPaths -SourceRoot $source.root)
+            $copySnapshot = New-WorkflowUpdateRollbackSnapshot `
+                -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot $source.root -AiRulesPathsAfter $candidateRulesPaths) `
+                -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
+            try {
+                $details = @{dependencyPlan=$dependencyPlan;rolloutScope=$rolloutScope}
+                if($catalogSelection){$details.catalogSelection=$catalogSelection}
+                if ($null -ne $legacyExecutor) {
+                    $details.recoveryExecutorRoot = [string]$legacyExecutor.root
+                    $details.recoveryExecutorCommit = [string]$legacyExecutor.commit
+                }
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $copySnapshot -Source $source -Phase prepared -Details $details
+            } catch {
+                $prepareError = $_.Exception.Message
+                try { Remove-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot }
+                catch { throw "WORKFLOW_UPDATE_SNAPSHOT_PREPARE_FAILED: $prepareError Own snapshot cleanup also failed: $($_.Exception.Message)" }
+                throw
+            }
+            $copyCompleted = $false
+            $rollbackSucceeded = $false
+            try {
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $copySnapshot -Source $source -Phase copying
+                Copy-WorkflowPackageManagedContent -Source $source
+                Update-WorkflowPackageLockEntry -Source $source | Out-Null
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $copySnapshot -Source $source -Phase copy-complete
+                $copyCompleted = $true
+            } catch {
+                $copyError = $_.Exception.Message
+                try {
+                    Restore-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
+                    $rollbackSucceeded = $true
+                } catch {
+                    throw "update-workflow copy failed and rollback did not restore the pre-copy managed paths. Copy error: $copyError Rollback error: $($_.Exception.Message)"
+                }
+                throw
+            } finally {
+                if (-not $copyCompleted -and $rollbackSucceeded) {
+                    Remove-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
+                }
+            }
+            Invoke-WorkflowLocalPatchStep -Step Complete -Plan $localPatchPlan
+        } catch {
+            if (-not $copyCompleted) { Invoke-WorkflowLocalPatchStep -Step Undo -Plan $localPatchPlan }
+            throw
+        }
         Write-Host "Workflow package files copied. Restarting the installed helper in a fresh PowerShell process for post-copy processing."
-        Invoke-Agent1cFreshProcess -AdditionalArguments @("-LifecyclePhase", "post-copy")
+        Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot $copySnapshot -Source $source
+        Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$source.commit) -RolloutScope (Get-ConfigValueFromObject $source 'rolloutScope' $null) | Out-Null
+        return
     }
 
     Set-RunStage -Stage "workflow-update.post-copy" -Detail "Applying installed-project overlays and dependency updates."
     Assert-MasterWorktreeContext -Operation "update-workflow post-copy"
-    Ensure-OneCSessionLimitDotEnv | Out-Null
-    $aiRulesPathsBefore = @(Get-AiRules1cManifestFileEntries | ForEach-Object { [string]$_.target })
-    $clientSurfacePathsBefore = @(Get-WorkflowUpdateClientSurfacePaths)
-    Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $script:ProjectRoot
-    Ensure-GitIgnore
-    Sync-ItlVanessaLibraries
-    Update-AgentGuidanceBridge
-    Update-UserRules
-    Sync-WorkflowManagedDependencyLockEntries | Out-Null
-    Install-YAxUnit | Out-Null
-    Update-RoctupMcp
-    Sync-VanessaAutomationDependencyLock | Out-Null
-    Install-VanessaAutomation
-    Update-VanessaMcpArtifacts
-    Sync-ItlOnDemandMcpDependencyLock | Out-Null
-    Install-ItlOnDemandMcp | Out-Null
-
-    if ($SkipAiRules) {
-        Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
-        $migrationPlan = Get-AiRulesMigrationPlan
-        if ($migrationPlan.status -eq "eligible") {
-            Write-Host "ai_rules_1c migration remains pending because -SkipAiRules was specified: $($migrationPlan.target.ref)"
+    if ([string]$pendingPostCopy.receipt.phase -eq 'post-copy-running') {
+        $filePostCopy = Invoke-WorkflowPackageFilePostCopy
+        Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $pendingPostCopy.snapshot -BeforeCommit ([string]$pendingPostCopy.receipt.preUpdateHead) -RequireOriginalIndex
+        $aiRulesPathsBefore = @($filePostCopy.aiRulesPathsBefore)
+        $clientSurfacePathsBefore = @($filePostCopy.clientSurfacePathsBefore)
+        $plannedChangePaths = @(
+            @(Get-WorkflowUpdateTrackedChangePaths) +
+            @(Get-GitPathList -Arguments @('ls-files', '-z', '--others', '--exclude-standard') |
+                Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs (Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore $aiRulesPathsBefore -ClientSurfacePathsBefore $clientSurfacePathsBefore) }) +
+            @(Get-WorkflowTrackedExecutionRuntimePaths) |
+                ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_) } |
+                Sort-Object -Unique
+        )
+        $commitDetails = @{
+            preCommitHead = Get-CurrentCommit
+            aiRulesPathsBefore = @($aiRulesPathsBefore)
+            clientSurfacePathsBefore = @($clientSurfacePathsBefore)
+            plannedChangePaths = @($plannedChangePaths)
         }
-        Sync-KiloItlCommandSurface
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $pendingPostCopy.snapshot -Source ([pscustomobject]@{
+            root = [string]$pendingPostCopy.receipt.sourceRoot
+            commit = [string]$pendingPostCopy.receipt.sourceCommit
+            repo = [string]$pendingPostCopy.receipt.sourceRepo
+            ref = [string]$pendingPostCopy.receipt.sourceRef
+            source = [string]$pendingPostCopy.receipt.sourceKind
+        }) -Phase master-commit-ready -Details $commitDetails
+        $pendingPostCopy = Get-WorkflowUpdatePendingSnapshot
     } else {
-        $migration = Invoke-AiRulesBaselineMigration
-        Assert-AiRulesBaselineMigrationResult -Migration $migration
-        if (-not $migration.migrated -and -not $migration.suppressRegularUpdate) {
-            Update-AiRules1c
+        $aiRulesPathsBefore = @($pendingPostCopy.receipt.aiRulesPathsBefore)
+        $clientSurfacePathsBefore = @($pendingPostCopy.receipt.clientSurfacePathsBefore)
+        $commitDetails = @{
+            preCommitHead = [string]$pendingPostCopy.receipt.preCommitHead
+            aiRulesPathsBefore = @($aiRulesPathsBefore)
+            clientSurfacePathsBefore = @($clientSurfacePathsBefore)
+            plannedChangePaths = @($pendingPostCopy.receipt.plannedChangePaths)
         }
     }
-
-    # These actions can materialize tracked client/tool files. Keep them inside
-    # the update transaction so the allowlist, commit, and final clean check own
-    # every write performed by update-workflow.
-    Install-ItlUiTools -BestEffort
-    Sync-ItlClientSurface
-    Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient)
-
     $workflowLock = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
     $workflowDependencies = ConvertTo-Agent1cHashtable -Object $workflowLock["dependencies"]
     $workflowEntry = ConvertTo-Agent1cHashtable -Object $workflowDependencies["workflowPackage"]
@@ -4845,10 +12045,93 @@ function Update-WorkflowPackage {
         source = [string]$workflowEntry["source"]
     }
     Set-RunStage -Stage "workflow-update.commit" -Detail "Committing the managed workflow update in master."
-    $commitResult = Commit-WorkflowUpdate -Source $workflowSource -AiRulesPathsBefore $aiRulesPathsBefore -ClientSurfacePathsBefore $clientSurfacePathsBefore
+    $commitCheckpoint = Assert-WorkflowUpdateMasterCommitCheckpoint -Receipt $pendingPostCopy.receipt -Source $workflowSource
+    if ($commitCheckpoint.committed) {
+        $commitResult = [pscustomobject]@{ created = $true; commit = [string]$commitCheckpoint.commit; message = Get-WorkflowUpdateCommitMessage -Source $workflowSource }
+    } elseif ([string]$pendingPostCopy.receipt.phase -eq 'master-committed') {
+        throw "WORKFLOW_UPDATE_MASTER_COMMIT_LOST: receipt says committed but master HEAD returned to pre-commit '$($commitDetails.preCommitHead)'. Preserve the snapshot for reconciliation."
+    } else {
+        $commitResult = Commit-WorkflowUpdate -Source $workflowSource -AiRulesPathsBefore $aiRulesPathsBefore -ClientSurfacePathsBefore $clientSurfacePathsBefore
+    }
+    if ($commitResult.created) {
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $pendingPostCopy.snapshot -Source ([pscustomobject]@{
+            root = [string]$pendingPostCopy.receipt.sourceRoot
+            commit = [string]$pendingPostCopy.receipt.sourceCommit
+            repo = [string]$pendingPostCopy.receipt.sourceRepo
+            ref = [string]$pendingPostCopy.receipt.sourceRef
+            source = [string]$pendingPostCopy.receipt.sourceKind
+        }) -Phase master-committed -Details $commitDetails
+    }
+    Enable-WorkflowExecutionGuardForCurrentRoot
+    $rolloutSource = [pscustomobject]@{
+        root = [string]$pendingPostCopy.receipt.sourceRoot
+        repo = [string]$pendingPostCopy.receipt.sourceRepo
+        ref = [string]$pendingPostCopy.receipt.sourceRef
+        commit = [string]$pendingPostCopy.receipt.sourceCommit
+        source = [string]$pendingPostCopy.receipt.sourceKind
+        rolloutScope = $rolloutScope
+    }
+    Set-RunStage -Stage 'workflow-update.branches' -Detail 'Updating eligible development worktrees with the same exact workflow candidate.'
+    $masterOnly = [string](Get-ConfigValueFromObject $pendingPostCopy.receipt 'legacyCopyRecovery.scope' '') -ceq 'master-only'
+    $branchReport = if ($masterOnly) { [pscustomobject]@{scope='master-only';roots=@()} } else { Invoke-WorkflowDevelopmentBranchRollout -Source $rolloutSource }
+    foreach ($outcome in @($branchReport.roots | Where-Object { [string]$_.status -ne 'completed' })) {
+        Write-Warning "Workflow branch $($outcome.branch): $($outcome.status); $($outcome.reason)"
+    }
     Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation "update-workflow" | Out-Null
-    Write-WorkflowUpdateFollowUp -Source $workflowSource -CommitResult $commitResult
-    Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed and verified clean."
+    Write-WorkflowUpdateFollowUp -Source $workflowSource -CommitResult $commitResult -BranchReport $branchReport
+    # Invoke-Agent1cFreshProcess exits the parent after this child returns.
+    # Finalize the snapshot here, while this exact post-copy owner is alive.
+    Save-WorkflowUpdateSnapshotReceipt -Snapshot $pendingPostCopy.snapshot -Source $rolloutSource -Phase post-copy-complete
+    Retain-WorkflowUpdateRollbackSnapshot -Snapshot $pendingPostCopy.snapshot | Out-Null
+    if ($masterOnly) {
+        Set-RunStage -Stage 'workflow-update.complete' -Detail 'Legacy recovery completed master only; development worktrees were outside this recovery.'
+        Write-Host 'Legacy recovery completed master only. Development worktrees and infobases were not updated. The retained before boundary is the observed legacy copy, not the lost historical pre-copy state.'
+        return
+    }
+    if (@($branchReport.roots | Where-Object { [string]$_.status -ne 'completed' }).Count -gt 0) {
+        Set-RunStage -Stage 'workflow-update.partial' -Detail 'Master is complete; some registered development worktrees require a repeated update-workflow.'
+        Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$rolloutSource.commit) -RolloutScope $rolloutScope | Out-Null
+    } else {
+        # Selection/association was required before file post-copy and included
+        # in the existing master commit; no optional post-success prompt.
+        Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed in master and eligible development worktrees."
+    }
+}
+
+function Get-ItlManagedRuleOverrideConflicts {
+    $results = [System.Collections.Generic.List[object]]::new()
+    foreach ($relative in @('USER-RULES.md', 'LLM-RULES.md')) {
+        $path = Join-Path $script:ProjectRoot $relative
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        $insideManaged = $false
+        $lineNumber = 0
+        foreach ($line in @(Read-Utf8Lines -Path $path)) {
+            $lineNumber++
+            if ($relative -eq 'USER-RULES.md' -and $line -match '<!-- ITL-WORKFLOW-USER-RULES:START -->') { $insideManaged = $true }
+            if ($insideManaged) {
+                if ($line -match '<!-- ITL-WORKFLOW-USER-RULES:END -->') { $insideManaged = $false }
+                continue
+            }
+            $policy = ''
+            $operation = ''
+            if ($line -match '(?i)^\s*(?:[-*]\s*)?(?:always|must|всегда|обязательно|требуется)\s+(?:create|write|maintain|созда(?:вать|й|йте)|вести|оформ(?:ить|лять))\b.{0,60}test-plan\.md') {
+                $policy = 'test-plan-is-optional'
+                $operation = 'OpenSpec propose/apply'
+            } elseif ($line -match '(?i)CAVEMAN_LEVEL\s*=|caveman\s+persist\s+(?:lite|full|ultra)') {
+                $policy = 'caveman-level-is-session-only'
+                $operation = 'Caveman mode selection'
+            }
+            if (-not $policy) { continue }
+            $results.Add([pscustomobject]@{
+                path = $relative
+                line = $lineNumber
+                policy = $policy
+                dependentOperation = $operation
+                text = ([string]$line).Trim()
+            }) | Out-Null
+        }
+    }
+    return @($results)
 }
 
 function Update-UserRules {
@@ -4862,11 +12145,11 @@ function Update-UserRules {
     $marker = "## 1C Project Lifecycle"
     $templateBlock = (Read-Utf8Text -Path $templatePath).Trim()
     if (-not (Test-ProductDocsMcpAllowed)) {
-        $productDocsRulePattern = '(?m)^For PM5 product logic,.*$'
+        $productDocsRulePattern = '(?m)^For product logic,.*$'
         if (-not [regex]::IsMatch($templateBlock, $productDocsRulePattern)) {
-            throw "PM5 product-docs rule was not found in USER-RULES overlay; refusing to install PM5 BookStack routing into a PM4 project."
+            throw "Product-docs rule was not found in USER-RULES overlay; refusing to install BookStack routing into a project without product documentation."
         }
-        $pm4Rule = 'For PM4 projects, PM5 product documentation MCP is disabled. Before answering, exploring, planning, proposing, or changing product logic, technical or implementation architecture, internal subsystem design, technical decisions/constraints/rationale, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
+        $pm4Rule = 'This project has no product documentation MCP (its registry productDocs role is disabled, or it is a legacy PM4 project). Before answering, exploring, planning, proposing, or changing product logic, technical or implementation architecture, internal subsystem design, technical decisions/constraints/rationale, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
         $templateBlock = [regex]::Replace($templateBlock, $productDocsRulePattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $pm4Rule }, 1)
     }
     $block = ($startMarker + [Environment]::NewLine + $templateBlock + [Environment]::NewLine + $endMarker)
@@ -4943,6 +12226,29 @@ Keep `.dev.env`, `.agent-1c/dev-branches/*.json`, `.agent-1c/event-log-baselines
     }
 }
 
+function Get-ItlMemoryCycleUpdates {
+    param([object]$State,[ValidateSet('initial','reserve','complete')][string]$Transition,[string]$WorkspaceId='')
+    $stateValues=ConvertTo-Agent1cHashtable $State
+    $cycle=if($stateValues.Contains('memoryCycle')){$stateValues['memoryCycle']}else{$null}
+    if(-not $cycle){
+        if($Transition -ne 'initial'){return @{}}
+        return @{memoryCycle=[ordered]@{current=[guid]::NewGuid().ToString('N');reserved='';workspaceId=$WorkspaceId}}
+    }
+    $cycle=ConvertTo-Agent1cHashtable $cycle
+    if($Transition -eq 'initial' -and $WorkspaceId -and (-not $cycle.Contains('workspaceId') -or $cycle.workspaceId -cne $WorkspaceId)){
+        # A copied branch record is not permission to reuse its parent's task
+        # dataset. First opt-in binds a fresh cycle to this local workspace.
+        if($cycle.reserved){throw 'MEMORY_CYCLE_RESUME: finish the existing reset before binding a workspace.'}
+        $cycle['workspaceId']=$WorkspaceId;$cycle['current']=[guid]::NewGuid().ToString('N')
+    }
+    if($Transition -eq 'reserve' -and -not $cycle.reserved){$cycle['reserved']=[guid]::NewGuid().ToString('N')}
+    if($Transition -eq 'complete'){
+        if(-not $cycle.reserved){throw 'MEMORY_CYCLE_RESUME: preserve reset state; resume its reserved cycle before activation.'}
+        $cycle['current']=$cycle.reserved;$cycle['reserved']=''
+    }
+    return @{memoryCycle=$cycle}
+}
+
 function Save-DevBranchState {
     param(
         [string]$SafeDevBranchName,
@@ -5015,7 +12321,11 @@ function Write-DevBranchInitializationStatusLines {
         }
     }
     $normalizationStatus = Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "legacy-pending"
-    Write-Host "${Indent}Enterprise normalization: $normalizationStatus"
+    if ($normalizationStatus -eq "passed" -and -not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
+        Write-Host "${Indent}Enterprise normalization: unverified (legacy passed state without run result)"
+    } else {
+        Write-Host "${Indent}Enterprise normalization: $normalizationStatus"
+    }
     $normalizationReason = Get-StateValue -State $State -Name "enterpriseNormalizationReason" -Default ""
     if ($normalizationReason) {
         Write-Host "${Indent}Enterprise normalization reason: $normalizationReason"
@@ -5023,6 +12333,19 @@ function Write-DevBranchInitializationStatusLines {
     $normalizationError = Get-StateValue -State $State -Name "enterpriseNormalizationError" -Default ""
     if ($normalizationError) {
         Write-Host "${Indent}Enterprise normalization error: $normalizationError"
+    }
+    $normalizationResultPath = Get-StateValue -State $State -Name "lastEnterpriseAutoUpdateResultPath" -Default ""
+    if ($normalizationResultPath) {
+        Write-Host "${Indent}Last Enterprise auto-update result: $normalizationResultPath"
+    }
+    $titleStatus = [string](Get-StateValue -State $State -Name "applicationTitleStatus" -Default "")
+    if ($titleStatus) {
+        $titleDetail = switch ($titleStatus) {
+            "skipped" { " (configuration has no ЗаголовокСистемы constant)" }
+            "failed" { " error='$(Get-StateValue -State $State -Name 'applicationTitleError' -Default '')'" }
+            default { "" }
+        }
+        Write-Host "${Indent}Application title: $titleStatus '$(Get-StateValue -State $State -Name 'applicationTitle' -Default '')'$titleDetail"
     }
     $configLoadStatus = Get-StateValue -State $State -Name "configLoadStatus" -Default ""
     if ($configLoadStatus) {
@@ -5194,6 +12517,9 @@ function Copy-DotEnvToWorktree {
     if (Test-Path -LiteralPath $sourceDotEnv -PathType Leaf -ErrorAction SilentlyContinue) {
         Copy-Item -LiteralPath $sourceDotEnv -Destination (Join-Path $WorktreePath ".dev.env") -Force
     }
+    Copy-CavemanPolicyReceiptToWorktree -WorktreePath $WorktreePath
+    Copy-UiTestingPolicyReceiptToWorktree -WorktreePath $WorktreePath
+    Copy-DotEnvPolicyReceiptToWorktree -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy verification-model) -WorktreePath $WorktreePath
 }
 
 function Copy-KiloProjectConfigToWorktree {
@@ -5214,8 +12540,131 @@ function Copy-KiloProjectConfigToWorktree {
             continue
         }
 
+        if ($fileName -ceq 'kilo.json') {
+            $sourceOwnership = Join-Path $MainProjectRoot '.agent-1c/mcp/client-managed.json'
+            $configState = Get-ItlMcpFileState -Path $sourcePath
+            $ownershipState = Get-ItlMcpFileState -Path $sourceOwnership
+        }
         New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
         Copy-Item -LiteralPath $sourcePath -Destination $targetPath
+        if ($fileName -ceq 'kilo.json') {
+            Copy-ItlClientMcpOwnershipFromProof -Client kilocode -SourceConfigPath $sourcePath -SourceOwnershipPath $sourceOwnership `
+                -ExpectedConfigState $configState -ExpectedOwnershipState $ownershipState -TargetProjectRoot $WorktreePath | Out-Null
+        }
+    }
+}
+
+function Restore-UnfinishedForkCopiedMcpOwnership {
+    # Compatibility for an old interrupted fork which copied Kilo JSON without
+    # its sidecar. Unproved entries stay unowned for the ordinary collision guard.
+    $root = $script:ProjectRoot
+    $configRelative = '.kilo/kilo.json'; $ownershipRelative = '.agent-1c/mcp/client-managed.json'
+    $configPath = Join-Path $root $configRelative
+    $stateDirectory = Join-Path $root '.agent-1c/dev-branches'
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $stateDirectory -PathType Container)) { return $false }
+    try {
+        $branch = (Get-GitOutput @('branch', '--show-current')).Trim()
+        if ($branch -notlike 'itldev/*') { return $false }
+        $safeName = ConvertTo-SafeName ($branch.Substring('itldev/'.Length))
+        $statePath = Join-Path $stateDirectory "$safeName.json"
+        if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return $false }
+        $state = Read-DevBranchStateFile -Path $statePath
+        if ([string]$state.initializationStatus -notin @('fork-failed','fork-initializing','launcher-registered') -or
+            [string]$state.devBranch -cne $branch -or -not [string]$state.forkId -or
+            (Resolve-Agent1cFullPath $state.worktreePath) -ine (Resolve-Agent1cFullPath $root) -or
+            (Resolve-Agent1cFullPath $state.stateProjectRoot) -ine (Resolve-Agent1cFullPath $root)) { return $false }
+        $entries = Read-ItlClientMcpEntries -Client kilocode
+        $owners = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-ItlManagedMcpState)['owners']
+        $ownedNames = @($owners.Keys | Where-Object { ([string]$_).StartsWith('kilocode/', [StringComparison]::Ordinal) } | ForEach-Object { $owners[$_] })
+        if (@($entries.Keys | Where-Object { $_ -notin $ownedNames }).Count -eq 0) { return $false }
+        $pending = Get-WorkflowUpdatePendingSnapshot
+        if ($null -eq $pending -or [string]$pending.receipt.phase -notin @('copy-complete','post-copy-running','post-copy-failed') -or
+            [string]$pending.receipt.branchRef -cne ('refs/heads/'+$branch) -or
+            [string]$pending.receipt.preUpdateHead -cne [string]$state.forkedFromCommit -or
+            (Get-CurrentCommit) -cne [string]$state.forkedFromCommit) { return $false }
+        $before = ConvertTo-Agent1cHashtable -Object $pending.receipt.beforePathState
+        $configState = Get-ItlMcpFileState -Path $configPath
+        $targetRecords = @($pending.snapshot.records | Where-Object { $_.relativePath -in @($configRelative,$ownershipRelative) })
+        if ($targetRecords.Count -ne 2 -or @($targetRecords | Where-Object relativePath -CEQ $configRelative).Count -ne 1 -or
+            @($targetRecords | Where-Object relativePath -CEQ $ownershipRelative).Count -ne 1 -or
+            [string]$before[$configRelative] -cne $configState) { return $false }
+        foreach ($record in $targetRecords) {
+            $backupState = if ($record.existed) { Get-ItlMcpFileState -Path $record.backupPath } else { 'absent' }
+            if ($backupState -cne [string]$before[$record.relativePath]) { return $false }
+        }
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+        $main = Get-MainWorktreePath
+        if ((Resolve-Agent1cFullPath $state.mainWorktreePath) -ine (Resolve-Agent1cFullPath $main) -or
+            (Resolve-Agent1cFullPath $main) -ieq (Resolve-Agent1cFullPath $root) -or
+            (Get-GitOutputAt -Root $main -Arguments @('branch','--show-current')).Trim() -cne (Get-MasterBranch) -or
+            (Get-GitOutputAt -Root $main -Arguments @('rev-parse','--path-format=absolute','--git-common-dir')).Trim() -ine
+            (Get-GitOutput @('rev-parse','--path-format=absolute','--git-common-dir')).Trim()) { return $false }
+        $proofs = @(Invoke-InProjectContext -Root $main -ScriptBlock {
+            $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+            if (-not (Test-Path -LiteralPath $parent -PathType Container)) { return }
+            foreach ($directory in @(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-completed-*')) {
+                try {
+                    $preview = Read-Utf8Text -Path (Join-Path $directory.FullName 'transaction.json') | ConvertFrom-Json -ErrorAction Stop
+                    if ([string]$preview.beforePathState.$configRelative -cne $configState) { continue }
+                    $id = $directory.Name.Substring('itl-workflow-update-completed-'.Length)
+                    $completed = Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id
+                    $receipt = $completed.receipt
+                    $oldHead = [string]$receipt.preUpdateHead; $newHead = [string]$receipt.completedHead
+                    if ($oldHead -notmatch '^[a-f0-9]{40}$' -or $newHead -notmatch '^[a-f0-9]{40}$' -or
+                        [string]$receipt.branchRef -cne ('refs/heads/'+(Get-MasterBranch))) { continue }
+                    $parents = (Get-GitOutput @('rev-list','--parents','-n','1',$newHead)).Trim() -split ' '
+                    if ($parents.Count -ne 2 -or $parents[1] -cne $oldHead -or
+                        (Get-GitOutput @('merge-base',$newHead,'HEAD')).Trim() -cne $newHead) { continue }
+                    $changes = @(Get-GitPathList -Arguments @('diff','--name-only','--no-renames','-z',$oldHead,$newHead,'--'))
+                    $writeSet = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @($completed.snapshot.records | ForEach-Object { $_.relativePath })
+                    $static = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
+                    $managed = New-WorkflowUpdatePathMatcher -ManagedPathSpecs (@(Get-WorkflowUpdateManagedPathSpecs -AtCommit $oldHead)+@(Get-WorkflowUpdateManagedPathSpecs -AtCommit $newHead)+@(Get-AiRulesOpenSpecScaffoldPaths))
+                    $native = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-AiRulesMigrationSnapshotRelativePaths | Where-Object { $_ -cne 'openspec' })
+                    $legacyRetired = @(Get-WorkflowUpdateLegacyRetirementPaths -OldCommit $oldHead -NewCommit $newHead)
+                    $unproved = @($changes | Where-Object {
+                        $path = $_
+                        $businessTests = @(@('tests',(Get-VanessaConfiguredFeaturesPath),(Get-YAxUnitTestsPath)) | Where-Object {
+                            Test-RepoPathUnderRoot -RepoPath $path -Root $_
+                        }).Count -gt 0 -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $static)
+                        (Test-OneCSourceRepoPath -RepoPath $path) -or $businessTests -or
+                        -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $writeSet) -or
+                        ($path -cnotin $legacyRetired -and (
+                         -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $managed) -or
+                         (-not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $static) -and
+                          (-not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $native) -and $path -cnotin @(Get-AiRulesOpenSpecScaffoldPaths)))))
+                    })
+                    if ($unproved.Count -gt 0) { continue }
+                    $records = @($completed.snapshot.records | Where-Object { $_.relativePath -in @($configRelative,$ownershipRelative) })
+                    if ($records.Count -ne 2 -or @($records | Where-Object relativePath -CEQ $configRelative).Count -ne 1 -or
+                        @($records | Where-Object relativePath -CEQ $ownershipRelative).Count -ne 1 -or
+                        @($records | Where-Object { -not $_.existed -or $_.wasDirectory }).Count -gt 0) { continue }
+                    [pscustomobject]@{ completed=$completed; config=($records | Where-Object relativePath -CEQ $configRelative).backupPath; ownership=($records | Where-Object relativePath -CEQ $ownershipRelative).backupPath }
+                } catch { Write-Verbose ('Unproved copied MCP ownership capsule: '+$_.Exception.Message) }
+            }
+        })
+        # Several real updates may retain the same copied config. Only the
+        # exact same config AND ownership bytes are interchangeable evidence.
+        $proofGroups = @($proofs | Group-Object {
+            ([string]$_.completed.receipt.beforePathState.$configRelative) + '|' + ([string]$_.completed.receipt.beforePathState.$ownershipRelative)
+        })
+        if ($proofGroups.Count -ne 1) { return $false }
+        $proof = $proofGroups[0].Group[0]
+        $sourceOwners = ConvertTo-Vibecoding1cMcpHashtable -Object ((Read-Utf8Text -Path $proof.ownership | ConvertFrom-Json -ErrorAction Stop).owners)
+        $missing = @($sourceOwners.Keys | Where-Object { ([string]$_).StartsWith('kilocode/',[StringComparison]::Ordinal) } | ForEach-Object {
+            $key = $_; @($sourceOwners[$key] | Where-Object { $entries.Contains($_) -and $_ -notin @($owners[$key]) })
+        })
+        if ($missing.Count -eq 0) { return $false }
+        $fork = Read-DevBranchForkSnapshot -StagingPath (Get-DevBranchForkStagingPath -SafeDevBranchName $safeName)
+        if ([string]$fork.sourceCommit -cne [string]$pending.receipt.preUpdateHead -or [string]$fork.targetSafeName -cne $safeName) { return $false }
+        $resume = Get-DevBranchForkResumeState -Snapshot $fork -TargetProjectRoot $root
+        if ($null -eq $resume) { return $false }
+        $result = Copy-ItlClientMcpOwnershipFromProof -Client kilocode -SourceConfigPath $proof.config -SourceOwnershipPath $proof.ownership `
+            -ExpectedConfigState $configState -ExpectedOwnershipState ([string]$proof.completed.receipt.beforePathState.$ownershipRelative)
+        return [bool]$result.changed
+    } catch {
+        Write-Verbose ('Copied fork MCP ownership remains unproved: '+$_.Exception.Message)
+        return $false
     }
 }
 
@@ -5421,7 +12870,7 @@ function Add-Vibecoding1cRunUserReportLines {
 
     try {
         $summary = Get-Vibecoding1cMcpStatusSummary
-        Add-RunUserReportLine -Lines $Lines -Label "Активные vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.active) -Default "<нет>"
+        Add-RunUserReportLine -Lines $Lines -Label "Настроены в клиенте vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.active) -Default "<нет>"
         Add-RunUserReportLine -Lines $Lines -Label "Пропущенные vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.skipped) -Default "<нет>"
         Add-RunUserReportLine -Lines $Lines -Label "Устаревшие vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.staleServers) -Default "<нет>"
         Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c без configId" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.missingConfigId) -Default "<нет>"
@@ -5443,6 +12892,10 @@ function Add-ItlClientMcpEnablementRunUserReportLines {
         $observation = Get-ItlClientMcpEnablementObservation
     } catch {
         return
+    }
+    Add-RunUserReportLine -Lines $McpLines -Label "MCP: подключение и инструменты текущей задачи" -Value "не проверялись; конфигурация не подтверждает доступность"
+    if (@(Get-StateValue -State $observation -Name 'disabledServerIds' -Default @()).Count -gt 0) {
+        Add-RunUserReportLine -Lines $McpLines -Label "MCP отключены в конфигурации" -Value (@(Get-StateValue -State $observation -Name 'disabledServerIds' -Default @()) -join ', ')
     }
     if (-not $observation.applicable) { return }
 
@@ -5476,9 +12929,94 @@ function Add-KiloBrowserRunUserReportLines {
     }
 }
 
-function Write-AndSetRunUserReport {
-    param([System.Collections.Generic.List[string]]$Lines)
+function Add-PlatformPreparationRunUserReportLines {
+    param([System.Collections.Generic.List[string]]$Lines, [AllowNull()][object]$Preparation)
 
+    $status = [string](Get-StateValue -State $Preparation -Name 'status' -Default '')
+    if (-not $status) { return }
+    $Lines.Add('')
+    if ($status -eq 'not-required-development') {
+        $Lines.Add('**Полная проверка конфигурации (`/CheckConfig`) не выполнялась.** В режиме разработки она отложена до подготовки к рабочей ИБ или прямого вызова, поскольку может занимать значительное время.')
+        $Lines.Add('')
+        $Lines.Add('Она дополнительно проверяет:')
+        $Lines.Add('- логическую целостность объектов конфигурации;')
+        $Lines.Add('- ссылки на отсутствующие объекты;')
+        $Lines.Add('- наличие обработчиков, назначенных формам и элементам интерфейса;')
+        $Lines.Add('- возможные ошибки обращения к свойствам, методам и некоторым объектам, указанным строкой в коде.')
+        $Lines.Add('')
+        $Lines.Add('Для запуска напишите: **«Выполни полную проверку конфигурации CheckConfig».**')
+        return
+    }
+    $display = switch ($status) {
+        'passed' { 'пройдена' }
+        'accepted-with-preexisting-findings' { 'допущена с прежними замечаниями по доказательному legacy-допуску' }
+        default { $status }
+    }
+    Add-RunUserReportLine -Lines $Lines -Label 'CheckConfig' -Value $display
+    Add-RunUserReportLine -Lines $Lines -Label 'Подтверждение CheckConfig' -Value (Get-StateValue -State $Preparation -Name 'receiptPath' -Default '')
+}
+
+function Write-DevBranchVerificationRunUserReport {
+    param([object]$State, [AllowNull()][object]$PlatformPreparation, [AllowNull()][object]$Failure = $null)
+
+    $verification = if ($null -eq $Failure) { Get-VerificationState -State $State } else { $null }
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('## Проверка доработок')
+    Add-RunUserReportLine -Lines $lines -Label 'Ветка' -Value (Get-StateValue -State $State -Name 'devBranch' -Default '')
+    $status = if ($null -ne $Failure) { 'failed' } elseif ([bool](Get-StateValue -State $verification -Name 'isFreshPassed' -Default $false)) { 'fresh passed' } else {
+        [string](Get-StateValue -State $verification -Name 'effectiveStatus' -Default (Get-StateValue -State $verification -Name 'status' -Default 'unknown'))
+    }
+    Add-RunUserReportLine -Lines $lines -Label 'Результат' -Value $status
+    if ($null -ne $Failure) {
+        Add-RunUserReportLine -Lines $lines -Label 'Ошибка' -Value $Failure.Exception.Message
+    } else {
+        Add-RunUserReportLine -Lines $lines -Label 'Модель проверки' -Value (Get-StateValue $verification 'verificationModel' 'cumulative')
+        if ([string](Get-StateValue $verification 'verificationModel' '') -eq 'change') {
+            Add-RunUserReportLine -Lines $lines -Label 'Проверки текущего изменения пройдены' -Value ([string][bool](Get-StateValue $verification 'changeFreshPassed' $false))
+            Add-RunUserReportLine -Lines $lines -Label 'Приёмка всей задачи завершена' -Value ([string][bool](Get-StateValue $verification 'taskAccepted' $false))
+            Add-RunUserReportLine -Lines $lines -Label 'Остаток приёмки' -Value (@(Get-StateValue $verification 'acceptanceRemaining' @()) -join ', ')
+        }
+        $skipped = @(Get-StateValue -State $State -Name 'lastVerificationSkippedComponents' -Default @())
+        if ($skipped.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Пропущенные компоненты' -Value ($skipped -join ', ') }
+        $attested = @(Get-StateValue -State $verification -Name 'attestedSuiteIds' -Default @())
+        if ($attested.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Засчитано по подтверждению пользователя, без прогона' -Value ($attested -join ', ') }
+        $issues = @(Get-StateValue -State $verification -Name 'assessmentIssues' -Default @()) + @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
+        if ($issues.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Незавершённые проверки' -Value ($issues -join '; ') }
+        $reportPath = [string](Get-StateValue -State $State -Name 'lastVerifiedReportPath' -Default '')
+        if ($reportPath) { Add-RunUserReportLine -Lines $lines -Label 'Отчёт проверки' -Value $reportPath }
+    }
+    $timing = Get-ItlCheckTimingSnapshot
+    $duration = Format-DevBranchCheckDurationText -Timing $timing
+    if ($duration) { Add-RunUserReportLine -Lines $lines -Label 'Длительность' -Value $duration }
+    if ($null -ne $timing -and $timing.selectionReason) { Add-RunUserReportLine -Lines $lines -Label 'Выбор наборов Vanessa' -Value $timing.selectionReason }
+    Write-AndSetRunUserReport -Lines $lines -PlatformPreparation $PlatformPreparation
+}
+
+function Format-DevBranchCheckDurationText {
+    param([AllowNull()][object]$Timing)
+    if ($null -eq $Timing) { return '' }
+    $format = {
+        param($Milliseconds)
+        $seconds = [int][Math]::Round(([double]$Milliseconds) / 1000)
+        if ($seconds -lt 60) { "$seconds с" } else { "$([int][Math]::Floor($seconds / 60)) мин $($seconds % 60) с" }
+    }
+    $parts = @()
+    foreach ($item in @(@('загрузка', 'platformMs'), @('YAxUnit', 'yaxunitMs'), @('Vanessa', 'vanessaMs'))) {
+        $value = $Timing.PSObject.Properties[$item[1]].Value
+        if ($null -ne $value) { $parts += "$($item[0]) $(& $format $value)" }
+    }
+    $reused = $Timing.PSObject.Properties['yaxunitReused']
+    if ($null -ne $reused -and [bool]$reused.Value) { $parts += 'YAxUnit переиспользован без прогона' }
+    $text = & $format $Timing.totalMs
+    if ($parts.Count -gt 0) { $text += " ($($parts -join ', '))" }
+    if ($Timing.selectionMode) { $text += "; наборы Vanessa: $($Timing.selectionMode)" }
+    return $text
+}
+
+function Write-AndSetRunUserReport {
+    param([System.Collections.Generic.List[string]]$Lines, [AllowNull()][object]$PlatformPreparation = $null)
+
+    Add-PlatformPreparationRunUserReportLines -Lines $Lines -Preparation $PlatformPreparation
     $report = (@($Lines) -join [Environment]::NewLine).Trim()
     Set-RunUserReport -Report $report
     Write-Host ""
@@ -5618,6 +13156,18 @@ function Write-DevBranchRunUserReport {
             Add-RunUserReportLine -Lines $lines -Label "Публикация" -Value (ConvertTo-RunUserReportStateDisplay -Value $publicationStatus -Kind PublicationStatus)
         }
     }
+    $applicationTitle = [string](Get-StateValue -State $State -Name "applicationTitle" -Default "")
+    $applicationTitleDisplay = switch ([string](Get-StateValue -State $State -Name "applicationTitleStatus" -Default "")) {
+        "set" { "$applicationTitle (установлен)" }
+        "unchanged" { "$applicationTitle (уже установлен)" }
+        "skipped" { "пропущен: в конфигурации нет константы ЗаголовокСистемы" }
+        "failed" { "не установлен, ветка работоспособна; повтор при следующей Enterprise-нормализации: $(Get-StateValue -State $State -Name 'applicationTitleError' -Default '')" }
+        "inherited" { "$applicationTitle (унаследован от исходной ветки; обновится при следующей Enterprise-нормализации)" }
+        default { "" }
+    }
+    if ($applicationTitleDisplay) {
+        Add-RunUserReportLine -Lines $lines -Label "Заголовок приложения" -Value $applicationTitleDisplay
+    }
     $publicationError = [string](Get-StateValue -State $State -Name "publicationError" -Default "")
     if ((Get-DevBranchKind -State $State) -eq "extension") {
         Add-RunUserReportLine -Lines $lines -Label "Инициализация расширения" -Value (ConvertTo-RunUserReportStateDisplay -Value (Get-DevBranchExtensionInitializationStatus -State $State) -Kind ExtensionStatus)
@@ -5634,14 +13184,14 @@ function Write-DevBranchRunUserReport {
     $extensionStatus = Get-DevBranchExtensionInitializationStatus -State $State
     if ($isRefresh) {
         $client = [string](Get-RunUserReportObservedValue -Read { Get-ItlActiveClient } -Default "")
-        if (@(Get-ItlClientMcpSemanticChanges -Owner "ondemand-facade").Count -eq 0) {
+        if (@(Get-ItlClientMcpSemanticChanges).Count -eq 0) {
             if ($client -eq "kilocode") {
                 $advice.Add("- Если Kilo продолжает показывать старые команды или маршрутизацию, выполните /reload; при нормальном поведении дополнительный шаг не требуется.")
             } else {
                 $reloadInstruction = [string](Get-RunUserReportObservedValue -Read {
                     Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный клиент."
                 } -Default "Перезапустите активный клиент.")
-                $advice.Add("- Заставьте текущий клиент перечитать обновлённый проект: $reloadInstruction")
+                $advice.Add("- Если клиент использует устаревшие инструкции проекта, перечитайте их штатным механизмом клиента. $reloadInstruction")
             }
         }
         $advice.Add("- Перед продолжением разработки выполните /itl-check.")
@@ -5673,6 +13223,68 @@ function Write-DevBranchRunUserReport {
         foreach ($item in $advice) { $lines.Add($item) }
     }
     Write-AndSetRunUserReport -Lines $lines
+}
+
+# Report evidence is owned by refresh and stored in the existing selection runtime.
+# It never participates in classification readiness or executable verification.
+function Save-RefreshClassificationReportContext {
+    param([object]$State, [AllowNull()][object]$LoadResult)
+    if ((Get-StateValue -State $State -Name "verificationClassificationStatus" -Default "") -ne "required") { return }
+    try {
+        $projection = [ordered]@{}
+        foreach ($name in @('devBranchKind','devBranch','mainWorktreePath','worktreePath','devBranchInfoBasePath',
+            'lastRefreshAt','lastRefreshMode','lastRefreshMasterCommit','lastRefreshRepairPaths','lastConfigBaseUpdatedCommit',
+            'extensionInitializationStatus','roctupMcpStatus','vanessaMcpStatus','verificationClassificationInventoryPath')) {
+            $projection[$name] = Get-StateValue -State $State -Name $name -Default ''
+        }
+        $projection['publicationError'] = if (Get-StateValue -State $State -Name 'publicationError' -Default '') { 'present' } else { '' }
+        $load = [ordered]@{}
+        foreach ($name in @('currentCommit','loaded','loadModeUsed','enterpriseInvoked')) {
+            $load[$name] = Get-StateValue -State $LoadResult -Name $name -Default $null
+        }
+        $remainingAction = [string]$script:RunRequiredAction
+        if ($remainingAction -match '^classify-tests-after-refresh:') {
+            $parts = $remainingAction -split '; then also follow: ', 2
+            $remainingAction = if ($parts.Count -eq 2) { $parts[1] } else { '' }
+        }
+        $context = [ordered]@{ schemaVersion = 1; projectRoot = $script:ProjectRoot; state = $projection; load = $load
+            sourceStatusPath = $script:ResolvedRunStatusPath; remainingAction = $remainingAction }
+        Write-Vibecoding1cMcpJsonFile -Path (Join-Path (Get-VerificationSelectionStateRoot) 'refresh-report-context.json') -Value $context
+    } catch {
+        Write-Warning "Refresh succeeded; classification report context could not be saved: $($_.Exception.Message)"
+    }
+}
+
+function Write-VerificationClassificationRunUserReport {
+    param([object]$State, [object]$Inventory)
+    $oldAction = [string]$script:RunRequiredAction
+    try {
+        $path = Join-Path (Get-VerificationSelectionStateRoot) 'refresh-report-context.json'
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'No saved refresh report context.' }
+        $context = Read-Utf8Text -Path $path | ConvertFrom-Json
+        if ($context.schemaVersion -ne 1 -or $context.projectRoot -ne $script:ProjectRoot) { throw 'Unrelated report context.' }
+        foreach ($name in @('devBranch','worktreePath','devBranchInfoBasePath','lastRefreshAt','lastRefreshMasterCommit')) {
+            $saved = [string](Get-StateValue -State $context.state -Name $name -Default '')
+            if (-not $saved -or $saved -cne [string](Get-StateValue -State $State -Name $name -Default '')) { throw "Stale report context: $name." }
+        }
+        if ($context.sourceStatusPath) {
+            $source = Read-Utf8Text -Path $context.sourceStatusPath | ConvertFrom-Json
+            if ($source.status -ne 'succeeded' -or $source.projectRoot -ne $script:ProjectRoot -or
+                $source.action -notin @('refresh-dev-branch','refresh-dev-branch-lite')) { throw 'Refresh success is not confirmed.' }
+        }
+        $snapshot = ConvertTo-Vibecoding1cMcpHashtable -Object $context.state
+        $snapshot['verificationClassificationStatus'] = 'ready'
+        $script:RunRequiredAction = [string]$context.remainingAction
+        $script:RunRefreshMasterCommit = [string]$snapshot.lastRefreshMasterCommit
+        Write-DevBranchRunUserReport -State ([pscustomobject]$snapshot) -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $context.load
+        Set-RunUserReport -Report ($script:RunUserReport + "`n`nКлассификация завершена: Vanessa=$($Inventory.featureCount); YAxUnit=$($Inventory.yaxunit.moduleCount). Загрузка базы выше относится к исходному refresh; повторно не выполнялась. Классификация не является проверкой BSL или /itl-check.")
+        return
+    } catch {
+        # Old installations and unavailable evidence do not invalidate classification.
+        Write-Warning "Classification succeeded; combined refresh report unavailable: $($_.Exception.Message)"
+        $script:RunRequiredAction = $oldAction
+        Set-RunUserReport -Report "## Классификация тестов`n`nКлассификация завершена: Vanessa=$($Inventory.featureCount); YAxUnit=$($Inventory.yaxunit.moduleCount).`n`nИсходный отчёт refresh недоступен или относится к другому обновлению. Результаты загрузки базы не переоценивались; сохраняйте исходный userReport. Классификация не является проверкой BSL или /itl-check."
+    }
 }
 
 function Clear-DevBranchContext {
@@ -6200,7 +13812,9 @@ function Confirm-DevBranchUnsafeActionProtection {
         [string]$InfoBasePath,
         [string]$DevBranchName,
         [ValidateSet("", "manual-confirm", "skip")]
-        [string]$SetupModeOverride = ""
+        [string]$SetupModeOverride = "",
+        [string]$InfoBaseUserOverride = "",
+        [string]$InfoBasePasswordOverride = ""
     )
 
     function Get-UnsafeActionProtectionMessage {
@@ -6232,7 +13846,8 @@ function Confirm-DevBranchUnsafeActionProtection {
     }
 
     $mode = if ($SetupModeOverride) { $SetupModeOverride } else { Get-DevBranchUnsafeActionProtectionSetup }
-    $user = [string](Get-EnvValue -Name "IB_USER")
+    $user = if ($PSBoundParameters.ContainsKey("InfoBaseUserOverride")) { $InfoBaseUserOverride } else { [string](Get-EnvValue -Name "IB_USER") }
+    $password = if ($PSBoundParameters.ContainsKey("InfoBasePasswordOverride")) { $InfoBasePasswordOverride } else { [string](Get-EnvValue -Name "IB_PASSWORD") }
     if ($mode -eq "skip") {
         Write-Host (Get-UnsafeActionProtectionMessage 0)
         return [pscustomobject]@{
@@ -6287,7 +13902,7 @@ function Confirm-DevBranchUnsafeActionProtection {
             -InfoBasePath $InfoBasePath `
             -InfoBaseKind $InfoBaseKind `
             -User $user `
-            -Password (Get-EnvValue -Name "IB_PASSWORD") | Out-Null
+            -Password $password | Out-Null
     }
 }
 
@@ -6821,6 +14436,8 @@ function Commit-AuthoritativeExportPathIfChanged {
 
     $attributesChanged = Ensure-OneCSourceGitAttributes
     Invoke-Git @("add", "--", ".gitattributes")
+    $timingPrefix = if ($Action -eq "init-project") { "init" } else { "sync-master" }
+    Set-RunStage -Stage "$timingPrefix.git-index" -Detail "Rebuilding the authoritative 1C source Git index"
     $rebuildPaths = @($repoExportPath, (Get-ExtensionsPath))
     if ($attributesChanged) {
         $rebuildPaths += "src/configs"
@@ -6829,6 +14446,7 @@ function Commit-AuthoritativeExportPathIfChanged {
     Assert-GitAuthoritativeExportPathHasNoCaseCollisions -ExportPath $repoExportPath
 
     $commitPaths = @(".gitattributes") + $sourcePaths
+    Set-RunStage -Stage "$timingPrefix.git-commit" -Detail "Committing the authoritative 1C source result"
     if (Test-GitHasStagedChanges -PathSpec $commitPaths) {
         # A commit pathspec re-reads case-insensitive worktree aliases instead of committing this rebuilt index.
         Invoke-Git @("commit", "--quiet", "-m", $Message)
@@ -6911,6 +14529,7 @@ function Test-InitStageAtLeast {
         "init.git",
         "init.repository-update",
         "init.dump-config",
+        "init.seed",
         "init.commit-dump",
         "init.install-ai-rules",
         "init.guidance",
@@ -6962,6 +14581,10 @@ function Test-InitAiRulesReady {
 }
 
 function Initialize-Project {
+    Invoke-Vibecoding1cMcpRegistryOperation { Initialize-ProjectCore }
+}
+
+function Initialize-ProjectCore {
     Write-Section "Initialize project"
     Assert-Agent1cInitialProjectRootPathBudget | Out-Null
     New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
@@ -6985,6 +14608,11 @@ function Initialize-Project {
     }
     Apply-BootstrapWorkflowPackageProvenance | Out-Null
     Sync-WorkflowManagedDependencyLockEntries | Out-Null
+    # Wizard/JSON preparation establishes the real connection. Release the
+    # settings/Git phase and reacquire only lifecycle ownership; each later
+    # native call obtains its own exact execution guard.
+    $script:InitDatabaseSettingsReady = $true
+    Enter-ItlInitializationNativePhase -Operation 'init-project'
     $dumpWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.commit-dump") -and (Test-InitDumpArtifactsReady))
     $unsafeActionProtectionWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.unsafe-action-protection-complete"))
     $interactiveQuestionsWereCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.interactive-complete"))
@@ -7032,25 +14660,32 @@ function Initialize-Project {
     Ensure-GitRepository
     Ensure-GitIgnore
     Checkout-Master
+    Ensure-ItlPinnedOpenSpecGitAttributes | Out-Null
 
     $sourceRepositoryUpdated = $false
     if (-not $dumpWasCompleted) {
         Set-RunStage -Stage "init.repository-update" -Detail "Applying the source repository update policy"
-        $sourceRepositoryUpdated = Update-BaseFromRepository
-        Set-RunStage -Stage "init.dump-config" -Detail "Dumping 1C configuration files"
-        $dumpResult = Dump-ConfigToFiles
-        Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
-        $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
-        Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
-        Ensure-BranchSeed `
-            -Policy "Rebuild" `
-            -ConfigurationFingerprint $configSource.fingerprint `
-            -ConfigurationFileCount $configSource.fileCount | Out-Null
-        $dumpResult = [pscustomobject]@{
-            exportPath = Get-ExportPath
-            absoluteExportPath = Assert-ExportPathInsideProject (Get-ExportPath)
-            incremental = $false
-            logPath = $script:LastLogPath
+        $sourceRepositoryUpdated = Invoke-WithRunStatusHeartbeat { Update-BaseFromRepository }
+        if ((Get-InfoBaseKind) -eq "file") {
+            $sourceGenerationId = Get-SourceConfigurationGenerationId
+            Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed and dumping its configuration"
+            Ensure-BranchSeed `
+                -Policy "Rebuild" `
+                -ConfigurationFingerprint "" `
+                -SourceGenerationId $sourceGenerationId | Out-Null
+            $dumpResult = Get-ExistingAuthoritativeExportResult
+        } else {
+            Set-RunStage -Stage "init.dump-config" -Detail "Dumping the server source configuration"
+            $dumpResult = Dump-ConfigToFiles
+            Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
+            Ensure-OneCSourceGitAttributes | Out-Null
+            $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+            Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
+            Set-RunStage -Stage "init.seed" -Detail "Rebuilding the server branch seed"
+            Ensure-BranchSeed `
+                -Policy "Rebuild" `
+                -ConfigurationFingerprint $configSource.fingerprint `
+                -ConfigurationFileCount $configSource.fileCount | Out-Null
         }
     } else {
         $dumpResult = [pscustomobject]@{
@@ -7061,18 +14696,29 @@ function Initialize-Project {
         }
         $existingSeed = Read-BranchSeedManifest -AllowMissing
         if ($null -eq $existingSeed -or -not (Test-BranchSeedArtifactReady -Manifest $existingSeed)) {
-            Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
-            $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
             Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
-            Ensure-BranchSeed `
-                -Policy "Rebuild" `
-                -ConfigurationFingerprint $configSource.fingerprint `
-                -ConfigurationFileCount $configSource.fileCount | Out-Null
+            if ((Get-InfoBaseKind) -eq "file") {
+                $sourceGenerationId = Get-SourceConfigurationGenerationId
+                Ensure-BranchSeed `
+                    -Policy "Rebuild" `
+                    -ConfigurationFingerprint "" `
+                    -SourceGenerationId $sourceGenerationId | Out-Null
+            } else {
+                Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
+                Ensure-OneCSourceGitAttributes | Out-Null
+                $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+                Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
+                Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
+                Ensure-BranchSeed `
+                    -Policy "Rebuild" `
+                    -ConfigurationFingerprint $configSource.fingerprint `
+                    -ConfigurationFileCount $configSource.fileCount | Out-Null
+            }
         }
     }
     $dumpMessage = if ($sourceRepositoryUpdated) { "sync: export 1C configuration from repository" } else { "sync: export current 1C configuration from source infobase" }
     Set-RunStage -Stage "init.commit-dump" -Detail "Committing baseline 1C configuration dump"
-    Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
+    Invoke-WithRunStatusHeartbeat { Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath } | Out-Null
     Assert-BaselineDumpCommitted -ExportPath $dumpResult.exportPath
 
     Set-RunStage -Stage "init.install-ai-rules" -Detail "Installing or updating ai_rules_1c"
@@ -7086,6 +14732,20 @@ function Initialize-Project {
     Update-AgentGuidanceBridge
     Update-UserRules
     Sync-KiloItlCommandSurface
+    Invoke-CavemanPolicyTransition -NewScope | Out-Null
+    if (Test-AiRulesUiTestingPolicySupport) {
+        Invoke-UiTestingPolicyTransition -NewScope | Out-Null
+    } else {
+        $uiTestingDescriptor = Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing
+        $uiTestingAssignments = @(Get-DotEnvPolicyAssignmentMatches -Text (Read-Utf8Text -Path (Join-Path $script:ProjectRoot '.dev.env')) -Descriptor $uiTestingDescriptor)
+        $uiTestingExplicitChoice = $uiTestingAssignments.Count -eq 1 -and
+            (Get-DotEnvPolicyAssignmentValue -Descriptor $uiTestingDescriptor -Assignment $uiTestingAssignments[0]) -in @('manual', 'off', 'auto')
+        if ($uiTestingExplicitChoice) {
+            Invoke-UiTestingPolicyTransition -NewScope | Out-Null
+        } else {
+            Write-Host 'UI_TESTING new-project default remains pending: installed ai_rules_1c does not prove support for essential. Update the rules through normal update-workflow without -SkipAiRules.'
+        }
+    }
     Commit-IfChanged "chore: install 1C agent workflow"
     if ($vibecodingRequested -and -not $vibecodingAlreadyCompleted) {
         Set-RunStage -Stage "init.vibecoding1c-mcp" -Detail "Setting up vibecoding1c MCP"
@@ -7139,31 +14799,65 @@ function Sync-Master {
     $sourceUsesRepository = Get-SourceUsesRepository
     $sourceRepositoryUpdateMode = Get-SourceRepositoryUpdateMode
     Set-RunStage -Stage "sync-master.repository-update" -Detail "Applying the source repository update policy"
-    $sourceRepositoryUpdated = Update-BaseFromRepository
-    if ($SeedPolicy -eq "Rebuild" -and (Get-InfoBaseKind) -eq "file") {
+    $sourceRepositoryUpdated = Invoke-WithRunStatusHeartbeat { Update-BaseFromRepository }
+    $kind = Get-InfoBaseKind
+    $sourceGenerationId = if ($kind -eq "file") { Get-SourceConfigurationGenerationId } else { "" }
+    $dumpResult = $null
+    if ($SeedPolicy -eq "Rebuild" -and $kind -eq "file") {
         Set-RunStage -Stage "sync-master.seed" -Detail "Rebuilding the branch seed from the source infobase"
-        $seed = Ensure-BranchSeed -Policy "Rebuild" -ConfigurationFingerprint "" -ConfigurationFileCount 0
-        $dumpResult = [pscustomobject]@{
-            exportPath = Get-ExportPath
-            absoluteExportPath = Assert-ExportPathInsideProject (Get-ExportPath)
-            incremental = $false
-            logPath = $script:LastLogPath
+        $seed = Ensure-BranchSeed -Policy "Rebuild" -ConfigurationFingerprint "" -SourceGenerationId $sourceGenerationId
+        $dumpResult = Get-ExistingAuthoritativeExportResult
+    } elseif ($SeedPolicy -eq "EnsureCompatible" -and $kind -eq "file" -and $sourceGenerationId) {
+        $existingSeed = Read-BranchSeedManifest -AllowMissing
+        $existingSourceGenerationId = [string](Get-StateValue -State $existingSeed -Name "sourceGenerationId" -Default "")
+        $exportRoot = Assert-ExportPathInsideProject (Get-ExportPath)
+        $exportReady = (Test-Path -LiteralPath (Join-Path $exportRoot "Configuration.xml") -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $exportRoot "ConfigDumpInfo.xml") -PathType Leaf)
+        if ($exportReady -and (Test-BranchSeedArtifactReady -Manifest $existingSeed) -and
+            $existingSourceGenerationId -ceq $sourceGenerationId) {
+            Set-RunStage -Stage "sync-master.seed" -Detail "Reusing the compatible branch seed and configuration export"
+            $seed = $existingSeed
+        } elseif ($null -ne $existingSeed -and [string]$existingSeed.status -eq "failed") {
+            throw "BRANCH_SEED_FAILED: explicit /itl-sync-master is required to recover the seed. Error: $($existingSeed.failureEvidence)"
+        } elseif ($null -eq $existingSeed -or $existingSourceGenerationId) {
+            Set-RunStage -Stage "sync-master.seed" -Detail "Refreshing the branch seed and configuration export"
+            $seed = Ensure-BranchSeed `
+                -Policy "Rebuild" `
+                -ConfigurationFingerprint "" `
+                -SourceGenerationId $sourceGenerationId `
+                -IncrementalFromCurrentExport:$exportReady
+        } else {
+            Set-RunStage -Stage "sync-master.dump-config" -Detail "Dumping the authoritative configuration for a legacy seed"
+            $dumpResult = Dump-ConfigToFiles
+            Set-RunStage -Stage "sync-master.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
+            Ensure-OneCSourceGitAttributes | Out-Null
+            $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+            Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
+            Set-RunStage -Stage "sync-master.seed" -Detail "Ensuring a compatible branch seed"
+            $seed = Ensure-BranchSeed `
+                -Policy "EnsureCompatible" `
+                -ConfigurationFingerprint $configSource.fingerprint `
+                -ConfigurationFileCount $configSource.fileCount `
+                -SourceGenerationId $sourceGenerationId
         }
+        if (-not $dumpResult) { $dumpResult = Get-ExistingAuthoritativeExportResult }
     } else {
         Set-RunStage -Stage "sync-master.dump-config" -Detail "Dumping the authoritative 1C configuration"
         $dumpResult = Dump-ConfigToFiles
         Set-RunStage -Stage "sync-master.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
-        $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+        Ensure-OneCSourceGitAttributes | Out-Null
+        $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+        Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
         Set-RunStage -Stage "sync-master.seed" -Detail "Ensuring a compatible branch seed"
         $seed = Ensure-BranchSeed `
             -Policy $SeedPolicy `
             -ConfigurationFingerprint $configSource.fingerprint `
             -ConfigurationFileCount $configSource.fileCount `
-            -TrustProvidedConfigurationFingerprint
+            -SourceGenerationId $sourceGenerationId
     }
     $dumpMessage = if ($sourceRepositoryUpdated) { "sync: refresh 1C configuration from repository" } else { "sync: capture current 1C configuration from source infobase" }
     Set-RunStage -Stage "sync-master.commit" -Detail "Committing the authoritative configuration dump"
-    Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
+    Invoke-WithRunStatusHeartbeat { Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath } | Out-Null
     Sync-KiloItlCommandSurface
     Write-Host "Branch seed: $($seed.artifactPath)"
     Write-Host "Branch seed sync ID: $($seed.syncId)"
@@ -7334,6 +15028,7 @@ function Get-PendingDevBranchMergeTransaction {
         operation = $operation
         branch = [string](Get-StateValue -State $State -Name "pendingMergeBranch" -Default (Get-StateValue -State $State -Name "devBranch" -Default ""))
         branchCommit = [string](Get-StateValue -State $State -Name "pendingMergeBranchCommit" -Default "")
+        originalBranchCommit = [string](Get-StateValue -State $State -Name "pendingMergeOriginalBranchCommit" -Default "")
         targetCommit = $targetCommit
         stage = [string](Get-StateValue -State $State -Name "pendingMergeStage" -Default $(if ($legacy) { "legacy" } else { "" }))
         allowedPaths = @(Get-StateValue -State $State -Name "pendingMergePaths" -Default @())
@@ -7387,6 +15082,7 @@ function Add-PendingDevBranchMergeClearUpdates {
         "pendingMergeOperation",
         "pendingMergeBranch",
         "pendingMergeBranchCommit",
+        "pendingMergeOriginalBranchCommit",
         "pendingMergeTargetCommit",
         "pendingMergeStage",
         "pendingMergeCommit",
@@ -7400,6 +15096,373 @@ function Add-PendingDevBranchMergeClearUpdates {
     $Updates["pendingMergePaths"] = @()
     $Updates["pendingMergeConflictPaths"] = @()
     $Updates["pendingMergeRepairPaths"] = @()
+}
+
+function Get-WorkflowGitLiteralPathRecords {
+    param([string[]]$Arguments, [string[]]$LiteralPaths)
+
+    if (@($LiteralPaths).Count -eq 0) { return }
+    $executable = [string](Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $fixedArguments = @('-C', $script:ProjectRoot, '-c', 'core.quotepath=false') + @($Arguments) + @('--')
+    $fixedLength = (ConvertTo-NativeCommandLineArgument -Argument $executable).Length + 1 +
+        (Join-NativeCommandLineArguments -Arguments $fixedArguments).Length
+    $batches = [Collections.Generic.List[object]]::new()
+    $batch = [Collections.Generic.List[string]]::new()
+    $length = $fixedLength
+    foreach ($path in $LiteralPaths) {
+        $pathLength = 1 + (ConvertTo-NativeCommandLineArgument -Argument $path).Length
+        if ($fixedLength + $pathLength -gt 24000) {
+            throw "WORKFLOW_UPDATE_GIT_PATH_ARGUMENT_TOO_LONG: one literal path exceeds the native command budget: $path"
+        }
+        if ($length + $pathLength -gt 24000) {
+            $batches.Add($batch.ToArray())
+            $batch = [Collections.Generic.List[string]]::new()
+            $length = $fixedLength
+        }
+        $batch.Add($path)
+        $length += $pathLength
+    }
+    if ($batch.Count -gt 0) { $batches.Add($batch.ToArray()) }
+    # Buffer every NUL record until all read-only batches succeed. Old receipts
+    # and current index reads use the same ordinal ordering, never rewritten.
+    $records = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($paths in $batches) {
+        foreach ($record in @(Get-GitPathList -Arguments (@($Arguments) + @('--') + @($paths)))) {
+            [void]$records.Add([string]$record)
+        }
+    }
+    $result = [string[]]@($records)
+    [Array]::Sort($result, [StringComparer]::Ordinal)
+    return $result
+}
+
+function Invoke-WorkflowGitLiteralPathMutation {
+    param([string[]]$Arguments, [string[]]$LiteralPaths)
+
+    if (@($LiteralPaths).Count -eq 0) { return }
+    $pathspecPath = New-TimestampedFilePath -Directory ([IO.Path]::GetTempPath()) -Prefix 'itl-workflow-branch-pathspec-' -Extension '.paths'
+    try {
+        [IO.File]::WriteAllText($pathspecPath, (($LiteralPaths -join [string][char]0) + [string][char]0), [Text.UTF8Encoding]::new($false))
+        Invoke-Git (@($Arguments) + @("--pathspec-from-file=$pathspecPath", '--pathspec-file-nul'))
+    } finally {
+        if (Test-Path -LiteralPath $pathspecPath -PathType Leaf) { Remove-Item -LiteralPath $pathspecPath -Force }
+    }
+}
+
+function New-WorkflowBranchCommitPlan {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$ManagedPathSpecs,
+        [string]$Message = 'chore: update ITL workflow in development branch',
+        [switch]$AllowMaster,
+        [string]$RestoreTrackedFromCommit = ''
+    )
+
+    $branchRef = (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim()
+    if (-not $branchRef.StartsWith('refs/heads/itldev/', [StringComparison]::Ordinal) -and
+        -not ($AllowMaster -and $branchRef -ceq ('refs/heads/' + (Get-MasterBranch)))) {
+        throw "WORKFLOW_UPDATE_BRANCH_REQUIRED: '$script:ProjectRoot' must be a registered itldev/* worktree."
+    }
+    $oldHead = Get-CurrentCommit
+    $runtimeTracked = @(Get-WorkflowTrackedExecutionRuntimePaths)
+    $ownedSpecs = @(@($ManagedPathSpecs) + @($runtimeTracked) | Select-Object -Unique)
+    $matcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $ownedSpecs
+    $restoredIgnoredPaths = @()
+    if ($RestoreTrackedFromCommit) {
+        # Completed rollback supplies its recorded before-commit after its existing checks. Raw
+        # backups may restore ignored files that were tracked before update.
+        $priorTracked = @(Get-GitPathList -Arguments @('ls-tree', '-r', '--name-only', '-z', $RestoreTrackedFromCommit, '--') |
+            Where-Object { (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher) -and -not (Test-WorkflowExecutionRuntimePath -Path $_) })
+        if ($priorTracked.Count -gt 0) {
+            $priorLiterals = @($priorTracked | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
+            $restoredIgnoredPaths = @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-files', '--others', '--ignored', '--exclude-standard', '-z') -LiteralPaths $priorLiterals |
+                Where-Object { Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_) -PathType Leaf })
+        }
+    }
+    $restoredIgnoredSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($path in $restoredIgnoredPaths) { [void]$restoredIgnoredSet.Add([string]$path) }
+    # A restored package can retain the indexed size and timestamp. Build from
+    # owned content in a fresh index rather than trusting worktree stat diffs.
+    $candidatePaths = @(
+        @(Get-GitPathList -Arguments @('ls-tree', '-r', '--name-only', '-z', $oldHead, '--')) +
+        @(Get-GitPathList -Arguments @('ls-files', '-z')) +
+        @(Get-GitPathList -Arguments @('ls-files', '--others', '--exclude-standard', '-z')) +
+        $restoredIgnoredPaths + $runtimeTracked |
+            Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher } |
+            Select-Object -Unique
+    )
+    $literalPaths = @($candidatePaths | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
+    $indexedChanged = @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z', $oldHead, '--') |
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher })
+    $copyLiterals = @($candidatePaths | Where-Object { -not (Test-WorkflowExecutionRuntimePath -Path $_) -and -not $restoredIgnoredSet.Contains([string]$_) } |
+        ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
+    $candidateIndexStateBefore = if ($literalPaths.Count -gt 0) {
+        @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-files', '--stage', '-z') -LiteralPaths $literalPaths)
+    } else { @() }
+    $tempRoot = Join-Path $script:ProjectRoot '.agent-1c/tmp'
+    New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+    $temporaryIndex = Join-Path $tempRoot ('workflow-branch-index-' + [guid]::NewGuid().ToString('N'))
+    $previousIndexExists = Test-Path -LiteralPath 'Env:GIT_INDEX_FILE'
+    $previousIndex = [Environment]::GetEnvironmentVariable('GIT_INDEX_FILE', 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable('GIT_INDEX_FILE', $temporaryIndex, 'Process')
+        Invoke-Git @('read-tree', $oldHead)
+        if ($copyLiterals.Count -gt 0) {
+            Invoke-WorkflowGitLiteralPathMutation -Arguments @('add', '-A') -LiteralPaths $copyLiterals
+        }
+        if ($restoredIgnoredPaths.Count -gt 0) {
+            $restoredLiterals = @($restoredIgnoredPaths | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
+            Invoke-WorkflowGitLiteralPathMutation -Arguments @('add', '-f') -LiteralPaths $restoredLiterals
+        }
+        if ($runtimeTracked.Count -gt 0) {
+            $runtimeLiterals = @($runtimeTracked | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
+            Invoke-WorkflowGitLiteralPathMutation -Arguments @('rm', '-r', '-f', '--cached', '--ignore-unmatch') -LiteralPaths $runtimeLiterals
+        }
+        $candidateTree = (Get-GitOutput @('write-tree')).Trim()
+        $oldTree = (Get-GitOutput @('rev-parse', "$oldHead^{tree}")).Trim()
+        $changed = @(@(Get-GitPathList -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', $oldTree, $candidateTree, '--')) +
+            $indexedChanged | Select-Object -Unique)
+        $changedSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($path in $changed) { [void]$changedSet.Add([string]$path) }
+        $indexStateBefore = @($candidateIndexStateBefore | Where-Object {
+            $separator = ([string]$_).IndexOf("`t")
+            $separator -ge 0 -and $changedSet.Contains(([string]$_).Substring($separator + 1))
+        })
+        $newHead = if ($candidateTree -cne $oldTree) {
+            (Get-GitOutput @('commit-tree', $candidateTree, '-p', $oldHead, '-m', $Message)).Trim()
+        } else { $oldHead }
+    } finally {
+        if ($previousIndexExists) { [Environment]::SetEnvironmentVariable('GIT_INDEX_FILE', $previousIndex, 'Process') }
+        else { Remove-Item -LiteralPath 'Env:GIT_INDEX_FILE' -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $temporaryIndex -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryIndex -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return [pscustomobject]@{
+        branchRef = $branchRef
+        oldHead = $oldHead
+        newHead = $newHead
+        candidateTree = $candidateTree
+        managedPaths = @($changed)
+        managedPathSpecs = @($ownedSpecs)
+        indexStateBefore = @($indexStateBefore)
+    }
+}
+
+function Save-WorkflowBranchCommitPlanReceipt {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][object]$Plan
+    )
+
+    if ([string]$Snapshot.targetRoot -cne [string]$script:ProjectRoot -or
+        (Split-Path -Leaf ([string]$Snapshot.root)) -notlike 'itl-workflow-update-rollback-*') {
+        throw 'WORKFLOW_UPDATE_BRANCH_RECEIPT_SCOPE_INVALID: the branch commit plan requires this root transaction snapshot.'
+    }
+    $receipt = [ordered]@{
+        schemaVersion = 1
+        operation = 'update-workflow-branch'
+        projectRoot = [string]$script:ProjectRoot
+        snapshotRoot = [string]$Snapshot.root
+        branchRef = [string]$Plan.branchRef
+        oldHead = [string]$Plan.oldHead
+        newHead = [string]$Plan.newHead
+        candidateTree = [string]$Plan.candidateTree
+        managedPaths = @($Plan.managedPaths)
+        managedPathSpecs = @($Plan.managedPathSpecs)
+        indexStateBefore = @($Plan.indexStateBefore)
+    }
+    Write-Utf8TextAtomic -Path (Join-Path $Snapshot.root 'branch-commit.json') -Value (($receipt | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+}
+
+function Read-WorkflowBranchCommitPlanReceipt {
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+
+    $path = Join-Path $Snapshot.root 'branch-commit.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    try { $receipt = Read-Utf8Text -Path $path | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw "WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID: '$path' cannot be read. Preserve the snapshot. $($_.Exception.Message)" }
+    # Retention renames the snapshot directory, never its immutable receipts.
+    $receiptRoot = [string]$Snapshot.root
+    if ((Split-Path -Leaf $receiptRoot) -cmatch '^itl-workflow-update-completed-([a-f0-9]{32})$') {
+        $receiptRoot = Join-Path (Split-Path -Parent $receiptRoot) ('itl-workflow-update-rollback-' + $Matches[1])
+    }
+    if ([int]$receipt.schemaVersion -ne 1 -or [string]$receipt.operation -cne 'update-workflow-branch' -or
+        [string]$receipt.projectRoot -cne [string]$script:ProjectRoot -or
+        [string]$receipt.snapshotRoot -cne $receiptRoot -or
+        [string]$receipt.branchRef -cne (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim() -or
+        [string]$receipt.oldHead -notmatch '^[a-f0-9]{40}$' -or
+        [string]$receipt.newHead -notmatch '^[a-f0-9]{40}$' -or
+        [string]$receipt.candidateTree -notmatch '^[a-f0-9]{40}$' -or
+        $null -eq $receipt.PSObject.Properties['indexStateBefore']) {
+        throw "WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID: identity or Git pin mismatch in '$path'. Preserve the snapshot."
+    }
+    $specs = @($receipt.managedPathSpecs | ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_) })
+    $paths = @($receipt.managedPaths | ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_) })
+    $matcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $specs
+    $unexpected = @($paths | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher) })
+    if ($unexpected.Count -gt 0) {
+        throw "WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID: changed paths outside the owned write-set in '$path': $($unexpected -join ', ')."
+    }
+    $snapshotMatcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @($Snapshot.records | ForEach-Object { [string]$_.relativePath })
+    $outsideSnapshot = @($paths | Where-Object {
+        -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $snapshotMatcher) -and
+        -not (Test-WorkflowExecutionRuntimePath -Path $_)
+    })
+    if ($outsideSnapshot.Count -gt 0) {
+        throw "WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID: changed paths lack a before snapshot in '$path': $($outsideSnapshot -join ', ')."
+    }
+    if (-not (Test-GitCommitExists -Commit ([string]$receipt.oldHead)) -or
+        -not (Test-GitCommitExists -Commit ([string]$receipt.newHead)) -or
+        (Get-GitOutput @('rev-parse', "$($receipt.newHead)^{tree}")).Trim() -cne [string]$receipt.candidateTree) {
+        throw "WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID: candidate commit/tree is unavailable or changed in '$path'."
+    }
+    if ([string]$receipt.newHead -cne [string]$receipt.oldHead) {
+        $parents = @(Get-GitCommitParents -Commit ([string]$receipt.newHead))
+        $actualChanged = @(Get-GitPathList -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', [string]$receipt.newHead, '--'))
+        if ($parents.Count -ne 1 -or $parents[0] -cne [string]$receipt.oldHead -or
+            @($actualChanged | Where-Object { $paths -cnotcontains $_ }).Count -gt 0) {
+            throw "WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID: candidate parent or write-set differs from '$path'."
+        }
+        foreach ($runtimePath in @($paths | Where-Object { Test-WorkflowExecutionRuntimePath -Path $_ })) {
+            $literal = ':(literal)' + $runtimePath
+            $oldEntry = @(Get-GitPathList -Arguments @('ls-tree', '-r', '--name-only', '-z', [string]$receipt.oldHead, '--', $literal))
+            $newEntry = @(Get-GitPathList -Arguments @('ls-tree', '-r', '--name-only', '-z', [string]$receipt.newHead, '--', $literal))
+            if ($oldEntry.Count -ne 1 -or $newEntry.Count -ne 0) {
+                throw "WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID: legacy runtime path '$runtimePath' must only be removed from Git tracking; physical evidence remains in the worktree."
+            }
+        }
+    }
+    return [pscustomobject]@{
+        branchRef = [string]$receipt.branchRef
+        oldHead = [string]$receipt.oldHead
+        newHead = [string]$receipt.newHead
+        candidateTree = [string]$receipt.candidateTree
+        managedPaths = @($paths)
+        managedPathSpecs = @($specs)
+        indexStateBefore = @($receipt.indexStateBefore)
+    }
+}
+
+function Apply-WorkflowBranchCommitPlan {
+    param(
+        [Parameter(Mandatory = $true)][object]$Plan,
+        [AllowNull()][object]$PendingMergeState = $null
+    )
+
+    $branchRef = (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim()
+    if ($branchRef -cne [string]$Plan.branchRef) {
+        throw "WORKFLOW_UPDATE_BRANCH_CHANGED: planned='$($Plan.branchRef)' actual='$branchRef'. Preserve the candidate commit for exact reconciliation."
+    }
+    $head = Get-CurrentCommit
+    if ($head -cne [string]$Plan.oldHead -and $head -cne [string]$Plan.newHead) {
+        throw "WORKFLOW_UPDATE_BRANCH_HEAD_CHANGED: planned='$($Plan.oldHead)' candidate='$($Plan.newHead)' actual='$head'. Preserve the branch and reconcile its exact workflow transition."
+    }
+    $pending = if ($null -ne $PendingMergeState) { Get-PendingDevBranchMergeTransaction -State $PendingMergeState } else { $null }
+    $pendingReplayMatches = $false
+    if ($null -ne $pending -and [string]$Plan.newHead -cne [string]$Plan.oldHead) {
+        if ($pending.stage -in @('prepared', 'conflicts')) {
+            # The lifecycle keeps its initial branch anchor through every
+            # workflow-only child. A later lost acknowledgement must match
+            # this exact candidate and the preserved linear Git ancestry;
+            # it must not replace that anchor with the latest plan's parent.
+            $pendingReplayMatches = $pending.branchCommit -ceq [string]$Plan.newHead -and
+                $pending.originalBranchCommit -cmatch '^[a-f0-9]{40}$' -and
+                (Test-GitCommitExists -Commit $pending.originalBranchCommit) -and
+                (Test-DevBranchLifecycleLinearDescendant -Ancestor $pending.originalBranchCommit -Descendant ([string]$Plan.oldHead))
+            if ($pending.branchCommit -cne [string]$Plan.oldHead -and -not $pendingReplayMatches) {
+                throw "WORKFLOW_UPDATE_PENDING_MERGE_CHECKPOINT_CHANGED: recorded='$($pending.branchCommit)' original='$($pending.originalBranchCommit)' expected='$($Plan.newHead)'/'$($Plan.oldHead)'."
+            }
+        } elseif ($pending.stage -cne 'merged') {
+            throw "WORKFLOW_UPDATE_PENDING_MERGE_STAGE_UNSUPPORTED: '$($pending.stage)' requires its original lifecycle recovery before a branch workflow commit."
+        }
+    }
+    if ($null -ne $pending -and $pending.stage -ceq 'merged') {
+        Assert-DevBranchLifecycleMergeRecordedResult -Transaction $pending -Operation $pending.operation
+        if (-not $pending.postMergeHead) {
+            if ([string]$Plan.oldHead -cne $pending.mergeCommit) {
+                throw "WORKFLOW_UPDATE_MERGED_CHECKPOINT_MISSING: HEAD '$($Plan.oldHead)' differs from recorded merge '$($pending.mergeCommit)'. Preserve the branch and resume the original lifecycle owner."
+            }
+        } elseif ([string]$Plan.oldHead -cne $pending.postMergeHead -and
+            -not (Test-DevBranchLifecycleLinearDescendant -Ancestor $pending.postMergeHead -Descendant ([string]$Plan.oldHead))) {
+            throw "WORKFLOW_UPDATE_MERGED_CHECKPOINT_CHANGED: HEAD '$($Plan.oldHead)' is not the recorded post-merge checkpoint or its linear descendant."
+        }
+    }
+    $managedPaths = @($Plan.managedPaths | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
+    if ($managedPaths.Count -gt 0) {
+        $indexNow = @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-files', '--stage', '-z') -LiteralPaths $managedPaths)
+        $indexBefore = [string[]]@($Plan.indexStateBefore)
+        [Array]::Sort($indexBefore, [StringComparer]::Ordinal)
+        $matchesBefore = [string]::Equals(($indexNow -join "`0"), ($indexBefore -join "`0"), [StringComparison]::Ordinal)
+        $matchesCandidate = @(Get-WorkflowGitLiteralPathRecords -Arguments @('diff', '--cached', '--name-only', '-z', [string]$Plan.newHead) -LiteralPaths $managedPaths).Count -eq 0
+        if (-not $matchesBefore -and -not $matchesCandidate) {
+            throw "WORKFLOW_UPDATE_BRANCH_INDEX_CHANGED: owned index entries changed after the branch commit plan was recorded. Preserve the index and candidate receipt for exact reconciliation."
+        }
+    }
+    if ($null -ne $pending -and $pending.stage -ceq 'merged' -and -not $pending.postMergeHead) {
+        Update-DevBranchState -State $PendingMergeState -Updates @{ pendingMergePostMergeHead = $pending.mergeCommit }
+    }
+    if ([string]$Plan.newHead -cne [string]$Plan.oldHead -and $head -cne [string]$Plan.newHead) {
+        Invoke-Git @('update-ref', [string]$Plan.branchRef, [string]$Plan.newHead, [string]$Plan.oldHead)
+    }
+    if ($managedPaths.Count -gt 0) {
+        $remaining = @(Get-WorkflowGitLiteralPathRecords -Arguments @('diff', '--cached', '--name-only', '-z') -LiteralPaths $managedPaths)
+        if ($remaining.Count -gt 0) {
+            Invoke-WorkflowGitLiteralPathMutation -Arguments @('reset', '--quiet', [string]$Plan.newHead) -LiteralPaths $managedPaths
+            $remaining = @(Get-WorkflowGitLiteralPathRecords -Arguments @('diff', '--cached', '--name-only', '-z') -LiteralPaths $managedPaths)
+        }
+        if ($remaining.Count -gt 0) {
+            throw "WORKFLOW_UPDATE_BRANCH_INDEX_MISMATCH: owned paths remain staged after the workflow parent transition: $($remaining -join ', ')."
+        }
+    }
+    Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs @($Plan.managedPathSpecs)
+    if ($null -ne $pending -and [string]$Plan.newHead -cne [string]$Plan.oldHead) {
+        if ($pending.stage -in @('prepared', 'conflicts')) {
+            if ($pending.branchCommit -ceq [string]$Plan.oldHead) {
+                Advance-PendingDevBranchMergeForWorkflowUpdate -State $PendingMergeState -OldHead ([string]$Plan.oldHead) `
+                    -NewHead ([string]$Plan.newHead) -ManagedPathSpecs @($Plan.managedPathSpecs) | Out-Null
+            } elseif (-not $pendingReplayMatches) {
+                throw "WORKFLOW_UPDATE_PENDING_MERGE_CHECKPOINT_CHANGED: recorded='$($pending.branchCommit)' original='$($pending.originalBranchCommit)' expected='$($Plan.newHead)'/'$($Plan.oldHead)'."
+            }
+        } elseif ($pending.stage -cne 'merged') {
+            throw "WORKFLOW_UPDATE_PENDING_MERGE_STAGE_UNSUPPORTED: '$($pending.stage)' requires its original lifecycle recovery before a branch workflow commit."
+        }
+    }
+    return [pscustomobject]@{ changed = ([string]$Plan.newHead -cne [string]$Plan.oldHead); commit = [string]$Plan.newHead }
+}
+
+function Advance-PendingDevBranchMergeForWorkflowUpdate {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][string]$OldHead,
+        [Parameter(Mandatory = $true)][string]$NewHead,
+        [Parameter(Mandatory = $true)][string[]]$ManagedPathSpecs
+    )
+
+    $transaction = Get-PendingDevBranchMergeTransaction -State $State
+    if ($null -eq $transaction) { return $false }
+    if ($transaction.stage -notin @('prepared', 'conflicts')) {
+        throw "WORKFLOW_UPDATE_PENDING_MERGE_STAGE_UNSUPPORTED: '$($transaction.stage)' requires its original lifecycle recovery before advancing the branch workflow commit."
+    }
+    if ($transaction.branchCommit -cne $OldHead -or (Get-CurrentCommit) -cne $NewHead) {
+        throw "WORKFLOW_UPDATE_PENDING_MERGE_HEAD_CHANGED: recorded='$($transaction.branchCommit)' before='$OldHead' current='$(Get-CurrentCommit)'. Preserve the pending merge and reconcile the exact branch transition."
+    }
+    $parents = @(Get-GitCommitParents -Commit $NewHead)
+    if ($parents.Count -ne 1 -or $parents[0] -cne $OldHead) {
+        throw "WORKFLOW_UPDATE_PENDING_MERGE_PARENT_INVALID: '$NewHead' must be a workflow-only child of '$OldHead'."
+    }
+    $changed = @(Get-GitPathList -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', $NewHead, '--'))
+    $unexpected = @($changed | Where-Object {
+        -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $ManagedPathSpecs)
+    })
+    if ($unexpected.Count -gt 0) {
+        throw "WORKFLOW_UPDATE_PENDING_MERGE_FOREIGN_PATH: workflow transition changed paths outside its owned write-set: $($unexpected -join ', ')."
+    }
+    $original = if ($transaction.originalBranchCommit) { $transaction.originalBranchCommit } else { $OldHead }
+    Update-DevBranchState -State $State -Updates @{
+        pendingMergeBranchCommit = $NewHead
+        pendingMergeOriginalBranchCommit = $original
+    }
+    return $true
 }
 
 function Stop-DevBranchLifecycleMergeForConflicts {
@@ -7478,6 +15541,193 @@ function Test-GitWorktreePathDiffersOnlyByCarriageReturnsAtEol {
     throw "Cannot compare the worktree path with the merge index while ignoring carriage returns at EOL: $RepoPath"
 }
 
+function Get-DependencyLockMergeValueState {
+    param(
+        [System.Collections.IDictionary]$Map,
+        [string]$Name
+    )
+
+    $exists = $Map.Contains($Name)
+    $value = if ($exists) { $Map[$Name] } else { $null }
+    $comparable = if ($exists) {
+        "present:" + (ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $value) -Depth 100 -Compress)
+    } else {
+        "absent"
+    }
+    return [pscustomobject]@{ exists = $exists; value = $value; comparable = $comparable }
+}
+
+function Select-DependencyLockThreeWayValue {
+    param(
+        [System.Collections.IDictionary]$Base,
+        [System.Collections.IDictionary]$Branch,
+        [System.Collections.IDictionary]$Target,
+        [string]$Name,
+        [string]$Path
+    )
+
+    $baseState = Get-DependencyLockMergeValueState -Map $Base -Name $Name
+    $branchState = Get-DependencyLockMergeValueState -Map $Branch -Name $Name
+    $targetState = Get-DependencyLockMergeValueState -Map $Target -Name $Name
+    if ($branchState.comparable -ceq $targetState.comparable -or
+        $branchState.comparable -ceq $baseState.comparable) {
+        return $targetState
+    }
+    if ($targetState.comparable -ceq $baseState.comparable) {
+        return $branchState
+    }
+    throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: incompatible changes at $Path."
+}
+
+function Get-RefreshDependencyTemplateAtCommit {
+    param([string]$Commit)
+    $spec = "${Commit}:templates/dependency-lock.json"
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & git -C $script:ProjectRoot cat-file -e $spec *> $null
+        $exists = $LASTEXITCODE -eq 0
+    } finally { $ErrorActionPreference = $previousPreference }
+    if ($exists) { return ((Get-GitOutput @('show', $spec)) | ConvertFrom-Json -ErrorAction Stop) }
+    return (New-DefaultDependencyLockManifest)
+}
+
+function Merge-RefreshDependencyLockManifests {
+    param(
+        [System.Collections.IDictionary]$Base,
+        [System.Collections.IDictionary]$Branch,
+        [System.Collections.IDictionary]$Target,
+        [AllowNull()][object]$InstalledTemplate = $null
+    )
+
+    foreach ($manifest in @($Base, $Branch, $Target)) {
+        if ([int](Get-ConfigValueFromObject -Object $manifest -Path "schemaVersion" -Default 0) -notin @(1, 2)) {
+            throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: every lock side must use supported schemaVersion 1 or 2."
+        }
+        $dependencies = Get-ConfigValueFromObject -Object $manifest -Path "dependencies" -Default $null
+        if ($dependencies -isnot [System.Collections.IDictionary] -and $dependencies -isnot [pscustomobject]) {
+            throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: every lock side must contain a dependencies object."
+        }
+    }
+
+    $merged = ConvertTo-Agent1cHashtable -Object $Target
+    $baseDependencies = ConvertTo-Agent1cHashtable -Object $Base["dependencies"]
+    $branchDependencies = ConvertTo-Agent1cHashtable -Object $Branch["dependencies"]
+    $targetDependencies = ConvertTo-Agent1cHashtable -Object $Target["dependencies"]
+    $mergedDependencies = ConvertTo-Agent1cHashtable -Object $targetDependencies
+    $template = New-DefaultDependencyLockManifest
+    $authoritativeNames = @(
+        "workflowPackage"
+        "aiRules1c"
+        @(Get-WorkflowManagedDependencyLockEntryNames -TemplateManifest $template)
+    ) | Sort-Object -Unique
+    foreach ($name in $authoritativeNames) {
+        if (-not $targetDependencies.Contains($name)) {
+            throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: authoritative target entry dependencies.$name is missing."
+        }
+    }
+
+    $foreignNames = @(
+        @($baseDependencies.Keys) + @($branchDependencies.Keys) + @($targetDependencies.Keys) |
+            Where-Object { $authoritativeNames -cnotcontains [string]$_ } |
+            Sort-Object -Unique
+    )
+    foreach ($name in $foreignNames) {
+        $selection = Select-DependencyLockThreeWayValue `
+            -Base $baseDependencies `
+            -Branch $branchDependencies `
+            -Target $targetDependencies `
+            -Name $name `
+            -Path "dependencies.$name"
+        if ($selection.exists) {
+            $mergedDependencies[$name] = $selection.value
+        } else {
+            $mergedDependencies.Remove($name)
+        }
+    }
+    $merged["dependencies"] = $mergedDependencies
+
+    $topLevelNames = @(
+        @($Base.Keys) + @($Branch.Keys) + @($Target.Keys) |
+            Where-Object { [string]$_ -notin @('dependencies','schemaVersion','mode','hotfixes','baselineFingerprints') } |
+            Sort-Object -Unique
+    )
+    foreach ($name in $topLevelNames) {
+        $selection = Select-DependencyLockThreeWayValue `
+            -Base $Base `
+            -Branch $Branch `
+            -Target $Target `
+            -Name $name `
+            -Path $name
+        if ($selection.exists) {
+            $merged[$name] = $selection.value
+        } else {
+            $merged.Remove($name)
+        }
+    }
+
+    # Exceptions belong to this worktree. A master exception is not inherited
+    # by refresh; the same resolver decides retention/retirement against the
+    # merged installed workflow, using the branch's exact former template.
+    $selectionManifest = ConvertTo-Agent1cHashtable -Object $Branch
+    $selectionManifest['dependencies'] = ConvertTo-Agent1cHashtable -Object $branchDependencies
+    foreach ($name in $foreignNames) {
+        if ($mergedDependencies.Contains($name)) { $selectionManifest.dependencies[$name] = $mergedDependencies[$name] }
+        else { $selectionManifest.dependencies.Remove($name) }
+    }
+    $selectionManifest.dependencies['workflowPackage'] = $targetDependencies.workflowPackage
+    $compatibilityPath = Join-Path (Get-ItlOnDemandMcpAssetRoot) 'compatibility.json'
+    $compatibility = if (Test-Path -LiteralPath $compatibilityPath -PathType Leaf) { Read-Utf8Text -Path $compatibilityPath | ConvertFrom-Json } else { $null }
+    $plan = New-WorkflowDependencyPlan -Template $template -InstalledTemplate $InstalledTemplate -Manifest $selectionManifest -Selection (Get-WorkflowDependencySelectionInput) -Compatibility $compatibility
+    Assert-WorkflowDependencyPlan -Plan $plan
+    foreach ($name in @('dependencies','schemaVersion','mode','hotfixes','baselineFingerprints')) { $merged[$name] = $plan.manifest[$name] }
+    return $merged
+}
+
+function Resolve-RefreshDependencyLockMergeConflict {
+    $repoPath = ".agent-1c/dependency-lock.json"
+    if (@(Get-DevBranchMergeUnmergedPaths) -cnotcontains $repoPath) { return $false }
+
+    try {
+        $base = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":1:$repoPath")) | ConvertFrom-Json)
+        $branch = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":2:$repoPath")) | ConvertFrom-Json)
+        $target = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":3:$repoPath")) | ConvertFrom-Json)
+    } catch {
+        throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: the base, branch, and target lock files must all be valid JSON. $($_.Exception.Message)"
+    }
+    $merged = Merge-RefreshDependencyLockManifests -Base $base -Branch $branch -Target $target -InstalledTemplate (Get-RefreshDependencyTemplateAtCommit -Commit HEAD)
+    Write-Utf8Text `
+        -Path (Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json") `
+        -Value (($merged | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
+    Invoke-Git @("add", "--", $repoPath)
+    Write-Host "Resolved the workflow-owned dependency lock conflict while preserving compatible project entries."
+    return $true
+}
+
+function Test-RefreshDependencyLockSemanticMergeResult {
+    param(
+        [string]$BranchCommit,
+        [string]$TargetCommit
+    )
+
+    $repoPath = ".agent-1c/dependency-lock.json"
+    $currentPath = Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json"
+    if (-not (Test-Path -LiteralPath $currentPath -PathType Leaf -ErrorAction SilentlyContinue)) { return $false }
+    try {
+        $baseCommit = (Get-GitOutput @("merge-base", $BranchCommit, $TargetCommit)).Trim()
+        $base = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "${baseCommit}:$repoPath")) | ConvertFrom-Json)
+        $branch = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "${BranchCommit}:$repoPath")) | ConvertFrom-Json)
+        $target = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "${TargetCommit}:$repoPath")) | ConvertFrom-Json)
+        $expected = Merge-RefreshDependencyLockManifests -Base $base -Branch $branch -Target $target -InstalledTemplate (Get-RefreshDependencyTemplateAtCommit -Commit $BranchCommit)
+        $current = ConvertTo-Agent1cHashtable -Object ((Read-Utf8Text -Path $currentPath) | ConvertFrom-Json)
+        $expectedComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $expected) -Depth 100 -Compress
+        $currentComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $current) -Depth 100 -Compress
+        return $expectedComparable -ceq $currentComparable
+    } catch {
+        return $false
+    }
+}
+
 function Merge-MasterPreservingBranchConfigDumpInfo {
     param(
         [string]$MasterBranch = (Get-MasterBranch),
@@ -7511,6 +15761,7 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
     }
 
     Restore-BranchConfigDumpInfoFromCommit -Commit $BranchCommit -RepoPaths $allDumpInfoPaths
+    Resolve-RefreshDependencyLockMergeConflict | Out-Null
     $remainingConflicts = @(Get-DevBranchMergeUnmergedPaths)
     if ($remainingConflicts.Count -gt 0) {
         throw "Master merge still has non-ConfigDumpInfo conflicts after preserving the branch synchronization cursor: $($remainingConflicts -join ', ')"
@@ -7522,6 +15773,12 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
             -CursorPaths $allDumpInfoPaths
     }
     Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath)
+    . (Join-Path $PSScriptRoot 'agent-1c.merge-preservation.ps1')
+    $preservationExcludedPaths = @($allDumpInfoPaths)
+    if (Test-RefreshDependencyLockSemanticMergeResult -BranchCommit $BranchCommit -TargetCommit $MasterBranch) {
+        $preservationExcludedPaths += ".agent-1c/dependency-lock.json"
+    }
+    Assert-DevBranchMergePreservation -BranchCommit $BranchCommit -TargetCommit $MasterBranch -ExcludedPaths $preservationExcludedPaths
     Invoke-Git @("commit", "--no-edit")
 }
 
@@ -7609,12 +15866,39 @@ function Test-DevBranchLifecycleHelperOwnedPostMergeHead {
     if ($subject -ceq "chore: persist branch configuration synchronization cursor") {
         return ($paths.Count -eq 1 -and $paths[0] -ceq $cursorPath)
     }
+    if (-not $LegacyCursorOnly -and $subject -ceq "chore: activate execution guards v2") {
+        $manifestPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'execution-guard-cutover-paths.json'
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $directories = @($manifest.directories | ForEach-Object { ([string]$_).Replace('\', '/').Trim('/') })
+        $files = @($manifest.files | ForEach-Object { ([string]$_).Replace('\', '/') })
+        $unexpectedPaths = @($paths | Where-Object {
+            $path = $_
+            $files -cnotcontains $path -and
+            $path -cne '.agent-1c/execution-guard-generation.json' -and
+            $path -cnotmatch '^\.agent-1c/execution-guard-generation\.json\.[^/]+$' -and
+            $path -cnotlike '.agent-1c/execution-checkpoints/*' -and
+            @($directories | Where-Object { $path.StartsWith("$_/", [StringComparison]::Ordinal) }).Count -eq 0
+        })
+        return ($paths.Count -ge 1 -and $unexpectedPaths.Count -eq 0)
+    }
     if ($LegacyCursorOnly -or $subject -cne "chore: persist branch refresh state") { return $false }
 
-    $allowedPaths = @($cursorPath, ".kilo/kilo.json")
-    return ($paths.Count -ge 1 -and $paths.Count -le 2 -and
-        $paths -ccontains ".kilo/kilo.json" -and
+    $managedStatePaths = @(".kilo/kilo.json", ".agent-1c/dependency-lock.json")
+    $allowedPaths = @($cursorPath) + $managedStatePaths
+    return ($paths.Count -ge 1 -and $paths.Count -le 3 -and
+        @($paths | Where-Object { $managedStatePaths -ccontains $_ }).Count -ge 1 -and
         @($paths | Where-Object { $allowedPaths -cnotcontains $_ }).Count -eq 0)
+}
+
+function Test-DevBranchLifecycleLinearDescendant {
+    param([string]$Ancestor, [string]$Descendant)
+
+    if (-not (Test-GitCommitIsAncestor -Ancestor $Ancestor -Descendant $Descendant)) { return $false }
+    $commits = @(Get-GitOutput @('rev-list', '--first-parent', '--parents', "$Ancestor..$Descendant"))
+    foreach ($record in $commits) {
+        if (@([string]$record -split '\s+' | Where-Object { $_ }).Count -ne 2) { return $false }
+    }
+    return $true
 }
 
 function Resolve-DevBranchLifecyclePostMergeHead {
@@ -7634,7 +15918,15 @@ function Resolve-DevBranchLifecyclePostMergeHead {
             throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$Operation' mergeCommit='$($Transaction.mergeCommit)' recordedPostMergeHead='$recordedPostMergeHead'."
         }
         if ($head -cne $recordedPostMergeHead) {
-            throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$Operation' expected='$recordedPostMergeHead' actual='$head'."
+            $expectedBranch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
+            if ($Operation -in @('refresh-dev-branch', 'refresh-dev-branch-lite') -and
+                $Transaction.operation -ceq $Operation -and $Transaction.stage -ceq 'merged' -and
+                $expectedBranch -and $Transaction.branch -ceq $expectedBranch -and
+                (Get-CurrentBranch) -ceq $expectedBranch -and
+                (Test-DevBranchLifecycleLinearDescendant -Ancestor $recordedPostMergeHead -Descendant $head)) {
+                return $head
+            }
+            throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$Operation' expected='$recordedPostMergeHead' actual='$head'. Only linear commits after the recorded merge may resume this refresh."
         }
         return $head
     }
@@ -7665,6 +15957,12 @@ function Set-DevBranchLifecyclePostMergeHeadCheckpoint {
     Assert-DevBranchLifecycleMergeRecordedResult -Transaction $transaction -Operation $Operation
     if ($PostMergeHead -cne $transaction.mergeCommit -and
         -not (Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction $transaction -CandidateHead $PostMergeHead)) {
+        # Resume already admits linear task commits after a trusted checkpoint.
+        # Keep that anchor: a cursor commit after reviewed input work must not be
+        # falsely recorded as a direct helper-owned child of the merge.
+        if ($PostMergeHead -ceq (Resolve-DevBranchLifecyclePostMergeHead -State $State -Transaction $transaction -Operation $Operation)) {
+            return
+        }
         throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$Operation' mergeCommit='$($transaction.mergeCommit)' postMergeHead='$PostMergeHead'."
     }
     Update-DevBranchState -State $State -Updates @{ pendingMergePostMergeHead = $PostMergeHead }
@@ -7679,6 +15977,8 @@ function Invoke-NewDevBranchLifecycleMerge {
     )
 
     $branch = [string](Get-StateValue -State $State -Name "devBranch" -Default "")
+    # Before the transaction pins the branch commit, so a resume sees the same head.
+    Add-DevBranchResetMasterAncestry -State $State | Out-Null
     $branchCommit = Get-CurrentCommit
     Set-PendingDevBranchMergeTransaction `
         -State $State `
@@ -7711,13 +16011,21 @@ function Invoke-NewDevBranchLifecycleMerge {
             -Stage "conflicts" `
             -AllowedPaths $allowedPaths `
             -ConflictPaths $conflictPaths
-        if ($sourceValidationFailure) {
+        if ($sourceValidationFailure -or $mergeFailure.Exception.Message -match '^LIFECYCLE_MERGE_(PRESERVATION_REVIEW_REQUIRED|REVIEW_)') {
             throw $mergeFailure
+        }
+        # Without unmerged paths the merge stopped on a validation or helper error;
+        # the stop keeps that error as its reason instead of an empty conflict list.
+        $conflictReason = "merge conflicts remain"
+        if ($conflictPaths.Count -eq 0) {
+            $conflictReason = "merge stopped before commit without unmerged paths: " +
+                (([string]$mergeFailure.Exception.Message) -replace "[`r`n]+", " " -replace "'", '"').Trim()
         }
         Stop-DevBranchLifecycleMergeForConflicts `
             -Operation $Operation `
             -Stage $ConflictStage `
-            -ConflictPaths $conflictPaths
+            -ConflictPaths $conflictPaths `
+            -Reason $conflictReason
     }
 
     $stateAfterMerge = Read-DevBranchState -Name $DevBranchName
@@ -7821,11 +16129,10 @@ function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {
     $verification = Get-VerificationState -State $State
     $evidenceKind = [string](Get-StateValue -State $State -Name "lastVerificationEvidenceKind" -Default "")
     $configLoadStatus = [string](Get-StateValue -State $State -Name "configLoadStatus" -Default "")
-    $normalizationStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
     if (-not $verification.isFreshPassed -or
-        $evidenceKind -cne "full" -or
+        $evidenceKind -cnotin @('full', 'complete/current-obligations', 'complete/current-change') -or
         $configLoadStatus -notin @("passed", "fallback-succeeded") -or
-        $normalizationStatus -cne "passed") {
+        -not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
         return $false
     }
 
@@ -7866,9 +16173,10 @@ function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {
         lastRefreshRecoveryOperation = $RecoveryOperation
         lastRefreshRecoveredHead = $head
     }
+    $updates['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $State -Operation $transaction.operation -BaseCommit $transaction.targetCommit -CompletedHead $head -CompletedAt $updates.lastRefreshAt
     Add-PendingDevBranchMergeClearUpdates -Updates $updates
     Update-DevBranchState -State $State -Updates $updates
-    Write-Host "Completed pending $($transaction.operation) after fresh full verification at descendant HEAD: $head"
+    Write-Host "Completed pending $($transaction.operation) after fresh complete verification at descendant HEAD: $head"
     return $true
 }
 
@@ -7908,6 +16216,7 @@ function Resume-DevBranchLifecycleMergeIfPresent {
                 Sort-Object -Unique
         )
         Restore-BranchConfigDumpInfoFromCommit -Commit $transaction.branchCommit -RepoPaths $cursorPaths
+        Resolve-RefreshDependencyLockMergeConflict | Out-Null
 
         $unmergedPaths = @(Get-DevBranchMergeUnmergedPaths)
         if ($unmergedPaths.Count -gt 0) {
@@ -8009,6 +16318,12 @@ function Resume-DevBranchLifecycleMergeIfPresent {
 
         Sync-AiRules1cManagedIgnoredFilesFromMain -State $State | Out-Null
         Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath) -AdditionalPaths $transaction.repairPaths
+        . (Join-Path $PSScriptRoot 'agent-1c.merge-preservation.ps1')
+        $preservationExcludedPaths = @($cursorPaths)
+        if (Test-RefreshDependencyLockSemanticMergeResult -BranchCommit $transaction.branchCommit -TargetCommit $transaction.targetCommit) {
+            $preservationExcludedPaths += ".agent-1c/dependency-lock.json"
+        }
+        Assert-DevBranchMergePreservation -BranchCommit $transaction.branchCommit -TargetCommit $transaction.targetCommit -ExcludedPaths $preservationExcludedPaths
         Invoke-Git @("commit", "--no-edit")
         $State = Read-DevBranchState -Name $DevBranchName
         Complete-DevBranchLifecycleMergeTransaction -State $State -Transaction $transaction
@@ -8021,8 +16336,21 @@ function Resume-DevBranchLifecycleMergeIfPresent {
             -Transaction $transaction `
             -Operation $Operation `
             -AllowLegacyCursorMigration | Out-Null
-        Assert-CleanGit
+        Assert-DevBranchLifecyclePostMergeGitState -Operation $Operation
         Restart-Agent1cAfterDevBranchMerge -Operation $Operation
+    }
+
+    if ($head -ceq $transaction.branchCommit -and $transaction.stage -ceq "conflicts") {
+        # A supervisor or E2E cleanup may restore the exact pre-merge checkout
+        # while the durable transaction still records the interrupted conflict.
+        # Recreate only that same pinned merge, and only from a clean tree.
+        Assert-CleanGit
+        Write-Host "The recorded merge conflict no longer has an active Git merge. Recreating the same pinned merge transaction."
+        Invoke-NewDevBranchLifecycleMerge `
+            -State $State `
+            -Operation $Operation `
+            -TargetCommit $transaction.targetCommit `
+            -ConflictStage $ConflictStage
     }
 
     if (Test-GitCommitHasExactMergeParents -Commit $head -FirstParent $transaction.branchCommit -SecondParent $transaction.targetCommit) {
@@ -8042,6 +16370,104 @@ function Resume-DevBranchLifecycleMergeIfPresent {
     }
 
     throw "LIFECYCLE_MERGE_STATE_MISMATCH operation='$Operation' stage='$($transaction.stage)' branchCommit='$($transaction.branchCommit)' targetCommit='$($transaction.targetCommit)' head='$head'."
+}
+
+function Get-RefreshGitInputScopes {
+    param([switch]$DeclaredOnly)
+    # These are consumed by load, dependency setup and verification inventory.
+    # Declared evidence inputs override the small independent-document scope.
+    $scopes = @(Get-VerificationDeclaredInputScopes)
+    if (-not $DeclaredOnly) {
+        $scopes += @('src', 'tests', 'features', '.agents', '.agent-1c', 'scripts', 'templates',
+            '.dev.env', '.gitignore', '.gitattributes', 'AGENTS.md', 'USER-RULES.md', 'LLM-RULES.md',
+            (Get-ExportPath), (Get-ExtensionsPath))
+    }
+    foreach ($catalogPath in @((Get-VerificationSuiteCatalogPaths) + (Get-YAxUnitSuiteCatalogPaths))) {
+        if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) { continue }
+        $catalog = Read-Utf8Text -Path $catalogPath | ConvertFrom-Json -ErrorAction Stop
+        # Legacy catalogs express their inputs on suites/groups instead of
+        # obligations. Reuse their owner/feature/input paths as bounded scopes.
+        foreach ($entry in @(@(Get-VerificationCatalogValue -Value $catalog -Name suites -Default @()) +
+            @(Get-VerificationCatalogValue -Value $catalog -Name groups -Default @()))) {
+            foreach ($field in @('ownerPaths', 'featurePaths', 'inputPaths')) {
+                $scopes += @(Get-VerificationCatalogValue -Value $entry -Name $field -Default @())
+            }
+        }
+    }
+    return @($scopes | Where-Object { $_ } | Sort-Object -Unique)
+}
+
+function Get-RefreshGitPathDisposition {
+    param([string[]]$Paths, [string]$Operation, [string]$Phase, [switch]$IncludeIgnoredDeclaredInputs)
+    try {
+        if ($IncludeIgnoredDeclaredInputs) {
+            # Status omits ignored untracked inputs. Without a tracked Git identity
+            # they cannot be admitted as unchanged. Inspect only declared scopes;
+            # ordinary ignored runtime/reports remain outside this admission check.
+            $declaredScopes = @(Get-RefreshGitInputScopes -DeclaredOnly)
+            $prefixes = @(foreach ($scope in $declaredScopes) {
+                $prefix = (([string]$scope -replace '\\', '/') -replace '^(\./)+', '').TrimEnd('/')
+                $wildcardAt = $prefix.IndexOfAny([char[]]@('*', '?', '['))
+                if ($wildcardAt -ge 0) {
+                    $prefix = $prefix.Substring(0, $wildcardAt)
+                    $slash = $prefix.LastIndexOf('/')
+                    $prefix = if ($slash -ge 0) { $prefix.Substring(0, $slash) } else { '.' }
+                }
+                if ($prefix) { $prefix }
+            })
+            $prefixes = @($prefixes | Sort-Object -Unique)
+            if ($prefixes.Count -gt 0) {
+                $ignored = @(Get-GitPathList -Arguments (@('--literal-pathspecs', 'ls-files', '--others', '--ignored', '--exclude-standard', '-z', '--') + $prefixes))
+                $Paths = @($Paths) + @(Get-LifecycleGitPathDisposition -Paths $ignored -InputScopes $declaredScopes -IndependentScopes @() |
+                    Where-Object { $_.kind -eq 'input' } | ForEach-Object { $_.path })
+            }
+        }
+        return @(Get-LifecycleGitPathDisposition -Paths $Paths -InputScopes (Get-RefreshGitInputScopes) -IndependentScopes @('CONTEXT.md', 'docs', 'handoffs') | ForEach-Object {
+            # Independent documents cannot turn executable files into a bypass.
+            if ($_.kind -eq 'independent' -and [IO.Path]::GetExtension($_.path) -notin @('.md','.json')) { $_.kind = 'unknown' }
+            $_
+        })
+    } catch {
+        $catalogs = @(@(Get-VerificationSuiteCatalogPaths) + @(Get-YAxUnitSuiteCatalogPaths))
+        Set-LifecycleGitContinuation -Operation $Operation -Phase $Phase -Paths $catalogs
+        throw "LIFECYCLE_GIT_INPUTS_UNCLASSIFIED: inspect the verification catalogs in blockerOwner and repair their declared input scopes, then repeat the same wrapper. $($_.Exception.Message)"
+    }
+}
+
+function Assert-RefreshGitInputs {
+    param([string]$Operation, [string]$Phase, [string[]]$OwnedPaths = @(), [switch]$StagedOnly)
+
+    if ($Operation -notin @('refresh-dev-branch', 'refresh-dev-branch-lite')) {
+        Assert-CleanGit
+        return
+    }
+    try { Assert-DevBranchCheckpointGitState -Operation $Operation } catch {
+        Set-LifecycleGitContinuation -Operation $Operation -Phase $Phase -Paths @('<unfinished-git-operation>')
+        throw
+    }
+    $changes = @(Get-LifecycleGitChanges)
+    if ($StagedOnly) { $changes = @($changes | Where-Object { $_.status[0] -notin @(' ', '?') }) }
+    $paths = @($changes | ForEach-Object { $_.path } | Where-Object { $OwnedPaths -cnotcontains $_ } | Sort-Object -Unique)
+    $dispositions = @(Get-RefreshGitPathDisposition -Paths $paths -Operation $Operation -Phase $Phase -IncludeIgnoredDeclaredInputs:(-not $StagedOnly))
+    $blocked = @($dispositions | Where-Object { $_.kind -ne 'independent' })
+    if ($blocked.Count -gt 0) {
+        Set-LifecycleGitContinuation -Operation $Operation -Phase $Phase -Paths @($blocked.path)
+        $script:RunRequiredAction += ' For ignored declared inputs, include the reviewed task-owned input in version control (correct its ignore rule or force-add that exact path), commit it, then repeat the same wrapper; do not commit independent reports.'
+        throw "Git worktree is not clean. LIFECYCLE_GIT_INPUTS_CHANGED operation='$Operation' phase='$Phase' paths='$($blocked.path -join ', ')'. Follow requiredAction; independent documents are preserved."
+    }
+}
+
+function Test-RefreshIndependentDocumentationPath {
+    param([string]$Path, [string]$Operation)
+    if ($Operation -notin @('refresh-dev-branch','refresh-dev-branch-lite')) { return $false }
+    return (Get-RefreshGitPathDisposition -Paths @($Path) -Operation $Operation -Phase post-load).kind -eq 'independent'
+}
+
+function Assert-DevBranchLifecyclePostMergeGitState {
+    param([string]$Operation, [string[]]$AllowedPaths = @(), [switch]$StagedOnly)
+    # Retain the existing callers and narrow cursor/index scope; phase input
+    # classification has one owner, including both rename endpoints.
+    Assert-RefreshGitInputs -Operation $Operation -Phase post-merge -OwnedPaths $AllowedPaths -StagedOnly:$StagedOnly
 }
 
 function Assert-DevBranchLifecycleMergePostMerge {
@@ -8066,7 +16492,7 @@ function Assert-DevBranchLifecycleMergePostMerge {
         -Transaction $transaction `
         -Operation $Operation `
         -AllowLegacyCursorMigration | Out-Null
-    Assert-CleanGit
+    Assert-DevBranchLifecyclePostMergeGitState -Operation $Operation
     return (Get-PendingDevBranchMergeTransaction -State (Read-DevBranchState -Name $DevBranchName))
 }
 
@@ -8098,7 +16524,6 @@ function Initialize-DevBranchRuntime {
         $rootPath = Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)
         $DevBranchInfoBasePath = Join-Path $rootPath $SafeDevBranchName
     }
-
     $publishDefault = Get-WebPublishByDefault
     $publicationEnabled = ($PublishToWeb -or $publishDefault)
     $publicationAuto = ($PublishToWeb -or ($publishDefault -and (Get-WebPublishAuto)))
@@ -8135,6 +16560,10 @@ function Initialize-DevBranchRuntime {
     $stateHash["createdWithWorktree"] = $CreatedWithWorktree
     $stateHash["worktreePath"] = $WorktreePath
     $stateHash["mainWorktreePath"] = $MainProjectRoot
+    if(-not $stateHash.ContainsKey('memoryCycle')){
+        $stateHash['memoryCycle']=@{current=[guid]::NewGuid().ToString('N');reserved=''}
+    }
+
     if ($WorkspaceProvider) {
         $stateHash["workspaceProvider"] = $WorkspaceProvider
         $stateHash["clientWorkspaceId"] = $ClientWorkspaceId
@@ -8143,6 +16572,15 @@ function Initialize-DevBranchRuntime {
     }
     if (-not $stateHash.ContainsKey("createdFromCommit") -or -not $stateHash["createdFromCommit"]) {
         $stateHash["createdFromCommit"] = $currentCommit
+    }
+    # Existing states adopt on first check/refresh so their dirty BSL is not lost.
+    if (-not $stateHash.ContainsKey("yaxunitApplicabilityBaseline") -and $null -eq $existingState) {
+        $stateHash["yaxunitApplicabilityBaseline"] = [ordered]@{
+            schemaVersion = 1
+            commit = $currentCommit
+            legacy = $false
+            recordedAt = $now
+        }
     }
     if (-not $stateHash.ContainsKey("lastConfigBaseUpdatedCommit") -or -not $stateHash["lastConfigBaseUpdatedCommit"]) {
         $stateHash["lastConfigBaseUpdatedCommit"] = $currentCommit
@@ -8191,6 +16629,7 @@ function Initialize-DevBranchRuntime {
         @{ name = "createdAt"; value = $now },
         @{ name = "lastLogPath"; value = "" },
         @{ name = "enterpriseNormalizationStatus"; value = "pending" },
+        @{ name = "enterpriseNormalizationProofVersion"; value = 0 },
         @{ name = "enterpriseNormalizationReason"; value = "branch-copy" },
         @{ name = "enterpriseNormalizationError"; value = "" },
         @{ name = "enterpriseNormalizedAt"; value = "" },
@@ -8440,7 +16879,7 @@ function Initialize-DevBranchRuntime {
 function Get-DevWorkspacePlan {
     Require-Value "DevBranchName" $DevBranchName | Out-Null
     Assert-MasterWorktreeContext -Operation "get-dev-workspace-plan"
-    Assert-CleanGit
+    Assert-CleanGit -Operation $(if ($DevBranchKind -eq 'extension') { 'new-extension-dev-branch' } else { 'new-dev-branch' })
 
     $safe = ConvertTo-SafeName $DevBranchName
     $branch = if ($DevBranch) { $DevBranch } else { "itldev/$safe" }
@@ -8776,8 +17215,8 @@ function Remove-DevBranchForkTransientState {
 
     foreach ($key in @($State.Keys)) {
         $name = [string]$key
-        if ($name -in @("statePath", "stateProjectRoot", "closedAt", "pendingDeregistration", "pendingDeregistrationAt", "pendingDeregistrationError", "workspaceProvider", "clientWorkspaceId", "runtimeRoot", "lastVanessaStatusPath") -or
-            $name -match '^(?:launcher|publication|roctupMcp|vanessaMcp|dataMcp|vibecoding1c)' -or
+        if ($name -in @("statePath", "stateProjectRoot", "closedAt", "pendingDeregistration", "pendingDeregistrationAt", "pendingDeregistrationError", "workspaceProvider", "clientWorkspaceId", "runtimeRoot", "lastVanessaStatusPath", "resultTransferBaseline") -or
+            $name -match '^(?:launcher|publication|roctupMcp|vanessaMcp|vanessaServiceInfoBase|dataMcp|vibecoding1c)' -or
             $name -match '^(?:reset|pendingMerge|pendingRefresh|lifecycleMerge|lastResult|finalResult|close|eventLogPendingCursor)' -or
             $name -match '(?i)(?:pid|pids|port|ports|leasetoken|lockpath|locked)$') {
             [void]$State.Remove($key)
@@ -9049,11 +17488,24 @@ function New-ForkedDevBranchState {
         [Parameter(Mandatory = $true)][object]$Snapshot,
         [Parameter(Mandatory = $true)][string]$TargetInfoBasePath,
         [Parameter(Mandatory = $true)][string]$TargetHistoryRoot,
-        [Parameter(Mandatory = $true)][string]$MainProjectRoot
+        [Parameter(Mandatory = $true)][string]$MainProjectRoot,
+        [AllowNull()][object]$TargetState = $null
     )
 
     $state = ConvertTo-Agent1cHashtable -Object $SourceState
     Remove-DevBranchForkTransientState -State $state | Out-Null
+    # The source manager belongs to the source lease. A resumed fork may keep
+    # only the target's own manager inputs, already covered by target admission.
+    if ($null -ne $TargetState) {
+        $targetValues = ConvertTo-Agent1cHashtable -Object $TargetState
+        foreach ($key in @($targetValues.Keys)) {
+            if ([string]$key -match '^vanessaServiceInfoBase') { $state[$key] = $targetValues[$key] }
+        }
+    }
+    # The copied database still carries the source branch title; fork runs no Enterprise to rewrite it.
+    if ([string]$state["applicationTitleStatus"] -in @("set", "unchanged")) {
+        $state["applicationTitleStatus"] = "inherited"
+    }
     $state["toolingInfoBaseGeneration"] = [guid]::NewGuid().ToString("N")
     $state["vanessaMcpSafeModeProof"] = $null
     $state["yaxunitInstallationProof"] = $null
@@ -9072,6 +17524,14 @@ function New-ForkedDevBranchState {
     $state["worktreePath"] = [string]$Snapshot.targetWorktreePath
     $state["mainWorktreePath"] = $MainProjectRoot
     $state["createdFromCommit"] = [string]$Snapshot.sourceCommit
+    if (-not $state.Contains("yaxunitApplicabilityBaseline")) {
+        $state["yaxunitApplicabilityBaseline"] = [ordered]@{
+            schemaVersion = 1
+            commit = [string]$Snapshot.sourceCommit
+            legacy = $true
+            recordedAt = $now
+        }
+    }
     $state["lastConfigBaseUpdatedCommit"] = [string]$Snapshot.sourceCommit
     $state["devBranchInfoBasePath"] = $TargetInfoBasePath
     $state["createdAt"] = $now
@@ -9247,6 +17707,159 @@ function Restore-DevBranchForkInfoBase {
     return $true
 }
 
+function Set-DevBranchForkEvidenceReferences {
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$State,
+        [AllowNull()][object]$EvidencePaths,
+        [Parameter(Mandatory = $true)][string]$TargetHistoryRoot
+    )
+
+    $paths = ConvertTo-Agent1cHashtable -Object $EvidencePaths
+    foreach ($fieldName in @(
+        "lastVerifiedReportPath", "lastVerificationLogPath",
+        "lastDiagnosticVerificationReportPath", "lastDiagnosticVerificationLogPath",
+        "lastYAxUnitReportPath", "lastYAxUnitLogPath",
+        "lastVanessaReportPath", "lastVanessaLogPath", "lastVanessaStatusPath",
+        "lastVanessaEventLogNewErrorsPath", "eventLogDebtReportPath"
+    )) {
+        $State[$fieldName] = if ($paths.Contains($fieldName)) {
+            Join-Path $TargetHistoryRoot (([string]$paths[$fieldName]).Replace("/", [IO.Path]::DirectorySeparatorChar))
+        } else {
+            ""
+        }
+    }
+}
+
+function Assert-DevBranchForkWorkflowTransition {
+    param(
+        [Parameter(Mandatory = $true)][string]$OriginalCommit,
+        [string]$OriginalDependencyLockSha256 = ''
+    )
+
+    $head = Get-CurrentCommit
+    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -AtCommit $head)
+    $changed = @(
+        @(Get-GitPathList -Arguments @('diff', '--name-only', '-z')) +
+        @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z')) +
+        @(Get-GitPathList -Arguments @('ls-files', '--others', '--exclude-standard', '-z'))
+    )
+    if (@($changed | Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher }).Count -gt 0) {
+        throw 'DEV_BRANCH_FORK_WORKFLOW_DIRTY: preserve staged/unstaged workflow edits and reconcile them before repeating the same fork.'
+    }
+    if ($head -ceq $OriginalCommit) { return }
+    $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+    $saved = @()
+    if (Test-Path -LiteralPath $parent -PathType Container) {
+        $saved = @(foreach ($directory in @(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-completed-*')) {
+            # An unrelated damaged historical receipt cannot invalidate the
+            # selected chain. Every selected capsule is fully validated below.
+            try { $projection = Read-Utf8Text -Path (Join-Path $directory.FullName 'transaction.json') | ConvertFrom-Json -ErrorAction Stop }
+            catch { continue }
+            [pscustomobject]@{ root=$directory.FullName; receipt=$projection }
+        })
+    }
+    $cursor = $head
+    $expectedLock = Get-WorkflowUpdatePathState -RelativePath '.agent-1c/dependency-lock.json'
+    $branchRef = (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim()
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    # Snapshot coverage includes all user OpenSpec documents for rollback;
+    # only the five generated scaffold files can be new workflow claims.
+    $scaffoldPaths = @(Get-AiRulesOpenSpecScaffoldPaths)
+    $nativePaths = @(Get-AiRulesMigrationSnapshotRelativePaths | Where-Object { $_ -cne 'openspec' })
+    $nativeMatcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $nativePaths
+    while ($cursor -cne $OriginalCommit) {
+        if (-not $seen.Add($cursor)) { throw 'DEV_BRANCH_FORK_WORKFLOW_CHAIN_INVALID: cyclic workflow history; preserve the original fork snapshot.' }
+        $candidates = @($saved | Where-Object {
+            [string](Get-StateValue -State $_.receipt -Name 'completedHead' -Default '') -ceq $cursor -and
+            [string](Get-StateValue -State $_.receipt -Name 'preUpdateHead' -Default '') -cne $cursor
+        })
+        if ($candidates.Count -ne 1) {
+            throw "DEV_BRANCH_FORK_WORKFLOW_CHAIN_UNPROVEN: expected one completed update ending at '$cursor'; found $($candidates.Count). Preserve the fork snapshot and finish or reconcile its original update-workflow transaction."
+        }
+        $id = (Split-Path -Leaf $candidates[0].root).Substring('itl-workflow-update-completed-'.Length)
+        $completed = Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id
+        $plan = Read-WorkflowBranchCommitPlanReceipt -Snapshot $completed.snapshot
+        if ($null -eq $plan -or [string]$completed.receipt.branchRef -cne $branchRef -or
+            [string]$plan.oldHead -cne [string]$completed.receipt.preUpdateHead -or [string]$plan.newHead -cne $cursor) {
+            throw 'DEV_BRANCH_FORK_WORKFLOW_CHAIN_INVALID: completed transaction and branch commit proof disagree.'
+        }
+        $before = ConvertTo-Agent1cHashtable -Object $completed.receipt.beforePathState
+        $after = ConvertTo-Agent1cHashtable -Object $completed.receipt.pathState
+        $lockPath = '.agent-1c/dependency-lock.json'
+        if (-not $before.Contains($lockPath) -or -not $after.Contains($lockPath) -or
+            [string]$after[$lockPath] -cne $expectedLock -or [string]$before[$lockPath] -notmatch '^file:[a-f0-9]{64}$') {
+            throw 'DEV_BRANCH_FORK_WORKFLOW_LOCK_UNPROVEN: the completed update does not connect the original and current dependency locks.'
+        }
+        $lockRecord = @($completed.snapshot.records | Where-Object relativePath -CEQ $lockPath)
+        if ($lockRecord.Count -ne 1 -or -not $lockRecord[0].existed -or
+            (Get-GitOutput @('hash-object', ('--path=' + $lockPath), '--', [string]$lockRecord[0].backupPath)).Trim() -cne
+            (Get-GitOutput @('rev-parse', ($plan.oldHead + ':' + $lockPath))).Trim()) {
+            throw 'DEV_BRANCH_FORK_WORKFLOW_LOCK_UNPROVEN: the before lock is not the recorded Git parent lock.'
+        }
+        # Each hop uses only its Git-pinned endpoint manifests, never mutable
+        # working files, edited backups or ownership acquired by a later hop.
+        $oldOwned = @(Get-WorkflowUpdateManagedPathSpecs -AtCommit $plan.oldHead)
+        $owned = @($oldOwned) + @(Get-WorkflowUpdateManagedPathSpecs -AtCommit $plan.newHead) + @(Get-AiRulesOpenSpecScaffoldPaths)
+        $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $owned
+        $oldMatcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $oldOwned
+        $staticMatcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
+        # Known legacy documents may only leave this hop. Git-pinned old bytes
+        # prove their owner; a same-named replacement or custom README does not.
+        $legacyRetired = @(Get-WorkflowUpdateLegacyRetirementPaths -OldCommit $plan.oldHead -NewCommit $plan.newHead)
+        $newClaims = @($plan.managedPaths | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $oldMatcher) } | ForEach-Object { ':(literal)' + $_ })
+        $existingNewClaims = @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-tree', '-r', '--name-only', '-z', $plan.oldHead) -LiteralPaths $newClaims)
+        foreach ($path in @($plan.managedPaths)) {
+            $businessSource = Test-OneCSourceRepoPath -RepoPath $path
+            $businessTests = @(@('tests', (Get-VanessaConfiguredFeaturesPath), (Get-YAxUnitTestsPath)) | Where-Object {
+                Test-RepoPathUnderRoot -RepoPath $path -Root $_
+            }).Count -gt 0 -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $staticMatcher)
+            $newClaimOnExistingPath = $existingNewClaims -ccontains $path -and
+                -not (Test-WorkflowUpdateScaffoldClaim -Path $path -Completed $completed -OldCommit $plan.oldHead)
+            $unknownNewClaim = -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $oldMatcher) -and
+                -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $nativeMatcher) -and $path -cnotin $scaffoldPaths
+            if ($businessSource -or $businessTests -or
+                (($newClaimOnExistingPath -or $unknownNewClaim -or -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $matcher)) -and -not (Test-WorkflowExecutionRuntimePath -Path $path) -and $path -cnotin $legacyRetired)) {
+                throw "DEV_BRANCH_FORK_WORKFLOW_BUSINESS_CHANGE: '$path' is not a proven workflow-owned transition. Preserve the original fork anchor and use the original update-workflow recovery to reconcile this path."
+            }
+        }
+        $expectedLock = [string]$before[$lockPath]
+        $cursor = [string]$plan.oldHead
+    }
+    if ($OriginalDependencyLockSha256 -and $expectedLock -cne ('file:' + $OriginalDependencyLockSha256)) {
+        throw 'DEV_BRANCH_FORK_WORKFLOW_LOCK_UNPROVEN: the first update backup does not match the immutable fork dependency lock.'
+    }
+    if ((Get-GitOutput @('hash-object', '--path=.agent-1c/dependency-lock.json', '--', (Join-Path $script:ProjectRoot '.agent-1c/dependency-lock.json'))).Trim() -cne
+        (Get-GitOutput @('rev-parse', ($head + ':.agent-1c/dependency-lock.json'))).Trim()) {
+        throw 'DEV_BRANCH_FORK_WORKFLOW_LOCK_UNPROVEN: the current lock differs from the completed Git transition.'
+    }
+}
+
+function Get-DevBranchForkResumeState {
+    param([Parameter(Mandatory = $true)][object]$Snapshot, [Parameter(Mandatory = $true)][string]$TargetProjectRoot)
+
+    if ((Resolve-Agent1cFullPath -Path ([string]$Snapshot.targetWorktreePath)) -ine (Resolve-Agent1cFullPath -Path $TargetProjectRoot) -or
+        (Get-GitOutputAt -Root $TargetProjectRoot -Arguments @('branch', '--show-current')).Trim() -cne [string]$Snapshot.targetGitBranch) {
+        throw 'DEV_BRANCH_FORK_RESUME_IDENTITY_MISMATCH: the snapshot belongs to another target branch or worktree.'
+    }
+    $path = Join-Path $TargetProjectRoot ".agent-1c/dev-branches/$($Snapshot.targetSafeName).json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $state = Read-DevBranchStateFile -Path $path
+    $expected = @{
+        forkId = [string]$Snapshot.forkId; forkedFromCommit = [string]$Snapshot.sourceCommit
+        forkedFromBranch = [string]$Snapshot.sourceGitBranch; devBranch = [string]$Snapshot.targetGitBranch
+        forkSnapshotArtifactSha256 = [string]$Snapshot.artifactSha256; forkSnapshotArtifactKind = [string]$Snapshot.artifactKind
+    }
+    foreach ($name in $expected.Keys) {
+        if ([string](Get-StateValue -State $state -Name $name -Default '') -cne $expected[$name]) {
+            throw "DEV_BRANCH_FORK_RESUME_IDENTITY_MISMATCH: target state differs at '$name'; preserve the original snapshot."
+        }
+    }
+    if ((Resolve-Agent1cFullPath -Path ([string]$state.worktreePath)) -ine (Resolve-Agent1cFullPath -Path $TargetProjectRoot)) {
+        throw 'DEV_BRANCH_FORK_RESUME_IDENTITY_MISMATCH: target worktree changed.'
+    }
+    return $state
+}
+
 function Install-DevBranchForkDependencyLock {
     param(
         [Parameter(Mandatory = $true)][object]$Snapshot,
@@ -9260,7 +17873,15 @@ function Install-DevBranchForkDependencyLock {
     if (Test-Path -LiteralPath $targetDependencyLockPath -PathType Leaf -ErrorAction SilentlyContinue) {
         $targetDependencyLockSha256 = (Get-FileHash -LiteralPath $targetDependencyLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($targetDependencyLockSha256 -cne [string]$Snapshot.dependencyLockSha256) {
-            throw "DEV_BRANCH_FORK_TARGET_DEPENDENCY_LOCK_MISMATCH expected='$($Snapshot.dependencyLockSha256)' actual='$targetDependencyLockSha256' path='$targetDependencyLockPath'"
+            if (-not [string](Get-StateValue -State $Snapshot -Name 'sourceCommit' -Default '')) {
+                throw "DEV_BRANCH_FORK_TARGET_DEPENDENCY_LOCK_MISMATCH expected='$($Snapshot.dependencyLockSha256)' actual='$targetDependencyLockSha256' path='$targetDependencyLockPath'"
+            }
+            Invoke-InProjectContext -Root $TargetProjectRoot -ScriptBlock {
+                if ((Get-CurrentCommit) -ceq [string]$Snapshot.sourceCommit) {
+                    throw "DEV_BRANCH_FORK_TARGET_DEPENDENCY_LOCK_MISMATCH expected='$($Snapshot.dependencyLockSha256)' actual='$targetDependencyLockSha256' path='$targetDependencyLockPath'"
+                }
+                Assert-DevBranchForkWorkflowTransition -OriginalCommit ([string]$Snapshot.sourceCommit) -OriginalDependencyLockSha256 ([string]$Snapshot.dependencyLockSha256)
+            }
         }
         return $targetDependencyLockPath
     }
@@ -9332,6 +17953,43 @@ function Assert-DevBranchForkInfoBaseIsolated {
     }
 }
 
+function Test-DevBranchForkRestoreCompleted {
+    param([Parameter(Mandatory = $true)][object]$Snapshot, [AllowNull()][object]$State, [string]$TargetInfoBasePath)
+
+    if ($null -eq $State -or -not [bool](Get-StateValue -State $State -Name 'launcherRegistered' -Default $false)) { return $false }
+    # The original owner saved launcher-registered only after restore, immutable
+    # history and branch baseline. Validate that whole boundary before reusing it.
+    $history = Join-Path $script:ProjectRoot ".agent-1c/fork-history/$($Snapshot.forkId)"
+    $baselinePath = Join-Path $script:ProjectRoot ".agent-1c/event-log-baselines/$($Snapshot.targetSafeName).json"
+    if ((Resolve-Agent1cFullPath -Path ([string]$State.forkHistoryPath)) -ine (Resolve-Agent1cFullPath -Path $history) -or
+        (Resolve-Agent1cFullPath -Path ([string]$State.eventLogBaselinePath)) -ine (Resolve-Agent1cFullPath -Path $baselinePath)) {
+        throw 'DEV_BRANCH_FORK_RESTORE_EVIDENCE_CHANGED: preserve the fork history and restore its original branch baseline before repeating the same fork.'
+    }
+    Assert-DevBranchForkHistoryReady -Snapshot $Snapshot -TargetHistoryRoot $history | Out-Null
+    $original = Read-Utf8Text -Path (Join-Path $history 'event-log-baseline.json') | ConvertFrom-Json -ErrorAction Stop
+    $baseline = Read-Utf8Text -Path $baselinePath | ConvertFrom-Json -ErrorAction Stop
+    $logDirectory = if ([string]$Snapshot.infoBaseKind -eq 'file') { Join-Path (Resolve-InfoBasePath $TargetInfoBasePath) '1Cv8Log' } else { '' }
+    $signatureHash = Get-StringSha256 -Value ((@($original.signatures) -join "`n"))
+    if ([string]$baseline.createdAt -cne [string]$original.createdAt -or [string]$baseline.reader -cne [string]$original.reader -or
+        [int]$baseline.errorCount -ne [int]$original.errorCount -or [int]$baseline.signatureCount -ne [int]$original.signatureCount -or
+        (@($baseline.signatures) -join "`n") -cne (@($original.signatures) -join "`n") -or
+        [string]$baseline.logDirectory -ine $logDirectory -or [string]$baseline.reason -cne 'fork-boundary' -or
+        [string]$State.eventLogBaselineHash -cne $signatureHash -or [string]$State.eventLogBaselineCreatedAt -cne [string]$original.createdAt) {
+        throw 'DEV_BRANCH_FORK_RESTORE_EVIDENCE_CHANGED: the original completed restore baseline is missing or changed; preserve the target database and reconcile the retained fork evidence.'
+    }
+    $connect = New-LauncherConnectString -InfoBaseKind ([string]$Snapshot.infoBaseKind) -InfoBasePath $TargetInfoBasePath
+    $sections = @(Get-LauncherSections -Lines @(Read-Utf8Lines -Path ([string]$State.launcherListPath)))
+    $owned = @($sections | Where-Object {
+        $_.values.ContainsKey('ID') -and [string]$_.values['ID'] -ceq [string]$State.launcherInfoBaseId -and
+        $_.values.ContainsKey('Connect') -and [string]$_.values['Connect'] -ceq $connect
+    })
+    if (-not [string]$State.launcherInfoBaseId -or $owned.Count -ne 1 -or
+        ([string]$Snapshot.infoBaseKind -eq 'file' -and -not (Test-Path -LiteralPath (Join-Path (Resolve-InfoBasePath $TargetInfoBasePath) '1Cv8.1CD') -PathType Leaf))) {
+        throw 'DEV_BRANCH_FORK_RESTORE_EVIDENCE_CHANGED: the completed restore no longer identifies its original target database and launcher entry; preserve that database and reconcile its original fork evidence.'
+    }
+    return $true
+}
+
 function Initialize-ForkedDevBranchRuntime {
     param(
         [Parameter(Mandatory = $true)][object]$Snapshot,
@@ -9347,19 +18005,49 @@ function Initialize-ForkedDevBranchRuntime {
         Join-Path (Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)) $safeName
     }
     Assert-DevBranchForkInfoBaseIsolated -SourceState $sourceState -Snapshot $Snapshot -TargetInfoBasePath $targetInfoBasePath
+    $resumeState = Get-DevBranchForkResumeState -Snapshot $Snapshot -TargetProjectRoot $script:ProjectRoot
+    if ($null -ne $resumeState -and
+        ((Resolve-Agent1cFullPath -Path ([string]$resumeState.mainWorktreePath)) -ine (Resolve-Agent1cFullPath -Path $MainProjectRoot) -or
+         [string]$resumeState.infoBaseKind -cne [string]$Snapshot.infoBaseKind -or
+         (Get-OneCInfoBaseIdentity -InfoBaseKind ([string]$Snapshot.infoBaseKind) -InfoBasePath ([string]$resumeState.devBranchInfoBasePath)).key -cne
+         (Get-OneCInfoBaseIdentity -InfoBaseKind ([string]$Snapshot.infoBaseKind) -InfoBasePath $targetInfoBasePath).key)) {
+        throw 'DEV_BRANCH_FORK_RESUME_IDENTITY_MISMATCH: the target infobase changed; preserve its snapshot and original branch settings.'
+    }
+    Assert-DevBranchForkWorkflowTransition -OriginalCommit ([string]$Snapshot.sourceCommit) -OriginalDependencyLockSha256 ([string]$Snapshot.dependencyLockSha256)
+    $executionState = Get-ItlInitializationExecutionState
+    $executionState.infoBaseKind = [string]$Snapshot.infoBaseKind
+    $executionState.devBranchInfoBasePath = $targetInfoBasePath
     Install-DevBranchForkDependencyLock -Snapshot $Snapshot -TargetProjectRoot $script:ProjectRoot | Out-Null
     $targetHistoryRoot = Join-Path $script:ProjectRoot ".agent-1c\fork-history\$($Snapshot.forkId)"
-    $stateHash = New-ForkedDevBranchState `
-        -SourceState $sourceState `
-        -Snapshot $Snapshot `
-        -TargetInfoBasePath $targetInfoBasePath `
-        -TargetHistoryRoot $targetHistoryRoot `
-        -MainProjectRoot $MainProjectRoot
+    $restoreCompleted = Test-DevBranchForkRestoreCompleted -Snapshot $Snapshot -State $resumeState -TargetInfoBasePath $targetInfoBasePath
+    if ($null -ne $resumeState) {
+        # The validated same fork already owns this generation and its runtime
+        # proofs. Re-importing the source state would erase completed effects.
+        $stateHash = ConvertTo-Agent1cHashtable -Object $resumeState
+        [void]$stateHash.Remove('statePath')
+        [void]$stateHash.Remove('stateProjectRoot')
+        $executionValues = ConvertTo-Agent1cHashtable -Object $executionState
+        foreach ($key in @($executionValues.Keys | Where-Object { $_ -match '^vanessaServiceInfoBase' })) {
+            $stateHash[$key] = $executionValues[$key]
+        }
+    } else {
+        $stateHash = New-ForkedDevBranchState `
+            -SourceState $sourceState `
+            -Snapshot $Snapshot `
+            -TargetInfoBasePath $targetInfoBasePath `
+            -TargetHistoryRoot $targetHistoryRoot `
+            -MainProjectRoot $MainProjectRoot `
+            -TargetState $executionState
+    }
     $statePath = Save-DevBranchInitializationState -SafeDevBranchName $safeName -State $stateHash -Status "fork-initializing"
 
     try {
         Set-RunStage -Stage "fork.restore.infobase" -Detail "Restoring the forked branch infobase from the immutable source snapshot."
-        $baseRestoreProven = Restore-DevBranchForkInfoBase -Snapshot $Snapshot -TargetInfoBasePath $targetInfoBasePath
+        $baseRestoreProven = if ($restoreCompleted) {
+            # Later target-owned native effects must survive retry. Their base
+            # is no longer the immutable source artifact for freshness reuse.
+            $false
+        } else { Restore-DevBranchForkInfoBase -Snapshot $Snapshot -TargetInfoBasePath $targetInfoBasePath }
         Install-DevBranchForkHistory -Snapshot $Snapshot -TargetHistoryRoot $targetHistoryRoot
 
         $baselineSourcePath = Join-Path $targetHistoryRoot "event-log-baseline.json"
@@ -9382,20 +18070,7 @@ function Initialize-ForkedDevBranchRuntime {
         $stateHash["eventLogBaselineSegmentCount"] = [int]$baseline.cache.segmentCount
         $stateHash["lastVanessaEventLogBaselinePath"] = $baselinePath
 
-        $evidencePaths = ConvertTo-Agent1cHashtable -Object $Snapshot.evidencePaths
-        foreach ($fieldName in @(
-            "lastVerifiedReportPath", "lastVerificationLogPath",
-            "lastDiagnosticVerificationReportPath", "lastDiagnosticVerificationLogPath",
-            "lastYAxUnitReportPath", "lastYAxUnitLogPath",
-            "lastVanessaReportPath", "lastVanessaLogPath", "lastVanessaStatusPath",
-            "lastVanessaEventLogNewErrorsPath", "eventLogDebtReportPath"
-        )) {
-            if ($evidencePaths.ContainsKey($fieldName)) {
-                $stateHash[$fieldName] = Join-Path $targetHistoryRoot (([string]$evidencePaths[$fieldName]).Replace("/", [IO.Path]::DirectorySeparatorChar))
-            } else {
-                $stateHash[$fieldName] = ""
-            }
-        }
+        Set-DevBranchForkEvidenceReferences -State $stateHash -EvidencePaths $Snapshot.evidencePaths -TargetHistoryRoot $targetHistoryRoot
 
         $launcher = Register-DevBranchInLauncher `
             -InfoBaseKind ([string]$Snapshot.infoBaseKind) `
@@ -9441,6 +18116,7 @@ function Initialize-ForkedDevBranchRuntime {
             $finalHash["lastVerificationStaleAt"] = (Get-Date).ToString("o")
             $finalHash["lastVerificationStaleReason"] = [string]$verificationDecision.reason
         }
+        $finalHash['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $finalHash -Operation 'fork-dev-branch' -BaseCommit ([string]$Snapshot.sourceCommit)
         $statePath = Save-DevBranchInitializationState -SafeDevBranchName $safeName -State $finalHash -Status "ready"
         $state = Read-DevBranchStateFile -Path $statePath
         Ensure-DevBranchEventLogPendingCursor -State $state -Reason "fork-dev-branch" | Out-Null
@@ -9476,7 +18152,7 @@ function Invoke-ForkDevBranchRuntimeAfterSnapshot {
     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
     Exit-Agent1cLifecycleOperation
     Invoke-InProjectContext -Root $WorktreePath -ScriptBlock {
-        Enter-Agent1cLifecycleOperation -RequestedAction "fork-dev-branch"
+        Enter-ItlInitializationRuntimeAdmission -Operation 'initialize-dev-branch-runtime' -LifecycleAction 'fork-dev-branch'
         Initialize-ForkedDevBranchRuntime -Snapshot $Snapshot -MainProjectRoot $MainProjectRoot | Out-Null
     }
 }
@@ -9520,7 +18196,7 @@ function Fork-DevBranch {
             $currentSourceCommit = Get-CurrentCommit
             $forkedFromCommit = [string](Get-StateValue -State $existingState -Name "forkedFromCommit" -Default "")
             if ($forkedFromCommit -cne $currentSourceCommit) {
-                throw "DEV_BRANCH_FORK_TARGET_ALREADY_READY: target='$targetGitBranch' forkedFromCommit='$forkedFromCommit' currentSourceCommit='$currentSourceCommit'. Choose a new target branch name for the current source state."
+                Assert-DevBranchForkWorkflowTransition -OriginalCommit $forkedFromCommit
             }
             $completedStagingPath = Get-DevBranchForkStagingPath -SafeDevBranchName $targetSafeName
             if (Test-Path -LiteralPath $completedStagingPath -PathType Container -ErrorAction SilentlyContinue) {
@@ -9566,8 +18242,27 @@ function Fork-DevBranch {
         Invoke-Git @("worktree", "add", "-b", $targetGitBranch, $targetWorktreePath, $sourceCommit)
     }
 
-    Install-DevBranchForkDotEnv -Snapshot $snapshot -TargetProjectRoot $targetWorktreePath | Out-Null
-    Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $targetWorktreePath
+    $resumeTarget = if ($branchExists) { Get-DevBranchForkResumeState -Snapshot $snapshot -TargetProjectRoot $targetWorktreePath } else { $null }
+    $preserveTargetEnv = $null -ne $resumeTarget
+    if ($branchExists) {
+        $preserveTargetEnv = Invoke-InProjectContext -Root $targetWorktreePath -ScriptBlock {
+            Assert-DevBranchForkWorkflowTransition -OriginalCommit ([string]$snapshot.sourceCommit) -OriginalDependencyLockSha256 ([string]$snapshot.dependencyLockSha256)
+            ($null -ne $resumeTarget -or (Get-CurrentCommit) -cne [string]$snapshot.sourceCommit)
+        }
+    }
+    if ($preserveTargetEnv) {
+        if (-not (Test-Path -LiteralPath (Join-Path $targetWorktreePath '.dev.env') -PathType Leaf)) {
+            throw 'DEV_BRANCH_FORK_TARGET_DOT_ENV_MISSING: restore the target branch settings through its original workflow-update recovery before repeating this fork.'
+        }
+    } else {
+        Install-DevBranchForkDotEnv -Snapshot $snapshot -TargetProjectRoot $targetWorktreePath | Out-Null
+    }
+    Copy-CavemanPolicyReceiptToWorktree -WorktreePath $targetWorktreePath
+    Copy-UiTestingPolicyReceiptToWorktree -WorktreePath $targetWorktreePath
+    Copy-DotEnvPolicyReceiptToWorktree -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy verification-model) -WorktreePath $targetWorktreePath
+    if (-not $preserveTargetEnv) {
+        Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $targetWorktreePath
+    }
     Invoke-ForkDevBranchRuntimeAfterSnapshot `
         -Snapshot $snapshot `
         -MainProjectRoot $mainProjectRoot `
@@ -9579,6 +18274,23 @@ function Fork-DevBranch {
     Write-DevBranchRunUserReport -State $state -AdvisoryRoot $targetWorktreePath -Operation "forked"
 }
 
+function Enter-ItlInitializationRuntimeAdmission {
+    param([Parameter(Mandatory=$true)][string]$Operation, [string]$LifecycleAction = $Operation)
+    $envFile = Join-Path $script:ProjectRoot '.dev.env'
+    $envBefore = if (Test-Path -LiteralPath $envFile) { Read-Utf8Text -Path $envFile } else { $null }
+    Enter-Agent1cLifecycleOperation -RequestedAction $LifecycleAction
+    $envAfter = if (Test-Path -LiteralPath $envFile) { Read-Utf8Text -Path $envFile } else { $null }
+    if ($envBefore -cne $envAfter) { throw 'LIFECYCLE_INPUT_CHANGED: .dev.env changed during initialization lock acquisition; repeat the same helper.' }
+    Read-ProjectConfig
+}
+
+function Enter-ItlInitializationNativePhase {
+    param([Parameter(Mandatory=$true)][string]$Operation)
+    Complete-Agent1cLifecycleOperation -Status 'succeeded' -ExitCode 0
+    Exit-Agent1cLifecycleOperation
+    Enter-ItlInitializationRuntimeAdmission -Operation $Operation
+}
+
 function Invoke-DevBranchRuntimeAfterGitPhase {
     param(
         [ValidateSet("configuration", "extension")]
@@ -9586,7 +18298,8 @@ function Invoke-DevBranchRuntimeAfterGitPhase {
         [string]$GitBranch,
         [string]$MainProjectRoot,
         [string]$WorktreePath,
-        [object]$BranchSeedLease
+        [object]$BranchSeedLease,
+        [bool]$CreatedWithWorktree = $true
     )
 
     try {
@@ -9594,14 +18307,14 @@ function Invoke-DevBranchRuntimeAfterGitPhase {
         Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
         Exit-Agent1cLifecycleOperation
         Invoke-InProjectContext -Root $WorktreePath -ScriptBlock {
-            Enter-Agent1cLifecycleOperation -RequestedAction "initialize-dev-branch-runtime"
+            Enter-ItlInitializationRuntimeAdmission -Operation 'initialize-dev-branch-runtime'
             Initialize-DevBranchRuntime `
                 -DevBranchKind $DevBranchKind `
                 -SafeDevBranchName (ConvertTo-SafeName $DevBranchName) `
                 -GitBranch $GitBranch `
                 -MainProjectRoot $MainProjectRoot `
                 -WorktreePath $WorktreePath `
-                -CreatedWithWorktree $true `
+                -CreatedWithWorktree $CreatedWithWorktree `
                 -BranchSeedLease $BranchSeedLease
         }
     } finally {
@@ -9623,7 +18336,7 @@ function New-DevBranchCore {
     }
 
     Assert-MasterWorktreeContext -Operation "new development branch"
-    Assert-CleanGit
+    Assert-CleanGit -Operation $(if ($DevBranchKind -eq 'extension') { 'new-extension-dev-branch' } else { 'new-dev-branch' })
     Assert-DevBranchUnsafeActionProtectionPromptAvailable
     Checkout-Master
 
@@ -9642,13 +18355,14 @@ function New-DevBranchCore {
             throw "Development branch already exists: $DevBranch"
         }
         Invoke-Git @("checkout", "-b", $DevBranch)
-        Initialize-DevBranchRuntime `
+        $seedLease = Open-BranchSeedLease -Mode read
+        Invoke-DevBranchRuntimeAfterGitPhase `
             -DevBranchKind $DevBranchKind `
-            -SafeDevBranchName $safe `
             -GitBranch $DevBranch `
             -MainProjectRoot $script:ProjectRoot `
             -WorktreePath $script:ProjectRoot `
-            -CreatedWithWorktree $false
+            -CreatedWithWorktree $false `
+            -BranchSeedLease $seedLease
         return
     }
 
@@ -9805,7 +18519,11 @@ function New-ExtensionDevBranch {
     $state = Get-PreparedExtensionDevBranchState
     if ($state) {
         Assert-MasterWorktreeContext -Operation "resume extension development branch provisioning"
-        Assert-CleanGit
+        Assert-CleanGit -Operation new-extension-dev-branch
+        # The delegated initializer obtains its own target admission. It must
+        # never wait for that target while this parent holds the master lock.
+        Complete-Agent1cLifecycleOperation -Status 'succeeded' -ExitCode 0
+        Exit-Agent1cLifecycleOperation
     } else {
         New-DevBranchCore -DevBranchKind "extension" -DeferHandoff
         $state = Read-DevBranchState -Name $DevBranchName
@@ -9900,13 +18618,16 @@ function Invoke-ExtensionLifecycleTool {
 function Test-DevBranchExtensionExists {
     param(
         [object]$State,
-        [string]$Name
+        [string]$Name,
+        [string]$User = (Get-EnvValue -Name "IB_USER"),
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
 
     try {
         Invoke-Designer `
             -InfoBasePath $State.devBranchInfoBasePath `
             -InfoBaseKind $State.infoBaseKind `
+            -User $User -Password $Password `
             -DesignerArgs @("/DumpDBCfgList", "-Extension", $Name) | Out-Null
         return $true
     } catch {
@@ -10031,6 +18752,8 @@ function Init-DevBranchExtension {
     $snapshotDir = ""
     $snapshotPath = ""
     $snapshotCreated = $false
+    $snapshotDuty = $null
+    $snapshotCompletionAttempted = $false
     $snapshotCleanupError = ""
     $roctupWasRunning = $false
     $vanessaWasRunning = $false
@@ -10047,7 +18770,7 @@ function Init-DevBranchExtension {
         $stagingRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/extension-init/" + [guid]::NewGuid().ToString("N"))
         New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
         $snapshotDir = Assert-ExportPathInsideProject -ExportPath ".agent-1c/snapshots"
-        $snapshotPath = Join-Path $snapshotDir ("extension-init-{0}-{1}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"))
+        $snapshotPath = Join-Path $snapshotDir ("extension-init-{0}-{1}-{2}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"), [guid]::NewGuid().ToString('N'))
         $roctupWasRunning = [bool](Get-RoctupMcpRuntimeInfo -State $state).processAlive
         $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
         Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "extension initialization"
@@ -10059,7 +18782,12 @@ function Init-DevBranchExtension {
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
             throw "1C snapshot was not created: $snapshotPath"
         }
+        $snapshotDuty = Register-OneCDatabaseRestorationDuty -State $state -SnapshotPath $snapshotPath -Policy on-failure
         $snapshotCreated = $true
+        $enclosingSnapshot = [pscustomobject]@{
+            path=$snapshotPath; sha256=(Get-FileHash -LiteralPath $snapshotPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            infoBaseKind=$state.infoBaseKind; infoBasePath=$state.devBranchInfoBasePath; duty=$snapshotDuty
+        }
 
         if ($ExtensionInitMode -eq "Empty") {
             Set-RunStage -Stage "extension-init.scaffold" -Detail "Creating and validating the Empty extension scaffold."
@@ -10074,14 +18802,18 @@ function Init-DevBranchExtension {
             )
             Invoke-ExtensionLifecycleTool -ScriptPath $tools.validate -Arguments @("-ExtensionPath", $scaffoldPath)
             Set-RunStage -Stage "extension-init.load" -Detail "Loading the extension scaffold into the branch infobase."
-            Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @(
-                "/LoadConfigFromFiles", $scaffoldPath, "-Extension", $ExtensionName, "-Format", "Hierarchical", "/UpdateDBCfg"
-            ) | Out-Null
+            $scaffoldIdentity = Get-ConfigSourceFingerprint -ExportPath $scaffoldPath
+            $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind `
+                -ExtensionName $ExtensionName -SourceFingerprint $scaffoldIdentity.fingerprint -EnclosingSnapshot $enclosingSnapshot -DesignerArgs @(
+                    "/LoadConfigFromFiles", $scaffoldPath, "-Extension", $ExtensionName, "-Format", "Hierarchical", "/UpdateDBCfg"
+                )
         } else {
             Set-RunStage -Stage "extension-init.load" -Detail "Loading the supplied CFE into the branch infobase."
-            Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @(
-                "/LoadCfg", $sourceCfe, "-Extension", $ExtensionName, "/UpdateDBCfg"
-            ) | Out-Null
+            $cfeIdentity = (Get-FileHash -LiteralPath $sourceCfe -Algorithm SHA256).Hash.ToLowerInvariant()
+            $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind `
+                -ExtensionName $ExtensionName -SourceFingerprint ("sha256:" + $cfeIdentity) -EnclosingSnapshot $enclosingSnapshot -DesignerArgs @(
+                    "/LoadCfg", $sourceCfe, "-Extension", $ExtensionName, "/UpdateDBCfg"
+                )
         }
 
         Set-RunStage -Stage "extension-init.dump" -Detail "Dumping and validating the canonical extension source tree."
@@ -10113,6 +18845,7 @@ function Init-DevBranchExtension {
             lastExtensionDesignerFingerprint = $extensionSource.fingerprint
             lastExtensionDesignerTreeObjectId = $extensionSource.treeObjectId
             lastExtensionDesignerLoadedAt = $now
+            lastGate6Evidence = $gate6Evidence
             sourceFingerprint = $extensionSource.fingerprint
             loadReason = "extension-init-seed"
             designerInvoked = $true
@@ -10131,6 +18864,8 @@ function Init-DevBranchExtension {
         $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
         Sync-DevBranchContextToDotEnv -State $state
 
+        $snapshotCompletionAttempted = $true
+        Complete-OneCDatabaseRestorationDuty -Duty $snapshotDuty -Resolution committed
         try {
             Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
         } catch {
@@ -10143,6 +18878,11 @@ function Init-DevBranchExtension {
         Write-Host "Run /itl-check before reporting the development task complete."
     } catch {
         $originalError = $_.Exception.Message
+        if ($snapshotCompletionAttempted) {
+            # The authority may already have committed the successful result.
+            # Do not delete its sources or replay rollback after a lost ACK.
+            throw "EXTENSION_INIT_COMPLETION_UNCONFIRMED: $originalError Snapshot retained: $snapshotPath"
+        }
         $rollbackError = ""
         if ($snapshotCreated) {
             try {
@@ -10162,12 +18902,6 @@ function Init-DevBranchExtension {
                     enterpriseNormalizationStatus = "pending"
                     enterpriseNormalizationReason = "extension-init-rollback"
                 }
-                try {
-                    Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
-                } catch {
-                    $snapshotCleanupError = $_.Exception.Message
-                    Write-Warning "Extension initialization rollback succeeded, but snapshot cleanup failed. Snapshot retained: $snapshotPath Detail: $snapshotCleanupError"
-                }
             } catch {
                 $rollbackError = $_.Exception.Message
             }
@@ -10183,12 +18917,25 @@ function Init-DevBranchExtension {
                 }
             }
         } catch {
+            if ($null -ne $snapshotDuty -and -not $rollbackError) { $rollbackError = $_.Exception.Message }
             Write-Warning "Could not remove partial extension dump: $($_.Exception.Message)"
         }
         try {
             Restore-ExtensionInitMcpRuntime -State $state -RoctupWasRunning $roctupWasRunning -VanessaWasRunning $vanessaWasRunning
         } catch {
+            if ($null -ne $snapshotDuty -and -not $rollbackError) { $rollbackError = $_.Exception.Message }
             Write-Warning "Could not restore branch MCP runtime after extension initialization failure: $($_.Exception.Message)"
+        }
+        if ($snapshotCreated -and -not $rollbackError) {
+            try { Complete-OneCDatabaseRestorationDuty -Duty $snapshotDuty }
+            catch { $rollbackError = $_.Exception.Message }
+            if (-not $rollbackError) {
+                try { Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath }
+                catch {
+                    $snapshotCleanupError = $_.Exception.Message
+                    Write-Warning "Extension initialization rollback succeeded, but snapshot cleanup failed. Snapshot retained: $snapshotPath Detail: $snapshotCleanupError"
+                }
+            }
         }
         $failureMessage = if ($rollbackError) {
             "Extension initialization failed: $originalError Rollback also failed: $rollbackError Snapshot retained: $snapshotPath"
@@ -10314,6 +19061,8 @@ function Write-BaseUpdateResult {
 }
 
 function Update-DevBranchBase {
+    param([switch]$PassThruPlatformPreparation)
+
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "update-dev-branch-base"
     Assert-DevBranchExtensionInitialized -State $state -Operation "update-dev-branch-base"
@@ -10333,6 +19082,7 @@ function Update-DevBranchBase {
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch extension base was updated." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
         $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "development branch extension base update"
+        $platformPreparation = Confirm-DevBranchProductionPreparation -State $updatedState -ExportPath $extensionExportPath -ContentKind extension -LoadResult $loadResult
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch extension"
     } else {
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
@@ -10341,8 +19091,10 @@ function Update-DevBranchBase {
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch configuration base was updated." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
         $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "development branch configuration base update"
+        $platformPreparation = Confirm-DevBranchProductionPreparation -State $updatedState -ExportPath (Get-ExportPath) -ContentKind configuration -LoadResult $loadResult
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch infobase"
     }
+    if ($PassThruPlatformPreparation) { return $platformPreparation }
 }
 
 function Get-DevBranchSourceSyncExportPath {
@@ -10468,6 +19220,238 @@ function Invoke-BranchSourceMergeTree {
     }
 }
 
+function New-BranchSourceSyncCommit {
+    param([string]$BaseCommit, [string]$SourceTreeish, [string]$ExportPath, [string]$Message, [string]$MergeParent = '')
+    foreach ($object in @($BaseCommit, $SourceTreeish) + @($MergeParent | Where-Object { $_ })) {
+        if ($object -cnotmatch '^[a-f0-9]{40,64}$') { throw 'DEV_BRANCH_SOURCE_SYNC_OBJECT_INVALID' }
+    }
+    Assert-ExportPathInsideProject $ExportPath | Out-Null
+    $sourceTree = Get-GitObjectIdForTreePath -Treeish $SourceTreeish -RepoPath $ExportPath
+    if ($sourceTree -eq '<missing>') { throw 'DEV_BRANCH_SOURCE_SYNC_SOURCE_MISSING' }
+    $cursorPath = "$ExportPath/ConfigDumpInfo.xml"
+    $cursor = Get-GitObjectIdForTreePath -Treeish $BaseCommit -RepoPath $cursorPath
+    $indexPath = New-TimestampedFilePath -Directory ([IO.Path]::GetTempPath()) -Prefix 'itl-source-sync-index-' -Extension '.idx'
+    $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
+    try {
+        $env:GIT_INDEX_FILE = $indexPath
+        Invoke-Git @('read-tree', $BaseCommit)
+        Invoke-Git @('--literal-pathspecs', 'rm', '--quiet', '-r', '--cached', '-f', '--ignore-unmatch', '--', $ExportPath)
+        Invoke-Git @('read-tree', "--prefix=$ExportPath/", $sourceTree)
+        if ($cursor -ne '<missing>') {
+            Invoke-Git @('update-index', '--add', '--cacheinfo', '100644', $cursor, $cursorPath)
+        } else {
+            Invoke-Git @('update-index', '--force-remove', '--', $cursorPath)
+        }
+        $tree = ([string](Get-GitOutput @('write-tree'))).Trim()
+        $baseTree = ([string](Get-GitOutput @('rev-parse', "$BaseCommit`^{tree}"))).Trim()
+        if (-not $MergeParent -and $tree -ceq $baseTree) { return $BaseCommit }
+        $arguments = @('commit-tree', $tree, '-p', $BaseCommit)
+        if ($MergeParent) { $arguments += @('-p', $MergeParent) }
+        $arguments += @('-m', $Message)
+        return ([string](Get-GitOutput $arguments)).Trim()
+    } finally {
+        Restore-ItlProcessEnvironment -Snapshot $environmentBefore
+        foreach ($path in @($indexPath, "$indexPath.lock")) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
+        }
+    }
+}
+
+function Get-BranchSourceSyncTreeFiles {
+    param([string]$Commit, [string]$ExportPath)
+    $files = @{}
+    foreach ($entry in @(Get-GitPathList -Arguments @('ls-tree', '-r', '-z', "$Commit`:$ExportPath"))) {
+        if ($entry -cnotmatch '^100644 blob ([a-f0-9]{40,64})\t(.+)$') { throw 'DEV_BRANCH_SOURCE_SYNC_ENTRY_UNSUPPORTED: source entries must be regular files.' }
+        $files["$ExportPath/$($Matches[2])"] = $Matches[1]
+    }
+    return $files
+}
+
+function Install-BranchSourceSyncTree {
+    param([string]$ExpectedHead, [string]$PreviousSource, [string]$DesiredCommit, [string]$ExportPath, [switch]$CommitHead)
+    $head = Get-CurrentCommit
+    if ($head -cne $ExpectedHead -and (-not $CommitHead -or $head -cne $DesiredCommit)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_HEAD_MOVED: preserve the worktree and its saved plan.'
+    }
+    $previous = Get-BranchSourceSyncTreeFiles -Commit $PreviousSource -ExportPath $ExportPath
+    $desired = Get-BranchSourceSyncTreeFiles -Commit $DesiredCommit -ExportPath $ExportPath
+    Assert-BranchSourceSyncChangesScoped -ExportPath $ExportPath | Out-Null
+    foreach ($entry in @(Get-GitPathList -Arguments @('ls-files', '--stage', '-z', '--', $ExportPath))) {
+        if ($entry -cnotmatch '^100644 ([a-f0-9]{40,64}) 0\t(.+)$') { throw 'DEV_BRANCH_SOURCE_SYNC_INDEX_UNMERGED' }
+        $blob = $Matches[1]; $path = $Matches[2]
+        if ($blob -cne $previous[$path] -and $blob -cne $desired[$path]) {
+            throw "DEV_BRANCH_SOURCE_SYNC_FOREIGN_INDEX: $path"
+        }
+    }
+    $paths = @($previous.Keys) + @($desired.Keys) + @(Get-GitPathList -Arguments @('ls-files', '-z', '--others', '--exclude-standard', '--', $ExportPath))
+    $paths += @(Get-GitPathList -Arguments @('ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', $ExportPath))
+    foreach ($path in @($paths | Sort-Object -Unique)) {
+        if (-not $previous.ContainsKey($path) -and -not $desired.ContainsKey($path)) {
+            throw "DEV_BRANCH_SOURCE_SYNC_UNEXPECTED_SOURCE: $path"
+        }
+        $absolute = Assert-BranchSourceSyncFilePath -RepoPath $path
+        if (Test-Path -LiteralPath $absolute) {
+            $item = Get-Item -LiteralPath $absolute -Force
+            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "DEV_BRANCH_SOURCE_SYNC_UNSAFE_PATH: $path" }
+            $actual = ([string](Get-GitOutput @('hash-object', '--no-filters', '--', $path))).Trim()
+            if ($actual -cne $previous[$path] -and $actual -cne $desired[$path]) {
+                throw "DEV_BRANCH_SOURCE_SYNC_FOREIGN_EDIT: $path"
+            }
+        }
+    }
+    if ($CommitHead -and $head -ceq $DesiredCommit) {
+        # The ref update was durable but saving the following plan phase failed.
+        # A fresh source edit must not be overwritten on this recovery path.
+        Assert-CleanGit
+        return
+    }
+    Invoke-Git @('--literal-pathspecs', 'rm', '--quiet', '-r', '-f', '--ignore-unmatch', '--', $ExportPath)
+    foreach ($path in @($previous.Keys | Where-Object { -not $desired.ContainsKey($_) })) {
+        $absolute = Assert-BranchSourceSyncFilePath -RepoPath $path
+        if (Test-Path -LiteralPath $absolute -PathType Leaf) { Remove-Item -LiteralPath $absolute -Force }
+    }
+    Invoke-Git @('--literal-pathspecs', 'checkout', $DesiredCommit, '--', $ExportPath)
+    if ($CommitHead) {
+        Assert-OneCConfigurationSourceIntegrity -ExportPath $ExportPath
+        if (([string](Get-GitOutput @('write-tree'))).Trim() -cne ([string](Get-GitOutput @('rev-parse', "$DesiredCommit`^{tree}"))).Trim()) {
+            throw 'DEV_BRANCH_SOURCE_SYNC_INDEX_CHANGED: staged tree differs from the planned commit.'
+        }
+        Invoke-Git @('update-ref', 'HEAD', $DesiredCommit, $ExpectedHead)
+        Assert-CleanGit
+    }
+}
+
+function Assert-BranchSourceSyncFilePath {
+    param([string]$RepoPath)
+    $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/')
+    $absolute = [IO.Path]::GetFullPath((Join-Path $root $RepoPath))
+    if (-not $absolute.StartsWith(($root + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_PATH_OUTSIDE_PROJECT'
+    }
+    $parent = Split-Path -Parent $absolute
+    while ($parent -and $parent.Length -ge $root.Length) {
+        if (Test-Path -LiteralPath $parent) {
+            if ((Get-Item -LiteralPath $parent -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "DEV_BRANCH_SOURCE_SYNC_REPARSE_PATH: $RepoPath"
+            }
+        }
+        if ($parent -ieq $root) { break }
+        $parent = Split-Path -Parent $parent
+    }
+    return $absolute
+}
+
+function Invoke-BranchSourceSyncProject {
+    param([string]$Root, [scriptblock]$ScriptBlock)
+    $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
+    try { Invoke-InProjectContext -Root $Root -ScriptBlock $ScriptBlock }
+    finally { Restore-ItlProcessEnvironment -Snapshot $environmentBefore }
+}
+
+function Get-BranchSourceSyncGroupPlanPath {
+    param([string]$Id)
+    if ($Id -cnotmatch '^[a-f0-9]{32}$') { throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_ID_INVALID' }
+    return Join-Path $script:ProjectRoot ".agent-1c/source-sync/$Id.json"
+}
+
+function Save-BranchSourceSyncGroupPlan {
+    param([object]$Plan)
+    if (-not [string]::Equals([IO.Path]::GetFullPath($script:ProjectRoot), $Plan.project, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_PROJECT_MISMATCH'
+    }
+    $Plan.updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    $payload = $Plan | ConvertTo-Json -Depth 30 -Compress
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($payload)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    $envelope = [pscustomobject]@{schemaVersion=1;payload=$payload;sha256=$hash}
+    Write-Utf8TextAtomic -Path (Get-BranchSourceSyncGroupPlanPath -Id $Plan.id) -Value ($envelope | ConvertTo-Json -Depth 4)
+}
+
+function New-BranchSourceSyncGroupPlan {
+    param([object]$Scope, [object]$DatabasePlan)
+    $id = [guid]::NewGuid().ToString('N')
+    $members = @()
+    # Checkpoints precede source transfer. If preparation is interrupted, a new
+    # preparation can retain the already-created checkpoints without replaying
+    # any source propagation or database update.
+    foreach ($state in $Scope.states) {
+        Invoke-BranchSourceSyncProject -Root $state.worktreePath -ScriptBlock {
+            Assert-BranchSourceSyncChangesScoped -ExportPath $DatabasePlan.syncParticipants[0].exportPath | Out-Null
+        }
+    }
+    foreach ($state in $Scope.states) {
+        $head = Invoke-BranchSourceSyncProject -Root $state.worktreePath -ScriptBlock {
+            Assert-DevBranchSourceSyncLifecycleReady -State $state -Role peer -SyncWorktreePath $DatabasePlan.syncParticipants[0].project
+            Save-DevBranchCheckpoint -Operation sync-dev-branches -Message "chore: checkpoint before source group $id" | Out-Null
+            Get-CurrentCommit
+        }
+        $participant = @($DatabasePlan.syncParticipants | Where-Object { $_.branch -ceq $state.devBranch })[0]
+        $members += [pscustomobject]@{name=[string]$state.devBranchName;branch=[string]$state.devBranch;project=[string]$state.worktreePath
+            head=$head;target=$participant.target;recipient=($Scope.recipients -icontains [string]$state.devBranchName)
+            resultCommit='';sourceStatus='pending';loadStatus='pending';loadedHead='';loadProgress=$null}
+        Invoke-Git @('update-ref', "refs/itl/source-sync/$id/source-$($members.Count - 1)", $head)
+    }
+    $plan = [pscustomobject]@{schemaVersion=1;id=$id;project=[IO.Path]::GetFullPath($script:ProjectRoot)
+        requestPath=$Scope.requestPath;requestHash=$Scope.requestHash;names=@($Scope.names);recipients=@($Scope.recipients)
+        exportPath=$DatabasePlan.syncParticipants[0].exportPath;members=$members;aggregate=$members[0].head;nextPeer=1
+        phase='aggregating';pending=$null;conflict=$null;fingerprint='';validationSource='';error='';createdAt=(Get-Date).ToUniversalTime().ToString('o');updatedAt=''}
+    Save-BranchSourceSyncGroupPlan -Plan $plan
+    Update-DevBranchState -State (Read-DevBranchState -Name $members[0].name) -Updates @{pendingBranchSourceGroupId=$id}
+    return $plan
+}
+
+function Read-BranchSourceSyncGroupPlan {
+    param([object]$State, [object]$Scope)
+    $id = [string](Get-StateValue -State $State -Name 'pendingBranchSourceGroupId' -Default '')
+    if (-not $id) { return $null }
+    $envelope = (Read-Utf8Text -Path (Get-BranchSourceSyncGroupPlanPath -Id $id)) | ConvertFrom-Json
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$envelope.payload)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    if ($envelope.schemaVersion -ne 1 -or $hash -cne $envelope.sha256) { throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_INTEGRITY_FAILED' }
+    $plan = $envelope.payload | ConvertFrom-Json
+    if ($plan.schemaVersion -ne 1 -or $plan.id -cne $id -or $plan.requestHash -cne $Scope.requestHash -or
+        -not [string]::Equals($plan.project, [IO.Path]::GetFullPath($script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase) -or
+        @($plan.members).Count -ne @($Scope.states).Count -or ($plan.names -join [char]0) -cne ($Scope.names -join [char]0) -or
+        ($plan.recipients -join [char]0) -cne ($Scope.recipients -join [char]0)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_SCOPE_CHANGED: resume the original request; saved work is preserved.'
+    }
+    for ($index = 0; $index -lt @($plan.members).Count; $index++) {
+        $member = $plan.members[$index]; $state = $Scope.states[$index]
+        if ($member.branch -cne $state.devBranch -or $member.target.kind -cne $state.infoBaseKind -or
+            -not (Test-ItlOnDemandInfoBaseMatch -First $member.target.path -Second $state.devBranchInfoBasePath) -or
+            -not [string]::Equals($member.project, [IO.Path]::GetFullPath($state.worktreePath), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_MEMBER_CHANGED'
+        }
+        $pin = ([string](Get-GitOutput @('rev-parse', "refs/itl/source-sync/$id/source-$index"))).Trim()
+        if ($pin -cne $member.head) { throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_SOURCE_CHANGED' }
+    }
+    return $plan
+}
+
+function Invoke-BranchSourceSyncGroupInstall {
+    param([object]$Plan, [int]$MemberIndex, [string]$PreviousSource, [string]$DesiredCommit, [switch]$CommitHead)
+    if ($null -eq $Plan.pending) {
+        $Plan.pending = [pscustomobject]@{member=$MemberIndex;previous=$PreviousSource;desired=$DesiredCommit;commitHead=[bool]$CommitHead}
+        Invoke-Git @('update-ref', "refs/itl/source-sync/$($Plan.id)/pending", $DesiredCommit)
+        Save-BranchSourceSyncGroupPlan -Plan $Plan
+    } elseif ($Plan.pending.member -ne $MemberIndex -or $Plan.pending.previous -cne $PreviousSource -or
+        $Plan.pending.desired -cne $DesiredCommit -or [bool]$Plan.pending.commitHead -ne [bool]$CommitHead) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_PENDING_STEP_CHANGED'
+    }
+    $member = $Plan.members[$MemberIndex]
+    Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
+        $state = Read-DevBranchState -Name $member.name
+        Assert-DevelopmentBranchWorktreeContext -State $state -Operation sync-dev-branches
+        Install-BranchSourceSyncTree -ExpectedHead $member.head -PreviousSource $PreviousSource -DesiredCommit $DesiredCommit `
+            -ExportPath $Plan.exportPath -CommitHead:$CommitHead
+    }
+    if ($CommitHead) { $member.sourceStatus = 'committed' }
+    $Plan.pending = $null
+    Save-BranchSourceSyncGroupPlan -Plan $Plan
+}
+
 function Restore-BranchSourceSyncCursor {
     param([string]$Head, [string]$ExportPath)
     Restore-BranchConfigDumpInfoFromCommit -Commit $Head -RepoPaths @("$ExportPath/ConfigDumpInfo.xml")
@@ -10515,35 +19499,160 @@ function Copy-BranchSourceSyncResult {
     return (Get-CurrentCommit)
 }
 
+function Save-BranchSourceSyncLoadProgress {
+    param([object]$Context)
+    Invoke-BranchSourceSyncProject -Root $Context.plan.project -ScriptBlock {
+        Save-BranchSourceSyncGroupPlan -Plan $Context.plan
+    }
+}
+
+function Copy-BranchSourceSyncPhaseResult {
+    param([object]$Value)
+    return (($Value | ConvertTo-Json -Depth 30 -Compress) | ConvertFrom-Json)
+}
+
+function Invoke-BranchSourceSyncLoadPhase {
+    param([AllowNull()][object]$Context, [ValidateSet('load','normalize','runtime','cursor','state')][string]$Name,
+        [scriptblock]$Action, [switch]$ReplaySafe)
+    if ($null -eq $Context) { return (& $Action) }
+    $progress = $Context.member.loadProgress
+    $completed = @($progress.completed | Where-Object { $_.name -ceq $Name })
+    if ($completed.Count -gt 1) { throw 'SOURCE_SYNC_PHASE_DUPLICATE' }
+    if ($completed.Count -eq 1) {
+        return (Copy-BranchSourceSyncPhaseResult -Value $completed[0].result)
+    }
+    $order = @('load','normalize','runtime','cursor','state')
+    if (@($progress.completed).Count -ge $order.Count -or $order[@($progress.completed).Count] -cne $Name) {
+        throw 'SOURCE_SYNC_PHASE_ORDER_CHANGED'
+    }
+    if ($null -ne $progress.pending) {
+        $pending = $progress.pending
+        if ($pending.step -cne $Name) { throw 'SOURCE_SYNC_PHASE_ORDER_CHANGED' }
+        # The saved plan is an operation-specific checkpoint, not ownership.
+        # A repeated sync command is an explicit new attempt; record the
+        # interrupted attempt before invoking the phase again.
+        $progress.attempts = @($progress.attempts) + @([pscustomobject]@{
+            name=$Name;stepId=$pending.stepId;status='interrupted';replaySafe=[bool]$ReplaySafe})
+        $progress.pending = $null
+        Save-BranchSourceSyncLoadProgress -Context $Context
+    }
+    $record = [pscustomobject]@{schemaVersion=2;groupId=$Context.plan.id;stepId=[guid]::NewGuid().ToString('N')
+        step=$Name;status='running';project=$Context.plan.project;member=$Context.member.name
+        members=@($Context.plan.members | ForEach-Object { [pscustomobject]@{name=$_.name;project=$_.project;target=$_.target} })
+        sourceFingerprint=$Context.plan.fingerprint;sourceCommit=$Context.member.resultCommit;exportPath=$Context.plan.exportPath
+        contentKind=$Context.contentKind;extensionName=$Context.extensionName;result=@{}}
+    $progress.pending = $record
+    Save-BranchSourceSyncLoadProgress -Context $Context
+    if ($Name -eq 'load') {
+        $cursorPath = "$($Context.plan.exportPath)/ConfigDumpInfo.xml"
+        $expectedCursor = Get-GitObjectIdForTreePath -Treeish $Context.member.resultCommit -RepoPath $cursorPath
+        $cursorAbsolute = Assert-BranchSourceSyncFilePath -RepoPath $cursorPath
+        $actualCursor = if (Test-Path -LiteralPath $cursorAbsolute -PathType Leaf) {
+            ([string](Get-GitOutput @('hash-object','--no-filters','--',$cursorPath))).Trim()
+        } else { '<missing>' }
+        if ($actualCursor -cne $expectedCursor) { throw 'SOURCE_SYNC_UNLOADED_CURSOR_CHANGED' }
+        Assert-BranchSourceSyncCursorIndex -CursorPath $cursorPath -AllowedObjectIds @($expectedCursor)
+    }
+    $result = & $Action
+    $progress.completed = @($progress.completed) + @([pscustomobject]@{
+        name=$Name;stepId=$record.stepId;result=(Copy-BranchSourceSyncPhaseResult -Value $result)})
+    $progress.pending = $null
+    Save-BranchSourceSyncLoadProgress -Context $Context
+    return $result
+}
+
+function Get-BranchSourceSyncCursorHash {
+    param([string]$ExportPath)
+    $path = Assert-BranchSourceSyncFilePath -RepoPath "$ExportPath/ConfigDumpInfo.xml"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return '<missing>' }
+    if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'SOURCE_SYNC_CURSOR_REDIRECTED'
+    }
+    return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Assert-BranchSourceSyncCursorIndex {
+    param([string]$CursorPath, [string[]]$AllowedObjectIds)
+    $entries = @(Get-GitPathList -Arguments @('ls-files','--stage','-z','--',$CursorPath))
+    $objectId = '<missing>'
+    if ($entries.Count -gt 0) {
+        if ($entries.Count -ne 1 -or $entries[0] -cnotmatch '^100644 ([a-f0-9]{40,64}) 0\t') { throw 'SOURCE_SYNC_CURSOR_INDEX_CHANGED' }
+        $objectId = $Matches[1]
+    }
+    if ($AllowedObjectIds -cnotcontains $objectId) { throw 'SOURCE_SYNC_CURSOR_INDEX_CHANGED' }
+}
+
+function Assert-BranchSourceSyncLoadSource {
+    param([object]$Plan, [object]$Member)
+    $head = Get-CurrentCommit
+    if ($head -cne $Member.resultCommit -and ([string](Get-GitOutput @('merge-base',$Member.resultCommit,$head))).Trim() -cne $Member.resultCommit) {
+        throw 'SOURCE_SYNC_LOAD_HEAD_DIVERGED'
+    }
+    $cursorPath = "$($Plan.exportPath)/ConfigDumpInfo.xml"
+    $paths = @(Get-GitPathList -Arguments @('diff','--name-only','-z',$Member.resultCommit,$head,'--'))
+    $paths += @(Get-BranchSourceSyncChangedPaths)
+    if (@($paths | Where-Object { $_ -cne $cursorPath }).Count -gt 0) { throw 'SOURCE_SYNC_LOAD_FOREIGN_CHANGE' }
+    $originalCursor = Get-GitObjectIdForTreePath -Treeish $Member.resultCommit -RepoPath $cursorPath
+    $absolute = Assert-BranchSourceSyncFilePath -RepoPath $cursorPath
+    $currentCursor = if (Test-Path -LiteralPath $absolute -PathType Leaf) {
+        ([string](Get-GitOutput @('hash-object','--no-filters','--',$cursorPath))).Trim()
+    } else { '<missing>' }
+    Assert-BranchSourceSyncCursorIndex -CursorPath $cursorPath -AllowedObjectIds @($originalCursor,$currentCursor)
+}
+
 function Invoke-BranchSourceSyncLoad {
-    param([object]$State, [string]$ExportPath, [string]$OtherBranch)
+    param([object]$State, [string]$ExportPath, [string]$OtherBranch, [string]$GroupId = '', [AllowNull()][object]$LoadContext = $null)
 
     $stateName = [string](Get-StateValue -State $State -Name "devBranchName" -Default "")
     Sync-DevBranchContextToDotEnv -State $State
-    $State = Ensure-DevBranchEventLogBaseline -State $State
-    Ensure-DevBranchEventLogPendingCursor -State $State -Reason "sync-dev-branches" | Out-Null
-    $State = Read-DevBranchState -Name $stateName
     $contentKind = Get-DevBranchKind -State $State
     $extensionName = if ($contentKind -eq "extension") { Require-DevBranchExtensionName -State $State } else { "" }
-    $loadResult = Load-ConfigFromFiles `
-        -InfoBasePath $State.devBranchInfoBasePath `
-        -InfoBaseKind $State.infoBaseKind `
-        -State $State `
-        -ExportPath $ExportPath `
-        -ContentKind $contentKind `
-        -ExtensionName $extensionName `
-        -Mode $ConfigLoadMode
-    $updates = @{}
-    Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $State -LoadResult $loadResult -Updates $updates
-    Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $stateName) -LoadResult $loadResult -Reason "branch source synchronization" | Out-Null
-    Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath $ExportPath
-    foreach ($entry in (New-LoadStateUpdates -LoadResult $loadResult -ContentKind $contentKind).GetEnumerator()) {
-        $updates[$entry.Key] = $entry.Value
+    if ($null -ne $LoadContext) {
+        $LoadContext | Add-Member -NotePropertyName contentKind -NotePropertyValue $contentKind -Force
+        $LoadContext | Add-Member -NotePropertyName extensionName -NotePropertyValue $extensionName -Force
     }
-    $updates["lastBranchSourceSyncAt"] = (Get-Date).ToString("o")
-    $updates["lastBranchSourceSyncPeer"] = $OtherBranch
-    Add-VerificationStaleIfNeeded -State $State -Updates $updates -Reason "1C sources were synchronized with another development branch." -CurrentCommit $loadResult.currentCommit
-    Update-DevBranchState -State $State -Updates $updates
+    $loaded = Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name load -Action {
+        $State = Ensure-DevBranchEventLogBaseline -State $State
+        Ensure-DevBranchEventLogPendingCursor -State $State -Reason "sync-dev-branches" | Out-Null
+        $State = Read-DevBranchState -Name $stateName
+        $value = Load-ConfigFromFiles -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+            -State $State -ExportPath $ExportPath -ContentKind $contentKind -ExtensionName $extensionName -Mode $ConfigLoadMode
+        [pscustomobject]@{loadResult=$value;cursorSha256=$(if ($null -ne $LoadContext) { Get-BranchSourceSyncCursorHash -ExportPath $ExportPath } else { '' })}
+    }
+    $loadResult = $loaded.loadResult
+    if ($null -ne $LoadContext -and (Get-BranchSourceSyncCursorHash -ExportPath $ExportPath) -cne $loaded.cursorSha256) { throw 'SOURCE_SYNC_CURSOR_CHANGED_AFTER_LOAD' }
+    $normalized = Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name normalize -Action {
+        $values = @{}
+        Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State (Read-DevBranchState -Name $stateName) -LoadResult $loadResult -Updates $values
+        [pscustomobject]@{loadResult=$loadResult;updates=$values}
+    }
+    $loadResult = $normalized.loadResult
+    $updates = ConvertTo-Agent1cHashtable -Object $normalized.updates
+    Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name runtime -ReplaySafe -Action {
+        Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $stateName) -LoadResult $loadResult -Reason "branch source synchronization" | Out-Null
+        @{}
+    } | Out-Null
+    $cursor = Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name cursor -ReplaySafe -Action {
+        Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath $ExportPath
+        [pscustomobject]@{currentCommit=(Get-CurrentCommit)}
+    }
+    $loadResult.currentCommit = $cursor.currentCommit
+    Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name state -ReplaySafe -Action {
+        foreach ($entry in (New-LoadStateUpdates -LoadResult $loadResult -ContentKind $contentKind).GetEnumerator()) {
+            $updates[$entry.Key] = $entry.Value
+        }
+        $updates["lastBranchSourceSyncAt"] = (Get-Date).ToString("o")
+        $updates["lastBranchSourceSyncPeer"] = $OtherBranch
+        if ($GroupId) {
+            $updates['lastBranchSourceSyncGroupId'] = $GroupId
+            $updates['lastBranchSourceSyncGroupFingerprint'] = $loadResult.sourceFingerprint
+            $updates['lastBranchSourceSyncGroupCommit'] = Get-CurrentCommit
+        }
+        $currentState = Read-DevBranchState -Name $stateName
+        Add-VerificationStaleIfNeeded -State $currentState -Updates $updates -Reason "1C sources were synchronized with another development branch." -CurrentCommit $loadResult.currentCommit
+        Update-DevBranchState -State $currentState -Updates $updates
+        @{}
+    } | Out-Null
     return $loadResult
 }
 
@@ -10588,7 +19697,213 @@ function Assert-DevBranchSourceSyncLifecycleReady {
     throw "DEV_BRANCH_SOURCE_SYNC_PENDING_LIFECYCLE: role='$Role' branch='$branch' worktree='$worktreePath' operation='$operation' stage='$stage'. Source synchronization cannot replace a different helper-owned lifecycle operation."
 }
 
+function Assert-BranchSourceSyncGroupResolution {
+    param([object]$Plan)
+    if ((Get-CurrentCommit) -cne $Plan.members[0].head) { throw 'DEV_BRANCH_SOURCE_SYNC_PRIMARY_MOVED' }
+    Assert-BranchSourceSyncChangesScoped -ExportPath $Plan.exportPath | Out-Null
+    $unstaged = @(Get-GitPathList -Arguments @('diff', '--name-only', '-z', '--'))
+    $untracked = @(Get-GitPathList -Arguments @('ls-files', '-z', '--others', '--exclude-standard', '--'))
+    if ($unstaged.Count -gt 0 -or $untracked.Count -gt 0) { throw 'DEV_BRANCH_SOURCE_SYNC_RESOLUTION_NOT_STAGED: resolve source files, run git add and repeat the same group request.' }
+    foreach ($path in @($(if ($null -ne $Plan.conflict) { $Plan.conflict.paths } else { @() }))) {
+        $absolute = Assert-BranchSourceSyncFilePath -RepoPath $path
+        if ((Test-Path -LiteralPath $absolute -PathType Leaf) -and (Read-Utf8Text -Path $absolute) -match '(?m)^(<<<<<<< |>>>>>>> )') {
+            throw "DEV_BRANCH_SOURCE_SYNC_CONFLICT_MARKERS: $path"
+        }
+    }
+    Restore-BranchSourceSyncCursor -Head $Plan.members[0].head -ExportPath $Plan.exportPath
+    Assert-OneCConfigurationSourceIntegrity -ExportPath $Plan.exportPath
+}
+
+function Show-BranchSourceSyncGroupConflict {
+    param([object]$Plan)
+    Invoke-BranchSourceSyncGroupInstall -Plan $Plan -MemberIndex 0 -PreviousSource $Plan.members[0].head -DesiredCommit $Plan.conflict.candidate
+    Invoke-Git (@('--literal-pathspecs', 'reset', '--quiet', 'HEAD', '--') + @($Plan.conflict.paths))
+    $Plan.phase = 'conflicts'
+    Save-BranchSourceSyncGroupPlan -Plan $Plan
+    Set-RunFailureContext -Category merge-conflict -RequiredAction 'Resolve only the recorded 1C source conflicts, run git add, and repeat the same sync-dev-branches group request. Do not create a commit or edit the saved plan manually.'
+    throw "DEV_BRANCH_SOURCE_SYNC_CONFLICT: $($Plan.conflict.paths -join ', ')"
+}
+
+function Write-BranchSourceSyncGroupReport {
+    param([object]$Plan)
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add('## Групповая синхронизация исходников')
+    Add-RunUserReportLine -Lines $lines -Label 'Результат' -Value $(if ($Plan.phase -eq 'complete' -and -not $Plan.error) { 'успешно' } else { 'не завершено' })
+    Add-RunUserReportLine -Lines $lines -Label 'План' -Value (Get-BranchSourceSyncGroupPlanPath -Id $Plan.id)
+    Add-RunUserReportLine -Lines $lines -Label 'Этап' -Value $Plan.phase
+    Add-RunUserReportLine -Lines $lines -Label 'Получатели общего результата' -Value ($Plan.recipients -join ', ')
+    if ($Plan.fingerprint) { Add-RunUserReportLine -Lines $lines -Label 'Fingerprint результата' -Value $Plan.fingerprint }
+    foreach ($member in $Plan.members) {
+        $delivery = if ($member.recipient) { "исходники: $($member.sourceStatus); база: $($member.loadStatus); итоговый коммит: $($member.resultCommit)" } else { 'только источник; общий результат в эту ветку не доставлялся' }
+        Add-RunUserReportLine -Lines $lines -Label $member.branch -Value "источник @ $($member.head); $delivery"
+        if ($member.PSObject.Properties['loadProgress'] -and $null -ne $member.loadProgress -and $null -ne $member.loadProgress.pending) {
+            $pendingPhase = $member.loadProgress.pending
+            Add-RunUserReportLine -Lines $lines -Label 'Незавершённый этап' -Value "$($pendingPhase.step); step=$($pendingPhase.stepId)"
+        }
+    }
+    if ($Plan.error) { Add-RunUserReportLine -Lines $lines -Label 'Причина остановки' -Value $Plan.error }
+    Add-RunUserReportLine -Lines $lines -Label 'Область переноса' -Value "$($Plan.exportPath); каждый получатель сохраняет свой ConfigDumpInfo.xml"
+    Write-AndSetRunUserReport -Lines $lines
+}
+
+function Sync-DevBranchSourceGroup {
+    $primaryState = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $primaryState -Operation sync-dev-branches
+    $scope = Get-BranchSourceSyncScope -State $primaryState
+    if (-not $scope.group) { throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_REQUIRED' }
+    $frozenVariable = Get-Variable -Name BranchSourceSyncFrozenScope -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $frozenVariable -and $null -ne $frozenVariable.Value -and
+        -not (Test-BranchSourceSyncScopeEquivalent -First $frozenVariable.Value -Second $scope)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_CHANGED: repeat the original request without changing its inputs.'
+    }
+    $databasePlan = Get-ItlBranchSourceSyncDatabasePlan -State $primaryState
+    if (-not (Test-BranchSourceSyncScopeEquivalent -First $scope -Second $databasePlan.syncScope)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_CHANGED: repeat the original request without changing its inputs.'
+    }
+    foreach ($state in $scope.states) {
+        Invoke-BranchSourceSyncProject -Root $state.worktreePath -ScriptBlock {
+            Assert-DevBranchSourceSyncLifecycleReady -State $state -Role peer -SyncWorktreePath $primaryState.worktreePath
+            if ($null -ne (Get-PendingBranchSourceSync -State $state)) { throw 'DEV_BRANCH_SOURCE_SYNC_PAIR_PENDING: complete the saved pair synchronization first.' }
+        }
+    }
+    $plan = Read-BranchSourceSyncGroupPlan -State $primaryState -Scope $scope
+    if ($null -eq $plan) { $plan = New-BranchSourceSyncGroupPlan -Scope $scope -DatabasePlan $databasePlan }
+    try {
+        $plan.error = ''
+        if ($null -ne $plan.pending) {
+            $pending = $plan.pending
+            Invoke-BranchSourceSyncGroupInstall -Plan $plan -MemberIndex $pending.member -PreviousSource $pending.previous -DesiredCommit $pending.desired -CommitHead:([bool]$pending.commitHead)
+        }
+        if ($plan.phase -eq 'conflict-materializing') { Show-BranchSourceSyncGroupConflict -Plan $plan }
+        if ($plan.phase -eq 'conflicts') {
+            Assert-BranchSourceSyncGroupResolution -Plan $plan
+            $resolvedTree = ([string](Get-GitOutput @('write-tree'))).Trim()
+            $plan.aggregate = New-BranchSourceSyncCommit -BaseCommit $plan.aggregate -SourceTreeish $resolvedTree -ExportPath $plan.exportPath `
+                -MergeParent $plan.members[$plan.conflict.peer].head -Message "sync: resolved source group $($plan.id)"
+            Invoke-Git @('update-ref', "refs/itl/source-sync/$($plan.id)/resolved-$($plan.nextPeer)", $plan.aggregate)
+            $plan.nextPeer++
+            $plan.phase = 'restoring-primary'
+            Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'restoring-primary') {
+            Invoke-BranchSourceSyncGroupInstall -Plan $plan -MemberIndex 0 -PreviousSource $plan.aggregate -DesiredCommit $plan.members[0].head
+            $plan.conflict = $null; $plan.phase = 'aggregating'
+            Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        while ($plan.phase -eq 'aggregating' -and $plan.nextPeer -lt @($plan.members).Count) {
+            $peer = $plan.members[$plan.nextPeer]
+            $merge = Invoke-BranchSourceMergeTree -PrimaryHead $plan.aggregate -PeerHead $peer.head
+            $candidate = New-BranchSourceSyncCommit -BaseCommit $plan.aggregate -SourceTreeish $merge.tree -ExportPath $plan.exportPath `
+                -MergeParent $peer.head -Message "sync: aggregate $($peer.branch) for group $($plan.id)"
+            Invoke-Git @('update-ref', "refs/itl/source-sync/$($plan.id)/aggregate-$($plan.nextPeer)", $candidate)
+            $conflicts = @($merge.conflictPaths | Where-Object { (Test-RepoPathUnderRoot -RepoPath $_ -Root $plan.exportPath) -and $_ -cne "$($plan.exportPath)/ConfigDumpInfo.xml" })
+            if ($conflicts.Count -gt 0) {
+                $plan.conflict = [pscustomobject]@{peer=$plan.nextPeer;candidate=$candidate;paths=$conflicts}
+                $plan.phase = 'conflict-materializing'; Save-BranchSourceSyncGroupPlan -Plan $plan
+                Show-BranchSourceSyncGroupConflict -Plan $plan
+            }
+            $plan.aggregate = $candidate; $plan.nextPeer++
+            Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'aggregating') {
+            $plan.validationSource = New-BranchSourceSyncCommit -BaseCommit $plan.members[0].head -SourceTreeish $plan.aggregate -ExportPath $plan.exportPath -Message "sync: validate source group $($plan.id)"
+            $plan.phase = 'validating'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'validating') {
+            Invoke-BranchSourceSyncGroupInstall -Plan $plan -MemberIndex 0 -PreviousSource $plan.members[0].head -DesiredCommit $plan.validationSource
+            $plan.phase = 'review'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'review') {
+            Assert-BranchSourceSyncGroupResolution -Plan $plan
+            $resolvedTree = ([string](Get-GitOutput @('write-tree'))).Trim()
+            $plan.aggregate = New-BranchSourceSyncCommit -BaseCommit $plan.aggregate -SourceTreeish $resolvedTree -ExportPath $plan.exportPath -Message "sync: validated source group $($plan.id)"
+            Invoke-Git @('update-ref', "refs/itl/source-sync/$($plan.id)/validated", $plan.aggregate)
+            $plan.fingerprint = [string](Get-ConfigSourceFingerprint -ExportPath $plan.exportPath).fingerprint
+            $plan.phase = 'restoring-validation'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'restoring-validation') {
+            Invoke-BranchSourceSyncGroupInstall -Plan $plan -MemberIndex 0 -PreviousSource $plan.aggregate -DesiredCommit $plan.members[0].head
+            $plan.phase = 'planning-recipients'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'planning-recipients') {
+            foreach ($member in $plan.members) {
+                if (-not $member.recipient) { $member.sourceStatus = 'source-only'; $member.loadStatus = 'not-requested'; continue }
+                $member.resultCommit = New-BranchSourceSyncCommit -BaseCommit $member.head -SourceTreeish $plan.aggregate -ExportPath $plan.exportPath -Message "sync: receive source group $($plan.id)"
+                Invoke-Git @('update-ref', "refs/itl/source-sync/$($plan.id)/recipient-$([array]::IndexOf($plan.members, $member))", $member.resultCommit)
+            }
+            $plan.phase = 'applying'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'applying') {
+            for ($index = 0; $index -lt @($plan.members).Count; $index++) {
+                $member = $plan.members[$index]
+                if (-not $member.recipient -or $member.sourceStatus -eq 'committed') { continue }
+                Invoke-BranchSourceSyncGroupInstall -Plan $plan -MemberIndex $index -PreviousSource $member.head -DesiredCommit $member.resultCommit -CommitHead
+            }
+            $plan.phase = 'loading'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'loading') {
+            foreach ($member in @($plan.members | Where-Object { $_.recipient })) {
+                $observation = Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
+                    $state = Read-DevBranchState -Name $member.name
+                    if ($member.loadStatus -eq 'loading' -and $member.PSObject.Properties['loadProgress'] -and $null -ne $member.loadProgress) {
+                        Assert-BranchSourceSyncLoadSource -Plan $plan -Member $member
+                    } else { Assert-CleanGit }
+                    [pscustomobject]@{state=$state;head=(Get-CurrentCommit);fingerprint=[string](Get-ConfigSourceFingerprint -ExportPath $plan.exportPath).fingerprint}
+                }
+                $expectedHead = if ($member.loadStatus -eq 'loaded') { $member.loadedHead } else { $member.resultCommit }
+                if ($observation.fingerprint -cne $plan.fingerprint -or ($member.loadStatus -ne 'loading' -and $observation.head -cne $expectedHead)) {
+                    throw "DEV_BRANCH_SOURCE_SYNC_RECIPIENT_CHANGED: $($member.branch)"
+                }
+                if ($member.loadStatus -eq 'loaded') { continue }
+                $hasReceipt = (Get-StateValue $observation.state 'lastBranchSourceSyncGroupId' '') -ceq $plan.id -and
+                    (Get-StateValue $observation.state 'lastBranchSourceSyncGroupFingerprint' '') -ceq $plan.fingerprint -and
+                    (Get-StateValue $observation.state 'lastBranchSourceSyncGroupCommit' '') -ceq $observation.head
+                if (-not $hasReceipt) {
+                    if ($member.loadStatus -eq 'loading' -and (-not $member.PSObject.Properties['loadProgress'] -or $null -eq $member.loadProgress)) {
+                        throw "DEV_BRANCH_SOURCE_SYNC_LOAD_STATE_INVALID: $($member.branch); the saved operation checkpoint is incomplete."
+                    }
+                    if ($member.loadStatus -ne 'loading') {
+                        $member | Add-Member -NotePropertyName loadProgress -NotePropertyValue ([pscustomobject]@{schemaVersion=1;completed=@();pending=$null;attempts=@()}) -Force
+                        $member.loadStatus = 'loading'
+                        Save-BranchSourceSyncGroupPlan -Plan $plan
+                    }
+                    $loadContext = [pscustomobject]@{plan=$plan;member=$member}
+                    $member.loadedHead = Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
+                        Invoke-BranchSourceSyncLoad -State (Read-DevBranchState -Name $member.name) -ExportPath $plan.exportPath -OtherBranch ($plan.names -join ', ') -GroupId $plan.id -LoadContext $loadContext | Out-Null
+                        Get-CurrentCommit
+                    }
+                }
+                if (-not $member.loadedHead) { $member.loadedHead = $observation.head }
+                $member.loadStatus = 'loaded'; Save-BranchSourceSyncGroupPlan -Plan $plan
+            }
+            $plan.phase = 'complete'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -ne 'complete') { throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_PHASE_INVALID' }
+        foreach ($member in @($plan.members | Where-Object { $_.recipient })) {
+            Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
+                Assert-CleanGit
+                $state = Read-DevBranchState -Name $member.name
+                if ($member.loadStatus -ne 'loaded' -or (Get-CurrentCommit) -cne $member.loadedHead -or
+                    [string](Get-ConfigSourceFingerprint -ExportPath $plan.exportPath).fingerprint -cne $plan.fingerprint -or
+                    (Get-StateValue $state 'lastBranchSourceSyncGroupId' '') -cne $plan.id -or
+                    (Get-StateValue $state 'lastBranchSourceSyncGroupCommit' '') -cne $member.loadedHead -or
+                    (Get-StateValue $state 'lastBranchSourceSyncGroupFingerprint' '') -cne $plan.fingerprint) {
+                    throw "DEV_BRANCH_SOURCE_SYNC_COMPLETION_CHANGED: $($member.branch)"
+                }
+            }
+        }
+        Update-DevBranchState -State (Read-DevBranchState -Name $plan.members[0].name) -Updates @{pendingBranchSourceGroupId=''}
+        Set-RunStage -Stage 'sync-dev-branches.complete' -Detail 'The common source result reached every explicitly selected recipient.'
+    } catch {
+        $plan.error = $_.Exception.Message
+        Save-BranchSourceSyncGroupPlan -Plan $plan
+        throw
+    } finally { Write-BranchSourceSyncGroupReport -Plan $plan }
+}
+
 function Sync-DevBranches {
+    $requestVariable = Get-Variable -Name BranchSyncRequestPath -ErrorAction SilentlyContinue
+    if ($null -ne $requestVariable -and $requestVariable.Value) { Sync-DevBranchSourceGroup; return }
     $peerName = Require-Value "PeerDevBranchName" $PeerDevBranchName
     if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
         $peerName = $peerName.Substring("itldev/".Length)
@@ -10810,6 +20125,36 @@ function Restore-RefreshTrackedKiloConfigSnapshot {
     }
 }
 
+function Test-RefreshManagedDependencyLockChange {
+    $repoPath = ".agent-1c/dependency-lock.json"
+    $changedPaths = @(@(
+            @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--", $repoPath))
+            @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--", $repoPath))
+        ) | Sort-Object -Unique)
+    if ($changedPaths.Count -eq 0) { return $false }
+
+    $currentPath = Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json"
+    if (-not (Test-Path -LiteralPath $currentPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    try {
+        $beforeManifest = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "HEAD:$repoPath")) | ConvertFrom-Json)
+        $currentManifest = ConvertTo-Agent1cHashtable -Object ((Read-Utf8Text -Path $currentPath) | ConvertFrom-Json)
+        $templateManifest = New-DefaultDependencyLockManifest
+        $compatibilityPath = Join-Path (Get-ItlOnDemandMcpAssetRoot) 'compatibility.json'
+        $compatibility = if (Test-Path -LiteralPath $compatibilityPath -PathType Leaf) { Read-Utf8Text -Path $compatibilityPath | ConvertFrom-Json } else { $null }
+        $plan = New-WorkflowDependencyPlan -Template $templateManifest -InstalledTemplate (Get-RefreshDependencyTemplateAtCommit -Commit HEAD) -Manifest $beforeManifest -Selection (Get-WorkflowDependencySelectionInput) -Compatibility $compatibility
+        if (@($plan.blocked).Count -gt 0) { return $false }
+        $expected = Get-WorkflowDependencySyncManifest -Plan $plan -Before $beforeManifest
+        $beforeComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $expected) -Depth 100 -Compress
+        $currentComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $currentManifest) -Depth 100 -Compress
+        return $beforeComparable -ceq $currentComparable
+    } catch {
+        return $false
+    }
+}
+
 function Complete-RefreshConfigDumpInfoPostcondition {
     param(
         [Parameter(Mandatory = $true)][object]$LoadResult,
@@ -10822,24 +20167,35 @@ function Complete-RefreshConfigDumpInfoPostcondition {
     $normalizedExportPath = (($ExportPath -replace "\\", "/").Trim("/"))
     $dumpInfoRepoPath = "$normalizedExportPath/ConfigDumpInfo.xml"
     $trackedKiloChanged = Assert-RefreshTrackedKiloConfigChange -Snapshot $TrackedKiloSnapshot
+    $dependencyLockChanged = Test-RefreshManagedDependencyLockChange
     $allowedPaths = @($dumpInfoRepoPath)
     if ($trackedKiloChanged) {
         $allowedPaths += [string]$TrackedKiloSnapshot.repoPath
+    }
+    if ($dependencyLockChanged) {
+        $allowedPaths += ".agent-1c/dependency-lock.json"
     }
     $trackedPaths = @(
         @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--"))
         @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--"))
     ) | Sort-Object -Unique
     $unexpectedPaths = @($trackedPaths | Where-Object {
-        $allowedPaths -cnotcontains ([string]$_ -replace "\\", "/")
+        $allowedPaths -cnotcontains ([string]$_ -replace "\\", "/") -and
+        -not (Test-RefreshIndependentDocumentationPath -Path $_ -Operation $Operation)
     })
     if ($unexpectedPaths.Count -gt 0) {
         throw "REFRESH_TRACKED_STATE_UNEXPECTED: refresh changed tracked files other than the branch synchronization cursor: $($unexpectedPaths -join ', ')"
     }
 
+    if ($Operation -in @("refresh-dev-branch", "refresh-dev-branch-lite")) {
+        # Preserve the existing cursor checkpoint before reporting a later
+        # untracked-file failure. The pre-commit check only guards the index.
+        Assert-DevBranchLifecyclePostMergeGitState -Operation $Operation -AllowedPaths $allowedPaths -StagedOnly
+    }
+
     $pathsToCommit = @($trackedPaths | Where-Object { $allowedPaths -ccontains ([string]$_ -replace "\\", "/") })
     if ($pathsToCommit.Count -gt 0) {
-        $commitMessage = if ($trackedKiloChanged) { "chore: persist branch refresh state" } else { "chore: persist branch configuration synchronization cursor" }
+        $commitMessage = if ($trackedKiloChanged -or $dependencyLockChanged) { "chore: persist branch refresh state" } else { "chore: persist branch configuration synchronization cursor" }
         Commit-IfChanged `
             -Message $commitMessage `
             -PathSpec $pathsToCommit `
@@ -10853,7 +20209,7 @@ function Complete-RefreshConfigDumpInfoPostcondition {
             -Operation $Operation `
             -PostMergeHead $LoadResult.currentCommit
     }
-    Assert-CleanGit
+    Assert-DevBranchLifecyclePostMergeGitState -Operation $Operation
     if ($null -ne $TrackedKiloSnapshot) {
         $TrackedKiloSnapshot.completed = $true
     }
@@ -10879,9 +20235,14 @@ function Write-ConfigRepositoryObjectList {
         $writer.WriteStartElement("Objects", $namespace)
         $writer.WriteAttributeString("version", "1.0")
         foreach ($item in @($Plan.items | Sort-Object name)) {
-            $writer.WriteStartElement("Object", $namespace)
-            $writer.WriteAttributeString("fullName", [string]$item.name)
-            $writer.WriteAttributeString("includeChildObjects", $(if ([string]$item.scope -eq "full") { "true" } else { "false" }))
+            if ([string]$item.name -eq 'Конфигурация') {
+                $writer.WriteStartElement('Configuration', $namespace)
+                $writer.WriteAttributeString('includeChildObjects', 'false')
+            } else {
+                $writer.WriteStartElement("Object", $namespace)
+                $writer.WriteAttributeString("fullName", [string]$item.name)
+                $writer.WriteAttributeString("includeChildObjects", $(if ([string]$item.scope -eq "full") { "true" } else { "false" }))
+            }
             $writer.WriteEndElement()
         }
         $writer.WriteEndElement()
@@ -10906,6 +20267,191 @@ function Write-ConfigRepositoryLockRedactedLog {
     $path = Join-Path $RunRoot "repository-lock.log"
     Write-Utf8Text -Path $path -Value $text
     return (Resolve-Agent1cFullPath -Path $path)
+}
+
+function ConvertTo-ConfigRepositoryLogObjectName {
+    param([string]$Name)
+    # Platform log language and metadata presentation language can differ.
+    # Translate type positions only; object identifiers are preserved verbatim.
+    if ($Name -eq 'Configuration') { return 'Конфигурация' }
+    $segments = $Name -split '\.'
+    if ($segments.Count % 2 -ne 0) { return $Name }
+    for ($index = 0; $index -lt $segments.Count; $index += 2) {
+        $label = Get-ConfigRepositoryMetadataCollectionLabel -Collection (Get-ConfigRepositoryMetadataTypeCollection -Type $segments[$index])
+        if ($label) { $segments[$index] = $label }
+    }
+    return ($segments -join '.')
+}
+
+function Get-ConfigRepositoryLockOutcome {
+    param(
+        [object]$Plan,
+        [string]$LogPath,
+        [bool]$Succeeded,
+        [object]$RootOutcome = $null,
+        [string]$CurrentOwner = '',
+        [string[]]$BlockedByRoot = @(),
+        [string[]]$NotAttempted = @(),
+        [bool]$ObjectOperationAttempted = $true,
+        [int]$ObjectRequestedCount = -1,
+        [ValidateSet('', 'succeeded', 'failed')][string]$OverallStatus = ''
+    )
+    $byName = @{}
+    $items = @(foreach ($item in @($Plan.items)) {
+        $entry = [pscustomobject]@{ name = [string]$item.name; scope = [string]$item.scope; status = 'unconfirmed'; owner = ''; observations = @() }
+        $byName[$entry.name] = $entry
+        $entry
+    })
+    $text = if ($LogPath -and (Test-Path -LiteralPath $LogPath -PathType Leaf)) { Read-Utf8Text -Path $LogPath } else { '' }
+    $starts = [regex]::Matches($text, '(?m)^---- Начало операции с хранилищем конфигурации ----\s*$').Count
+    $inOperation = $false
+    $inAbsentList = $false
+    $ended = $false
+    # An all-absent request fails before the native operation starts, but its
+    # explicit absence list is still valid per-object evidence.
+    if ($starts -le 1) {
+        foreach ($line in @($text -split '\r?\n')) {
+            $name = ''; $reportedName = ''; $status = ''; $owner = ''
+            if ($line -eq 'Объекты, отсутствующие в обеих конфигурациях:') { $inAbsentList = $true; continue }
+            if ($inAbsentList -and [string]::IsNullOrWhiteSpace($line)) { $inAbsentList = $false; continue }
+            if ($line -eq '---- Начало операции с хранилищем конфигурации ----') { $inOperation = $true; $inAbsentList = $false; continue }
+            if ($line -eq '---- Операция с хранилищем конфигурации завершена ----') { if ($inOperation) { $ended = $true }; $inOperation = $false; continue }
+            if ($inAbsentList -and $byName.ContainsKey((ConvertTo-ConfigRepositoryLogObjectName -Name $line.Trim()))) { $name = $line.Trim(); $status = 'absent' }
+            elseif ($inOperation -and $line -match '^Объект захвачен для редактирования другим пользователем:\s*(.+?)\s+\(([^()\r\n]+)\)\s*$') {
+                $name = $Matches[1].Trim(); $owner = $Matches[2].Trim(); $status = 'conflict'
+            } elseif ($inOperation -and $line -match '^Объект захвачен для редактирования:\s*(.+?)\s*$') {
+                $name = $Matches[1].Trim(); $status = 'captured'
+            }
+            if ($name) {
+                $reportedName = $name
+                $name = ConvertTo-ConfigRepositoryLogObjectName -Name $name
+                # A root-only request contains exactly one platform identity, but
+                # Designer reports the configured application name instead of the
+                # canonical Configuration/Конфигурация label on some builds.
+                if (-not $byName.ContainsKey($name) -and $items.Count -eq 1 -and $items[0].name -eq 'Конфигурация') {
+                    $name = 'Конфигурация'
+                }
+            }
+            if ($name -and $byName.ContainsKey($name)) {
+                $entry = $byName[$name]
+                $entry.observations = @($entry.observations) + [pscustomobject]@{ status = $status; owner = $owner; reportedName = $reportedName }
+            }
+        }
+    }
+    $lockSuccessMarker = 'Захват объектов в хранилище успешно завершен'
+    $lockSuccessObserved = $Succeeded -and $text -match ('(?m)^\s*' + [regex]::Escape($lockSuccessMarker) + '\s*$')
+    $lockCompletionEvidenceValid = $lockSuccessObserved -and (
+        ($starts -eq 0 -and $text.Trim() -ceq $lockSuccessMarker) -or
+        ($starts -eq 1 -and $ended)
+    )
+    foreach ($entry in $items) {
+        $statuses = @($entry.observations | ForEach-Object { $_.status } | Sort-Object -Unique)
+        $owners = @($entry.observations | ForEach-Object { $_.owner } | Where-Object { $_ } | Sort-Object -Unique)
+        if ($statuses.Count -eq 1 -and $owners.Count -le 1) {
+            $entry.status = $statuses[0]
+        } elseif ($statuses.Count -eq 0 -and $lockCompletionEvidenceValid -and $CurrentOwner) {
+            # Native Designer is intentionally silent for an object that is
+            # already locked by the current repository user. The exact final
+            # success marker closes that outcome only when no contradictory or
+            # partial per-object observation exists.
+            $entry.status = 'already-owned'
+            $owners = @($CurrentOwner)
+            $entry.observations = @([pscustomobject]@{ status = 'already-owned'; owner = $CurrentOwner; reportedName = '' })
+        }
+        $entry.owner = $owners -join ', '
+    }
+    if ($null -ne $RootOutcome) {
+        $rootEntry = @($RootOutcome.items | Where-Object name -eq 'Конфигурация')[0]
+        $entry = $byName['Конфигурация']
+        $entry.status = $rootEntry.status; $entry.owner = $rootEntry.owner; $entry.observations = $rootEntry.observations
+    }
+    foreach ($name in @($BlockedByRoot)) {
+        if ($byName.ContainsKey($name)) {
+            $byName[$name].status = 'blocked-by-root'
+            $byName[$name].owner = ''
+            $byName[$name].observations = @()
+        }
+    }
+    foreach ($name in @($NotAttempted)) {
+        if ($byName.ContainsKey($name)) {
+            $byName[$name].status = 'not-attempted'
+            $byName[$name].owner = ''
+            $byName[$name].observations = @()
+        }
+    }
+    $requiredBy = if ($null -ne $Plan.PSObject.Properties['rootLockRequiredBy']) { @($Plan.rootLockRequiredBy) } else { @() }
+    if ($ObjectRequestedCount -lt 0) { $ObjectRequestedCount = @($Plan.items).Count }
+    $operationStatus = if ($OverallStatus) { $OverallStatus } elseif ($Succeeded) { 'succeeded' } else { 'failed' }
+    return [pscustomobject]@{
+        schemaVersion = 1; baseCommit = [string]$Plan.baseCommit
+        operationStatus = $operationStatus
+        logPath = $LogPath; operationEndObserved = $ended
+        lockSuccessObserved = $lockSuccessObserved; lockCompletionEvidenceValid = $lockCompletionEvidenceValid; items = $items
+        rootLockRequiredBy = @($requiredBy); rootOperation = $RootOutcome
+        objectOperation = [pscustomobject]@{
+            attempted = $ObjectOperationAttempted
+            requestedCount = $ObjectRequestedCount
+            status = $(if (-not $ObjectOperationAttempted) { 'not-attempted' } elseif ($Succeeded) { 'succeeded' } else { 'failed' })
+            logPath = $LogPath
+        }
+    }
+}
+
+function Write-ConfigRepositoryLockOutcomeReport {
+    param([Collections.Generic.List[string]]$Lines, [object]$Outcome, [string]$RunRoot, [string]$ObjectListPath)
+    $outcomePath = Join-Path $RunRoot 'repository-lock-result.json'
+    Write-Utf8Text -Path $outcomePath -Value ($Outcome | ConvertTo-Json -Depth 12)
+    $capturedCount = @($Outcome.items | Where-Object status -eq 'captured').Count
+    $alreadyOwnedCount = @($Outcome.items | Where-Object status -eq 'already-owned').Count
+    $result = if ($Outcome.operationStatus -eq 'succeeded') { 'операция завершена' } else { 'операция завершилась с ошибкой; выполненные захваты сохранены' }
+    Add-RunUserReportLine -Lines $Lines -Label 'Результат' -Value $result
+    Add-RunUserReportLine -Lines $Lines -Label 'Захвачено этой командой' -Value ([string]$capturedCount)
+    Add-RunUserReportLine -Lines $Lines -Label 'Уже было захвачено текущим пользователем' -Value ([string]$alreadyOwnedCount)
+    Add-RunUserReportLine -Lines $Lines -Label 'Всего под контролем текущего пользователя' -Value ([string]($capturedCount + $alreadyOwnedCount))
+    Add-RunUserReportLine -Lines $Lines -Label 'Файл объектов' -Value $ObjectListPath
+    Add-RunUserReportLine -Lines $Lines -Label 'Результаты по объектам' -Value $outcomePath
+    Add-RunUserReportLine -Lines $Lines -Label 'Редактированный лог' -Value $Outcome.logPath -Default '<лог 1С не создан>'
+    if (@($Outcome.rootLockRequiredBy).Count -gt 0) {
+        $Lines.Add(''); $Lines.Add('### Зависимость новых объектов от корня конфигурации')
+        $Lines.Add('Корень запрашивается отдельно, без дочерних объектов. Его захват не означает захват новых объектов.')
+        if ($null -eq $Outcome.rootOperation) {
+            $Lines.Add('Результат отдельной операции с корнем отсутствует.')
+        } else {
+            $rootEntry = @($Outcome.rootOperation.items | Where-Object name -eq 'Конфигурация')[0]
+            $reportedRootName = @($rootEntry.observations | ForEach-Object {
+                if ($null -ne $_.PSObject.Properties['reportedName']) { $_.reportedName }
+            } | Where-Object { $_ } | Select-Object -First 1)
+            $rootNameDetail = if ($reportedRootName.Count -gt 0 -and $reportedRootName[0] -notin @('Configuration', 'Конфигурация')) { " (в журнале 1С: $($reportedRootName[0]))" } else { '' }
+            switch ([string]$rootEntry.status) {
+                'captured' { $Lines.Add("Корень конфигурации$rootNameDetail захвачен этой командой.") }
+                'already-owned' { $Lines.Add("Корень конфигурации$rootNameDetail уже был захвачен текущим пользователем $($rootEntry.owner).") }
+                'conflict' { $Lines.Add("Корень конфигурации$rootNameDetail не захвачен: занят пользователем $($rootEntry.owner).") }
+                default { $Lines.Add("Результат захвата корня конфигурации$rootNameDetail не подтверждён журналом 1С.") }
+            }
+            Add-RunUserReportLine -Lines $Lines -Label 'Лог операции с корнем' -Value $Outcome.rootOperation.logPath
+        }
+        $blockedCount = @($Outcome.items | Where-Object status -eq 'blocked-by-root').Count
+        if ($blockedCount -gt 0) {
+            $Lines.Add("Из-за недоступного корня не запускался захват только зависимых новых объектов: $blockedCount.")
+        }
+        if ($null -ne $Outcome.objectOperation -and $Outcome.objectOperation.attempted) {
+            $Lines.Add("Захват остальных независимых объектов был запущен: $($Outcome.objectOperation.requestedCount).")
+        }
+    }
+    $sections = [ordered]@{ captured = 'Захваченные этой командой объекты'; 'already-owned' = 'Уже захвачены текущим пользователем'; conflict = 'Не захвачены: заняты другими пользователями'; 'blocked-by-root' = 'Не захвачены: недоступен корень конфигурации'; absent = 'Отсутствуют в обеих конфигурациях'; 'not-attempted' = 'Захват не выполнялся'; unconfirmed = 'Результат захвата не подтверждён' }
+    foreach ($status in $sections.Keys) {
+        $entries = @($Outcome.items | Where-Object status -eq $status)
+        if ($entries.Count -eq 0) { continue }
+        $Lines.Add(''); $Lines.Add('### ' + $sections[$status])
+        if ($status -eq 'unconfirmed') {
+            $Lines.Add('Журнал 1С не подтверждает результат по этим объектам. Успешное завершение команды само по себе не доказывает новый захват или текущего владельца.')
+        }
+        foreach ($entry in $entries) {
+            $ownerDetail = if ($entry.owner) { ' — пользователь хранилища: ' + $entry.owner } else { '' }
+            $Lines.Add("- $($entry.name) ($($entry.scope))$ownerDetail")
+        }
+    }
+    Write-AndSetRunUserReport -Lines $Lines
 }
 
 function Get-ConfigRepositoryLockConflictSummary {
@@ -10972,7 +20518,7 @@ function Lock-ConfigRepositoryObjects {
     }
 
     Repair-OneCSourceLineEndings | Out-Null
-    $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath)
+    $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath) -State $state -ForRepositoryLock
     $unresolved = @($plan.unresolvedPaths)
     if ($unresolved.Count -gt 0) {
         throw "LOCK_CONFIG_REPOSITORY_UNRESOLVED_PATHS: $($unresolved -join ', ')"
@@ -10981,6 +20527,7 @@ function Lock-ConfigRepositoryObjects {
     $report = [System.Collections.Generic.List[string]]::new()
     $report.Add("## Захват объектов в хранилище")
     Add-RunUserReportLine -Lines $report -Label "База сравнения" -Value ([string]$plan.baseCommit)
+    Add-RunUserReportLine -Lines $report -Label "Происхождение базы" -Value ([string](Get-StateValue -State $plan -Name 'baseProvenance' -Default 'legacy:merge-base-master-no-lifecycle-proof'))
     if ($items.Count -eq 0) {
         Add-RunUserReportLine -Lines $report -Label "Результат" -Value "изменённых объектов нет; захват не выполнялся"
         Write-AndSetRunUserReport -Lines $report
@@ -10993,45 +20540,118 @@ function Lock-ConfigRepositoryObjects {
         Join-Path $script:ProjectRoot (".agent-1c\runs\repository-lock-{0}-{1}" -f (Get-Date -Format "yyyyMMdd-HHmmss-fff"), ([guid]::NewGuid().ToString("N").Substring(0, 8)))
     }
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
-    $objectListPath = Write-ConfigRepositoryObjectList -Plan $plan -Path (Join-Path $runRoot "repository-objects.xml")
-    Set-RunStage -Stage "repository-lock.designer" -Detail "Locking the exact changed configuration objects in the source repository."
-    try {
-        Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryLock" -ObjectListPath $objectListPath
-        $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
-    } catch {
-        $designerError = $_.Exception.Message
-        $redactedLogPath = ""
+    $hasRootDependency = $null -ne $plan.PSObject.Properties['rootLockRequiredBy'] -and @($plan.rootLockRequiredBy).Count -gt 0
+    $allObjectItems = if ($hasRootDependency) { @($plan.items | Where-Object name -ne 'Конфигурация') } else { @($plan.items) }
+    $rootOutcome = $null
+    $rootError = ''
+    $rootConflictSummary = ''
+    $blockedByRoot = @()
+    $notAttempted = @()
+    $objectItems = @($allObjectItems)
+    if ($hasRootDependency) {
+        $rootPlan = [pscustomobject]@{ baseCommit = $plan.baseCommit; items = @($plan.items | Where-Object name -eq 'Конфигурация') }
+        $rootListPath = Write-ConfigRepositoryObjectList -Plan $rootPlan -Path (Join-Path $runRoot 'repository-root-objects.xml')
+        Add-RunUserReportLine -Lines $report -Label 'Файл захвата корня' -Value $rootListPath
+        Set-RunStage -Stage 'repository-lock.root' -Detail 'Locking only the configuration root required by new top-level objects.'
+        # A launch failure before a new log exists must not reuse an earlier operation.
+        $script:LastLogPath = ''
+        $rootSucceeded = $false
         try {
+            Invoke-ConfigRepositoryObjectOperation -Operation '/ConfigurationRepositoryLock' -ObjectListPath $rootListPath
+            $rootSucceeded = $true
+        } catch {
+            $rootError = $_.Exception.Message
+        }
+        $rootRawLogPath = [string]$script:LastLogPath
+        $rootLogPath = ''
+        try {
+            $rootLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
+        } catch {
+            if (-not $rootError) { $rootError = $_.Exception.Message }
+            $rootLogPath = ''
+        }
+        if ($rootLogPath) {
+            $preservedRootLogPath = Join-Path $runRoot 'repository-root-lock.log'
+            Move-Item -LiteralPath $rootLogPath -Destination $preservedRootLogPath
+            $rootLogPath = $preservedRootLogPath
+        }
+        $rootDiagnosticLogPath = if ($rootLogPath) { $rootLogPath } else { $rootRawLogPath }
+        $rootOutcome = Get-ConfigRepositoryLockOutcome -Plan $rootPlan -LogPath $rootDiagnosticLogPath -Succeeded $rootSucceeded -CurrentOwner (Get-EnvValue -Name 'REPOSITORY_USER')
+        # Persist and expose only the redacted copy even when parsing had to use
+        # the native log because redaction could not be written.
+        $rootOutcome.logPath = $rootLogPath
+        if ($rootError) {
+            $rootConflictSummary = Get-ConfigRepositoryLockConflictSummary -LogPath $rootDiagnosticLogPath
+            if ($rootConflictSummary) {
+                $blockedByRoot = @($plan.rootLockRequiredBy)
+                $objectItems = @($allObjectItems | Where-Object { $blockedByRoot -notcontains [string]$_.name })
+            } else {
+                # An unclassified native/transport failure can leave mutation
+                # state uncertain. Do not launch another mutation in that case.
+                $notAttempted = @($allObjectItems | ForEach-Object { [string]$_.name })
+                $objectItems = @()
+            }
+        }
+    }
+
+    $objectPlan = [pscustomobject]@{ items = @($objectItems) }
+    $objectListPath = Write-ConfigRepositoryObjectList -Plan $objectPlan -Path (Join-Path $runRoot 'repository-objects.xml')
+    $objectOperationAttempted = $objectItems.Count -gt 0
+    $objectSucceeded = $false
+    $objectError = ''
+    $objectConflictSummary = ''
+    $redactedLogPath = ''
+    if ($objectOperationAttempted) {
+        Set-RunStage -Stage 'repository-lock.designer' -Detail "Locking $($objectItems.Count) exact changed configuration objects independently of unavailable objects."
+        $script:LastLogPath = ''
+        try {
+            Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryLock" -ObjectListPath $objectListPath
             $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
         } catch {
-            $redactedLogPath = ""
+            $objectError = $_.Exception.Message
+            try { $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot } catch { $redactedLogPath = '' }
         }
+        $objectSucceeded = -not $objectError
         $diagnosticLogPath = if ($redactedLogPath) { $redactedLogPath } else { [string]$script:LastLogPath }
-        $conflictSummary = Get-ConfigRepositoryLockConflictSummary -LogPath $diagnosticLogPath
+        if (-not $objectSucceeded) {
+            $objectConflictSummary = Get-ConfigRepositoryLockConflictSummary -LogPath $diagnosticLogPath
+        }
+    }
+
+    $overallSucceeded = -not $rootError -and (-not $objectOperationAttempted -or $objectSucceeded)
+    if ($overallSucceeded) {
+        Add-RunUserReportLine -Lines $report -Label "Исходная база" -Value (Get-SourceInfoBasePath)
+        Add-RunUserReportLine -Lines $report -Label "Пользователь хранилища" -Value (Get-EnvValue -Name "REPOSITORY_USER")
+    }
+    $outcomeLogPath = if ($objectOperationAttempted) { $redactedLogPath } elseif ($null -ne $rootOutcome) { [string]$rootOutcome.logPath } else { '' }
+    $outcome = Get-ConfigRepositoryLockOutcome `
+        -Plan $plan `
+        -LogPath $outcomeLogPath `
+        -Succeeded $objectSucceeded `
+        -RootOutcome $rootOutcome `
+        -CurrentOwner (Get-EnvValue -Name 'REPOSITORY_USER') `
+        -BlockedByRoot $blockedByRoot `
+        -NotAttempted $notAttempted `
+        -ObjectOperationAttempted $objectOperationAttempted `
+        -ObjectRequestedCount $objectItems.Count `
+        -OverallStatus $(if ($overallSucceeded) { 'succeeded' } else { 'failed' })
+    Write-ConfigRepositoryLockOutcomeReport -Lines $report -Outcome $outcome -RunRoot $runRoot -ObjectListPath $objectListPath
+
+    if (-not $overallSucceeded) {
+        $conflictSummary = @($rootConflictSummary, $objectConflictSummary | Where-Object { $_ } | Select-Object -Unique) -join ' '
         if ($conflictSummary) {
-            if ($redactedLogPath) { $script:LastLogPath = $redactedLogPath }
+            if ($outcomeLogPath) { $script:LastLogPath = $outcomeLogPath }
             Set-RunStage -Stage "repository-lock.conflict" -Detail $conflictSummary
             Set-RunFailureContext `
                 -Category "runner" `
                 -RequiredAction "Освободите перечисленные объекты в хранилище или согласуйте это с указанными пользователями, затем повторите /itl-lock-objects."
-            $logDetail = if ($redactedLogPath) { " Редактированный лог: $redactedLogPath" } else { "" }
+            $logDetail = if ($outcomeLogPath) { " Редактированный лог: $outcomeLogPath" } else { "" }
             throw "$conflictSummary$logDetail"
         }
-        $redactedLogDetail = if ($redactedLogPath) { " Редактированный лог: $redactedLogPath" } else { "" }
-        throw "$designerError$redactedLogDetail"
+        $failure = if ($objectError) { $objectError } else { $rootError }
+        $redactedLogDetail = if ($outcomeLogPath) { " Редактированный лог: $outcomeLogPath" } else { "" }
+        throw "$failure$redactedLogDetail"
     }
-
-    Add-RunUserReportLine -Lines $report -Label "Результат" -Value "успешно"
-    Add-RunUserReportLine -Lines $report -Label "Исходная база" -Value (Get-SourceInfoBasePath)
-    Add-RunUserReportLine -Lines $report -Label "Пользователь хранилища" -Value (Get-EnvValue -Name "REPOSITORY_USER")
-    Add-RunUserReportLine -Lines $report -Label "Файл объектов" -Value $objectListPath
-    Add-RunUserReportLine -Lines $report -Label "Редактированный лог" -Value $redactedLogPath -Default "<лог 1С не создан>"
-    $report.Add("")
-    $report.Add("### Захваченные объекты")
-    foreach ($item in $items) {
-        $report.Add("- $([string]$item.name) ($([string]$item.scope))")
-    }
-    Write-AndSetRunUserReport -Lines $report
 }
 
 function Invoke-ReleaseE2EConfigRepositoryLockRoundtrip {
@@ -11060,7 +20680,7 @@ function Invoke-ReleaseE2EConfigRepositoryLockRoundtrip {
                 -DesignerArgs ((New-RepositoryConnectionArgs) + @("/ConfigurationRepositoryCreate")) | Out-Null
         }
 
-        $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath)
+        $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath) -State $state
         if (@($plan.unresolvedPaths).Count -gt 0) {
             throw "RELEASE_E2E_CONFIG_REPOSITORY_UNRESOLVED: $(@($plan.unresolvedPaths) -join ', ')"
         }
@@ -11146,22 +20766,6 @@ function Save-DevBranchCheckpoint {
     return $checkpointCommit
 }
 
-function Get-DevBranchArchiveRoot {
-    $root = Join-Path (Get-MainWorktreePath) ".agent-1c\branch-archives"
-    return (Resolve-Agent1cFullPath -Path $root)
-}
-
-function Assert-PathUnderDevBranchArchiveRoot {
-    param([Parameter(Mandatory = $true)][string]$Path)
-
-    $root = (Get-DevBranchArchiveRoot).TrimEnd("\", "/")
-    $resolved = (Resolve-Agent1cFullPath -Path $Path).TrimEnd("\", "/")
-    if (-not $resolved.StartsWith(($root + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
-        throw "DEV_BRANCH_ARCHIVE_PATH_OUTSIDE_ROOT: $resolved"
-    }
-    return $resolved
-}
-
 function Get-DevBranchResetMasterSource {
     $mainRoot = Get-MainWorktreePath
     return Invoke-InProjectContext -Root $mainRoot -ScriptBlock {
@@ -11176,107 +20780,6 @@ function Get-DevBranchResetMasterSource {
             configTreeObjectId = [string]$source.treeObjectId
         }
     }
-}
-
-function Assert-DevBranchResetArchiveReady {
-    param(
-        [Parameter(Mandatory = $true)][string]$ArchivePath,
-        [Parameter(Mandatory = $true)][string]$OldHead,
-        [Parameter(Mandatory = $true)][string]$MasterCommit
-    )
-
-    $finalPath = Assert-PathUnderDevBranchArchiveRoot -Path $ArchivePath
-    $manifestPath = Join-Path $finalPath "manifest.json"
-    $verifiedManifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json
-    if ([int]$verifiedManifest.schemaVersion -ne 1 -or [string]$verifiedManifest.status -ne "ready" -or
-        [string]$verifiedManifest.oldHead -cne $OldHead -or [string]$verifiedManifest.masterCommit -cne $MasterCommit) {
-        throw "DEV_BRANCH_ARCHIVE_MANIFEST_INVALID: $manifestPath"
-    }
-    $verifiedDtPath = Join-Path $finalPath ([string]$verifiedManifest.dt.path)
-    $verifiedDtHash = (Get-FileHash -LiteralPath $verifiedDtPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($verifiedDtHash -cne [string]$verifiedManifest.dt.sha256 -or
-        (Get-Item -LiteralPath $verifiedDtPath).Length -ne [long]$verifiedManifest.dt.bytes) {
-        throw "DEV_BRANCH_ARCHIVE_DT_VERIFY_FAILED: $verifiedDtPath"
-    }
-    foreach ($record in @($verifiedManifest.files)) {
-        $verifiedFilePath = Resolve-Agent1cFullPath -Path (Join-Path (Join-Path $finalPath "files") ([string]$record.path))
-        if (-not (Test-Path -LiteralPath $verifiedFilePath -PathType Leaf) -or
-            (Get-Item -LiteralPath $verifiedFilePath).Length -ne [long]$record.bytes -or
-            (Get-FileHash -LiteralPath $verifiedFilePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$record.sha256) {
-            throw "DEV_BRANCH_ARCHIVE_FILE_VERIFY_FAILED: $verifiedFilePath"
-        }
-    }
-    return [pscustomobject]@{ archivePath = $finalPath; dtPath = $verifiedDtPath; manifestPath = $manifestPath }
-}
-
-function New-DevBranchResetArchive {
-    param(
-        [Parameter(Mandatory = $true)][object]$State,
-        [Parameter(Mandatory = $true)][string]$MasterCommit,
-        [Parameter(Mandatory = $true)][string]$OldHead,
-        [Parameter(Mandatory = $true)][string]$ArchivePath
-    )
-
-    $finalPath = Assert-PathUnderDevBranchArchiveRoot -Path $ArchivePath
-    $partialPath = Assert-PathUnderDevBranchArchiveRoot -Path ($finalPath + ".partial")
-    if (Test-Path -LiteralPath $partialPath -ErrorAction SilentlyContinue) {
-        Remove-Item -LiteralPath $partialPath -Recurse -Force
-    }
-    if (Test-Path -LiteralPath $finalPath -PathType Container -ErrorAction SilentlyContinue) {
-        return (Assert-DevBranchResetArchiveReady -ArchivePath $finalPath -OldHead $OldHead -MasterCommit $MasterCommit)
-    }
-    New-Item -ItemType Directory -Force -Path (Join-Path $partialPath "files") | Out-Null
-
-    Set-RunStage -Stage "reset.archive-dt" -Detail "Dumping the current development infobase before reset."
-    $dtPath = Join-Path $partialPath "infobase.dt"
-    Invoke-Designer -InfoBasePath ([string]$State.devBranchInfoBasePath) -InfoBaseKind ([string]$State.infoBaseKind) -DesignerArgs @("/DumpIB", $dtPath) | Out-Null
-    if (-not (Test-Path -LiteralPath $dtPath -PathType Leaf) -or (Get-Item -LiteralPath $dtPath).Length -le 0) {
-        throw "DEV_BRANCH_ARCHIVE_DT_EMPTY: $dtPath"
-    }
-
-    Set-RunStage -Stage "reset.archive-files" -Detail "Archiving the non-configuration delta against local master."
-    $changedPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMRTUXBD", $MasterCommit, "--"))
-    $deletedPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--no-renames", "--diff-filter=D", $MasterCommit, "--"))
-    $configPaths = @($changedPaths | Where-Object { ([string]$_).Replace("\", "/") -match '^src/(?:cf|cfe)(?:/|$)' })
-    $deletedSet = New-Object "System.Collections.Generic.HashSet[string]" ([StringComparer]::Ordinal)
-    foreach ($path in $deletedPaths) { [void]$deletedSet.Add(([string]$path).Replace("\", "/")) }
-    $fileRecords = @()
-    foreach ($repoPath in @($changedPaths | Sort-Object -Unique)) {
-        $normalized = ([string]$repoPath).Replace("\", "/")
-        if ($normalized -match '^src/(?:cf|cfe)(?:/|$)' -or $deletedSet.Contains($normalized)) { continue }
-        $sourcePath = Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $repoPath)
-        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { continue }
-        $destination = Resolve-Agent1cFullPath -Path (Join-Path (Join-Path $partialPath "files") $repoPath)
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
-        Copy-Item -LiteralPath $sourcePath -Destination $destination -Force
-        $fileRecords += [ordered]@{
-            path = $normalized
-            bytes = (Get-Item -LiteralPath $destination).Length
-            sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
-    }
-
-    $manifest = [ordered]@{
-        schemaVersion = 1
-        status = "ready"
-        createdAt = (Get-Date).ToString("o")
-        branch = [string]$State.devBranch
-        oldHead = $OldHead
-        oldTree = (Get-GitOutput @("rev-parse", "$OldHead^{tree}")).Trim()
-        masterCommit = $MasterCommit
-        masterTree = (Get-GitOutput @("rev-parse", "$MasterCommit^{tree}")).Trim()
-        dt = [ordered]@{
-            path = "infobase.dt"
-            bytes = (Get-Item -LiteralPath $dtPath).Length
-            sha256 = (Get-FileHash -LiteralPath $dtPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
-        files = @($fileRecords)
-        deletedPaths = @($deletedPaths | ForEach-Object { ([string]$_).Replace("\", "/") } | Where-Object { $_ -notmatch '^src/(?:cf|cfe)(?:/|$)' } | Sort-Object -Unique)
-        excludedConfigurationPaths = @($configPaths | ForEach-Object { ([string]$_).Replace("\", "/") } | Sort-Object -Unique)
-    }
-    Write-Utf8Text -Path (Join-Path $partialPath "manifest.json") -Value (($manifest | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
-    Move-Item -LiteralPath $partialPath -Destination $finalPath
-    return (Assert-DevBranchResetArchiveReady -ArchivePath $finalPath -OldHead $OldHead -MasterCommit $MasterCommit)
 }
 
 function Set-DevBranchTreeToMasterCommit {
@@ -11311,6 +20814,45 @@ function Set-DevBranchTreeToMasterCommit {
     return (Get-CurrentCommit)
 }
 
+# Records a commit of an already staged tree and moves the current branch to it
+# only from the expected head, so an interruption leaves either the old or the
+# new head and never a pending merge.
+function New-DevBranchRecordedCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tree,
+        [Parameter(Mandatory = $true)][string[]]$Parents,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    $arguments = @("commit-tree", $Tree)
+    foreach ($parent in $Parents) { $arguments += @("-p", $parent) }
+    $arguments += @("-m", $Message)
+    $commit = ([string](Get-GitOutput $arguments)).Trim()
+    if ($commit -notmatch '^[a-f0-9]{40}$') { throw "DEV_BRANCH_RECORDED_COMMIT_INVALID: $commit" }
+    Invoke-Git @("update-ref", "-m", $Message, "HEAD", $commit, $Parents[0])
+    return $commit
+}
+
+# A reset copies the master tree but keeps the old branch head as its only
+# parent, so git would merge the next master against the branch's previous base
+# and report master's own changes as conflicts or merge them wrongly (PM5
+# itldev/branch2, 2026-11-16: 30 conflicted files, 6 really touched). Before the
+# first merge after a reset, record the copied master commit as a parent
+# without changing any file. Once a later merge contains it this is a no-op.
+function Add-DevBranchResetMasterAncestry {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    $resetMaster = [string](Get-StateValue -State $State -Name "resetMasterCommit" -Default "")
+    if ($resetMaster -notmatch '^[a-f0-9]{40}$' -or -not (Test-GitCommitExists $resetMaster)) { return $false }
+    $headCommit = Get-CurrentCommit
+    if (Test-GitCommitIsAncestor -Ancestor $resetMaster -Descendant $headCommit) { return $false }
+    Assert-CleanGit
+    $tree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
+    $commit = New-DevBranchRecordedCommit -Tree $tree -Parents @($headCommit, $resetMaster) -Message "chore: record the master commit copied by the last reset"
+    Write-Host "Recorded master commit $resetMaster, copied by the last branch reset, as a parent ($commit); the refresh now merges against it."
+    return $true
+}
+
 function Restore-ExistingDevBranchFromSeed {
     param(
         [Parameter(Mandatory = $true)][object]$State,
@@ -11328,6 +20870,15 @@ function Restore-ExistingDevBranchFromSeed {
         if ($null -eq $Seed) { $Seed = Assert-BranchSeedReady -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint }
         if ([string]$Seed.configurationFingerprint -cne $ExpectedConfigurationFingerprint) {
             throw "BRANCH_SEED_INCOMPATIBLE: captured seed does not match the reset master fingerprint."
+        }
+        if ((Get-InfoBaseKind) -eq 'server') {
+            # File restore hashes its temporary copy before replacement. The
+            # server provider must receive the same validated bytes contract.
+            $expectedHash = [string](Get-StateValue -State $Seed -Name 'artifactSha256' -Default '')
+            $actualHash = (Get-FileHash -LiteralPath ([string]$Seed.artifactPath) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($expectedHash -cnotmatch '^[a-f0-9]{64}$' -or $actualHash -cne $expectedHash) {
+                throw "DEV_BRANCH_RESET_SEED_HASH_MISMATCH: expected=$expectedHash actual=$actualHash"
+            }
         }
         Reset-DevBranchToolingProof -State $State -Reason "branch-reset-seed"
         if ((Get-InfoBaseKind) -eq "file") {
@@ -11371,6 +20922,9 @@ function Restore-ExistingDevBranchRuntimeFromSeed {
         [System.IDisposable]$ExistingLease = $null
     )
 
+    # The reset may have replaced project.json without changing helper code.
+    # Activate that tracked configuration before restored-runtime consumers.
+    Read-ProjectConfig
     $seed = Restore-ExistingDevBranchFromSeed `
         -State $State `
         -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint `
@@ -11413,74 +20967,332 @@ function Add-DevBranchResetTransientStateClearUpdates {
     }
 }
 
-function Reset-DevBranch {
-    $state = Read-DevBranchState -Name $DevBranchName
-    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "reset-dev-branch"
-    if ((Get-DevBranchKind -State $state) -ne "configuration") {
-        throw "RESET_DEV_BRANCH_EXTENSION_UNSUPPORTED: only configuration branches are supported."
-    }
+function Get-DevBranchResetSeedIdentity {
+    param([Parameter(Mandatory)][object]$Seed)
 
-    $resetStatus = [string](Get-StateValue -State $state -Name "resetStatus" -Default "")
-    if ($resetStatus -ne "resetting") {
-        if ((Get-DevBranchInitializationStatus -State $state) -ne "ready") {
-            throw "RESET_DEV_BRANCH_NOT_READY: the branch must be ready before reset."
+    # A configuration fingerprint alone does not identify database contents.
+    # Keep the published generation and artifact contract, plus exact baseline
+    # bytes, while the caller owns the seed reader. The restore verifies the
+    # copied database against this pinned artifact hash before replacing it.
+    $identity = [ordered]@{ schemaVersion = 1 }
+    foreach ($field in @('sourceKey', 'syncId', 'artifactKind', 'artifactPath', 'artifactSha256',
+        'configurationFingerprint', 'baselinePath', 'baselineHash')) {
+        $identity[$field] = [string](Get-StateValue -State $Seed -Name $field -Default '')
+    }
+    if (-not $identity.sourceKey -or -not $identity.syncId -or
+        $identity.artifactKind -notin @('file-1cd', 'server-dt') -or
+        $identity.artifactSha256 -cnotmatch '^[a-f0-9]{64}$') {
+        throw 'RESET_DEV_BRANCH_SEED_IDENTITY_INVALID'
+    }
+    $identity.artifactPath = Resolve-Agent1cFullPath -Path $identity.artifactPath
+    $identity.baselinePath = Resolve-Agent1cFullPath -Path $identity.baselinePath
+    $identity.artifactBytes = [long](Get-StateValue -State $Seed -Name 'artifactBytes' -Default 0)
+    if ($identity.artifactBytes -le 0 -or (Get-Item -LiteralPath $identity.artifactPath).Length -ne $identity.artifactBytes) {
+        throw 'RESET_DEV_BRANCH_SEED_IDENTITY_INVALID: artifact size changed.'
+    }
+    $identity.baselineSha256 = (Get-FileHash -LiteralPath $identity.baselinePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    return [pscustomobject]$identity
+}
+
+function Assert-DevBranchResetResumeInputs {
+    param([Parameter(Mandatory)][object]$State, [Parameter(Mandatory)][object]$SeedIdentity)
+
+    $pinned = Get-StateValue -State $State -Name 'resetSeedIdentity' -Default $null
+    if ($null -eq $pinned) { throw 'RESET_DEV_BRANCH_SEED_IDENTITY_REQUIRED: interrupted reset has no pinned seed generation.' }
+    $pinnedFields = ConvertTo-Agent1cHashtable -Object $pinned
+    foreach ($field in $SeedIdentity.PSObject.Properties.Name) {
+        # Empty legacy baselineHash is a value, not a missing field.
+        if (-not $pinnedFields.Contains($field) -or $null -eq $pinnedFields[$field] -or
+            [string]$pinnedFields[$field] -cne [string]$SeedIdentity.$field) {
+            throw "RESET_DEV_BRANCH_SEED_CHANGED: pinned reset seed differs at $field; retain the original archive and reset state."
         }
-        if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation "reset-dev-branch" -ConflictStage "reset.merge-conflicts") { return }
-        Save-DevBranchCheckpoint -Operation "reset-dev-branch" -Message "chore: checkpoint before branch reset" | Out-Null
     }
+    $phase = [string](Get-StateValue -State $State -Name 'resetPhase' -Default '')
+    if ($phase -notin @(Get-DevBranchResetGitPendingPhases) + @('git-reset-complete', 'runtime-initializing')) {
+        throw "RESET_DEV_BRANCH_PHASE_INVALID: $phase"
+    }
+    Assert-CleanGit
+    $head = Get-CurrentCommit
+    $expectedHead = if ($phase -in @('git-reset-complete', 'runtime-initializing')) { [string]$State.resetNewHead } else { [string]$State.resetOldHead }
+    # A crash can fall between the exact-master commit and saving its phase.
+    $committedBeforePhase = $phase -in @(Get-DevBranchResetGitPendingPhases) -and
+        (Get-GitOutput @('rev-parse', 'HEAD^{tree}')).Trim() -ceq [string]$State.resetMasterTree
+    if ($head -cne $expectedHead -and -not $committedBeforePhase) {
+        throw 'RESET_DEV_BRANCH_HEAD_CHANGED: preserve changes made after the interrupted reset.'
+    }
+}
 
-    Set-RunStage -Stage "reset.source" -Detail "Capturing local master and its compatible seed under shared source protection."
-    $inputs = Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
-        $masterSource = if ($resetStatus -ne "resetting") { Get-DevBranchResetMasterSource } else { $null }
-        $expected = if ($null -ne $masterSource) { [string]$masterSource.fingerprint } else { [string]$state.resetMasterFingerprint }
+function Get-DevBranchResetGitPendingPhases {
+    # Older workflows journaled archive phases before the Git step. The old HEAD
+    # stays in branch history, so an interrupted reset resumes at the Git step.
+    return @('checkpointed', 'archive-pending', 'archive-complete')
+}
+
+function Assert-DevBranchResetPendingRefresh {
+    param([object]$State)
+
+    $transaction = Get-PendingDevBranchMergeTransaction -State $State
+    if ($null -eq $transaction) { return '' }
+    if ($transaction.operation -notin @('refresh-dev-branch', 'refresh-dev-branch-lite')) {
+        throw "LIFECYCLE_MERGE_OPERATION_MISMATCH pending='$($transaction.operation)' requested='reset-dev-branch'."
+    }
+    Assert-DevBranchLifecycleMergeIdentity -State $State -Transaction $transaction -Operation $transaction.operation
+    if (Test-GitMergeInProgress) {
+        $mergeHead = Get-GitMergeHeadCommit
+        throw "RESET_DEV_BRANCH_GIT_MERGE_IN_PROGRESS: pending='$($transaction.operation)' stage='$($transaction.stage)' mergeHead='$mergeHead'. Conflict resolutions cannot be archived by reset; continue the owning merge."
+    }
+    if ($transaction.stage -cne 'merged') {
+        throw "RESET_DEV_BRANCH_REFRESH_NOT_MERGED: pending='$($transaction.operation)' stage='$($transaction.stage)'. Continue the owning refresh before reset."
+    }
+    Assert-DevBranchLifecycleMergeRecordedResult -Transaction $transaction -Operation $transaction.operation
+    $postMergeHead = [string]$transaction.postMergeHead
+    if ($postMergeHead -and $postMergeHead -cne $transaction.mergeCommit -and
+        -not (Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction $transaction -CandidateHead $postMergeHead)) {
+        throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$($transaction.operation)' mergeCommit='$($transaction.mergeCommit)' recordedPostMergeHead='$postMergeHead'."
+    }
+    $recordedHead = if ($postMergeHead) { $postMergeHead } else { [string]$transaction.mergeCommit }
+    $head = Get-CurrentCommit
+    if (-not (Test-GitCommitIsAncestor -Ancestor $recordedHead -Descendant $head)) {
+        throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$($transaction.operation)' expectedAncestor='$recordedHead' actual='$head'."
+    }
+    $legacyOperation = [string](Get-StateValue -State $State -Name 'pendingRefreshOperation' -Default '')
+    $legacyTarget = [string](Get-StateValue -State $State -Name 'pendingRefreshMasterCommit' -Default '')
+    if (($legacyOperation -and $legacyOperation -cne $transaction.operation) -or
+        ($legacyTarget -and $legacyTarget -cne $transaction.targetCommit)) {
+        throw "RESET_DEV_BRANCH_REFRESH_STATE_MISMATCH: pending refresh fields disagree with the recorded merge."
+    }
+    return [string]$transaction.operation
+}
+
+# Wire declaration read from the pinned target blob before opening the reset journal.
+# ITL_RESET_AUXILIARY_RETIREMENT_SCHEMA=1
+function Get-DevBranchResetAuxiliaryInputs {
+    param([object[]]$Source, [string]$TargetCommit, [string[]]$RetiringNames = @())
+    $targetText = Get-GitBlobTextAtCommit -Commit $TargetCommit -RepoPath (ConvertTo-ProjectRelativePath $script:ConfigPath)
+    $previous = $script:Config
+    try {
+        $script:Config = if ($targetText) { $targetText | ConvertFrom-Json } else { [pscustomobject]@{} }
+        $remaining = @(Get-AuxiliaryContourDefinitions)
+        $remainingNames = @($remaining | ForEach-Object name)
+        $names = if ($RetiringNames.Count -gt 0) { $RetiringNames } else {
+            $Source | Where-Object { $_.name -notin $remainingNames } | ForEach-Object name
+        }
+        $manifest = if (@($names | Where-Object { $_ }).Count -gt 0) { Get-AuxiliaryRetirementProfileReferences -TargetCommit $TargetCommit }
+        Assert-AuxiliaryRetirementProfileReferences -Manifest $manifest -Names $names
+        return [pscustomobject]@{ names=@($names | Where-Object { $_ }); remaining=$remaining }
+    } finally { $script:Config = $previous }
+}
+
+function Assert-DevBranchResetAuxiliaryCompatibility {
+    param([string]$TargetCommit)
+    $path = '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+    $targetHelper = Get-GitBlobTextAtCommit -Commit $TargetCommit -RepoPath $path
+    if ($targetHelper -cnotmatch '(?m)^# ITL_RESET_AUXILIARY_RETIREMENT_SCHEMA=1\r?$') {
+        Set-RunFailureContext -Category 'runner' -RequiredAction 'update-workflow-in-master-prepare-compatible-branch-seed-then-repeat-reset-dev-branch'
+        throw "RESET_DEV_BRANCH_AUXILIARY_TARGET_INCOMPATIBLE: master='$TargetCommit'. Update workflow in master through its normal workflow, prepare its compatible branch seed, and repeat reset-dev-branch."
+    }
+}
+
+function Get-DevBranchResetOriginalAttachedContours {
+    param([string]$Commit)
+    $config = Get-GitBlobTextAtCommit -Commit $Commit -RepoPath (ConvertTo-ProjectRelativePath $script:ConfigPath)
+    if (-not $config) { return }
+    $previous = $script:Config
+    try {
+        $script:Config = $config | ConvertFrom-Json
+        Get-AuxiliaryContourDefinitions | Where-Object { $_.baseMode -like 'attached-*' }
+    } finally { $script:Config = $previous }
+}
+
+function Complete-DevBranchResetAuxiliaryRetirement {
+    param([object]$State, [object]$Plan)
+    Read-ProjectConfig
+    $remaining = @(Get-AuxiliaryContourDefinitions)
+    $manifest = Get-AuxiliaryRetirementProfileReferences
+    Assert-AuxiliaryRetirementProfileReferences -Manifest $manifest -Names @($Plan.entries.name)
+    if (@($remaining | Where-Object { $_.name -in $Plan.entries.name }).Count -gt 0) {
+        throw 'RESET_DEV_BRANCH_AUXILIARY_TARGET_CHANGED: preserve the journal and restore the pinned reset tree before repeating reset-dev-branch.'
+    }
+    Set-RunStage -Stage 'reset.auxiliary-retirement' -Detail 'Retiring disappeared auxiliary registrations from the pinned reset plan.'
+    $stillLinked = $remaining + @(Get-DevBranchResetOriginalAttachedContours -Commit $Plan.sourceHead)
+    Update-AuxiliaryRetirementBaseEvidence -Plan $Plan -Remaining $stillLinked
+    Assert-AuxiliaryRetirementExclusiveUse -Plan $Plan
+    $resetBranchSnapshot = $State
+    $resetRetirementPlan = $Plan
+    $save = { Update-DevBranchState -State $resetBranchSnapshot -Updates @{ resetAuxiliaryRetirement=$resetRetirementPlan } }
+    Invoke-AuxiliaryRetirement -Plan $Plan -Remaining $remaining -Manifest $manifest -SaveProgress $save
+}
+
+function Invoke-DevBranchResetAuxiliaryContinuation {
+    param([object]$State)
+    if (-not $script:LifecycleOperationIsContinuation -or $State.resetStatus -cne 'resetting' -or
+        $State.resetPhase -cne 'git-reset-complete' -or (Get-CurrentCommit) -cne $State.resetNewHead) {
+        throw 'RESET_DEV_BRANCH_AUXILIARY_CONTINUATION_INVALID: repeat reset-dev-branch from its worktree.'
+    }
+    $plan = $State.resetAuxiliaryRetirement
+    Assert-AuxiliaryRetirementPlan -Plan $plan -TargetCommit $State.resetMasterCommit
+    if ($null -ne $plan.result) { return }
+    if (@(Get-AuxiliaryRetirementAdmissions -Plan $plan).Count -gt 0 -and -not $env:ITL_EXECUTION_CONTEXT) {
+        throw 'RESET_DEV_BRANCH_AUXILIARY_ADMISSION_REQUIRED: repeat reset-dev-branch to obtain the recorded exact-base admission.'
+    }
+    Invoke-WithAuxiliaryRetirementGuard -Plan $plan -Purpose 'reset-dev-branch' -ScriptBlock {
+        Complete-DevBranchResetAuxiliaryRetirement -State $State -Plan $plan
+    }
+}
+
+function Open-DevBranchResetSourceInputs {
+    param([object]$State, [object]$MasterSource)
+    $expected = if ($null -ne $MasterSource) { [string]$MasterSource.fingerprint } else { [string]$State.resetMasterFingerprint }
+    Set-RunStage -Stage 'reset.source' -Detail 'Capturing the compatible branch seed under shared source protection.'
+    Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
         $lease = Open-BranchSeedLease -Mode read
         try {
             $seed = Assert-BranchSeedReady -ExpectedConfigurationFingerprint $expected
-            return [pscustomobject]@{ masterSource = $masterSource; seed = $seed; lease = $lease }
+            return [pscustomobject]@{ seed=$seed; seedIdentity=(Get-DevBranchResetSeedIdentity -Seed $seed); lease=$lease }
         } catch {
             $lease.Dispose()
             throw
         }
     }
-    $seedLease = $inputs.lease
-    try {
-        if ($resetStatus -ne "resetting") {
-            $masterSource = $inputs.masterSource
-            $oldHead = Get-CurrentCommit
-            $archivePath = Join-Path (Join-Path (Get-DevBranchArchiveRoot) ([string]$state.safeDevBranchName)) ("{0}-{1}" -f ((Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")), $oldHead.Substring(0, 8))
-            Update-DevBranchState -State $state -Updates @{
-                resetStatus = "resetting"; resetPhase = "archive-pending"; resetStartedAt = (Get-Date).ToString("o")
-                resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
-                resetMasterFingerprint = [string]$masterSource.fingerprint
-                resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
-                resetArchivePath = (Assert-PathUnderDevBranchArchiveRoot -Path $archivePath); resetArchiveDtPath = ""; resetNewHead = ""
-            }
-            $state = Read-DevBranchState -Name $DevBranchName
-        }
+}
 
-        $masterCommit = [string](Get-StateValue -State $state -Name "resetMasterCommit" -Default "")
-        if (-not (Test-GitCommitExists $masterCommit)) {
-            throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit"
+function Reset-DevBranch {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'reset-dev-branch'
+    if ((Get-DevBranchKind -State $state) -ne 'configuration') {
+        throw 'RESET_DEV_BRANCH_EXTENSION_UNSUPPORTED: only configuration branches are supported.'
+    }
+    if ($LifecyclePhase -eq 'reset-auxiliary-retirement') {
+        Invoke-DevBranchResetAuxiliaryContinuation -State $state
+        return
+    }
+
+    $resuming = (Get-StateValue $state 'resetStatus' '') -eq 'resetting'
+    $masterSource = $null
+    $auxiliaryPlan = $null
+    $discardedRefresh = ''
+    $statePath = [string](Get-StateValue $state 'statePath' '')
+    $stateInput = if ($statePath) { Get-ItlMcpFileState -Path $statePath }
+    $configInput = Get-ItlMcpFileState -Path $script:ConfigPath
+    if ($resuming) {
+        $auxiliaryPlan = Get-StateValue $state 'resetAuxiliaryRetirement' $null
+        if ($null -ne $auxiliaryPlan) {
+            Assert-AuxiliaryRetirementPlan -Plan $auxiliaryPlan -TargetCommit $state.resetMasterCommit
+            if ($auxiliaryPlan.sourceHead -cne $state.resetOldHead) { throw 'RESET_DEV_BRANCH_AUXILIARY_JOURNAL_MISMATCH: repeat the reset from its original worktree.' }
         }
-        $phase = [string](Get-StateValue -State $state -Name "resetPhase" -Default "archive-pending")
-        if ($phase -eq "archive-pending") {
-            $archive = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead ([string]$state.resetOldHead) -ArchivePath ([string]$state.resetArchivePath)
-            Update-DevBranchState -State $state -Updates @{ resetPhase = "archive-complete"; resetArchiveDtPath = [string]$archive.dtPath; resetArchiveManifestPath = [string]$archive.manifestPath }
-            $state = Read-DevBranchState -Name $DevBranchName
-            $phase = "archive-complete"
+    } else {
+        if ((Get-DevBranchInitializationStatus -State $state) -ne 'ready') {
+            throw 'RESET_DEV_BRANCH_NOT_READY: the branch must be ready before reset.'
         }
-        if ($phase -eq "archive-complete") {
-            Set-RunStage -Stage "reset.git" -Detail "Replacing the branch tree with the exact local master tree."
-            $currentHeadTree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
-            if ($currentHeadTree -ceq [string]$state.resetMasterTree) {
-                Assert-CleanGit
-                $newHead = Get-CurrentCommit
-            } else {
-                $newHead = Set-DevBranchTreeToMasterCommit -MasterCommit $masterCommit
+        $discardedRefresh = Assert-DevBranchResetPendingRefresh -State $state
+        Assert-DevBranchCheckpointGitState -Operation 'reset-dev-branch'
+        $masterSource = Invoke-Agent1cMainWorktreeReadScope -ScriptBlock { Get-DevBranchResetMasterSource }
+        $auxiliary = @(Get-AuxiliaryContourDefinitions)
+        if ($auxiliary.Count -gt 0) {
+            $targetInputs = Get-DevBranchResetAuxiliaryInputs -Source $auxiliary -TargetCommit $masterSource.commit
+            if ($targetInputs.names.Count -gt 0) {
+                Assert-DevBranchResetAuxiliaryCompatibility -TargetCommit $masterSource.commit
+                $auxiliaryPlan = New-AuxiliaryRetirementPlan -Source $auxiliary -Target $targetInputs.remaining `
+                    -Names $targetInputs.names -State $state -TargetCommit $masterSource.commit
             }
-            Update-DevBranchState -State $state -Updates @{ resetPhase = "git-reset-complete"; resetNewHead = $newHead }
-            $state = Read-DevBranchState -Name $DevBranchName
-            $phase = "git-reset-complete"
+        }
+    }
+
+    $productProjectStartup = Get-Variable -Name initializeProductProjectForAction -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -eq $auxiliaryPlan -and $productProjectStartup) { . $productProjectStartup }
+
+    $prepared = @{ inputs=$null; fresh=$false }
+    $branchHelper = Join-Path $script:ProjectRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    $seedLease = $null
+    try {
+        $gitAndRetirement = {
+            if ($null -ne $auxiliaryPlan -and $null -eq $auxiliaryPlan.result) {
+                if ((Get-ItlMcpFileState -Path $script:ConfigPath) -cne $configInput -or
+                    ($statePath -and (Get-ItlMcpFileState -Path $statePath) -cne $stateInput)) {
+                    throw 'RESET_DEV_BRANCH_AUXILIARY_INPUT_CHANGED: repeat reset-dev-branch with the current worktree and journal.'
+                }
+                $targetInputs = Get-DevBranchResetAuxiliaryInputs -TargetCommit $auxiliaryPlan.targetCommit -RetiringNames @($auxiliaryPlan.entries.name)
+                $oldAttached = if ($resuming) { @(Get-DevBranchResetOriginalAttachedContours -Commit $auxiliaryPlan.sourceHead) } else {
+                    @(Get-AuxiliaryContourDefinitions | Where-Object { $_.baseMode -like 'attached-*' })
+                }
+                Update-AuxiliaryRetirementBaseEvidence -Plan $auxiliaryPlan -Remaining ($targetInputs.remaining + @($oldAttached | Where-Object { $_ }))
+                Assert-AuxiliaryRetirementExclusiveUse -Plan $auxiliaryPlan
+            }
+            if (-not $resuming) {
+                Save-DevBranchCheckpoint -Operation 'reset-dev-branch' -Message 'chore: checkpoint before branch reset' | Out-Null
+            }
+            $prepared.inputs = Open-DevBranchResetSourceInputs -State $state -MasterSource $masterSource
+            $localState = $state
+            if (-not $resuming) {
+                $oldHead = Get-CurrentCommit
+                if ($null -ne $auxiliaryPlan) { $auxiliaryPlan.sourceHead = $oldHead }
+                $memoryCycleUpdate = Get-ItlMemoryCycleUpdates $localState reserve
+                $resetStart = @{
+                    resetStatus = 'resetting'; resetPhase = 'checkpointed'; resetStartedAt = (Get-Date).ToString('o')
+                    resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
+                    resetMasterFingerprint = [string]$masterSource.fingerprint; resetSeedIdentity = $prepared.inputs.seedIdentity
+                    resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
+                    resetArchivePath = ''; resetArchiveDtPath = ''; resetArchiveManifestPath = ''; resetNewHead = ''
+                    resetLeftoverCleanup = $null; resetDiscardedRefreshOperation = $discardedRefresh
+                    resetAuxiliaryRetirement = $auxiliaryPlan
+                }
+                foreach ($field in $memoryCycleUpdate.Keys) { $resetStart[$field] = $memoryCycleUpdate[$field] }
+                Update-DevBranchState -State $localState -Updates $resetStart
+                $localState = Read-DevBranchState -Name $DevBranchName
+            } else {
+                Assert-DevBranchResetResumeInputs -State $localState -SeedIdentity $prepared.inputs.seedIdentity
+            }
+
+            $masterCommit = [string]$localState.resetMasterCommit
+            if (-not (Test-GitCommitExists $masterCommit)) { throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit" }
+            $phase = [string](Get-StateValue $localState 'resetPhase' 'checkpointed')
+            if ($phase -in @(Get-DevBranchResetGitPendingPhases)) {
+                Set-RunStage -Stage 'reset.git' -Detail 'Replacing the branch tree with the exact local master tree.'
+                $currentHeadTree = (Get-GitOutput @('rev-parse', 'HEAD^{tree}')).Trim()
+                if ($currentHeadTree -ceq [string]$localState.resetMasterTree) {
+                    Assert-CleanGit
+                    $newHead = Get-CurrentCommit
+                } else {
+                    $newHead = Set-DevBranchTreeToMasterCommit -MasterCommit $masterCommit
+                }
+                $gitUpdate = @{ resetPhase='git-reset-complete'; resetNewHead=$newHead }
+                if ($null -ne $auxiliaryPlan) { $gitUpdate['resetAuxiliaryRetirement'] = $auxiliaryPlan }
+                Update-DevBranchState -State $localState -Updates $gitUpdate
+                $localState = Read-DevBranchState -Name $DevBranchName
+                $changedRuntime = @(Get-GitPathList -Arguments @('diff', '--name-only', '-z', [string]$localState.resetOldHead, 'HEAD', '--',
+                    '.agents/skills/1c-workflow/scripts', '.agents/skills/1c-workflow/assets/vanessa-service', '.agents/skills/itl-remote-runner/scripts'))
+                $prepared.fresh = $changedRuntime.Count -gt 0
+            }
+            if ($null -ne $auxiliaryPlan -and $null -eq $auxiliaryPlan.result) {
+                if ($prepared.fresh) {
+                    $prepared.inputs.lease.Dispose()
+                    $prepared.inputs = $null
+                    $child = Invoke-Agent1cFreshProcess -ScriptPath $branchHelper -AdditionalArguments @('-LifecyclePhase','reset-auxiliary-retirement') -ReturnExitStatus -ResumeParentAfterSuccess
+                    if ($child.exitCode -ne 0) { throw (Import-Agent1cFreshProcessFailure -Result $child -Operation 'Fresh reset contour retirement') }
+                } else {
+                    Complete-DevBranchResetAuxiliaryRetirement -State $localState -Plan $auxiliaryPlan
+                }
+            }
+        }
+        if ($null -eq $auxiliaryPlan -or $null -ne $auxiliaryPlan.result) { & $gitAndRetirement }
+        else { Invoke-WithAuxiliaryRetirementGuard -Plan $auxiliaryPlan -Purpose 'reset-dev-branch' -ScriptBlock $gitAndRetirement }
+        if ($prepared.fresh) {
+            # The new helper restores runtime outside the auxiliary admission.
+            if ($null -ne $prepared.inputs) { $prepared.inputs.lease.Dispose(); $prepared.inputs = $null }
+            if (-not (Test-Path -LiteralPath $branchHelper -PathType Leaf)) { throw 'RESET_DEV_BRANCH_HELPER_MISSING' }
+            Invoke-Agent1cFreshProcess -ScriptPath $branchHelper
+        }
+        Read-ProjectConfig
+        $inputs = $prepared.inputs
+        $seedLease = $inputs.lease
+        $prepared.inputs = $null
+        $state = Read-DevBranchState -Name $DevBranchName
+        $masterCommit = [string]$state.resetMasterCommit
+        $phase = [string]$state.resetPhase
+        $completedRetirement = Get-StateValue $state 'resetAuxiliaryRetirement' $null
+        if ($null -ne $completedRetirement -and $productProjectStartup) { . $productProjectStartup }
+        if ($null -ne $completedRetirement -and $null -eq $completedRetirement.result) {
+            throw 'RESET_DEV_BRANCH_AUXILIARY_INCOMPLETE: repeat reset-dev-branch to complete the recorded retirement.'
         }
         if ($phase -in @("git-reset-complete", "runtime-initializing")) {
             Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "reset-dev-branch"
@@ -11494,11 +21306,12 @@ function Reset-DevBranch {
                 lastConfigDesignerFingerprint = [string]$seed.configurationFingerprint; lastConfigDesignerTreeObjectId = [string]$state.resetMasterConfigTreeObjectId
                 lastConfigDesignerLoadedAt = $now; configLoadStatus = "passed"; sourceFingerprint = [string]$seed.configurationFingerprint
                 loadReason = "branch-reset-seed"; lastConfigBaseUpdatedCommit = $masterCommit; lastRefreshMasterCommit = $masterCommit
+                yaxunitApplicabilityBaseline = [ordered]@{ schemaVersion = 1; commit = [string]$state.resetNewHead; legacy = $false; recordedAt = $now }
                 lastVerificationStatus = ""; lastVerificationReason = ""; lastVerificationFingerprint = ""; lastVerifiedFingerprint = ""
                 lastVerifiedAt = ""; lastVerifiedCommit = ""; lastVerifiedReportPath = ""; lastVerificationLogPath = ""
                 lastResultPath = ""; lastResultKind = ""; lastResultManifestPath = ""; lastResultAt = ""
                 lastUnverifiedOverrideAt = ""; lastUnverifiedOverrideOperation = ""; lastUnverifiedResultPath = ""
-                pendingMergeOperation = ""; pendingMergeTargetCommit = ""; pendingMergePhase = ""; pendingMergeStartedAt = ""
+                pendingMergePhase = ""; pendingMergeStartedAt = ""
                 branchSeedSourceKey = [string]$seed.sourceKey; branchSeedSyncId = [string]$seed.syncId
                 branchSeedArtifactKind = [string]$seed.artifactKind; branchSeedConfigurationFingerprint = [string]$seed.configurationFingerprint
                 branchSeedBaselinePath = [string]$seed.baselinePath; branchSeedBaselineHash = [string]$seed.baselineHash; branchSeedBaselineCount = [int]$seed.baselineCount
@@ -11518,29 +21331,59 @@ function Reset-DevBranch {
             Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
                 Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
             }
-            $state = Invoke-DevBranchDefaultMcpSetup -State $state
+            $state = Invoke-DevBranchDefaultMcpSetup -State $state -PreserveAuxiliaryResources:($null -ne $completedRetirement)
             Sync-KiloItlCommandSurface
             Invoke-AiRules1cManagedMcpConfigReconcile -Operation "reset-dev-branch MCP reconcile" | Out-Null
             Sync-DevBranchContextToDotEnv -State $state
             $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
             Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
-            Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
+            # Retire the previous task's verification records first: while they
+            # stay current they retain that task's plans and reports as evidence.
+            Archive-VerificationChangeForReset -State $state
+            Archive-VerificationSelectionEvidenceForReset -State $state
+            Set-RunStage -Stage "reset.leftovers" -Detail "Removing the previous task's runtime leftovers from this branch."
+            $leftovers = Invoke-ItlBranchResetLeftoverCleanup -ProjectRoot $script:ProjectRoot -MainRoot (Get-MainWorktreePath) `
+                -SafeBranchName ([string]$state.safeDevBranchName) -StartedAt ([datetime](Get-StateValue -State $state -Name 'resetStartedAt' -Default ([datetime]::UtcNow.ToString('o'))))
+            $completion = @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o"); resetLeftoverCleanup = $leftovers }
+            $completion['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $state -Operation 'reset-dev-branch' -BaseCommit $masterCommit -CompletedHead ([string]$state.resetNewHead) -CompletedAt $completion.resetCompletedAt
+            Add-PendingDevBranchMergeClearUpdates -Updates $completion
+            $memoryComplete=Get-ItlMemoryCycleUpdates $state complete
+            foreach($field in $memoryComplete.Keys){$completion[$field]=$memoryComplete[$field]}
+            Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates $completion
+            if(Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container){
+                . Import-ItlMemory
+                try{Sync-ItlMemoryContext -Context $null}catch{Write-Warning 'Memory context requires explicit setup/reload; reset completed and the previous task binding is stale.'}
+            }
         }
 
         $completed = Read-DevBranchState -Name $DevBranchName
         $report = [System.Collections.Generic.List[string]]::new()
         $report.Add("## Ветка сброшена для новой доработки")
-        Add-RunUserReportLine -Lines $report -Label "Архив" -Value ([string]$completed.resetArchivePath)
-        Add-RunUserReportLine -Lines $report -Label "DT" -Value ([string]$completed.resetArchiveDtPath)
         Add-RunUserReportLine -Lines $report -Label "Предыдущий HEAD" -Value ([string]$completed.resetOldHead)
         Add-RunUserReportLine -Lines $report -Label "Новый HEAD" -Value ([string]$completed.resetNewHead)
         Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value ([string]$completed.resetMasterCommit)
         Add-RunUserReportLine -Lines $report -Label "База ветки" -Value ([string]$completed.devBranchInfoBasePath)
+        if ($completed.resetDiscardedRefreshOperation) {
+            Add-RunUserReportLine -Lines $report -Label "Отброшен сбросом refresh" -Value ([string]$completed.resetDiscardedRefreshOperation)
+        }
+        $cleanup = Get-StateValue -State $completed -Name 'resetLeftoverCleanup' -Default $null
+        if ($null -ne $cleanup) {
+            Add-RunUserReportLine -Lines $report -Label "Удалено остатков прошлой задачи" -Value ("{0} ({1:N1} МБ)" -f [int]$cleanup.removedCount, ([double]$cleanup.removedBytes / 1MB))
+            foreach ($left in @($cleanup.leftovers)) { Add-RunUserReportLine -Lines $report -Label "Не удалено" -Value ([string]$left) }
+        }
         $report.Add("")
-        $report.Add("Архив не отслеживается Git. Если он больше не нужен, освободите место вручную по указанному полному пути.")
+        if ($null -ne $completedRetirement) {
+            $report.Add('### Снятые регистрации вспомогательных контуров')
+            Add-AuxiliaryRetirementReport -Lines $report -Plan $completedRetirement
+            $report.Add('')
+        } elseif ($resuming -and -not $completed.PSObject.Properties['resetAuxiliaryRetirement']) {
+            $report.Add('Журнал прежней версии. Для инвентаризации локальных остатков используйте /itl-clean.')
+        }
+        $report.Add("Прежняя работа ветки сохранена в истории Git до коммита «Предыдущий HEAD»; архив DT не создаётся.")
         Write-AndSetRunUserReport -Lines $report
     } finally {
         if ($null -ne $seedLease) { $seedLease.Dispose() }
+        elseif ($null -ne $prepared.inputs) { $prepared.inputs.lease.Dispose() }
     }
 }
 
@@ -11576,21 +21419,35 @@ function Invoke-RefreshDevBranchCore {
         if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation $OperationName -ConflictStage "refresh.merge-conflicts") {
             return
         }
-        Save-DevBranchCheckpoint -Operation $OperationName | Out-Null
-        Assert-CleanGit
-        if ($SynchronizeMaster) {
-            Set-RunStage -Stage "refresh.master" -Detail "Synchronizing master and ensuring a compatible branch seed."
-            Sync-Master -SeedPolicy "EnsureCompatible"
+        $localPatchPlan = $null
+        try {
+            Save-DevBranchCheckpoint -Operation $OperationName | Out-Null
+            Assert-CleanGit
+            if ($SynchronizeMaster) {
+                Set-RunStage -Stage "refresh.master" -Detail "Synchronizing master and ensuring a compatible branch seed."
+                Sync-Master -SeedPolicy "EnsureCompatible"
+            }
+            if ((Get-CurrentBranch) -ne $state.devBranch) {
+                Invoke-Git @("checkout", $state.devBranch)
+            }
+            $masterRef = "refs/heads/$(Get-MasterBranch)"
+            $targetMasterCommit = (Get-GitOutput @("rev-parse", $masterRef)).Trim()
+            if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
+                throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
+            }
+            Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
+            $localPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation $OperationName -TargetCommit $targetMasterCommit
+            if ($null -ne $localPatchPlan) {
+                Invoke-WorkflowLocalPatchStep -Step Retire -Plan $localPatchPlan
+                Assert-CleanGit
+            }
+        } catch {
+            Invoke-WorkflowLocalPatchStep -Step Undo -Plan $localPatchPlan
+            throw
         }
-        if ((Get-CurrentBranch) -ne $state.devBranch) {
-            Invoke-Git @("checkout", $state.devBranch)
-        }
-        $masterRef = "refs/heads/$(Get-MasterBranch)"
-        $targetMasterCommit = (Get-GitOutput @("rev-parse", $masterRef)).Trim()
-        if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
-            throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
-        }
-        Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
+        # The existing merge transaction owns all recovery from this boundary.
+        # Never overlay an old patch onto the incoming workflow or a pending merge.
+        Invoke-WorkflowLocalPatchStep -Step Complete -Plan $localPatchPlan
         Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
         Invoke-NewDevBranchLifecycleMerge `
             -State $state `
@@ -11606,9 +21463,23 @@ function Invoke-RefreshDevBranchCore {
         throw "REFRESH_MASTER_COMMIT_MISSING: the exact master SHA was not preserved across the merge."
     }
     Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
+    if ($null -eq (Get-StateValue -State $state -Name "yaxunitApplicabilityBaseline" -Default $null)) {
+        Update-DevBranchState -State $state -Updates @{
+            yaxunitApplicabilityBaseline = [ordered]@{
+                schemaVersion = 1
+                commit = [string]$mergeTransaction.branchCommit
+                legacy = $true
+                recordedAt = (Get-Date).ToString("o")
+            }
+        }
+        $state = Read-DevBranchState -Name $DevBranchName
+    }
     Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
     Sync-WorkflowManagedDependencyLockEntries | Out-Null
-    $verificationClassificationInventory = Update-VerificationSuiteInventory -Reason "$OperationName post-merge"
+    $verificationClassificationInventory = Update-VerificationSuiteInventory -Reason "$OperationName post-merge" -EvaluateApplicability
+    if ([bool]$verificationClassificationInventory.yaxunit.legacyBaseline) {
+        Write-Host "[WARN] YAxUnit legacy baseline: unchanged pre-upgrade BSL remains without a new unit-test obligation; later branch-owned BSL changes require an applicability decision."
+    }
     Set-RunStage -Stage "refresh.dependencies" -Detail "Binding the branch to its workflow-pinned immutable dependency cache."
     Install-VanessaAutomation
     if (Get-RoctupMcpEnabled) {
@@ -11621,6 +21492,10 @@ function Invoke-RefreshDevBranchCore {
     $trackedKiloSnapshot = New-RefreshTrackedKiloConfigSnapshot
     try {
         $state = Invoke-DevBranchDefaultMcpSetup -State $state
+        $refreshOwnedPaths = @()
+        if (Test-RefreshManagedDependencyLockChange) { $refreshOwnedPaths += '.agent-1c/dependency-lock.json' }
+        if (Assert-RefreshTrackedKiloConfigChange -Snapshot $trackedKiloSnapshot) { $refreshOwnedPaths += [string]$trackedKiloSnapshot.repoPath }
+        Assert-RefreshGitInputs -Operation $OperationName -Phase before-load -OwnedPaths $refreshOwnedPaths
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
         $updates = @{}
         Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
@@ -11643,6 +21518,7 @@ function Invoke-RefreshDevBranchCore {
         $updates["lastRefreshAt"] = (Get-Date).ToString("o")
         $updates["lastRefreshMasterCommit"] = $targetMasterCommit
         $updates["lastRefreshMode"] = $(if ($SynchronizeMaster) { "full" } else { "lite" })
+        $updates['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $state -Operation $OperationName -BaseCommit $targetMasterCommit -CompletedAt $updates.lastRefreshAt
         $updates["verificationClassificationStatus"] = $(if ($verificationClassificationInventory.classificationComplete) { "ready" } else { "required" })
         $updates["verificationClassificationIssues"] = @($verificationClassificationInventory.classificationIssues)
         $updates["verificationClassificationInventoryPath"] = Get-VerificationClassificationInventoryPath
@@ -11659,6 +21535,7 @@ function Invoke-RefreshDevBranchCore {
             Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
         }
         Write-DevBranchRunUserReport -State $updatedState -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $loadResult
+        Save-RefreshClassificationReportContext -State $updatedState -LoadResult $loadResult
         Set-RunStage -Stage "$OperationName.complete" -Detail "Development branch refresh completed successfully."
     } catch {
         Restore-RefreshTrackedKiloConfigSnapshot -Snapshot $trackedKiloSnapshot
@@ -11731,6 +21608,11 @@ function Start-RefreshAllBranchProcess {
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runner, "--",
         "-Action", "refresh-dev-branch-lite", "-ExpectedMasterCommit", $MasterCommit
     )
+    # A child resolves the client from its own execution context otherwise; the
+    # parent's explicit client stays the identity of every branch it refreshes.
+    if (-not [string]::IsNullOrWhiteSpace([string]$AgentTarget)) {
+        $arguments += @("-AgentTarget", ([string]$AgentTarget).Trim())
+    }
     $process = Start-Process -FilePath "powershell" `
         -ArgumentList (Join-NativeCommandLineArguments -Arguments $arguments) `
         -WorkingDirectory ([string]$Target.worktreePath) `
@@ -11927,7 +21809,7 @@ function Prepare-ReleaseE2EOnDemandDependencies {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-prepare-ondemand"
     Assert-DevBranchKind -State $state -Expected "configuration"
 
-    if ((Get-DependencyMode) -ne "fresh") {
+    if ((Get-DependencyMode) -ne "workflow") {
         throw "RELEASE_E2E_FRESH_DEPENDENCIES_REQUIRED: the dedicated stand must use fresh dependency mode."
     }
     $packageRoot = [IO.Path]::GetFullPath((Join-Path $script:Agent1cScriptRoot "..\..\..\.."))
@@ -11949,11 +21831,12 @@ function Prepare-ReleaseE2EOnDemandDependencies {
     $yaxunitCfePath = Install-YAxUnit
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "Release E2E YAxUnit runtime-property proof"
     $extensionName = Get-YAxUnitExtensionName
-    Invoke-Designer `
+    $yaxunitLock = Get-YAxUnitPinnedEntry
+    $artifactDiagnosticBaseline = Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $yaxunitLock -ExtensionName $extensionName
+    Invoke-GuardedCfeExtensionApply -CheckProfile (Get-PlatformCheckProfile) `
         -InfoBasePath ([string]$state.devBranchInfoBasePath) `
         -InfoBaseKind ([string]$state.infoBaseKind) `
-        -DesignerArgs @("/LoadCfg", $yaxunitCfePath, "-Extension", $extensionName, "/UpdateDBCfg") | Out-Null
-    $yaxunitLock = Get-YAxUnitPinnedEntry
+        -CfePath $yaxunitCfePath -ExtensionName $extensionName -ArtifactDiagnosticBaseline $artifactDiagnosticBaseline | Out-Null
     $proof = Set-VanessaMcpExtensionUnsafeMode `
         -State $state `
         -InfoBaseKind ([string]$state.infoBaseKind) `
@@ -12078,12 +21961,13 @@ function Invoke-ReleaseE2EExtensionSmoke {
 
     $smokeRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/release-e2e-extension/" + [guid]::NewGuid().ToString("N"))
     $snapshotDir = Assert-ExportPathInsideProject -ExportPath ".agent-1c/snapshots"
-    $snapshotPath = Join-Path $snapshotDir ("release-e2e-extension-{0}-{1}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"))
+    $snapshotPath = Join-Path $snapshotDir ("release-e2e-extension-{0}-{1}-{2}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"), [guid]::NewGuid().ToString('N'))
     $cfePath = Join-Path $smokeRoot ($ExtensionName + ".cfe")
     $dumpPath = Assert-ExportPathInsideProject -ExportPath (Get-ExtensionInitDumpPath -Name $ExtensionName)
     $evidencePath = Resolve-ProjectPath "build/test-results/release-e2e/extension-smoke.json"
     $snapshotCreated = $false
     $databaseRestored = $false
+    $snapshotDuty = $null
     $roctupWasRunning = [bool](Get-RoctupMcpRuntimeInfo -State $state).processAlive
     $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
     $failure = $null
@@ -12167,6 +22051,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
             throw "Release extension smoke snapshot was not created: $snapshotPath"
         }
+        $snapshotDuty = Register-OneCDatabaseRestorationDuty -State $state -SnapshotPath $snapshotPath
         $snapshotCreated = $true
 
         Enable-ReleaseE2EExtensionState
@@ -12440,7 +22325,10 @@ function Invoke-ReleaseE2EExtensionSmoke {
         }
         if ($snapshotCreated -and $databaseRestored) {
             try {
-                Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
+                if (-not $rollbackFailure) {
+                    Complete-OneCDatabaseRestorationDuty -Duty $snapshotDuty
+                    Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
+                }
             } catch {
                 $snapshotCleanupFailure = $_.Exception.Message
             }
@@ -12477,7 +22365,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
 
 function Show-WorkflowStatus {
     Write-Section "ITL status"
-    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 3900000 by default and exceed the configured Designer timeout."
+    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 3900000 for ordinary long actions and >= 14700000 for init-project/sync-master by default, and exceed the configured action timeout."
     Write-DesignerMemoryLimitStatusLine
     Write-Agent1cLifecycleOperationStatusLines
 
@@ -12580,9 +22468,20 @@ function Show-WorkflowStatus {
     if ($autoUpdateLog) {
         Write-Host "Last Enterprise auto-update log: $autoUpdateLog"
     }
+    $autoUpdateResultPath = Get-StateValue -State $state -Name "lastEnterpriseAutoUpdateResultPath" -Default ""
+    if ($autoUpdateResultPath) {
+        Write-Host "Last Enterprise auto-update result: $autoUpdateResultPath"
+    }
     Write-Host "Last refresh: $(Get-StateValue -State $state -Name 'lastRefreshAt' -Default '<never>')"
     Write-Host "Verification status: $($verification.effectiveStatus)"
     Write-Host "Verification fresh passed: $($verification.isFreshPassed)"
+    $attestedSuites = @(Get-StateValue -State $verification -Name 'attestedSuiteIds' -Default @())
+    if ($attestedSuites.Count -gt 0) { Write-Host "Suites attested by the user, not run: $($attestedSuites -join ', ')" }
+    Write-Host "Verification model: $(Get-VerificationModel)"
+    if ((Get-VerificationModel) -eq 'change') {
+        Write-Host "Whole task accepted: $([bool](Get-StateValue -State $verification -Name 'taskAccepted' -Default $false))"
+        Write-Host "Acceptance remaining: $(@(Get-StateValue -State $verification -Name 'acceptanceRemaining' -Default @()) -join ', ')"
+    }
     if ($verification.verifiedAt) {
         Write-Host "Last verified at: $($verification.verifiedAt)"
     }
@@ -12595,6 +22494,7 @@ function Show-WorkflowStatus {
     if ($verification.reason) {
         Write-Host "Last verification reason: $($verification.reason)"
     }
+    Write-ItlCheckHistoryStatusLines -State $state
     Write-Host "Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
     Write-Host "Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
     $override = Get-StateValue -State $state -Name "lastUnverifiedOverrideAt" -Default ""
@@ -12603,54 +22503,181 @@ function Show-WorkflowStatus {
     }
 }
 
+function Write-DevBranchMemoryUsageNote {
+    # Informational line of the scoped-memory call journal, printed only while
+    # memory is enabled for this copy. It never changes or blocks the check.
+    try {
+        if (-not (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container)) { return }
+        . Import-ItlMemory
+        $line = Get-ItlMemoryUsageLine -ProjectRoot $script:ProjectRoot
+        if ($line) { Write-Host $line }
+    } catch { }
+}
+
 function Invoke-DevBranchCheck {
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
+    $dumpInfoSnapshot = $null
+    $repairAttemptConsumed = $false
+    $repairAttemptTicket = $null
+    $repairVerificationPassed = $false
+    $scenarioLoopDiagnostic = $false
+    $platformPreparation = $null
+    $repairStartedAt = Get-Date
+    $repairPhase = 'preflight'
+    $canonicalRepair = $false
+    $verification = $null
+    Start-ItlCheckTiming
+    try {
     Assert-ItlVerificationRepairScope -Trigger $trigger
+    # Reject an unknown diagnostic module before any load or 1C process.
+    Get-YAxUnitModuleFilter | Out-Null
     $state = Read-DevBranchState -Name $DevBranchName
     $checkExportPath = if ((Get-DevBranchKind -State $state) -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
-    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Resolve-Agent1cFullPath -Path $checkExportPath)
-    $repairAttemptConsumed = $false
-    $repairVerificationPassed = $false
+    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Assert-ExportPathInsideProject -ExportPath $checkExportPath)
     try {
+    if (-not $script:ActiveAuxiliaryVanessaContext) {
+        $classificationYaxunit = Get-ItlVerificationExecutionDecision -Component 'yaxunit' -Trigger $trigger -ExplicitComponents $explicit
+        $classificationVanessa = Get-ItlVerificationExecutionDecision -Component 'vanessa' -Trigger $trigger -ExplicitComponents $explicit
+        $lineEndingRepairs = @()
+        if ($classificationYaxunit.run -or $classificationVanessa.run -or (Get-VerificationModel) -eq 'change') {
+            # Assess the same prepared source bytes that the load will consume.
+            $lineEndingRepairs = @(Repair-OneCSourceLineEndings)
+        }
+        if ((Get-VerificationModel) -eq 'change') {
+            # An edit within the recorded plan repeats its registration here;
+            # any other staleness still stops in the assertion below.
+            Update-VerificationChangeForCurrentTree -State $state -RepairedPaths $lineEndingRepairs | Out-Null
+            Assert-VerificationChangeReady -State $state | Out-Null
+        }
+        if ($classificationYaxunit.run -or $classificationVanessa.run) {
+            # Keep the cycle's assessment: preparation may still change inputs.
+            Assert-VerificationClassificationReady -Reason 'check-dev-branch before infobase load' -RequireVanessa:$classificationVanessa.run -RequireYAxUnit:$classificationYaxunit.run | Out-Null
+            # Classification may persist the first adoption baseline. Do not
+            # overwrite it when the event-log owners save their next updates.
+            $state = Read-DevBranchState -Name $DevBranchName
+        }
+    }
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
     Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
     $fullProofEligible = Test-ItlFullVerificationProofEligible -Trigger $trigger -ExplicitComponents $explicit
     if ($trigger -eq "repair") {
-        Get-ItlMatchingVerificationRepairSession | Out-Null
-        if ($fullProofEligible) {
-            Use-ItlVerificationRepairAttempt
+        $repairSession = Get-ItlMatchingVerificationRepairSession
+        $canonicalRepair = [string](Get-StateValue $repairSession 'kind' 'canonical-repair') -eq 'canonical-repair'
+        $scenarioLoopDiagnostic = -not $canonicalRepair -and
+            (Test-ItlDiagnosticVerificationScope)
+        if ($scenarioLoopDiagnostic -and -not (Get-ItlVerificationExecutionDecision -Component 'vanessa' -Trigger $trigger -ExplicitComponents $explicit).run) {
+            throw 'ITL_VERIFICATION_SCENARIO_RUNNER_SKIPPED: Vanessa is unavailable under the effective execution mode. Correct the mode or use an authorized named invocation before consuming a repair attempt.'
+        }
+        if ($fullProofEligible -or $scenarioLoopDiagnostic) {
+            $repairInputFingerprint = ''
+            if ($canonicalRepair) {
+                try { $repairInputFingerprint = Get-VerificationFingerprint }
+                catch { Write-Warning 'Could not identify repair inputs. Inspect the current verification evidence.' -WarningAction Continue }
+            }
+            $repairAttemptTicket = Use-ItlVerificationRepairAttempt -InputFingerprint $repairInputFingerprint
             $repairAttemptConsumed = $true
         }
     }
+    $repairPhase = 'platform-preparation'
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
-    Update-DevBranchBase
+    $platformStarted = Get-Date
+    try { $platformPreparation = Update-DevBranchBase -PassThruPlatformPreparation }
+    finally { Set-ItlCheckTimingValue -Name platformMs -Value ([int64]((Get-Date) - $platformStarted).TotalMilliseconds) }
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+    $repairPhase = 'verification'
     Invoke-ItlVerificationCycle `
         -Trigger $trigger `
         -ExplicitComponents $explicit `
+        -ScenarioDiagnosticOnly:$scenarioLoopDiagnostic `
         -EventLogCursorPath $eventLogCursor.path `
         -EventLogBoundaryAt $eventLogCursor.capturedAt `
         -EventLogCursorScope "lifecycle-pending"
-    $verifiedState = Read-DevBranchState -Name $DevBranchName
-    Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $verifiedState -RecoveryOperation "check-dev-branch" | Out-Null
-    if ($trigger -eq "repair" -and $fullProofEligible) {
-        $verifiedState = Read-DevBranchState -Name $DevBranchName
-        $verification = Get-VerificationState -State $verifiedState
-        $evidenceKind = [string](Get-StateValue -State $verifiedState -Name "lastVerificationEvidenceKind" -Default "")
-        if ($verification.status -eq "passed" -and $evidenceKind -eq "full") {
-            Complete-ItlVerificationRepairSession
-            $repairVerificationPassed = $true
+    if ($scenarioLoopDiagnostic) {
+        # The named scenario and all due obligations belong to one persisted
+        # repair attempt. A successful filtered diagnostic cannot by itself
+        # clear export/close readiness; finish with the ordinary unfiltered
+        # assessor before releasing this same attempt.
+        $selectedFeature = $VanessaFeaturePath
+        $selectedTags = $VanessaFilterTags
+        try {
+            $VanessaFeaturePath = ''
+            $VanessaFilterTags = ''
+            $fullProofEligible = Test-ItlFullVerificationProofEligible -Trigger $trigger -ExplicitComponents $explicit
+            if (-not $fullProofEligible) {
+                throw 'ITL_VERIFICATION_SCENARIO_FULL_PROOF_INCOMPLETE: a due verification component is disabled. Request the named full component set for this invocation or correct its execution mode; the filtered result remains diagnostic.'
+            }
+            Invoke-ItlVerificationCycle `
+                -Trigger $trigger `
+                -ExplicitComponents $explicit `
+                -EventLogCursorPath $eventLogCursor.path `
+                -EventLogBoundaryAt $eventLogCursor.capturedAt `
+                -EventLogCursorScope "lifecycle-pending"
+        } finally {
+            $VanessaFeaturePath = $selectedFeature
+            $VanessaFilterTags = $selectedTags
         }
     }
-    } catch {
-        if ($repairAttemptConsumed -and -not $repairVerificationPassed) {
-            Complete-ItlVerificationRepairFailure
-        }
-        throw
     } finally {
         try { Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot } finally { Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot }
+    }
+    # Final restoration belongs to the checked operation. Only after it succeeds
+    # may recovery/repair be completed and a successful user report be emitted.
+    $verifiedState = Read-DevBranchState -Name $DevBranchName
+    Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $verifiedState -RecoveryOperation "check-dev-branch" | Out-Null
+    # Assessment and the user report can each stay silent for over a minute
+    # after the runners finished. Keep the owner's liveness published so the
+    # runner watchdog does not discard a completed check; locals that later
+    # recovery reads stay outside the heartbeat body.
+    Set-RunStage -Stage 'verification.report' -Detail 'Writing the verification report and check history.'
+    if ($trigger -eq "repair") {
+        $verifiedState = Read-DevBranchState -Name $DevBranchName
+        $verification = Invoke-WithRunStatusHeartbeat { Get-VerificationState -State $verifiedState }
+        $evidenceKind = [string](Get-StateValue -State $verifiedState -Name "lastVerificationEvidenceKind" -Default "")
+        if (($verification.isFreshPassed -and $evidenceKind -in @('full', 'complete/current-obligations', 'complete/current-change')) -or
+            ((Get-VerificationModel) -eq 'change' -and [bool](Get-StateValue $verification 'changeFreshPassed' $false) -and $evidenceKind -eq 'change/task-pending')) {
+            if (-not $canonicalRepair) { Complete-ItlVerificationRepairSession }
+            $repairVerificationPassed = $true
+        } elseif ($scenarioLoopDiagnostic) {
+            throw 'ITL_VERIFICATION_SCENARIO_FULL_PROOF_INCOMPLETE: the named scenario passed but the unfiltered assessment did not produce fresh full proof. Diagnose the due component and resume the same repair session.'
+        }
+    }
+    Invoke-WithRunStatusHeartbeat {
+        Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
+        Write-DevBranchMemoryUsageNote
+        $historyVerification = Get-VerificationState -State $verifiedState
+        $historyStatus = if ($historyVerification.isFreshPassed -or [bool](Get-StateValue $historyVerification 'changeFreshPassed' $false)) { 'passed' } else { 'partial' }
+        Add-ItlCheckHistoryRecord -State $verifiedState -Status $historyStatus -Trigger $trigger
+    }
+    if ($canonicalRepair) {
+        $repairResult = Get-ItlVerificationRepairRunResult -Phase $repairPhase -State $verifiedState -Verification $verification -StartedAt $repairStartedAt
+        Publish-ItlVerificationRepairRun -Ticket $repairAttemptTicket -Result $repairResult -SessionPassed $repairVerificationPassed -StartedAt $repairStartedAt
+    }
+    } catch {
+        $checkFailure = $_
+        if ($null -ne $platformPreparation) {
+            try {
+                Invoke-WithRunStatusHeartbeat { Write-DevBranchVerificationRunUserReport -State $state -PlatformPreparation $platformPreparation -Failure $checkFailure }
+            } catch {
+                Write-Warning "Could not render the verification failure report: $($_.Exception.Message)" -WarningAction Continue
+            }
+        }
+        # A run stopped before the base load measured nothing worth comparing.
+        if ($null -ne $platformPreparation) { Add-ItlCheckHistoryRecord -State $state -Status 'failed' -Trigger $trigger }
+        if ($trigger -eq 'repair' -and (-not $repairAttemptConsumed -or $canonicalRepair)) {
+            Set-RunFailureContextFromMessage -Message $checkFailure.Exception.Message -RequestedAction 'check-dev-branch'
+            try {
+                $latestState = if ($repairAttemptConsumed) { Read-DevBranchState -Name $DevBranchName } else { $null }
+                $repairResult = Get-ItlVerificationRepairRunResult -Phase $repairPhase -State $latestState -Failure $checkFailure -StartedAt $repairStartedAt
+                Publish-ItlVerificationRepairRun -Ticket $repairAttemptTicket -Result $repairResult -Failure $checkFailure -StartedAt $repairStartedAt
+            } catch {
+                Write-Warning "Could not persist repair diagnostics: $($_.Exception.Message)" -WarningAction Continue
+            }
+        } elseif ($repairAttemptConsumed -and -not $repairVerificationPassed) {
+            Complete-ItlVerificationRepairFailure -Failure $checkFailure -AttemptTicket $repairAttemptTicket
+        }
+        throw $checkFailure
     }
 }
 
@@ -12687,6 +22714,8 @@ function Restore-ReleaseE2EInfobaseSnapshot {
     Require-Value "ReleaseSnapshotPath" $ReleaseSnapshotPath | Out-Null
     $snapshotPath = Assert-ExportPathInsideProject -ExportPath $ReleaseSnapshotPath
     if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "Release E2E snapshot is missing: $snapshotPath" }
+    # The restore advances the generation before replacing bytes; read the paired one first.
+    $pairedToolingGeneration = [string](Get-StateValue -State $state -Name "toolingInfoBaseGeneration" -Default "")
     Restore-DevBranchInfobaseFromSnapshot -State $state -SnapshotPath $snapshotPath -Reason "Release E2E checkpoint restore"
     $restoreUpdates = @{
         lastConfigDesignerFingerprint = ""
@@ -12716,12 +22745,18 @@ function Restore-ReleaseE2EInfobaseSnapshot {
             "configLoadStatus",
             "loadReason",
             "enterpriseNormalizationStatus",
+            "enterpriseNormalizationProofVersion",
             "enterpriseNormalizedAt",
             "enterpriseNormalizationReason",
-            "enterpriseNormalizationError"
+            "enterpriseNormalizationError",
+            "lastEnterpriseAutoUpdateResultPath"
         )) {
             $restoreUpdates[$field] = Get-StateValue -State $state -Name $field -Default ""
         }
+        # The snapshot and state were saved as one pair, so the restored bytes are the
+        # database that generation named. A new generation would move the verification
+        # change target although nothing changed. Installation proofs stay invalidated.
+        if ($pairedToolingGeneration) { $restoreUpdates["toolingInfoBaseGeneration"] = $pairedToolingGeneration }
     }
     Update-DevBranchState -State $state -Updates $restoreUpdates
     Sync-DevBranchContextToDotEnv -State (Read-DevBranchState -Name $DevBranchName) -AllowIncompleteExtension
@@ -12748,8 +22783,11 @@ function Export-DevBranchResult {
 
     $kind = Get-DevBranchKind -State $state
     $loadExportPath = if ($kind -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
-    $repositoryTransferPlan = Get-ConfigRepositoryTransferPlan -ExportPath $loadExportPath
-    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Resolve-Agent1cFullPath -Path $loadExportPath)
+    $repositoryTransferPlan = Get-ConfigRepositoryTransferPlan -ExportPath $loadExportPath -State $state -ForReport
+    if ([string](Get-StateValue -State $repositoryTransferPlan -Name 'unavailableCode' -Default '')) {
+        Write-Warning "WARN $($repositoryTransferPlan.unavailableCode): the configuration repository object list is omitted from the report; the result export continues. $($repositoryTransferPlan.unavailableContinuation)"
+    }
+    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Assert-ExportPathInsideProject -ExportPath $loadExportPath)
     try {
     if ($kind -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
@@ -12775,6 +22813,7 @@ function Export-DevBranchResult {
     $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "export-dev-branch-result" -VerificationState $verificationBeforeExport -Allow:$AllowUnverifiedResult -ProceedOnWarn
     $verificationDecision = if ($verificationBeforeExport.isFreshPassed) { "fresh-passed" } else { "warn-unverified" }
 
+    $platformPreparation = Confirm-DevBranchProductionPreparation -State $state -ExportPath $loadExportPath -ContentKind $kind -LoadResult $loadResult
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind
     $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
     $resultPath = Resolve-Agent1cFullPath -Path $resultPath
@@ -12791,7 +22830,9 @@ function Export-DevBranchResult {
     $sourceFingerprint = $(if ($loadResult.PSObject.Properties.Match("sourceFingerprint").Count -gt 0) { [string]$loadResult.sourceFingerprint } else { "" })
     $worktreeClean = -not (Test-GitHasChanges)
     $verificationScopeCommitted = (@(Get-VerificationWorkingTreeChangePaths -PathSpec (Get-VerificationFingerprintScopePaths)).Count -eq 0)
+    $platformPreparation = Confirm-DevBranchProductionPreparation -State $state -ExportPath $loadExportPath -ContentKind $kind
     $manifestPath = New-ResultManifest `
+        -PlatformPreparation $platformPreparation `
         -State $state `
         -ResultPath $resultPath `
         -ResultKind $resultKind `
@@ -12825,8 +22866,21 @@ function Export-DevBranchResult {
     Add-RunUserReportLine -Lines $reportLines -Label "Манифест" -Value $manifestPath
     Add-RunUserReportLine -Lines $reportLines -Label "Ветка" -Value $state.devBranch
     Add-RunUserReportLine -Lines $reportLines -Label "Проверка" -Value $(if ($verificationDecision -eq "warn-unverified") { "ВНИМАНИЕ: fresh passed отсутствует; выгружено по политике warn" } else { "fresh passed" })
+    Add-RunUserReportLine -Lines $reportLines -Label 'Назначение' -Value $(if ($platformPreparation.purpose -eq 'production') { 'Подготовка к рабочей ИБ' } else { 'Промежуточный результат' })
+    if ((Get-VerificationModel) -eq 'change') {
+        # Information for the person accepting the result; it never blocks export.
+        $coverage = Get-ItlBranchSuiteCoverageSummary -State $state
+        if (@($coverage.neverRan).Count -gt 0) { Add-RunUserReportLine -Lines $reportLines -Label 'Наборы Vanessa без прогона в ветке' -Value (@($coverage.neverRan) -join ', ') }
+        Add-RunUserReportLine -Lines $reportLines -Label 'Полный приёмочный набор в ветке' -Value $(if ($coverage.lastFullAt) { "последний раз пройден $($coverage.lastFullAt)" } else { 'не запускался' })
+    }
+    $acknowledgedEventLog = @((Get-DevBranchEventLogAcknowledgements -State $state).Values)
+    if ($acknowledgedEventLog.Count -gt 0) {
+        # The agent's own decision, shown to the person accepting the result; it never blocks export.
+        $acknowledgedReasons = @($acknowledgedEventLog | ForEach-Object { [string](Get-StateValue -State $_ -Name 'reason' -Default '') } | Where-Object { $_ } | Select-Object -Unique)
+        Add-RunUserReportLine -Lines $reportLines -Label 'Ошибки журнала регистрации, признанные агентом' -Value "$($acknowledgedEventLog.Count); решения: $($acknowledgedReasons -join '; ')"
+    }
     Add-ConfigRepositoryTransferPlanRunUserReportLines -Lines $reportLines -Plan $repositoryTransferPlan
-    Write-AndSetRunUserReport -Lines $reportLines
+    Write-AndSetRunUserReport -Lines $reportLines -PlatformPreparation $platformPreparation
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Development branch commit: $devBranchCommit"
     Write-Host "Result saved: $resultPath"
@@ -12893,6 +22947,7 @@ function Close-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "close-dev-branch" -Allow:$AllowUnverifiedClose
 
+    $platformPreparation = Confirm-DevBranchProductionPreparation -State $state -ExportPath $(if ($kind -eq 'extension') { $extensionExportPath } else { Get-ExportPath }) -ContentKind $kind -LoadResult $(if ($kind -eq 'extension') { $extensionLoadResult } else { $configLoadResult })
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind
     $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind -ResultPath $resultPath
@@ -12901,7 +22956,9 @@ function Close-DevBranch {
     $masterCommit = $targetMasterCommit
     $devBranchCommit = Get-CurrentCommit
     $resultKind = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
+    $platformPreparation = Confirm-DevBranchProductionPreparation -State $state -ExportPath $(if ($kind -eq 'extension') { $extensionExportPath } else { Get-ExportPath }) -ContentKind $kind
     $manifestPath = New-ResultManifest `
+        -PlatformPreparation $platformPreparation `
         -State $state `
         -ResultPath $resultPath `
         -ResultKind $resultKind `
@@ -12937,6 +22994,7 @@ function Close-DevBranch {
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Master commit: $masterCommit"
     Write-Host "Development branch commit: $devBranchCommit"
+    Write-Host "Result purpose: $($platformPreparation.purpose); CheckConfig: $($platformPreparation.status)"
     Write-Host "Result saved: $resultPath"
     Write-Host "Result manifest: $manifestPath"
     Write-Host "Last 1C log: $script:LastLogPath"
@@ -13223,6 +23281,8 @@ function Show-Help {
     Write-Section "Жизненный цикл ITL"
     Write-Host "Корень проекта: $script:ProjectRoot"
 
+    $commandClient = @{ Client = "" }
+    try { $commandClient.Client = Get-ItlActiveClient } catch { }
     $surface = Get-KiloItlCommandSurface
     $currentBranch = ""
     try {
@@ -13232,7 +23292,7 @@ function Show-Help {
     }
     Write-Host "Контекст: $surface"
     Write-Host "Ветка Git: $(if ($currentBranch) { $currentBranch } else { '<нет>' })"
-    Write-Host "Долгие операции могут запускать Конфигуратор или Предприятие 1С; timeout_ms оболочки агента должен быть не меньше 3900000 и превышать настроенный тайм-аут Designer."
+    Write-Host "Долгие операции могут запускать Конфигуратор или Предприятие 1С; timeout_ms оболочки агента должен быть не меньше 3900000 для обычных долгих действий и 14700000 для init-project/sync-master по умолчанию, а также превышать настроенный срок операции."
 
     if ($surface -eq "master") {
         Write-Host ""
@@ -13240,16 +23300,18 @@ function Show-Help {
         Write-Host "  master → создать ветку → открыть worktree → выполнить задачу → проверить → получить результат"
         Write-Host ""
         Write-Host "Команды ITL в этом контексте:"
-        Write-ItlActiveClientCommandText "  /itl"
-        Write-ItlActiveClientCommandText "  /itl-status"
-        Write-ItlActiveClientCommandText "  /itl-new-config-branch <name>"
-        Write-ItlActiveClientCommandText "  /itl-new-extension-branch <name>"
-        Write-ItlActiveClientCommandText "  /itl-sync-master"
-        Write-ItlActiveClientCommandText "  /itl-refresh-all"
-        Write-ItlActiveClientCommandText "  /itl-update-workflow"
-        Write-ItlActiveClientCommandText "  /itl-switch-client <client>"
-        Write-ItlActiveClientCommandText "  /itl-repository-mode <workflow|external|status>"
-        Write-ItlActiveClientCommandText "  /itl-litemode <mode>"
+        Write-ItlActiveClientCommandText @commandClient "  /itl"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-status"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-new-config-branch <name>"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-new-extension-branch <name>"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-sync-master"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-refresh-all"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-clean"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-delete-branch <name>"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-update-workflow"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-switch-client <client>"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-repository-mode <workflow|external|status>"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-litemode <mode>"
         Write-Host ""
         Write-Host "Активные worktree разработки:"
         $states = @(Get-WorkflowActiveDevBranchStates)
@@ -13276,14 +23338,14 @@ function Show-Help {
         Write-Host ""
         Write-Host "Следующий шаг: создайте ветку конфигурации или расширения и откройте показанную папку worktree."
     } elseif ($surface -eq "dev") {
-        $openSpec = Get-AiRules1cOpenSpecStatus
+        $openSpec = Get-AiRules1cOpenSpecStatus -Client $commandClient.Client
         $state = $null
         try {
             $state = Read-DevBranchState -Name ""
         } catch {
             Write-Host "Состояние ветки разработки: отсутствует"
             Write-Host ""
-            Write-ItlActiveClientCommandText "Рекомендуемый шаг: выполните /itl-status и откройте сохранённый worktree этой ветки, если он существует."
+            Write-ItlActiveClientCommandText @commandClient "Рекомендуемый шаг: выполните /itl-status и откройте сохранённый worktree этой ветки, если он существует."
         }
 
         if ($state) {
@@ -13321,7 +23383,7 @@ function Show-Help {
             if ($kind -eq "extension" -and $extensionInitializationStatus -ne "ready") {
                 Write-Host "Рекомендуемый шаг: сообщите агенту, нужно создать пустое расширение или загрузить CFE; укажите имя расширения и путь к CFE, если он нужен."
             } elseif ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
-                Write-ItlActiveClientCommandText "Рекомендуемый шаг: /itl-check"
+                Write-ItlActiveClientCommandText @commandClient "Рекомендуемый шаг: /itl-check"
             } elseif (-not $verification.isFreshPassed) {
                 if ($openSpec.mode -eq "native") {
                     Write-Host "Рекомендуемый шаг: независимо выберите execution path quick-fix или full-cycle и planning mode direct или OpenSpec. По умолчанию используйте direct; выбирайте $($openSpec.invocations.explore) или $($openSpec.invocations.propose), только если полезно формальное исследование или согласование."
@@ -13331,41 +23393,42 @@ function Show-Help {
                     Write-Host "Рекомендуемый шаг: выберите execution path quick-fix или full-cycle; planning mode временно ограничен direct. Восстанавливайте workspace и правила OpenSpec только для формального исследования или согласования."
                 }
             } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
-                Write-ItlActiveClientCommandText "Рекомендуемый шаг: /itl-result"
+                Write-ItlActiveClientCommandText @commandClient "Рекомендуемый шаг: /itl-result"
             } else {
-                Write-ItlActiveClientCommandText "Рекомендуемый шаг: продолжите работу и повторите /itl-check либо снова выполните /itl-result, когда понадобится артефакт."
+                Write-ItlActiveClientCommandText @commandClient "Рекомендуемый шаг: продолжите работу и повторите /itl-check либо снова выполните /itl-result, когда понадобится артефакт."
             }
         }
 
         Write-Host ""
         Write-Host "Жизненный цикл:"
         if ($openSpec.mode -eq "native") {
-            Write-ItlActiveClientCommandText "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; OpenSpec explore/propose/apply/archive используется при необходимости."
+            Write-ItlActiveClientCommandText @commandClient "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; OpenSpec explore/propose/apply/archive используется при необходимости."
         } elseif ($openSpec.mode -eq "natural") {
-            Write-ItlActiveClientCommandText "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; natural OpenSpec explore/propose/apply/archive используется при необходимости."
+            Write-ItlActiveClientCommandText @commandClient "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; natural OpenSpec explore/propose/apply/archive используется при необходимости."
         } else {
-            Write-ItlActiveClientCommandText "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; восстанавливайте OpenSpec только для формального исследования или согласования."
+            Write-ItlActiveClientCommandText @commandClient "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; восстанавливайте OpenSpec только для формального исследования или согласования."
         }
-        Write-ItlActiveClientCommandText "  используйте /itl-refresh для полного source → master → branch цикла; для параллельных веток сначала один /itl-sync-master, затем /itl-refresh-lite в каждой ветке."
+        Write-ItlActiveClientCommandText @commandClient "  используйте /itl-refresh для полного source → master → branch цикла; для параллельных веток сначала один /itl-sync-master, затем /itl-refresh-lite в каждой ветке."
         Write-Host ""
         Write-Host "Команды ITL в этом контексте:"
-        Write-ItlActiveClientCommandText "  /itl"
-        Write-ItlActiveClientCommandText "  /itl-status"
-        Write-ItlActiveClientCommandText "  /itl-check"
-        Write-ItlActiveClientCommandText "  /itl-verify-fix"
-        Write-ItlActiveClientCommandText "  /itl-sync-master"
-        Write-ItlActiveClientCommandText "  /itl-refresh"
-        Write-ItlActiveClientCommandText "  /itl-refresh-lite"
-        Write-ItlActiveClientCommandText "  /itl-fork-branch <name>"
-        Write-ItlActiveClientCommandText "  /itl-sync-branches <name>"
-        Write-ItlActiveClientCommandText "  /itl-reset-branch"
-        Write-ItlActiveClientCommandText "  /itl-lock-objects"
-        Write-ItlActiveClientCommandText "  /itl-result"
-        Write-ItlActiveClientCommandText "  /itl-update-workflow"
-        Write-ItlActiveClientCommandText "  /itl-litemode <mode>"
+        Write-ItlActiveClientCommandText @commandClient "  /itl"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-status"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-clean"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-check"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-verify-fix"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-sync-master"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-refresh"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-refresh-lite"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-fork-branch <name>"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-sync-branches <name>"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-reset-branch"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-lock-objects"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-result"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-update-workflow"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-litemode <mode>"
         $inheritedPrimaryCommands = @()
         try {
-            if ((Get-ItlActiveClient) -eq "kilocode") { $inheritedPrimaryCommands = @(Get-KiloInheritedPrimaryItlCommands) }
+            if ($commandClient.Client -and (Get-ItlActiveClient -Client $commandClient.Client) -eq "kilocode") { $inheritedPrimaryCommands = @(Get-KiloInheritedPrimaryItlCommands) }
         } catch {
             $inheritedPrimaryCommands = @()
         }
@@ -13380,40 +23443,51 @@ function Show-Help {
         Write-Host "OpenSpec:"
         $naturalRequests = Get-ItlOpenSpecNaturalRequests
         Write-Host "  Режим: $($openSpec.mode)"
-        Write-Host "  Внешний CLI: $(if ($openSpec.cliAvailable) { $openSpec.cliPath } else { 'не найден; установка не выполняется' })"
+        Write-Host "  Закреплённый CLI: $(if ($openSpec.cliAvailable) { $openSpec.cliPath } else { 'не подготовлен; используйте provision-openspec-cli' })"
+        $cliNodePath = [string](Get-ConfigValueFromObject -Object $openSpec -Path 'cliNodePath' -Default '')
+        if ($openSpec.cliAvailable -and $cliNodePath) { Write-Host "  Node для CLI: $cliNodePath" }
+        $storeRoot = [string](Get-ConfigValueFromObject -Object $openSpec -Path 'storeRoot' -Default '')
+        if ($storeRoot) {
+            $storeSource = [string](Get-ConfigValueFromObject -Object $openSpec -Path 'storeSource' -Default '')
+            $storeId = [string](Get-ConfigValueFromObject -Object $openSpec -Path 'storeId' -Default '')
+            Write-Host "  Хранилище: $storeRoot (источник: $storeSource$(if ($storeId) { "; id: $storeId" }))"
+        }
         if ($openSpec.mode -eq "native") {
-            Write-Host "  $($openSpec.invocations.propose)  Создать proposal/design/tasks/test-plan/spec deltas без изменения кода."
-            Write-Host "  $($openSpec.invocations.apply)  Реализовать согласованное изменение по tasks.md и test-plan.md."
+            Write-Host "  $($openSpec.invocations.propose)  Создать proposal/design/tasks/spec deltas без изменения кода."
+            Write-Host "  $($openSpec.invocations.apply)  Реализовать согласованное изменение по tasks.md и достаточной проверке."
             Write-Host "  $($openSpec.invocations.archive)  Архивировать принятое изменение."
             Write-Host "  $($openSpec.invocations.explore)  Исследовать задачу без proposal и изменения кода."
-            if (-not $openSpec.cliAvailable) {
-                Write-Host "  Если native prompt не может вызвать CLI, используйте запросы ниже; не запускайте npm install или openspec update."
-                Write-Host "  Исследование: $($naturalRequests.explore)"
-                Write-Host "  Предложение: $($naturalRequests.propose)"
-                Write-Host "  Реализация: $($naturalRequests.apply)"
-                Write-Host "  Архивация: $($naturalRequests.archive)"
-            }
+            Write-Host "  $($openSpec.invocations.update)  Обновить согласованные артефакты change."
+            Write-Host "  $($openSpec.invocations.sync)  Синхронизировать spec deltas."
         } elseif ($openSpec.mode -eq "natural") {
             Write-Host "  Исследование: $($naturalRequests.explore)"
             Write-Host "  Предложение: $($naturalRequests.propose)"
             Write-Host "  Реализация: $($naturalRequests.apply)"
             Write-Host "  Архивация: $($naturalRequests.archive)"
-            Write-Host "  Native bundle не требуется; не запускайте npm install или openspec update."
+            Write-Host "  Обновление: $($naturalRequests.update)"
+            Write-Host "  Синхронизация: $($naturalRequests.sync)"
+            Write-Host "  Native bundle не требуется; используйте только закреплённый CLI."
         } else {
             Write-Host "  OpenSpec недоступен: $($openSpec.reason)"
-            Write-ItlActiveClientCommandText "  Восстановление: в master выполните update-ai-rules или update-workflow, перенесите обновление в ветку и запустите /itl-refresh."
+            if ($openSpec.reason -match 'OPEN_SPEC_CLI_') {
+                Write-ItlActiveClientCommandText @commandClient "  Восстановление: выполните provision-openspec-cli для этого checkout; при конфликте pin обновите workflow штатным update."
+            } elseif ($openSpec.reason -match 'OPEN_SPEC_(?:STORE|LOCAL)_') {
+                Write-ItlActiveClientCommandText @commandClient "  Восстановление: проверьте зарегистрированный store и openSpec.storeId в .agent-1c/project.json; автоматическая замена локальным каталогом не выполняется."
+            } else {
+                Write-ItlActiveClientCommandText @commandClient "  Восстановление: обновите закреплённые правила через update-ai-rules или update-workflow; проверьте workspace и manifest."
+            }
         }
-        Write-ItlActiveClientCommandText "  используйте /itl-verify-fix только для исправления пропущенного покрытия или неуспешного цикла проверки."
+        Write-ItlActiveClientCommandText @commandClient "  используйте /itl-verify-fix только для исправления пропущенного покрытия или неуспешного цикла проверки."
     } else {
         Write-Host ""
         Write-Host "Жизненный цикл:"
         Write-Host "  Откройте worktree master для создания веток либо worktree itldev/* для разработки, проверки и получения результата."
         Write-Host ""
         Write-Host "Команды ITL в этом контексте:"
-        Write-ItlActiveClientCommandText "  /itl"
-        Write-ItlActiveClientCommandText "  /itl-status"
+        Write-ItlActiveClientCommandText @commandClient "  /itl"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-status"
         Write-Host ""
-        Write-ItlActiveClientCommandText "Следующий шаг: выполните /itl-status для проверки папки, затем откройте правильный worktree."
+        Write-ItlActiveClientCommandText @commandClient "Следующий шаг: выполните /itl-status для проверки папки, затем откройте правильный worktree."
     }
 
     Write-ItlAdditionalHelperActions

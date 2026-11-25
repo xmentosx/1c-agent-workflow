@@ -1,4 +1,4 @@
-Describe "1C Designer load proof invalidation" {
+﻿Describe "1C Designer load proof invalidation" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -40,6 +40,11 @@ Describe "1C Designer load proof invalidation" {
                         [string]$AbsoluteExportPath,
                         [string]$ListFilePath,
                         [int]$FileCount,
+                        [string]$SourceFingerprint,
+                        [string]$SourceTreeObjectId,
+                        [string]$SourceCommit,
+                        [string]$ExportPath,
+                        [string]$ContentKind,
                         [string]$ExtensionName,
                         [string]$Mode,
                         [switch]$ResetConfigDumpInfo
@@ -97,6 +102,8 @@ Describe "1C Designer load proof invalidation" {
             @($result.observedProofs | Where-Object { $_.inMemory -or $_.persisted -or $_.status -ne "pending" }).Count | Should -Be 0
             $result.observedModes | Should -Be @("Auto", "Full")
             $result.recovery.loadReason | Should -Be "designer-proof-invalidated-full-load"
+            $result.recovery.infoBasePath | Should -Be 'C:\base'
+            $result.recovery.infoBaseKind | Should -Be 'file'
             $result.finalFingerprint | Should -Be "fingerprint-a"
             $result.finalStatus | Should -Be "passed"
         } finally {
@@ -156,6 +163,7 @@ Describe "1C Designer load proof invalidation" {
                     enterpriseNormalizationStatus = "passed"
                 }
                 $script:DesignerCalls = @()
+                $script:SnapshotCalls = @()
                 $script:ObservedFingerprints = @()
                 function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-b"; fileCount = 1; absoluteExportPath = "C:\src" } }
                 function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
@@ -167,8 +175,17 @@ Describe "1C Designer load proof invalidation" {
                 function Restore-ConfigDumpInfoLoadSnapshot {}
                 function Remove-ConfigDumpInfoLoadSnapshot {}
                 function Invoke-Designer {
-                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs, [object]$NativeEffectContract, $User, $Password, $RestorationDuty)
+                    if ($DesignerArgs[0] -in @('/DumpIB','/RestoreIB','/RollbackCfg')) {
+                        $script:SnapshotCalls += , @($DesignerArgs)
+                        $index = [Array]::IndexOf($DesignerArgs,'/DumpResult')
+                        if ($index -ge 0) { [IO.File]::WriteAllText($DesignerArgs[$index+1],'0',[Text.UTF8Encoding]::new($false)) }
+                        return
+                    }
                     $script:DesignerCalls += , @($DesignerArgs)
+                    $NativeEffectContract.sourceFingerprint | Should -Be 'fingerprint-b'
+                    $NativeEffectContract.sourceCommit | Should -Be 'head'
+                    $NativeEffectContract.exportPath | Should -Be 'src/cf'
                     $script:ObservedFingerprints += [string](Get-StateValue -State (Read-DevBranchStateFile -Path $statePath) -Name "lastConfigDesignerFingerprint" -Default "")
                     $script:LastLogPath = "C:\designer-$($script:DesignerCalls.Count).log"
                     $script:LastNativeProcessStarted = $true
@@ -185,16 +202,21 @@ Describe "1C Designer load proof invalidation" {
                     message = $message
                     state = Read-DevBranchStateFile -Path $statePath
                     calls = @($script:DesignerCalls)
+                    snapshotCalls = @($script:SnapshotCalls)
                     observedFingerprints = @($script:ObservedFingerprints)
                 }
             }
 
             $result.message | Should -Match "both failed"
             $result.calls.Count | Should -Be 2
+            # Each failed attempt returns the editable object to the database configuration; no DT is made.
+            $result.snapshotCalls.Count | Should -Be 2
+            $result.snapshotCalls[0][0] | Should -Be '/RollbackCfg'
+            $result.snapshotCalls[1][0] | Should -Be '/RollbackCfg'
             $result.calls[0] | Should -Contain "-listFile"
-            $result.calls[0] | Should -Contain "/UpdateDBCfg"
+            $result.calls[0] | Should -Not -Contain "/UpdateDBCfg"
             $result.calls[1] | Should -Not -Contain "-listFile"
-            $result.calls[1] | Should -Contain "/UpdateDBCfg"
+            $result.calls[1] | Should -Not -Contain "/UpdateDBCfg"
             @($result.observedFingerprints | Where-Object { $_ }).Count | Should -Be 0
             $result.state.lastConfigDesignerFingerprint | Should -Be ""
             $result.state.configLoadStatus | Should -Be "fallback-failed"
@@ -214,6 +236,7 @@ Describe "1C Designer load proof invalidation" {
                     lastConfigDesignerFingerprint = "fingerprint-a"
                     configLoadStatus = "passed"
                     enterpriseNormalizationStatus = "passed"
+                    enterpriseNormalizationProofVersion = 1
                 }
                 function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-a"; fileCount = 1; absoluteExportPath = "C:\src" } }
                 function Get-CurrentCommit { "head" }
@@ -228,6 +251,8 @@ Describe "1C Designer load proof invalidation" {
             $result.load.loaded | Should -BeFalse
             $result.load.designerInvoked | Should -BeFalse
             $result.load.loadReason | Should -Be "source-fingerprint-match"
+            $result.load.infoBasePath | Should -Be 'C:\base'
+            $result.load.infoBaseKind | Should -Be 'file'
             $result.state.lastConfigDesignerFingerprint | Should -Be "fingerprint-a"
             $result.state.configLoadStatus | Should -Be "passed"
         } finally {
@@ -270,6 +295,55 @@ Describe "1C Designer load proof invalidation" {
         }
     }
 
+    It 'loads local edits into a ready unbound branch with configured source storage while source Designer holds its base' {
+        $root = Join-Path $TestDrive 'Локальная ветка с пробелом'
+        $source = Join-Path $root 'Исходная база'
+        $branch = Join-Path $root 'База ветки'
+        $export = Join-Path $root 'src/cf'
+        foreach ($path in @($source, $branch, $export)) { [void][IO.Directory]::CreateDirectory($path) }
+        $sourceDatabase = Join-Path $source '1Cv8.1CD'
+        [IO.File]::WriteAllText($sourceDatabase, '')
+        [IO.File]::WriteAllText((Join-Path $root '.dev.env'), "REPOSITORY_PATH=fixture-source-storage`nSOURCE_USES_REPOSITORY=true`n", [Text.UTF8Encoding]::new($false))
+        $module = Join-Path $export 'Module.bsl'
+        [IO.File]::WriteAllText($module, '// local branch edit', [Text.UTF8Encoding]::new($false))
+        $holder = [IO.File]::Open($sourceDatabase, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $script:BranchLoadCalls = 0
+                function Get-SourceInfoBasePath { throw 'Branch verification must not access source' }
+                function Lock-ConfigRepositoryObjects { throw 'Branch edits must not capture source objects' }
+                function New-RepositoryConnectionArgs { throw 'Branch load must not use source repository credentials' }
+                function Get-ConfigSourceFingerprint {
+                    [pscustomobject]@{ fingerprint='local-edit'; treeObjectId=('a'*40); fileCount=1; absoluteExportPath=$export; repoPath='src/cf' }
+                }
+                function Get-ConfigLoadChangeSet { [pscustomobject]@{files=@('Module.bsl'); currentCommit='head'; absoluteExportPath=$export; requiresFullLoad=$true} }
+                function Get-CurrentCommit { 'head' }
+                function Assert-OneCConfigurationSourceIntegrity {}
+                function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
+                function Invoke-ConfigLoadWithFallback {
+                    param($InfoBasePath, $InfoBaseKind, $AbsoluteExportPath)
+                    $InfoBasePath | Should -Be $branch
+                    $InfoBaseKind | Should -Be 'file'
+                    [IO.File]::ReadAllText((Join-Path $AbsoluteExportPath 'Module.bsl')) | Should -Be '// local branch edit'
+                    $script:BranchLoadCalls++
+                    [pscustomobject]@{lastLogPath='branch.log'; loadModeUsed='full'; partialLogPath=''; fullFallbackLogPath=''; configLoadStatus='passed'; partialError=''; fullFallbackError=''}
+                }
+                $statePath = Save-DevBranchState -SafeDevBranchName 'local-edit' -State @{
+                    safeDevBranchName='local-edit'; devBranch='itldev/local-edit'; initializationStatus='ready'
+                    sourceUsesRepository=$true; repositoryUnbound=$true
+                    lastConfigDesignerFingerprint='before-edit'; configLoadStatus='passed'
+                }
+                $load = Load-ConfigFromFiles -InfoBasePath $branch -InfoBaseKind file -State (Read-DevBranchStateFile -Path $statePath) -ExportPath 'src/cf' 6>$null
+                [pscustomobject]@{load=$load; calls=$script:BranchLoadCalls; repository=(Get-EnvValue -Name 'REPOSITORY_PATH'); sourceLocked=(-not (Test-DesignerInfoBaseReleased -InfoBaseKind file -InfoBasePath $source))}
+            }
+            $result.repository | Should -Be 'fixture-source-storage'
+            $result.calls | Should -Be 1
+            $result.load.designerInvoked | Should -BeTrue
+            $result.sourceLocked | Should -BeTrue
+        } finally { $holder.Dispose() }
+    }
+
     It "always invokes Designer for an explicit Full load even when the fingerprint matches" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-explicit-full-load-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -277,7 +351,7 @@ Describe "1C Designer load proof invalidation" {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $script:LoadCalls = 0
                 function Get-ConfigSourceFingerprint {
-                    [pscustomobject]@{ fingerprint = "fingerprint-a"; treeObjectId = ("a" * 40); fileCount = 1; absoluteExportPath = "C:\src" }
+                    [pscustomobject]@{ fingerprint = "fingerprint-a"; treeObjectId = ("a" * 40); fileCount = 1; absoluteExportPath = "C:\repo\src\cf"; repoPath = "src/cf" }
                 }
                 function Get-ConfigLoadChangeSet {
                     [pscustomobject]@{ files = @(); currentCommit = "head"; absoluteExportPath = "C:\src"; requiresFullLoad = $false }
@@ -286,8 +360,14 @@ Describe "1C Designer load proof invalidation" {
                 function Assert-OneCConfigurationSourceIntegrity {}
                 function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
                 function Invoke-ConfigLoadWithFallback {
-                    param([string]$Mode, [switch]$ResetConfigDumpInfo)
+                    param([string]$Mode, [switch]$ResetConfigDumpInfo, [string]$SourceFingerprint,
+                        [string]$SourceTreeObjectId,[string]$SourceCommit,[string]$ExportPath,[string]$ContentKind)
                     $script:LoadCalls++
+                    $SourceFingerprint | Should -Be 'fingerprint-a'
+                    $SourceTreeObjectId | Should -Be ('a' * 40)
+                    $SourceCommit | Should -Be 'head'
+                    $ExportPath | Should -Be 'src/cf'
+                    $ContentKind | Should -Be 'configuration'
                     $script:ResetConfigDumpInfo = [bool]$ResetConfigDumpInfo
                     [pscustomobject]@{
                         lastLogPath = "C:\full.log"; loadModeUsed = $Mode.ToLowerInvariant(); partialLogPath = ""
@@ -300,7 +380,7 @@ Describe "1C Designer load proof invalidation" {
                     configLoadStatus = "passed"
                     enterpriseNormalizationStatus = "passed"
                 }
-                $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" -Mode Full 6>$null
+                $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "C:\repo\src\cf" -Mode Full 6>$null
                 [pscustomobject]@{ load = $load; calls = $script:LoadCalls; resetConfigDumpInfo = $script:ResetConfigDumpInfo }
             }
 

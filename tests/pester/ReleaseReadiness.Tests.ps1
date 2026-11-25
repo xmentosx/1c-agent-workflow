@@ -4,6 +4,7 @@ $RunnerPath = Join-Path $RepoRoot "scripts\test-release-readiness.ps1"
 Describe "Deterministic Release readiness" {
     BeforeAll {
         $script:ReadinessRunnerPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "scripts\test-release-readiness.ps1"
+        . (Join-Path (Split-Path -Parent $script:ReadinessRunnerPath) 'stand-env-identity.ps1')
         function Write-Utf8Json {
             param([string]$Path, [object]$Value)
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
@@ -25,6 +26,10 @@ Describe "Deterministic Release readiness" {
             $epfPath = Join-Path $assetStage "vanessa-automation-single.epf"
             [System.IO.File]::WriteAllBytes($epfPath, [byte[]](1, 2, 3, 4, 5))
             $epfSha = (Get-FileHash -LiteralPath $epfPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $pairedExtensionName = "VAExtension.1.32-itl-r1.cfe"
+            $pairedExtensionPath = Join-Path $assetStage $pairedExtensionName
+            [System.IO.File]::WriteAllBytes($pairedExtensionPath, [byte[]](6, 7, 8, 9))
+            $pairedExtensionSha = (Get-FileHash -LiteralPath $pairedExtensionPath -Algorithm SHA256).Hash.ToLowerInvariant()
             $patchSha = ("3" * 64)
             $upstreamCommit = ("4" * 40)
             $provenance = [ordered]@{
@@ -33,6 +38,7 @@ Describe "Deterministic Release readiness" {
                 upstream = [ordered]@{ commit = $upstreamCommit }
                 patch = [ordered]@{ sha256 = $patchSha }
                 artifact = [ordered]@{ fileName = $assetName; entryPoint = "vanessa-automation-single.epf" }
+                pairedExtension = [ordered]@{ required = $true; fileName = $pairedExtensionName; protocol = "itl-file-code-v1" }
             }
             Write-Utf8Json -Path (Join-Path $assetStage "ITL-PROVENANCE.json") -Value $provenance
             [System.IO.File]::WriteAllText((Join-Path $assetStage "ITL-NOTICE.txt"), "fixture`n", [System.Text.UTF8Encoding]::new($false))
@@ -59,13 +65,18 @@ Describe "Deterministic Release readiness" {
                     workflowPackage = [ordered]@{ repo = "https://example.invalid/workflow.git"; ref = "master"; commit = "" }
                     aiRules1c = [ordered]@{ ref = "itl-test"; commit = ("5" * 40) }
                     vanessaAutomation = $vanessa
+                    vanessaMcp = [ordered]@{ vaExtension = [ordered]@{
+                        version = "1.2.3"; assetName = $pairedExtensionName; releaseTag = "vanessa-test"
+                        url = "https://example.invalid/$pairedExtensionName"; sha256 = $pairedExtensionSha
+                        protocol = "itl-file-code-v1"; source = "workflow-pinned"
+                    } }
                 }
             }
             Write-Utf8Json -Path (Join-Path $Root "templates\dependency-lock.json") -Value $lock
             $compatibility = [ordered]@{
                 families = [ordered]@{
                     "vanessa-ui" = [ordered]@{
-                        backendVersions = [ordered]@{ vanessaAutomation = $vanessa.compatibilityVersion }
+                        backendVersions = [ordered]@{ vanessaAutomation = $vanessa.compatibilityVersion; vaExtension = "1.2.3" }
                         backendRevisions = [ordered]@{ vanessaAutomation = $vanessa.downstreamRevision }
                         vanessaAutomationArtifact = [ordered]@{
                             archiveSha256 = $vanessa.sha256
@@ -74,6 +85,7 @@ Describe "Deterministic Release readiness" {
                             patchSha256 = $vanessa.patchSha256
                             upstreamCommit = $vanessa.upstreamCommit
                         }
+                        pairedExtensionArtifact = [ordered]@{ assetName = $pairedExtensionName; sha256 = $pairedExtensionSha; protocol = "itl-file-code-v1" }
                     }
                 }
             }
@@ -92,14 +104,15 @@ Describe "Deterministic Release readiness" {
             & git -C $Root add -- templates/dependency-lock.json
             & git -C $Root commit -m "pin fixture" | Out-Null
             & git -C $Root update-ref refs/remotes/origin/master HEAD
-            return [pscustomobject]@{ root = $Root; assetPath = $assetPath; lock = $lock; compatibility = $compatibility }
+            return [pscustomobject]@{ root = $Root; assetPath = $assetPath; pairedExtensionPath = $pairedExtensionPath; lock = $lock; compatibility = $compatibility }
         }
 
         function Invoke-ReadinessFixture {
-            param([string]$Root, [string]$OutputPath, [string]$Mode = "Full", [string]$E2EProjectRoot = "", [string]$ResumeMode = "Auto")
+            param([string]$Root, [string]$OutputPath, [string]$Mode = "Full", [string]$E2EProjectRoot = "", [string]$ResumeMode = "Auto", [string]$BaseRef = "")
             $quote = { param([string]$Value) '"' + $Value.Replace('"', '\"') + '"' }
             $arguments = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (& $quote $script:ReadinessRunnerPath), "-Mode", (& $quote $Mode), "-RepositoryRoot", (& $quote $Root), "-OutputPath", (& $quote $OutputPath), "-ResumeMode", (& $quote $ResumeMode), "-Offline")
             if ($E2EProjectRoot) { $arguments += @("-E2EProjectRoot", (& $quote $E2EProjectRoot)) }
+            if ($BaseRef) { $arguments += @('-BaseRef', (& $quote $BaseRef)) }
             $stdoutPath = $OutputPath + ".stdout.log"
             $stderrPath = $OutputPath + ".stderr.log"
             $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($arguments -join " ") -WindowStyle Hidden `
@@ -144,6 +157,75 @@ Describe "Deterministic Release readiness" {
         }
     }
 
+    It "resolves an unpublished locked archive from another worktree or the shared cache without an override" {
+        # itl-r15/r16: the publish candidate never holds the build and the
+        # locked URL is 404 until finalization, so readiness must find the
+        # exact archive where Pester shards already find it.
+        $fixture = New-ReadinessFixture -Root (Join-Path $TestDrive 'кандидат выпуска\workflow')
+        $lock = $fixture.lock.dependencies.vanessaAutomation
+        $archiveBytes = [IO.File]::ReadAllBytes($fixture.assetPath)
+        Remove-Item -LiteralPath $fixture.assetPath -Force
+        $buildRoot = Join-Path $TestDrive 'сборка vanessa с пробелом'
+        $previousArchive = [Environment]::GetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', 'Process')
+        try {
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $null, 'Process')
+            & git -C $fixture.root worktree add --quiet --detach $buildRoot HEAD; $LASTEXITCODE | Should -Be 0
+            $builtArchive = Join-Path $buildRoot "build\third-party\vanessa-automation\$($lock.compatibilityVersion)-$($lock.downstreamRevision)\$($lock.assetName)"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $builtArchive) | Out-Null
+            [IO.File]::WriteAllBytes($builtArchive, $archiveBytes)
+            # A same-named candidate archive with foreign bytes is never admitted.
+            [IO.File]::WriteAllBytes($fixture.assetPath, [byte[]](9, 9, 9))
+
+            $worktreeOutput = Join-Path $TestDrive 'контекст worktree.json'
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $worktreeOutput | Should -Be 0
+            $context = Get-Content -LiteralPath $worktreeOutput -Raw -Encoding UTF8 | ConvertFrom-Json
+            $context.status | Should -Be 'passed'
+            $context.artifacts.vanessaAutomation.source | Should -Be 'worktree'
+            $context.artifacts.vanessaAutomation.path | Should -Be ([IO.Path]::GetFullPath($builtArchive))
+
+            # The building worktree is retired; the SHA-addressed cache remains.
+            & git -C $fixture.root worktree remove --force $buildRoot; $LASTEXITCODE | Should -Be 0
+            $sharedArchive = Join-Path $fixture.root ".git\itl\dependencies\vanessa-automation\$($lock.compatibilityVersion)-$($lock.downstreamRevision)\$($lock.sha256)-$($lock.assetName)"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sharedArchive) | Out-Null
+            [IO.File]::WriteAllBytes($sharedArchive, $archiveBytes)
+            $sharedOutput = Join-Path $TestDrive 'контекст shared.json'
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $sharedOutput | Should -Be 0
+            $context = Get-Content -LiteralPath $sharedOutput -Raw -Encoding UTF8 | ConvertFrom-Json
+            $context.status | Should -Be 'passed'
+            $context.artifacts.vanessaAutomation.source | Should -Be 'shared-cache'
+            $context.artifacts.vanessaAutomation.path | Should -Be ([IO.Path]::GetFullPath($sharedArchive))
+
+            # An explicit override with other bytes fails closed even though an
+            # exact shared copy exists.
+            $wrongOverride = Join-Path $TestDrive 'чужой архив с пробелом.zip'
+            [IO.File]::WriteAllBytes($wrongOverride, [byte[]](1, 2, 3))
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $wrongOverride, 'Process')
+            $overrideOutput = Join-Path $TestDrive 'контекст override.json'
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $overrideOutput | Should -Not -Be 0
+            $context = Get-Content -LiteralPath $overrideOutput -Raw -Encoding UTF8 | ConvertFrom-Json
+            $context.status | Should -Be 'failed'
+            @($context.issues.code) | Should -Contain 'RELEASE_VANESSA_ARCHIVE_HASH_MISMATCH'
+            $context.artifacts.vanessaAutomation | Should -BeNullOrEmpty
+        } finally {
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $previousArchive, 'Process')
+            if (Test-Path -LiteralPath $buildRoot) { & git -C $fixture.root worktree remove --force $buildRoot 2>$null }
+        }
+    }
+
+    It 'checks the frozen candidate base in a support clone without inventing an origin/master dependency' {
+        $fixture=New-ReadinessFixture -Root (Join-Path $TestDrive 'support clone')
+        & git -C $fixture.root update-ref -d refs/remotes/origin/master
+        $output=Join-Path $TestDrive 'support-context.json'
+        Invoke-ReadinessFixture -Root $fixture.root -OutputPath $output -BaseRef HEAD | Should -Be 0
+        $context=Get-Content $output -Raw -Encoding UTF8 | ConvertFrom-Json
+        $context.status | Should -Be 'passed'
+        @($context.issues).Count | Should -Be 0
+        # The explicit base must still reject an invalid revision before Pester.
+        Invoke-ReadinessFixture -Root $fixture.root -OutputPath $output -BaseRef missing-immutable-base | Should -Not -Be 0
+        $context=Get-Content $output -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($context.issues.code) | Should -Contain 'RELEASE_POWERSHELL_ENCODING_INVALID'
+    }
+
     It "aggregates missing archive and compatibility drift before Pester" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-drift-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -163,6 +245,22 @@ Describe "Deterministic Release readiness" {
         }
     }
 
+    It "surfaces issue text on redirected stderr as exact UTF-8 for a whitespace and Cyrillic root" {
+        # The gate captures this stderr into a log decoded as UTF-8; an OEM
+        # code page there turned the localized acquire failure into mojibake.
+        $fixture = New-ReadinessFixture -Root (Join-Path $TestDrive 'stand Тест\workflow')
+        Remove-Item -LiteralPath $fixture.assetPath -Force
+        $outputPath = Join-Path $TestDrive 'unicode-context.json'
+        Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath | Should -Not -Be 0
+        $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $missing = @($context.issues | Where-Object { $_.code -ceq 'RELEASE_VANESSA_ARCHIVE_MISSING' })
+        $missing.Count | Should -Be 1
+        $missing[0].message | Should -BeExactly "Qualified Vanessa Automation archive is missing in offline mode: $($fixture.assetPath)"
+        $expected = (@($context.issues | ForEach-Object { "$($_.code) [$($_.category)]: $($_.message) Recovery: $($_.recovery)" + [Environment]::NewLine }) -join '')
+        $stderr = [IO.File]::ReadAllText($outputPath + '.stderr.log', [Text.UTF8Encoding]::new($false, $true))
+        $stderr | Should -BeExactly $expected
+    }
+
     It "rejects an archive whose internal EPF differs from the immutable lock" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-epf-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -180,6 +278,28 @@ Describe "Deterministic Release readiness" {
             $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $context.status | Should -Be "failed"
             @($context.issues.code) | Should -Contain "RELEASE_VANESSA_EPF_HASH_MISMATCH"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It "rejects a paired VAExtension whose bytes differ from its immutable lock" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-cfe-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-ReadinessFixture -Root (Join-Path $tempRoot "workflow")
+            $lockPath = Join-Path $fixture.root "templates\dependency-lock.json"
+            $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lock.dependencies.vanessaMcp.vaExtension.sha256 = ("0" * 64)
+            Write-Utf8Json -Path $lockPath -Value $lock
+            $compatibilityPath = Join-Path $fixture.root ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"
+            $compatibility = Get-Content -LiteralPath $compatibilityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $compatibility.families.'vanessa-ui'.pairedExtensionArtifact.sha256 = ("0" * 64)
+            Write-Utf8Json -Path $compatibilityPath -Value $compatibility
+            $outputPath = Join-Path $tempRoot "release-context.json"
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $context.status | Should -Be "failed"
+            @($context.issues.code) | Should -Contain "RELEASE_VANESSA_PAIRED_EXTENSION_HASH_MISMATCH"
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }
@@ -240,8 +360,10 @@ Describe "Deterministic Release readiness" {
                     aiRulesCommit = ""
                     helperSha256 = (& $canonicalSha (Join-Path $fixture.root ".agents\skills\1c-workflow\scripts\agent-1c.ps1"))
                     projectConfigSha256 = (Get-FileHash -LiteralPath (Join-Path $worktreeRoot ".agent-1c\project.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+                    clientSelection = Get-SourceE2EClientIdentity -ProjectRoot $e2eRoot
                 }
                 configEvidence = [ordered]@{ featurePath = $outsideFixturePath }
+                snapshots = [ordered]@{ baseline = [ordered]@{ path = (Join-Path $checkpointRoot 'snapshots\baseline.dt'); sha256 = ('a' * 64) } }
                 stages = [ordered]@{ "verification-refresh" = [ordered]@{ status = "passed" } }
                 stateFiles = [ordered]@{ postConfig = [ordered]@{ stateCopyPath = $savedStatePath } }
             })
@@ -253,9 +375,12 @@ Describe "Deterministic Release readiness" {
             $codes | Should -Contain "RELEASE_DEPENDENCY_LOCK_DRIFT"
             $codes | Should -Contain "RELEASE_STAND_WORKFLOW_COMMIT_DRIFT"
             $codes | Should -Contain "RELEASE_STAND_UNSAFE_ACTION_PROTECTION_UNCONFIRMED"
+            $codes | Should -Contain "RELEASE_STAND_WORKTREE_FOREIGN"
             $codes | Should -Contain "RELEASE_CHECKPOINT_HEAD_MISMATCH"
             $codes | Should -Contain "RELEASE_CHECKPOINT_FIXTURE_INVALID"
+            $codes | Should -Contain "RELEASE_CHECKPOINT_SNAPSHOT_INVALID"
             $codes | Should -Contain "RELEASE_CHECKPOINT_VERIFICATION_STALE"
+            $codes | Should -Contain "RELEASE_STAND_MARKER_MISSING"
             $codes | Should -Not -Contain "RELEASE_STAND_MANAGED_PACKAGE_DRIFT"
             (Get-Content -LiteralPath (Join-Path $checkpointRoot "checkpoint.json") -Raw -Encoding UTF8 | ConvertFrom-Json).expectedHead | Should -Be ("f" * 40)
 
@@ -271,6 +396,7 @@ Describe "Deterministic Release readiness" {
             Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Release" -E2EProjectRoot $e2eRoot | Out-Null
             $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
             @($context.issues.code) | Should -Not -Contain "RELEASE_CHECKPOINT_HEAD_MISMATCH"
+            @($context.issues.code) | Should -Contain 'RELEASE_CHECKPOINT_TRANSITION_UNPROVEN'
 
             $checkpoint.schemaVersion = 2
             Write-Utf8Json -Path (Join-Path $checkpointRoot "checkpoint.json") -Value $checkpoint
@@ -302,6 +428,147 @@ Describe "Deterministic Release readiness" {
         }
     }
 
+    It "allows the runner to refresh a clean owned Release branch before creating a checkpoint" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-release-refresh-" + [guid]::NewGuid().ToString('N'))
+        try {
+            $fixture = New-ReadinessFixture -Root (Join-Path $tempRoot 'workflow')
+            $e2eRoot = Join-Path $tempRoot 'e2e'
+            $worktreeRoot = Join-Path $tempRoot 'e2e-release'
+            New-Item -ItemType Directory -Force -Path $e2eRoot | Out-Null
+            & git -C $e2eRoot init -b master | Out-Null
+            & git -C $e2eRoot config user.email 'tests@example.invalid'
+            & git -C $e2eRoot config user.name 'Release Tests'
+            foreach ($name in @('.agents', 'templates', 'scripts', 'AGENT-INSTALL.md', 'install-agent-1c-workflow.ps1')) {
+                Copy-Item -LiteralPath (Join-Path $fixture.root $name) -Destination $e2eRoot -Recurse
+            }
+            $lock = $fixture.lock | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+            $lock.dependencies.workflowPackage.commit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c\dependency-lock.json') -Value $lock
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c\project.json') -Value ([ordered]@{ masterBranch='master' })
+            [IO.File]::WriteAllText((Join-Path $e2eRoot '.gitignore'), ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/release-e2e.json`n", [Text.UTF8Encoding]::new($false))
+            & git -C $e2eRoot add -- .
+            & git -C $e2eRoot commit -m 'stand baseline' | Out-Null
+            & git -C $e2eRoot worktree add --quiet -b 'itldev/release-refresh' $worktreeRoot master
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c\release-e2e.json') -Value ([ordered]@{
+                schemaVersion=1; devBranchName='release-refresh'; worktreePath=$worktreeRoot
+            })
+            Write-Utf8Json -Path (Join-Path $worktreeRoot '.agent-1c\dev-branches\release-refresh.json') -Value ([ordered]@{
+                unsafeActionProtectionConfirmed=$true
+            })
+            $markerPath = Join-Path $e2eRoot 'tests\features\workflow-release-e2e.feature'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $markerPath) | Out-Null
+            [IO.File]::WriteAllText($markerPath, "# release marker`n", [Text.UTF8Encoding]::new($false))
+            & git -C $e2eRoot add -- tests/features/workflow-release-e2e.feature
+            & git -C $e2eRoot commit -m 'fixture marker' | Out-Null
+            $outputPath = Join-Path $tempRoot 'release-context.json'
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode Release -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $codes = @($context.issues.code)
+            $codes | Should -Not -Contain 'RELEASE_STAND_MANAGED_PACKAGE_DRIFT'
+            $codes | Should -Not -Contain 'RELEASE_STAND_WORKFLOW_COMMIT_DRIFT'
+            $codes | Should -Not -Contain 'RELEASE_STAND_MARKER_MISSING'
+            $context.stand.checkpoint.status | Should -Be 'absent'
+
+            [IO.File]::AppendAllText((Join-Path $worktreeRoot 'AGENT-INSTALL.md'), "dirty`n", [Text.Encoding]::UTF8)
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode Release -E2EProjectRoot $e2eRoot | Out-Null
+            $dirty = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($dirty.issues.code) | Should -Contain 'RELEASE_STAND_DIRTY'
+            @($dirty.issues.code) | Should -Contain 'RELEASE_STAND_MARKER_MISSING'
+
+            & git -C $worktreeRoot restore -- AGENT-INSTALL.md
+            [IO.File]::WriteAllText((Join-Path $worktreeRoot 'untracked-note.txt'), "unexpected`n", [Text.UTF8Encoding]::new($false))
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode Release -E2EProjectRoot $e2eRoot | Out-Null
+            $untracked = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($untracked.issues.code) | Should -Contain 'RELEASE_STAND_DIRTY'
+            @($untracked.issues.code) | Should -Contain 'RELEASE_STAND_MARKER_MISSING'
+        } finally {
+            if (Test-Path -LiteralPath $e2eRoot) { & git -C $e2eRoot worktree remove --force $worktreeRoot 2>$null | Out-Null }
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It "compares managed Python sources independently of generated caches for <Kind>" -TestCases @(
+        @{ Kind = 'cache-only'; ExpectedDrift = $false },
+        @{ Kind = 'modified-source'; ExpectedDrift = $true },
+        @{ Kind = 'missing-source'; ExpectedDrift = $true },
+        @{ Kind = 'extra-source'; ExpectedDrift = $true }
+    ) {
+        param([string]$Kind, [bool]$ExpectedDrift)
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-package-cache проверка " + [guid]::NewGuid().ToString('N'))
+        try {
+            $fixture = New-ReadinessFixture -Root (Join-Path $tempRoot 'workflow исходники')
+            $relativeSource = '.agents/skills/itl-remote-runner/scripts/itl_remote/probe.py'
+            $sourcePath = Join-Path $fixture.root $relativeSource
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sourcePath) | Out-Null
+            $sourceBytes = [Text.Encoding]::UTF8.GetBytes("# проверка пакета`r`nvalue = 7`r`n")
+            [IO.File]::WriteAllBytes($sourcePath, $sourceBytes)
+            & git -C $fixture.root add -- $relativeSource
+            & git -C $fixture.root commit -m 'owned Python package source' | Out-Null
+            $candidateCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            $sourceHash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $e2eRoot = Join-Path $tempRoot 'e2e стенд'
+            $worktreeRoot = Join-Path $tempRoot 'e2e ветка'
+            New-Item -ItemType Directory -Force -Path $e2eRoot | Out-Null
+            & git -C $e2eRoot init -b master | Out-Null
+            & git -C $e2eRoot config user.email 'tests@example.invalid'
+            & git -C $e2eRoot config user.name 'Release Tests'
+            foreach ($name in @('.agents', 'templates', 'scripts', 'AGENT-INSTALL.md', 'install-agent-1c-workflow.ps1')) {
+                Copy-Item -LiteralPath (Join-Path $fixture.root $name) -Destination $e2eRoot -Recurse
+            }
+            $lock = $fixture.lock | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+            $lock.dependencies.workflowPackage.commit = $candidateCommit
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c/dependency-lock.json') -Value $lock
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c/project.json') -Value ([ordered]@{ masterBranch='master' })
+            [IO.File]::WriteAllText((Join-Path $e2eRoot '.gitignore'), ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/release-e2e.json`n__pycache__/`n*.pyc`n", [Text.UTF8Encoding]::new($false))
+            $cacheRelative = '.agents/skills/itl-remote-runner/scripts/itl_remote/__pycache__/probe.cpython-313.pyc'
+            $cachePath = Join-Path $e2eRoot $cacheRelative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cachePath) | Out-Null
+            [IO.File]::WriteAllBytes($cachePath, [byte[]](243,13,13,10,0,0,0,0,1,0,0,0,7,0,0,0,128,0))
+            # Reproduce the actual stand: a generated cache can already be tracked by an older package commit.
+            & git -C $e2eRoot add -- .
+            & git -C $e2eRoot add -f -- $cacheRelative
+            & git -C $e2eRoot commit -m 'stand baseline including historical Python cache' | Out-Null
+            & git -C $e2eRoot worktree add --quiet -b 'itldev/package-cache' $worktreeRoot master
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c/release-e2e.json') -Value ([ordered]@{
+                schemaVersion=1; devBranchName='package-cache'; worktreePath=$worktreeRoot
+            })
+            Write-Utf8Json -Path (Join-Path $worktreeRoot '.agent-1c/dev-branches/package-cache.json') -Value ([ordered]@{
+                unsafeActionProtectionConfirmed=$true
+            })
+            $markerPath = Join-Path $e2eRoot 'tests/features/workflow-release-e2e.feature'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $markerPath) | Out-Null
+            [IO.File]::WriteAllText($markerPath, "# release marker`n", [Text.UTF8Encoding]::new($false))
+            & git -C $e2eRoot add -- tests/features/workflow-release-e2e.feature
+            & git -C $e2eRoot commit -m 'fixture marker' | Out-Null
+            $installedSource = Join-Path $e2eRoot $relativeSource
+            switch ($Kind) {
+                'modified-source' { [IO.File]::WriteAllText($installedSource, "# changed source`r`nvalue = 14`r`n", [Text.UTF8Encoding]::new($false)) }
+                'missing-source' { Remove-Item -LiteralPath $installedSource }
+                'extra-source' { [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $installedSource) 'foreign.py'), "value = 99`n", [Text.UTF8Encoding]::new($false)) }
+            }
+            if ($Kind -ne 'cache-only') {
+                & git -C $e2eRoot add -- .agents/skills/itl-remote-runner
+                & git -C $e2eRoot commit -m "stand $Kind difference" | Out-Null
+            }
+            $outputPath = Join-Path $tempRoot 'release-context.json'
+            $beforeCacheHash = (Get-FileHash -LiteralPath $cachePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode Release -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($ExpectedDrift) {
+                @($context.issues.code) | Should -Contain 'RELEASE_STAND_MANAGED_PACKAGE_DRIFT'
+                ($context.issues | Where-Object code -eq 'RELEASE_STAND_MANAGED_PACKAGE_DRIFT' | Select-Object -First 1).message | Should -Match (([regex]::Escape($(if ($Kind -eq 'extra-source') { '.agents/skills/itl-remote-runner/scripts/itl_remote/foreign.py' } else { $relativeSource }))) + '(?:$|,)')
+            } else {
+                @($context.issues.code) | Should -Not -Contain 'RELEASE_STAND_MANAGED_PACKAGE_DRIFT'
+            }
+            @($context.issues.code) | Should -Not -Contain 'RELEASE_STAND_WORKFLOW_COMMIT_DRIFT'
+            $context.stand.projectRoot | Should -BeExactly $e2eRoot
+            (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $sourceHash
+            (Get-FileHash -LiteralPath $cachePath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $beforeCacheHash
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($sourcePath)) | Should -BeExactly ([Convert]::ToBase64String($sourceBytes))
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
     It "rejects invalid UTF-8 in changed PowerShell before test execution" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-encoding-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -411,5 +678,142 @@ Describe "Deterministic Release readiness" {
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }
+    }
+}
+
+Describe 'Shared Release early admission' -Tag 'ReleaseAdmissionContract' {
+    BeforeAll {
+        $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        . (Join-Path $RepoRoot 'scripts/release-e2e/workflow-transition.ps1')
+        . (Join-Path $RepoRoot 'scripts/release-e2e/admission.ps1')
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1')
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/test-release-readiness.ps1'), [ref]$tokens, [ref]$errors)
+        if ($errors) { throw 'Readiness owner must parse' }
+        foreach ($name in @('Add-ReadinessIssue', 'Get-JsonFile', 'Get-GitValue', 'Get-FileSha256', 'Test-PathInsideRoot', 'Get-ManagedTextOrBinarySha256', 'Test-ReleaseStandDirtRolledBack', 'Test-ReleaseCheckpointPreflight')) {
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        function New-EarlyAdmissionFixture {
+            param([string]$Root)
+            $main = Join-Path $Root 'Основной проект'; $worktree = Join-Path $Root 'Ветка Release'
+            New-Item -ItemType Directory -Force (Join-Path $main '.agent-1c') | Out-Null
+            $utf8 = [Text.UTF8Encoding]::new($false)
+            [IO.File]::WriteAllText((Join-Path $main '.gitignore'), ".agent-1c/runs/`n.dev.env`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $main '.agent-1c/project.json'), '{"exportPath":"src/cf","aiRules":{"tools":["codex"]}}', $utf8)
+            & git -C $main init -q -b master
+            & git -C $main config user.name 'Early Release admission'
+            & git -C $main config user.email 'admission@example.invalid'
+            & git -C $main add --all
+            & git -C $main commit -qm baseline
+            & git -C $main worktree add --quiet -b itldev/admission $worktree master
+            if ($LASTEXITCODE -ne 0) { throw 'Owned Unicode worktree must exist' }
+            [IO.File]::WriteAllText((Join-Path $main '.agent-1c/release-e2e.json'), (@{worktreePath=$worktree;devBranchName='admission'} | ConvertTo-Json), $utf8)
+            $run = Join-Path $worktree '.agent-1c/runs/release-e2e/admission'
+            New-Item -ItemType Directory -Force $run | Out-Null
+            $dt = Join-Path $run 'baseline.dt'; $state = Join-Path $run 'baseline-state.json'; $envCopy = Join-Path $run 'baseline-env.txt'
+            [IO.File]::WriteAllText($dt, 'unit fixture DT bytes', $utf8)
+            [IO.File]::WriteAllText($state, '{"lastVerificationStatus":"unverified"}', $utf8)
+            [IO.File]::WriteAllText($envCopy, 'PASSWORD=transient-sentinel-never-report', $utf8)
+            $identity = [ordered]@{
+                projectRoot=$main;worktreePath=$worktree;branch='itldev/admission'
+                workflowCommit=(Invoke-RepositoryGit $RepoRoot @('rev-parse','HEAD')).stdout.Trim()
+                workflowTree=(Invoke-RepositoryGit $RepoRoot @('rev-parse','HEAD^{tree}')).stdout.Trim()
+                runnerSha256=Get-E2EAdmissionCanonicalTextSha256 (Join-Path $RepoRoot 'scripts/invoke-release-e2e.ps1')
+                helperSha256=Get-E2EAdmissionCanonicalTextSha256 (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1')
+                projectConfigSha256=Get-E2EAdmissionFileSha256 (Join-Path $worktree '.agent-1c/project.json')
+                aiRulesCommit='';clientSelection=Get-SourceE2EClientIdentity $main 'codex'
+            }
+            $checkpoint = [ordered]@{schemaVersion=3;identity=$identity;expectedHead=(Invoke-RepositoryGit $worktree @('rev-parse','HEAD')).stdout.Trim();stages=[ordered]@{};
+                snapshots=@{baseline=@{path=$dt;sha256=Get-E2EAdmissionFileSha256 $dt}};
+                stateFiles=@{baseline=@{stateCopyPath=$state;stateSha256=Get-E2EAdmissionFileSha256 $state;envCopyPath=$envCopy;envSha256=Get-E2EAdmissionFileSha256 $envCopy}}}
+            return @{main=$main;worktree=$worktree;run=$run;checkpoint=$checkpoint;checkpointPath=(Join-Path $run 'checkpoint.json');state=$state;envCopy=$envCopy}
+        }
+        function Invoke-EarlyAdmissionFixture {
+            param($Fixture, [string]$Mode = 'Auto')
+            [IO.File]::WriteAllText($Fixture.checkpointPath, ($Fixture.checkpoint | ConvertTo-Json -Depth 16), [Text.UTF8Encoding]::new($false))
+            $script:issues = New-Object 'Collections.Generic.List[object]'
+            $RepositoryRoot=$RepoRoot; $ResumeMode=$Mode; $AgentTarget='codex'
+            $before = Get-E2EAdmissionFileSha256 $Fixture.checkpointPath
+            $candidateCommit=(Invoke-RepositoryGit $RepoRoot @('rev-parse','HEAD')).stdout.Trim()
+            $candidateTree=(Invoke-RepositoryGit $RepoRoot @('rev-parse','HEAD^{tree}')).stdout.Trim()
+            $result = Test-ReleaseCheckpointPreflight -StandProjectRoot $Fixture.main -StandWorktree $Fixture.worktree -DevBranchName 'admission' -CandidateCommit $candidateCommit -CandidateTree $candidateTree -AiRulesCommit ''
+            # The candidate is current source even when the saved identity is old.
+            (Get-E2EAdmissionFileSha256 $Fixture.checkpointPath) | Should -BeExactly $before
+            return @{record=$result;issues=$script:issues.ToArray()}
+        }
+    }
+
+    It 'rejects an unsupported cross-source HEAD before any runner action and leaves checkpoint bytes intact' {
+        $fixture=New-EarlyAdmissionFixture (Join-Path $TestDrive 'Ранний отказ с пробелом')
+        $fixture.checkpoint.identity.runnerSha256='0'*64
+        [IO.File]::WriteAllText((Join-Path $fixture.worktree 'foreign.txt'),'foreign',[Text.UTF8Encoding]::new($false))
+        & git -C $fixture.worktree add -- foreign.txt
+        & git -C $fixture.worktree commit -qm 'chore: update ITL workflow in development branch'
+        $observed=Invoke-EarlyAdmissionFixture $fixture
+        $observed.record.transition.allowed | Should -BeFalse
+        @($observed.issues.code) | Should -Contain 'RELEASE_CHECKPOINT_TRANSITION_UNPROVEN'
+        $observed.record.transition.reason | Should -Match 'no supported completed'
+        ($observed.record | ConvertTo-Json -Depth 16) | Should -Not -Match 'transient-sentinel|PASSWORD='
+    }
+
+    It 'uses the current helper identity to catch a second stand change after a successful early read' {
+        $fixture=New-EarlyAdmissionFixture (Join-Path $TestDrive 'Повторная проверка границы')
+        $first=Invoke-EarlyAdmissionFixture $fixture
+        $first.record.transition.allowed | Should -BeTrue
+        $first.record.exactIdentity | Should -BeTrue
+        [IO.File]::WriteAllText((Join-Path $fixture.worktree 'foreign.txt'),'later foreign',[Text.UTF8Encoding]::new($false))
+        & git -C $fixture.worktree add -- foreign.txt
+        & git -C $fixture.worktree commit -qm later
+        $second=Invoke-EarlyAdmissionFixture $fixture
+        $second.record.transition.allowed | Should -BeFalse
+        @($second.issues.code) | Should -Contain 'RELEASE_CHECKPOINT_HEAD_MISMATCH'
+    }
+
+    It 'admits tracked stand changes only when the runner resets the worktree before a stage uses it' {
+        # 2026-11-21: a killed config-cadence left ConfigDumpInfo.xml modified on the
+        # exact checkpoint HEAD; every resume of that candidate stopped at
+        # RELEASE_STAND_DIRTY although the runner restores that stage's baseline first.
+        $fixture=New-EarlyAdmissionFixture (Join-Path $TestDrive 'Прерванный config-cadence')
+        $fixture.checkpoint.stages['config-cadence']=@{status='running';fingerprint='current'}
+        $interrupted=Invoke-EarlyAdmissionFixture $fixture
+        $interrupted.record.transition.allowed | Should -BeTrue
+        $interrupted.record.exactIdentity | Should -BeTrue
+        $interrupted.record.worktreeRollback | Should -BeExactly 'config-cadence'
+        (Invoke-EarlyAdmissionFixture $fixture -Mode Restart).record.worktreeRollback | Should -BeExactly 'restart'
+        $fixture.checkpoint.stages['config-cadence']=@{status='passed';fingerprint='current'}
+        (Invoke-EarlyAdmissionFixture $fixture).record.worktreeRollback | Should -BeExactly ''
+
+        [IO.File]::AppendAllText((Join-Path $fixture.worktree '.gitignore'), "# прерванная выгрузка`n", [Text.UTF8Encoding]::new($false))
+        Test-ReleaseStandDirtRolledBack -StandWorktree $fixture.worktree -Rollback 'config-cadence' | Should -BeTrue
+        Test-ReleaseStandDirtRolledBack -StandWorktree $fixture.worktree -Rollback '' | Should -BeFalse
+        [IO.File]::WriteAllText((Join-Path $fixture.worktree 'Лишний файл.xml'), 'untracked', [Text.UTF8Encoding]::new($false))
+        Test-ReleaseStandDirtRolledBack -StandWorktree $fixture.worktree -Rollback 'config-cadence' | Should -BeFalse
+    }
+
+    It 'reports rerun when HEAD is valid but source continuation proof is absent' {
+        $fixture=New-EarlyAdmissionFixture (Join-Path $TestDrive 'Нет proof без нового запрета')
+        $fixture.checkpoint.identity.workflowCommit='0'*40
+        $fixture.checkpoint.stages['ondemand-mcp']=@{status='failed';fingerprint='old'}
+        $observed=Invoke-EarlyAdmissionFixture $fixture
+        $observed.record.transition.allowed | Should -BeTrue
+        $observed.record.transition.sourceContinuationProven | Should -BeFalse
+        $observed.record.stageDecisions.Count | Should -Be 1
+        $observed.record.stageDecisions[0].action | Should -BeExactly 'rerun'
+        @($observed.issues) | Should -BeNullOrEmpty
+    }
+
+    It 'checks exact saved <Kind> bytes before reuse without editing or printing them' -ForEach @(@{Kind='state'},@{Kind='envCopy'}) {
+        $fixture=New-EarlyAdmissionFixture (Join-Path $TestDrive ('Дрейф '+$Kind))
+        [IO.File]::AppendAllText($fixture[$Kind], ' changed')
+        $badHash=Get-E2EAdmissionFileSha256 $fixture[$Kind]
+        $observed=Invoke-EarlyAdmissionFixture $fixture
+        @($observed.issues.code) | Should -Contain 'RELEASE_CHECKPOINT_SUPPORT_INVALID'
+        ($observed.issues.message -join ' ') | Should -Match 'recorded SHA256'
+        (Get-E2EAdmissionFileSha256 $fixture[$Kind]) | Should -BeExactly $badHash
+        ($observed | ConvertTo-Json -Depth 16) | Should -Not -Match 'transient-sentinel|PASSWORD='
     }
 }

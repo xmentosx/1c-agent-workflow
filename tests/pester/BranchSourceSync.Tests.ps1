@@ -138,6 +138,7 @@ Describe "development branch source-only synchronization" {
             function Read-DevBranchState { param([string]$Name) if ($Name -eq "peer") { return $peer }; return $primary }
             function Assert-DevelopmentBranchWorktreeContext {}
             function Assert-DevBranchSourceSyncCompatibility { return "src/cf" }
+            function Assert-ItlBranchSourceSyncDatabaseAdmission {}
             function Get-PendingBranchSourceSync { return $null }
             function Save-DevBranchCheckpoint { $script:checkpointRoots += $script:mockRoot }
             function Invoke-InProjectContext {

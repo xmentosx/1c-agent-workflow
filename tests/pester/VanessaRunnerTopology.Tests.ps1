@@ -156,6 +156,23 @@
         }
     }
 
+    It "runs extension setup in the already connected named client slot" {
+        $file = Join-Path $TestDrive 'Подготовка набора.feature'
+        [IO.File]::WriteAllText($file, @'
+Функционал: Подготовка данных
+Сценарий: Своя фикстура
+    Дано я подключаю профиль TestClient "Редактор"
+    И я выполняю код встроенного языка на сервере (Расширение)
+'@)
+        $requirements = & {
+            . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+            Get-VanessaFeatureTestClientRequirements -FeatureFiles @($file)
+        }
+        $requirements.maximumConcurrency | Should -Be 1
+        $requirements.requiresExtensionTestClient | Should -BeTrue
+        @($requirements.requiredProfiles) | Should -Be @('Редактор')
+    }
+
     It "binds the generic TestClient opener to the first product profile in an execution-only feature copy" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-default-profile-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -320,6 +337,54 @@
         }
     }
 
+    It 'reserves peak client capacity per database for <layout> scenarios' -TestCases @(
+        @{layout='sequential';separator="`nСценарий: Другой пользователь";expected=1},
+        @{layout='simultaneous';separator='';expected=2}
+    ) {
+        param($layout,$separator,$expected)
+        $tempRoot = Join-Path $TestDrive ('Пиковая вместимость ' + $layout)
+        $fixture = New-VanessaRunnerFixture -Root $tempRoot `
+            -FeatureText "# language: ru`nФункционал: Вместимость базы`nСценарий: Пользователи`n  Дано я подключаю профиль TestClient `"Alpha`"$separator`n  И я подключаю профиль TestClient `"Beta`"" `
+            -ManifestText '{"schemaVersion":1,"maxConcurrency":2,"profiles":[{"name":"Alpha"},{"name":"Beta"},{"name":"Unused"}]}'
+        & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+            $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
+            $topology.requiredProfiles | Should -HaveCount 2
+            $topology.requiredTestClientSlots | Should -Be $expected
+            $admissions = @(Get-VanessaTestClientAdmissionTargets -Topology $topology -DefaultState $fixture.state)
+            $admissions | Should -HaveCount 1
+            $admissions[0].requiredSessions | Should -Be $expected
+        }
+    }
+
+    It 'captures every configured database while reserving capacity only for selected clients' {
+        $tempRoot = Join-Path $TestDrive 'Профили разных баз'
+        $fixture = New-VanessaRunnerFixture -Root $tempRoot `
+            -FeatureText "# language: ru`nФункционал: Выбранная конкурентность`n@Selected`nСценарий: Один клиент`n  Дано я подключаю профиль TestClient `"Alpha`"`nСценарий: Другой клиент`n  Дано я подключаю профиль TestClient `"Beta`"" `
+            -ManifestText '{"schemaVersion":2,"maxConcurrency":2,"profiles":[{"name":"Alpha"},{"name":"Beta","contour":"aux"}]}'
+        & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+            function Get-AuxiliaryContour { param($Name) [pscustomobject]@{name=$Name} }
+            function Assert-AuxiliaryContourReady { [pscustomobject]@{connection=[pscustomobject]@{kind='file';path=(Join-Path $tempRoot 'Дополнительная база');user='';password=''}} }
+            foreach ($filter in @('@Selected','')) {
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath) -FilterTags $filter
+                $paramsPath = New-VanessaParamsFile -FeaturePath $fixture.featurePath -RunDirectory $fixture.runDirectory `
+                    -StatusPath (Join-Path $fixture.runDirectory 'status.json') -State $fixture.state -TestPort 48051 -TestPorts @(48051,48052) -TestClientTopology $topology -FilterTags $filter
+                $admissions = @(Get-VanessaTestClientAdmissionTargets -Topology $topology -DefaultState $fixture.state)
+                $runResources = @(Get-VanessaTestClientDatabaseResources -Topology $topology -DefaultState $fixture.state)
+                $topology.profiles | Should -HaveCount 2
+                $topology.requiredTestClientSlots | Should -Be 1
+                $runResources | Should -HaveCount 2
+                $admissions | Should -HaveCount $(if ($filter) {1} else {2})
+                foreach ($admission in $admissions) { $admission.requiredSessions | Should -Be 1 }
+                $manager = [pscustomobject]@{kind='file';path=(Join-Path $tempRoot 'Служебная база')}
+                $scopes = @(Get-OneCNativeRunProcessScopes -RunParamsPath $paramsPath -Resources (@($manager) + $runResources))
+                $scopes | Should -HaveCount 3
+                @($scopes | Where-Object role -eq 'test-client').path | Should -Contain (Join-Path $tempRoot 'Дополнительная база')
+            }
+        }
+    }
+
     It "allocates a bounded unique port per declared profile without a separate machine-global session cap" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-ports-" + [guid]::NewGuid().ToString("N"))
         $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
@@ -347,6 +412,113 @@
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", $oldRegistryHome, "Process")
             [Environment]::SetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", $oldPortRange, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'rejects selected profiles before loading and resumes the same check after manifest repair' {
+        $fixtureRoot = Join-Path $TestDrive 'profile preflight База'
+        $fixture = New-VanessaRunnerFixture -Root $fixtureRoot `
+            -FeatureText "# language: ru`nФункционал: Preflight`nСценарий: Selected`n  Дано я подключаю профиль TestClient `"Required`"" `
+            -ManifestText '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"Other"}]}'
+        & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
+            $DevBranchName = 'fixture'
+            $VerificationTrigger = 'repair'
+            $ExplicitVerificationComponent = @()
+            $script:Loads = 0
+            $script:Attempts = 0
+            $script:Verified = 0
+            function Read-DevBranchState { $fixture.state }
+            function Get-ItlVerificationExecutionDecision { param($Component) [pscustomobject]@{ run = $Component -eq 'vanessa' } }
+            function Assert-ItlVerificationRepairScope {}
+            function Assert-VerificationClassificationReady {}
+            function Repair-OneCSourceLineEndings {}
+            function Get-DevBranchKind { 'configuration' }
+            function Get-ExportPath { 'src/cf' }
+            function Assert-ExportPathInsideProject { $fixtureRoot }
+            function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+            function Restore-ConfigDumpInfoLoadSnapshot {}
+            function Remove-ConfigDumpInfoLoadSnapshot {}
+            function Invoke-DevBranchVanessaRuntimeRelease {}
+            function Get-VanessaChangedFeatureRecords { @() }
+            function New-VerificationSelectionPlan {
+                param($ApplicationFeatureFiles, [switch]$YAxUnitVerificationPlanned, [switch]$RequireObservedReceipts)
+                $RequireObservedReceipts | Should -BeTrue
+                $YAxUnitVerificationPlanned | Should -BeFalse
+                [pscustomobject]@{ mode = 'full'; selectedFeatureFiles = $ApplicationFeatureFiles }
+            }
+            function Test-ItlFullVerificationProofEligible { $true }
+            function Get-ItlMatchingVerificationRepairSession { [pscustomobject]@{ kind = 'canonical-repair' } }
+            function Use-ItlVerificationRepairAttempt { $script:Attempts++ }
+            function Ensure-DevBranchEventLogBaseline { param($State) $State }
+            function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{ path = 'fixture'; capturedAt = [datetime]'2026-10-24' } }
+            function Update-DevBranchBase { $script:Loads++ }
+            function Invoke-ItlVerificationCycle { $script:Verified++ }
+            function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
+            function Get-VerificationState { [pscustomobject]@{ isFreshPassed = $true } }
+            function Publish-ItlVerificationRepairRun {
+                param($Ticket, $Result, $Failure, $SessionPassed)
+                if ($null -eq $Failure) {
+                    $SessionPassed | Should -BeTrue
+                    $Result.phase | Should -BeExactly 'verification'
+                }
+            }
+            function Write-DevBranchVerificationRunUserReport {}
+            $fixture.state | Add-Member -NotePropertyName lastVerificationEvidenceKind -NotePropertyValue 'full'
+
+            { Invoke-DevBranchCheck } | Should -Throw '*ITL_VANESSA_TESTCLIENT_PROFILES_MISSING*Required*'
+            $script:Loads | Should -Be 0
+            $script:Attempts | Should -Be 0
+            $script:Verified | Should -Be 0
+            $script:RunErrorCategory | Should -Be 'runner'
+            $script:RunRequiredAction | Should -Be '/itl-verify-fix'
+            Set-Content -LiteralPath $fixture.manifestPath -Encoding UTF8 -Value '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"Required"}]}'
+            Invoke-DevBranchCheck
+            $script:Loads | Should -Be 1
+            $script:Attempts | Should -Be 1
+            $script:Verified | Should -Be 1
+        }
+    }
+
+    It 'checks only the effective profile scope for <caseName>' -TestCases @(
+        @{ caseName = 'incremental suites'; testingMode = 'auto'; trigger = 'command'; named = @(); planMode = 'incremental'; tags = ''; diagnostic = $false; auxiliary = $false; expectPlans = 1 },
+        @{ caseName = 'reused proof'; testingMode = 'auto'; trigger = 'command'; named = @(); planMode = 'reuse'; tags = ''; diagnostic = $false; auxiliary = $false; expectPlans = 1 },
+        @{ caseName = 'disabled Vanessa'; testingMode = 'off'; trigger = 'command'; named = @(); planMode = 'full'; tags = ''; diagnostic = $false; auxiliary = $false; expectPlans = 0 },
+        @{ caseName = 'named Vanessa overrides off'; testingMode = 'off'; trigger = 'explicit'; named = @('vanessa'); planMode = 'incremental'; tags = ''; diagnostic = $false; auxiliary = $false; expectPlans = 1 },
+        @{ caseName = 'diagnostic tag filter'; testingMode = 'auto'; trigger = 'command'; named = @(); planMode = 'full'; tags = '@Selected'; diagnostic = $true; auxiliary = $false; expectPlans = 0 },
+        @{ caseName = 'auxiliary tag filter'; testingMode = 'auto'; trigger = 'command'; named = @(); planMode = 'full'; tags = '@Selected'; diagnostic = $false; auxiliary = $true; expectPlans = 0 }
+    ) {
+        param($caseName, $testingMode, $trigger, $named, $planMode, $tags, $diagnostic, $auxiliary, $expectPlans)
+        $fixtureRoot = Join-Path $TestDrive 'selected profiles Кириллица'
+        $fixture = New-VanessaRunnerFixture -Root $fixtureRoot `
+            -FeatureText "# language: ru`nФункционал: Selected`n@Selected`nСценарий: Available`n  Дано я подключаю профиль TestClient `"Available`"" `
+            -ManifestText '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"Available"}]}'
+        $other = Join-Path (Split-Path -Parent $fixture.featurePath) 'other.feature'
+        Set-Content -LiteralPath $other -Encoding UTF8 -Value "# language: ru`nФункционал: Other`n@Other`nСценарий: Missing`n  Дано я подключаю профиль TestClient `"Missing`""
+        & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $VanessaFilterTags = $tags
+            $VanessaFeaturePath = ''
+            $script:ActiveAuxiliaryVanessaContext = if ($auxiliary) { [pscustomobject]@{ featuresPath = 'tests/features' } } else { $null }
+            $script:PlanCalls = 0
+            $script:ProfileModes = @{ ITL_VANESSA_TESTING = $testingMode; ITL_YAXUNIT_TESTING = 'off' }
+            function Get-EnvValue { param($Name, $Default) if ($script:ProfileModes.ContainsKey($Name)) { $script:ProfileModes[$Name] } else { $Default } }
+            function Get-VanessaChangedFeatureRecords { @() }
+            function Test-ItlDiagnosticVerificationScope { $diagnostic }
+            function New-VerificationSelectionPlan {
+                param($ApplicationFeatureFiles, [switch]$YAxUnitVerificationPlanned, [switch]$RequireObservedReceipts)
+                $script:PlanCalls++
+                $RequireObservedReceipts | Should -BeTrue
+                @($ApplicationFeatureFiles).Count | Should -Be 2
+                [pscustomobject]@{ mode = $planMode; selectedFeatureFiles = @($fixture.featurePath) }
+            }
+            if ($planMode -eq 'reuse') {
+                # No runner is due: even an unavailable manifest is irrelevant.
+                Set-Content -LiteralPath $fixture.manifestPath -Encoding UTF8 -Value '{invalid'
+            }
+            Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $named
+            $script:PlanCalls | Should -Be $expectPlans
         }
     }
 
@@ -502,14 +674,16 @@
             $runText | Should -Match 'Get-VanessaTestClientTopology -FeatureFiles \$applicationFeatureFiles'
             $runText | Should -Match 'Get-VanessaSelectedScenarioCount -FeatureFiles \$applicationFeatureFiles'
             $runText | Should -Match 'Ensure-VanessaMcpInstalled -State \$state'
-            $runText | Should -Match 'Invoke-DevBranchVanessaRuntimeRelease -State \$state -Reason "Vanessa verification preflight"'
+            $runText | Should -Match 'Invoke-DevBranchVanessaRuntimeRelease -State \$runtimeState -Reason "Vanessa verification preflight"'
             $runText | Should -Match 'Assert-VanessaScenarioCountJunitEvidence'
             $runText | Should -Match '(?s)New-VanessaParamsFile.*?-FeaturePath \$featuresPath'
             $runText | Should -Match '-InfoBasePath \$serviceInfoBase\.path'
             $runText | Should -Match '-ExpectedSessionCount 1'
         $runText | Should -Match 'Get-VanessaTestClientAdmissionTargets -Topology \$testClientTopology -DefaultState \$state'
         $runText | Should -Match '-AdditionalSessionAdmissions \$admissionTargets'
-        $runText | Should -Match '(?s)foreach \(\$target in \$admissionTargets\).*?Stop-OneCInfoBaseSessionProcesses.*?-InfoBaseKind \$target\.infoBaseKind.*?-InfoBasePath \$target\.infoBasePath'
+        $runText | Should -Match '\$sessionWait = Get-OneCSessionWaitParameters'
+        $runText | Should -Match '(?s)Invoke-Enterprise.*?-AdditionalSessionAdmissions \$admissionTargets.*?@sessionWait'
+        $runText | Should -Not -Match 'SessionLimitRecovery|Stop-OneCInfoBaseSessionProcesses'
             $runText | Should -Not -Match 'Assert-VanessaTestClientCapacity'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -880,6 +1054,212 @@ Describe "Vanessa verification failure classification" {
             $result.failure | Should -BeNullOrEmpty
             $result.candidate.processObserved | Should -BeTrue
             $result.candidate.processId | Should -Be 7811
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "stops a TESTMANAGER that launched no TestClient within the connect timeout instead of the whole test timeout" {
+        # 2026-11-07: a Vanessa form that did not compile in the thin client held
+        # a modal dialog in TESTMANAGER; no TestClient ever started, yet the run
+        # waited the full 1800-second test timeout. The path has whitespace and Cyrillic.
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl vanessa $nonAscii " + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $infoBasePath = Join-Path $tempRoot "ib"
+                New-Item -ItemType Directory -Force -Path $infoBasePath | Out-Null
+                $paramsPath = Join-Path $tempRoot "VAParams.json"
+                Set-Content -LiteralPath $paramsPath -Encoding UTF8 -Value '{}'
+                $state = [pscustomobject]@{ infoBaseKind = "file"; devBranchInfoBasePath = $infoBasePath; vanessaServiceInfoBasePath = (Join-Path $tempRoot "service") }
+                $script:fixtureProcesses = @([pscustomobject]@{ processId = 7001; commandLine = "1cv8c.exe ENTERPRISE /F `"$(Join-Path $tempRoot 'service')`" /TESTMANAGER" })
+                function Get-OneCProcessInfo { return @($script:fixtureProcesses) }
+                $probe = { param($monitor, $elapsed) Test-VanessaTestClientStartupMonitor -Monitor $monitor -State $state -TestPorts @(48067) -RunParamsPath $paramsPath -ElapsedSeconds $elapsed }
+
+                $quiet = New-VanessaTestClientStartupMonitor -RunDirectory $tempRoot -ProfileNames @("ProfileOne") -ConnectTimeoutSeconds 300
+                $beforeTimeout = & $probe $quiet 299
+                $quiet.lastProbeAt = [DateTime]::MinValue
+                $afterTimeout = & $probe $quiet 300
+
+                $started = New-VanessaTestClientStartupMonitor -RunDirectory $tempRoot -ProfileNames @("ProfileOne") -ConnectTimeoutSeconds 300
+                # An owned TestClient whose /Out name matches no manifest profile.
+                $script:fixtureProcesses += [pscustomobject]@{ processId = 7002; commandLine = "1cv8c.exe /TESTCLIENT /F `"$infoBasePath`" -TPort 48067 /Out `"$(Join-Path $tempRoot 'default_20261107120000.txt')`"" }
+                $connected = & $probe $started 600
+
+                $disabled = New-VanessaTestClientStartupMonitor -RunDirectory $tempRoot -ProfileNames @("ProfileOne") -ConnectTimeoutSeconds 0
+                $script:fixtureProcesses = @()
+                $unbounded = & $probe $disabled 1700
+                [pscustomobject]@{ beforeTimeout = $beforeTimeout; afterTimeout = $afterTimeout; failure = $quiet.failure
+                    connected = $connected; startedFailure = $started.failure; startedSeen = $started.testClientSeen; unbounded = $unbounded
+                    defaultTimeout = (Get-VanessaTestClientConnectTimeoutSeconds) }
+            }
+
+            $result.beforeTimeout | Should -BeFalse
+            $result.afterTimeout | Should -BeTrue
+            $result.failure.code | Should -Be "ITL_VANESSA_TESTCLIENT_NOT_STARTED"
+            $result.failure.waitedSeconds | Should -Be 300
+            $result.failure.connectTimeoutSeconds | Should -Be 300
+            $result.failure.profileName | Should -Be "ProfileOne"
+            $result.connected | Should -BeFalse
+            $result.startedFailure | Should -BeNullOrEmpty
+            $result.startedSeen | Should -BeTrue
+            $result.unbounded | Should -BeFalse
+            $result.defaultTimeout | Should -Be 300
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'repeats a TESTMANAGER launch once when 1C refuses the configuration signature: <case>' -ForEach @(
+        @{ case = 'refused then opened'; outcomes = @('signature-throw', 'ok'); launches = 2; retries = 1; expectedError = '' },
+        @{ case = 'refused with exit code zero then opened'; outcomes = @('signature-return', 'ok'); launches = 2; retries = 1; expectedError = '' },
+        @{ case = 'refused twice'; outcomes = @('signature-throw', 'signature-throw'); launches = 2; retries = 1; expectedError = 'ONEC_CONFIGURATION_SIGNATURE_INVALID' },
+        @{ case = 'other failure'; outcomes = @('other-throw', 'ok'); launches = 1; retries = 0; expectedError = '1C Enterprise failed with exit code 1' },
+        @{ case = 'opened'; outcomes = @('ok'); launches = 1; retries = 0; expectedError = '' }
+    ) {
+        # PM5 2026-11-07: two TESTMANAGER launches logged only "Цифровая подпись
+        # конфигурации неверна"; the agent's third, manual launch passed.
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl vanessa $nonAscii " + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $serviceBase = Join-Path $tempRoot "service base $nonAscii"
+                $script:fixtureOutcomes = [Collections.Generic.Queue[string]]::new([string[]]$outcomes)
+                $script:fixtureLaunches = 0
+                $script:fixtureRetries = 0
+                $script:LastLogPath = Join-Path $tempRoot 'earlier.log'
+                $launch = {
+                    $script:fixtureLaunches++
+                    $outcome = $script:fixtureOutcomes.Dequeue()
+                    $log = Join-Path $tempRoot ("1c-enterprise-$($script:fixtureLaunches).log")
+                    $script:LastLogPath = $log
+                    $text = if ($outcome -like 'signature-*') { "Цифровая подпись конфигурации неверна, Цифровая подпись конфигурации неверна`r`n" } elseif ($outcome -eq 'other-throw') { "Ошибка соединения с информационной базой`r`n" } else { "" }
+                    [IO.File]::WriteAllText($log, $text, [Text.UTF8Encoding]::new($true))
+                    if ($outcome -like '*-throw') { throw "1C Enterprise failed with exit code 1. PID: 1. Log: $log" }
+                    return $log
+                }
+                $failure = ''
+                $returned = ''
+                try {
+                    $returned = Invoke-VanessaManagerLaunchWithSignatureRetry -InfoBasePath $serviceBase -Launch $launch -BeforeRetry { $script:fixtureRetries++ } -RetryDelaySeconds 0 6>$null
+                } catch { $failure = $_.Exception.Message }
+                [pscustomobject]@{ launches = $script:fixtureLaunches; retries = $script:fixtureRetries; failure = $failure; returned = $returned
+                    category = [string]$script:RunErrorCategory; serviceBase = $serviceBase; lastLog = $script:LastLogPath }
+            }
+
+            $result.launches | Should -Be $launches
+            $result.retries | Should -Be $retries
+            if ($expectedError) {
+                $result.failure | Should -Match ([regex]::Escape($expectedError))
+                $result.returned | Should -BeNullOrEmpty
+            } else {
+                $result.failure | Should -BeNullOrEmpty
+                $result.returned | Should -BeExactly $result.lastLog
+            }
+            if ($expectedError -eq 'ONEC_CONFIGURATION_SIGNATURE_INVALID') {
+                $result.failure | Should -Match ([regex]::Escape("infobase '$($result.serviceBase)'"))
+                $result.failure | Should -Match 'attempts=2'
+                $result.category | Should -Be 'infobase-readiness'
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'stops waiting for the Vanessa MCP port once its backend exited and names the refusal' {
+        # PM5 2026-11-08: a backend that died after about a second still cost the
+        # whole port wait before ITL_ONDEMAND_START_FAILED phase=broker-start.
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl vanessa $nonAscii " + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $log = Join-Path $tempRoot '1c-enterprise-mcp.log'
+                [IO.File]::WriteAllText($log, "Цифровая подпись конфигурации неверна`r`n", [Text.UTF8Encoding]::new($true))
+                $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+                $listener.Start()
+                $closedPort = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
+                $listener.Stop()
+                $process = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoProfile', '-Command', 'exit 3') -WindowStyle Hidden -PassThru
+                $watch = [Diagnostics.Stopwatch]::StartNew()
+                $ready = Wait-VanessaMcpPort -Port $closedPort -TimeoutSeconds 60 -Process $process
+                $watch.Stop()
+                $process.WaitForExit()
+                $serviceBase = Join-Path $tempRoot "service $nonAscii"
+                [pscustomobject]@{ ready = $ready; seconds = $watch.Elapsed.TotalSeconds; serviceBase = $serviceBase
+                    message = Get-ItlOnDemandBackendNotReadyMessage -Family 'vanessa-ui' -Port $closedPort -Process $process -LogPath $log -InfoBasePath $serviceBase
+                    alive = Get-ItlOnDemandBackendNotReadyMessage -Family 'vanessa-ui' -Port $closedPort -Process $null -LogPath $log -InfoBasePath $serviceBase }
+            }
+
+            $result.ready | Should -BeFalse
+            $result.seconds | Should -BeLessThan 15
+            # Stable identifiers only: the code, the backend PID and its exit code.
+            ($result.message -split ':', 2)[0] | Should -Be 'ITL_ONDEMAND_BACKEND_EXITED'
+            $result.message | Should -Match '\bPID \d+'
+            $result.message | Should -Match '\bcode 3\b'
+            $result.message | Should -Match ([regex]::Escape("ONEC_CONFIGURATION_SIGNATURE_INVALID: 1C could not open infobase '$($result.serviceBase)'"))
+            $result.alive | Should -Not -Match 'ITL_ONDEMAND_BACKEND_EXITED'
+            $result.alive | Should -Match 'port \d+\. Log: '
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'routes a UI failure inside a desktop lock interval to the runner and keeps other failures with the product' {
+        # PM5 itldev/branch4, 2026-11-17: with the screen locked a VAExtension form
+        # could not activate and SettingsMapping failed as product-assertion.
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl vanessa $nonAscii " + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                # Vanessa writes local timestamps; the helper journal is UTC.
+                $failedLocal = [datetime]::new(2026, 11, 17, 5, 30, 0, [DateTimeKind]::Local)
+                $passedLocal = $failedLocal.AddMinutes(-20)
+                $junit = Join-Path $tempRoot 'junit.xml'
+                [IO.File]::WriteAllText($junit, @"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="Сопоставление настроек" tests="2" failures="1" time="120">
+    <testcase name="Колонка выбирается по новому названию" timestamp="$($failedLocal.ToString('yyyy-MM-ddTHH:mm:ss'))" time="60"><failure message="Форма не найдена"/></testcase>
+    <testcase name="Пройденный" timestamp="$($passedLocal.ToString('yyyy-MM-ddTHH:mm:ss'))" time="30"/>
+  </testsuite>
+</testsuites>
+"@, [Text.UTF8Encoding]::new($true))
+                $windows = @(Get-VanessaFailedTestcaseWindows -JUnitPath $junit)
+                $failedUtc = $failedLocal.ToUniversalTime()
+                $covering = [pscustomobject]@{ fromUtc = $failedUtc.AddMinutes(-5); toUtc = $failedUtc.AddMinutes(10) }
+                $before = [pscustomobject]@{ fromUtc = $failedUtc.AddMinutes(-40); toUtc = $failedUtc.AddMinutes(-30) }
+                [pscustomobject]@{
+                    windows = $windows; failedUtc = $failedUtc
+                    hit = Find-VanessaFailureSessionLock -FailedWindows $windows -LockIntervals @($before, $covering)
+                    miss = Find-VanessaFailureSessionLock -FailedWindows $windows -LockIntervals @($before)
+                    none = Find-VanessaFailureSessionLock -FailedWindows @() -LockIntervals @($covering)
+                    missing = @(Get-VanessaFailedTestcaseWindows -JUnitPath (Join-Path $tempRoot 'нет.xml'))
+                }
+            }
+            $result.windows | Should -HaveCount 1
+            $result.windows[0].fromUtc | Should -Be $result.failedUtc
+            $result.windows[0].toUtc | Should -Be $result.failedUtc.AddSeconds(65)
+            $result.hit | Should -Not -BeNullOrEmpty
+            $result.hit.fromUtc | Should -Be $result.failedUtc.AddMinutes(-5)
+            $result.miss | Should -BeNullOrEmpty
+            $result.none | Should -BeNullOrEmpty
+            $result.missing | Should -HaveCount 0
+            # The runner applies the route only to a product-assertion verdict.
+            $runner = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1') -Raw -Encoding UTF8
+            $guard = $runner.IndexOf("`$failureRoute.category -eq 'product-assertion'")
+            $lookup = $runner.IndexOf('$sessionLock = Find-VanessaFailureSessionLock')
+            $route = $runner.IndexOf("requiredAction = 'unlock-windows-session-and-repeat-original-command'")
+            $guard | Should -BeGreaterThan -1
+            $lookup | Should -BeGreaterThan $guard
+            $route | Should -BeGreaterThan $lookup
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

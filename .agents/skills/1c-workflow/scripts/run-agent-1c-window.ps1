@@ -5,13 +5,18 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 [Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
+. (Join-Path $PSScriptRoot "lib\itl-runner-timeout.ps1")
 
 $ProjectRoot = (Get-Location).Path
 $HelperPath = ""
 $PollIntervalMilliseconds = 1000
 $StatusStartTimeoutSeconds = 30
-$MaxWaitSeconds = 3600
+$MaxWaitSeconds = $null
 $KeepWindowOnFailure = $false
+# The external window is for the user. An unattended caller passes -WindowStyle Hidden;
+# a gate sets ITL_AGENT_WINDOW_STYLE=Hidden once for every launcher its stands start.
+$WindowStyle = "Normal"
+if ($env:ITL_AGENT_WINDOW_STYLE -in @("Normal", "Minimized", "Hidden")) { $WindowStyle = $env:ITL_AGENT_WINDOW_STYLE }
 $AgentArgs = @()
 $GitIndexLockPath = ""
 $GitIndexLockPreExisted = $false
@@ -139,6 +144,15 @@ $rawArgs = @($args)
         }
         "-keepwindowonfailure" {
             $KeepWindowOnFailure = $true
+            continue
+        }
+        "-windowstyle" {
+            $value = Read-RequiredLauncherValue -Values $rawArgs -Index $i -Name $arg
+            if ($value.value -notin @("Normal", "Minimized", "Hidden")) {
+                throw "Launcher -WindowStyle must be Normal, Minimized or Hidden. Actual: $($value.value)"
+            }
+            $WindowStyle = $value.value
+            $i = $value.index
             continue
         }
         default {
@@ -576,7 +590,9 @@ function Write-LauncherRunStatus {
         [string]$Stage,
         [string]$StageDetail,
         [AllowNull()][object]$ExistingStatus = $null,
-        [int]$HelperProcessId = 0
+        [int]$HelperProcessId = 0,
+        [string]$ErrorCode = "",
+        [string]$RequiredAction = ""
     )
 
     $now = Get-Date
@@ -604,6 +620,9 @@ function Write-LauncherRunStatus {
         launcherPid = $PID
         startedAt = $startedAtText
         updatedAt = $now.ToString("o")
+        operationTimeoutSeconds = $MaxWaitSeconds
+        operationTimeoutSource = "$($operationPolicy.source):$($operationPolicy.setting)"
+        operationDeadlineUtc = $(if ($null -ne $operationDeadlineUtc) { $operationDeadlineUtc.ToString("o") } else { "" })
         finishedAt = $now.ToString("o")
         exitCode = $ExitCode
         lastLogPath = $lastLogPath
@@ -618,24 +637,31 @@ function Write-LauncherRunStatus {
         recoveryReason = $recoveryReason
         resumeStage = $resumeStage
     }
+    if ($ErrorCode) {
+        $payload.errorCode = $ErrorCode
+        $payload.errorCategory = "runner"
+        $payload.requiredAction = $RequiredAction
+    }
 
     [System.IO.File]::WriteAllText($statusPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $utf8)
 }
 
-function Stop-ProcessIfRunning {
-    param([int]$ProcessId)
+function Stop-LauncherOwnedProcessTree {
+    param([Parameter(Mandatory = $true)][Diagnostics.Process]$Process)
 
-    if ($ProcessId -le 0) {
-        return
+    if ($Process.HasExited) { return $true }
+    try { $expectedStartUtc = $Process.StartTime.ToUniversalTime() }
+    catch { return [bool]$Process.HasExited }
+    $current = Get-Process -Id $Process.Id -ErrorAction SilentlyContinue
+    if ($null -eq $current) { return [bool]$Process.HasExited }
+    try { $currentStartUtc = $current.StartTime.ToUniversalTime() }
+    catch { return [bool]$Process.HasExited }
+    if ($currentStartUtc -ne $expectedStartUtc) {
+        return $false
     }
-
-    try {
-        $target = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
-        if ($null -ne $target -and -not $target.HasExited) {
-            Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
-        }
-    } catch {
-    }
+    & taskkill.exe /PID ([string]$Process.Id) /T /F *> $null
+    $Process.WaitForExit(10000) | Out-Null
+    return [bool]$Process.HasExited
 }
 
 function Fail-Launcher {
@@ -645,7 +671,9 @@ function Fail-Launcher {
         [string]$Stage,
         [string]$StageDetail,
         [AllowNull()][object]$ExistingStatus = $null,
-        [int]$HelperProcessId = 0
+        [int]$HelperProcessId = 0,
+        [string]$ErrorCode = "",
+        [string]$RequiredAction = ""
     )
 
     $cleanupMessage = Invoke-LauncherGitIndexLockCleanup
@@ -656,6 +684,7 @@ function Fail-Launcher {
     }
 
     $effectiveExitCode = if ($ExitCode -ne 0) { $ExitCode } else { 1 }
+    Remove-Item -LiteralPath ($statusPath + ".heartbeat") -Force -ErrorAction SilentlyContinue
     Write-LauncherRunStatus `
         -Status "failed" `
         -ExitCode $effectiveExitCode `
@@ -663,7 +692,9 @@ function Fail-Launcher {
         -Stage $Stage `
         -StageDetail $StageDetail `
         -ExistingStatus $ExistingStatus `
-        -HelperProcessId $HelperProcessId
+        -HelperProcessId $HelperProcessId `
+        -ErrorCode $ErrorCode `
+        -RequiredAction $RequiredAction
     [Console]::Error.WriteLine($fullMessage)
     exit $effectiveExitCode
 }
@@ -677,9 +708,8 @@ if ($AgentArgs.Count -gt 0 -and $AgentArgs[0] -eq "--") {
 }
 
 $projectRootFull = Resolve-Agent1cFullPath -Path $ProjectRoot
-if ($MaxWaitSeconds -lt 0) {
-    throw "MaxWaitSeconds must be 0 or greater."
-}
+$operationPolicy = Resolve-ItlRunnerTimeout -ProjectRoot $projectRootFull -Action (Get-AgentAction) -ExplicitSeconds $MaxWaitSeconds
+$MaxWaitSeconds = [int]$operationPolicy.seconds
 if (-not $HelperPath) {
     $HelperPath = Join-Path $PSScriptRoot "agent-1c.ps1"
 }
@@ -700,6 +730,7 @@ $runDir = Join-Path $runsRoot $runId
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 $statusPath = Join-Path $runDir "status.json"
 $logPath = Join-Path $runDir "console.log"
+$argumentsErrorPath = $statusPath + ".arguments-error"
 Initialize-GitIndexLockTracking
 
 $powershell = (Get-Command powershell -ErrorAction SilentlyContinue | Select-Object -First 1).Source
@@ -737,9 +768,16 @@ try {
     }
 } catch {
     [Console]::Error.WriteLine(`$_.Exception.Message)
+    # The helper rejected its own command line before it could publish status.
+    `$agent1cBinding = `$_.Exception -as [System.Management.Automation.ParameterBindingException]
+    if (`$null -ne `$agent1cBinding -and `$null -ne `$agent1cBinding.CommandInvocation -and [string]`$agent1cBinding.CommandInvocation.MyCommand.Path -ieq $(ConvertTo-PowerShellLiteral $helperFull)) {
+        [IO.File]::WriteAllText($(ConvertTo-PowerShellLiteral $argumentsErrorPath), `$agent1cBinding.Message, `$utf8)
+    }
     `$agent1cExitCode = 1
 }
-[Environment]::Exit(`$agent1cExitCode)
+# Leave through the host: [Environment]::Exit on the pipeline thread races the
+# console host's shutdown and can surface 0x80131029 instead of this code.
+exit `$agent1cExitCode
 "@
 
 $argumentLine = Join-NativeCommandLineArguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $commandText)
@@ -749,18 +787,32 @@ Write-Host "Run directory: $runDir"
 Write-Host "Status file: $statusPath"
 Write-Host "Console log: $logPath"
 
-$process = Start-Process `
-    -FilePath $powershell `
-    -ArgumentList $argumentLine `
-    -WorkingDirectory $projectRootFull `
-    -WindowStyle Normal `
-    -PassThru
+$startedAt = Get-Date
+$operationDeadlineUtc = if ($MaxWaitSeconds -gt 0) { $startedAt.ToUniversalTime().AddSeconds($MaxWaitSeconds) } else { $null }
+Write-Host "ITL timeout: action=$(Get-AgentAction); seconds=$MaxWaitSeconds; source=$($operationPolicy.source); setting=$($operationPolicy.setting); deadlineUtc=$(if ($null -ne $operationDeadlineUtc) { $operationDeadlineUtc.ToString('o') } else { 'explicitly-disabled' })"
+$timeoutEnvironmentNames = @("ITL_RUNNER_EFFECTIVE_TIMEOUT_SECONDS", "ITL_RUNNER_TIMEOUT_SOURCE", "ITL_RUNNER_DEADLINE_UTC")
+$previousTimeoutEnvironment = @{}
+foreach ($name in $timeoutEnvironmentNames) { $previousTimeoutEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process") }
+try {
+    [Environment]::SetEnvironmentVariable("ITL_RUNNER_EFFECTIVE_TIMEOUT_SECONDS", [string]$MaxWaitSeconds, "Process")
+    [Environment]::SetEnvironmentVariable("ITL_RUNNER_TIMEOUT_SOURCE", "$($operationPolicy.source):$($operationPolicy.setting)", "Process")
+    [Environment]::SetEnvironmentVariable("ITL_RUNNER_DEADLINE_UTC", $(if ($null -ne $operationDeadlineUtc) { $operationDeadlineUtc.ToString("o") } else { "" }), "Process")
+    $process = Start-Process `
+        -FilePath $powershell `
+        -ArgumentList $argumentLine `
+        -WorkingDirectory $projectRootFull `
+        -WindowStyle $WindowStyle `
+        -PassThru
+} finally {
+    foreach ($name in $timeoutEnvironmentNames) {
+        [Environment]::SetEnvironmentVariable($name, $previousTimeoutEnvironment[$name], "Process")
+    }
+}
 
 if ($null -eq $process) {
     throw "Failed to start external PowerShell window."
 }
 
-$startedAt = Get-Date
 $reportedMissingStatus = $false
 while ($true) {
     $status = Read-RunStatus -Path $statusPath
@@ -795,11 +847,9 @@ while ($true) {
     }
 
     $elapsedSeconds = ((Get-Date) - $startedAt).TotalSeconds
-    if ($MaxWaitSeconds -gt 0 -and $elapsedSeconds -ge $MaxWaitSeconds) {
-        $lastProcessId = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $status -Name "lastProcessId" -Default 0) -Default 0
-        Stop-ProcessIfRunning -ProcessId $lastProcessId
-        Stop-ProcessIfRunning -ProcessId $process.Id
-        $message = "External ITL helper timed out after $MaxWaitSeconds seconds before writing a terminal status. Log: $logPath"
+    if ($null -ne $operationDeadlineUtc -and [DateTime]::UtcNow -ge $operationDeadlineUtc) {
+        $stopped = Stop-LauncherOwnedProcessTree -Process $process
+        $message = "External ITL helper timed out after $MaxWaitSeconds seconds before writing a terminal status. Owned helper tree stop confirmed=$stopped. Log: $logPath"
         Fail-Launcher `
             -ExitCode 124 `
             -Message $message `
@@ -816,6 +866,22 @@ while ($true) {
             continue
         }
         $exitCode = ConvertTo-IntOrDefault -Value $process.ExitCode -Default 1
+        if (Test-Path -LiteralPath $argumentsErrorPath -PathType Leaf) {
+            # A command line split by the caller's shell fails parameter binding
+            # before the helper can publish status; report it as an argument error.
+            $argumentsError = ([IO.File]::ReadAllText($argumentsErrorPath, $utf8)).Trim()
+            $requiredAction = "Repeat the command with every value passed as one named argument (-Name value); quote a value that contains spaces as a single argument."
+            $message = "ITL_ARGUMENTS_INVALID agent-1c.ps1 rejected its arguments before starting: $argumentsError $requiredAction Log: $logPath"
+            Fail-Launcher `
+                -ExitCode $exitCode `
+                -Message $message `
+                -Stage "launcher.arguments-invalid" `
+                -StageDetail $message `
+                -ExistingStatus $status `
+                -HelperProcessId $process.Id `
+                -ErrorCode "LIFECYCLE_OPERATION_ARGUMENTS_INVALID" `
+                -RequiredAction $requiredAction
+        }
         $message = "External ITL helper exited with code $($process.ExitCode) before writing a terminal status. Log: $logPath"
         Fail-Launcher `
             -ExitCode $exitCode `

@@ -6,23 +6,102 @@ Use this reference for `/itl-check`, `verify-dev-branch`, Vanessa Automation, ev
 
 ## Normal Gate
 
+`ITL_VERIFICATION_MODEL=change` selects current-change verification; `cumulative`
+preserves the previous catalog-wide assessment. For change mode, prepare and
+complete the helper-owned increment following [current change verification](verification-change.md).
+A verified increment does not close pending criteria of the whole task. The
+normal unfiltered check and all execution/provider/repair limits below remain
+in force; this model does not authorize a new run or a policy bypass.
+
 Use targeted/static checks while implementing. Use `/itl-check` or helper action `check-dev-branch` as the only executable gate: before completion after the last verification-relevant edit, and earlier only at a milestone whose runtime result decides whether implementation can continue. The final run must be unfiltered. It ensures the copied branch infobase matches current configuration/extension sources, skips Designer/Enterprise when the fingerprint is already current, evaluates `ITL_YAXUNIT_TESTING`, `ITL_VANESSA_TESTING`, and `ITL_CHECK_EVENT_LOG`, and runs permitted components. YAxUnit runs the hierarchical test extension first; Vanessa then uses packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology.
 
-Invoke `check-dev-branch` through `.agents/skills/1c-workflow/scripts/run-itl-command.ps1`, as the generated `/itl-check` command does. That parent runner owns abrupt helper-exit detection, exact Vanessa-run cleanup, and terminal lifecycle/status recovery. Direct `agent-1c.ps1` invocation is an internal debugging path and cannot recover from termination of its own PowerShell process.
+Invoke `check-dev-branch` through `.agents/skills/1c-workflow/scripts/run-itl-command.ps1`, as the generated `/itl-check` command does. That parent runner owns the helper Job Object (`KILL_ON_JOB_CLOSE`), abrupt helper-exit detection, stale-status watchdog even when `liveness` is empty, and the `ITL_RUNNER_OPERATION_TIMEOUT_SECONDS` ceiling (default 3600). Long native waits publish a generic helper heartbeat; Designer and Vanessa add operation-specific progress/stall evidence, so the generic stale watchdog does not preempt a live operation that is still within its published stall budget. After an abrupt helper exit, the runner first uses the exact persisted database/native recovery ticket and retained `ownedProcessScopes`; legacy exact Vanessa evidence remains only a fallback. A verified recovery releases the database, reports stopped owned PIDs with `foreignProcessesStopped=[]`, and returns `retry-original-command` rather than asking for manual process cleanup. Direct `agent-1c.ps1` invocation is an internal debugging path and cannot recover from termination of its own PowerShell process.
 
-`/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. Its cheap preflight checks the suite and reports bounded source-only feature warnings without executing a second authoring run. Missing suites and failed unfiltered verification route to `/itl-verify-fix`. A filtered diagnostic failure instead routes to fixing the cause and repeating the same filtered check; it never starts a repair session. Recovery reuses sufficient coverage, otherwise creates the smallest focused scenario and uses one helper-owned repair session bounded by `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` (default `5`).
+`/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. Its cheap preflight checks the suite and reports bounded source-only feature warnings without executing a second authoring run. Missing classification or failed unfiltered verification routes to `/itl-verify-fix`. An ordinary filtered diagnostic failure routes to fixing the cause and repeating that scope without a repair session. An explicitly requested `/test-fix-loop` instead starts one `scenario-loop` repair session pinned to the named Vanessa feature/tag scope. If no retained feature covers the requested behavior, the agent may author a minimal transient `.feature` under ignored `.agent-1c/verification/scenario-loop/`, with explicit expected outcomes and the normal Vanessa authoring checks, then pass that exact path to the same helper. Preserve the file through the session and any evidence/diagnosis that references it; do not count it as retained regression coverage or silently change an expectation to pass. If the requested behavior cannot be made into a reliable executable scenario, report the missing prerequisite before starting the loop. Its default limit is three rounds; `-VerificationRepairMaxAttempts N` sets the limit only when creating a new session, while repeat `begin-verification-repair` resumes the existing budget. Recovery first separates runner, fixture, and product causes; a proven product defect then uses sufficient existing YAxUnit/Vanessa coverage or the smallest missing regression. The agent resolves classification and repair without asking the user to choose tests or catalogs.
 
 The compact result exposes `errorCategory` and `requiredAction`. Categories are `missing-suite`, `test-fixture`, `unsupported-step`, `scenario-context`, `product-assertion`, `runner`, and `event-log`. They are routing hints, not automatic proof that the test or product is wrong. Follow the structured action; read the last 80 log lines only for an unclassified runner failure.
 
-Long Designer work publishes a 30-second stderr heartbeat plus structured status evidence: current stage, elapsed time, liveness, seconds without CPU/log/process progress, timeout remaining, exact owned PIDs, CPU/log deltas, and working set. `stalled-suspected` begins after `DESIGNER_STALL_WARNING_SECONDS` (default 300). At `DESIGNER_STALL_TIMEOUT_SECONDS` (default 600) the helper fails and stops only exact owned Designer PIDs. The independent memory guard and overall hard operation timeout remain fail-closed. Never kill 1C manually from a stale-looking heartbeat.
+Long Designer work publishes structured liveness from its own bounded completion probe: current stage, elapsed time, seconds without CPU/log/process progress, timeout remaining, exact owned PIDs, CPU/log deltas, and working set. `stalled-suspected` begins after `DESIGNER_STALL_WARNING_SECONDS` (default 300); `DESIGNER_STALL_TIMEOUT_SECONDS` (default 600) fails the operation within a 30-second confirmation window; if the owned Designer is gone but another session still holds the file base, it fails as `DESIGNER_INFOBASE_RELEASE_BLOCKED` naming that holder: release it (this project's ROCTUP session: `close_1c_session`), then repeat the original command. Vanessa uses the same principle against the exact current run: `vanessa.log` growth, owned TestManager/TestClient process-set changes and CPU activity reset its no-progress budget; a normal 1800-second run gets a 300-second warning and 600-second stall bound while still emitting a helper heartbeat well inside the generic 120-second stale threshold. YAxUnit and other native waits also emit the generic heartbeat even when they have no richer progress probe. The independent hard operation/native timeout remains fail-closed. Never kill 1C manually from a stale-looking heartbeat.
 
-Do not run a separate base update first. `/deploy-and-test` and `verify-dev-branch` are compatibility aliases to the same canonical `check-dev-branch` path, not independent loaders. `Run-DevBranchTests` is its private Vanessa phase. A canonical check may select one feature or tag filter for repeated performance profiling, but any `VanessaFeaturePath` or `VanessaFilterTags` keeps that run diagnostic-only. The helper rejects those filters with `VerificationTrigger=repair` before launching 1C. Only an unfiltered full canonical check after its owned update-base may authorize export or complete a repair session. A passed repair id means resume the original task; an exhausted id means report the blocker. Neither state starts another repair. Do not replace executable evidence with MCP or a headless EPF.
+Do not run a separate base update first. `/deploy-and-test` and `verify-dev-branch` are compatibility aliases to the same canonical `check-dev-branch` path, not independent loaders. `Run-DevBranchTests` is its private Vanessa phase. A canonical check may select one feature or tag filter for repeated performance profiling, but any `VanessaFeaturePath` or `VanessaFilterTags` keeps that run diagnostic-only. So does `YAxUnitModule` ([yaxunit-tests.md](yaxunit-tests.md)). `canonical-repair` rejects filters. `scenario-loop` admits only the scope recorded when its session began; a changed feature/tag scope stops before 1C. A named component override may run Vanessa for that session even when its persistent execution switch is `off`, but does not change the switch or lift a broader user no-UI instruction. One `check-dev-branch` scenario-loop call consumes one outer attempt: it checks the filtered scenario, then checks due YAxUnit/Vanessa/event-log obligations unfiltered without a second base update or attempt. The filtered phase alone cannot produce full proof. Only the unfiltered phase supplies fresh passed evidence or completes either repair kind; unverified export follows the policy below. A passed repair id means resume the original task; an exhausted id preserves the blocker and routes suspected workflow defects to `workflow-incidents.md`. Neither state starts another repair. Do not replace executable evidence with MCP or a headless EPF.
+
+### Canonical repair assessment
+
+The report in compact `userReport` points to the helper-owned session record.
+Read the latest counted result and the primary artifacts it references. The
+history records admissions, preflight refusals, refunded workflow refusals and
+available elapsed time. An interrupted admission keeps its charge and links to
+the original run status. Read the stage, symptom, possible mechanism and
+strength of evidence separately. A test can pass its earlier failure point
+while the hypothesis of a common mechanism remains open.
+
+After the fifth counted run in a session without an explicit limit, assess
+every proposed full run. Write a short UTF-8 JSON file in the project with
+`previousRunId` from the latest completed or failed counted run in that session,
+`evidencePath` from that run, and nonempty `progress`, `change`, `expected`
+strings. Cite the observed advance or new diagnostic evidence, the relevant
+input or state change and the result to observe. The previous run's final
+compact status can serve as the evidence reference. Inspect primary artifacts
+before deciding. To validate the reference without launching 1C, pass
+`-VerificationRepairBasisPath <file>` to the original `begin-verification-repair`
+invocation. Pass the same argument to the full repair command with the existing
+`RepairSessionId`. The helper checks linkage and available file identity under
+the lifecycle lock. With a basis `WARN`, diagnose and complete the basis before
+the full repeat. A linked basis leaves the decision on diagnostic sufficiency
+to the agent. Without an actionable basis, keep the dependent check open and
+continue available work in plan order.
+
+A failed repair means one coherent fix followed by a check of the original
+failure path. After three failed repairs without crossing the same obstacle,
+perform systemic diagnosis before another full run, including when a new log
+arrives. Diagnose earlier when several failures share a confirmed mechanism.
+Review the affected contract and analogous cases, fix their common source
+where possible, and gather targeted evidence. Logs and static checks alone
+neither add a repair nor reset the history. A technical refusal before product
+verification routes to the workflow or environment owner.
+
+Read the YAxUnit executed and expected counts, omitted modules and their
+loader diagnostics separately from the event-log verdict. The inventory can
+name modules while the expected case count remains unknown. Keep missing
+coverage and remaining acceptance criteria open. A green subset applies only
+to its observed inputs. Use the existing freshness and task assessment.
+
+An unfiltered check does not start YAxUnit again while its passed result still
+matches the verification inputs, the loaded infobase and the checker; the check
+reports it as reused, not skipped. Any change of these inputs runs it. A named
+`-ExplicitVerificationComponent yaxunit|all` or a module filter always runs it.
+
+For future canonical sessions, remove a legacy `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS=5`
+from `.dev.env` and remove any corresponding process or `AGENT_1C_` override
+if the project wants the new default. A recorded numeric limit and extension
+history continue with the existing session. Older helpers reject the new
+record with no overall limit. If reverting, preserve that record and its
+run artifacts, pause canonical repair and restore a compatible helper before
+resuming the same ID. Numeric records remain readable by the preceding helper.
+
+### Authorized repair-session continuation
+
+An explicit user grant for a larger numeric limit permits `extend-verification-repair` in the original worktree. First verify that authorization in the task; pass its short source reference, the existing session ID and the authorized absolute maximum (1–100):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action extend-verification-repair -RepairSessionId <existing-id> -VerificationRepairMaxAttempts <authorized-maximum> -VerificationRepairGrantSource <grant-reference>
+```
+
+The source reference records the caller's verified authorization; the helper does not fetch chat history or treat a nonempty string as proof of human identity. It validates the same branch/worktree/session and immutable scenario scope. The existing lifecycle lock serializes extension with attempts and completion. Active or exhausted sessions can increase monotonically, preserving attempts, failures, start time and prior extension history in the same atomic record. Repeating the same maximum changes no bytes and does not reactivate exhausted state. Other terminal states cannot resume; 100 remains the technical maximum. Missing authorization, a different scope or contradictory state returns an owner continuation; never edit the JSON, reset counters or start a replacement session to bypass a limit.
+
+After extension, repeat the original repair command with the same ID. Extension is not a passed gate: the next attempt is counted and must perform the original verification. `begin-verification-repair` still only resumes an active session's existing budget. Autonomous AI-budget grants are a separate policy and do not implicitly change this machine limit.
+
+### Workflow-blocked attempts
+
+The repair budget counts product attempts. When an attempt fails on a workflow/runner refusal before any product verdict (`ITL_TESTCLIENT_*`, `EXECUTION_GUARD_*`, `ITL_ONDEMAND_*`, or the runner admission preconditions `ITL_ONEC_SESSION_LIMIT`/`ITL_VANESSA_LICENSE_LIMIT`), the helper refunds that attempt and appends `workflowBlocked` evidence (code, time, category) to the same session record; a scenario-loop retry with unchanged input is then allowed. Any product, fixture, suite, update or event-log category is counted as before, even when the message also quotes a workflow code. The same `workflowBlocked` code twice in a row, with no counted product attempt between them, sets status `workflow-blocked` and `requiredAction=report-workflow-incident`: stop retrying and follow [workflow incidents](workflow-incidents.md). After the incident is resolved, `begin-verification-repair` with the original scope resumes that session with its product attempts; the last blocked code is retained, so an unchanged refusal stops it again after one run. Extension does not apply to `workflow-blocked`, and the user's extension consent is unchanged. Records without these fields keep their existing counts.
 
 ## ITL Modes
 
-Both ITL keys accept `auto|manual|off`; missing/invalid uses safe effective `auto`. `auto` runs for implicit completion, command, repair, and direct requests. `manual` runs for command, repair, and direct requests. `off` runs only for an explicit request naming that component; generic `/itl-check` and `/itl-verify-fix` do not override it. `/itl-litemode` maps `lite/on` to `off/off`, `standard` to `auto/manual`, and `full/off` to `auto/auto`. Upstream `/litemode`, `VERIFICATION_DEPTH`, and `UI_TESTING` remain independent.
+Both ITL keys accept `auto|manual|off`; missing uses `auto`; invalid values skip execution with a correction diagnostic. `auto` runs for implicit completion, command, repair, and direct requests. `manual` runs for command, repair, and direct requests. `off` runs only for an explicit request naming that component; generic `/itl-check` and `/itl-verify-fix` do not override it. `/itl-litemode` maps `lite/on` to `off/off`, `standard` to `auto/manual`, and `full/off` to `auto/auto`. Upstream `/litemode`, `VERIFICATION_DEPTH`, and `UI_TESTING` remain independent.
 
-When Vanessa is off, do not automatically author tests or add them to a new plan. A skipped component sets `lastVerificationStatus=partial`, clears fresh evidence, and records skipped components. `verificationPolicy=block` still requires full evidence. For result export, `warn` proceeds after a visible warning; advanced close still requires its separate explicit confirmation.
+Execution off does not prohibit authoring needed current evidence or retaining an independently justified regression; it does not itself require new tests. Preserve approved plans and decide current proof separately from future regression coverage. A skipped component records partial evidence only when no fresh complete proof already covers the current inputs; a later ordinary check reuses a fresh explicit result without resetting the persistent switch. One-off obligations need a matching passed receipt in the same readiness assessment as retained runners and event log. Classification may be ready while that receipt is pending, so retained tests can still run. `verificationPolicy=block` requires the complete result; `warn` proceeds after a visible warning, and advanced close still requires its separate explicit confirmation. The receipt format and compact helper actions are in [verification suite selection](verification-suite-selection.md).
+
+Saved Vanessa also obeys `TOOL_BROWSER=auto|off|required`; empty means `auto`, invalid blocks that runner with a correction, and `off` cannot be bypassed through another launcher. A named Vanessa invocation may override its execution and provider off switches for that invocation only; it does not authorize unrelated UI or lift a current broader no-UI instruction. `UI_TESTING` selects the separate interactive UI workflow and does not disable saved Vanessa by itself. YAxUnit and event-log checks are independent of browser policy. A required runtime still needs the existing runner's actual capability and readiness checks; configuration alone is not proof.
 
 `VANESSA_TEST_FOREIGN_WAIT_MODE=warn` is the default: foreign branch 1C test processes are diagnostic warnings, not a reason to wait, unless there is a real TestClient port/infobase conflict or the mode is set to `wait`.
 
@@ -32,9 +111,9 @@ Use scenarios from `tests/features` for quick-fix, direct full-cycle, and OpenSp
 
 Named or multi-client suites declare a project-owned TestClient manifest through `vanessaAutomation.testClientManifestPath` or ignored `VANESSA_TESTCLIENT_MANIFEST`. Schema 1 contains `maxConcurrency` and `profiles`; the legacy field name `maxConcurrency` is the maximum TestClient concurrency permitted by the manifest, not a license limit or the number reserved for every run. The runner statically derives the actual requirement from the selected feature scenarios and atomically reserves `1 x TESTMANAGER` in its empty service infobase plus the required TestClients in the development infobase against each exact infobase's `ONEC_MAX_CONCURRENT_SESSIONS` ceiling. Each profile has a literal unique `name`, optional `user` or `userEnv`, optional `passwordEnv`, `synonym`, and `clientType=Thin|Thick`. Never put a password, secret, or raw `/P` argument in the manifest. `passwordEnv` is resolved only from ignored `.dev.env` or the process environment. A project without a manifest keeps the one-profile legacy behavior for unnamed serial suites.
 
-Before TestManager starts, the helper expands profile placeholders from scenario-outline `Examples`, treats any selected `(Расширение)` arbitrary-code step as requiring the current TestClient, reports a genuinely unresolved `<Профиль>` as `test-fixture`, reports the complete set of concrete missing profile names as `runner`, checks that the selected scenarios' static per-scenario TestClient requirement does not exceed the manifest ceiling, and allocates one bounded unique port per profile. The multi-infobase admission is atomic, so ROCTUP, Vanessa UI, Designer, and project-owned guarded launches cannot consume a promised target TestClient slot during manager startup. Static analysis resets client state between scenarios. Because VA `1.2.043.28` only distinguishes one client from multiple clients, that one-versus-many mode follows the selected scenarios' actual requirement; a configured non-zero topology stops on the first scenario error and asks VA to close configured TestClients after the run. `-VanessaFilterTags` is normalized from feature syntax such as `@V28` to VA values such as `V28`; VA receives only the official `filtertags` array. A filtered run is accepted only when JUnit `tests` equals the selected scenario count calculated from the feature set. The final completion run remains unfiltered.
+Before TestManager starts, the helper expands profile placeholders from scenario-outline `Examples`, treats any selected `(Расширение)` arbitrary-code step as requiring the current TestClient, reports a genuinely unresolved `<Профиль>` as `test-fixture`, reports the complete set of concrete missing profile names as `runner`, checks that the selected scenarios' static per-scenario TestClient requirement does not exceed the manifest ceiling, and allocates one bounded unique port per profile. The multi-infobase admission is atomic, so ROCTUP, Vanessa UI, Designer, and project-owned guarded launches cannot consume a promised target TestClient slot during manager startup. Static analysis resets client state between scenarios. Because VA `1.2.043.42` only distinguishes one client from multiple clients, that one-versus-many mode follows the selected scenarios' actual requirement; a configured non-zero topology stops on the first scenario error and asks VA to close configured TestClients after the run. `-VanessaFilterTags` is normalized from feature syntax such as `@V28` to VA values such as `V28`; VA receives only the official `filtertags` array. A filtered run is accepted only when JUnit `tests` equals the selected scenario count calculated from the feature set. The final completion run remains unfiltered.
 
-For a quick-fix, reuse sufficient existing coverage; otherwise create or update one focused regression scenario and add a second only for a separate meaningful integration/UI boundary or negative case. For direct full-cycle, choose coverage from the actual behavior and risk rather than OpenSpec artifact count. For OpenSpec, plan 1-2 representative integration/UI scenarios and keep algorithmic boundaries in parameterized YAxUnit tests. Choose the cheapest reliable check type:
+For a quick-fix, reuse sufficient existing coverage or obtain a focused current result; retain a new regression when future reuse justifies it. For direct full-cycle and OpenSpec, choose current proof and retained coverage from the actual behavior and risk rather than artifact count. If creating retained OpenSpec tests, prefer representative integration/UI scenarios and put algorithmic boundaries in parameterized YAxUnit tests. A one-off result must be recorded against the exact obligation and checked inputs before it can establish readiness. Choose the cheapest reliable check type:
 
 - local calculation, parsing, condition, filling, or applied logic belongs in YAxUnit; keep a Vanessa `unit-like` block only when the contract itself depends on TestClient/extension runtime context;
 - `integration`: object/register/document/exchange interaction.
@@ -48,7 +127,11 @@ The verification gate checks the branch-local file infobase event log against `.
 
 The preferred 8.3.22 sequential `.lgp` reader decodes severity and identifiers from their fixed fields and resolves event and metadata names through `1Cv8.lgf`. `SOURCE_EVENT_LOG_BASELINE_ENABLED` enables this auxiliary baseline for both source kinds and defaults to `true`. A file-source seed baseline inspects only the latest `.lgp`: an unchanged segment parses no event range after small identity probes, append-only growth parses only the byte delta, and cold start, rotation, truncation, replacement, or damaged cache parses at most `SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES` (default `1048576`; `0` starts at EOF). It never falls back to a full large segment or opens an older segment. `SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS` is the positive server-provider lookback and defaults to `7`. The old `SOURCE_EVENT_LOG_LOOKBACK_DAYS` is only a deprecated compatibility fallback. The latest-segment cursor and signatures live under `.agent-1c/event-log-signature-cache/<source-key>.json`; degraded tail coverage is recorded rather than presented as complete history. Canonical `check-dev-branch` preserves the oldest branch-persistent cursor before its owned base update, reuses a cursor left by a separate `update-dev-branch-base`, and copies that boundary into the Vanessa run evidence. The gate therefore covers config load/Enterprise normalization, delayed errors before the next check, and the current TestManager/TestClient cycle. Direct Vanessa-only runs keep a local cursor immediately before TestManager and do not consume the lifecycle cursor.
 
-After a completed scan the persistent cursor advances even when new errors fail the gate, so fixed errors are not replayed forever. The failed fingerprint remains an event-log debt: an unchanged command retry cannot turn green; a changed verification fingerprint or a clean `/itl-verify-fix` repair run clears it. Existing branches without a persistent cursor perform one bounded migration scan from their baseline boundary. Cursor-mode uses byte position plus clock-skew tolerance, while rotation, truncation, source change, damaged cursor, or migration falls back to boundary-period segments. Evidence records cursor source key, capture time, scope, scan mode, scanned bytes, and the actual checked window; a clean message is limited to that stated scope. No fixed post-test sleep is allowed; managed process completion and the 10-second completion grace remain authoritative. `.lgd` stays unsupported.
+After a completed scan the persistent cursor advances even when new errors fail the gate, so fixed errors are not replayed forever. The failed fingerprint remains an event-log debt: an unchanged command retry cannot turn green; a changed verification fingerprint, an acknowledgement of every error in the debt report, or a clean `/itl-verify-fix` repair run clears it. Existing branches without a persistent cursor perform one bounded migration scan from their baseline boundary. Cursor-mode uses byte position plus clock-skew tolerance, while rotation, truncation, source change, damaged cursor, or migration falls back to boundary-period segments. Evidence records cursor source key, capture time, scope, scan mode, scanned bytes, and the actual checked window; a clean message is limited to that stated scope. No fixed post-test sleep is allowed; managed process completion and the 10-second completion grace remain authoritative. `.lgd` stays unsupported.
+
+When the scenarios passed and only the event log failed, `requiredAction=fix-or-acknowledge-event-log-errors`. Read the named report and decide each error yourself; do not wait for the user. Each error carries `origin` (`check`, or `before-check` such as manual work in the branch infobase between checks) and `relation` of its stack to the branch changes against the accepted master ancestor: `changed-lines`, `changed-objects`, `unchanged` or `no-stack`. Fix an error the branch causes: one in the check window or with `changed-lines` belongs to the task unless the agent provoked it on purpose. For `changed-objects`, read the frames and the branch diff: an expected business refusal is unrelated, a technical failure is a defect to fix. Acknowledge an error provoked on purpose, such as a tested refusal raised with `ВызватьИсключение`, or one unrelated to the branch task: run `-Action acknowledge-event-log-errors -EventLogSignatures <signature,...> -EventLogAcknowledgeReason "<decision and evidence>"` with signatures from that report, then repeat the original check. The reason is required; the acknowledgement keeps the error's origin and relation. An acknowledged signature stays non-blocking for the rest of the branch, is listed under `acknowledged` in later reports and in the `/itl-result` report. A signature includes the stack line numbers, so an edited module may need a new acknowledgement.
+
+Diagnostic output never changes a pass/fail, route or debt decision. A Vanessa failure summary leads with the exception and first stack line after Vanessa's `ДеталиОшибки:` (`ErrorDetails:`) marker, then Vanessa's own error; the technical-data block stays in the named JUnit. A named run that leaves `event-log` out of scope prints `VANESSA_EVENT_LOG_PREVIEW` for new errors in its own window, including background jobs, with its duration, scanning only from a run-local cursor; its `event-log-preview.json` is not evidence, and cursor and debt stay unchanged. `ITL_CHECK_EVENT_LOG=off` suppresses the preview. A failing event-log check names each registered diagnostic Vanessa run whose time window contains a new error; those errors remain debt and close through the existing continuation. A project-tests `GATE6_PROJECT_TESTS_ENVIRONMENT` warning counts findings separately for the tests extension, repository extensions, the configuration and extensions outside the repository.
 
 ## EXPORT_DEV_BRANCH_RESULT
 
@@ -56,20 +139,239 @@ Goal: export a CF or CFE artifact from the current development branch.
 
 1. Require the current `itldev/*` worktree. Do not require or create a Git commit.
 2. Check that the canonical effective-tree fingerprint still matches the successful verification before loading, before export, and after export.
-3. Apply `verificationPolicy`: default `warn` prints a prominent warning and continues without confirmation or `-AllowUnverifiedResult` when verification is not fresh passed; `block` stops without an override path.
+3. Apply `verificationPolicy`: default `warn` prints a prominent warning and continues without confirmation or `-AllowUnverifiedResult` when verification is not fresh passed; `block` stops in the normal route; a suspected workflow defect follows `workflow-incidents.md`.
 4. Export CF for configuration branches and CFE for extension branches.
 5. Create `<artifact>.manifest.json` next to the exported artifact.
 6. Normalize the artifact and manifest to absolute paths, publish them as `resultPath` and `resultManifestPath` in run status/compact JSON, include both in `artifacts`, and return a short Russian `userReport` with the full paths.
-7. In the same report, list configuration-repository transfer objects from `merge-base(master, HEAD)` through the effective working tree. Include committed, staged, unstaged, and untracked files under the active CF/CFE export path. A changed metadata descriptor is reported as a full object; external-only changes are reported as partial with their affected parts. Exclude `ConfigDumpInfo.xml` and the membership-only root `Configuration.xml`; surface every unmapped source path for manual review instead of dropping it.
+7. In the same report, list configuration-repository transfer objects from the last completed reset/refresh/fork baseline through the effective working tree. Result export and repository locking use the same resolver and report its provenance. Own commits, infobase loads and movement of master do not advance this baseline. A manual master merge without `/itl-refresh` moves only the scope base of result transfer, repository locking and review: when the recorded base is an ancestor of `merge-base(HEAD, master)`, that merge-base is used with provenance `merge-base-after-manual-merge`. When the two are unrelated (a fork branch after a manual merge reports `DEV_BRANCH_MANUAL_MERGE_REFRESH_REQUIRED`; a rewritten master `DEV_BRANCH_TRANSFER_SCOPE_BASE_DIVERGED`), repository locking refuses and result export continues with a `WARN` and no object list; the continuation of both is `/itl-refresh`. Verification change and production preparation keep the recorded baseline. A reset proves equality with the exact master tree, without requiring merge ancestry; refresh/fork prove the target in the completed head history. Include committed, staged, unstaged, and untracked files under the active CF/CFE export path. A changed metadata descriptor is reported as a full object; external-only changes are reported as partial with their affected parts. Exclude `ConfigDumpInfo.xml` and the membership-only root `Configuration.xml`; surface every unmapped source path for manual review instead of dropping it. State without a recorded completed lifecycle proof retains `merge-base(master, HEAD)` with explicit legacy provenance; old load/refresh fields alone do not create proof. Invalid, foreign or contradictory proof never falls back silently: use the reported lifecycle-owner recovery, then retry the original operation. A pending refresh does not erase the previous completed baseline; an interrupted reset retains its existing `/itl-reset-branch` continuation. Check/refresh completion does not depend on transfer planning, so recording the accepted baseline does not create a verification cycle.
 
 The manifest also retains SHA256, verification status, latest 1C log path, and the manual import note.
+
+A standalone `/DumpCfg <file>` (including `-Extension <name>`) may finish while
+another Enterprise/ROCTUP session keeps the infobase open. The helper still
+requires its own Designer processes to finish, valid stable output, and passing
+exit/log checks. It does not require exclusive file-base availability for this
+read-only step. Configuration loads, updates, snapshots and combined commands
+retain their existing release requirements. Never close foreign sessions or
+bypass runtime locks to finish an export; a CF/CFE without the official manifest
+is not a completed result.
 
 Result manifest schema 3 records artifact SHA256, operation, branch metadata, master/development base commits, working-tree provenance, configuration and verification fingerprints, verification status/report/log, `verification.policy`, `verification.decision` (`fresh-passed` or `warn-unverified`), latest 1C log path, publication URL, and manual import note. The legacy `unverifiedOverride` key remains false unless the legacy flag was actually passed. A development commit in a dirty-tree manifest is the base commit, not a claim that the exported content was committed.
 
 Verification freshness uses a versioned canonical Git tree fingerprint of configured configuration, extension, and feature paths. A temporary index materializes the effective scoped working tree without changing the user's index. Committing exactly that checked content preserves the fingerprint; staging, unstaging, or committing files outside the scope also preserves it. Any effective scoped content change makes previous evidence stale.
 
 Configuration and extension loads use a separate versioned Git-tree source fingerprint. It hashes canonical Git tree records instead of reopening every source file, includes effective staged, unstaged, untracked, and ignored source files, and excludes `ConfigDumpInfo.xml`. An existing legacy SHA256 source fingerprint is recalculated once and migrates without Designer only on an exact match; a mismatch still follows the normal partial/full load safety path.
-The `v3` rollout intentionally treats stored legacy `v2` evidence as stale once; run one fresh `/itl-check` after updating the workflow.
+The `v5` fingerprint uses only verification-relevant dependency-lock fields. A
+passed result also records the exact target infobase and loaded configuration /
+extension identity, including the target and runner infobase generations; older
+proof without that identity is stale once. A workflow-only update does not run
+tests or automatically invalidate compatible proof; the next ordinary
+assessment runs only checks whose relevant source, loaded state, runner, checker
+or acceptance inputs changed. The first check or refresh
+records a legacy baseline so unchanged old BSL does not require new tests.
+Schema-2 obligation `inputPaths` also enter the fingerprint. A changed declared
+OpenSpec requirement selects its retained owning suite; an unrelated change
+outside those paths does not invalidate proof.
+
+One-off receipts also bind the actual functions that assess their validity.
+A changed relevant checker or an old receipt without that identity requires
+`begin-one-off-proof` and a new observed result with the current checker;
+unknown compatibility is never passed. A checker change between begin and
+complete leaves the receipt pending with the same continuation. JUnit parser
+changes affect JUnit receipts without invalidating unrelated runtime
+observations. Invocation permission and its expiry remain provenance, separate
+from proof freshness; a passed sufficient result can be reused after its named
+invocation ends while persistent execution stays off. File-only installation
+does not run the new proof automatically.
+
+For a checked source or CFE load, the rollback point is the database
+configuration of the same object: the ITL owner creates no DT and runs no
+configuration comparison. An extension absent from the database configuration
+is removed with `/DeleteCfg -Extension` instead; one already present, including
+a branch-seed extension, is never removed. Presence comes from the recorded
+applied proof, the owner's fresh runtime probe or `/DumpDBCfgList -Extension`;
+an unknown answer stops before editable mutation with
+`GATE6_ROLLBACK_POINT_FAILED`. When the enclosing
+extension-init or Release operation already owns a pending snapshot for this
+exact target, the checked load uses it without changing its completion policy.
+For every editable source load, the ITL owner runs Designer `/CheckModules`
+and extension applicability when loading an extension, before `/UpdateDBCfg`.
+Each selected generic check requires zero process exit, fresh numeric
+`/DumpResult=0` and a UTF-8 `/Out` without remaining errors or warnings;
+the existing project-test and immutable vendor contracts below remain separate.
+Ordinary development, full/partial/fallback loads, tooling installs, intermediate
+CF/CFE exports and ordinary close do not run `/CheckConfig`. Static MCP coverage
+never waives required compilation. Full checks belong to explicit working-base
+preparation and existing Release qualification; load size, execution path,
+verification depth and OpenSpec do not select them.
+See [platform validation evidence](platform-validation-evidence.md) for saved-input
+MCP proof identity, which remains independent of the platform cadence.
+`GATE6_CHECK_FAILED` stops database apply and returns the editable object to
+the database configuration (`/RollbackCfg [-Extension]` or `/DeleteCfg
+-Extension`), confirmed by zero exit and `/DumpResult=0`;
+correct the named source finding and repeat the original ITL operation.
+A failed applicability check does not trigger the partial-load full fallback;
+the owner also restores the byte-exact `ConfigDumpInfo.xml` cursor.
+A confirmed rollback before apply restores the previous loaded proof, so the
+retry stays partial. A started `/UpdateDBCfg` first clears the applied-tree
+proof; if it fails, the editable object is rolled back and the retry is one full
+load. A failure after a completed apply (project-test readiness) returns
+`GATE6_POST_APPLY_FAILED` without rollback: the candidate passed every mandatory
+check but stays unverified, and repeating the original operation reloads it
+fully. If an earlier load of the same source object stopped before apply (empty
+fingerprint with a recorded tree), the next checked load rolls it back before
+any check and prints `GATE6_UNFINISHED_LOAD_ROLLED_BACK`; unapplied Designer
+edits are discarded. This runs only under the branch's exclusive lifecycle lock.
+If any rollback is unconfirmed, `GATE6_ROLLBACK_RECOVERY_FAILED` names the load,
+check and rollback logs and clears the applied tree: repeat the original
+operation, which runs one strict full load without legacy finding acceptance and
+never repeats the same rollback; recreate a damaged branch infobase through
+`reset-dev-branch`. Retained `gate6-*.dt` files from older runs are neither used
+nor removed by checked loads.
+The proof is recorded under
+`lastGate6Evidence` with source, editable-load arguments/log hash, target,
+modes, rollback point (`kind`, `attemptId`, `baseIdentity`, mechanism) or
+enclosing snapshot identity, and check artifact hashes. Older DT-bound evidence
+remains readable.
+Every completed ladder also writes an ignored `1c-gate6-evidence-*.json` receipt
+beside its result and log files, including tooling installs that do not update
+the source-load state. Compilation and extension applicability remain strict under the generic policy; the narrowly scoped internal engine exception below is separate from main-CF legacy assessment.
+Managed main-CF structural findings may continue only when the load owner
+proves complete unchanged before/after findings outside the change and its
+impact scope, with matching source, target, native check inputs and the same
+load attempt: its rollback point `attemptId` and `baseIdentity` (derived from
+the applied proof before the load), or the enclosing snapshot SHA.
+This records `accepted-with-preexisting-findings`, the original nonzero native
+result and `nativePassed=false`; it is not a clean platform pass. New, increased,
+inside-scope, unclassified or unbound findings stop apply with the existing
+rollback and retry route. Agents must not create a baseline by editing State,
+suppress warnings or repair unrelated product objects to satisfy this gate.
+Empty/CFE extension initialization uses the same ladder inside its existing
+infobase snapshot; a failed check restores that snapshot before retrying the
+original initialization after a source repair.
+The owner also compares the source fingerprint or CFE SHA after editable load;
+a changed input stops before any check or database apply.
+The same owner checks CFE installs for YAxUnit, Vanessa UI MCP and Data MCP;
+their prior tooling readiness and recovery routes remain the continuation.
+
+### Immutable YAxUnit engine diagnostics
+
+The managed USER-RULES override applies only to helper-owned installation of
+the official immutable `YAXUNIT` engine. The existing YAxUnit dependency owner
+internally selects one canonical version/tag/asset/URL/upstream/SHA baseline
+for `YAxUnit-25.12.cfe`, SHA256
+`805a2277c997a3c24be0b0d080696479e91e4a15ed7e27aaf3991a7346522d70`.
+Another pin cannot inherit it merely by matching the lock. Agents cannot supply
+allowed messages, a public skip or an environment override. Product CF/CFE,
+the tests extension and other dependencies retain all generic strict checks.
+
+Modules must strictly pass with native exit/DumpResult `0/0`. Applicability may
+continue as WARN only with native `0/0` and its four exact canonical annotation
+lines (two texts, twice each); configuration may continue only with `101/101`
+and its two exact canonical helper-form handler lines (once each).
+The owner reads complete strict UTF-8 Out and matches separate bounded ordinal
+multisets, preserving message spaces. Only encoding BOM, line separators and an
+ordinary terminal newline may normalize for comparison. Filtered diagnostics,
+substring matching, line counts or success fragments are insufficient.
+Extra/unknown/altered/missing lines, repetition overflow, invalid output/result,
+nonzero compilation/applicability or another nonzero code pair retain the
+original strict failure. Ordinary clean `0/0` behavior remains unchanged.
+
+The checked-load owner rechecks exact artifact SHA before editable load, after
+load and immediately before first apply. It retains raw bytes/hashes/codes,
+canonical baseline identity, actual target/platform/modes and explicit WARN;
+the vendor steps retain `nativePassed=false` and the assessment
+`cleanPassed=false`. Snapshot, guard, timeout, split load/apply, rollback,
+`-WarningsAsErrors`, runtime protection reconciliation and exact installed
+extension runtime proof remain mandatory. A mismatch stops apply and uses the
+same original-operation recovery; do not patch an installed artifact or receipt.
+
+Observed live evidence covers only platform `8.3.27.2130`, file infobase and
+thin client. Instrumented callback evidence and failed whole diagnostic drivers
+are not official-CFE or Release acceptance. Ordinary/server/other-platform
+qualification is not inferred, and missing evidence alone introduces no new
+support barrier. The original Release still qualifies the official CFE and
+both original ondemand backend families under their existing native/apply/runtime
+owners; no vendor, pin, public command or coordinator changes follow from WARN.
+
+When Gates 1–3 validators are unavailable, this same already-authorized
+load/check/apply route supplies platform syntax/context and structural evidence
+for its exact artifact and target. It does not claim semantic logic or standards
+review passed. Read-only work never grants a configuration load. Without an
+authorized matching dev/test target, record unverified evidence and the upstream
+delivery limitation; there is no new blanket delivery block or bypass of ITL
+apply requirements. For EDT-format sources, use EDT validation and its qualified
+update owner, or an explicitly selected XML export/import route; never add this
+ladder as a second deployment owner in the same run.
+
+## Review scope
+
+A code review in a managed project, including `/ponytail-review`, takes its scope from `get-review-scope` and passes it as the explicit scope. Run it from the development branch worktree through the compact runner:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action get-review-scope -ReviewPurpose review
+```
+
+- **ReviewPurpose** is required. `self` is the author's self-review: Soft gate C in full-cycle, the final OpenSpec apply review, review of code changed in this session, and an `arch-reviewer` or `/ponytail-review` invoked in this session. `review` is a separately requested review. A requested review of code this session changed is a self-review: say so and recommend a separate chat.
+- **Scope:** every file that differs from the branch scope base (item 7 of `EXPORT_DEV_BRANCH_RESULT`): committed, staged, unstaged and non-ignored untracked, deletions included, renames as delete plus add. Every review covers the whole branch work.
+- **Report:** `stageDetail` carries the base, provenance and counts per kind; the full report is normally in `userReportPath`. Read its header and the needed sections by range, not the whole file: subject objects per dump root (full/partial, unparsed paths), subject files, tests, requirement sources, unclassified (grouped with counts when large). Excluded files are only counted.
+- **Kinds, first match wins:** `ConfigDumpInfo.xml` (always excluded) → excluded: ITL-managed paths of the base, `HEAD` and the static set, and `.agent-1c/diagnostic-artifacts` → subject: `src/cf`, `src/cfe`, except the project tests extension `src/cfe/<YAXUNIT_TESTS_EXTENSION_NAME>` → requirement sources: `openspec/changes`, `docs`, `handoffs` → tests: Vanessa features, YAxUnit test sources, suite catalogs and obligation `inputPaths` outside `src` → unclassified.
+- **Reading:** each path line is a ready command, `git -c core.quotepath=false diff --no-renames <base> -- '<path>'`, or «read it whole» for a new untracked file. Run commands in PowerShell after `[Console]::OutputEncoding = [Text.Encoding]::UTF8`. Review `src/cf`/`src/cfe` XML by the object list. Read the diff of tests that relate to the subject objects (the object or module is visible in the test path or found by name in the scoped tests); report the rest as a count. Read requirement sources only as needed to check the current task's specification. Self-review limits full reading per `review-criteria.md → Scope`.
+- **Read-only:** the action takes no lifecycle lock, writes no branch state, index, worktree, Git objects or refs and never runs lifecycle commands; the verification fingerprint's temporary objects go to a discarded object directory. A refresh or reset started in the same worktree during a review is not detected; the report opens with its base.
+- **Refusals for `review`:** not an `itldev/*` worktree `REVIEW_SCOPE_DEVELOPMENT_BRANCH_REQUIRED`; unfinished refresh, including stage `merged`, `REVIEW_SCOPE_REFRESH_PENDING`; active merge `REVIEW_SCOPE_MERGE_CONFLICT`; interrupted reset `DEV_BRANCH_RESET_IN_PROGRESS`; invalid proof `DEV_BRANCH_TRANSFER_BASELINE_INVALID`; fork after a manual master merge `DEV_BRANCH_MANUAL_MERGE_REFRESH_REQUIRED`; rewritten master `DEV_BRANCH_TRANSFER_SCOPE_BASE_DIVERGED`. The review then reports «scope not obtained: <code>; finish <command> in the development chat of this branch, then repeat the review» and never runs that command itself. An empty scope is not an error: «no changes to review».
+- **`self` never blocks:** on any of these refusals it returns mode `local-delta` (working tree, staged, unstaged and untracked against `HEAD`) with the code and continuation. Mark coverage `limited: <code>` and give the continuation to the user as a recommendation.
+- **Outside a development branch** (on `master` or without `itldev/*` work for this task): `review` takes the scope per `review-criteria.md → Scope`, sources 2–3 (a user-named base, otherwise CONFUSION); `self` uses the local delta.
+- **Size and range (`review` only):** the report gives the size as BSL change text of the subject. Above 300 KB the action stops at stage `review-scope.range-required` with a ready question instead of the scope: only uncommitted changes (shown when there are any), one numbered option per listed commit, or the whole branch. Show the user every option as one numbered list or table with its figures, never select or squeeze options into dialog buttons, never choose yourself; the user answers with a number or a commit. Then run the chosen command: `-ReviewRange uncommitted`, `-ReviewRange since -ReviewSince <commit>` or `-ReviewRange branch`. A range the user already named in the request is passed directly. `self` gets no question.
+- **Commit list:** the branch's first-parent commits since its creation or last reset, newest first, at most 15 shown; updates from master are marked. A range after the last update is the change since that commit. A range that starts before an update holds only the files the branch's own commits or uncommitted work changed since that commit, read from the branch base: master changes stay out, earlier branch edits of those files are visible, and the report says so. Each entry shows its date, explained automatic ITL commits, up to three objects, BSL lines, the resulting size and an `/itl-check` mark; ITL service commits without 1C changes are counted. An unlisted earlier commit of the branch may be named by hash; any other commit is refused with `REVIEW_SCOPE_SINCE_NOT_ALLOWED`.
+- **`/itl-check` and gates:** the report shows the last branch check against the current code: passed on the current code, stale, partial, failed, not run or unknown. Passed on the current code is Gate 1 evidence for every BSL module of the scope: the workflow recorded it, it is not the author's claim. Otherwise mark Gate 1 unverified and recommend `/itl-check` in the development chat. For a large scope taken whole, run Gates 2–3 as text on changed procedures chosen by risk and list the rest as not checked automatically.
+
+## Production preparation
+
+Use `-ResultPurpose production` only when the human explicitly requests preparation
+for a working infobase or directly requests the full `CheckConfig`, on `export-dev-branch-result`, `close-dev-branch`,
+`export-auxiliary-contour-result`, `check-dev-branch` or `verify-dev-branch`.
+The default is `development`; export, closing a branch or a large change alone
+never implies production. This prepares evidence/artifacts in the authorized test
+contour and does not grant a working-base deployment.
+Route “Выполни полную проверку конфигурации CheckConfig” to
+`check-dev-branch -ResultPurpose production`; it authorizes the full check in the
+development contour without installation into a working infobase or publication.
+
+Final check and branch-result reports render the existing platform preparation
+outcome. Only explicit `not-required-development` produces the skipped-check
+notice, explaining the extra checks, their possible cost, and that preparation
+for a working infobase or a direct request runs them. Completed and reused proof
+show its actual result and receipt; absent evidence never implies a skipped or
+passed check. The notice adds no native invocation or baseline storage.
+If a later verification fails, retain the platform outcome and receipt in the
+failure report with overall status `failed` and the original error. Do not present
+an earlier successful verification as the current result; rethrow the original
+failure even if rendering the report also fails.
+
+Preparation requires the complete `/CheckModules`, extension applicability when
+applicable, and `/CheckConfig -ConfigLogIntegrity -IncorrectReferences -ThinClient
+-Server -ExternalConnection -HandlersExistence -ExtendedModulesCheck` ladder.
+A fingerprint-matching no-load path still runs any missing full qualification.
+Exact qualified proof may be reused only with matching source, loaded-base
+identity, target, layer, platform build, modes and intact native/assessment files.
+Missing proof causes checking; it is never inferred from a prior `passed` label.
+The manifest's `platformPreparation` records purpose, status and receipt path/hash
+separately from behavioural verification. `verificationPolicy=warn` cannot waive
+the production platform requirement, and platform success does not prove tests.
+
+There is no new baseline store or history reconstruction. Operation-local main-CF
+legacy comparison retains its existing comparator only when the previous loaded
+corpus is the proven original seed/lifecycle source for the whole release delta.
+A later development load and candidate self-comparison cannot supply that origin.
+Transfer-baseline commits and event-log seed baselines alone are not native
+before-checks. An already completed exact legacy qualification can be reused;
+its original completed rollback snapshot need not be retained. Without suitable
+proof, a clean native check needs no baseline, while unresolved findings stop only
+production preparation. Continue development/intermediate export or resolve the
+findings and repeat the same explicit preparation; never restore arbitrary old
+snapshots, create a whitelist, edit state, or repair unrelated product code merely
+to invent a baseline. A read-only preparation failure does not roll back a previous
+development apply. Checked-load failures retain their checked-load rollback.
 
 ## Verification Policy
 

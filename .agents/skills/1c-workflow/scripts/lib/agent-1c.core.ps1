@@ -1,4 +1,12 @@
-$script:Agent1cCoreRoot = $PSScriptRoot
+﻿$script:Agent1cCoreRoot = $PSScriptRoot
+
+$script:RunStatusHeartbeatDepth = 0
+$script:RunTimingRecords = @()
+$script:RunTimingStage = ""
+$script:RunTimingStartedAtUtc = [DateTime]::MinValue
+$script:RunTimingCounters = [ordered]@{}
+$script:RunTimingWriteFailed = $false
+$script:RunTimingImplementationSha256 = ""
 
 function Write-Section {
     param([string]$Text)
@@ -261,6 +269,77 @@ function Resolve-RunFilePath {
     return (Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $Path))
 }
 
+function Write-RunPhaseTimings {
+    if ($script:RunTimingWriteFailed -or [string]::IsNullOrWhiteSpace($RunStatusPath)) { return }
+    try {
+        $statusPath = Resolve-RunFilePath -Path $RunStatusPath
+        $path = Join-Path (Split-Path -Parent $statusPath) "phase-timings.json"
+        if (-not $script:RunTimingImplementationSha256) {
+            $implementationParts = @(
+                foreach ($leaf in @('agent-1c.core.ps1', 'agent-1c.lifecycle.ps1', 'agent-1c.seed.ps1', 'agent-1c.sessions.ps1')) {
+                    $modulePath = Join-Path $script:Agent1cCoreRoot $leaf
+                    "$leaf=$((Get-FileHash -LiteralPath $modulePath -Algorithm SHA256).Hash.ToLowerInvariant())"
+                }
+            )
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try {
+                $digest = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($implementationParts -join "`n")))
+                $script:RunTimingImplementationSha256 = ([BitConverter]::ToString($digest)).Replace('-', '').ToLowerInvariant()
+            } finally {
+                $sha.Dispose()
+            }
+        }
+        $payload = [ordered]@{
+            schemaVersion = 1
+            runId = Split-Path -Leaf (Split-Path -Parent $statusPath)
+            action = [string]$Action
+            implementationSha256 = $script:RunTimingImplementationSha256
+            completedPhases = @($script:RunTimingRecords)
+            truncated = ($script:RunTimingRecords.Count -ge 200)
+        }
+        Write-Utf8TextAtomic -Path $path -Value (($payload | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    } catch {
+        $script:RunTimingWriteFailed = $true
+        Write-Warning "ITL_PHASE_TIMING_WRITE_FAILED: $($_.Exception.Message)"
+    }
+}
+
+function Complete-RunPhaseTiming {
+    param([string]$Outcome = "completed")
+    if (-not $script:RunTimingStage -or $script:RunTimingRecords.Count -ge 200) { return }
+    $endedAtUtc = [DateTime]::UtcNow
+    $script:RunTimingRecords += [ordered]@{
+        phaseId = ($script:RunTimingRecords.Count + 1)
+        phase = $script:RunTimingStage
+        startedAtUtc = $script:RunTimingStartedAtUtc.ToString("o")
+        endedAtUtc = $endedAtUtc.ToString("o")
+        durationMilliseconds = [int64][Math]::Max(0, ($endedAtUtc - $script:RunTimingStartedAtUtc).TotalMilliseconds)
+        outcome = $Outcome
+        counters = $script:RunTimingCounters
+    }
+    $script:RunTimingStage = ""
+    $script:RunTimingCounters = [ordered]@{}
+    Write-RunPhaseTimings
+}
+
+function Set-RunTimingCounter {
+    param([string]$Name, [long]$Value)
+    if ($script:RunTimingStage -and $Name -match '^[a-zA-Z][a-zA-Z0-9]*$' -and $Value -ge 0) {
+        $script:RunTimingCounters[$Name] = $Value
+    }
+}
+
+function Start-RunPhaseTiming {
+    param([string]$Stage)
+    if ($Action -notin @("init-project", "sync-master") -or [string]::IsNullOrWhiteSpace($RunStatusPath)) { return }
+    if ($Stage -eq $script:RunTimingStage) { return }
+    Complete-RunPhaseTiming
+    if ($script:RunTimingRecords.Count -ge 200) { return }
+    $script:RunTimingStage = $Stage
+    $script:RunTimingStartedAtUtc = [DateTime]::UtcNow
+    $script:RunTimingCounters = [ordered]@{}
+}
+
 function Write-RunStatus {
     param(
         [ValidateSet("running", "succeeded", "failed", "cancelled")]
@@ -277,6 +356,7 @@ function Write-RunStatus {
             throw "init-project success status requires stage init.complete and exitCode 0."
         }
     }
+    if ($Status -ne "running") { Complete-RunPhaseTiming -Outcome $Status }
 
     $script:ResolvedRunStatusPath = Resolve-RunFilePath -Path $RunStatusPath
     if ($RunLogPath) {
@@ -298,6 +378,9 @@ function Write-RunStatus {
         launcherPid = $script:LauncherPid
         startedAt = $script:RunStartedAt.ToString("o")
         updatedAt = $now.ToString("o")
+        operationTimeoutSeconds = [int]([Environment]::GetEnvironmentVariable("ITL_RUNNER_EFFECTIVE_TIMEOUT_SECONDS", "Process"))
+        operationTimeoutSource = [string]([Environment]::GetEnvironmentVariable("ITL_RUNNER_TIMEOUT_SOURCE", "Process"))
+        operationDeadlineUtc = [string]([Environment]::GetEnvironmentVariable("ITL_RUNNER_DEADLINE_UTC", "Process"))
         finishedAt = $finishedAt
         exitCode = $ExitCode
         lastLogPath = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
@@ -327,6 +410,11 @@ function Write-RunStatus {
         recoveryReason = $script:RecoveryReason
         errorCategory = $(if ($script:RunErrorCategory) { [string]$script:RunErrorCategory } else { "" })
         requiredAction = $(if ($script:RunRequiredAction) { [string]$script:RunRequiredAction } else { "" })
+        blockerClassification = $(if ($script:RunBlockerClassification) { [string]$script:RunBlockerClassification } else { "" })
+        blockerRequiresUserDecision = [bool]$script:RunBlockerRequiresUserDecision
+        blockerRetryOriginalCommand = [bool]$script:RunBlockerRetryOriginal
+        blockerAction = $script:RunBlockerAction
+        blockerOwner = $script:RunBlockerOwner
         refreshMasterCommit = [string]$script:RunRefreshMasterCommit
         devBranch = $(if ($script:RunDevBranch) { [string]$script:RunDevBranch } else { "" })
         worktreePath = $(if ($script:RunWorktreePath) { [string]$script:RunWorktreePath } else { "" })
@@ -339,6 +427,178 @@ function Write-RunStatus {
     }
 
     Write-Utf8TextAtomic -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+}
+
+function Invoke-WithRunStatusHeartbeat {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Alias('Action')][scriptblock]$Body,
+        [ValidateRange(1, 60)][int]$IntervalSeconds = 15
+    )
+
+    $runStatusVariable = Get-Variable -Name RunStatusPath -Scope Script -ErrorAction SilentlyContinue
+    if ($null -eq $runStatusVariable -or [string]::IsNullOrWhiteSpace([string]$runStatusVariable.Value)) {
+        return & $Body
+    }
+    if ([int]$script:RunStatusHeartbeatDepth -gt 0) {
+        $script:RunStatusHeartbeatDepth++
+        try { return & $Body }
+        finally { $script:RunStatusHeartbeatDepth-- }
+    }
+
+    $stopPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-run-status-hb-" + [guid]::NewGuid().ToString("N"))
+    $heartbeatPath = (Resolve-RunFilePath -Path $RunStatusPath) + ".heartbeat"
+    [IO.File]::WriteAllText($heartbeatPath, [string]$PID, [Text.Encoding]::ASCII)
+    $job = $null
+    try {
+        $job = Start-Job -ScriptBlock {
+        param($HeartbeatPath, $StopPath, $IntervalSeconds)
+        $delaySeconds = $IntervalSeconds
+        while (-not (Test-Path -LiteralPath $StopPath)) {
+            Start-Sleep -Seconds $delaySeconds
+            if (Test-Path -LiteralPath $StopPath) { break }
+            try {
+                [IO.File]::SetLastWriteTimeUtc($HeartbeatPath, [DateTime]::UtcNow)
+                $delaySeconds = $IntervalSeconds
+            } catch {
+                # Only a withdrawn sidecar ends liveness. A reader or scanner
+                # holding it is transient: retry soon instead of going silent
+                # for the rest of the body while the owner is still working.
+                if (-not (Test-Path -LiteralPath $HeartbeatPath -PathType Leaf)) { break }
+                $delaySeconds = 1
+            }
+        }
+        } -ArgumentList $heartbeatPath, $stopPath, $IntervalSeconds
+        $script:RunStatusHeartbeatDepth = 1
+        return & $Body
+    } finally {
+        $script:RunStatusHeartbeatDepth = 0
+        if ($null -ne $job) {
+            New-Item -ItemType File -Path $stopPath -Force | Out-Null
+            Wait-Job -Job $job -Timeout 1 | Out-Null
+            Stop-Job -Job $job -ErrorAction SilentlyContinue
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath $stopPath -Force -ErrorAction SilentlyContinue
+        # Publish main-file liveness before removing its temporary sidecar. Keep
+        # the original status/exit/error evidence, including terminal failures.
+        try {
+            if (Test-Path -LiteralPath (Resolve-RunFilePath -Path $RunStatusPath) -PathType Leaf) {
+                $statusPath = Resolve-RunFilePath -Path $RunStatusPath
+                $record = Read-Utf8Text -Path $statusPath | ConvertFrom-Json
+                $owner = $record.PSObject.Properties['pid']
+                if ($null -ne $owner -and [string]$owner.Value -ceq [string]$PID) {
+                    $record | Add-Member -NotePropertyName updatedAt -NotePropertyValue ([DateTimeOffset]::Now.ToString('o')) -Force
+                    Write-Utf8TextAtomic -Path $statusPath -Value (($record | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+                }
+            }
+        } catch {
+            Write-Warning "Run-status heartbeat handoff could not be published: $($_.Exception.Message)" -WarningAction Continue
+        }
+        Remove-Item -LiteralPath $heartbeatPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# One update-workflow process applies master and every development worktree in
+# sequence. Machine-scoped inputs (verified shared artifacts, the registry
+# snapshot, isolated rules preflight, user-scope UI tool preparation) are
+# prepared once per process and reused while the branch pins are identical.
+# The state is in memory only and disappears with the operation.
+function Test-WorkflowUpdateRunSharedInputsActive {
+    $run = Get-Variable -Name ItlWorkflowUpdateRunInputs -Scope Script -ErrorAction SilentlyContinue
+    return ($null -ne $run -and $null -ne $run.Value)
+}
+
+function Invoke-WorkflowUpdateRunSharedInputs {
+    param([Parameter(Mandatory = $true)][scriptblock]$Body)
+    if (Test-WorkflowUpdateRunSharedInputsActive) { return (& $Body) }
+    $script:ItlWorkflowUpdateRunInputs = @{}
+    # Snapshot path-state hashes of this operation, keyed by file metadata;
+    # see Get-WorkflowUpdateFileSha256 for its invalidation points.
+    $script:ItlWorkflowUpdatePathHashCache = @{}
+    $script:ItlWorkflowUpdateRealDirectoryCache = @{}
+    try { & $Body } finally {
+        Remove-Variable -Name ItlWorkflowUpdateRunInputs -Scope Script -ErrorAction SilentlyContinue
+        Remove-Variable -Name ItlWorkflowUpdatePathHashCache -Scope Script -ErrorAction SilentlyContinue
+        Remove-Variable -Name ItlWorkflowUpdateRealDirectoryCache -Scope Script -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-WorkflowUpdateRunSharedEntry {
+    param([Parameter(Mandatory = $true)][string]$Kind, [AllowNull()][object]$Identity)
+    if (-not (Test-WorkflowUpdateRunSharedInputsActive)) { return $null }
+    $key = $Kind + '|' + (ConvertTo-Json -InputObject $Identity -Depth 12 -Compress)
+    if (-not $script:ItlWorkflowUpdateRunInputs.ContainsKey($key)) { $script:ItlWorkflowUpdateRunInputs[$key] = @{} }
+    return $script:ItlWorkflowUpdateRunInputs[$key]
+}
+
+function Invoke-WorkflowUpdateRunSharedStep {
+    param([Parameter(Mandatory = $true)][string]$Kind, [AllowNull()][object]$Identity,
+        [Parameter(Mandatory = $true)][scriptblock]$Prepare)
+    $entry = Get-WorkflowUpdateRunSharedEntry -Kind $Kind -Identity $Identity
+    if ($null -ne $entry -and $entry.ContainsKey('value')) {
+        return [pscustomobject]@{ reused = $true; value = $entry['value'] }
+    }
+    $value = & $Prepare
+    if ($null -ne $entry) { $entry['value'] = $value }
+    return [pscustomobject]@{ reused = $false; value = $value }
+}
+
+# Parallel branch helpers of the same update run receive these verified inputs
+# as data. Only completed results travel: a step value, a ready state, a UI tool
+# outcome, and a successful registry refresh pinned to its exact catalog
+# revision. Anything missing or unreadable is simply prepared again.
+function Export-WorkflowUpdateRunSharedInputs {
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$SourceCommit)
+    $entries = [System.Collections.Generic.List[object]]::new()
+    if (Test-WorkflowUpdateRunSharedInputsActive) {
+        foreach ($key in @($script:ItlWorkflowUpdateRunInputs.Keys)) {
+            $entry = $script:ItlWorkflowUpdateRunInputs[$key]
+            $data = [ordered]@{}
+            if ([string]$key -like 'vibecoding1c-mcp-registry|*') {
+                if (-not $entry.ContainsKey('attempted') -or -not $entry['attempted'] -or $null -ne $entry['error']) { continue }
+                $data['attempted'] = $true
+                if ($entry.ContainsKey('catalogRefreshAttempted') -and $entry['catalogRefreshAttempted']) {
+                    if ($null -ne $entry['catalogRefreshError']) { continue }
+                    $revision = if ($entry.ContainsKey('catalogPinnedRevision') -and $entry['catalogPinnedRevision']) { [string]$entry['catalogPinnedRevision'] }
+                        elseif ($entry.ContainsKey('catalogSnapshot') -and $null -ne $entry['catalogSnapshot']) { [string](Get-ConfigValueFromObject $entry['catalogSnapshot'] 'catalogRevision' '') } else { '' }
+                    if ($revision -cnotmatch '^(?:[a-f0-9]{40}|[a-f0-9]{64})$') { continue }
+                    $data['catalogRefreshAttempted'] = $true
+                    $data['catalogPinnedRevision'] = $revision
+                    if ($entry.ContainsKey('catalogPinnedRoot') -and $entry['catalogPinnedRoot']) { $data['catalogPinnedRoot'] = [string]$entry['catalogPinnedRoot'] }
+                }
+            } else {
+                foreach ($name in @('value', 'readyState', 'outcome')) { if ($entry.ContainsKey($name)) { $data[$name] = $entry[$name] } }
+            }
+            if ($data.Count -gt 0) { $entries.Add([ordered]@{ key = [string]$key; data = $data }) | Out-Null }
+        }
+    }
+    $payload = [ordered]@{ schemaVersion = 1; sourceCommit = $SourceCommit; entries = @($entries.ToArray()) }
+    Write-Utf8TextAtomic -Path $Path -Value (($payload | ConvertTo-Json -Depth 32) + [Environment]::NewLine)
+}
+
+function Import-WorkflowUpdateRunSharedInputs {
+    param([string]$Path, [Parameter(Mandatory = $true)][string]$SourceCommit)
+    if (-not (Test-WorkflowUpdateRunSharedInputsActive) -or [string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return 0 }
+    try { $saved = Read-Utf8Text -Path $Path | ConvertFrom-Json -ErrorAction Stop }
+    catch { Write-Warning "Shared update inputs were not reused and will be prepared again: $($_.Exception.Message)"; return 0 }
+    if ([int](Get-ConfigValueFromObject $saved 'schemaVersion' 0) -ne 1 -or [string](Get-ConfigValueFromObject $saved 'sourceCommit' '') -cne $SourceCommit) { return 0 }
+    $count = 0
+    foreach ($item in @($saved.entries)) {
+        $key = [string]$item.key
+        $entry = @{}
+        foreach ($property in @($item.data.PSObject.Properties)) { $entry[$property.Name] = $property.Value }
+        if ($key -like 'vibecoding1c-mcp-registry|*') {
+            # The local checkout already holds the refreshed publication; read
+            # it without another fetch, and the catalog at the pinned revision.
+            try { $entry['snapshot'] = Read-Vibecoding1cMcpRegistryFile } catch { continue }
+            $entry['error'] = $null
+            if ($entry.ContainsKey('catalogRefreshAttempted')) { $entry['catalogRefreshError'] = $null }
+        }
+        $script:ItlWorkflowUpdateRunInputs[$key] = $entry
+        $count++
+    }
+    return $count
 }
 
 function Set-RunUserReport {
@@ -359,13 +619,62 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed", "refresh-target", "branch-aggregate")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "product-update", "runner", "event-log", "session-capacity", "infobase-readiness", "execution-conflict", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed", "refresh-target", "branch-aggregate")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )
 
     if ($Category) { $script:RunErrorCategory = $Category }
     if ($RequiredAction) { $script:RunRequiredAction = $RequiredAction }
+}
+
+function Get-WorkflowVerificationFailureContext {
+    param([AllowEmptyString()][string]$Message)
+
+    $category = ''
+    $requiredAction = ''
+    $messageText = ([string]$Message).TrimStart()
+    $fixtureFrame = '\{ВнешняяОбработка\.VanessaAutomation(?:single)?\.Форма\.Тест_ВстроенныйЯзык\.Форма\([0-9]+\)\}:\s*'
+    $fixtureCompilation = '^(?:' + $fixtureFrame + 'При выполнении кода возникла ошибка\s*<)?' + $fixtureFrame +
+        'Ошибка компиляции при вычислении выражения или выполнении фрагмента кода:\s*\{<Неизвестный модуль>'
+    if ($messageText -match '^ITL_PROJECT_TESTS_NOT_APPLICABLE\b') {
+        # The continuation is a test-source correction, not tooling repair.
+        $category = 'test-fixture'
+    } elseif ($messageText -match '^ITL_(?:TOOLING_|DESIGNER_AGENT_|PROJECT_TESTS_)') {
+        $category = 'runner'
+        $requiredAction = 'repair-dev-branch-tooling'
+    } elseif ($messageText -cmatch '(?<![A-Z0-9_])ITL_TESTCLIENT_[A-Z0-9_]+') {
+        # Raised by the patched Vanessa allocator inside a scenario step, so the
+        # code is wrapped by VA frames. It is TestClient capacity, not product.
+        $category = 'runner'
+        $requiredAction = 'wait-for-testclient-capacity-and-repeat-original-command'
+    } elseif ($messageText -match '^ITL_YAXUNIT_TIMEOUT\b') {
+        # Project setting, not a product or test defect.
+        $category = 'runner'
+        $requiredAction = 'set-yaxunit-test-timeout-in-dev-env-and-repeat-original-command'
+    } elseif ($messageText -match '^ITL_YAXUNIT_ZERO_TESTS') {
+        $category = 'missing-suite'
+    } elseif ($messageText -match '^ITL_YAXUNIT_TESTS_FAILED') {
+        $category = 'product-assertion'
+    } elseif ($messageText -match '^ITL_VANESSA_TEST_FIXTURE_' -or $messageText -match $fixtureCompilation) {
+        # Only compilation at Vanessa's direct dynamic-body call site is fixture-owned.
+        # A nested product module frame or unknown source does not establish that provenance.
+        $category = 'test-fixture'
+    } elseif ($messageText -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
+        $category = 'missing-suite'
+    } elseif ($messageText -match '(?i)(undefined step|step.+not found|unsupported-step)') {
+        $category = 'unsupported-step'
+    } elseif ($messageText -match '(?i)(scenario context|scenario-context)') {
+        $category = 'scenario-context'
+    } elseif ($messageText -match '^ITL_VANESSA_TAG_FILTER_') {
+        $category = 'runner'
+    } elseif ($messageText -match '(?i)(event.?log)') {
+        $category = 'event-log'
+    } elseif ($messageText -match '(?i)(\bassert(?:ion)?\b|\bexpected\b|verification failed)') {
+        $category = 'product-assertion'
+    }
+    if ($category -and $category -ne 'runner') { $requiredAction = '/itl-verify-fix' }
+    return [pscustomobject]@{ category=$category; requiredAction=$requiredAction }
 }
 
 function Set-RunFailureContextFromMessage {
@@ -389,6 +698,45 @@ function Set-RunFailureContextFromMessage {
         Set-RunFailureContext -Category "infobase-readiness" -RequiredAction "update-dev-branch-base"
         return
     }
+    if ($Message -match '^(?i:ITL_ENTERPRISE_AUTO_UPDATE_FAILED)\b') {
+        $recovery = if ($RequestedAction -like "*auxiliary-contour*") {
+            "fix-update-handler-then-run-update-auxiliary-contour"
+        } else {
+            "fix-update-handler-then-run-update-dev-branch-base"
+        }
+        Set-RunFailureContext -Category "product-update" -RequiredAction $recovery
+        return
+    }
+    if ($Message -match '^(?i:ITL_ENTERPRISE_AUTO_UPDATE_(?:PROOF_MISSING|NATIVE_FAILED))\b') {
+        Set-RunFailureContext -Category "runner" -RequiredAction "inspect-auto-update-result"
+        return
+    }
+    if ($Message -match '^(?i:ITL_ENTERPRISE_NORMALIZATION_(?:PROOF_UNVERIFIED|RETRY_REQUIRED))\b') {
+        Set-RunFailureContext -Category "infobase-readiness" -RequiredAction "update-dev-branch-base"
+        return
+    }
+    if ($Message -match '^(?i:ITL_AUXILIARY_(?:NORMALIZATION_(?:PROOF_UNVERIFIED|RETRY_REQUIRED)|INFOBASE_NOT_READY))\b') {
+        Set-RunFailureContext -Category "infobase-readiness" -RequiredAction "update-auxiliary-contour"
+        return
+    }
+    if ($Message -match '^(?i:EXECUTION_GUARD_BRANCH_HOLDER_RETAINED)\b') {
+        # The holder is this worktree's own workflow; its single release owner
+        # is the tooling repair, never a manual kill or a fresh chat.
+        Set-RunFailureContext -Category 'execution-conflict' -RequiredAction 'repair-dev-branch-tooling'
+        return
+    }
+    if ($Message -match '^(?i:DESIGNER_INFOBASE_RELEASE_BLOCKED)\b') {
+        # The named holder is outside this operation; product and test fixes cannot release it.
+        Set-RunFailureContext -Category 'execution-conflict' -RequiredAction 'release-the-named-infobase-holder-then-repeat-original-command'
+        $script:RunBlockerClassification = 'infobase-holder'
+        $script:RunBlockerRequiresUserDecision = $false
+        $script:RunBlockerRetryOriginal = $true
+        return
+    }
+    if ($Message -match '^(?i:EXECUTION_GUARD_(?:EXTERNAL_CONFLICT|WAIT_TIMEOUT))\b') {
+        Set-RunFailureContext -Category 'execution-conflict' -RequiredAction 'wait-for-exact-base-activity-or-cancel-the-current-operation'
+        return
+    }
 
     $verificationActions = @("check-dev-branch", "verify-dev-branch", "deploy-and-test")
     if ($Message -match '^(?i:ITL_CONFIG_LOAD_FAILED)\b' -and
@@ -402,35 +750,27 @@ function Set-RunFailureContextFromMessage {
         return
     }
 
-    if ($Message -match '^ITL_TOOLING_') {
-        $category = "runner"
-        $requiredAction = "repair-dev-branch-tooling"
-    } elseif ($Message -match '^ITL_YAXUNIT_ZERO_TESTS') {
-        $category = "missing-suite"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '^ITL_YAXUNIT_TESTS_FAILED') {
-        $category = "product-assertion"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
-        $category = "missing-suite"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '^ITL_VANESSA_TEST_FIXTURE_') {
-        $category = "test-fixture"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(undefined step|step.+not found|unsupported-step)') {
-        $category = "unsupported-step"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(scenario context|scenario-context)') {
-        $category = "scenario-context"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(event.?log)') {
-        $category = "event-log"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(\bassert(?:ion)?\b|\bexpected\b|verification failed)') {
-        $category = "product-assertion"
-        $requiredAction = "/itl-verify-fix"
+    $classification = Get-WorkflowVerificationFailureContext -Message $Message
+    if ($classification.category) {
+        $category = [string]$classification.category
+        $requiredAction = [string]$classification.requiredAction
     }
     Set-RunFailureContext -Category $category -RequiredAction $requiredAction
+}
+
+function Clear-RunLivenessEvidence {
+    $script:RunLiveness = ""
+    $script:RunNoProgressSeconds = 0
+    $script:RunStallTimeoutRemainingSeconds = 0
+    $script:RunTimeoutRemainingSeconds = 0
+    $script:RunOwnedProcessIds = @()
+    $script:RunProbePhase = ""
+    $script:RunProbeStartedAt = ""
+    $script:RunProbeAgeSeconds = 0
+    $script:RunProbeLastCompletedAt = ""
+    $script:RunCpuDeltaMilliseconds = 0
+    $script:RunWorkingSetMb = 0
+    $script:RunLogGrowthBytes = 0
 }
 
 function Set-RunStage {
@@ -440,20 +780,15 @@ function Set-RunStage {
     )
 
     $designerMonitorStage = $Stage -match '(^|\.)designer-(running|wait|stalled-suspected|stalled-timeout)$'
-    if (-not $designerMonitorStage) {
-        $script:RunLiveness = ""
-        $script:RunNoProgressSeconds = 0
-        $script:RunStallTimeoutRemainingSeconds = 0
-        $script:RunTimeoutRemainingSeconds = 0
-        $script:RunOwnedProcessIds = @()
-        $script:RunProbePhase = ""
-        $script:RunProbeStartedAt = ""
-        $script:RunProbeAgeSeconds = 0
-        $script:RunProbeLastCompletedAt = ""
-        $script:RunCpuDeltaMilliseconds = 0
-        $script:RunWorkingSetMb = 0
-        $script:RunLogGrowthBytes = 0
+    if (-not $designerMonitorStage) { Clear-RunLivenessEvidence }
+    $stageLogPath = [string](Get-Variable -Name RunLogPath -ValueOnly -ErrorAction SilentlyContinue)
+    $previousStage = [string](Get-Variable -Name RunStage -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    if (-not [string]::IsNullOrWhiteSpace($stageLogPath) -and $Stage -cne $previousStage) {
+        # Captured helper output flows only into the run log. Its single writer
+        # turns these transitions into the per-stage duration table.
+        Write-Host "ITL stage: $Stage"
     }
+    Start-RunPhaseTiming -Stage $Stage
     $script:RunStage = $Stage
     $script:RunStageDetail = $Detail
     if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) {
@@ -462,8 +797,24 @@ function Set-RunStage {
     Update-Agent1cLifecycleOperationStage -Stage $Stage -Detail $Detail
 }
 
+function Write-RunStepMarker {
+    param([Parameter(Mandatory = $true)][string]$Name, [switch]$End)
+    # Only a captured run log receives step markers; its single writer adds the
+    # entry-to-exit duration to the run timing table. Callers pair them with
+    # try/finally so the marked code keeps its own scope.
+    if ([string]::IsNullOrWhiteSpace([string](Get-Variable -Name RunLogPath -ValueOnly -ErrorAction SilentlyContinue))) { return }
+    if ($End) { Write-Host "ITL step end: $Name" } else { Write-Host "ITL step: $Name" }
+}
+
 function Test-Agent1cActionRequiresLifecycleLock {
     param([string]$RequestedAction)
+
+    if ($RequestedAction -eq 'stop-vanessa-profile' -and
+        (Get-Command Test-VanessaInteractiveProfileHasOwner -CommandType Function -ErrorAction SilentlyContinue) -and
+        (Test-VanessaInteractiveProfileHasOwner)) {
+        # The persistent owner performs an exact strict stop itself.
+        return $false
+    }
 
     $readOnlyActions = @(
         "help",
@@ -479,33 +830,44 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "list-platforms",
         "detect-web-publication",
         "detect-apache",
+        "openspec-context",
         "vibecoding1c-mcp-status",
         "status-vanessa-profile"
     )
-    # These actions mutate only facade-owned runtime state while the caller
-    # already holds the shared runtime lease. Reacquiring runtime-mcp.lock here
-    # would deadlock the nested helper against its own facade call.
-    $facadeRuntimeLeaseActions = @(
+    # These actions are nested under the call-scoped execution guard owned by
+    # the facade. They must not acquire a lifecycle lock while the call runs.
+    $facadeExecutionActions = @(
         "start-vanessa-profile",
+        "internal-ondemand-execution-plan",
         "internal-ondemand-ensure",
         "internal-ondemand-ensure-test-client",
         "internal-ondemand-mark-running",
         "internal-ondemand-recover",
+        "internal-ondemand-complete-test-client-close",
         "internal-ondemand-stop"
     )
+    # Review scope only reads branch state and Git; a review in another chat on
+    # the same worktree must not wait for the author's check or publication.
+    $branchScopeReadActions = @("get-review-scope")
+    # Window helpers are disposable per group under their own helper.lock; status,
+    # stop and restart must reach a hung helper while a run holds the lifecycle lock.
+    $windowHelperActions = @("window-helper-status", "window-helper-stop", "window-helper-restart", "window-show", "window-hide")
+    # A parallel update-workflow child takes its branch lease itself with the
+    # same zero wait as the in-process rollout, so a busy branch is deferred.
+    $workflowBranchChildActions = @("update-workflow-branch")
     if ($readOnlyActions -contains $RequestedAction) { return $false }
-    if ($facadeRuntimeLeaseActions -contains $RequestedAction) { return $false }
+    if ($workflowBranchChildActions -contains $RequestedAction) { return $false }
+    if ($branchScopeReadActions -contains $RequestedAction) { return $false }
+    if ($windowHelperActions -contains $RequestedAction) { return $false }
+    if ($facadeExecutionActions -contains $RequestedAction) { return $false }
+    # These writes are admitted by the selected store's scoped file leases;
+    # a project lifecycle lock would serialize unrelated external changes.
     return $true
 }
 
 function Get-Agent1cLifecycleLockPath {
     param([string]$WorktreePath)
     return (Join-Path (Resolve-Agent1cFullPath -Path $WorktreePath) ".agent-1c\locks\lifecycle.lock")
-}
-
-function Get-Agent1cRuntimeMcpLockPath {
-    param([string]$WorktreePath)
-    return (Join-Path (Resolve-Agent1cFullPath -Path $WorktreePath) ".agent-1c\locks\runtime-mcp.lock")
 }
 
 function Get-Agent1cLifecycleOperationStatePath {
@@ -537,29 +899,78 @@ function Ensure-Agent1cLifecycleLocksIgnored {
         Resolve-Agent1cFullPath -Path (Join-Path $resolvedWorktree $commonGitDirectoryText)
     }
     $excludePath = Join-Path $commonGitDirectory "info\exclude"
-    $ignoreLines = @(".agent-1c/locks/", ".agent-1c/runtime/", ".agent-1c/event-log-cursors/")
-    $existingLines = @()
-    if (Test-Path -LiteralPath $excludePath -PathType Leaf -ErrorAction SilentlyContinue) {
-        $existingLines = @(Read-Utf8Lines -Path $excludePath | ForEach-Object { ([string]$_).Trim() })
-    }
-    foreach ($ignoreLine in $ignoreLines) {
-        if ($existingLines -contains $ignoreLine) {
-            continue
+    $ignoreLines = @(
+        ".agent-1c/locks/",
+        ".agent-1c/runtime/",
+        ".agent-1c/event-log-cursors/",
+        ".agent-1c/execution-checkpoints/",
+        ".agent-1c/execution-guard-generation.json",
+        ".agent-1c/tools/openspec-cli/",
+        ".agent-1c/snapshots/dependency-selection.json",
+        ".agent-1c/snapshots/dependency-selection.json.*",
+        ".agent-1c/execution-guard-generation.json.*"
+    )
+    # Admission prepares this shared file before acquiring the lifecycle lock.
+    # Hold its writer handle across read/append so concurrent helpers neither
+    # fail on a sharing race nor append duplicate entries from a stale read.
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $excludePath))
+    $stream = $null
+    try {
+        for ($attempt = 1; $attempt -le 40; $attempt++) {
+            try {
+                $stream = [IO.File]::Open($excludePath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+                break
+            } catch [IO.IOException] {
+                $cause = $_.Exception
+                while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+                if (($cause.HResult -band 0xffff) -notin @(32, 33) -or $attempt -eq 40) { throw }
+                Start-Sleep -Milliseconds 50
+            }
         }
-        Add-Utf8Text -Path $excludePath -Value ($ignoreLine + [Environment]::NewLine)
+        $reader = [IO.StreamReader]::new($stream, (Get-Utf8Encoding), $true, 1024, $true)
+        try { $existingText = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        $existingLines = @($existingText -split '\r?\n' | ForEach-Object { $_.Trim() })
+        $missing = @($ignoreLines | Where-Object { $existingLines -notcontains $_ })
+        if ($missing.Count -gt 0) {
+            $prefix = if ($existingText.Length -gt 0 -and -not $existingText.EndsWith("`n")) { [Environment]::NewLine } else { "" }
+            $bytes = (Get-Utf8Encoding).GetBytes($prefix + ($missing -join [Environment]::NewLine) + [Environment]::NewLine)
+            [void]$stream.Seek(0, [IO.SeekOrigin]::End)
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush()
+        }
+    } catch {
+        throw "ITL_LIFECYCLE_IGNORE_WRITE_FAILED path='$excludePath': $($_.Exception.Message) Release the writer or restore access to this Git exclude file, then repeat the original ITL command."
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
     }
 }
 
 function Read-Agent1cLifecycleOperationRecord {
-    param([string]$Path)
+    param([string]$Path, [switch]$ExistingPublication)
 
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return $null
-    }
-    try {
-        return (ConvertTo-Agent1cHashtable -Object ((Read-Utf8Text -Path $Path) | ConvertFrom-Json))
-    } catch {
-        return $null
+    for ($attempt = 1; $attempt -le 40; $attempt++) {
+        $stream = $null
+        $reader = $null
+        try {
+            # Read one complete file generation, including an already opened old
+            # generation during replacement. Windows ReplaceFile can briefly
+            # hold the replacement exclusively; retry only that transport race.
+            $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            $reader = [IO.StreamReader]::new($stream, (Get-Utf8Encoding), $true)
+            return (ConvertTo-Agent1cHashtable -Object ($reader.ReadToEnd() | ConvertFrom-Json))
+        } catch [IO.IOException] {
+            $cause = $_.Exception
+            while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+            $code = $cause.HResult -band 0xffff
+            $publicationRace = $code -in @(32, 33) -or ($ExistingPublication -and $code -eq 2)
+            if (-not $publicationRace -or $attempt -eq 40) { return $null }
+        } catch {
+            return $null
+        } finally {
+            if ($null -ne $reader) { $reader.Dispose() }
+            elseif ($null -ne $stream) { $stream.Dispose() }
+        }
+        Start-Sleep -Milliseconds 50
     }
 }
 
@@ -569,7 +980,7 @@ function Write-Agent1cLifecycleOperationRecord {
         [System.Collections.IDictionary]$Record
     )
 
-    Write-Utf8Text -Path $Path -Value (($Record | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    Write-Utf8TextAtomic -Path $Path -Value (($Record | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 }
 
 function Archive-StaleAgent1cLifecycleOperation {
@@ -609,15 +1020,27 @@ function Get-Agent1cLifecycleOperationLockScopes {
 
     $candidatePaths = @($script:ProjectRoot)
     if ($RequestedAction -eq "sync-dev-branches") {
-        if (-not $PeerDevBranchName) {
+        $requestVariable = Get-Variable -Name BranchSyncRequestPath -ErrorAction SilentlyContinue
+        if ($null -ne $requestVariable -and $requestVariable.Value) {
+            $currentScope = Get-BranchSourceSyncScope -State (Read-DevBranchState -Name $DevBranchName)
+            $frozenVariable = Get-Variable -Name BranchSourceSyncFrozenScope -Scope Script -ErrorAction SilentlyContinue
+            if ($null -ne $frozenVariable -and $null -ne $frozenVariable.Value) {
+                if (-not (Test-BranchSourceSyncScopeEquivalent -First $frozenVariable.Value -Second $currentScope)) {
+                    throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_CHANGED: repeat the original request without changing its inputs.'
+                }
+                $scope = $frozenVariable.Value
+            } else { $scope = $currentScope }
+            $candidatePaths = @($scope.states.worktreePath)
+        } elseif (-not $PeerDevBranchName) {
             throw "sync-dev-branches requires -PeerDevBranchName."
+        } else {
+            $peerName = [string]$PeerDevBranchName
+            if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
+                $peerName = $peerName.Substring("itldev/".Length)
+            }
+            $peerState = Read-DevBranchState -Name $peerName
+            $candidatePaths += Get-StateValue -State $peerState -Name "worktreePath" -Default (Get-StateValue -State $peerState -Name "stateProjectRoot" -Default "")
         }
-        $peerName = [string]$PeerDevBranchName
-        if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
-            $peerName = $peerName.Substring("itldev/".Length)
-        }
-        $peerState = Read-DevBranchState -Name $peerName
-        $candidatePaths += Get-StateValue -State $peerState -Name "worktreePath" -Default (Get-StateValue -State $peerState -Name "stateProjectRoot" -Default "")
     }
     if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
         $candidatePaths += Get-MainWorktreePath
@@ -946,12 +1369,6 @@ function Enter-Agent1cLifecycleOperation {
             }
             [pscustomobject]@{ worktreePath = $scope; lockPath = $lockPath; share = [IO.FileShare]::Read; kind = "lifecycle" }
         }
-        # Lifecycle is acquired first. The runtime lock then drains active MCP calls
-        # and prevents infobase refresh/close from racing with a proxied tool call.
-        foreach ($scope in $scopes) {
-            $runtimeLockPath = Get-Agent1cRuntimeMcpLockPath -WorktreePath $scope
-            [pscustomobject]@{ worktreePath = $scope; lockPath = $runtimeLockPath; share = [IO.FileShare]::None; kind = "runtime-mcp" }
-        }
     }
     $handles = @($lease.handles)
     $scopes = @($handles | ForEach-Object { $_.worktreePath } | Select-Object -Unique)
@@ -1203,6 +1620,108 @@ function Exit-Agent1cLifecycleOperation {
         try { $script:LifecycleOperationHandles[$index].stream.Dispose() } catch {}
     }
     $script:LifecycleOperationHandles = @()
+}
+
+function Get-Agent1cExecutionInputFingerprint {
+    param([Parameter(Mandatory = $true)][object[]]$Admissions)
+
+    $head = ''
+    if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.git') -ErrorAction SilentlyContinue) {
+        # Fresh initialization creates the repository before its first source
+        # dump commit. Its unborn branch is a valid, stable execution input;
+        # retain the symbolic branch so a concurrent branch change is detected.
+        if (Test-GitHasAnyCommit) {
+            $head = Get-CurrentCommit
+        } else {
+            $headBranch = Get-GitHeadBranch
+            if (-not $headBranch) { throw 'EXECUTION_PHASE_HEAD_UNAVAILABLE' }
+            $head = 'unborn:' + $headBranch
+        }
+    }
+    $environmentPath = Join-Path $script:ProjectRoot '.dev.env'
+    $environmentHash = $(if (Test-Path -LiteralPath $environmentPath -PathType Leaf) {
+        (Get-FileHash -LiteralPath $environmentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    } else { 'missing' })
+    $targets = @($Admissions | ForEach-Object {
+        $kind = [string](Get-StateValue -State $_ -Name 'infoBaseKind' -Default '')
+        $path = [string](Get-StateValue -State $_ -Name 'infoBasePath' -Default '')
+        if ($kind -eq 'file') { $path = Resolve-Agent1cFullPath -Path $path }
+        ($kind.ToLowerInvariant() + '|' + $path.Trim().TrimEnd('/','\').ToLowerInvariant())
+    } | Sort-Object -Unique)
+    $text = ([ordered]@{schemaVersion=1;projectRoot=$script:ProjectRoot;head=$head;environmentSha256=$environmentHash;targets=$targets} | ConvertTo-Json -Depth 5 -Compress)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $digest = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    return [pscustomobject]@{digest=$digest;head=$head;environmentSha256=$environmentHash;targets=$targets}
+}
+
+function Suspend-Agent1cLifecycleOperationForExecutionWait {
+    param([Parameter(Mandatory = $true)][object[]]$Admissions, [Parameter(Mandatory = $true)][string]$Purpose)
+
+    $continuationVariable = Get-Variable -Name LifecycleOperationIsContinuation -Scope Script -ErrorAction SilentlyContinue
+    $handlesVariable = Get-Variable -Name LifecycleOperationHandles -Scope Script -ErrorAction SilentlyContinue
+    $recordVariable = Get-Variable -Name LifecycleOperationRecord -Scope Script -ErrorAction SilentlyContinue
+    $isContinuation = $null -ne $continuationVariable -and [bool]$continuationVariable.Value
+    $handles = @($(if ($null -ne $handlesVariable) { $handlesVariable.Value }))
+    $recordValue = $(if ($null -ne $recordVariable) { $recordVariable.Value } else { $null })
+    if ($isContinuation -or $handles.Count -eq 0 -or $null -eq $recordValue) {
+        return [pscustomobject]@{suspended=$false;fingerprint=$null}
+    }
+    $record = $recordValue
+    $scopes = @($record.lockScopes)
+    $fingerprint = Get-Agent1cExecutionInputFingerprint -Admissions $Admissions
+    $checkpointId = [guid]::NewGuid().ToString('N')
+    $checkpointPath = Join-Path $script:ProjectRoot ('.agent-1c/execution-checkpoints/' + $checkpointId + '.json')
+    $checkpoint = [ordered]@{
+        schemaVersion=1;checkpointId=$checkpointId;operationId=$script:LifecycleOperationId
+        action=[string]$record.action;purpose=$Purpose;projectRoot=$script:ProjectRoot
+        lockScopes=$scopes;fingerprint=$fingerprint;status='waiting-for-base'
+        createdAt=[DateTime]::UtcNow.ToString('o');updatedAt=[DateTime]::UtcNow.ToString('o')
+    }
+    Write-Agent1cLifecycleOperationRecord -Path $checkpointPath -Record $checkpoint
+    $record['status'] = 'waiting-execution'
+    $record['phase'] = 'execution.waiting-for-base'
+    $record['detail'] = "purpose='$Purpose' checkpoint='$checkpointPath'"
+    $record['updatedAt'] = (Get-Date).ToString('o')
+    Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
+    Exit-Agent1cLifecycleOperation
+    return [pscustomobject]@{suspended=$true;record=$record;statePath=$script:LifecycleOperationStatePath
+        scopes=$scopes;fingerprint=$fingerprint;checkpoint=$checkpoint;checkpointPath=$checkpointPath}
+}
+
+function Resume-Agent1cLifecycleOperationAfterExecutionWait {
+    param([Parameter(Mandatory = $true)][object]$Checkpoint, [Parameter(Mandatory = $true)][object[]]$Admissions)
+
+    if (-not [bool]$Checkpoint.suspended) { return }
+    $lease = Wait-Agent1cLockSet -RequestedAction ([string]$Checkpoint.record.action) -GetRequests {
+        foreach ($scope in @($Checkpoint.scopes)) {
+            $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath ([string]$scope)
+            Ensure-Agent1cLifecycleLocksIgnored -WorktreePath ([string]$scope)
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+            [pscustomobject]@{worktreePath=[string]$scope;lockPath=$lockPath;share=[IO.FileShare]::Read;kind='lifecycle'}
+        }
+    }
+    $script:LifecycleOperationHandles = @($lease.handles)
+    $fresh = Get-Agent1cExecutionInputFingerprint -Admissions $Admissions
+    if ([string]$fresh.digest -cne [string]$Checkpoint.fingerprint.digest) {
+        Exit-Agent1cLifecycleOperation
+        $Checkpoint.checkpoint['status'] = 'input-changed'
+        $Checkpoint.checkpoint['updatedAt'] = [DateTime]::UtcNow.ToString('o')
+        $Checkpoint.checkpoint['freshFingerprint'] = $fresh
+        Write-Agent1cLifecycleOperationRecord -Path $Checkpoint.checkpointPath -Record $Checkpoint.checkpoint
+        throw "EXECUTION_PHASE_INPUT_CHANGED checkpoint='$($Checkpoint.checkpointPath)'"
+    }
+    $record = $Checkpoint.record
+    $record['status'] = 'running'
+    $record['phase'] = 'execution.running'
+    $record['detail'] = "purpose='$($Checkpoint.checkpoint.purpose)' checkpoint='$($Checkpoint.checkpointPath)'"
+    $record['updatedAt'] = (Get-Date).ToString('o')
+    $script:LifecycleOperationRecord = $record
+    $script:LifecycleOperationStatePath = [string]$Checkpoint.statePath
+    Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
+    $Checkpoint.checkpoint['status'] = 'resumed'
+    $Checkpoint.checkpoint['updatedAt'] = [DateTime]::UtcNow.ToString('o')
+    Write-Agent1cLifecycleOperationRecord -Path $Checkpoint.checkpointPath -Record $Checkpoint.checkpoint
 }
 
 function Write-Agent1cLifecycleOperationStatusLines {
@@ -1497,18 +2016,12 @@ function ConvertTo-DependencyMode {
     param([AllowNull()][object]$Value)
 
     if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
-        return "fresh"
+        return "workflow"
     }
 
     $text = ([string]$Value).Trim().ToLowerInvariant()
-    if ($text -eq "fresh" -or $text -eq "latest") {
-        return "fresh"
-    }
-    if ($text -eq "locked" -or $text -eq "pinned") {
-        return "locked"
-    }
-
-    throw "Invalid dependency mode: $Value. Use fresh or locked."
+    if ($text -in @('workflow','fresh','latest','locked','pinned')) { return 'workflow' }
+    throw "Invalid dependency policy: $Value. Use workflow; legacy fresh/locked inputs are migration aliases."
 }
 
 function ConvertTo-BaseConfigurationVersion {
@@ -1634,6 +2147,73 @@ function Test-ItlPathUnderSharedArtifactCache {
     }
     return [string]::Equals($resolvedPath, $cacheRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
         $resolvedPath.StartsWith(($cacheRoot + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-ItlSharedArtifactPhysicalDirectory {
+    param([string]$Path)
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        return ($item.PSIsContainer -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint))
+    } catch {
+        return $false
+    }
+}
+
+function Test-ItlSharedArtifactEntryPath {
+    param([string]$Path)
+    if (-not (Test-ItlPathUnderSharedArtifactCache -Path $Path)) { return $false }
+    try {
+        $cacheRoot = (Resolve-Agent1cFullPath -Path (Get-ItlSharedArtifactCacheRoot)).TrimEnd("\", "/")
+        return -not [string]::Equals((Resolve-Agent1cFullPath -Path $Path).TrimEnd("\", "/"), $cacheRoot, [StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+
+function Set-ItlSharedArtifactLastUsed {
+    param([string]$Path)
+    # The entry directory's own write time is the usage signal for owner
+    # retention; it adds no file to an immutable payload.
+    try {
+        if ((Test-ItlSharedArtifactEntryPath -Path $Path) -and (Test-ItlSharedArtifactPhysicalDirectory -Path $Path)) {
+            [IO.Directory]::SetLastWriteTimeUtc($Path, [DateTime]::UtcNow)
+        }
+    } catch {
+        # Usage time only steers retention; a concurrent writer may own the entry.
+    }
+}
+
+function Remove-ItlSharedArtifactEntry {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Owners decide eligibility; this only removes safely. The atomic rename is
+    # the in-use probe: Windows refuses it while any process holds a handle,
+    # an image or a working directory inside the entry. Links are never followed.
+    if (-not (Test-ItlSharedArtifactEntryPath -Path $Path) -or -not (Test-ItlSharedArtifactPhysicalDirectory -Path $Path)) { return $false }
+    $retired = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($Path))) ('.retire-' + [guid]::NewGuid().ToString('N'))
+    try { [IO.Directory]::Move($Path, $retired) } catch { return $false }
+    return (Remove-ItlSharedArtifactRetiredEntry -Path $retired)
+}
+
+function Remove-ItlSharedArtifactRetiredEntry {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        if (-not (Test-ItlSharedArtifactEntryPath -Path $Path) -or -not (Test-ItlSharedArtifactPhysicalDirectory -Path $Path) -or
+            [IO.Path]::GetFileName($Path) -cnotmatch '^\.retire-[a-f0-9]{32}$') { return $false }
+        $pending = [Collections.Generic.Stack[string]]::new()
+        $pending.Push($Path)
+        while ($pending.Count -gt 0) {
+            foreach ($item in @(Get-ChildItem -LiteralPath $pending.Pop() -Force -ErrorAction Stop)) {
+                if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+                if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+            }
+        }
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        return $true
+    } catch {
+        # Nothing references a retired name; a later owner run retries it.
+        return $false
+    }
 }
 
 function Test-ItlPathUnderManagedProjectTools {
@@ -1766,6 +2346,66 @@ function Write-Agent1cProjectTransactionState {
     Write-Utf8Text -Path $Paths.state -Value (($record | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
 }
 
+function Remove-Agent1cProjectTree {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $absolutePath = [IO.Path]::GetFullPath($Path)
+    $allowed = @(
+        foreach ($kind in @("c", "e", "v")) {
+            $paths = Get-Agent1cProjectTransactionPaths -Kind $kind
+            $paths.slot; $paths.stage; $paths.backup
+        }
+    )
+    if (-not @($allowed | Where-Object { [string]::Equals($_, $absolutePath, [StringComparison]::OrdinalIgnoreCase) }).Count) {
+        throw "Refusing to remove a path outside a project transaction slot: $absolutePath"
+    }
+    $transactionRoot = (Get-Agent1cProjectTransactionPaths -Kind "c").root
+    if ((Test-Path -LiteralPath $transactionRoot -ErrorAction SilentlyContinue) -and
+        (([IO.File]::GetAttributes($transactionRoot) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        throw "Refusing to traverse a linked project transaction root: $transactionRoot"
+    }
+
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        if (-not (Test-Path -LiteralPath $absolutePath -ErrorAction SilentlyContinue)) { return }
+        try {
+            $files = [System.Collections.Generic.List[string]]::new()
+            $directories = [System.Collections.Generic.List[string]]::new()
+            $pending = [System.Collections.Generic.Stack[string]]::new()
+            $pending.Push($absolutePath)
+            while ($pending.Count -gt 0) {
+                $directory = $pending.Pop()
+                $directories.Add($directory)
+                $attributes = [IO.File]::GetAttributes($directory)
+                if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+                foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($directory)) {
+                    $childAttributes = [IO.File]::GetAttributes($child)
+                    if (($childAttributes -band [IO.FileAttributes]::Directory) -ne 0) {
+                        $pending.Push($child)
+                    } else {
+                        $files.Add($child)
+                    }
+                }
+            }
+            foreach ($file in $files) {
+                Remove-Item -LiteralPath $file -Force -ErrorAction Stop
+            }
+            foreach ($directory in @($directories | Sort-Object Length -Descending)) {
+                Remove-Item -LiteralPath $directory -Force -ErrorAction Stop
+            }
+            if (Test-Path -LiteralPath $absolutePath -ErrorAction SilentlyContinue) {
+                throw "Directory still exists after cleanup: $absolutePath"
+            }
+            return
+        } catch {
+            if (-not (Test-Path -LiteralPath $absolutePath -ErrorAction SilentlyContinue)) { return }
+            if ($attempt -eq 5) {
+                throw "PROJECT_TRANSACTION_CLEANUP_FAILED path='$absolutePath' attempts=$attempt error='$($_.Exception.Message)'"
+            }
+            Start-Sleep -Milliseconds (100 * $attempt)
+        }
+    }
+}
+
 function Initialize-Agent1cProjectTransactionSlot {
     param(
         [Parameter(Mandatory = $true)]
@@ -1775,19 +2415,36 @@ function Initialize-Agent1cProjectTransactionSlot {
     )
 
     $paths = Get-Agent1cProjectTransactionPaths -Kind $Kind
-    if (Test-Path -LiteralPath $paths.backup -PathType Container -ErrorAction SilentlyContinue) {
-        if (Test-Path -LiteralPath $Target -ErrorAction SilentlyContinue) {
-            Remove-Item -LiteralPath $paths.backup -Recurse -Force -ErrorAction Stop
-        } else {
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Target) | Out-Null
-            Move-Item -LiteralPath $paths.backup -Destination $Target -ErrorAction Stop
+    $state = $null
+    if (Test-Path -LiteralPath $paths.state -PathType Leaf -ErrorAction SilentlyContinue) {
+        try { $state = Read-Utf8Text -Path $paths.state | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw "Project transaction state cannot be read: $($paths.state). $($_.Exception.Message)" }
+        if ([int]$state.schemaVersion -ne 1 -or [string]$state.kind -cne $Kind -or
+            -not [string]::Equals([IO.Path]::GetFullPath([string]$state.target), [IO.Path]::GetFullPath($Target), [StringComparison]::OrdinalIgnoreCase) -or
+            [string]$state.phase -notin @("staging", "target-backed-up", "installed")) {
+            throw "Project transaction state does not match the requested target: $($paths.state)"
         }
     }
+    $targetExists = Test-Path -LiteralPath $Target -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $paths.backup -PathType Container -ErrorAction SilentlyContinue) {
+        if ($state -and $state.phase -eq "installed" -and $targetExists) {
+            Remove-Agent1cProjectTree -Path $paths.backup
+        } elseif ($state -and $state.phase -in @("staging", "target-backed-up") -and -not $targetExists) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Target) | Out-Null
+            Move-Item -LiteralPath $paths.backup -Destination $Target -ErrorAction Stop
+        } else {
+            throw "Project transaction has an ambiguous backup; preserving it for diagnosis: $($paths.backup)"
+        }
+    } elseif ($state -and $state.phase -eq "installed" -and -not $targetExists) {
+        throw "Installed project transaction target is missing: $Target"
+    } elseif ($state -and $state.phase -eq "target-backed-up" -and -not $targetExists) {
+        throw "Project transaction backup and target are both missing: $($paths.slot)"
+    }
     if (Test-Path -LiteralPath $paths.stage -ErrorAction SilentlyContinue) {
-        Remove-Item -LiteralPath $paths.stage -Recurse -Force -ErrorAction Stop
+        Remove-Agent1cProjectTree -Path $paths.stage
     }
     if (Test-Path -LiteralPath $paths.slot -ErrorAction SilentlyContinue) {
-        Remove-Item -LiteralPath $paths.slot -Recurse -Force -ErrorAction Stop
+        Remove-Agent1cProjectTree -Path $paths.slot
     }
 
     New-Item -ItemType Directory -Force -Path $paths.stage | Out-Null
@@ -1798,11 +2455,17 @@ function Initialize-Agent1cProjectTransactionSlot {
 function Complete-Agent1cProjectTransactionSlot {
     param([Parameter(Mandatory = $true)][object]$Paths)
 
-    if (Test-Path -LiteralPath $Paths.slot -ErrorAction SilentlyContinue) {
-        Remove-Item -LiteralPath $Paths.slot -Recurse -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $Paths.backup -ErrorAction SilentlyContinue) {
+        Remove-Agent1cProjectTree -Path $Paths.backup
+    }
+    if (Test-Path -LiteralPath $Paths.stage -ErrorAction SilentlyContinue) {
+        Remove-Agent1cProjectTree -Path $Paths.stage
     }
     if (Test-Path -LiteralPath $Paths.state -PathType Leaf -ErrorAction SilentlyContinue) {
         Remove-Item -LiteralPath $Paths.state -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $Paths.slot -ErrorAction SilentlyContinue) {
+        Remove-Agent1cProjectTree -Path $Paths.slot
     }
     if (Test-Path -LiteralPath $Paths.root -PathType Container -ErrorAction SilentlyContinue) {
         $children = @(Get-ChildItem -LiteralPath $Paths.root -Force -ErrorAction Stop)
@@ -1833,7 +2496,21 @@ function Invoke-InProjectContext {
     $previousConfigPath = $script:ConfigPath
     $previousDependencyLockPath = $script:DependencyLockPath
     $previousConfig = $script:Config
+    $previousBranchEnvironment = @{}
     try {
+        $branchEnvPath = Join-Path (Resolve-Agent1cFullPath -Path $Root) '.dev.env'
+        if (Test-Path -LiteralPath $branchEnvPath -PathType Leaf) {
+            foreach ($line in @(Read-Utf8Lines -Path $branchEnvPath)) {
+                $trimmed = ([string]$line).Trim()
+                if (-not $trimmed -or $trimmed.StartsWith('#')) { continue }
+                $separator = $trimmed.IndexOf('=')
+                if ($separator -lt 1) { continue }
+                $name = $trimmed.Substring(0, $separator).Trim()
+                if (-not $previousBranchEnvironment.ContainsKey($name)) {
+                    $previousBranchEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+                }
+            }
+        }
         Set-ProjectContext -Root $Root
         & $ScriptBlock
     } finally {
@@ -1841,6 +2518,9 @@ function Invoke-InProjectContext {
         $script:ConfigPath = $previousConfigPath
         $script:DependencyLockPath = $previousDependencyLockPath
         $script:Config = $previousConfig
+        foreach ($name in @($previousBranchEnvironment.Keys)) {
+            [Environment]::SetEnvironmentVariable([string]$name, $previousBranchEnvironment[$name], 'Process')
+        }
         Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
     }
 }
@@ -2075,8 +2755,14 @@ function Test-GitCommitExists {
         return $false
     }
 
-    & git -C $script:ProjectRoot cat-file -e "$Commit^{commit}" *> $null
-    return ($LASTEXITCODE -eq 0)
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & git -C $script:ProjectRoot cat-file -e "$Commit^{commit}" *> $null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 }
 
 function Test-GitHasAnyCommit {
@@ -2139,7 +2825,7 @@ function Test-IgnorableLocalGitStatusLine {
         return $true
     }
 
-    if ($normalizedPath -in @(".agent-1c/mcp/", ".agent-1c/locks/", ".agent-1c/runtime/")) {
+    if ($normalizedPath -in @(".agent-1c/mcp/", ".agent-1c/locks/", ".agent-1c/runtime/", ".agent-1c/source-exports/")) {
         return $true
     }
 
@@ -2192,7 +2878,71 @@ function Get-EffectiveGitStatusLines {
     })
 }
 
+function Get-LifecycleGitChanges {
+    # Porcelain -z stores the destination first and a second record for the
+    # source of a rename/copy. Both endpoints participate in admission.
+    $records = @(Get-GitPathList -Arguments @('status', '--porcelain=v1', '-z', '--untracked-files=all'))
+    for ($i = 0; $i -lt $records.Count; $i++) {
+        $record = [string]$records[$i]
+        if ($record.Length -lt 4 -or $record[2] -ne ' ') { throw 'LIFECYCLE_GIT_STATUS_INVALID: preserve the worktree and inspect Git output.' }
+        $status = $record.Substring(0, 2)
+        $path = $record.Substring(3)
+        if (-not (Test-IgnorableLocalGitStatusLine -Line $record)) {
+            [pscustomobject]@{ path = $path; status = $status }
+        }
+        if ($status -match '[RC]') {
+            $i++
+            if ($i -ge $records.Count) { throw 'LIFECYCLE_GIT_STATUS_INVALID: missing rename source.' }
+            [pscustomobject]@{ path = [string]$records[$i]; status = $status }
+        }
+    }
+}
+
+function Get-LifecycleGitPathDisposition {
+    param([string[]]$Paths, [string[]]$InputScopes, [string[]]$IndependentScopes)
+
+    foreach ($path in $Paths) {
+        $normalized = $path -replace '\\', '/'
+        $kind = 'unknown'
+        foreach ($group in @(
+            @{ kind = 'input'; scopes = $InputScopes },
+            @{ kind = 'independent'; scopes = $IndependentScopes }
+        )) {
+            foreach ($scope in $group.scopes) {
+                $scope = (([string]$scope -replace '\\', '/') -replace '^(\./)+', '').TrimEnd('/')
+                if ($scope -and ($scope -eq '.' -or $normalized -ieq $scope -or $normalized.StartsWith($scope + '/', [StringComparison]::OrdinalIgnoreCase) -or
+                    ($scope -match '[*?\[]' -and $normalized -like $scope))) {
+                    $kind = $group.kind
+                    break
+                }
+            }
+            if ($kind -ne 'unknown') { break }
+        }
+        [pscustomobject]@{ path = $path; kind = $kind }
+    }
+}
+
+function Set-LifecycleGitContinuation {
+    param([string]$Operation, [string]$Phase, [string[]]$Paths)
+
+    Set-RunFailureContext -Category runner -RequiredAction "prepare-lifecycle-git: inspect the exact paths in blockerOwner for $Operation phase=$Phase; preserve other owners' index and worktree changes. Commit only reviewed task-owned paths when a clean tree is required, or repair changed phase inputs through the original lifecycle owner; then repeat the same wrapper. Do not commit an unfinished merge manually. Ask only for an unresolved incompatible choice; do not repeat an unchanged failure."
+    $script:RunBlockerClassification = 'lifecycle-git'
+    $script:RunBlockerRequiresUserDecision = $false
+    $script:RunBlockerRetryOriginal = $true
+    $script:RunBlockerOwner = [ordered]@{ type = 'agent'; operation = $Operation; phase = $Phase; paths = @($Paths) }
+}
+
 function Assert-CleanGit {
+    param([string]$Operation = '')
+
+    if ($Operation -in @('new-dev-branch', 'new-extension-dev-branch')) {
+        $changes = @(Get-LifecycleGitChanges)
+        if ($changes.Count -gt 0) {
+            Set-LifecycleGitContinuation -Operation $Operation -Phase preflight -Paths @($changes.path)
+            throw "Git worktree is not clean. Follow requiredAction and repeat the same wrapper. Remaining Git paths: $($changes.path -join '; ')"
+        }
+        return
+    }
     $status = & git -C $script:ProjectRoot status --porcelain
     if ($LASTEXITCODE -ne 0) {
         throw "Cannot read Git status"
@@ -2210,22 +2960,12 @@ function Get-FullPathNormalized {
 }
 
 function Get-GitWorktrees {
-    $output = & git -C $script:ProjectRoot worktree list --porcelain
-    if ($LASTEXITCODE -ne 0) {
-        return @()
-    }
+    try { $output = @(Get-GitPathList -Arguments @('worktree', 'list', '--porcelain', '-z')) }
+    catch { return @() }
 
     $items = @()
     $current = $null
     foreach ($line in @($output)) {
-        if (-not $line) {
-            if ($null -ne $current) {
-                $items += [pscustomobject]$current
-                $current = $null
-            }
-            continue
-        }
-
         if ($line -like "worktree *") {
             if ($null -ne $current) {
                 $items += [pscustomobject]$current
@@ -2438,6 +3178,7 @@ function Ensure-GitIgnore {
     $gitignorePath = Join-Path $script:ProjectRoot ".gitignore"
     $fallbackRequired = @(
         ".dev.env",
+        "/handoffs/",
         "build/result/",
         "build/event-log/",
         "testResults.xml",
@@ -2445,6 +3186,8 @@ function Ensure-GitIgnore {
         "*.cfe",
         "*.dt",
         "*.mdmp",
+        "__pycache__/",
+        "*.pyc",
         "*.log",
         "logs/",
         ".tx/",
@@ -2453,6 +3196,9 @@ function Ensure-GitIgnore {
         ".agent-1c/event-log-cursors/",
         ".agent-1c/event-log-checks/",
         ".agent-1c/runs/",
+        ".agent-1c/execution-guard-generation.json",
+        ".agent-1c/execution-guard-generation.json.*",
+        ".agent-1c/execution-checkpoints/",
         ".agent-1c/vanessa-authoring/",
         ".agent-1c/verification-repair/",
         ".agent-1c/verification-selection/",
@@ -2460,10 +3206,14 @@ function Ensure-GitIgnore {
         ".agent-1c/runtime/",
         ".agent-1c/branch-dumps/",
         ".agent-1c/branch-archives/",
+        ".agent-1c/branch-deletions/",
+        ".agent-1c/auxiliary-archives/",
         ".agent-1c/config-dump/",
         ".agent-1c/extension-dump/",
         ".agent-1c/extension-init/",
         ".agent-1c/snapshots/",
+        ".agent-1c/migrations/",
+        ".agent-1c/restoration-state/",
         ".agent-1c/release-e2e-roundtrip/",
         ".agent-1c/release-e2e-extension/",
         ".agent-1c/tmp/",
@@ -2476,6 +3226,7 @@ function Ensure-GitIgnore {
         ".agent-1c/tools/vanessa-automation/",
         ".agent-1c/tools/vanessa-mcp/",
         ".agent-1c/tools/roctup-mcp-toolkit/",
+        ".agent-1c/tools/openspec-cli/",
         ".agent-1c/mcp/",
         "build/data-mcp-tools-loader/",
         "build/test-results/",
@@ -2486,13 +3237,17 @@ function Ensure-GitIgnore {
         ".kilo/kilo.jsonc",
         ".kilo/agents/itl-routine.md",
         ".claude/commands/itl*.md",
+        ".claude/settings.local.json",
         ".cursor/commands/itl*.md",
         ".opencode/command/itl*.md",
         ".opencode/agent/itl-routine.md",
         ".opencode/plugins/itl-workspace.js",
         ".mcp.json",
         ".cursor/mcp.json",
-        "opencode.json"
+        "opencode.json",
+        "opencode.jsonc",
+        ".opencode/opencode.json",
+        ".opencode/opencode.jsonc"
     )
 
     $templatePath = Join-Path $script:ProjectRoot "templates\gitignore.append"
@@ -2504,7 +3259,7 @@ function Ensure-GitIgnore {
     # Keep crash dumps and tooling probe runtime mandatory in code and template. A refreshed
     # master helper can checkpoint an older branch before that branch receives
     # the updated template through its master merge.
-    $required = @($required + @("*.mdmp", ".agent-1c/tools/tooling-probe/", "build/tooling-probe/") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
+    $required = @($required + @("/handoffs/", "*.mdmp", "__pycache__/", "*.pyc", ".agent-1c/tools/tooling-probe/", ".agent-1c/tools/openspec-cli/", "build/tooling-probe/") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
 
     if (Test-Path -LiteralPath $gitignorePath) {
         $current = Read-Utf8Lines -Path $gitignorePath
@@ -2520,8 +3275,46 @@ function Ensure-GitIgnore {
     }
 
     if ($linesToAdd.Count -gt 0) {
-        Add-Utf8Text -Path $gitignorePath -Value (($linesToAdd -join [Environment]::NewLine) + [Environment]::NewLine)
+        $existingText = if (Test-Path -LiteralPath $gitignorePath -PathType Leaf) { Read-Utf8Text -Path $gitignorePath } else { '' }
+        $separator = if ($existingText -and -not $existingText.EndsWith("`n")) { [Environment]::NewLine } else { '' }
+        Add-Utf8Text -Path $gitignorePath -Value ($separator + ($linesToAdd -join [Environment]::NewLine) + [Environment]::NewLine)
     }
+}
+
+function Ensure-ItlPinnedOpenSpecGitAttributes {
+    $relative = '.agents/skills/1c-workflow/resources/openspec-cli/package-lock.json'
+    $required = "$relative -text"
+    $path = Join-Path $script:ProjectRoot '.gitattributes'
+    $text = if (Test-Path -LiteralPath $path -PathType Leaf) { Read-Utf8Text -Path $path } else { '' }
+    $lines = @($text -split "`r?`n")
+    $present = @($lines | Where-Object { $_ -ceq $required })
+    if ($present.Count -gt 1) {
+        throw "OPEN_SPEC_CLI_GIT_ATTRIBUTES_CONFLICT: '$path' repeats the pinned package-lock attribute. Keep one exact '$required' line and repeat the operation."
+    }
+    $explicitPattern = '^' + [regex]::Escape($relative) + '\s+'
+    $conflicts = @($lines | Where-Object { $_ -match $explicitPattern -and $_ -cne $required })
+    if ($conflicts.Count -gt 0) {
+        throw "OPEN_SPEC_CLI_GIT_ATTRIBUTES_CONFLICT: '$path' has another attribute for the pinned package lock. Reconcile it to '$required' and repeat the operation."
+    }
+    if ($present.Count -eq 1) { return $false }
+
+    # The 1C transport contract keeps its managed block at EOF. Insert this
+    # independent byte-preservation rule before that block, preserving all
+    # existing user text and its line-ending style.
+    $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $marker = '# BEGIN ITL MANAGED: preserve 1C source bytes'
+    $markerAt = $text.IndexOf($marker, [StringComparison]::Ordinal)
+    if ($markerAt -ge 0) {
+        if ($markerAt -gt 0 -and $text[$markerAt - 1] -ne "`n") {
+            throw "OPEN_SPEC_CLI_GIT_ATTRIBUTES_CONFLICT: the 1C managed block in '$path' is not at a line boundary. Reconcile it and repeat the operation."
+        }
+        $updated = $text.Insert($markerAt, ($required + $newline))
+    } else {
+        $separator = if (-not $text -or $text.EndsWith("`n")) { '' } else { $newline }
+        $updated = $text + $separator + $required + $newline
+    }
+    Write-Utf8TextAtomic -Path $path -Value $updated
+    return $true
 }
 
 function Get-OneCSourceGitAttributesManagedLines {
@@ -3188,32 +3981,42 @@ function Set-DotEnvValues {
     param([hashtable]$Values)
 
     $path = Join-Path $script:ProjectRoot ".dev.env"
-    $lines = @()
+    $text = ""
+    $hasUtf8Bom = $false
     if (Test-Path -LiteralPath $path) {
-        $lines = @(Read-Utf8Lines -Path $path)
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+        $hasUtf8Bom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+        $text = (Get-Utf8Encoding).GetString($bytes)
+        if ($hasUtf8Bom) { $text = $text.Substring(1) }
     }
 
+    # Replace only owned value spans; retain every other character and original line separator.
+    $updated = $text
     $seen = @{}
-    $updated = New-Object System.Collections.ArrayList
-    foreach ($line in $lines) {
-        $replacement = $line
-        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=') {
-            $name = $matches[1]
-            if ($Values.ContainsKey($name)) {
-                $replacement = "$name=$($Values[$name])"
-                $seen[$name] = $true
-            }
-        }
-        [void]$updated.Add($replacement)
-    }
-
-    foreach ($name in @($Values.Keys | Sort-Object)) {
-        if (-not $seen.ContainsKey($name)) {
-            [void]$updated.Add("$name=$($Values[$name])")
+    $assignments = [regex]::Matches($text, '(?:\A|(?<=[\r\n]))[^\S\r\n]*([A-Za-z_][A-Za-z0-9_]*)=([^\r\n]*)')
+    for ($index = $assignments.Count - 1; $index -ge 0; $index--) {
+        $assignment = $assignments[$index]
+        $name = $assignment.Groups[1].Value
+        if ($Values.ContainsKey($name)) {
+            $value = $assignment.Groups[2]
+            $updated = $updated.Substring(0, $value.Index) + [string]$Values[$name] + $updated.Substring($value.Index + $value.Length)
+            $seen[$name] = $true
         }
     }
 
-    Write-Utf8Text -Path $path -Value ((@($updated) -join [Environment]::NewLine) + [Environment]::NewLine)
+    [string[]]$missingNames = @($Values.Keys | Where-Object { -not $seen.ContainsKey($_) })
+    [Array]::Sort($missingNames, [StringComparer]::Ordinal)
+    if ($missingNames.Count -gt 0) {
+        $newLine = [regex]::Match($text, '\r\n|\n|\r').Value
+        if (-not $newLine) { $newLine = [Environment]::NewLine }
+        if ($updated -and -not $updated.EndsWith("`n") -and -not $updated.EndsWith("`r")) { $updated += $newLine }
+        foreach ($name in $missingNames) { $updated += "$name=$($Values[$name])$newLine" }
+    }
+
+    if ($updated -ceq $text) { return }
+    # The shared atomic writer emits no preamble; a target-only prefix preserves the existing BOM.
+    if ($hasUtf8Bom) { $updated = [string][char]0xFEFF + $updated }
+    Write-Utf8TextAtomic -Path $path -Value $updated
 }
 
 function Get-WorkflowTemplatePath {
@@ -3263,7 +4066,7 @@ function Read-DependencyLockManifest {
 function Write-DependencyLockManifest {
     param([object]$Manifest)
 
-    Write-Utf8Text -Path (Get-DependencyLockPath) -Value (($Manifest | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+    Write-Utf8TextAtomic -Path (Get-DependencyLockPath) -Value (($Manifest | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
 }
 
 function Ensure-DependencyLockManifest {
@@ -3274,20 +4077,7 @@ function Ensure-DependencyLockManifest {
 }
 
 function Get-DependencyMode {
-    if ($DependencyMode) {
-        return ConvertTo-DependencyMode -Value $DependencyMode
-    }
-
-    $value = Get-EnvValue -Name "DEPENDENCY_MODE"
-    if (-not $value) {
-        $value = Get-ConfigValue -Path "dependencyMode" -Default ""
-    }
-    if (-not $value) {
-        $lock = Read-DependencyLockManifest
-        $value = [string](Get-ConfigValueFromObject -Object $lock -Path "mode" -Default "fresh")
-    }
-
-    return ConvertTo-DependencyMode -Value $value
+    return 'workflow'
 }
 
 function Get-BaseConfigurationVersion {
@@ -3296,7 +4086,28 @@ function Get-BaseConfigurationVersion {
 }
 
 function Test-ProductDocsMcpAllowed {
+    # A project bound to the product registry follows the productDocs role of
+    # its applied context. An unbound (legacy) project, or one whose role is
+    # not resolved yet, keeps the previous PM5 family rule.
+    $resolution = Get-ProductDocsRegistryResolution
+    if ($resolution -eq "resolved") { return $true }
+    if ($resolution -eq "disabled") { return $false }
     return ((Get-BaseConfigurationVersion) -eq "PM5")
+}
+
+function Get-ProductDocsRegistryResolution {
+    try {
+        if ($null -eq (Get-ConfigValue -Path "productProject" -Default $null)) { return "" }
+        $path = Join-Path $script:ProjectRoot ".agent-1c\mcp\product-context-applied.json"
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return "" }
+        $record = Read-Utf8Text -Path $path | ConvertFrom-Json -ErrorAction Stop
+        if ([IO.Path]::GetFullPath([string]$record.projectRoot).TrimEnd('\') -ine [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\')) { return "" }
+        $role = $record.context.roles.PSObject.Properties["productDocs"]
+        if ($null -eq $role) { return "" }
+        return [string]$role.Value.resolution
+    } catch {
+        return ""
+    }
 }
 
 function Set-ProjectBaseConfigurationVersion {
@@ -3457,8 +4268,9 @@ function Get-DependencyLockRateLimitFallbackInfo {
         [string]$DefaultFileName = ""
     )
 
-    $manifest = Read-DependencyLockManifest
-    $entry = Get-ConfigValueFromObject -Object $manifest -Path "dependencies.$LockPath" -Default $null
+    $parts = $LockPath -split '\.', 2
+    $entry = Get-WorkflowDependencyEntry -Name $parts[0]
+    if ($parts.Count -eq 2) { $entry = Get-ConfigValueFromObject $entry $parts[1] $null }
     $version = [string](Get-ConfigValueFromObject -Object $entry -Path "version" -Default "")
     $url = [string](Get-ConfigValueFromObject -Object $entry -Path "url" -Default "")
     $sha256 = [string](Get-ConfigValueFromObject -Object $entry -Path "sha256" -Default "")
@@ -3545,8 +4357,11 @@ function ConvertTo-DependencyLockComparableValue {
         return [pscustomobject]$normalized
     }
     if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
-        $items = @($Value | ForEach-Object { ConvertTo-DependencyLockComparableValue -Value $_ })
-        return ,$items
+        # A foreach statement keeps string items unwrapped; ForEach-Object wraps them in
+        # PSObject, which Windows PowerShell serializes as {"Length":N}.
+        $items = New-Object System.Collections.Generic.List[object]
+        foreach ($item in $Value) { $items.Add((ConvertTo-DependencyLockComparableValue -Value $item)) }
+        return ,$items.ToArray()
     }
     return $Value
 }
@@ -3562,7 +4377,7 @@ function Get-WorkflowManagedDependencyLockEntryNames {
         throw "WORKFLOW_MANAGED_DEPENDENCY_TEMPLATE_INVALID: templates/dependency-lock.json has no dependencies object."
     }
     $templateDependencies = ConvertTo-Agent1cHashtable -Object $templateDependenciesValue
-    $names = @($templateDependencies.Keys | Where-Object { [string]$_ -notin @("workflowPackage", "aiRules1c") } | Sort-Object)
+    $names = @($templateDependencies.Keys | Where-Object { [string]$_ -ne "workflowPackage" } | Sort-Object)
     if ($names.Count -eq 0) {
         throw "WORKFLOW_MANAGED_DEPENDENCY_TEMPLATE_INVALID: templates/dependency-lock.json has no workflow-managed dependency entries."
     }
@@ -3617,7 +4432,10 @@ function Merge-WorkflowManagedDependencyLockValue {
         $before = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $Current) -Depth 100 -Compress
         $after = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $Template) -Depth 100 -Compress
         $changed = $before -cne $after
-        return [pscustomobject]@{ value = $(if ($changed) { $Template } else { $Current }); changed = [bool]$changed }
+        # Assign without a subexpression: $(...) would unroll a one-item array into its item.
+        $value = $Current
+        if ($changed) { $value = $Template }
+        return [pscustomobject]@{ value = $value; changed = [bool]$changed }
     }
 
     $currentIsMap = $Current -is [System.Collections.IDictionary] -or $Current -is [pscustomobject]
@@ -3646,63 +4464,37 @@ function Merge-WorkflowManagedDependencyLockValue {
 }
 
 function Sync-WorkflowManagedDependencyLockEntries {
-    $template = New-DefaultDependencyLockManifest
-    $templateDependencies = ConvertTo-Agent1cHashtable -Object (Get-ConfigValueFromObject -Object $template -Path "dependencies" -Default $null)
-    $managedNames = @(Get-WorkflowManagedDependencyLockEntryNames -TemplateManifest $template)
-    $mode = Get-DependencyMode
-    $lockPath = Get-DependencyLockPath
-
-    if ($mode -eq "locked" -and -not (Test-Path -LiteralPath $lockPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        throw "DEPENDENCY_LOCK_UPGRADE_REQUIRED: dependency mode is locked, but .agent-1c/dependency-lock.json is missing."
+    $plan = Get-WorkflowDependencyPlan
+    Assert-WorkflowDependencyPlan -Plan $plan
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    if ($null -ne $pending -and $null -eq (Get-ConfigValueFromObject $pending.receipt 'dependencyPlan' $null)) {
+        $source = [pscustomobject]@{root=[string]$pending.receipt.sourceRoot;commit=[string]$pending.receipt.sourceCommit}
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source $source -Phase ([string]$pending.receipt.phase) -Details @{dependencyPlan=$plan}
     }
-    if ($mode -eq "fresh") {
-        Ensure-DependencyLockManifest
-    }
-
-    $manifest = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
-    $dependenciesValue = Get-ConfigValueFromObject -Object $manifest -Path "dependencies" -Default $null
-    $dependencies = if ($null -eq $dependenciesValue) { [ordered]@{} } else { ConvertTo-Agent1cHashtable -Object $dependenciesValue }
-
-    if ($mode -eq "locked") {
-        $missing = [System.Collections.Generic.List[string]]::new()
-        foreach ($name in $managedNames) {
-            if (-not $dependencies.Contains($name)) {
-                $missing.Add("dependencies.$name") | Out-Null
-                continue
-            }
-            foreach ($path in @(Get-MissingDependencyLockValuePaths -Current $dependencies[$name] -Template $templateDependencies[$name] -Prefix "dependencies.$name")) {
-                $missing.Add([string]$path) | Out-Null
-            }
-        }
-        if ($missing.Count -gt 0) {
-            throw "DEPENDENCY_LOCK_UPGRADE_REQUIRED: dependency mode is locked and the workflow dependency lock is incomplete. Missing: $($missing -join ', ')."
-        }
-        return [pscustomobject]@{ mode = "locked"; changed = $false; entries = @() }
-    }
-
-    $changedEntries = [System.Collections.Generic.List[string]]::new()
-    foreach ($name in $managedNames) {
-        $hasCurrent = $dependencies.Contains($name)
-        $merged = Merge-WorkflowManagedDependencyLockValue `
-            -Current $(if ($hasCurrent) { $dependencies[$name] } else { $null }) `
-            -Template $templateDependencies[$name]
-        if ($merged.changed -or -not $hasCurrent) {
-            $dependencies[$name] = $merged.value
-            $changedEntries.Add([string]$name) | Out-Null
-        }
-    }
-
-    if ($changedEntries.Count -gt 0) {
-        $manifest["dependencies"] = $dependencies
-        $manifest["mode"] = "fresh"
+    $before = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
+    $manifest = Get-WorkflowDependencySyncManifest -Plan $plan -Before $before
+    $persistedMode = [string]$manifest.mode
+    $changed = (ConvertTo-Json (ConvertTo-DependencyLockComparableValue $before) -Depth 100 -Compress) -cne
+        (ConvertTo-Json (ConvertTo-DependencyLockComparableValue $manifest) -Depth 100 -Compress)
+    if ($changed) {
         Write-DependencyLockManifest -Manifest $manifest
-        Write-Host "Workflow-managed dependency lock synchronized: $($changedEntries -join ', ')."
+        Write-Host 'Dependency selection synchronized to the installed workflow and explicit hotfixes.'
     }
-    return [pscustomobject]@{
-        mode = "fresh"
-        changed = ($changedEntries.Count -gt 0)
-        entries = @($changedEntries)
+    $config = Get-Variable -Name ConfigPath -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $config -and $config.Value -and (Test-Path -LiteralPath ([string]$config.Value))) {
+        $project = Read-Utf8Text -Path ([string]$config.Value) | ConvertFrom-Json
+        if ([string](Get-ConfigValueFromObject $project 'dependencyMode' '') -ne $persistedMode) {
+            $project | Add-Member -NotePropertyName dependencyMode -NotePropertyValue $persistedMode -Force
+            Write-Utf8TextAtomic -Path ([string]$config.Value) -Value (($project | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
+            Read-ProjectConfig
+        }
     }
+    if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.dev.env')) {
+        if ([string](Get-EnvValue -Name DEPENDENCY_MODE -Default '') -ne $persistedMode) {
+            Set-DotEnvValues -Values @{ DEPENDENCY_MODE = $persistedMode }
+        }
+    }
+    return [pscustomobject]@{ mode=$persistedMode; changed=$changed; entries=@(Get-WorkflowManagedDependencyLockEntryNames) }
 }
 
 function Update-DependencyLockEntry {
@@ -3711,14 +4503,17 @@ function Update-DependencyLockEntry {
         [hashtable]$Values
     )
 
-    if ((Get-DependencyMode) -ne "fresh") {
-        return
-    }
-
     Ensure-DependencyLockManifest
     $manifest = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
     $dependencies = ConvertTo-Agent1cHashtable -Object $manifest["dependencies"]
     $entry = ConvertTo-Agent1cHashtable -Object $dependencies[$Name]
+    $selected = if (@(Get-WorkflowManagedDependencyLockEntryNames) -contains $Name) { Get-WorkflowDependencyEntry -Name $Name } else { $null }
+    if ($null -ne $selected) {
+        $observed = Merge-WorkflowManagedDependencyLockValue -Current $selected -Template $Values
+        if ((Get-WorkflowDependencyFingerprint $observed.value) -cne (Get-WorkflowDependencyFingerprint $selected)) {
+            throw "DEPENDENCY_ACQUISITION_DRIFT: '$Name' returned bytes or identity outside the selected workflow/hotfix. Repair the selected artifact or use update-workflow -DependencySelectionFile."
+        }
+    }
     $changed = $false
     foreach ($key in @($Values.Keys)) {
         if (-not $entry.Contains($key)) {
@@ -3734,7 +4529,9 @@ function Update-DependencyLockEntry {
     $entry["updatedAt"] = (Get-Date).ToString("o")
     $dependencies[$Name] = $entry
     $manifest["dependencies"] = $dependencies
-    $manifest["mode"] = "fresh"
+    $wire = Get-WorkflowDependencyWireFormat
+    $manifest["schemaVersion"] = $wire.schemaVersion
+    $manifest["mode"] = $wire.mode
     Write-DependencyLockManifest -Manifest $manifest
 }
 
@@ -4102,6 +4899,12 @@ function Format-Installed1CPlatformOptions {
 
 function Test-InteractiveInputAvailable {
     try {
+        # The compact runner owns a hidden console, not a user input channel.
+        # Its original log path survives legacy-runner post-copy reexec too.
+        $runLog = Get-Variable -Name RunLogPath -ValueOnly -ErrorAction SilentlyContinue
+        if ($runLog -and [IO.Path]::GetFileName([IO.Path]::GetDirectoryName([string]$runLog)).StartsWith('compact-', [StringComparison]::OrdinalIgnoreCase)) {
+            return $false
+        }
         return (-not [Console]::IsInputRedirected)
     } catch {
         return $false
@@ -4376,16 +5179,21 @@ function Read-InitWizardFileInfoBaseAnswers {
 }
 
 function Read-InitWizardAnswersOnce {
-    $agentTarget = $(if ([string]::IsNullOrWhiteSpace($AgentTarget)) { Read-InitAgentTarget } else { $AgentTarget.Trim().ToLowerInvariant() })
+    $agentTargets = @($(if ([string]::IsNullOrWhiteSpace($AgentTarget)) { Read-InitAgentTarget } else { $AgentTarget.Trim().ToLowerInvariant() }))
     $platformPath = Read-InitPlatformPath
-    $baseConfigurationVersion = Read-InitBaseConfigurationVersion
+    . Import-ItlProductProjectSetup
+    $baseConfigurationVersion = Read-ItlProductProjectInitFamily
     $infoBaseKind = Read-InitInfoBaseKind
 
     $answers = [ordered]@{
-        agentTarget = $agentTarget
+        agentTarget = $agentTargets[0]
+        agentTargets = $agentTargets
         agentModel = $AgentModel.Trim().ToLowerInvariant()
         platformPath = $platformPath
         baseConfigurationVersion = $baseConfigurationVersion
+        catalogMode = 'catalog'
+        projectId = $script:PreparedCatalogCandidate.binding.projectId
+        catalogProfileId = (Get-ItlCatalogField $script:PreparedCatalogCandidate.binding 'profileId' '')
         infoBaseKind = $infoBaseKind
         sourceUsesRepository = $false
         sourceInfoBasePath = ""
@@ -4420,7 +5228,7 @@ function Read-InitWizardAnswersOnce {
         }
     }
 
-    $answers.dependencyMode = "fresh"
+    $answers.dependencyMode = "workflow"
     $answers.vibecoding1cMcpSetupDuringInit = $true
 
     return [pscustomobject]$answers
@@ -4432,7 +5240,7 @@ function Write-InitWizardAnswersSummary {
     $answers = [pscustomobject]$Answers
     Write-Section (Get-Agent1cUtf8Text "0KHQstC+0LTQutCwINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
     Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
-    Write-Host ("Agent client: " + $answers.agentTarget)
+    Write-Host ("Agent clients: " + (@(Get-AnswerValue -Answers $answers -Names @("agentTargets", "agentTarget")) -join ", "))
     Write-Host ("Agent model profile: " + $(if ($answers.agentModel) { $answers.agentModel } else { "auto" }))
     Write-Host ((Get-Agent1cUtf8Text "0J/Qu9Cw0YLRhNC+0YDQvNCwOiA=") + $answers.platformPath)
     Write-Host ("Base configuration version: " + $answers.baseConfigurationVersion)
@@ -4490,6 +5298,12 @@ function Normalize-InitAnswers {
     param([object]$Answers)
 
     $baseConfigurationVersion = ConvertTo-BaseConfigurationVersion -Value (Get-AnswerValue -Answers $Answers -Names @("baseConfigurationVersion", "BASE_CONFIGURATION_VERSION") -Default "PM5")
+    $catalogMode='legacy';$catalogProjectId='';$catalogProfileId=''
+    if((Get-AnswerValue -Answers $Answers -Names @('projectId','catalogProjectId') -Default '') -or (Get-AnswerValue -Answers $Answers -Names @('catalogMode') -Default '') -eq 'catalog'){
+        . Import-ItlProductProjectSetup
+        $candidate=Resolve-ItlProductProjectInitAnswers $Answers
+        if($candidate){$baseConfigurationVersion=$candidate.context.baseConfigurationVersion;$catalogMode='catalog';$catalogProjectId=$candidate.binding.projectId;$catalogProfileId=[string](Get-ItlCatalogField $candidate.binding 'profileId' '')}
+    }
     $sourceUsesRepository = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("sourceUsesRepository", "SOURCE_USES_REPOSITORY") -Default $true) -Default $true
     $dependencyModeValue = Get-AnswerValue -Answers $Answers -Names @("dependencyMode", "DEPENDENCY_MODE") -Default ""
     if (-not $dependencyModeValue) {
@@ -4497,11 +5311,19 @@ function Normalize-InitAnswers {
         $dependencyModeValue = $(if ($useLatestDependencies) { "fresh" } else { "locked" })
     }
 
+    $initialClient = ([string](Get-AnswerValue -Answers $Answers -Names @("agentTarget", "AGENT_TARGET") -Default $AgentTarget)).Trim().ToLowerInvariant()
+    $clients = @(ConvertTo-AgentToolList -Value (Get-AnswerValue -Answers $Answers -Names @("agentTargets", "AGENT_TARGETS") -Default @($initialClient)))
+    if (-not $initialClient -and $clients.Count -gt 0) { $initialClient = $clients[0] }
+
     return [pscustomobject]@{
-        agentTarget = ([string](Get-AnswerValue -Answers $Answers -Names @("agentTarget", "AGENT_TARGET") -Default $AgentTarget)).Trim().ToLowerInvariant()
+        agentTarget = $initialClient
+        agentTargets = $clients
         agentModel = ([string](Get-AnswerValue -Answers $Answers -Names @("agentModel", "AGENT_MODEL") -Default $AgentModel)).Trim().ToLowerInvariant()
         platformPath = [string](Get-AnswerValue -Answers $Answers -Names @("platformPath", "PLATFORM_PATH"))
         baseConfigurationVersion = $baseConfigurationVersion
+        catalogMode=$catalogMode
+        projectId=$catalogProjectId
+        catalogProfileId=$catalogProfileId
         infoBaseKind = ([string](Get-AnswerValue -Answers $Answers -Names @("infoBaseKind", "INFOBASE_KIND") -Default "file")).Trim().ToLowerInvariant()
         sourceUsesRepository = $sourceUsesRepository
         sourceInfoBasePath = [string](Get-AnswerValue -Answers $Answers -Names @("sourceInfoBasePath", "SOURCE_INFOBASE_PATH") -Default "")
@@ -4528,6 +5350,10 @@ function Assert-InitAnswers {
     $agentTargetContract = "agentTarget(" + ((Get-SupportedAgentTargets) -join "|") + ")"
     if (-not $Answers.agentTarget) { $missing += $agentTargetContract }
     if ($Answers.agentTarget -and $Answers.agentTarget -notin (Get-SupportedAgentTargets)) { $missing += $agentTargetContract }
+    $clients = @(Get-AnswerValue -Answers $Answers -Names @("agentTargets", "agentTarget"))
+    if ($clients.Count -eq 0 -or @($clients | Where-Object { $_ -notin (Get-SupportedAgentTargets) }).Count -gt 0 -or $Answers.agentTarget -notin $clients) {
+        $missing += "agentTargets(non-empty supported client set containing agentTarget)"
+    }
     if ($Answers.agentModel -and $Answers.agentModel -notin @("opus5", "sonnet5", "fable5", "gpt56")) { $missing += "agentModel(opus5|sonnet5|fable5|gpt56|empty)" }
     if (-not $Answers.platformPath) { $missing += "platformPath" }
     if ($Answers.infoBaseKind -ne "file" -and $Answers.infoBaseKind -ne "server") { $missing += "infoBaseKind(file|server)" }
@@ -4572,11 +5398,15 @@ function Save-InitAnswers {
     }
 
     Set-DotEnvValues -Values $values
-    Set-ProjectAiRulesClient -Client $Answers.agentTarget
+    Set-ProjectAiRulesClients -Clients @(Get-AnswerValue -Answers $Answers -Names @("agentTargets", "agentTarget"))
+    # Keep the selected initial client for this invocation, including a manual
+    # terminal where executor detection has no client marker.
+    $script:AgentTarget = $Answers.agentTarget
     Set-ProjectBaseConfigurationVersion -Version $Answers.baseConfigurationVersion
     Set-DependencyLockMode -Mode $Answers.dependencyMode
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
     $script:InitVibecoding1cMcpSetupRequested = [bool]$Answers.vibecoding1cMcpSetupDuringInit
+    if((Get-AnswerValue -Answers $Answers -Names @('catalogMode') -Default 'legacy') -eq 'catalog'){. Import-ItlProductProjectSetup;Save-ItlProductProjectInitBinding $Answers}
 }
 
 function New-ConfiguredInitAnswers {
@@ -4602,6 +5432,12 @@ function Prepare-InitProjectSettings {
         return
     }
 
+    . Import-ItlProductProjectSetup
+    $candidate=Resolve-ItlProductProjectInitAnswers $rawAnswers
+    $rawAnswers=ConvertTo-Agent1cHashtable $rawAnswers
+    $rawAnswers['projectId']=$candidate.binding.projectId
+    $rawAnswers['catalogProfileId']=[string](Get-ItlCatalogField $candidate.binding 'profileId' '')
+    $rawAnswers['catalogMode']='catalog'
     $answers = Normalize-InitAnswers -Answers $rawAnswers
     Assert-InitAnswers -Answers $answers
     Save-InitAnswers -Answers $answers
@@ -4611,6 +5447,15 @@ function Prepare-InitProjectSettings {
 function Prepare-ConfiguredInitProjectSettings {
     Ensure-WorkflowProjectFiles
     Read-ProjectConfig
+
+    . Import-ItlProductProjectSetup
+    if(-not (Get-ItlProductProjectBinding)){
+        $null=Get-ItlProductProjectTransitionSelection
+        $family=Get-ConfigValue -Path baseConfigurationVersion -Default ''
+        if($family -and $family -cne $script:PreparedCatalogCandidate.context.baseConfigurationVersion){throw 'CATALOG_PRODUCT_FAMILY_CHANGED: select the matching published project; initialization cannot change the configured family.'}
+        if(-not $family){Set-ProjectBaseConfigurationVersion -Version $script:PreparedCatalogCandidate.context.baseConfigurationVersion}
+        Save-ItlProductProjectInitBinding ([pscustomobject]@{catalogMode='catalog'})
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) {
         Set-ProjectAiRulesClient -Client $AgentTarget
@@ -4762,10 +5607,17 @@ function ConvertTo-AgentToolList {
 }
 
 function Get-SupportedAgentTargets {
-    return @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
+    return @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "zcode", "mimocode", "pi")
+}
+
+function Test-InitAgentHostIsolated {
+    # A Pester worker (run-pester-shard.ps1) is not the agent that launched the
+    # gate; its fixtures must not inherit that agent's identity.
+    return [Environment]::GetEnvironmentVariable('ITL_TEST_AGENT_HOST_ISOLATED', 'Process') -eq '1'
 }
 
 function Get-InitAgentExecutionEnvironment {
+    if (Test-InitAgentHostIsolated) { return @{} }
     $names = @(
         "CODEX_THREAD_ID",
         "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
@@ -4789,6 +5641,7 @@ function Get-InitAgentExecutionEnvironment {
 function Get-InitAgentExecutionProcessChain {
     param([int]$StartProcessId = $PID)
 
+    if (Test-InitAgentHostIsolated) { return @() }
     $result = [System.Collections.Generic.List[object]]::new()
     $visited = @{}
     $currentProcessId = $StartProcessId
@@ -4852,6 +5705,8 @@ function Resolve-InitAgentTargetFromExecutionContext {
         qwen = @("qwen", "qwen-code")
         "command-code" = @("command-code", "commandcode")
         cline = @("cline")
+        zcode = @("zcode")
+        mimocode = @("mimocode")
         pi = @("pi")
     }
     $commandMarkers = [ordered]@{
@@ -4863,6 +5718,8 @@ function Resolve-InitAgentTargetFromExecutionContext {
         qwen = @("@qwen-code/qwen-code", "@qwen-code\\qwen-code")
         "command-code" = @("command-code", "commandcode")
         cline = @("cline.bot", "cline-cli")
+        zcode = @("zcode")
+        mimocode = @("mimocode", "@mimo/code")
         pi = @("@mariozechner/pi-coding-agent", "pi-coding-agent")
     }
 
@@ -4917,33 +5774,47 @@ function Read-InitAgentTarget {
     if ($DefaultClient -notin (Get-SupportedAgentTargets)) {
         $DefaultClient = "kilocode"
     }
-    Write-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQtdC00LjQvdGB0YLQstC10L3QvdGL0Lkg0LDQs9C10L3RgtGB0LrQuNC5INC60LvQuNC10L3RgiDQtNC70Y8g0L/RgNC+0LXQutGC0LA6")
+    Write-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQsNCz0LXQvdGC0YHQutC40LUg0LrQu9C40LXQvdGC0Ysg0LTQu9GPINC/0YDQvtC10LrRgtCwOg==")
     $supported = @(Get-InitAgentTargetChoices -DefaultClient $DefaultClient)
     for ($index = 0; $index -lt $supported.Count; $index++) {
-        $label = if ($supported[$index] -eq $DefaultClient) { "$DefaultClient (recommended)" } else { $supported[$index] }
+        $label = if ($supported[$index] -eq $DefaultClient) { "[x] $DefaultClient (recommended)" } else { "[ ] $($supported[$index])" }
         Write-Host ("{0}. {1}" -f ($index + 1), $label)
     }
+    Write-Host (Get-Agent1cUtf8Text "RW50ZXIg4oCUINGC0L7Qu9GM0LrQviDQvtGC0LzQtdGH0LXQvdC90YvQuSDQutC70LjQtdC90YIuINCn0YLQvtCx0Ysg0LTQvtCx0LDQstC40YLRjCDQtNGA0YPQs9C40LUsINCy0LLQtdC00LjRgtC1INC90L7QvNC10YDQsCDQuNC70Lgg0LjQvNC10L3QsCDRh9C10YDQtdC3INC30LDQv9GP0YLRg9GOINC40LvQuCDQv9GA0L7QsdC10Lsu")
     while ($true) {
         $answer = (Read-Host ((Get-Agent1cUtf8Text "0JrQu9C40LXQvdGCINCw0LPQtdC90YLQsA==") + " [$DefaultClient]")).Trim().ToLowerInvariant()
         if (-not $answer) {
             return $DefaultClient
         }
-        $number = 0
-        if ([int]::TryParse($answer, [ref]$number) -and $number -ge 1 -and $number -le $supported.Count) {
-            return $supported[$number - 1]
+        $selected = @($DefaultClient)
+        $invalid = $false
+        foreach ($token in @($answer -split '[,\s]+' | Where-Object { $_ })) {
+            $number = 0
+            $client = $token
+            if ([int]::TryParse($token, [ref]$number) -and $number -ge 1 -and $number -le $supported.Count) {
+                $client = $supported[$number - 1]
+            }
+            if ($client -eq "kilo") { $client = "kilocode" }
+            if ($client -notin $supported) { $invalid = $true; break }
+            if ($client -notin $selected) { $selected += $client }
         }
-        if ($answer -eq "kilo") { return "kilocode" }
-        if ($supported -contains $answer) { return $answer }
-        Write-Host ((Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQvtC00LjQvSDQuNC3Og==") + " $($supported -join ', ').")
+        if (-not $invalid -and $answer -match '[^,\s]') { return $selected }
+        Write-Host ((Get-Agent1cUtf8Text "0J3QtdCy0LXRgNC90YvQuSDQstGL0LHQvtGALiDQktCy0LXQtNC40YLQtSDQvdC+0LzQtdGA0LAg0LjQu9C4INC40LzQtdC90LAg0LjQtyDRgdC/0LjRgdC60LA6IA==") + "$($supported -join ', ').")
     }
 }
 
 function Set-ProjectAiRulesClient {
     param([Parameter(Mandatory = $true)][string]$Client)
 
-    $normalized = @(ConvertTo-AgentToolList -Value $Client)
-    if ($normalized.Count -ne 1 -or $normalized[0] -notin (Get-SupportedAgentTargets)) {
-        throw "Exactly one supported agent client is required: $((Get-SupportedAgentTargets) -join ', ')."
+    Set-ProjectAiRulesClients -Clients @($Client)
+}
+
+function Set-ProjectAiRulesClients {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Clients)
+
+    $normalized = @(ConvertTo-AgentToolList -Value $Clients)
+    if (@($normalized | Where-Object { $_ -notin (Get-SupportedAgentTargets) }).Count -gt 0) {
+        throw "Unsupported agent client; choose from: $((Get-SupportedAgentTargets) -join ', ')."
     }
     $config = if (Test-Path -LiteralPath $script:ConfigPath -PathType Leaf -ErrorAction SilentlyContinue) {
         ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $script:ConfigPath | ConvertFrom-Json)
@@ -4955,30 +5826,80 @@ function Set-ProjectAiRulesClient {
     } else {
         [ordered]@{}
     }
-    $aiRules["tools"] = @($normalized[0])
+    $aiRules["tools"] = @($normalized)
     $config["aiRules"] = $aiRules
     Write-Utf8Text -Path $script:ConfigPath -Value (($config | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
 }
 
+function Initialize-ItlClientModelTiers {
+    # Bind legacy project-wide model ids to the sole original client before
+    # an attach changes the desired set. The fork renderer reads this map and
+    # never applies those ids to another client's agent files.
+    if (-not (Test-Path -LiteralPath $script:ConfigPath -PathType Leaf)) { return $false }
+    $config = ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $script:ConfigPath | ConvertFrom-Json)
+    if (-not $config.Contains('aiRules')) { return $false }
+    $aiRules = ConvertTo-Agent1cHashtable -Object $config['aiRules']
+    if ($aiRules.Contains('modelTiersByClient')) { return $false }
+    $clients = @(ConvertTo-AgentToolList -Value $aiRules['tools'])
+    $models = [ordered]@{ coding = ''; analysis = ''; light = '' }
+    $envPath = Join-Path $script:ProjectRoot '.dev.env'
+    if (Test-Path -LiteralPath $envPath -PathType Leaf) {
+        $envText = Read-Utf8Text -Path $envPath
+        foreach ($tier in @($models.Keys)) {
+            $key = 'SUBAGENT_MODEL_' + $tier.ToUpperInvariant()
+            $match = [regex]::Match($envText, '(?m)^\s*' + [regex]::Escape($key) + '\s*=\s*([^\r\n]*)')
+            if ($match.Success) { $models[$tier] = $match.Groups[1].Value.Trim() }
+        }
+        if ($models['coding'] -and -not [regex]::IsMatch($envText, '(?m)^\s*SUBAGENT_MODEL_ANALYSIS\s*=')) {
+            $models['analysis'] = $models['coding']
+            $models['analysisExplicit'] = $false
+        }
+    }
+    $hasLegacyValues = @($models.Values | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
+    if ($clients.Count -ne 1) {
+        $priorOwners = @(Get-AiRules1cManifestToolNames)
+        $originalClient = if ($priorOwners.Count -eq 1 -and $priorOwners[0] -in $clients) { [string]$priorOwners[0] } else { '' }
+        if ($hasLegacyValues -and -not $originalClient) {
+            throw "ITL_CLIENT_MODEL_AMBIGUOUS: legacy SUBAGENT_MODEL_* values cannot be assigned across $($clients.Count) clients without a sole installed owner. Set aiRules.modelTiersByClient explicitly."
+        }
+        $modelMap = [ordered]@{}
+        if ($hasLegacyValues) { $modelMap[$originalClient] = $models }
+        $aiRules['modelTiersByClient'] = $modelMap
+    } else {
+        $modelMap = [ordered]@{}
+        $modelMap[[string]$clients[0]] = $models
+        $aiRules['modelTiersByClient'] = $modelMap
+    }
+    $config['aiRules'] = $aiRules
+    Write-Utf8TextAtomic -Path $script:ConfigPath -Value (($config | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+    Read-ProjectConfig
+    return $true
+}
+
 function Get-AgentTargets {
-    $target = $AgentTarget
-    if ($null -eq $target -or ($target -is [string] -and [string]::IsNullOrWhiteSpace($target))) {
-        $target = Get-Setting -EnvName "AGENT_TOOLS" -ConfigName "aiRules.tools" -Default @()
+    param([switch]$AllowUnconfigured)
+    # The configured set belongs to the project; -AgentTarget selects the
+    # executing client and must not silently replace the desired installation.
+    $target = Get-ConfigValue -Path "aiRules.tools" -Default @()
+    $hasExplicitSet = $null -ne $script:Config -and
+        $null -ne $script:Config.PSObject.Properties['aiRules'] -and
+        $null -ne $script:Config.aiRules -and
+        $null -ne $script:Config.aiRules.PSObject.Properties['tools']
+    if (-not $hasExplicitSet -and @(ConvertTo-AgentToolList -Value $target).Count -eq 0) {
+        $target = [Environment]::GetEnvironmentVariable("AGENT_TOOLS", "Process")
+    }
+    if (-not $hasExplicitSet -and @(ConvertTo-AgentToolList -Value $target).Count -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$AgentTarget)) {
+        $target = $AgentTarget
     }
 
     $items = @(ConvertTo-AgentToolList -Value $target)
-    if ($items.Count -eq 2 -and $items -contains "codex" -and $items -contains "kilocode") {
-        Write-Host "Migrating legacy aiRules.tools [codex,kilocode] to the single active client [kilocode]."
-        $items = @("kilocode")
-    }
     if ($items.Count -eq 0) {
-        throw "No active agent client is configured. Choose exactly one of: $((Get-SupportedAgentTargets) -join ', ')."
+        if ($hasExplicitSet -or $AllowUnconfigured) { return @() }
+        throw "No agent client is configured. Choose at least one of: $((Get-SupportedAgentTargets) -join ', ')."
     }
-    if ($items.Count -ne 1) {
-        throw "Multiple active agent clients are not supported. Choose exactly one of: $((Get-SupportedAgentTargets) -join ', '). Configured: $($items -join ', ')."
-    }
-    if ($items[0] -notin (Get-SupportedAgentTargets)) {
-        throw "Unsupported agent client '$($items[0])'. Supported clients: $((Get-SupportedAgentTargets) -join ', ')."
+    $unsupported = @($items | Where-Object { $_ -notin (Get-SupportedAgentTargets) })
+    if ($unsupported.Count -gt 0) {
+        throw "Unsupported agent client(s) '$($unsupported -join ', ')'. Supported clients: $((Get-SupportedAgentTargets) -join ', ')."
     }
 
     return $items
@@ -5387,10 +6308,19 @@ function Get-DesignerLogTerminalState {
         [regex]::Escape($errorsText)
     $noFailurePattern = '(?i)(?:\u043e\u0448\u0438\u0431\u043a\u0438\s+\u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442|\u043e\u0448\u0438\u0431\u043e\u043a\s+\u043d\u0435\s+\u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u043e|\u0431\u0435\u0437\s+\u043e\u0448\u0438\u0431\u043e\u043a|\b0\s+errors?\b|\berrors?\s*[:=]\s*0\b|\bno\s+errors?\b)'
     foreach ($line in @([string]$text -split '[\r\n]+')) {
-        if ([regex]::IsMatch($line, $noFailurePattern)) {
+        $failureCandidate = [string]$line
+        $pathField = [regex]::Match($failureCandidate, '^(?<label>\s*[^:]+:)\s*(?:[A-Za-z]:[\\/]|\\\\)')
+        if ($pathField.Success) {
+            # Designer reports source and target paths as labelled fields. A
+            # project-controlled directory such as "review-calendar-error"
+            # is data, not a terminal failure marker. Keep the label so an
+            # actual "Error: C:\..." or "Ошибка: C:\..." line still fails.
+            $failureCandidate = [string]$pathField.Groups['label'].Value
+        }
+        if ([regex]::IsMatch($failureCandidate, $noFailurePattern)) {
             continue
         }
-        $failureMatch = [regex]::Match($line, $failurePattern)
+        $failureMatch = [regex]::Match($failureCandidate, $failurePattern)
         if ($failureMatch.Success) {
             return [pscustomobject]@{
                 state = "failure"
@@ -5797,17 +6727,159 @@ function Test-DesignerInfoBaseReleased {
     }
 }
 
+function ConvertTo-DesignerIdentityTimeUtc {
+    param([AllowNull()][object]$CreationTime)
+    $start = [DateTimeOffset]::MinValue
+    if ($CreationTime -is [datetime]) { $start = [DateTimeOffset]$CreationTime.ToUniversalTime() }
+    elseif (-not [DateTimeOffset]::TryParse([string]$CreationTime, [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::None, [ref]$start)) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: process creation time is required.' }
+    # Identity and its invocation lower bound use the same UTC CIM precision.
+    $ticks = $start.UtcDateTime.Ticks - ($start.UtcDateTime.Ticks % 10)
+    return [datetime]::new($ticks,[DateTimeKind]::Utc)
+}
+
+function Get-NativeLauncherProcessIdentity {
+    param([Parameter(Mandatory = $true)][object]$ProcessInfo)
+    $name = [string](Get-StateValue -State $ProcessInfo -Name 'Name' -Default '')
+    if (-not $name) { $name = [string](Get-StateValue -State $ProcessInfo -Name 'ProcessName' -Default '') }
+    if ($name -and -not $name.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { $name += '.exe' }
+    $creation = Get-StateValue -State $ProcessInfo -Name 'CreationDate' -Default $null
+    if ($null -eq $creation) { $creation = Get-StateValue -State $ProcessInfo -Name 'processStartTime' -Default $null }
+    if ($null -eq $creation) { $creation = Get-StateValue -State $ProcessInfo -Name 'StartTime' -Default $null }
+    $start = ConvertTo-DesignerIdentityTimeUtc -CreationTime $creation
+    if (-not $name -or [IO.Path]::GetFileName($name) -cne $name) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: launcher executable name is required.' }
+    return [pscustomobject]@{ name=$name.ToLowerInvariant(); startTimeUtc=$start.ToString('o') }
+}
+
+function Get-DesignerProcessIdentity {
+    param([Parameter(Mandatory = $true)][object]$ProcessInfo)
+    $identity = Get-NativeLauncherProcessIdentity -ProcessInfo $ProcessInfo
+    if ($identity.name -notin @('1cv8.exe', '1cv8c.exe')) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: native 1C process name is required.' }
+    return $identity
+}
+
+function Set-DesignerNativeLaunchIdentity {
+    param([AllowNull()][object]$Record, [object]$Process, [string]$FilePath)
+    if ($null -eq $Record -or [IO.Path]::GetFileName($FilePath) -notin @('1cv8.exe','1cv8c.exe')) { return }
+    try {
+        # The original launch owns this name and held process birth. ProcessName
+        # may no longer be available after the real launcher exits/Refresh runs.
+        $identity = Get-DesignerProcessIdentity -ProcessInfo ([pscustomobject]@{
+            Name=[IO.Path]::GetFileName($FilePath); StartTime=$Process.StartTime })
+        $identity | Add-Member NoteProperty processId ([int]$Process.Id)
+        $Record | Add-Member NoteProperty processIdentity $identity -Force
+    } catch { }
+}
+
+function Set-DesignerInvocationLauncherIdentity {
+    param([object]$ProbeState, [object]$ProbeContext)
+    $scopes = @(if ($null -ne $ProbeContext -and $ProbeContext.PSObject.Properties['nativeOperationScopes']) { $ProbeContext.nativeOperationScopes })
+    if ($scopes.Count -gt 0) { $ProbeState.ownedProcessScopes = $scopes }
+    $id = [int](Get-StateValue -State $ProbeContext -Name 'processId' -Default 0)
+    $birth = [string](Get-StateValue -State $ProbeContext -Name 'processStartTimeUtc' -Default '')
+    $notBefore = [string](Get-StateValue -State $ProbeContext -Name 'invocationStartedAtUtc' -Default '')
+    if ($notBefore) { $ProbeState.invocationStartedAtUtc = $notBefore }
+    if ($id -gt 0) {
+        $ProbeState.trackedProcessIds.Add($id) | Out-Null
+        if ($birth -and -not $ProbeState.trackedProcessIdentities.ContainsKey($id)) {
+            # The held launcher can be OneScript; discovered descendants remain
+            # strictly 1C. Both identities retain exact name and captured birth.
+            $ProbeState.trackedProcessIdentities[$id] = Get-NativeLauncherProcessIdentity -ProcessInfo ([pscustomobject]@{
+                Name=([string](Get-StateValue -State $ProbeContext -Name 'processName' -Default '1cv8.exe')); processStartTime=$birth })
+        }
+        $exitTime = [string](Get-StateValue -State $ProbeContext -Name 'processExitTimeUtc' -Default '')
+        if ($exitTime -and $ProbeState.trackedProcessIdentities.ContainsKey($id)) {
+            $ProbeState.trackedProcessIdentities[$id] | Add-Member NoteProperty exitTimeUtc $exitTime -Force
+        }
+    }
+}
+
+function Get-DesignerOwnedProcessInventory {
+    param([object[]]$Inventory, [System.Collections.IDictionary]$Identities, [int[]]$TrackedProcessIds,
+        [string]$LogPath, [datetime]$InvocationStartedAtUtc, [object[]]$Scopes = @())
+    $InvocationStartedAtUtc = ConvertTo-DesignerIdentityTimeUtc -CreationTime $InvocationStartedAtUtc
+    foreach ($id in $TrackedProcessIds) {
+        if (-not $Identities.Contains($id)) { throw "DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: launcher PID $id has no captured birth identity." }
+    }
+    $selected = @{}
+    $parentObservations = @{}
+    do {
+        $changed = $false
+        foreach ($candidate in $Inventory) {
+            $id = [int]$candidate.ProcessId
+            if ($selected.ContainsKey($id)) { continue }
+            $parentId = [int]$candidate.ParentProcessId
+            $matchesLog = $Scopes.Count -eq 0 -and $LogPath -and
+                (Test-OneCCommandLineExactOutputPath -CommandLine ([string]$candidate.CommandLine) -ExpectedLogPath $LogPath)
+            $matchedScopes = @($Scopes | Where-Object { Test-OneCNativeProcessInRunScopes -ProcessInfo $candidate -Scopes @($_) })
+            $matchesScope = $matchedScopes.Count -gt 0
+            if (-not ($Identities.Contains($id) -or $matchesScope -or ($Scopes.Count -eq 0 -and $matchesLog) -or $Identities.Contains($parentId))) { continue }
+            $identity = Get-DesignerProcessIdentity -ProcessInfo $candidate
+            $birth = ConvertTo-DesignerIdentityTimeUtc -CreationTime $identity.startTimeUtc
+            if ($Identities.Contains($id)) {
+                $expected = $Identities[$id]
+                if (($identity.name -cne $expected.name -or $identity.startTimeUtc -cne $expected.startTimeUtc) -and -not $matchesScope) { continue }
+            } elseif (-not $matchesScope) {
+                $matchesLog = $Scopes.Count -eq 0 -and $matchesLog
+                $matchesParent = -not $matchesLog -and $Identities.Contains($parentId) -and $birth -ge ([DateTimeOffset]$Identities[$parentId].startTimeUtc).UtcDateTime
+                $liveParent = @($Inventory | Where-Object { [int]$_.ProcessId -eq $parentId })
+                $parentExit = if ($matchesParent) { [string](Get-StateValue -State $Identities[$parentId] -Name 'exitTimeUtc' -Default '') } else { '' }
+                if ($matchesParent -and $parentExit) {
+                    # A child born during the original parent's captured lifetime
+                    # remains ours even after that parent's numeric PID is reused.
+                    $matchesParent = $birth -le ([DateTimeOffset]$parentExit).UtcDateTime
+                } elseif ($matchesParent -and $liveParent.Count -gt 0) {
+                    $currentParent = Get-NativeLauncherProcessIdentity -ProcessInfo $liveParent[0]
+                    $matchesParent = $currentParent.startTimeUtc -ceq $Identities[$parentId].startTimeUtc -and $currentParent.name -ceq $Identities[$parentId].name
+                } elseif ($matchesParent) {
+                    if (-not $parentObservations.ContainsKey($parentId)) {
+                        $parentObservations[$parentId] = @(Get-CimInstance Win32_Process -Filter "ProcessId=$parentId" -OperationTimeoutSec 2 -ErrorAction Stop)
+                    }
+                    $currentParents = @($parentObservations[$parentId])
+                    if ($currentParents.Count -gt 0) {
+                        $currentParent = Get-NativeLauncherProcessIdentity -ProcessInfo $currentParents[0]
+                        $matchesParent = $currentParent.startTimeUtc -ceq $Identities[$parentId].startTimeUtc -and $currentParent.name -ceq $Identities[$parentId].name
+                    } else {
+                        $parentExit = [string](Get-StateValue -State $Identities[$parentId] -Name 'exitTimeUtc' -Default '')
+                        if (-not $parentExit) { throw "DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: parent PID $parentId has no live or captured exit identity." }
+                        $matchesParent = $birth -le ([DateTimeOffset]$parentExit).UtcDateTime
+                    }
+                }
+                if ($birth -lt $InvocationStartedAtUtc -or -not ($matchesLog -or $matchesParent)) { continue }
+            }
+            if ($Identities.Contains($id) -and $identity.startTimeUtc -ceq $Identities[$id].startTimeUtc) {
+                $priorExit = [string](Get-StateValue -State $Identities[$id] -Name 'exitTimeUtc' -Default '')
+                if ($priorExit) { $identity | Add-Member NoteProperty exitTimeUtc $priorExit }
+            }
+            $Identities[$id] = $identity
+            $selected[$id] = [pscustomobject]@{
+                OwnedByInvocation=$true; Name=$identity.name; ProcessId=$id; ParentProcessId=$parentId
+                processStartTime=$identity.startTimeUtc
+                matchedScopes=$matchedScopes
+                KernelModeTime=[int64](Get-StateValue -State $candidate -Name 'KernelModeTime' -Default 0)
+                UserModeTime=[int64](Get-StateValue -State $candidate -Name 'UserModeTime' -Default 0)
+                WorkingSetSize=[int64](Get-StateValue -State $candidate -Name 'WorkingSetSize' -Default 0)
+            }
+            $changed = $true
+        }
+    } while ($changed)
+    return @($selected.Values | Sort-Object ProcessId)
+}
+
 function New-DesignerInvocationProbeState {
     param(
         [int]$LauncherProcessId,
         [int]$StallWarningSeconds = -1,
         [int]$StallTimeoutSeconds = -1,
-        [int]$SubProbeTimeoutSeconds = -1
+        [int]$SubProbeTimeoutSeconds = -1,
+        [object[]]$OwnedProcessScopes = @()
     )
 
     $trackedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
+    $identities = @{}
     if ($LauncherProcessId -gt 0) {
         $trackedProcessIds.Add($LauncherProcessId) | Out-Null
+        try { $identities[$LauncherProcessId] = Get-DesignerProcessIdentity -ProcessInfo (Get-Process -Id $LauncherProcessId -ErrorAction Stop) } catch { }
     }
     if ($StallWarningSeconds -lt 0) {
         $StallWarningSeconds = Get-DesignerStallWarningSeconds
@@ -5823,6 +6895,9 @@ function New-DesignerInvocationProbeState {
     }
     return [pscustomobject]@{
         trackedProcessIds = $trackedProcessIds
+        trackedProcessIdentities = $identities
+        invocationStartedAtUtc = $(if ($identities.ContainsKey($LauncherProcessId)) { $identities[$LauncherProcessId].startTimeUtc } else { [DateTime]::UtcNow.ToString('o') })
+        ownedProcessScopes = @($OwnedProcessScopes)
         lastDiagnosticSecond = -1
         nextProcessCheckAtUtc = [DateTime]::MinValue
         lastProcessState = $null
@@ -5831,6 +6906,9 @@ function New-DesignerInvocationProbeState {
         stallWarningSeconds = $StallWarningSeconds
         stallTimeoutSeconds = $StallTimeoutSeconds
         stallTimeoutExceeded = $false
+        stallTimeoutExceededAtUtc = $null
+        stallConfirmationSeconds = 30
+        stallTermination = $null
         stallCleanup = $null
         startedAtUtc = [DateTime]::UtcNow
         lastObservedAtUtc = $null
@@ -5850,6 +6928,7 @@ function New-DesignerInvocationProbeState {
         processProbeLastCompletedAtUtc = $null
         processScanProcess = $null
         processScanOutputPath = ""
+        processScanInputPath = ""
         processScanStartedAtUtc = $null
         infoBaseReleaseDatabasePath = ""
         probeLastStatusPublishedAtUtc = [DateTime]::MinValue
@@ -5867,41 +6946,33 @@ function Start-DesignerProcessEnumeration {
     }
 
     $outputPath = Join-Path (Get-Agent1cTempRoot) ("designer-process-probe-{0}-{1}.json" -f $PID, ([guid]::NewGuid().ToString("N")))
-    $inputBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((@{
+    $inputPath = [IO.Path]::ChangeExtension($outputPath, 'input.json')
+    $inputPayload = @{
         outputPath = $outputPath
         operationTimeoutSeconds = [int][Math]::Max(1, [Math]::Min(10, [int]$ProbeState.subProbeTimeoutSeconds))
         trackedProcessIds = @($ProbeState.trackedProcessIds)
+        trackedProcessIdentities = @($ProbeState.trackedProcessIdentities.GetEnumerator() | ForEach-Object { @{ processId=[int]$_.Key; name=$_.Value.name; startTimeUtc=$_.Value.startTimeUtc; exitTimeUtc=(Get-StateValue -State $_.Value -Name 'exitTimeUtc' -Default '') } })
+        invocationStartedAtUtc = $ProbeState.invocationStartedAtUtc
+        ownedProcessScopes = @(if ($ProbeState.PSObject.Properties['ownedProcessScopes']) { $ProbeState.ownedProcessScopes })
+        helperLibraryPath = $script:Agent1cCoreRoot
         logPath = $(if ($LogPath) { [System.IO.Path]::GetFullPath($LogPath) } else { "" })
         databasePath = [string]$ProbeState.infoBaseReleaseDatabasePath
-    } | ConvertTo-Json -Compress)))
+    } | ConvertTo-Json -Compress -Depth 10
+    # Ownership evidence grows with a long native build. Keep the complete
+    # payload in an owned UTF-8 file; only its path enters the bounded command.
+    $inputPathBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($inputPath))
     $commandText = @"
 `$ErrorActionPreference = 'Stop'
-`$inputPayload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$inputBase64')) | ConvertFrom-Json
+`$inputPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$inputPathBase64'))
+`$inputPayload = [IO.File]::ReadAllText(`$inputPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
 `$payload = `$null
 try {
+    `$scopes = @(`$inputPayload.ownedProcessScopes)
+    foreach (`$module in @('agent-1c.core.ps1','agent-1c.runtime-values.ps1','agent-1c.sessions.ps1')) { . (Join-Path ([string]`$inputPayload.helperLibraryPath) `$module) }
     `$inventory = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='1cv8.exe' OR Name='1cv8c.exe'" -OperationTimeoutSec ([uint32]`$inputPayload.operationTimeoutSeconds) -ErrorAction Stop)
-    `$tracked = [System.Collections.Generic.HashSet[int]]::new()
-    foreach (`$trackedProcessId in @(`$inputPayload.trackedProcessIds)) { `$tracked.Add([int]`$trackedProcessId) | Out-Null }
-    `$changed = `$true
-    while (`$changed) {
-        `$changed = `$false
-        foreach (`$candidate in `$inventory) {
-            `$matchesLog = `$inputPayload.logPath -and ([string]`$candidate.CommandLine).IndexOf([string]`$inputPayload.logPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
-            `$matchesParent = `$tracked.Contains([int]`$candidate.ParentProcessId)
-            if ((`$matchesLog -or `$matchesParent) -and `$tracked.Add([int]`$candidate.ProcessId)) { `$changed = `$true }
-        }
-    }
-    `$processes = @(`$inventory | Where-Object { `$tracked.Contains([int]`$_.ProcessId) } | ForEach-Object {
-        [ordered]@{
-            OwnedByInvocation = `$true
-            Name = [string]`$_.Name
-            ProcessId = [int]`$_.ProcessId
-            ParentProcessId = [int]`$_.ParentProcessId
-            KernelModeTime = [int64]`$_.KernelModeTime
-            UserModeTime = [int64]`$_.UserModeTime
-            WorkingSetSize = [int64]`$_.WorkingSetSize
-        }
-    })
+    `$identities = @{}
+    foreach (`$identity in @(`$inputPayload.trackedProcessIdentities)) { `$identities[[int]`$identity.processId] = `$identity }
+    `$processes = @(Get-DesignerOwnedProcessInventory -Inventory `$inventory -Identities `$identities -TrackedProcessIds @(`$inputPayload.trackedProcessIds) -LogPath ([string]`$inputPayload.logPath) -InvocationStartedAtUtc ([datetime]`$inputPayload.invocationStartedAtUtc) -Scopes `$scopes)
     `$infoBaseReleaseChecked = `$false
     `$infoBaseReleased = `$false
     if (`$inputPayload.databasePath -and `$processes.Count -eq 0) {
@@ -5936,17 +7007,35 @@ if (`$payload.status -eq 'failed') { exit 1 }
 exit 0
 "@
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
-    $process = Start-Process `
-        -FilePath "powershell" `
-        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
-        -WorkingDirectory $script:ProjectRoot `
-        -WindowStyle Hidden `
-        -PassThru
-    if ($null -eq $process) {
-        throw "Could not start the bounded Designer process enumeration."
+    $inputCreated = $false
+    try {
+        # This unique private file is consumed only after Start-Process. Close
+        # it before launch; an atomic rename adds a sharing failure boundary
+        # without protecting any concurrent reader. Never overwrite a collision.
+        $inputStream = [IO.File]::Open($inputPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $inputCreated = $true
+        try {
+            $inputBytes = (Get-Utf8Encoding).GetBytes($inputPayload)
+            $inputStream.Write($inputBytes, 0, $inputBytes.Length)
+        } finally {
+            $inputStream.Dispose()
+        }
+        $process = Start-Process `
+            -FilePath "powershell" `
+            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
+            -WorkingDirectory $script:ProjectRoot `
+            -WindowStyle Hidden `
+            -PassThru
+        if ($null -eq $process) {
+            throw "Could not start the bounded Designer process enumeration."
+        }
+    } catch {
+        if ($inputCreated) { Remove-Item -LiteralPath $inputPath -Force -ErrorAction SilentlyContinue }
+        throw
     }
     $ProbeState.processScanProcess = $process
     $ProbeState.processScanOutputPath = $outputPath
+    $ProbeState.processScanInputPath = $inputPath
     $ProbeState.processScanStartedAtUtc = [DateTime]::UtcNow
     $ProbeState.processProbeStartedAtUtc = $ProbeState.processScanStartedAtUtc
 }
@@ -5967,6 +7056,11 @@ function Stop-DesignerProcessEnumeration {
     }
     if ($ProbeState.processScanOutputPath -and (Test-Path -LiteralPath $ProbeState.processScanOutputPath -PathType Leaf -ErrorAction SilentlyContinue)) {
         Remove-Item -LiteralPath $ProbeState.processScanOutputPath -Force -ErrorAction SilentlyContinue
+    }
+    $inputPath = [string](Get-StateValue -State $ProbeState -Name 'processScanInputPath' -Default '')
+    if ($termination.confirmed -and $inputPath) {
+        Remove-Item -LiteralPath $inputPath -Force -ErrorAction SilentlyContinue
+        $ProbeState.processScanInputPath = ''
     }
     $ProbeState.processScanProcess = $null
     $ProbeState.processScanOutputPath = ""
@@ -6045,6 +7139,7 @@ function Get-DesignerInvocationProcessState {
         $enumeration = Receive-DesignerProcessEnumeration -ProbeState $ProbeState -LogPath $LogPath
         if ($enumeration.status -ne "completed") {
             $state = [pscustomobject]@{
+                observationStatus = 'pending'
                 querySucceeded = $false
                 active = $true
                 processIds = @()
@@ -6064,27 +7159,39 @@ function Get-DesignerInvocationProcessState {
         $workerFiltered = $designerProcesses.Count -eq 0 -or
             @($designerProcesses | Where-Object { $_.PSObject.Properties.Name -contains "OwnedByInvocation" -and [bool]$_.OwnedByInvocation }).Count -eq $designerProcesses.Count
         if ($workerFiltered) {
-            foreach ($candidate in $designerProcesses) {
-                $ProbeState.trackedProcessIds.Add([int]$candidate.ProcessId) | Out-Null
-            }
-        } else {
-            $normalizedLogPath = if ($LogPath) { [System.IO.Path]::GetFullPath($LogPath) } else { "" }
-            $changed = $true
-            while ($changed) {
-                $changed = $false
-                foreach ($candidate in $designerProcesses) {
-                    $processId = [int]$candidate.ProcessId
-                    $parentProcessId = [int]$candidate.ParentProcessId
-                    $commandLine = [string]$candidate.CommandLine
-                    $matchesLog = $normalizedLogPath -and $commandLine.IndexOf($normalizedLogPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
-                    $matchesParent = $ProbeState.trackedProcessIds.Contains($parentProcessId)
-                    if (($matchesLog -or $matchesParent) -and $ProbeState.trackedProcessIds.Add($processId)) { $changed = $true }
+            # A complete empty worker result still requires captured tracked identities.
+            $null = @(Get-DesignerOwnedProcessInventory -Inventory @() -Identities $ProbeState.trackedProcessIdentities -TrackedProcessIds @($ProbeState.trackedProcessIds) -LogPath $(if ($LogPath) { [IO.Path]::GetFullPath($LogPath) } else { '' }) -InvocationStartedAtUtc ([datetime]$ProbeState.invocationStartedAtUtc) -Scopes @($ProbeState.ownedProcessScopes))
+            $validated = @($designerProcesses | ForEach-Object {
+                $identity = Get-DesignerProcessIdentity -ProcessInfo $_
+                $id = [int]$_.ProcessId
+                if ($ProbeState.trackedProcessIdentities.ContainsKey($id)) {
+                    $expected = $ProbeState.trackedProcessIdentities[$id]
+                    if ($identity.name -cne $expected.name -or $identity.startTimeUtc -cne $expected.startTimeUtc) {
+                        # The owned worker may independently prove a new native invocation
+                        # with this recycled PID. Its matched scope must be ours exactly.
+                        $scopeMatched = $false
+                        foreach ($matched in @(if ($_.PSObject.Properties['matchedScopes']) { $_.matchedScopes })) {
+                            $matchedJson = [string]($matched | ConvertTo-Json -Depth 10 -Compress)
+                            foreach ($scope in @($ProbeState.ownedProcessScopes)) {
+                                if ($matchedJson -ceq [string]($scope | ConvertTo-Json -Depth 10 -Compress)) { $scopeMatched = $true; break }
+                            }
+                            if ($scopeMatched) { break }
+                        }
+                        if (-not $scopeMatched) { return }
+                    } else {
+                        $priorExit = [string](Get-StateValue -State $expected -Name 'exitTimeUtc' -Default '')
+                        if ($priorExit) { $identity | Add-Member NoteProperty exitTimeUtc $priorExit }
+                    }
                 }
-            }
+                $ProbeState.trackedProcessIdentities[$id] = $identity
+                $ProbeState.trackedProcessIds.Add($id) | Out-Null
+                $_
+            })
+            $activeProcesses = $validated
+        } else {
+            $activeProcesses = @(Get-DesignerOwnedProcessInventory -Inventory $designerProcesses -Identities $ProbeState.trackedProcessIdentities -TrackedProcessIds @($ProbeState.trackedProcessIds) -LogPath $(if ($LogPath) { [IO.Path]::GetFullPath($LogPath) } else { '' }) -InvocationStartedAtUtc ([datetime]$ProbeState.invocationStartedAtUtc) -Scopes @($ProbeState.ownedProcessScopes))
+            foreach ($candidate in $activeProcesses) { $ProbeState.trackedProcessIds.Add([int]$candidate.ProcessId) | Out-Null }
         }
-
-        $activeProcesses = @($designerProcesses |
-            Where-Object { $ProbeState.trackedProcessIds.Contains([int]$_.ProcessId) })
         $activeProcessIds = @($activeProcesses | ForEach-Object { [int]$_.ProcessId } | Sort-Object)
         [int64]$cpuTime100ns = 0
         [int64]$workingSetBytes = 0
@@ -6104,6 +7211,7 @@ function Get-DesignerInvocationProcessState {
         }
         $state = [pscustomobject]@{
             querySucceeded = $true
+            observationStatus = 'completed'
             active = ($activeProcessIds.Count -gt 0)
             processIds = $activeProcessIds
             cpuSampleAvailable = $cpuSampleAvailable
@@ -6261,6 +7369,34 @@ function Update-DesignerInvocationLiveness {
     return $observation
 }
 
+function Get-DesignerInfoBaseHolderSummary {
+    # Diagnostic only: names live 1C processes of the exact file base and marks
+    # a registered on-demand backend. It never stops or admits anything.
+    param([string]$InfoBaseKind, [string]$InfoBasePath)
+
+    try {
+        $ondemand = @{}
+        if (Get-Command Get-ItlOnDemandRuntimeInstances -CommandType Function -ErrorAction SilentlyContinue) {
+            foreach ($item in @(Get-ItlOnDemandRuntimeInstances)) {
+                if (-not (Test-ItlOnDemandInfoBaseMatch -First ([string]$item.infoBasePath) -Second $InfoBasePath)) { continue }
+                foreach ($field in @("pid", "testClientPid")) {
+                    $holderPid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $item -Name $field -Default 0) -Default 0
+                    if ($holderPid -gt 0) { $ondemand[$holderPid] = "ondemand-$([string]$item.family) instance=$([string]$item.instanceId)" }
+                }
+            }
+        }
+        $holders = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath | ForEach-Object {
+            $text = "pid=$($_.pid) role=$($_.role)"
+            if ($ondemand.ContainsKey([int]$_.pid)) { $text += " owner=$($ondemand[[int]$_.pid])" }
+            $text
+        })
+        if ($holders.Count -eq 0) { return "none identified by command line" }
+        return ($holders -join " | ")
+    } catch {
+        return "holder inspection failed: $(([string]$_.Exception.Message) -replace '[\r\n]+', ' ')"
+    }
+}
+
 function Test-DesignerInvocationReleased {
     param(
         [Parameter(Mandatory = $true)][object]$ProbeState,
@@ -6276,19 +7412,35 @@ function Test-DesignerInvocationReleased {
         return $false
     }
 
+    # A failed launch must release its own processes, not an unrelated holder
+    # of the same file base. Success keeps the operation's release contract.
+    if ($ProbeContext.launcherExited -and (
+        [int](Get-StateValue -State $ProbeContext -Name 'launcherExitCode' -Default 0) -ne 0 -or
+        (Get-DesignerLogTerminalState -LogPath $LogPath -SuccessPattern '').state -eq 'failure'
+    )) {
+        $RequireInfoBaseRelease = $false
+    }
+
+    Set-DesignerInvocationLauncherIdentity -ProbeState $ProbeState -ProbeContext $ProbeContext
     $ProbeState.infoBaseReleaseDatabasePath = if ($RequireInfoBaseRelease -and $InfoBaseKind -eq "file" -and $ProbeState.processesReleaseConfirmed) {
         Join-Path (Resolve-InfoBasePath $InfoBasePath) "1Cv8.1CD"
     } else {
         ""
     }
+    $previousObservation = $ProbeState.lastProcessState
     $processState = Get-DesignerInvocationProcessState -ProbeState $ProbeState -LogPath $LogPath
-    if (-not $processState.querySucceeded -or $processState.active) {
+    $freshObservation = -not [object]::ReferenceEquals($previousObservation, $processState)
+    if ((Get-StateValue -State $processState -Name "observationStatus" -Default "") -eq "pending") {
+        # Retain the first empty observation while a bounded scan is in flight,
+        # but require a fresh completed scan before confirming process release.
+        $ProbeState.processesReleaseConfirmed = $false
+    } elseif (-not $processState.querySucceeded -or $processState.active) {
         $ProbeState.processesReleasedSinceUtc = $null
         $ProbeState.processesReleaseConfirmed = $false
     } elseif (-not $ProbeState.processesReleaseConfirmed) {
         if ($null -eq $ProbeState.processesReleasedSinceUtc) {
             $ProbeState.processesReleasedSinceUtc = [DateTime]::UtcNow
-        } elseif (([DateTime]::UtcNow - [DateTime]$ProbeState.processesReleasedSinceUtc).TotalSeconds -ge 1) {
+        } elseif ($freshObservation -and ([DateTime]::UtcNow - [DateTime]$ProbeState.processesReleasedSinceUtc).TotalSeconds -ge 1) {
             $ProbeState.processesReleaseConfirmed = $true
         }
     }
@@ -6342,7 +7494,28 @@ function Test-DesignerInvocationReleased {
 
     if ($livenessObservation.liveness -eq "stalled-timeout" -and -not [bool]$ProbeState.stallTimeoutExceeded) {
         $ProbeState.stallTimeoutExceeded = $true
+        $ProbeState.stallTimeoutExceededAtUtc = [DateTime]::UtcNow
         $ProbeState.stallCleanup = Stop-DesignerInvocationOwnedProcesses -ProbeState $ProbeState -LogPath $LogPath
+    } elseif ([bool]$ProbeState.stallTimeoutExceeded -and $null -ne $ProbeState.stallCleanup -and
+        -not [bool]$ProbeState.stallCleanup.attempted -and $processState.querySucceeded) {
+        # The first cleanup met a pending scan; repeat it on a completed one.
+        $ProbeState.stallCleanup = Stop-DesignerInvocationOwnedProcesses -ProbeState $ProbeState -LogPath $LogPath
+    }
+
+    # After the stall timeout only a short confirmation window remains. Waiting
+    # for the operation timeout cannot change an unrelated holder of the base.
+    if ([bool]$ProbeState.stallTimeoutExceeded -and $waitingDetail) {
+        $infoBaseHeld = $launcherExited -and $processState.querySucceeded -and -not $processState.active -and
+            [bool]$ProbeState.processesReleaseConfirmed -and $infoBaseRelease.status -eq "completed" -and -not $infoBaseReleased
+        $windowElapsed = ([DateTime]::UtcNow - [DateTime]$ProbeState.stallTimeoutExceededAtUtc).TotalSeconds -ge [int]$ProbeState.stallConfirmationSeconds
+        if ($infoBaseHeld -or $windowElapsed) {
+            $ProbeState.stallTermination = [pscustomobject]@{
+                reason = $(if ($infoBaseHeld) { "infobase-held" } else { "release-unconfirmed" })
+                waitingDetail = $waitingDetail
+                holders = $(if ($infoBaseHeld) { Get-DesignerInfoBaseHolderSummary -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath } else { "" })
+            }
+            throw "DESIGNER_STALL_TERMINATED"
+        }
     }
 
     if (-not $launcherExited) {
@@ -6386,34 +7559,35 @@ function Stop-DesignerInvocationOwnedProcesses {
     }
 
     $errors = [System.Collections.Generic.List[string]]::new()
-    $attempted = $false
+    $stopped = [System.Collections.Generic.List[int]]::new()
     $confirmed = $true
     foreach ($processId in @($state.processIds)) {
-        $attempted = $true
+        $ownedProcess = $null
         try {
-            $ownedProcess = Get-Process -Id ([int]$processId) -ErrorAction Stop
-            $termination = Stop-NativeProcessForSafety -Process $ownedProcess
-            if (-not [bool]$termination.confirmed) {
-                $confirmed = $false
-            }
-            if ($termination.error) {
-                $errors.Add("PID ${processId}: $($termination.error)") | Out-Null
-            }
+            $ownedProcess = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
+            if ($null -eq $ownedProcess) { continue }
+            if (-not $ProbeState.trackedProcessIdentities.ContainsKey([int]$processId)) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: cleanup requires a captured identity.' }
+            # Hold the OS process object before checking birth; never kill a freshly resolved PID.
+            $null = $ownedProcess.Handle
+            $actual = Get-DesignerProcessIdentity -ProcessInfo $ownedProcess
+            $expected = $ProbeState.trackedProcessIdentities[[int]$processId]
+            if ($actual.name -cne $expected.name -or $actual.startTimeUtc -cne $expected.startTimeUtc) { continue }
+            $stopped.Add([int]$processId) | Out-Null
+            $termination = Stop-NativeProcessForSafety -Process $ownedProcess -UseOpenedProcess
+            if (-not [bool]$termination.confirmed) { $confirmed = $false }
+            if ($termination.error) { $errors.Add("PID ${processId}: $($termination.error)") | Out-Null }
         } catch {
             $confirmed = $false
             $errors.Add("PID ${processId}: $($_.Exception.Message)") | Out-Null
+        } finally {
+            if ($ownedProcess -is [Diagnostics.Process]) { $ownedProcess.Dispose() }
         }
     }
-    return [pscustomobject]@{
-        attempted = $attempted
-        confirmed = $confirmed
-        processIds = @($state.processIds)
-        error = ($errors -join " ")
-    }
+    return [pscustomobject]@{ attempted=($stopped.Count -gt 0); confirmed=$confirmed; processIds=@($stopped); error=($errors -join ' ') }
 }
 
 function Stop-NativeProcessForSafety {
-    param([Parameter(Mandatory = $true)][object]$Process)
+    param([Parameter(Mandatory = $true)][object]$Process, [switch]$UseOpenedProcess)
 
     $errors = New-Object System.Collections.Generic.List[string]
     $confirmed = $false
@@ -6426,7 +7600,8 @@ function Stop-NativeProcessForSafety {
     }
 
     try {
-        Stop-Process -Id $Process.Id -Force -ErrorAction Stop
+        if ($UseOpenedProcess) { $Process.Kill() }
+        else { Stop-Process -Id $Process.Id -Force -ErrorAction Stop }
     } catch {
         $errors.Add($_.Exception.Message)
         try {
@@ -6454,38 +7629,212 @@ function Stop-NativeProcessForSafety {
     }
 }
 
+function New-NativeWaitRunStatusMonitor {
+    param([string[]]$LogPaths = @(), [ValidateRange(1, 60)][int]$HeartbeatSeconds = 10)
+
+    $lengths = @{}
+    foreach ($path in @($LogPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        $lengths[[string]$path] = [int64]-1
+    }
+    return [pscustomobject]@{
+        heartbeatSeconds = $HeartbeatSeconds
+        lastPublishedAtUtc = [DateTime]::MinValue
+        lastEvidenceAtUtc = [DateTime]::UtcNow
+        lastCpuTicks = [int64]0
+        lastCpuSampleAvailable = $false
+        lastLogLengths = $lengths
+    }
+}
+
+function Publish-NativeWaitRunStatus {
+    param(
+        [Parameter(Mandatory = $true)][object]$Process,
+        [Parameter(Mandatory = $true)][object]$Monitor,
+        [Parameter(Mandatory = $true)][DateTime]$StartedAtUtc,
+        [Parameter(Mandatory = $true)][DateTime]$DeadlineUtc
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RunStatusPath)) { return }
+    $now = [DateTime]::UtcNow
+    if ($Monitor.lastPublishedAtUtc -ne [DateTime]::MinValue -and
+        ($now - [DateTime]$Monitor.lastPublishedAtUtc).TotalSeconds -lt [int]$Monitor.heartbeatSeconds) { return }
+
+    # A richer operation-specific monitor (Designer/Vanessa) owns its own stall
+    # budget and evidence. The generic native heartbeat must refresh the helper
+    # status without overwriting that diagnosis.
+    if ([int]$script:RunStallTimeoutRemainingSeconds -gt 0 -or
+        [string]$script:RunLiveness -in @('stalled-suspected','stalled-timeout','probe-running')) {
+        $Monitor.lastPublishedAtUtc = $now
+        Write-RunStatus -Status 'running'
+        return
+    }
+
+    $cpuTicks = [int64]0
+    $cpuSampleAvailable = $false
+    $workingSetMb = 0
+    try {
+        $Process.Refresh()
+        if (-not [bool]$Process.HasExited) {
+            $cpuTicks = [int64]$Process.TotalProcessorTime.Ticks
+            $workingSetMb = [int][Math]::Ceiling([double]$Process.WorkingSet64 / 1MB)
+            $cpuSampleAvailable = $true
+        }
+    } catch {}
+
+    $cpuDeltaMilliseconds = 0
+    $progressObserved = $false
+    if ($cpuSampleAvailable -and [bool]$Monitor.lastCpuSampleAvailable -and $cpuTicks -gt [int64]$Monitor.lastCpuTicks) {
+        $cpuDeltaMilliseconds = [int][Math]::Floor(($cpuTicks - [int64]$Monitor.lastCpuTicks) / [TimeSpan]::TicksPerMillisecond)
+        $progressObserved = $true
+    }
+
+    $logGrowthBytes = [int64]0
+    foreach ($path in @($Monitor.lastLogLengths.Keys)) {
+        $length = [int64]-1
+        try {
+            if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
+                $length = [int64](Get-Item -LiteralPath $path -Force -ErrorAction Stop).Length
+            }
+        } catch { $length = [int64]-1 }
+        $previous = [int64]$Monitor.lastLogLengths[$path]
+        if ($previous -ge 0 -and $length -ge 0 -and $length -ne $previous) {
+            $logGrowthBytes += ($length - $previous)
+            $progressObserved = $true
+        }
+        $Monitor.lastLogLengths[$path] = $length
+    }
+
+    if ($progressObserved) { $Monitor.lastEvidenceAtUtc = $now }
+    $noProgressSeconds = [int][Math]::Max(0, [Math]::Floor(($now - [DateTime]$Monitor.lastEvidenceAtUtc).TotalSeconds))
+    $timeoutRemainingSeconds = if ($DeadlineUtc -eq [DateTime]::MaxValue) { 0 } else {
+        [int][Math]::Max(0, [Math]::Ceiling(($DeadlineUtc - $now).TotalSeconds))
+    }
+    $script:RunLiveness = $(if ($progressObserved) { 'running-active' } else { 'running-waiting' })
+    $script:RunNoProgressSeconds = $noProgressSeconds
+    $script:RunStallTimeoutRemainingSeconds = 0
+    $script:RunTimeoutRemainingSeconds = $timeoutRemainingSeconds
+    $script:RunOwnedProcessIds = @([int]$Process.Id)
+    $script:RunCpuDeltaMilliseconds = $cpuDeltaMilliseconds
+    $script:RunWorkingSetMb = $workingSetMb
+    $script:RunLogGrowthBytes = $logGrowthBytes
+    $Monitor.lastPublishedAtUtc = $now
+    $Monitor.lastCpuTicks = $cpuTicks
+    $Monitor.lastCpuSampleAvailable = $cpuSampleAvailable
+    Write-RunStatus -Status 'running'
+}
+
+function Complete-NativeRedirectedOutput {
+    param([string[]]$Paths, [ValidateRange(1,10)][int]$TimeoutSeconds=10)
+    # A timed process wait does not finish Start-Process asynchronous file output.
+    # Return only after its writers release both captures; keep this owner wait bounded.
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    do {
+        $released=$true
+        foreach($path in $Paths) {
+            try {
+                $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+                $stream.Dispose()
+            } catch [IO.IOException] {
+                if(($_.Exception.HResult -band 0xffff) -notin @(32,33)){throw}
+                $released=$false
+            }
+        }
+        if($released){return}
+        [Threading.Thread]::Sleep(25)
+    } while($clock.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    throw "NATIVE_PROCESS_OUTPUT_NOT_RELEASED: retain captures $($Paths -join ', '); diagnose the owned writer and repeat the original operation. No output proof was accepted."
+}
+
 function Invoke-NativeProcessAndWaitResult {
     param(
         [string]$FilePath,
         [string[]]$Arguments,
         [switch]$OneCCreateInfoBaseSyntax,
+        [switch]$HideOneCMainFrame,
         [int]$TimeoutSeconds = 0,
         [scriptblock]$OnTimeout = $null,
         [scriptblock]$CompletionProbe = $null,
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
         [ValidateRange(0, 86400)][int]$PostExitProbeSeconds = 0,
-        [ValidateRange(0, 1048576)][int]$MaxWorkingSetMb = 0
+        [ValidateRange(0, 300)][int]$FailurePostExitProbeSeconds = 0,
+        [switch]$RequirePostExitProbeOnFailure,
+        [ValidateRange(0, 1048576)][int]$MaxWorkingSetMb = 0,
+        [string]$StdoutPath = '',
+        [string]$StderrPath = ''
     )
 
+    if ([bool]$StdoutPath -ne [bool]$StderrPath) { throw 'NATIVE_PROCESS_OUTPUT_PATH_PAIR_REQUIRED' }
+    if ($StdoutPath) {
+        $StdoutPath = [IO.Path]::GetFullPath($StdoutPath)
+        $StderrPath = [IO.Path]::GetFullPath($StderrPath)
+        if ([string]::Equals($StdoutPath, $StderrPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'NATIVE_PROCESS_OUTPUT_PATHS_COLLIDE'
+        }
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($StdoutPath))
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($StderrPath))
+    }
+
+    # Compile/verify before launching 1C, so a cold helper cache cannot leave
+    # the client's early main window visible for the whole build duration.
+    $mainFrameWatchExecutable = ''
+    if ($HideOneCMainFrame) {
+        try { $mainFrameWatchExecutable = Get-ItlWindowHelperExecutable }
+        catch { Write-Host "[WARN] ITL_WINDOW_HELPER_UNAVAILABLE: Enterprise main window may become visible. $($_.Exception.Message)" }
+    }
     $script:LastNativeProcessStarted = $false
+    Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
     $argumentLine = if ($OneCCreateInfoBaseSyntax) {
         Join-OneCCreateInfoBaseCommandLineArguments -Arguments $Arguments
     } else {
         Join-NativeCommandLineArguments -Arguments $Arguments
     }
+    $nativeOperationRecord = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
+    $nativeOperationScopes = @(if ($null -ne $nativeOperationRecord -and $nativeOperationRecord.PSObject.Properties['ownedProcessScopes']) { $nativeOperationRecord.ownedProcessScopes })
+    $createNativeRecord = if ($OneCCreateInfoBaseSyntax) { $nativeOperationRecord } else { $null }
+    $nativeStartNotBeforeUtc = [DateTime]::UtcNow.ToString('o')
     $process = Invoke-OneCSessionProcessStart -StartProcess {
-        Start-Process `
-            -FilePath $FilePath `
-            -ArgumentList $argumentLine `
-            -WorkingDirectory $script:ProjectRoot `
-            -WindowStyle Hidden `
-            -PassThru
+        $startParameters = @{
+            FilePath = $FilePath
+            ArgumentList = $argumentLine
+            WorkingDirectory = $script:ProjectRoot
+            WindowStyle = 'Hidden'
+            PassThru = $true
+        }
+        if ($StdoutPath) {
+            $startParameters.RedirectStandardOutput = $StdoutPath
+            $startParameters.RedirectStandardError = $StderrPath
+        }
+        Start-Process @startParameters
     }
 
     if ($null -eq $process) {
         throw "Failed to start process: $FilePath"
     }
 
+    # Windows PowerShell Start-Process can lose the exit status after the child
+    # exits unless its native handle is retained before monitoring begins.
+    # In that case [int]$process.ExitCode would silently turn null into success.
+    $null = $process.Handle
+
+    if ($mainFrameWatchExecutable) {
+        try {
+            if (-not $process.HasExited) {
+                $watch = Start-ItlOneCMainFrameWatch -Process $process -Executable $mainFrameWatchExecutable
+                # Releasing our handle does not stop the watcher. It validates
+                # PID + creation time and exits with this exact client, including
+                # timeout/cancellation, without a group or an input lease.
+                $watch.Dispose()
+            }
+        } catch {
+            if (-not $process.HasExited) {
+                Write-Host "[WARN] ITL_WINDOW_HELPER_UNAVAILABLE: Enterprise PID $($process.Id) main window may become visible. $($_.Exception.Message)"
+            }
+        }
+    }
+
+    $nativeProcessStartedAtUtc = ''
+    try { $nativeProcessStartedAtUtc = $process.StartTime.ToUniversalTime().ToString('o') } catch { }
+    Set-DesignerNativeLaunchIdentity -Record $nativeOperationRecord -Process $process -FilePath $FilePath
     $script:LastNativeProcessStarted = $true
     $script:LastProcessId = $process.Id
     $script:LastProcessTimedOut = $false
@@ -6502,6 +7851,7 @@ function Invoke-NativeProcessAndWaitResult {
     $launcherExited = $false
     $launcherExitCode = $null
     $launcherExitedAtUtc = $null
+    $effectivePostExitSeconds = $PostExitProbeSeconds
     $postExitProbeTimedOut = $false
     $completionProbeFailed = $false
     $completionProbeErrorType = ""
@@ -6510,9 +7860,12 @@ function Invoke-NativeProcessAndWaitResult {
     $memoryMonitorError = ""
     $terminationConfirmed = $true
     $terminationError = ""
+    $monitorStartedAtUtc = [DateTime]::UtcNow
+    $deadline = if ($TimeoutSeconds -gt 0) { $monitorStartedAtUtc.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
+    $heartbeatLogs = @()
+    if ($script:LastLogPath) { $heartbeatLogs += [string]$script:LastLogPath }
+    $runStatusMonitor = New-NativeWaitRunStatusMonitor -LogPaths $heartbeatLogs
     if ($TimeoutSeconds -gt 0 -or $MaxWorkingSetMb -gt 0 -or $null -ne $CompletionProbe) {
-        $monitorStartedAtUtc = [DateTime]::UtcNow
-        $deadline = if ($TimeoutSeconds -gt 0) { $monitorStartedAtUtc.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
         $postExitProbeDeadlineUtc = $null
         $probeObservedAt = $null
         $finished = $false
@@ -6524,7 +7877,10 @@ function Invoke-NativeProcessAndWaitResult {
                     $launcherExitCode = [int]$process.ExitCode
                     $launcherExitedAtUtc = [DateTime]::UtcNow
                     if ($PostExitProbeSeconds -gt 0) {
-                        $postExitProbeDeadlineUtc = $launcherExitedAtUtc.AddSeconds($PostExitProbeSeconds)
+                        if ($launcherExitCode -ne 0 -and $FailurePostExitProbeSeconds -gt 0) {
+                            $effectivePostExitSeconds = [Math]::Min($effectivePostExitSeconds, $FailurePostExitProbeSeconds)
+                        }
+                        $postExitProbeDeadlineUtc = $launcherExitedAtUtc.AddSeconds($effectivePostExitSeconds)
                     }
                 }
             } catch {
@@ -6580,6 +7936,11 @@ function Invoke-NativeProcessAndWaitResult {
                         launcherExited = $launcherExited
                         launcherExitCode = $launcherExitCode
                         processId = $process.Id
+                        processStartTimeUtc = $nativeProcessStartedAtUtc
+                        nativeOperationScopes = $nativeOperationScopes
+                        invocationStartedAtUtc = $nativeStartNotBeforeUtc
+                        processName = [IO.Path]::GetFileName($FilePath)
+                        processExitTimeUtc = $(if ($launcherExited) { try { $process.ExitTime.ToUniversalTime().ToString('o') } catch { '' } } else { '' })
                         observedAtUtc = $probeObservedAtUtc
                         elapsedSeconds = [int][Math]::Floor(($probeObservedAtUtc - $monitorStartedAtUtc).TotalSeconds)
                         timeoutSeconds = $TimeoutSeconds
@@ -6648,8 +8009,8 @@ function Invoke-NativeProcessAndWaitResult {
                     $postExitProbeExpired = $PostExitProbeSeconds -le 0 -or
                         $null -eq $postExitProbeDeadlineUtc -or
                         [DateTime]::UtcNow -ge [DateTime]$postExitProbeDeadlineUtc
-                    if ($launcherExitCode -ne 0 -or $postExitProbeExpired) {
-                        if ($launcherExitCode -eq 0 -and $postExitProbeExpired -and -not $completedByProbe) {
+                    if (($launcherExitCode -ne 0 -and -not $RequirePostExitProbeOnFailure) -or $postExitProbeExpired) {
+                        if (($launcherExitCode -eq 0 -or $RequirePostExitProbeOnFailure) -and $postExitProbeExpired -and -not $completedByProbe) {
                             $postExitProbeTimedOut = $true
                         }
                         $finished = $true
@@ -6661,6 +8022,7 @@ function Invoke-NativeProcessAndWaitResult {
                 break
             }
 
+            Publish-NativeWaitRunStatus -Process $process -Monitor $runStatusMonitor -StartedAtUtc $monitorStartedAtUtc -DeadlineUtc $deadline
             if (-not $launcherExited) {
                 $process.WaitForExit(250) | Out-Null
             } else {
@@ -6687,7 +8049,10 @@ function Invoke-NativeProcessAndWaitResult {
             }
         }
     } else {
-        $process.WaitForExit()
+        while (-not $process.HasExited) {
+            Publish-NativeWaitRunStatus -Process $process -Monitor $runStatusMonitor -StartedAtUtc $monitorStartedAtUtc -DeadlineUtc $deadline
+            $process.WaitForExit(250) | Out-Null
+        }
     }
 
     try {
@@ -6697,12 +8062,14 @@ function Invoke-NativeProcessAndWaitResult {
             $launcherExitCode = [int]$process.ExitCode
         }
     } catch {}
-    return [pscustomobject]@{
+    if($launcherExited -and $StdoutPath){Complete-NativeRedirectedOutput -Paths @($StdoutPath,$StderrPath)}
+    $nativeResult = [pscustomobject]@{
         processId = $process.Id
         exitCode = $(
             if ($script:LastProcessMemoryLimitExceeded) { -2 }
             elseif ($memoryMonitorFailed) { -3 }
             elseif ($script:LastProcessTimedOut) { -1 }
+            elseif ($completedByProbe -and $RequirePostExitProbeOnFailure -and $null -ne $launcherExitCode -and $launcherExitCode -ne 0) { $launcherExitCode }
             elseif ($completedByProbe) { 0 }
             elseif ($null -ne $launcherExitCode) { $launcherExitCode }
             else { $process.ExitCode }
@@ -6720,10 +8087,56 @@ function Invoke-NativeProcessAndWaitResult {
         completionProbeErrorType = $completionProbeErrorType
         completionProbeErrorMessage = $completionProbeErrorMessage
         postExitProbeTimedOut = $postExitProbeTimedOut
-        postExitProbeSeconds = $PostExitProbeSeconds
+        postExitProbeSeconds = $effectivePostExitSeconds
         launcherExited = $launcherExited
         launcherExitCode = $launcherExitCode
     }
+    if ($OneCCreateInfoBaseSyntax) {
+        # CREATEINFOBASE may detach its launcher just like Designer. A native
+        # exit/file alone cannot release ownership or authorize RestoreIB.
+        if ($completedByProbe -and $null -ne $launcherExitCode -and $launcherExitCode -ne 0) {
+            $nativeResult.exitCode = $launcherExitCode
+        }
+        $releaseSeconds = if ($PostExitProbeSeconds -gt 0) { $PostExitProbeSeconds } else { Get-CompletionPostExitTimeoutSeconds }
+        $released = Confirm-OneCCreateInfoBaseProcessRelease -Record $createNativeRecord -ProcessId $process.Id `
+            -LauncherExited $launcherExited -TimeoutSeconds $releaseSeconds `
+            -ProcessStartTimeUtc $nativeProcessStartedAtUtc -InvocationStartedAtUtc $nativeStartNotBeforeUtc `
+            -ProcessExitTimeUtc $(try { $process.ExitTime.ToUniversalTime().ToString('o') } catch { '' })
+        $nativeResult | Add-Member NoteProperty ownedProcessesReleased $released
+        if (-not $released) {
+            if ($nativeResult.exitCode -eq 0) { $nativeResult.exitCode = -4 }
+            $nativeResult.terminationConfirmed = $false
+            $nativeResult.terminationError = 'CREATEINFOBASE_OWNED_PROCESS_RELEASE_UNCONFIRMED'
+        }
+    }
+    return $nativeResult
+}
+
+function Confirm-OneCCreateInfoBaseProcessRelease {
+    param([AllowNull()][object]$Record, [int]$ProcessId, [bool]$LauncherExited,
+        [ValidateRange(1, 86400)][int]$TimeoutSeconds, [string]$ProcessStartTimeUtc,
+        [string]$InvocationStartedAtUtc, [string]$ProcessExitTimeUtc)
+    $released = $false
+    $probe = $null
+    try {
+        if (-not $LauncherExited -or $ProcessId -le 0) { return $false }
+        $probe = New-DesignerInvocationProbeState -LauncherProcessId 0
+        $context = [pscustomobject]@{processId=$ProcessId;launcherExited=$LauncherExited
+            processStartTimeUtc=$ProcessStartTimeUtc; invocationStartedAtUtc=$InvocationStartedAtUtc; processExitTimeUtc=$ProcessExitTimeUtc
+            nativeOperationScopes=@(if ($null -ne $Record -and $Record.PSObject.Properties['ownedProcessScopes']) { $Record.ownedProcessScopes })}
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        do {
+            if (Test-OneCNativeInvocationReleased -ProbeState $probe -ProbeContext $context -LogPath '') { $released = $true; break }
+            Start-Sleep -Milliseconds 100
+        } while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    } finally {
+        if ($null -ne $probe -and $null -ne $probe.processScanProcess) {
+            $released = [bool](Stop-DesignerProcessEnumeration -ProbeState $probe).confirmed -and $released
+        }
+        Confirm-OneCNativeOperationRelease -Record $Record -LauncherExited $LauncherExited `
+            -OwnedProcessesReleased $released -Evidence 'create-infobase-owned-process-release'
+    }
+    return $released
 }
 
 function Invoke-NativeProcessAndWait {
@@ -6742,6 +8155,8 @@ function Invoke-VisibleNativeProcessAndWait {
         [string[]]$Arguments
     )
 
+    Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
+    $nativeOperationRecord = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
     $process = Invoke-OneCSessionProcessStart -StartProcess {
         Start-Process `
@@ -6754,6 +8169,8 @@ function Invoke-VisibleNativeProcessAndWait {
     if ($null -eq $process) {
         throw "Failed to start process: $FilePath"
     }
+
+    Set-DesignerNativeLaunchIdentity -Record $nativeOperationRecord -Process $process -FilePath $FilePath
 
     $script:LastProcessId = $process.Id
     $script:LastProcessTimedOut = $false
@@ -6778,6 +8195,8 @@ function Start-NativeProcessBackground {
         [switch]$Visible
     )
 
+    Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
+    $nativeOperationRecord = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
     $startParameters = @{
         FilePath = $FilePath
@@ -6796,7 +8215,117 @@ function Start-NativeProcessBackground {
         throw "Failed to start process: $FilePath"
     }
 
+    Set-DesignerNativeLaunchIdentity -Record $nativeOperationRecord -Process $process -FilePath $FilePath
+
     return $process
+}
+
+function Read-DesignerBatchStrictUtf8Text {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $text = ([Text.UTF8Encoding]::new($false, $true)).GetString([IO.File]::ReadAllBytes($Path))
+    return $text.TrimStart([char]0xFEFF)
+}
+
+function Get-DesignerBatchCheckVerdict {
+    param(
+        [Parameter(Mandatory = $true)][int]$ExitCode,
+        [Parameter(Mandatory = $true)][string]$ResultPath,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+
+    $resultCode = $null
+    $reasons = [System.Collections.Generic.List[string]]::new()
+    if ($ExitCode -ne 0) { $reasons.Add("process exit=$ExitCode") }
+    if (-not (Test-Path -LiteralPath $ResultPath -PathType Leaf)) {
+        $reasons.Add('/DumpResult was not written')
+    } else {
+        try {
+            $rawResult = (Read-DesignerBatchStrictUtf8Text -Path $ResultPath).Trim()
+            if ($rawResult -notmatch '^-?[0-9]+$') { throw 'expected one numeric result' }
+            $resultCode = [int]::Parse($rawResult, [Globalization.CultureInfo]::InvariantCulture)
+            if ($resultCode -ne 0) { $reasons.Add("/DumpResult=$resultCode") }
+        } catch { $reasons.Add("/DumpResult is invalid: $($_.Exception.Message)") }
+    }
+
+    $diagnostics = [System.Collections.Generic.List[string]]::new()
+    $parsedDiagnostics = $null
+    $diagnosticSummary = $null
+    if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+        $reasons.Add('/Out log was not written')
+    } else {
+        try {
+            $parsedDiagnostics = Get-ItlPlatformStructuralDiagnostics -LogPath $LogPath
+            $diagnosticSummary = Get-ItlPlatformDiagnosticSummary -Diagnostics $parsedDiagnostics
+            foreach ($finding in @($parsedDiagnostics.knownDiagnostics) + @($parsedDiagnostics.compilerDiagnostics)) {
+                for ($occurrence=0; $occurrence -lt $finding.count; $occurrence++) { $diagnostics.Add($finding.line) }
+            }
+            foreach ($finding in $parsedDiagnostics.unresolvedDiagnostics) { $diagnostics.Add($finding.line) }
+            if ($diagnostics.Count -gt 0) {
+                $reasons.Add("/Out has $($diagnostics.Count) diagnostic occurrence(s): structural=$($diagnosticSummary.structuralOccurrences), unique=$($diagnosticSummary.structuralUnique), compiler=$($diagnosticSummary.compilerOccurrences), unknown=$($diagnosticSummary.unknownLines)")
+            }
+        } catch { $reasons.Add("/Out cannot be decoded: $($_.Exception.Message)") }
+    }
+    return [pscustomobject]@{
+        passed = ($reasons.Count -eq 0)
+        exitCode = $ExitCode
+        resultCode = $resultCode
+        resultPath = $ResultPath
+        logPath = $LogPath
+        diagnostics = @($diagnostics.ToArray())
+        parsedDiagnostics = $parsedDiagnostics
+        diagnosticSummary = $diagnosticSummary
+        diagnosticsEvidence = $null
+        reasons = @($reasons.ToArray())
+    }
+}
+
+function Get-DesignerLicenseRetryPolicy {
+    # Bounded: at most two minutes of pauses for one Designer command.
+    return [pscustomobject]@{ maxRetries = 8; delaySeconds = 15 }
+}
+
+function Test-DesignerLicenseRefusal {
+    # 1C refuses a license before it opens the infobase: the failed invocation
+    # released its processes and its /Out log holds only the platform message.
+    # Bursts of Designer launches meet such refusals with no other 1C running.
+    param([AllowNull()][object]$ErrorRecord)
+    $exception = if ($ErrorRecord -is [Management.Automation.ErrorRecord]) { $ErrorRecord.Exception } else { $ErrorRecord }
+    if ($null -eq $exception -or $null -eq $exception.Data -or -not $exception.Data.Contains('ItlDesignerBatchResult')) { return $false }
+    $batch = $exception.Data['ItlDesignerBatchResult']
+    if ([int]$batch.exitCode -eq 0 -or -not [bool]$batch.ownedProcessesReleased) { return $false }
+    $logPath = [string]$batch.logPath
+    if (-not $logPath -or -not (Test-Path -LiteralPath $logPath -PathType Leaf -ErrorAction SilentlyContinue)) { return $false }
+    try { $text = [IO.File]::ReadAllText($logPath, [Text.UTF8Encoding]::new($false)) } catch { return $false }
+    $lines = @(($text.TrimStart([char]0xFEFF) -split '\r?\n') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($lines.Count -eq 0) { return $false }
+    $russian = -join ([char[]](1053, 1077, 32, 1085, 1072, 1081, 1076, 1077, 1085, 1072, 32, 1083, 1080, 1094, 1077, 1085, 1079, 1080, 1103))
+    foreach ($line in $lines) {
+        if (-not ($line.StartsWith($russian, [StringComparison]::Ordinal) -or $line.StartsWith('License not found', [StringComparison]::OrdinalIgnoreCase))) { return $false }
+    }
+    return $true
+}
+
+function Test-DesignerReadOnlyBatchCheck {
+    # A standalone batch check reads the configuration and reports through
+    # /DumpResult. Like a standalone CF/CFE export, its own Designer must
+    # finish, but an unrelated Enterprise/ROCTUP session of the same file base
+    # may stay open. Combined or unknown commands keep the release requirement.
+    param([AllowEmptyCollection()][string[]]$DesignerArgs)
+
+    $values = @($DesignerArgs)
+    if ($values.Count -eq 0 -or [string]$values[0] -cnotin @('/CheckCanApplyConfigurationExtensions', '/CheckModules', '/CheckConfig')) {
+        return $false
+    }
+    for ($index = 1; $index -lt $values.Count; $index++) {
+        $value = [string]$values[$index]
+        if ($value -ceq '/DumpResult') {
+            if (($index + 1) -ge $values.Count -or [string]::IsNullOrWhiteSpace([string]$values[$index + 1])) { return $false }
+            $index++
+        } elseif ($value.StartsWith('/', [StringComparison]::Ordinal)) {
+            return $false
+        }
+    }
+    return $true
 }
 
 function Invoke-Designer {
@@ -6805,9 +8334,40 @@ function Invoke-Designer {
         [string]$InfoBaseKind,
         [string[]]$DesignerArgs,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
-        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
+        [AllowNull()][object]$NativeEffectContract = $null,
+        [object]$RestorationDuty = $null
     )
 
+    # Only a license refusal repeats the same command: it never reached the
+    # infobase. Every other failure, and the last refusal, propagate unchanged.
+    $policy = Get-DesignerLicenseRetryPolicy
+    for ($retry = 0; ; $retry++) {
+        try {
+            return Invoke-DesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $DesignerArgs `
+                -User $User -Password $Password -NativeEffectContract $NativeEffectContract -RestorationDuty $RestorationDuty
+        } catch {
+            if ($retry -ge [int]$policy.maxRetries -or -not (Test-DesignerLicenseRefusal -ErrorRecord $_)) { throw }
+            Write-Host "1C refused its license before the Designer opened the infobase; the same command repeats in $($policy.delaySeconds) s (retry $($retry + 1) of $($policy.maxRetries)). Log: $($_.Exception.Data['ItlDesignerBatchResult'].logPath)"
+            Start-Sleep -Seconds ([int]$policy.delaySeconds)
+        }
+    }
+}
+
+function Invoke-DesignerAttempt {
+    param(
+        [string]$InfoBasePath,
+        [string]$InfoBaseKind,
+        [string[]]$DesignerArgs,
+        [string]$User,
+        [string]$Password,
+        [AllowNull()][object]$NativeEffectContract = $null,
+        [object]$RestorationDuty = $null
+    )
+
+    if ($null -ne $RestorationDuty) {
+        Assert-OneCDatabaseRestoreRequest -Duty $RestorationDuty -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -DesignerArgs $DesignerArgs
+    }
     $platformPath = Get-PlatformPath
     if (-not (Test-Path -LiteralPath $platformPath)) {
         throw "1cv8.exe was not found: $platformPath"
@@ -6821,7 +8381,11 @@ function Invoke-Designer {
     $script:LastLogPath = $logPath
 
     $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
+    $updateDbIndex = [Array]::IndexOf($DesignerArgs, "/UpdateDBCfg")
     $args = @("DESIGNER") + $ibArgs + @("/DisableStartupMessages", "/DisableStartupDialogs", "/Out", $logPath) + $DesignerArgs
+    if ($InfoBaseKind -eq "file" -and $updateDbIndex -ge 0 -and [Array]::IndexOf($DesignerArgs, "/AllowExecuteScheduledJobs") -lt 0) {
+        $args += @("/AllowExecuteScheduledJobs", "-Off")
+    }
 
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
@@ -6834,7 +8398,6 @@ function Invoke-Designer {
     $artifactProbeState = $null
     $invocationProbeState = $null
     $repositoryUpdateIndex = [Array]::IndexOf($DesignerArgs, "/ConfigurationRepositoryUpdateCfg")
-    $updateDbIndex = [Array]::IndexOf($DesignerArgs, "/UpdateDBCfg")
     $dumpIndex = [Array]::IndexOf($DesignerArgs, "/DumpConfigToFiles")
     $dumpCfgIndex = [Array]::IndexOf($DesignerArgs, "/DumpCfg")
     $dumpIbIndex = [Array]::IndexOf($DesignerArgs, "/DumpIB")
@@ -6861,6 +8424,8 @@ function Invoke-Designer {
                 -OperationKind $operationKind)) {
                 return $false
             }
+            # A failed invocation needs release evidence, not a successful artifact.
+            if ($probeContext.launcherExited -and [int](Get-StateValue -State $probeContext -Name 'launcherExitCode' -Default 0) -ne 0) { return $true }
             $observedAtUtc = [DateTime]::UtcNow
             if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
                 return $false
@@ -6880,7 +8445,9 @@ function Invoke-Designer {
         $subProbeTimeoutSeconds = Get-DesignerCompletionProbeTimeoutSeconds
         $stabilitySeconds = Get-DesignerDumpStabilitySeconds
         $initialDumpState = Invoke-BoundedDesignerDumpArtifactState -Path $operationTarget -TimeoutSeconds $subProbeTimeoutSeconds
-        $initialSignature = [string]$initialDumpState.signature
+        # An incremental dump may legitimately leave every file unchanged.
+        # The owned invocation must still finish before the copied tree counts as complete.
+        $initialSignature = if ($DesignerArgs -contains "-update") { "" } else { [string]$initialDumpState.signature }
         $artifactProbeState = New-DesignerArtifactProbeState -SubProbeTimeoutSeconds $subProbeTimeoutSeconds
         $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds $subProbeTimeoutSeconds
         $completionProbe = {
@@ -6898,6 +8465,8 @@ function Invoke-Designer {
                 -RequireInfoBaseRelease:$false)) {
                 return $false
             }
+            # A failed invocation needs release evidence, not a successful artifact.
+            if ($probeContext.launcherExited -and [int](Get-StateValue -State $probeContext -Name 'launcherExitCode' -Default 0) -ne 0) { return $true }
             $observedAtUtc = [DateTime]::UtcNow
             if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
                 return $false
@@ -6925,6 +8494,15 @@ function Invoke-Designer {
               ($dumpIbIndex -ge 0 -and ($dumpIbIndex + 1) -lt $DesignerArgs.Count) -or
               ($externalProcessorIndex -ge 0 -and ($externalProcessorIndex + 2) -lt $DesignerArgs.Count)) {
         $operationKind = if ($dumpCfgIndex -ge 0) { "dump-cfg" } elseif ($dumpIbIndex -ge 0) { "dump-ib" } else { "build-external-processor" }
+        # A standalone CF/CFE export reads the configuration. Its own Designer
+        # must finish, but an unrelated Enterprise/ROCTUP session may stay open.
+        # Unknown or combined commands retain the existing release requirement.
+        $readOnlyCfgDump = $dumpCfgIndex -eq 0 -and (
+            $DesignerArgs.Count -eq 2 -or (
+                $DesignerArgs.Count -eq 4 -and $DesignerArgs[2] -eq "-Extension" -and
+                -not [string]::IsNullOrWhiteSpace([string]$DesignerArgs[3])
+            )
+        )
         $targetIndex = if ($dumpCfgIndex -ge 0) { $dumpCfgIndex + 1 } elseif ($dumpIbIndex -ge 0) { $dumpIbIndex + 1 } else { $externalProcessorIndex + 2 }
         $operationTarget = [string]$DesignerArgs[$targetIndex]
         $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
@@ -6944,9 +8522,12 @@ function Invoke-Designer {
                 -LogPath $logPath `
                 -InfoBaseKind $InfoBaseKind `
                 -InfoBasePath $InfoBasePath `
-                -OperationKind $operationKind)) {
+                -OperationKind $operationKind `
+                -RequireInfoBaseRelease:(-not $readOnlyCfgDump))) {
                 return $false
             }
+            # A failed invocation needs release evidence, not a successful artifact.
+            if ($probeContext.launcherExited -and [int](Get-StateValue -State $probeContext -Name 'launcherExitCode' -Default 0) -ne 0) { return $true }
             $observedAtUtc = [DateTime]::UtcNow
             if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
                 return $false
@@ -6961,6 +8542,7 @@ function Invoke-Designer {
         }
     } else {
         $operationKind = $(if ($updateDbIndex -ge 0) { "configuration-update" } else { "designer-command" })
+        $readOnlyBatchCheck = Test-DesignerReadOnlyBatchCheck -DesignerArgs $DesignerArgs
         $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
         $stabilitySeconds = Get-DesignerDumpStabilitySeconds
         $initialLogState = Get-DesignerFileArtifactState -Path $logPath -AllowEmpty
@@ -6978,9 +8560,12 @@ function Invoke-Designer {
                 -LogPath $logPath `
                 -InfoBaseKind $InfoBaseKind `
                 -InfoBasePath $InfoBasePath `
-                -OperationKind $operationKind)) {
+                -OperationKind $operationKind `
+                -RequireInfoBaseRelease:(-not $readOnlyBatchCheck))) {
                 return $false
             }
+            # A failed invocation needs release evidence, not a successful artifact.
+            if ($probeContext.launcherExited -and [int](Get-StateValue -State $probeContext -Name 'launcherExitCode' -Default 0) -ne 0) { return $true }
             $observedAtUtc = [DateTime]::UtcNow
             if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
                 return $false
@@ -7033,13 +8618,17 @@ function Invoke-Designer {
     }
     $nativeArguments = @($args)
     $result = $null
+    $invocationError = $null
+    $nativeOperationEvidence = [pscustomobject]@{ record = $null }
     try {
         $result = Invoke-WithOneCSessionAdmissionContext `
             -InfoBaseKind $InfoBaseKind `
             -InfoBasePath $InfoBasePath `
             -RequiredSessions 1 `
-            -Purpose "designer-$operationKind" `
+            -Purpose $(if ($null -ne $RestorationDuty) { 'designer-restore-snapshot-' + $RestorationDuty.payload.id } else { "designer-$operationKind" }) `
+            -NativeEffectContract $NativeEffectContract `
             -ScriptBlock {
+                $nativeOperationEvidence.record = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
                 Invoke-NativeProcessAndWaitResult `
                     -FilePath $platformPath `
                     -Arguments $nativeArguments `
@@ -7048,8 +8637,12 @@ function Invoke-Designer {
                     -CompletionProbe $completionProbe `
                     -CompletionGraceSeconds $completionGraceSeconds `
                     -PostExitProbeSeconds $postExitProbeSeconds `
+                    -FailurePostExitProbeSeconds (Get-CompletionPostExitTimeoutSeconds) `
+                    -RequirePostExitProbeOnFailure `
                     -MaxWorkingSetMb $maxWorkingSetMb
             }
+    } catch {
+        $invocationError = $_
     } finally {
         if ($null -ne $artifactProbeState -and $null -ne $artifactProbeState.scanProcess) {
             $artifactTermination = Stop-DesignerDumpArtifactScan -ProbeState $artifactProbeState
@@ -7063,7 +8656,17 @@ function Invoke-Designer {
                 $timeoutCleanupState.error = (([string]$timeoutCleanupState.error + " " + [string]$processProbeTermination.error).Trim())
             }
         }
+        $ownedReleaseConfirmed = $null -ne $invocationProbeState -and
+            [bool]$invocationProbeState.processesReleaseConfirmed -and -not $timeoutCleanupState.error
+        Confirm-OneCNativeOperationRelease -Record $nativeOperationEvidence.record `
+            -LauncherExited ([bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false)) `
+            -OwnedProcessesReleased $ownedReleaseConfirmed -Evidence 'designer-owned-process-release'
     }
+    if ($null -ne $invocationError) {
+        Complete-OneCNativeOperationOutcome -Record $nativeOperationEvidence.record -Status failed
+        throw $invocationError
+    }
+    try {
     if ($timeoutCleanupState.error) {
         throw "DESIGNER_COMPLETION_PROBE_CLEANUP_FAILED operation=$operationKind log=$logPath detail='$(([string]$timeoutCleanupState.error) -replace '[\r\n]+', ' ')'"
     }
@@ -7075,7 +8678,10 @@ function Invoke-Designer {
         $terminationDetail = if ($result.terminationError) { " terminationError='$(([string]$result.terminationError) -replace '[\r\n]+', ' ')'" } else { "" }
         throw "DESIGNER_MEMORY_LIMIT_EXCEEDED pid=$($result.processId) limitMb=$maxWorkingSetMb peakWorkingSetMb=$($result.peakWorkingSetMb) terminationConfirmed=$($result.terminationConfirmed) log=$logPath$terminationDetail"
     }
-    if ([bool](Get-StateValue -State $result -Name "completionProbeFailed" -Default $false)) {
+    $stallTerminated = $null -ne $invocationProbeState -and [bool]$invocationProbeState.stallTimeoutExceeded -and
+        $null -ne $invocationProbeState.stallTermination -and
+        [string](Get-StateValue -State $result -Name "completionProbeErrorMessage" -Default "") -match '^DESIGNER_STALL_TERMINATED\b'
+    if ([bool](Get-StateValue -State $result -Name "completionProbeFailed" -Default $false) -and -not $stallTerminated) {
         $probeErrorType = [string](Get-StateValue -State $result -Name "completionProbeErrorType" -Default "")
         $probeErrorMessage = [string](Get-StateValue -State $result -Name "completionProbeErrorMessage" -Default "")
         $cleanupError = if ($timeoutCleanupState.error) { " cleanupError='$(([string]$timeoutCleanupState.error) -replace '[\r\n]+', ' ')'" } else { "" }
@@ -7092,7 +8698,12 @@ function Invoke-Designer {
         $cleanupAttempted = $null -ne $stallCleanup -and [bool]$stallCleanup.attempted
         $cleanupConfirmed = $null -ne $stallCleanup -and [bool]$stallCleanup.confirmed
         $cleanupProcessIds = if ($null -ne $stallCleanup) { @($stallCleanup.processIds) -join "," } else { "" }
-        throw "DESIGNER_STALL_TIMEOUT operation=$operationKind stallTimeoutSeconds=$($invocationProbeState.stallTimeoutSeconds) noProgressSeconds=$($script:RunNoProgressSeconds) pid=$($result.processId) log=$logPath$targetDetail ownedCleanupAttempted=$cleanupAttempted ownedCleanupConfirmed=$cleanupConfirmed ownedProcessIds=$cleanupProcessIds$cleanupError"
+        $termination = $invocationProbeState.stallTermination
+        if ($null -ne $termination -and [string]$termination.reason -eq "infobase-held") {
+            throw "DESIGNER_INFOBASE_RELEASE_BLOCKED operation=$operationKind stallTimeoutSeconds=$($invocationProbeState.stallTimeoutSeconds) pid=$($result.processId) log=$logPath$targetDetail ownedProcessesReleased=True holders='$($termination.holders)'. The Designer's own processes exited, but another 1C session keeps the file infobase open. Release that holder (for this project's on-demand ROCTUP session call close_1c_session through the facade), then repeat the original command; no foreign process was stopped."
+        }
+        $confirmationDetail = if ($null -ne $termination) { " releaseConfirmationSeconds=$($invocationProbeState.stallConfirmationSeconds) waiting='$(([string]$termination.waitingDetail) -replace '[\r\n]+', ' ')'" } else { "" }
+        throw "DESIGNER_STALL_TIMEOUT operation=$operationKind stallTimeoutSeconds=$($invocationProbeState.stallTimeoutSeconds) noProgressSeconds=$($script:RunNoProgressSeconds) pid=$($result.processId) log=$logPath$targetDetail ownedCleanupAttempted=$cleanupAttempted ownedCleanupConfirmed=$cleanupConfirmed ownedProcessIds=$cleanupProcessIds$cleanupError$confirmationDetail"
     }
     if ($result.timedOut) {
         $targetDetail = if ($operationTarget) { " target='$operationTarget'" } else { "" }
@@ -7101,16 +8712,56 @@ function Invoke-Designer {
         throw "DESIGNER_OPERATION_TIMEOUT operation=$operationKind timeoutSeconds=$completionTimeoutSeconds pid=$($result.processId) log=$logPath$targetDetail$livenessDetail ownedCleanupAttempted=$($timeoutCleanupState.attempted) ownedCleanupConfirmed=$($timeoutCleanupState.confirmed) ownedProcessIds=$(@($timeoutCleanupState.processIds) -join ',')$cleanupError"
     }
     if ([bool](Get-StateValue -State $result -Name "postExitProbeTimedOut" -Default $false)) {
-        throw "DESIGNER_POST_EXIT_PROBE_TIMEOUT operation=$operationKind timeoutSeconds=$postExitProbeSeconds pid=$($result.processId) log=$logPath"
+        $releaseTimeoutSeconds = Get-StateValue -State $result -Name 'postExitProbeSeconds' -Default $postExitProbeSeconds
+        $failedLauncherExitCode = Get-StateValue -State $result -Name 'launcherExitCode' -Default $result.exitCode
+        $nativeLogState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ''
+        $nativeDetail = if ($nativeLogState.state -eq 'failure') { " nativeError='$($nativeLogState.detail)'" } else { '' }
+        throw "DESIGNER_POST_EXIT_PROBE_TIMEOUT operation=$operationKind timeoutSeconds=$releaseTimeoutSeconds pid=$($result.processId) log=$logPath launcherExitCode=$failedLauncherExitCode$nativeDetail; owned process release is unconfirmed; finish the named owned activity and repeat the original command."
     }
-    if ($result.exitCode -ne 0) {
-        throw "1C Designer failed with exit code $($result.exitCode). Log: $logPath"
+    $stableArtifactRecovered = $false
+    if ($result.exitCode -ne 0 -and
+        $operationKind -eq "build-external-processor") {
+        $recoveredArtifactState = if ($operationKind -eq "dump-config-to-files") {
+            if ($null -ne $artifactProbeState -and $null -ne $artifactProbeState.confirmedState) {
+                $artifactProbeState.confirmedState
+            } else {
+                Invoke-BoundedDesignerDumpArtifactState -Path $operationTarget -TimeoutSeconds (Get-DesignerCompletionProbeTimeoutSeconds)
+            }
+        } else {
+            if ($null -ne $artifactProbeState -and $null -ne $artifactProbeState.confirmedState) {
+                $artifactProbeState.confirmedState
+            } else {
+                Get-DesignerFileArtifactState -Path $operationTarget
+            }
+        }
+        $stableArtifactRecovered = [bool]$recoveredArtifactState.ready
+    }
+    if ($result.exitCode -ne 0 -and -not $stableArtifactRecovered) {
+        $nativeLogState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ''
+        $nativeDetail = if ($nativeLogState.state -eq 'failure') { " Native error: $($nativeLogState.detail)." } else { '' }
+        $nativeFailure = [InvalidOperationException]::new("1C Designer failed with exit code $($result.exitCode).$nativeDetail Log: $logPath")
+        # Preserve the failed native verdict. Only the checked-load owner may
+        # assess a completed CheckConfig diagnostic result against its baseline.
+        $nativeFailure.Data['ItlDesignerBatchResult'] = [pscustomobject]@{
+            exitCode = [int]$result.exitCode
+            logPath = $logPath
+            operation = [string]$DesignerArgs[0]
+            infoBaseKind = $InfoBaseKind
+            infoBasePath = $InfoBasePath
+            ownedProcessesReleased = [bool]$ownedReleaseConfirmed
+        }
+        throw $nativeFailure
     }
 
     $operationLogState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
     if ($operationLogState.state -eq "failure") {
         $failureLabel = if ($operationKind -like "repository-update*") { "repository update" } else { $operationKind }
-        throw "1C Designer $failureLabel failed: $($operationLogState.detail). Log: $logPath"
+        $nativeFailure = [InvalidOperationException]::new("1C Designer $failureLabel failed: $($operationLogState.detail). Log: $logPath")
+        $nativeFailure.Data['ItlDesignerBatchResult'] = [pscustomobject]@{
+            exitCode = [int]$result.exitCode; logPath = $logPath; operation = [string]$DesignerArgs[0]
+            infoBaseKind = $InfoBaseKind; infoBasePath = $InfoBasePath; ownedProcessesReleased = [bool]$ownedReleaseConfirmed
+        }
+        throw $nativeFailure
     }
 
     if ($operationKind -eq "dump-config-to-files") {
@@ -7132,7 +8783,13 @@ function Invoke-Designer {
             throw "1C Designer $operationKind ended without a complete output file '$operationTarget'. Log: $logPath"
         }
     }
+    } catch {
+        Complete-OneCNativeOperationOutcome -Record $nativeOperationEvidence.record -Status failed
+        throw
+    }
 
+    Complete-OneCNativeOperationOutcome -Record $nativeOperationEvidence.record -Status succeeded
+    if ($null -ne $RestorationDuty) { Set-OneCDatabaseRestoreEvidence -Duty $RestorationDuty -NativeRecord $nativeOperationEvidence.record }
     return $logPath
 }
 
@@ -7189,13 +8846,18 @@ function Start-EnterpriseBackground {
         [switch]$UseTestClient,
         [int]$TestClientPort = 0,
         [scriptblock]$SessionLimitRecovery = $null,
+        [ValidateRange(0, 86400)][double]$SessionWaitTimeoutSeconds = 0,
+        [string]$SessionCancelPath = '',
+        [long]$SessionDeadlineMonotonicNs = 0,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
-        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
+        [switch]$HiddenTestClient
     )
 
     if ($UseTestManager -and $UseTestClient) {
         throw "A background 1C process cannot be both TESTMANAGER and TESTCLIENT."
     }
+    $windowMode = Get-OneCWindowMode
     if ($UseTestClient -and $TestClientPort -le 0) {
         throw "TestClientPort must be positive when UseTestClient is set."
     }
@@ -7224,24 +8886,105 @@ function Start-EnterpriseBackground {
     if (-not $UseTestClient) {
         $args += "/DisableStartupDialogs"
     }
+    if ($windowMode -eq 'hidden') {
+        $args += "/DisableSplash"
+    }
     $args += @("/Out", $logPath) + $EnterpriseArgs
 
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
+    # A visible TestClient is the UI under test: VanessaExt finds it and lists or captures
+    # windows only while its main window is visible. A hidden TestClient is served by a
+    # ready window helper group, which shows it only for a capture or a user-approved lease.
+    # TESTMANAGER and other background sessions stay hidden.
+    $visible = $UseTestClient -and -not ($HiddenTestClient -and $windowMode -eq 'hidden')
+    $userWindow = if ($windowMode -eq 'hidden') { Get-OneCLaunchUserWindow } else { [int64]0 }
     $process = Start-OneCProcessBackground `
+        -Visible:$visible `
         -FilePath $platformPath `
         -Arguments $args `
         -InfoBaseKind $InfoBaseKind `
         -InfoBasePath $InfoBasePath `
         -RequiredSessions 1 `
         -Purpose $(if ($UseTestManager) { "test-manager" } elseif ($UseTestClient) { "test-client" } else { "enterprise-background" }) `
-        -SessionLimitRecovery $SessionLimitRecovery
+        -SessionLimitRecovery $SessionLimitRecovery `
+        -SessionWaitTimeoutSeconds $SessionWaitTimeoutSeconds `
+        -SessionCancelPath $SessionCancelPath `
+        -SessionDeadlineMonotonicNs $SessionDeadlineMonotonicNs
     return [pscustomobject]@{
         process = $process
         logPath = $logPath
         executablePath = $platformPath
+        windowMode = $windowMode
+        visible = [bool]$visible
+        focusGuard = $(if ($userWindow -ne 0 -and $null -ne $process) { New-OneCLaunchFocusGuard -UserWindow $userWindow -ProcessId ([int]$process.Id) } else { $null })
     }
+}
+
+function Test-OneCNativeInvocationReleased {
+    param([object]$ProbeState, [object]$ProbeContext, [string]$LogPath)
+    Set-DesignerInvocationLauncherIdentity -ProbeState $ProbeState -ProbeContext $ProbeContext
+    $previousObservation = $ProbeState.lastProcessState
+    $processState = Get-DesignerInvocationProcessState -ProbeState $ProbeState -LogPath $LogPath
+    $freshObservation = -not [object]::ReferenceEquals($previousObservation, $processState)
+    if ((Get-StateValue -State $processState -Name 'observationStatus' -Default '') -eq 'pending') {
+        # An in-flight bounded scan is not an observation of a surviving child.
+        # Retain the first empty observation but require a fresh completed scan
+        # before confirming release; the cached empty result cannot suffice.
+        $ProbeState.processesReleaseConfirmed = $false
+        return $false
+    }
+    if (-not $processState.querySucceeded -or $processState.active) {
+        $ProbeState.processesReleasedSinceUtc = $null
+        $ProbeState.processesReleaseConfirmed = $false
+    } elseif (-not $ProbeState.processesReleaseConfirmed) {
+        if ($null -eq $ProbeState.processesReleasedSinceUtc) {
+            $ProbeState.processesReleasedSinceUtc = [DateTime]::UtcNow
+        } elseif ($freshObservation -and ([DateTime]::UtcNow - [DateTime]$ProbeState.processesReleasedSinceUtc).TotalSeconds -ge 1) {
+            $ProbeState.processesReleaseConfirmed = $true
+        }
+    }
+    return ([bool](Get-StateValue -State $ProbeContext -Name 'launcherExited' -Default $false) -and
+        [bool]$ProbeState.processesReleaseConfirmed)
+}
+
+function Confirm-OneCNativeRunProcessRelease {
+    param([Parameter(Mandatory = $true)][object]$Record, [ValidateRange(1, 60)][int]$TimeoutSeconds = 10)
+    if (-not $Record.launcherExited -or @($Record.ownedProcessScopes).Count -eq 0) { return $false }
+    $probe = New-DesignerInvocationProbeState -LauncherProcessId 0 -OwnedProcessScopes $Record.ownedProcessScopes
+    $birth = ''; $exitTime = ''; $name = ''
+    # The journal holds the original launched Process object. A late numeric PID
+    # lookup can instead open an unrelated process that reused the launcher's ID.
+    if ($null -ne $Record.process) {
+        try {
+            $identity = if ($Record.PSObject.Properties['processIdentity']) { $Record.processIdentity }
+                else { Get-DesignerProcessIdentity -ProcessInfo $Record.process }
+            $heldIdentity = Get-DesignerProcessIdentity -ProcessInfo ([pscustomobject]@{
+                Name=$identity.name; StartTime=$Record.process.StartTime })
+            if ([int]$Record.process.Id -eq [int]$Record.processId -and
+                $heldIdentity.startTimeUtc -ceq $identity.startTimeUtc) {
+                $birth = $identity.startTimeUtc; $name = $identity.name
+                $exitTime = $Record.process.ExitTime.ToUniversalTime().ToString('o')
+            }
+        } catch { }
+    }
+    $context = [pscustomobject]@{processId=$Record.processId;launcherExited=$true
+        processStartTimeUtc=$birth;processName=$name;processExitTimeUtc=$exitTime;invocationStartedAtUtc=$birth
+        nativeOperationScopes=@($Record.ownedProcessScopes)}
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $released = $false
+    try {
+        if (-not $birth) { return $false }
+        do {
+            if (Test-OneCNativeInvocationReleased -ProbeState $probe -ProbeContext $context -LogPath '') { $released = $true; break }
+            Start-Sleep -Milliseconds 100
+        } while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    } finally {
+        if ($null -ne $probe.processScanProcess) { $released = [bool](Stop-DesignerProcessEnumeration -ProbeState $probe).confirmed -and $released }
+        Confirm-OneCNativeOperationRelease -Record $Record -LauncherExited $true -OwnedProcessesReleased $released -Evidence 'native-run-scoped-process-release'
+    }
+    return $released
 }
 
 function Invoke-Enterprise {
@@ -7256,12 +8999,19 @@ function Invoke-Enterprise {
         [int]$TimeoutSeconds = 0,
         [scriptblock]$OnTimeout = $null,
         [scriptblock]$CompletionProbe = $null,
+        [switch]$RequireOwnedProcessRelease,
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
         [ValidateRange(0, 64)][int]$ExpectedSessionCount = 0,
         [object[]]$AdditionalSessionAdmissions = @(),
         [scriptblock]$SessionLimitRecovery = $null,
+        [ValidateRange(0, 86400)][double]$SessionWaitTimeoutSeconds = 0,
+        [string]$SessionCancelPath = '',
+        [long]$SessionDeadlineMonotonicNs = 0,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
-        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
+        [string]$RunParamsPath = '',
+        [object[]]$AdditionalRunResources = @(),
+        [scriptblock]$OwnedProcessCleanup = $null
     )
 
     $platformPath = Resolve-EnterpriseClientExecutablePath -ClientType $ClientType
@@ -7281,15 +9031,63 @@ function Invoke-Enterprise {
     } elseif ($VanessaTestPort -gt 0) {
         $effectiveTestClientPort = $VanessaTestPort
     }
+    $launchFocusGuard = $null
+    $hiddenEnterprise = (Get-OneCWindowMode) -eq 'hidden'
+    if ($hiddenEnterprise) { $args += '/DisableSplash' }
     if ($effectiveTestClientPort -gt 0) {
         $args += "/TESTMANAGER"
+        if ($hiddenEnterprise) {
+            $launchFocusGuard = New-OneCLaunchFocusGuard -UserWindow (Get-OneCLaunchUserWindow)
+        }
     }
     $args += @("/Out", $logPath) + $EnterpriseArgs
+
+    $runScopes = @()
+    if ($RunParamsPath) {
+        if ($effectiveTestClientPort -le 0 -or -not (Test-CommandLineContainsVaParamsPath -CommandLine ($EnterpriseArgs -join ' ') -ParamsPath $RunParamsPath)) {
+            throw 'ENTERPRISE_NATIVE_RUN_ARGUMENT_MISMATCH'
+        }
+        $runResources = @([pscustomobject]@{kind=$InfoBaseKind;path=$InfoBasePath}) + @($AdditionalSessionAdmissions | ForEach-Object {
+            [pscustomobject]@{kind=$_.infoBaseKind;path=$_.infoBasePath}
+        }) + @($AdditionalRunResources)
+        $runScopes = @(Get-OneCNativeRunProcessScopes -RunParamsPath $RunParamsPath -Resources $runResources)
+    }
+    if ($null -ne $OwnedProcessCleanup -and $runScopes.Count -eq 0) { throw 'ENTERPRISE_NATIVE_RUN_SCOPE_REQUIRED' }
 
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
-    $postExitProbeSeconds = if ($null -ne $CompletionProbe) { Get-CompletionPostExitTimeoutSeconds } else { 0 }
+    $nativeOperationEvidence = [pscustomobject]@{ record = $null }
+    $ownedProcessProbe = $null
+    $requestedEnterpriseCompletionProbe = $CompletionProbe
+    $enterpriseApplicationEvidence = [pscustomobject]@{ since = $null; graceSeconds = $CompletionGraceSeconds }
+    $effectiveCompletionProbe = $CompletionProbe
+    if ($RequireOwnedProcessRelease) {
+        $ownedProcessProbe = New-DesignerInvocationProbeState -LauncherProcessId 0 -OwnedProcessScopes $runScopes
+        $effectiveCompletionProbe = {
+            param($probeContext)
+            $released = Test-OneCNativeInvocationReleased -ProbeState $ownedProcessProbe -ProbeContext $probeContext -LogPath $logPath
+            $applicationCompleted = $null -eq $requestedEnterpriseCompletionProbe -or [bool](& $requestedEnterpriseCompletionProbe $probeContext)
+            if (-not $applicationCompleted) { $enterpriseApplicationEvidence.since = $null }
+            elseif ($null -eq $enterpriseApplicationEvidence.since) { $enterpriseApplicationEvidence.since = [DateTime]::UtcNow }
+            $applicationStable = $applicationCompleted -and ($null -eq $requestedEnterpriseCompletionProbe -or
+                ([DateTime]::UtcNow - [DateTime]$enterpriseApplicationEvidence.since).TotalSeconds -ge $enterpriseApplicationEvidence.graceSeconds)
+            return ($released -and $applicationStable)
+        }
+    }
+    if ($null -ne $launchFocusGuard -and $null -ne $effectiveCompletionProbe) {
+        # The hidden TestManager can take the foreground while it starts. The existing
+        # monitor loop (about 250 ms) gives it back during the first 60 seconds.
+        $focusedCompletionProbe = $effectiveCompletionProbe
+        $effectiveCompletionProbe = {
+            param($probeContext)
+            Invoke-OneCLaunchFocusReturn -Guard $launchFocusGuard -ProcessId ([int]$probeContext.processId) | Out-Null
+            try { return (& $focusedCompletionProbe $probeContext) }
+            finally { Invoke-OneCLaunchFocusReturn -Guard $launchFocusGuard -ProcessId ([int]$probeContext.processId) | Out-Null }
+        }
+    }
+    $postExitProbeSeconds = if ($null -ne $effectiveCompletionProbe) { Get-CompletionPostExitTimeoutSeconds } else { 0 }
+    $nativeCompletionGraceSeconds = if ($RequireOwnedProcessRelease) { 0 } else { $CompletionGraceSeconds }
     $requiredSessions = if ($ExpectedSessionCount -gt 0) {
         $ExpectedSessionCount
     } elseif ($effectiveTestClientPort -gt 0) {
@@ -7298,24 +9096,70 @@ function Invoke-Enterprise {
         1
     }
     $nativeArguments = @($args)
-    $result = Invoke-WithOneCSessionAdmissionContext `
-        -InfoBaseKind $InfoBaseKind `
-        -InfoBasePath $InfoBasePath `
-        -RequiredSessions $requiredSessions `
-        -ExpectedChildRole $(if ($effectiveTestClientPort -gt 0) { "test-client" } else { "" }) `
-        -Purpose $(if ($effectiveTestClientPort -gt 0) { "test-manager-run" } else { "enterprise-run" }) `
-        -AdditionalAdmissions $AdditionalSessionAdmissions `
-        -SessionLimitRecovery $SessionLimitRecovery `
-        -ScriptBlock {
-            Invoke-NativeProcessAndWaitResult `
-                -FilePath $platformPath `
-                -Arguments $nativeArguments `
-                -TimeoutSeconds $TimeoutSeconds `
-                -OnTimeout $OnTimeout `
-                -CompletionProbe $CompletionProbe `
-                -CompletionGraceSeconds $CompletionGraceSeconds `
-                -PostExitProbeSeconds $postExitProbeSeconds
+    $result = $null
+    try {
+        $result = Invoke-WithOneCSessionAdmissionContext `
+            -InfoBaseKind $InfoBaseKind `
+            -InfoBasePath $InfoBasePath `
+            -RequiredSessions $requiredSessions `
+            -ExpectedChildRole $(if ($effectiveTestClientPort -gt 0) { "test-client" } else { "" }) `
+            -Purpose $(if ($effectiveTestClientPort -gt 0) { "test-manager-run" } else { "enterprise-run" }) `
+            -AdditionalAdmissions $AdditionalSessionAdmissions `
+            -SessionLimitRecovery $SessionLimitRecovery `
+            -SessionWaitTimeoutSeconds $SessionWaitTimeoutSeconds `
+            -SessionCancelPath $SessionCancelPath `
+            -SessionDeadlineMonotonicNs $SessionDeadlineMonotonicNs `
+            -ScriptBlock {
+                $nativeOperationEvidence.record = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
+                if ($runScopes.Count -gt 0) {
+                    if ($null -eq $nativeOperationEvidence.record) {
+                        $nativeOperationEvidence.record = Add-OneCNativeOperationRecord -Journal (New-OneCNativeOperationJournal) -Admissions $script:OneCSessionLaunchContext.admissions -Purpose 'test-manager-run'
+                        $script:OneCSessionLaunchContext.nativeOperationRecord = $nativeOperationEvidence.record
+                    }
+                    $nativeOperationEvidence.record.ownedProcessScopes = $runScopes
+                }
+                Invoke-NativeProcessAndWaitResult `
+                    -FilePath $platformPath `
+                    -Arguments $nativeArguments `
+                    -HideOneCMainFrame:($hiddenEnterprise -and $effectiveTestClientPort -le 0) `
+                    -TimeoutSeconds $TimeoutSeconds `
+                    -OnTimeout $OnTimeout `
+                    -CompletionProbe $effectiveCompletionProbe `
+                    -CompletionGraceSeconds $nativeCompletionGraceSeconds `
+                    -PostExitProbeSeconds $postExitProbeSeconds `
+                    -RequirePostExitProbeOnFailure:$RequireOwnedProcessRelease
+            }
+        } finally {
+        $probeCleanupConfirmed = $true
+        if ($null -ne $ownedProcessProbe -and $null -ne $ownedProcessProbe.processScanProcess) {
+            $cleanup = Stop-DesignerProcessEnumeration -ProbeState $ownedProcessProbe
+            $probeCleanupConfirmed = [bool]$cleanup.confirmed
         }
+        $ownedReleaseConfirmed = $null -ne $ownedProcessProbe -and $probeCleanupConfirmed -and
+            [bool]$ownedProcessProbe.processesReleaseConfirmed -and $null -eq $OwnedProcessCleanup
+        Confirm-OneCNativeOperationRelease -Record $nativeOperationEvidence.record `
+            -LauncherExited ([bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false)) `
+            -OwnedProcessesReleased $ownedReleaseConfirmed -Evidence 'enterprise-owned-process-release'
+        if ($runScopes.Count -gt 0 -and $null -ne $nativeOperationEvidence.record -and $nativeOperationEvidence.record.startAttempted -and $null -ne $OwnedProcessCleanup) {
+            # The aggregate database owner still holds the journal here. Cleanup
+            # uses the captured run binding, including every TestClient target.
+            & $OwnedProcessCleanup $runScopes | Out-Null
+            $record = $nativeOperationEvidence.record
+            if ($null -ne $record.process) {
+                $record.process.Refresh()
+                $record.launcherExited = [bool]$record.process.HasExited
+            }
+            $ownedReleaseConfirmed = Confirm-OneCNativeRunProcessRelease -Record $record
+            if (-not $ownedReleaseConfirmed) { throw 'ENTERPRISE_NATIVE_RUN_CLEANUP_UNCONFIRMED' }
+        }
+        if (-not $probeCleanupConfirmed) {
+            Confirm-OneCNativeOperationRelease -Record $nativeOperationEvidence.record -LauncherExited $false -OwnedProcessesReleased $false -Evidence ''
+            throw 'ENTERPRISE_OWNED_PROCESS_PROBE_CLEANUP_FAILED'
+        }
+    }
+    if ($RequireOwnedProcessRelease -and [bool](Get-StateValue -State $result -Name 'postExitProbeTimedOut' -Default $false)) {
+        throw "ENTERPRISE_OWNED_PROCESS_RELEASE_TIMEOUT pid=$($result.processId) log=$logPath"
+    }
     if ([bool](Get-StateValue -State $result -Name "completionProbeFailed" -Default $false)) {
         $probeErrorType = [string](Get-StateValue -State $result -Name "completionProbeErrorType" -Default "")
         $probeErrorMessage = [string](Get-StateValue -State $result -Name "completionProbeErrorMessage" -Default "")
@@ -7325,8 +9169,14 @@ function Invoke-Enterprise {
     if ($result.timedOut) {
         throw "1C Enterprise timed out after $TimeoutSeconds seconds. PID: $($result.processId). Log: $logPath"
     }
-    if ($result.exitCode -ne 0) {
-        throw "1C Enterprise failed with exit code $($result.exitCode). PID: $($result.processId). Log: $logPath"
+    $enterpriseExitCode = if ($RequireOwnedProcessRelease -and [bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false)) {
+        Get-StateValue -State $result -Name 'launcherExitCode' -Default $result.exitCode
+    } else { $result.exitCode }
+    if ($enterpriseExitCode -ne 0) {
+        throw "1C Enterprise failed with exit code $enterpriseExitCode. PID: $($result.processId). Log: $logPath"
+    }
+    if ($RequireOwnedProcessRelease -and -not $ownedReleaseConfirmed) {
+        throw "ENTERPRISE_OWNED_PROCESS_RELEASE_UNCONFIRMED pid=$($result.processId) log=$logPath"
     }
 
     return $logPath

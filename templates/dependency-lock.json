@@ -1,6 +1,7 @@
 {
-  "schemaVersion": 1,
-  "mode": "fresh",
+  "schemaVersion": 2,
+  "mode": "workflow",
+  "hotfixes": {},
   "dependencies": {
     "workflowPackage": {
       "repo": "https://github.com/xmentosx/1c-agent-workflow.git",
@@ -10,25 +11,45 @@
       "updatedAt": ""
     },
     "itlOndemandMcp": {
-      "version": "0.4.9",
-      "releaseTag": "itl-ondemand-mcp-v0.4.9",
+      "version": "0.4.38",
+      "releaseTag": "itl-ondemand-mcp-v0.4.38",
       "assetName": "itl-ondemand-mcp-windows-amd64.exe",
-      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.9/itl-ondemand-mcp-windows-amd64.exe",
-      "sha256": "71eb64ee7a900a43fb23842f9d4cec21502e0d4b92eddc2847bb9769396ec21b",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.38/itl-ondemand-mcp-windows-amd64.exe",
+      "sha256": "a5a5d02ccff820bf917ac1c6b8af0695f8af37a5e2b62460dfbbd5316c1c9508",
+      "os": "windows",
+      "arch": "amd64",
+      "source": "workflow release asset"
+    },
+    "itlOndemandRelay": {
+      "version": "1.0.0",
+      "releaseTag": "itl-ondemand-relay-v1.0.0",
+      "assetName": "itl-ondemand-relay-windows-amd64.exe",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-relay-v1.0.0/itl-ondemand-relay-windows-amd64.exe",
+      "sha256": "3860e6dee95ce16b9a2caa3fd97283cff3917bce23d4bee9e7e0ac119a362b95",
       "os": "windows",
       "arch": "amd64",
       "source": "workflow release asset"
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-      "ref": "itl-main-410951e7-r33",
-      "commit": "9309bfbbc9f8d844a21bce55178c2e0d72eaf965",
+      "ref": "itl-main-2f640143-r64",
+      "commit": "9bbba3b0b19f5758be113e978562fa26ca48bbd6",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
-      "upstreamCommit": "410951e74fd3e6b7a763cf49757935b9a34d3f31",
-      "downstreamRevision": 33,
+      "upstreamCommit": "2f640143756ecd01fed42100e412632aa9082385",
+      "downstreamRevision": 64,
       "compatibilityStatus": "passed",
-      "compatibilityCheckedAt": "2026-09-04T15:36:42Z"
+      "compatibilityCheckedAt": "2026-11-24T22:21:53Z"
+    },
+    "openSpecCli": {
+      "version": "1.13.1",
+      "source": "npm:@fission-ai/openspec@1.13.1",
+      "tarball": "https://registry.npmjs.org/@fission-ai/openspec/-/openspec-1.13.1.tgz",
+      "integrity": "sha512-UHJSV2n6ohjfRaJLvi526avOohFS/orCjM+7JPgvDzuEJbCCkykKfP2fp3gcsvthDLeWolMRT5JAE08MSPnr8Q==",
+      "packageLockSha256": "7fa9c50d3a7e194687346641755beffadb33c03486411e92fc3f84c09a5e06d4",
+      "scope": "project-versioned",
+      "minimumNode": "20.19.0",
+      "sourceRegistry": "https://registry.npmjs.org/"
     },
     "agentBrowser": {
       "version": "0.33.1",
@@ -44,6 +65,8 @@
     "windowsMcp": {
       "version": "0.8.2",
       "source": "pypi:windows-mcp==0.8.2",
+      "url": "https://files.pythonhosted.org/packages/ce/84/ed4119aa52a7ee77f25d8f32745f58bfa2d3a834581473c598268690409d/windows_mcp-0.8.2-py3-none-any.whl",
+      "sha256": "4689f070795323a25dc4f324057315f4273021b1799c149f6ad8181a54611fd5",
       "projectUrl": "https://pypi.org/project/windows-mcp/",
       "scope": "uvx-cache",
       "minimumPython": "3.13",
@@ -82,17 +105,18 @@
       "compatibilityCheckedAt": "2026-07-20T21:38:00Z"
     },
     "vanessaAutomation": {
-      "version": "1.2.043.28",
-      "compatibilityVersion": "1.2.043.28",
-      "downstreamRevision": "itl-r8",
-      "assetName": "vanessa-automation-single.1.2.043.28-itl-r8.zip",
-      "releaseTag": "vanessa-automation-v1.2.043.28-itl-r8",
-      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r8/vanessa-automation-single.1.2.043.28-itl-r8.zip",
-      "sha256": "0a5eab8fbc93bf6db053ebcbf99b511c440c737a6f5f6d68840002ac9743bb50",
-      "epfSha256": "178995192dd02a701fb6301a497c50028cac1b40c40e703de544647c2f84ad5b",
-      "manifestSha256": "43366ce71aa2657b4d20e46fff6e9a2d6848df0d02d6d63ca8718c6e4a7da781",
-      "patchSha256": "b12426595cd0fa603698d9682d48bcb00b403ffce747ffdf02e00fd9f7ad5943",
-      "upstreamCommit": "f3a01778a14d29b38204685deea0131274d438ff",
+      "version": "1.2.043.42",
+      "compatibilityVersion": "1.2.043.42",
+      "downstreamRevision": "itl-r18",
+      "assetName": "vanessa-automation-single.1.2.043.42-itl-r18.zip",
+      "releaseTag": "vanessa-automation-v1.2.043.42-itl-r18",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r18/vanessa-automation-single.1.2.043.42-itl-r18.zip",
+      "sha256": "ce3dddbded9ba2429bf976e5cd8d41c5d7475458cbbb88cd198e21cd5569b9e2",
+      "epfSha256": "7b6ae82e54f1ed06a19be0ab6652994cf6883be02ddfc2c8bd18ffd5b391d53c",
+      "manifestSha256": "04dce00b2e3f8fd6bb5e19d398371250481fbe02b10453f55fb2362831b0d932",
+      "patchSha256": "51fbdc4fe46dc7d119b63494341df6006ec56bbb52da3a7a11d5d92e1d5afef1",
+      "capabilities": ["itl-window-channel-1"],
+      "upstreamCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1",
       "source": "workflow-pinned"
     },
     "yaxunit": {
@@ -107,28 +131,40 @@
     "vanessaMcp": {
       "clientMcp": {
         "version": "v0.6.5",
-        "assetName": "client_mcp.cfe",
-        "url": "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe",
-        "sha256": "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f",
-        "source": "template baseline",
-        "updatedAt": "2026-05-26T19:34:34Z"
+        "downstreamRevision": "itl-r1",
+        "manifestSha256": "33a6bf635d4690b9556019f8333bf58a70fc6cffa1a4fd9d22c980db7fb1e8bf",
+        "upstreamCommit": "3f6a066913057c2d6f2d61c0b429fd0707ab271b",
+        "assetName": "client_mcp.v0.6.5-itl-r1.cfe",
+        "releaseTag": "client-mcp-v0.6.5-itl-r1",
+        "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/client-mcp-v0.6.5-itl-r1/client_mcp.v0.6.5-itl-r1.cfe",
+        "sha256": "29f741db8a379384cd8270398761ec96e7e8e548071a0c180d4ffc6ddd8443b6",
+        "source": "workflow-pinned",
+        "correspondingSource": {
+          "assetName": "client_mcp.v0.6.5-itl-r1.sources.zip",
+          "releaseTag": "client-mcp-v0.6.5-itl-r1",
+          "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/client-mcp-v0.6.5-itl-r1/client_mcp.v0.6.5-itl-r1.sources.zip",
+          "sha256": "409253c0bc9abbbabf0797bde3a1316f8a95bfbdfbae0ec0709924eb24f95dcc",
+          "source": "workflow-pinned"
+        }
       },
       "vaExtension": {
-        "version": "1.2.043.28",
-        "assetName": "VAExtension.1.29.cfe",
-        "url": "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.28/VAExtension.1.29.cfe",
-        "sha256": "fc557bb23371a37dbe22a7a7a83e28f6db75b57f87e8802028cf1f90c4e00605",
-        "source": "template baseline",
-        "updatedAt": "2026-07-10T00:00:00Z"
+        "version": "1.2.043.42",
+        "assetName": "VAExtension.1.32-itl-r18.cfe",
+        "releaseTag": "vanessa-automation-v1.2.043.42-itl-r18",
+        "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r18/VAExtension.1.32-itl-r18.cfe",
+        "sha256": "fc964181ec3e623c21985656cba1c5ecb77f90c0a47316d945580ebe6212a510",
+        "protocol": "itl-file-code-v1",
+        "source": "workflow-pinned",
+        "updatedAt": "2026-09-26T18:04:00Z"
       }
     },
     "roctupMcpToolkit": {
-      "version": "v1.7.1",
+      "version": "v1.10.0",
       "assetName": "MCP_Toolkit.epf",
-      "url": "https://github.com/ROCTUP/1c-mcp-toolkit/releases/download/v1.7.1/MCP_Toolkit.epf",
-      "sha256": "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675",
+      "url": "https://github.com/ROCTUP/1c-mcp-toolkit/releases/download/v1.10.0/MCP_Toolkit.epf",
+      "sha256": "03fd32f3d5bd556c98f30ee789f69ebdfbce8327205eb060af94d6752cd2ca18",
       "source": "template baseline",
-      "updatedAt": "2026-06-14T15:19:23Z"
+      "updatedAt": "2026-11-11T09:30:00Z"
     }
   }
 }

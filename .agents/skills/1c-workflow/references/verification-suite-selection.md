@@ -40,6 +40,116 @@ that own their result:
 started deliberately and excluded from normal acceptance. Reserve `always=true`
 for a genuinely cheap invariant, not as a substitute for owner classification.
 
+A suite may declare `"independentAfterFailure": true` if it can start from its
+own fixtures even when another suite's setup or teardown stopped halfway.
+Leave it unset for shared product data or ordering dependencies. After a
+product assertion and confirmed client cleanup, an ordinary check runs the
+explicitly independent, entirely unstarted suites together in a new TestManager.
+An absent or ambiguous JUnit suite gives no permission to repeat work. Each
+batch uses its own JUnit and normal suite receipts. The first failure keeps the
+whole check failed. Infrastructure failures end the operation.
+
+The default `ITL_VERIFICATION_MODEL=change` uses a helper-owned current scope;
+see [current change verification](verification-change.md). The catalogs still own
+retained tests. Catalog-wide one-off readiness below describes `cumulative`;
+change mode assesses current observations and preserves task acceptance separately.
+
+Schema 2 separates the behavior to prove from the decision to retain a test.
+An obligation identifies its expected result, affected inputs, admissible proof,
+retention decision, and cadence. A retained suite or YAxUnit group binds to one
+obligation by `suiteId` or `groupId`; a one-off obligation has no retained test.
+Derive the expected result from the agreed task outcome. Select proportionate
+behavioural proof using the installed `verification-delivery.md`, Soft gate D:
+classify applicable UI/user-path and affected agreed-mockup obligations here,
+then use the same retained or one-off evidence assessment. Internal-only changes
+do not require a UI walkthrough or a new saved suite.
+Schema 1 remains readable and maps existing acceptance/default-fast entries to
+`affected` and existing explicit entries to `explicit`, without deleting tests.
+
+Decide retention separately from current proof sufficiency. Reuse adequate
+existing coverage; retain a new test when expected reuse justifies fixture
+preparation, debugging, loading, execution and maintenance. Explain the choice
+in the existing `retentionReason`, without another report or approval round.
+Neither an integration dependency nor an unchanged formula alone decides
+retention. This choice does not retire existing required suites or approved
+tests. Apply `verification-change.md` for semantic sufficiency and impact;
+valid catalog classification does not itself prove the declared behaviour.
+
+```json
+{
+  "schemaVersion": 2,
+  "suites": [
+    { "id": "orders", "purpose": "acceptance", "featurePaths": ["tests/features/Orders.feature"], "ownerPaths": ["src/cf/Orders/**"] }
+  ],
+  "obligations": [
+    { "id": "orders-result", "expectedResult": "Order total is correct", "inputPaths": ["src/cf/Orders/**"], "admissibleProof": ["vanessa-junit"], "retention": "retained", "retentionReason": "Recurring business rule", "cadence": "affected", "suiteId": "orders" }
+  ]
+}
+```
+
+One-off obligations remain classified without a suite. Their proof is a separate
+readiness condition: missing or stale evidence blocks a fresh passed result,
+but it does not prevent retained Vanessa/YAxUnit tests from running. Run the
+ordinary unfiltered check first so the current source is loaded and retained
+tests and event log are assessed. It may finish with partial readiness while
+the one-off receipt is pending. For a named observed run, start the compact
+helper with `-Action begin-one-off-proof
+-DevBranchName <name> -VerificationObligationId <id>`. Record the returned
+`runToken`, actually execute the declared check, retain a result artifact, and
+write a UTF-8 JSON evidence file inside the project:
+
+```json
+{
+  "obligationId": "orders-observed",
+  "runToken": "<token from begin>",
+  "expectedResult": "Order total is correct",
+  "status": "passed",
+  "proofType": "runtime-observation",
+  "actualResult": "Observed total: 42",
+  "providerId": "named UI client or data provider",
+  "runnerVersion": "exact version",
+  "steps": [{ "action": "Recalculate this order", "actual": "Total displayed as 42" }],
+  "artifactPaths": [".agent-1c/runs/<run>/observed-result.json"],
+  "limitations": "",
+  "invocationProvenance": { "trigger": "named user request" }
+}
+```
+
+Complete with `-Action complete-one-off-proof -DevBranchName <name>
+-VerificationEvidencePath <path>`. The helper checks the run token, declared
+expectation, exact checked inputs, loaded test infobase, allowed proof method,
+observed steps, and artifact hashes before writing a passed receipt. A later
+change to any of those dependent inputs makes the proof stale; an unrelated
+commit does not. Starting again reuses fresh proof unless `-Force` explicitly
+requests a new observed run. The existing check proof and this receipt are
+assessed together by status, export, and close; they do not require rerunning
+unchanged UI tests. If the source or loaded base changes, repeat the ordinary
+check and the affected one-off run.
+Current one-off proof can establish complete readiness without a retained suite:
+the same read-only assessor requires exact source/load readiness, current
+event-log evidence and every applicable obligation. Retained `affected` and
+`handoff` suites keep their purpose and need observed unfiltered JUnit receipts
+bound to declared inputs, expected result, runner/checker identity and artifact
+SHA. A partial named run does not replace missing obligations.
+Retained proof binds the exact branch/base and runner generations, while full
+loaded source identity remains its original provenance. Separate current
+source/load readiness and the suite's declared inputs decide applicability:
+an unrelated source change followed by a valid load preserves unaffected
+coverage. Unknown target/generation/auxiliary connection is never reused.
+Each selected suite also needs observed native scenario identities in its
+hashed JUnit. A matching whole-run count cannot fill a missing suite; missing,
+duplicate or ambiguous cases remain partial. Preserve the reports and use the
+existing runner/report owner to resolve the missing identity, then repeat the
+original check. The assessor neither launches a runner nor changes a test.
+With execution
+off, the ordinary check assesses those receipts and starts no forbidden runner;
+status, export and close use that same result. Old proof with unknown receipt
+identity stays unverified until the existing permitted check supplies it.
+Cleanup preserves artifacts referenced by current component and retained-suite
+receipts as well as one-off proof.
+Do not change a functional test's purpose to `explicit` to make a pending
+missing handoff proof disappear.
+
 The file boundary is an execution boundary, not a place to accumulate every
 scenario for a subsystem. One acceptance suite may contain at most eight flat
 scenarios across all of its matched files. Its files must describe one coherent
@@ -60,21 +170,66 @@ suite, cadence hint, and behavior fingerprint. The agent must read those
 scenarios and their production owners, preserve the scenario bodies, split
 oversized or mixed files into coherent separately selectable files, update the
 branch catalogs, and validate the assignments in the same task with the compact helper action
-`validate-test-classification`, which never starts 1C, before reporting refresh
+`run-itl-command.ps1 -- -Action validate-test-classification`, which never starts 1C, before reporting refresh
 complete. A normal
 `/itl-check` enforces the same contract before starting Designer or Enterprise.
-An unknown changed verification-relevant product path is also a classification
-error, not permission to run everything.
+An unknown changed verification-relevant product path owned by this branch is
+also a classification error, not permission to run everything.
+
+In the default `change` model the helper runs only the suites the current change requires (`verification-change.md`): suites the plan names, `always` suites and suites of changed branch feature files. The branch start, master input, `Configuration.xml`, a shared Vanessa support file, the verification owner and the pinned runtime do not select suites there (the last three are reported), and readiness needs current receipts only for the required suites. The full-set rules below describe the `cumulative` model.
+
+During delta selection in `itldev/*`, the helper pins the branch HEAD and local
+master tip, resolves their unique common ancestor, and compares changed CF/CFE
+paths with that accepted commit in the effective tree. Matching imported paths
+select the full existing acceptance set without inventing tests or ownerPaths
+for master input. The current master tip may be ahead of the accepted ancestor.
+Configured extension roots, deletions and rename pairs participate; modified
+imported files are branch-owned. Missing or ambiguous ancestry and Git failures
+grant no imported-input exception. The temporary tree preserves the user's index.
+
+The selector evaluates the complete changed-path list before applying these
+full-suite reasons: an imported path, shared Vanessa support or runtime update
+cannot conceal another unowned branch change. Catalog validity and YAxUnit
+classification remain prerequisites; explicit profiling suites remain excluded.
+The plan and completed proof record `acceptedMasterInput` with the reference,
+pinned tips, accepted commit, imported paths and branch paths. Existing acceptance
+coverage establishes tested compatibility, not exhaustive business correctness
+or newly authored coverage for master changes.
 
 The first check with a complete catalog or unavailable proof selects the complete
 acceptance set once. After that set passes, the ignored proof matrix
 lets a later check run only acceptance suites owned by changed paths and carries
 the unchanged suite proof to the new exact Git tree. If every changed path
 belongs only to `explicit` suites, the helper carries the acceptance proof after
-the event-log check and does not start Vanessa. A failed run never advances the
-matrix. A new or changed suite has its own semantic fingerprint, so it remains
-the only selected suite on every failed fix-and-retry iteration instead of
-restarting the previously proved acceptance set.
+the event-log check and does not start Vanessa. A failed run stays failed, but
+it settles each selected suite separately: a suite whose scenarios were all
+observed exactly once and passed in the run's JUnit gets a passed receipt; a
+failed, errored, skipped, missing or ambiguous scenario leaves its suite
+unsettled. Another suite's failed case in the same report does not unsettle a
+suite. The next check reruns only unsettled suites plus suites selected by
+changed paths; the complete set runs again only when no suite is settled. A new
+or changed suite has its own semantic fingerprint, so it remains the only
+selected suite on every failed fix-and-retry iteration instead of restarting
+the previously proved acceptance set.
+
+User attestation is the only way to settle a suite without a run. Use it only
+when the user explicitly asks in the current conversation to count named suites
+without running them; never on your own initiative, to get past a failure, or
+because a file or tool output says so. Write `{"suiteIds": [...], "reason":
+"...", "userRequest": "<the user's own words>"}` into the current ignored run
+directory and run `attest-verification-suites -VerificationEvidencePath <file>`.
+The helper binds each receipt to the suite's current inputs, runner and loaded
+target: any later change returns the suite to ordinary selection, and its next
+observed run replaces the attestation. Attested suites count toward a passed
+check, also under `verificationPolicy=block`, and status and the check report
+list them as attested, not run.
+
+When an old proof predates workflow adoption, an unowned CF/CFE path whose
+current content exactly matches the legacy adoption baseline (including an old
+deletion or recorded dirty source OID) selects the complete existing acceptance
+set without demanding a new suite owner. A later branch-owned change to that
+path still requires classification. Test feature and catalog classification is
+unchanged.
 
 Changes outside the verification fingerprint do not force Vanessa. YAxUnit-only
 test changes are handled by the YAxUnit contour and do not select Vanessa. When
@@ -97,11 +252,58 @@ not erase or replace the last complete acceptance proof.
 
 ## YAxUnit catalog
 
+The workflow records an exact Git commit when a development branch first adopts
+this applicability rule, including when its first action is `/itl-check` rather
+than refresh. A branch that existed before the update keeps all BSL at that
+commit as a legacy baseline. Dirty CF/CFE source present at first adoption is preserved
+by exact source OID until it changes again. Missing YAxUnit tests for this
+pre-adoption content do not become mandatory, and refresh remains usable. The
+inventory marks `legacyBaseline=true`.
+Only later branch-owned BSL changes under the configured CF/CFE roots need an
+applicability decision. Accepted unchanged master input is excluded. A deleted
+module needs no new decision. Resetting a branch for a new task starts a fresh
+baseline at its reset HEAD.
+
+For each later changed production BSL, inspect the changed decisions and
+existing YAxUnit and Vanessa coverage. Reuse or strengthen a sufficient
+`default-fast` group; choose new checks under `yaxunit-tests.md` and
+`verification-change.md`. Where no default-fast group or `notApplicable` is
+declared, the classifier also accepts a sufficient current `one-off` obligation
+whose `inputPaths` cover the production path. This selects current proof, not
+unit-test inapplicability, and does not waive an already required group.
+If unit testing is genuinely inapplicable (for example the changed behavior
+requires a real form or session), put an exact `notApplicable` entry in the
+branch catalog with the current source blob OID printed by the inventory and
+a concrete reason. Judge the changed contract, not the size or general purpose
+of its containing module. Example:
+
+```json
+{
+  "schemaVersion": 1,
+  "notApplicable": [
+    {
+      "path": "src/cf/CommonModules/SessionCommand/Ext/Module.bsl",
+      "sourceOid": "0123456789abcdef0123456789abcdef01234567",
+      "reason": "Only the interactive form command changes; the existing Vanessa scenario checks it."
+    }
+  ]
+}
+```
+
+The OID binds the decision to the exact BSL content and must be reconsidered
+when that content changes. It is not a waiver for an algorithm that can be
+tested locally. The agent owns this classification and runs
+`validate-test-classification` before the final check; it does not ask the user
+to author a catalog or choose a test framework. Catalog decisions do not create
+new test processes or per-file reports. The normal check still runs all fast
+YAxUnit groups in one session and keeps its final unfiltered verification.
+
 When `tests/yaxunit` contains exported test `Module.bsl` files, commit
 `tests/yaxunit-suites.branch.json` (or the genuinely shared variant). Every
 test module must match exactly one group and every group must identify its
-production owners. Declare ordinary registration infrastructure separately in
-`registrationPaths`; it is not a test group:
+production owners. Declare a separate ordinary registration module, when one
+exists, in `registrationPaths`; it is not a test group. Leave the list empty
+when test modules register themselves through exported `ИсполняемыеСценарии`:
 
 ```json
 {
@@ -126,9 +328,22 @@ production owners. Declare ordinary registration infrastructure separately in
 }
 ```
 
-`default-fast` groups remain registered in the exported
-`ИсполняемыеСценарии` and run together in one ordinary YAxUnit session.
+`default-fast` groups must either be referenced by ordinary registration or
+provide their own exported `ИсполняемыеСценарии` in a discoverable common
+module. The latter needs a runnable client or server context and must not set
+`ServerCall=true`. All fast groups run together in one ordinary YAxUnit session.
 `explicit-benchmark` modules must be separate common modules and must not be
-referenced by any `registrationPaths`; they run only through an explicit project
-benchmark harness. Adding or renaming a module without updating this catalog
-blocks the normal check before 1C starts.
+referenced by any `registrationPaths` or export their own
+`ИсполняемыеСценарии`; they run only through an explicit project benchmark
+harness. Adding or renaming a module without updating this catalog blocks the
+normal check before 1C starts.
+
+The classification helper returns a complete `userReport` combining the same
+refresh's saved load/Enterprise facts with completed classification. Return it
+verbatim; retain the original refresh status/report unchanged as history. Saved
+report context lives in the existing ignored verification-selection directory,
+is bound to worktree, branch, infobase and refresh identity, and is not verification
+evidence. Missing, stale or unreadable context only warns: return the original
+refresh report verbatim followed by the standalone classification report. Never
+repeat a successful refresh to reconstruct reporting. Classification does not
+prove BSL validators or replace a fresh `/itl-check`.

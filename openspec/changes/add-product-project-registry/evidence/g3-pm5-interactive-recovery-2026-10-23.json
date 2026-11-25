@@ -1,0 +1,1177 @@
+{
+  "date": "2026-10-23",
+  "status": "interactive-and-owned-restore-subsets-passed-completed-resume-blocker-open",
+  "identity": {
+    "sourceCommit": "3cfbf0fd30cc7b086dcdb07a6f06ac3b84903b2f",
+    "runtimeFiles": [
+      {
+        "sourceEqualsInstalled": true,
+        "sha256": "b467342b57df8ce6a4f01a1180492fc75257056453f6934410b43bd52058dcd0",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1"
+      },
+      {
+        "sourceEqualsInstalled": true,
+        "sha256": "9e0f210cde5f745a8dceb0df55d1c7ede0c6f5196a09023f44ea14f136f8ea30",
+        "path": ".agents/skills/1c-workflow/scripts/agent-1c.ps1"
+      },
+      {
+        "sourceEqualsInstalled": true,
+        "sha256": "5413a3442d5fc92e60460eda5550737574f609d429b20a15f26bbfaa49db9a67",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1"
+      }
+    ],
+    "database": {
+      "unchanged": true,
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "bytes": 3295928320
+    },
+    "runtimeCommit": "176bd2fa6b8d107d33df2b92600e0c14d365ee45"
+  },
+  "rootsAfter": [
+    {
+      "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "workflow": "176bd2fa6b8d107d33df2b92600e0c14d365ee45",
+      "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "untracked": [],
+      "dirty": [],
+      "lockSha": "152159d8b2535bf8034a068802e3832857e10779fee0ae0a052099900fdaad41",
+      "bindingPresent": true,
+      "head": "b7b2653b4284fcac975b0f2624566623e9cd5da6"
+    },
+    {
+      "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+      "workflow": "176bd2fa6b8d107d33df2b92600e0c14d365ee45",
+      "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "untracked": [],
+      "dirty": [],
+      "lockSha": "a33c8c72a18b85ec04019495932e2f34d1fc096765f1389dcb0da24b286073b7",
+      "bindingPresent": false,
+      "head": "286f3f16e694104fdd0da5e36bdc796f184e8920"
+    }
+  ],
+  "interactive": {
+    "operationCreated": false,
+    "emptyAnswer": true,
+    "passed": true,
+    "receiptEdits": 0,
+    "normalCacheUnchanged": true,
+    "ctrlC": true,
+    "originalCommandPassed": true,
+    "harnessContinuation": "Native checks verified before aggregation failure; exact own URL reversal already complete, resumed only original mtime restoration and healthy public command."
+  },
+  "ptyEvidence": {
+    "ctrlC": {
+      "session": 92828,
+      "promptObserved": true,
+      "inputRedirected": false,
+      "sent": "U+0003",
+      "exitCode": 1,
+      "promptText": "Catalog conflict: keep-local / registry / defer:",
+      "promptToolChunk": "95a67c"
+    },
+    "empty": {
+      "session": 58669,
+      "promptObserved": true,
+      "inputRedirected": false,
+      "sent": "U+000D",
+      "promptText": "Catalog conflict: keep-local / registry / defer:",
+      "promptToolChunk": "00dcd4",
+      "agentExitCode": 1
+    },
+    "mockReadHost": false,
+    "transcriptLimitation": "PowerShell transcript omits Read-Host prompt; actual prompt observed in PTY tool output, corroborated with conflict preview and inputRedirected=False."
+  },
+  "nativeRecoverySteps": [
+    {
+      "durationMs": 7778,
+      "stderrBytes": 0,
+      "stdoutBytes": 663,
+      "arguments": [
+        "-CatalogAction",
+        "select",
+        "-CatalogProjectId",
+        "pm5-core-development"
+      ],
+      "name": "recovery-prepare-same-project",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 2844,
+      "stderrBytes": 203,
+      "stdoutBytes": 0,
+      "arguments": [],
+      "name": "recovery-main-blocked",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 2755,
+      "stderrBytes": 0,
+      "stdoutBytes": 424,
+      "arguments": [
+        "-CatalogAction",
+        "status"
+      ],
+      "name": "recovery-invalid-status",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-status"
+    },
+    {
+      "durationMs": 2838,
+      "stderrBytes": 0,
+      "stdoutBytes": 264,
+      "arguments": [
+        "-CatalogAction",
+        "resume"
+      ],
+      "name": "recovery-completed-resume",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 3352,
+      "stderrBytes": 203,
+      "stdoutBytes": 0,
+      "arguments": [],
+      "name": "recovery-main-after-resume",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 4608,
+      "stderrBytes": 0,
+      "stdoutBytes": 318,
+      "arguments": [
+        "-CatalogAction",
+        "restore"
+      ],
+      "name": "recovery-owned-restore",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 2776,
+      "stderrBytes": 0,
+      "stdoutBytes": 2157,
+      "arguments": [
+        "-CatalogAction",
+        "context"
+      ],
+      "name": "recovery-read-context",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-status"
+    },
+    {
+      "durationMs": 6395,
+      "stderrBytes": 0,
+      "stdoutBytes": 910,
+      "arguments": [],
+      "name": "recovery-original-command",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    }
+  ],
+  "nativeCalls": {
+    "interactive": 2,
+    "healthyAfterInteractive": 1,
+    "recovery": 8,
+    "totalProductCalls": 11,
+    "standaloneConsoleProbe": 1
+  },
+  "recovery": {
+    "pinnedRevision": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+    "ownedRestorePassed": true,
+    "operationId": "37f07c509bc849bd837cefbf5ed35065",
+    "restoreStatus": "restored",
+    "restoredId": "b08bbfa5ba4542ceb8bd8f929f1c45fc",
+    "foreignBytes": {
+      "passed": true,
+      "originalStrictByteAssertion": "failed and retained; only owned value property order differs",
+      "contract": "AC-16 owned sections restored; foreign bytes preserved. No whole-file byte equality claimed.",
+      "clients": [
+        {
+          "path": ".kilo/kilo.json",
+          "semanticEqual": true,
+          "entireFileByteEqual": false,
+          "allBytesOutsideOwnedValuesEqual": true,
+          "ownedValueCount": 4,
+          "otherEntryCount": 4,
+          "maskedSha256": "bf761569ee7fac5203fc1315a37c53675476b06f74d5c0be55d5601d6bbeee5a"
+        },
+        {
+          "path": ".cursor/mcp.json",
+          "semanticEqual": true,
+          "entireFileByteEqual": false,
+          "allBytesOutsideOwnedValuesEqual": true,
+          "ownedValueCount": 2,
+          "otherEntryCount": 5,
+          "maskedSha256": "e5e32f5bdb24706771b178d46172d600bf8b516fdd8cb8fff2d89354e05087b1"
+        }
+      ]
+    },
+    "nativeToolCalls": 0,
+    "strictWholeFileByteAssertion": "failed on owned JSON property order; retained, no entire-file byte pass claimed",
+    "llmTurns": 0,
+    "originalCommandPassed": true,
+    "contextValid": true,
+    "faultRestoration": "Public owned restore only; harness backup was not copied over the marker",
+    "resumeFinding": "G3-CATALOG-COMPLETED-RESUME-INVALID-APPLIED",
+    "beforeAppliedId": "b08bbfa5ba4542ceb8bd8f929f1c45fc",
+    "physical": [
+      {
+        "path": ".agent-1c/project.json",
+        "shaStable": true,
+        "mtimeStable": true
+      },
+      {
+        "path": ".agent-1c/dependency-lock.json",
+        "shaStable": true,
+        "mtimeStable": true
+      },
+      {
+        "path": ".kilo/kilo.json",
+        "shaStable": false,
+        "mtimeStable": false
+      },
+      {
+        "path": ".cursor/mcp.json",
+        "shaStable": false,
+        "mtimeStable": false
+      },
+      {
+        "path": ".agent-1c/mcp/client-managed.json",
+        "shaStable": true,
+        "mtimeStable": false
+      },
+      {
+        "path": ".agent-1c/mcp/vibecoding1c-selection.json",
+        "shaStable": true,
+        "mtimeStable": true
+      }
+    ],
+    "manualReceiptRestoration": 0,
+    "memoryCalls": 0,
+    "scopeLimit": "Completed operation with valid durable beforeApplied only; restored/cancelled/missing/corrupt operation states not accepted by this run."
+  },
+  "finding": {
+    "reportedConfigured": true,
+    "resumeExitCode": 0,
+    "originalCommandStillBlocked": true,
+    "finding": "G3-CATALOG-COMPLETED-RESUME-INVALID-APPLIED",
+    "operationId": "37f07c509bc849bd837cefbf5ed35065",
+    "damagedMarkerUnchanged": true,
+    "notFixed": true,
+    "status": "open-not-fixed",
+    "classification": "confirmed-runtime-defect",
+    "criteria": [
+      "AC-16",
+      "AC-26",
+      "AC-39"
+    ],
+    "cause": "Invoke-ItlProductProjectClientApply resume returns configured for completed operation before reading or validating the current applied record.",
+    "owner": "existing product-project apply/recovery owner",
+    "sourcePath": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+    "continuationQualified": "Public restore on the same operation restores valid beforeApplied and the original command passes.",
+    "acceptanceForRepair": "Completed resume must not report configured for a known invalid/missing/mismatched applied record. Return truthful recovery-needed with existing restore continuation or verify an actually valid restored context; repeat the original command as proof. No guessed projection, manual receipt copy or new recovery owner."
+  },
+  "preservation": {
+    "oldRootsAndFiles": {
+      "files": [
+        {
+          "path": "D:\\Git\\itl-workflow-e2e-pm5\\.agent-1c\\release-e2e.json",
+          "sha256": "c801f456323309cf009e392e3652dd3d78930ddc6e19a8eafe196745aa0f769b",
+          "bytes": 32342
+        },
+        {
+          "path": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight\\.agent-1c\\dev-branches\\workflow-release-e2e-preflight.json",
+          "sha256": "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456",
+          "bytes": 21228
+        },
+        {
+          "path": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+          "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+          "bytes": 8643
+        },
+        {
+          "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\project.json",
+          "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+          "bytes": 2793
+        },
+        {
+          "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format.diff",
+          "sha256": "0e9f8753905740798c313a587628e5375e912603b1684eefd4f77e7121c4dc38",
+          "bytes": 5277
+        },
+        {
+          "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+          "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+          "bytes": 3295928320
+        },
+        {
+          "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl",
+          "sha256": "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782",
+          "bytes": 844555
+        },
+        {
+          "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml",
+          "sha256": "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa",
+          "bytes": 525269
+        },
+        {
+          "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml",
+          "sha256": "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d",
+          "bytes": 13917
+        },
+        {
+          "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+          "sha256": "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+          "bytes": 2739
+        },
+        {
+          "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result",
+          "sha256": "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+          "bytes": 6
+        },
+        {
+          "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log",
+          "sha256": "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+          "bytes": 141700
+        },
+        {
+          "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log",
+          "sha256": "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+          "bytes": 93
+        },
+        {
+          "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\project.json",
+          "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+          "bytes": 2793
+        },
+        {
+          "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\dependency-lock.json",
+          "sha256": "8ec8af0a98f4a91b11f97942841feb0f1afa223732621a18ee55c0e69c546a4c",
+          "bytes": 16521
+        },
+        {
+          "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\project.json",
+          "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+          "bytes": 2793
+        },
+        {
+          "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\dependency-lock.json",
+          "sha256": "6e3c249ea46e1451489e39e0489c890c6d69fc772c0d623603fdb8ccd95cd796",
+          "bytes": 16521
+        },
+        {
+          "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\project.json",
+          "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+          "bytes": 2793
+        },
+        {
+          "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\dependency-lock.json",
+          "sha256": "b4b97e15b003ced4a2d176705e859de6ee0dbff615b8d397cedf4702f61cf541",
+          "bytes": 16521
+        },
+        {
+          "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\project.json",
+          "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+          "bytes": 2793
+        },
+        {
+          "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\dependency-lock.json",
+          "sha256": "5c06d4e1ba1c6dbb542746e62d1a9a040eaaef0ff40b1dedde8da981eb526beb",
+          "bytes": 16521
+        }
+      ],
+      "missingOriginalRawSeed": false,
+      "allPreserved": true,
+      "observedUtc": "2026-10-22T21:41:16.2403426Z",
+      "gate6Artifacts": 7,
+      "roots": [
+        {
+          "changed": [],
+          "root": "D:\\Git\\itl-workflow-e2e-pm5",
+          "head": "4e540b3cada85eb6d711c383d22ee368c306e045",
+          "untracked": []
+        },
+        {
+          "changed": [],
+          "root": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight",
+          "head": "cc49bc30bda0223877eda0287bf810cf8329c60c",
+          "untracked": []
+        },
+        {
+          "changed": [
+            ".agent-1c/project.json"
+          ],
+          "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+          "head": "308ac59380112deb797e3eaeafbfa115bd605f4a",
+          "untracked": []
+        },
+        {
+          "changed": [],
+          "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch",
+          "head": "1db160699bc69643e5d7f926139846b009f2f754",
+          "untracked": []
+        }
+      ]
+    },
+    "capsule": {
+      "artifactHashes": [
+        {
+          "path": "branch.env",
+          "sha256": "b1d10c2976413c7141aef4e75ddfb9f5c9d40496aca57893aa57af887bf8d703"
+        },
+        {
+          "path": "infobase.dt",
+          "sha256": "faefe7b1ce594dae2d18fe3f7b7f0697ace80eaba4e4ff9e432ad672cb97179c"
+        },
+        {
+          "path": "master.env",
+          "sha256": "aa9e8198b55cfb1a11c10773c570e1d238a0714f2dfda5dec8d37703dcf3d976"
+        },
+        {
+          "path": "release-e2e.json",
+          "sha256": "7ec92eaa9244c8556c2be46d32e4c65d3da28ad8f8dc7f4c6d5ff7d07402d788"
+        },
+        {
+          "path": "source.bundle",
+          "sha256": "997cb11daa09dddb29f0e6549624976ec0cba9c518af733b55bd35e41132d6d7"
+        },
+        {
+          "path": "state.json",
+          "sha256": "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456"
+        },
+        {
+          "path": "context/branch/.agent-1c/event-log-baselines/workflow-release-e2e-preflight.json",
+          "sha256": "e4d05b00b678997db7628c03b63a3adb909b7097ddc97d70542c94c8dee73eda"
+        },
+        {
+          "path": "context/branch/.agent-1c/event-log-cursors/workflow-release-e2e-preflight.pending.json",
+          "sha256": "a2c3ac883aaeb9ca64cb8e59a2037c467fe1aacb699aabe93a958a42d8227c5d"
+        },
+        {
+          "path": "context/branch/.agent-1c/runs/auto-update/5260e8441e3e48a783bb5466740139f7.result.json",
+          "sha256": "56e6e2efc950169946c7315e73817c532ad1d84e3dc4f6bec5658afef67ad090"
+        },
+        {
+          "path": "context/master/.agent-1c/branch-seed/d36790cc833a54009c15b29614df6fce67f9ab2ad0e89758b54c739541b40692/event-log-baseline.json",
+          "sha256": "85c9dbd8d4ee398fa71b151abc7988b544dbd3c9605de018e9e252c5093ba614"
+        },
+        {
+          "path": "context/master/.agent-1c/event-log-signature-cache/6313c6efc6c4ba7874c0d0e4c78c3aba397f7695b8e99fe4bb266f679a925b19.json",
+          "sha256": "115820bab388c127818eaf131dd73ad033202797c85ed57b5430fff6851e36e7"
+        }
+      ],
+      "approvedExplicitSnapshotAdmission": true,
+      "artifactsVerified": 11,
+      "originalRawSeedCurrentness": "unavailable",
+      "capsuleUnchanged": true,
+      "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+      "liveSeedAdmissionBypassed": false,
+      "observedUtc": "2026-10-22T21:41:18.6158764Z",
+      "manifestPath": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json"
+    },
+    "database": {
+      "unchanged": true,
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "bytes": 3295928320
+    }
+  },
+  "harnessLimitations": [
+    "Initial isolated Git-root check compared slash spelling; rejected before catalog/Cursor mutation. Normalized absolute root and remote checks retained.",
+    "Read-Host prompt is visible in native PTY but omitted from PowerShell transcript. Prompt observation is explicitly retained separately; transcript corroborates unredirected input and actual conflict. No complete byte-for-byte PTY recording is claimed.",
+    "PowerShell 5.1 JSON-array pipeline aggregation failed after exact own URL reversal; resumed only original mtime restoration and healthy public command. Product receipts were not restored manually.",
+    "Initial strict whole-client-file SHA assertion failed during owned restore. Retained failure. Full JSON semantics and every byte outside owned values are equal; owned property ordering differs. No whole-file byte equality claimed."
+  ],
+  "cost": {
+    "addedAlwaysOnBytes": 0,
+    "addedToolSchemaBytes": 0,
+    "cogneeCalls": 0,
+    "nativeCodeGraphCalls": 0,
+    "llmTurns": 0,
+    "pairedStartupTokenCost": "not measured; interactive time includes operator waiting"
+  },
+  "remaining": [
+    "completed-resume blocker",
+    "cooperative cancellation during partial write and other original installed journeys",
+    "remaining client/CUSTOM/source/routing matrix",
+    "unavailable PM4/Win10/Server/terminal stands",
+    "paired installed Startup/context/token/cost and stalled transport cleanup",
+    "mandatory release population AC-36-38",
+    "memory4.2/G4/AC-43/G5/44"
+  ],
+  "notPerformed": [
+    "Gate6 fix/run",
+    "G4 implementation",
+    "working-project migration",
+    "workflow/catalog publication",
+    "remote server changes",
+    "client upgrades"
+  ],
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before-files.json",
+      "bytes": 1913,
+      "sha256": "8358efc571c89a718e75b979f6b63b01cdc3faea5ac1a13d45c86f790fffd483"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before-prompt-files.json",
+      "bytes": 1913,
+      "sha256": "b087557e8f77a1661b2764c9172909caac4bd50210344ff16f611ce18dbebe4d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\branch-before.json",
+      "bytes": 1613,
+      "sha256": "9b047b47c20090d0f81c445148ffa1f207bb9f97f89fdfa25bac736a17d5d31a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\capsule-final-validation.json",
+      "bytes": 3486,
+      "sha256": "b26aba25052c0c9b7569700da8e2013c5adda93199f284758b52fb3dd4786742"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\client-byte-analysis.json",
+      "bytes": 879,
+      "sha256": "987a26052378b9d2c8e198afa3493d1c0bac8bfa3507d0c7c733d48744871e9d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\common.ps1",
+      "bytes": 1914,
+      "sha256": "71c70c2ffef5e14f7ffb81ac8fa10554597ca367e3d8615e3a78bd4897613ea5"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\complete-interactive.ps1",
+      "bytes": 1475,
+      "sha256": "9f4a3572af99d5baa814b8db883ebadd76e009b9aca36b380678da70cab1c422"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\complete-recovery.ps1",
+      "bytes": 2694,
+      "sha256": "36434545318683bf1e5be1a991fbc64c3fa5aceae9f6fe75b582c6b6c418ef13"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\completed-resume-observation.json",
+      "bytes": 290,
+      "sha256": "db9677fcb9b5bc38e70cd433f91d20044da75dc25ef7ba9f31310aab9c9685c8"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\ctrl-c-after.json",
+      "bytes": 1913,
+      "sha256": "b087557e8f77a1661b2764c9172909caac4bd50210344ff16f611ce18dbebe4d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\ctrl-c-verified.json",
+      "bytes": 167,
+      "sha256": "bc280a9f5a8a3543d5d97763dbd94852633240ec07a3bd5d0971baeace601643"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\ctrl-c.transcript.txt",
+      "bytes": 3773,
+      "sha256": "ee08244ba2d735bfb9d9e6dc43f568a308f055ff1d10e34c734e515ba9b500be"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\driver-functions.ps1",
+      "bytes": 2658,
+      "sha256": "892052a28cf0a20f9ada401788207a0b299e519486d30658fb88e948d21b6514"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\empty-after.json",
+      "bytes": 1913,
+      "sha256": "b087557e8f77a1661b2764c9172909caac4bd50210344ff16f611ce18dbebe4d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\empty-returned.json",
+      "bytes": 83,
+      "sha256": "bfb7f68f6b5c2ce0ce4d86fe74780498d3c9db434ff1302de509a19e87d09075"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\empty-verified.json",
+      "bytes": 167,
+      "sha256": "bc280a9f5a8a3543d5d97763dbd94852633240ec07a3bd5d0971baeace601643"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\empty.transcript.txt",
+      "bytes": 3635,
+      "sha256": "36c7b83e4f1a2a577519cfa6573cd004ca17336a2a4534ba95c9456e32d20136"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\healthy-after-interactive-result.json",
+      "bytes": 364,
+      "sha256": "2a980031cf43db5e8c35712ddab2b6fabdea0a6559be30dcd057c65198018589"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\healthy-after-interactive.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\healthy-after-interactive.stdout.log",
+      "bytes": 477,
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\identity-database.json",
+      "bytes": 1158,
+      "sha256": "2ed93e7d71f6c7b7dbfa17a96baf65342a3607abc7ee41660ffa8cb7af30c7a2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\interactive-native-steps.json",
+      "bytes": 364,
+      "sha256": "2a980031cf43db5e8c35712ddab2b6fabdea0a6559be30dcd057c65198018589"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\interactive-preconditions.json",
+      "bytes": 933,
+      "sha256": "10885a0faf245c433407b9bbb10cac9c2baf888b02b4b06469b30a523f766f72"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\interactive-result.json",
+      "bytes": 396,
+      "sha256": "8edce6ba302227dd9f2e7d6bf094a6f4282022ff36acf5b76660c1e97a9eafd5"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\interactive.ps1",
+      "bytes": 1198,
+      "sha256": "51362d83dd64e8c56a6cba77dada43b6cfb32c5c83741cebea3cd6a028df026a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\pm5-copy-receipt.json",
+      "bytes": 2145,
+      "sha256": "2eb19aef95b08122d53fb2f1579cdd6f0553db410fd86a4000245e0899c4c69e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\prepare-interactive.failed-path-check.ps1",
+      "bytes": 2689,
+      "sha256": "6f3c919447a4b987cb9be496133a4518ec8af5f60bcbaf1fc3200bd947eeb7aa"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\prepare-interactive.ps1",
+      "bytes": 3008,
+      "sha256": "9ee11f1e87894419e55ad325533d18912c7cfe45f3cdfe24a7bf2c1691ec09ab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\prepare-path-check-failure.json",
+      "bytes": 200,
+      "sha256": "cd5e9a55aaa0954aa729b6b5d07c77551d45582cb2e1f028771f63585a7e964e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\preserve.ps1",
+      "bytes": 3489,
+      "sha256": "05e32d00fca53c7886dfd9e7a5d4b467f135528e52cc2dc0d82550c842344789"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\preserved-after.json",
+      "bytes": 9482,
+      "sha256": "1c90b7b5519962296a4f50c4de96be4bc34171330007410db3ed329b09684543"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\preserved-before.json",
+      "bytes": 9482,
+      "sha256": "4c2af0c1fe2ac982973e4713b755fb3486d7b14ecb2f4fcdc25e3db9ab6bf2e4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\pty-input-evidence.json",
+      "bytes": 715,
+      "sha256": "aaa46376f579e067a74d1ad7b0b7643bb343be9817b98174205dc18b90783c9d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-before-files.json",
+      "bytes": 1913,
+      "sha256": "8358efc571c89a718e75b979f6b63b01cdc3faea5ac1a13d45c86f790fffd483"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-completed-resume-result.json",
+      "bytes": 422,
+      "sha256": "37c8299f1cfce492bc8224df9368cf6e38a855b3cfcd0ed0e851e5c7fc5de76a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-completed-resume.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-completed-resume.stdout.log",
+      "bytes": 264,
+      "sha256": "2454a5138de706fab95d81a52edae7b1bb30bbb4113aa2d60f1385a2a28f83d6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-damaged-files.json",
+      "bytes": 1913,
+      "sha256": "10a64c60cb0661765baa95417ec6e38d8e3e6b7511a624f8cfeb77a17f1bf7f9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-final-files.json",
+      "bytes": 1913,
+      "sha256": "1c7a788c27eb08dcac3046a0b6509c5ec83ccaf5ad785b4aa94f06987be72a8f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-invalid-status-result.json",
+      "bytes": 420,
+      "sha256": "362e23f45d1cde9792f500bdc2f333a77b107cb703027ba80d36274ebb8551ce"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-invalid-status.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-invalid-status.stdout.log",
+      "bytes": 424,
+      "sha256": "84c27d01a245f3f8054c2c82aab505bf0dabe95dd543c77e30879f410375f502"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-main-after-resume-result.json",
+      "bytes": 365,
+      "sha256": "b802d25871a8c98984658fa843c26f26fad0e4fc765146455b1eed5f7e333d33"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-main-after-resume.stderr.log",
+      "bytes": 203,
+      "sha256": "c266f85c73ab1315b07b9d451f99e2b40f59cac5660c2982ce7d6a6f68db8464"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-main-after-resume.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-main-blocked-result.json",
+      "bytes": 360,
+      "sha256": "fbabf9ac6a1b5a2dca547e9bbdc822880d1a3bc0ccf556563ce41a60f745a5c7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-main-blocked.stderr.log",
+      "bytes": 203,
+      "sha256": "c266f85c73ab1315b07b9d451f99e2b40f59cac5660c2982ce7d6a6f68db8464"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-main-blocked.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-native-steps.json",
+      "bytes": 3715,
+      "sha256": "2423d8812ac250fca677401ac347d9a060d23737bccf416c2dfc0a0a40e234a3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-original-command-result.json",
+      "bytes": 364,
+      "sha256": "beef2f042badc15bb857c444872b80e6e4ee5f927db5b0e9efb638fa43e7faac"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-original-command.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-original-command.stdout.log",
+      "bytes": 910,
+      "sha256": "bbb53d52fa5b7706573374ba38596b5ebde8d40d4af916942297553b1abc3bc6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-owned-restore-result.json",
+      "bytes": 420,
+      "sha256": "20db789df8eae9f103a2c101528b1ed0affd21f94351229e1cb2b728bcde80ff"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-owned-restore.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-owned-restore.stdout.log",
+      "bytes": 318,
+      "sha256": "f13e3ff0f0840a5dd7e691d61f4df1c847aeb43b4dbc2fda31743865bd22e47b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepare-same-project-result.json",
+      "bytes": 517,
+      "sha256": "80026fef619089eef13f3728c77ecc8a2a961b2449a1766f31319465a326e800"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepare-same-project.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepare-same-project.stdout.log",
+      "bytes": 663,
+      "sha256": "055579c8dabb3168081406633a87251ab265d0db8d30d9586cbd916fdfcff046"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepared-files.json",
+      "bytes": 1913,
+      "sha256": "4cc73e7d63bad059d50630a5a7ad42452c7589bd428413173c3aeef896b6a706"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-read-context-result.json",
+      "bytes": 420,
+      "sha256": "f985711306e7a0ce276edaab5cbdf40d06bc6d0c1a6a48a4214743880db46f81"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-read-context.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-read-context.stdout.log",
+      "bytes": 2157,
+      "sha256": "7489533582e00e8926ed3d0a14b2b06985086755ee18b103c27e76e8b0ebb6b6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-restored-files.json",
+      "bytes": 1913,
+      "sha256": "0cb6e08eb3ccba2e65e7ded0e004d9446d9a8080cf1c7bed58612f0c0438023a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-result.json",
+      "bytes": 3831,
+      "sha256": "f63a96f85fe98ae069947006af5fd475e08627ac8e061837c04ada7117744464"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery.ps1",
+      "bytes": 5455,
+      "sha256": "763198294f00780718c22e0e2a20c82ca2e590bf501cd1c5678b5c291bc5c011"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\roots-after.json",
+      "bytes": 1297,
+      "sha256": "c61f5076f0f80fced19a5ffe58cd897182e8ffe5ba591c0e8d9078c3a91db368"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\roots-before.json",
+      "bytes": 1297,
+      "sha256": "c61f5076f0f80fced19a5ffe58cd897182e8ffe5ba591c0e8d9078c3a91db368"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\support.ps1",
+      "bytes": 1258,
+      "sha256": "7bd0cfdfe74599e812b3c63ab47ee33bbc10faad7957b233a16eda9a9d2683e7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\verify-capsule.ps1",
+      "bytes": 769,
+      "sha256": "37d43a6f360f279d4aa5996323027704a65890068fc87b05efde489b4925d70a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\verify-client-bytes.py",
+      "bytes": 2586,
+      "sha256": "6c5ff66118690e4b24d845709de2d3744ad34b266b2223869de1253b03279c59"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\verify-interactive.failed-transcript-prompt.ps1",
+      "bytes": 2108,
+      "sha256": "98c515b01748e02f4dd9734015fcb33a1f37f8e117d53c495190d97905827771"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\verify-interactive.ps1",
+      "bytes": 2350,
+      "sha256": "4f13882876e1ddad650e8fef108b5923a0f9fdb25c4238bedc4ae4f083171a38"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "152159d8b2535bf8034a068802e3832857e10779fee0ae0a052099900fdaad41"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43331,
+      "sha256": "e21a54ecfa52ff6e5ccd37c99eec87e44543533a704479fe13ada5ee1d30b3b5"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 154784,
+      "sha256": "272cb4cd2b14606390302b9d2871ceb03ba3cbdd06337048fd99b774d076136e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before-prompt\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "152159d8b2535bf8034a068802e3832857e10779fee0ae0a052099900fdaad41"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before-prompt\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before-prompt\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43331,
+      "sha256": "e21a54ecfa52ff6e5ccd37c99eec87e44543533a704479fe13ada5ee1d30b3b5"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before-prompt\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 154784,
+      "sha256": "272cb4cd2b14606390302b9d2871ceb03ba3cbdd06337048fd99b774d076136e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before-prompt\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before-prompt\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before-prompt\\.cursor_mcp.json",
+      "bytes": 5836,
+      "sha256": "a145849da937da79f88adc992af1a29970686ebdeb559fb9f5ad80350ece8c49"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\before-prompt\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-before\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "152159d8b2535bf8034a068802e3832857e10779fee0ae0a052099900fdaad41"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-before\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-before\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43331,
+      "sha256": "e21a54ecfa52ff6e5ccd37c99eec87e44543533a704479fe13ada5ee1d30b3b5"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-before\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 154784,
+      "sha256": "272cb4cd2b14606390302b9d2871ceb03ba3cbdd06337048fd99b774d076136e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-before\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-before\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-before\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-before\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepared\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "152159d8b2535bf8034a068802e3832857e10779fee0ae0a052099900fdaad41"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepared\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepared\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43333,
+      "sha256": "2b6fba5ba9c1e0665f9adfc509e4001a8da70d441c7c50e61aa1bc9f799202a8"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepared\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 137210,
+      "sha256": "0f09414b621ff59e499d502ee385f6325a8844432359d4a9034dd29816464197"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepared\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepared\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepared\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-prepared\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-damaged\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "152159d8b2535bf8034a068802e3832857e10779fee0ae0a052099900fdaad41"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-damaged\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-damaged\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43333,
+      "sha256": "dd68508b0ae59fec75fb84c972f079cadc1df6f16649791fe4148b1d556dcef3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-damaged\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 137210,
+      "sha256": "0f09414b621ff59e499d502ee385f6325a8844432359d4a9034dd29816464197"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-damaged\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-damaged\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-damaged\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-damaged\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-restored\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "152159d8b2535bf8034a068802e3832857e10779fee0ae0a052099900fdaad41"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-restored\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-restored\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43331,
+      "sha256": "626e6ee82ee5d4cc3ce103c0ac381331a4c06c10d0a973f4512bd2a4bab4f24f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-restored\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 138544,
+      "sha256": "b3afb07f47b56dee2c5cb47273eefeb27015d2f2a5a3e3f6fb3397f0516740c0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-restored\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-restored\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-restored\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-restored\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-final\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "152159d8b2535bf8034a068802e3832857e10779fee0ae0a052099900fdaad41"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-final\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-final\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43332,
+      "sha256": "784d47eaacb254e6f323687ba4b4a7b158b1d80821947a513b826370990155ed"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-final\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 138544,
+      "sha256": "b3afb07f47b56dee2c5cb47273eefeb27015d2f2a5a3e3f6fb3397f0516740c0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-final\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-final\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-final\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\interactive-recovery-20261023\\recovery-final\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    }
+  ],
+  "validation": {
+    "runtimeChanges": 0,
+    "rawSha": "verified",
+    "memoryStrict": "passed",
+    "standardUser": true,
+    "registryStrict": "passed",
+    "unicodeRoot": "exact round trip",
+    "openSpecCli": "1.13.1",
+    "ownedPester": "not rerun: native qualification and documentation only; RegisterChange owns Targeted"
+  }
+}

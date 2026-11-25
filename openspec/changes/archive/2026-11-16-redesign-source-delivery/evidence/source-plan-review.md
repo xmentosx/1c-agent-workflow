@@ -1,0 +1,9 @@
+# SourceDeliveryPlan necessity review (27 original definitions)
+
+All27 original fa0 definitions and current setup/callers were read.26 normalized bodies match baseline; original598 is the C7 snapshot-fixture adaptation, preserving capability inputs and original assertions. Exact mapping validated from the original inventory and current AST; baseline SHA/source identities in source-plan-review.csv; current mapping in source-plan-reviewed-bodies.csv. Current full focused run:27/0/0,86.32s in Windows PowerShell5.1. This is no historical timing/flake claim and no 1C/release qualification.
+
+All27 retain; no proven duplicate removable as a whole. Different callers protecting the same invariant (plan447/publication467, evidence196/checker209, client659/677/717) are separate integration seams, not redundant whole tests. Five cases have concrete limitations/follow-up: long mixed deadline360; exact-path hash431 with generic committed fixture; env secrecy487 assertion only observes digest; locked-fork call-order567 text may match unreachable code; argument677 structure-coupled extraction. No removal, weakening or topology change has been made.
+
+Next A3 work should separate short owner/API/hash checks from native Git/planner integration and enforce short preflight before long workers without executing tests twice. Current observed largest single cases: ownership/corruption10115.392s; committed budget27011.132s; older tree14311.101s; Release overhead3609.026s; checker/planner2328.807s. Timings are this one focused run only. Preserve corruption, Unicode/spaces, exact commit/tree, client intent, stage dependencies and actual checker argument construction.
+
+The index includes these27 once:303/2814 reviewed,2511 pending. This read-only review is accumulated with the coherent A3 scheduler/suite change; no separate gate is run for audit generation.

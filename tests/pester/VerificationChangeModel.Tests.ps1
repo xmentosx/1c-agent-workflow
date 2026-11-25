@@ -1,0 +1,957 @@
+﻿BeforeAll {
+    $helperPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    function New-ChangeFixture {
+        param([string]$Root, [switch]$Retained, [switch]$LegacyOneOff, [switch]$NamedProfiles, [switch]$WithoutCatalog)
+        foreach($part in @('.agent-1c','src/cf','tests/features','evidence')) { New-Item -ItemType Directory -Force -Path (Join-Path $Root $part) | Out-Null }
+        [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/project.json'),'{}',[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $Root '.gitignore'),".agent-1c/verification-selection/`nevidence/`n.dev.env`n",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $Root '.dev.env'),"ITL_VERIFICATION_MODEL=change`n",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $Root 'requirements.md'),'AC-01: Current result. AC-02: Web acceptance.',[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $Root 'src/cf/current.bsl'),'Procedure Current() EndProcedure',[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $Root 'src/cf/other.bsl'),'Procedure Other() EndProcedure',[Text.UTF8Encoding]::new($false))
+        if (-not $WithoutCatalog) {
+            [IO.File]::WriteAllText((Join-Path $Root 'tests/verification-suites.branch.json'),'{"schemaVersion":2,"suites":[],"obligations":[]}',[Text.UTF8Encoding]::new($false))
+        }
+        if($LegacyOneOff) {
+            $catalog=@{schemaVersion=2;suites=@();obligations=@(@{id='legacy';expectedResult='Legacy result';inputPaths=@('src/cf/other.bsl');admissibleProof=@('runtime-observation');retention='one-off';retentionReason='Previously observed behavior';cadence='explicit'})}
+            [IO.File]::WriteAllText((Join-Path $Root 'tests/verification-suites.branch.json'),($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+        }
+        if($Retained) {
+            [IO.File]::WriteAllText((Join-Path $Root 'tests/features/Existing.feature'),"Функционал: Existing UI`nСценарий: Existing result`nКогда Данные готовы`n",[Text.UTF8Encoding]::new($false))
+            if($NamedProfiles) {
+                [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/project.json'),'{"vanessaAutomation":{"testClientManifestPath":"tests/vanessa-testclients.json"}}',[Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText((Join-Path $Root 'tests/vanessa-testclients.json'),'{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"Other"}]}',[Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText((Join-Path $Root 'tests/features/Existing.feature'),"Функционал: Existing UI`nСценарий: Existing result`nДано я подключаю профиль TestClient `"Required`"`n",[Text.UTF8Encoding]::new($false))
+            }
+            $catalog=@{schemaVersion=2;suites=@(@{id='existing';purpose='acceptance';featurePaths=@('tests/features/Existing.feature');ownerPaths=@('src/cf/current.bsl')});obligations=@(@{id='existing-result';expectedResult='Existing result is correct';inputPaths=@('src/cf/current.bsl');admissibleProof=@('vanessa-junit');retention='retained';retentionReason='Existing reusable UI coverage';cadence='affected';suiteId='existing'})}
+            [IO.File]::WriteAllText((Join-Path $Root 'tests/verification-suites.branch.json'),($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+        }
+        & git -C $Root init -b master *> $null
+        & git -C $Root config user.email 'test@example.com'
+        & git -C $Root config user.name 'Test User'
+        & git -C $Root add -- .
+        & git -C $Root commit -qm 'branch baseline'
+    }
+    function Enter-ChangeFixture {
+        param([string]$Root, [scriptblock]$Body)
+        & {
+            . $helperPath -ProjectRoot $Root -Action help *> $null
+            $script:ChangeTestState=[pscustomobject]@{
+                stateProjectRoot=$Root;devBranchName='change';safeDevBranchName='change';infoBaseKind='file';devBranchInfoBasePath=(Join-Path $Root 'База 1С')
+                toolingInfoBaseGeneration='target';vanessaServiceInfoBaseGeneration='runner';configLoadStatus='passed'
+                lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+                lastVerificationStatus='partial';lastVerifiedFingerprint='';enterpriseNormalizationStatus='passed';enterpriseNormalizationProofVersion=1
+                yaxunitApplicabilityBaseline=[pscustomobject]@{schemaVersion=1;commit=(Get-CurrentCommit);legacy=$false}
+            }
+            function Read-DevBranchState { $script:ChangeTestState }
+            function Assert-DevelopmentBranchWorktreeContext { param($State,$Operation) }
+            function Get-DevBranchResultTransferBaseCommit { param($State) (Get-GitOutput @('rev-list','--max-parents=0','HEAD')).Trim() }
+            function Set-CurrentObservation {
+                param([string]$Id)
+                $draft=Start-VerificationOneOffProof -ObligationId $Id
+                Write-Utf8TextAtomic -Path (Join-Path $Root "evidence/$Id.txt") -Value 'Observed expected result'
+                $obligation=@(Get-VerificationOneOffObligations | Where-Object id -eq $Id)[0]
+                $evidence=@{obligationId=$Id;runToken=$draft.runToken;expectedResult=$obligation.expectedResult;status='passed';proofType='runtime-observation';actualResult='Observed expected result';providerId='test-ui';runnerVersion='1';steps=@(@{action='Read the actual result';actual='Expected value'});artifactPaths=@("evidence/$Id.txt")}
+                Write-Utf8TextAtomic -Path (Join-Path $Root "evidence/$Id.json") -Value ($evidence|ConvertTo-Json -Depth 8)
+                Complete-VerificationOneOffProof -EvidencePath "evidence/$Id.json" | Out-Null
+            }
+            function Set-CurrentEventEvidence {
+                $fp=Get-VerificationFingerprint
+                Write-Utf8TextAtomic -Path (Join-Path $Root 'evidence/event.json') -Value '{"status":"passed","newErrorCount":0,"scanMode":"cursor","cursorScope":"lifecycle-pending"}'
+                $receipt=[pscustomobject]@{schemaVersion=1;component='event-log';status='passed';inputFingerprint=$fp;loadedBaseIdentity=(Get-VerificationLoadedBaseIdentity -State $script:ChangeTestState);checkerIdentity=(Get-VerificationOneOffCheckerIdentity -ProofType 'event-log');artifacts=@(New-VerificationArtifactReferences -Paths @((Join-Path $Root 'evidence/event.json')))}
+                $script:ChangeTestState|Add-Member -NotePropertyName lastVerificationComponentEvidence -NotePropertyValue ([pscustomobject]@{'event-log'=$receipt}) -Force
+            }
+            function Write-CurrentPlan {
+                param([string]$Id='first',[string]$Path='src/cf/current.bsl',[switch]$ReuseFirst,[switch]$Finish)
+                $criteria=@(@{id='AC-01';expectedResult='Current result';decision='check';checkIds=@($Id)},@{id='AC-02';expectedResult='Web acceptance';decision='pending'})
+                if($ReuseFirst){$criteria[0]=@{id='AC-01';expectedResult='Current result';decision='unaffected';reason='Only Other changed; Current has no caller or shared state dependency.'}}
+                if($Finish){$criteria[1]=@{id='AC-02';expectedResult='Web acceptance';decision='check';checkIds=@($Id)}}
+                $plan=@{taskId='feature';requirementPaths=@('requirements.md');checks=@(@{id=$Id;expectedResult="Expected $Id result";inputPaths=@($Path);admissibleProof=@('runtime-observation')});paths=@(@{path=$Path;checkIds=@($Id);reason='Check the changed behavior and its boundary.'});criteria=$criteria;retainedDispositions=@()}
+                Write-Utf8TextAtomic -Path (Join-Path $Root "evidence/plan-$Id.json") -Value ($plan|ConvertTo-Json -Depth 10)
+                return "evidence/plan-$Id.json"
+            }
+            & $Body
+        }
+    }
+}
+
+Describe 'Change mode recovery and reuse boundaries' {
+    It 'keeps begin and check independent of master after the branch <Origin>' -TestCases @(
+        @{Origin='creation'}, @{Origin='refresh'}, @{Origin='fork'}
+    ) {
+        param($Origin)
+        $root = Join-Path $TestDrive "База ветки с пробелом $Origin"
+        New-ChangeFixture $root -WithoutCatalog
+        $module = Join-Path $root 'src/cf/current.bsl'
+        $template = Join-Path $root 'src/cf/Шаблон.xml'
+        [IO.File]::WriteAllText((Join-Path $root '.gitattributes'), "src/cf/** -text`n")
+        [IO.File]::WriteAllText($module, "base`r`n")
+        [IO.File]::WriteAllText($template, "a`r`nb`n")
+        & git -C $root add -- .
+        & git -C $root commit --quiet --amend --no-edit
+        $base = (& git -C $root rev-parse HEAD).Trim()
+        & git -C $root branch itldev/change
+        [IO.File]::WriteAllText($template, "a`r`nb`r`nc`r`n")
+        [IO.File]::WriteAllText($module, "master`n")
+        & git -C $root add -- src/cf
+        & git -C $root commit --quiet -m 'master changes content and line endings'
+        & git -C $root checkout --quiet itldev/change
+        [IO.File]::WriteAllText($module, "branch`n")
+        & git -C $root add -- src/cf/current.bsl
+        & git -C $root commit --quiet -m 'committed branch edit with LF'
+
+        Enter-ChangeFixture $root {
+            $state = $script:ChangeTestState
+            $state | Add-Member devBranch 'itldev/change'
+            @(Repair-OneCSourceLineEndings) | Should -HaveCount 0
+            @(Repair-OneCSourceLineEndings -ReferenceCommit $base -CandidatePaths @() -StageChanges) | Should -HaveCount 0
+            (& git -C $root write-tree) | Should -Be (& git -C $root rev-parse 'HEAD^{tree}')
+            [IO.File]::ReadAllText($module) | Should -BeExactly "branch`n"
+            if ($Origin -eq 'refresh') {
+                $at = (Get-Date).ToString('o')
+                $state | Add-Member lastRefreshAt $at
+                $state | Add-Member lastRefreshMasterCommit $base
+                $proof = New-DevBranchResultTransferBaseline -State $state -Operation 'refresh-dev-branch' -BaseCommit $base -CompletedHead $base -CompletedAt $at
+                $state | Add-Member resultTransferBaseline ([pscustomobject]$proof)
+            } elseif ($Origin -eq 'fork') {
+                $state | Add-Member forkId 'fork-eol'
+                $state | Add-Member forkedFromCommit $base
+                $proof = New-DevBranchResultTransferBaseline -State $state -Operation 'fork-dev-branch' -BaseCommit $base -CompletedHead $base
+                $state | Add-Member resultTransferBaseline ([pscustomobject]$proof)
+            } else {
+                $state | Add-Member createdFromCommit $base
+            }
+            $plan = Write-CurrentPlan
+            foreach ($pass in 1..2) {
+                Start-VerificationChange -EvidencePath $plan | Out-Null
+                [IO.File]::ReadAllText($module) | Should -BeExactly "branch`r`n"
+                (& git -C $root hash-object --no-filters -- $template) | Should -Be (& git -C $root rev-parse 'HEAD:src/cf/Шаблон.xml')
+            }
+            # Exercise the real check preparation with an unstaged edit; stop at the platform boundary.
+            [IO.File]::WriteAllText($module, "next branch edit`n")
+            function Assert-VerificationClassificationReady { param($Reason,[switch]$RequireVanessa,[switch]$RequireYAxUnit) }
+            function Invoke-DevBranchVanessaRuntimeRelease { throw 'Reached platform preflight' }
+            { Invoke-DevBranchCheck } | Should -Throw '*Reached platform preflight*'
+            [IO.File]::ReadAllText($module) | Should -BeExactly "next branch edit`r`n"
+            (& git -C $root hash-object --no-filters -- $template) | Should -Be (& git -C $root rev-parse 'HEAD:src/cf/Шаблон.xml')
+        }
+    }
+
+    It 'assesses a catalog-free change through real selection and completion: <Fault>' -TestCases @(
+        @{Fault='none'; ErrorPattern=''},
+        @{Fault='missing-one-off'; ErrorPattern='*VERIFICATION_ONE_OFF_PROOF_PENDING*'},
+        @{Fault='failed-one-off'; ErrorPattern='*VERIFICATION_ONE_OFF_PROOF_INVALID*'},
+        @{Fault='changed-artifact'; ErrorPattern='*VERIFICATION_ONE_OFF_PROOF_INVALID*'},
+        @{Fault='stale-load'; ErrorPattern='*VERIFICATION_LOADED_INPUT_STALE*'},
+        @{Fault='unready-load'; ErrorPattern='*VERIFICATION_LOADED_INPUT_UNVERIFIED*'},
+        @{Fault='missing-event-log'; ErrorPattern='*VERIFICATION_COMPONENT_PROOF_PENDING*'}
+    ) {
+        param($Fault, $ErrorPattern)
+        $root=Join-Path $TestDrive ('Без каталога ' + $Fault)
+        New-ChangeFixture $root -WithoutCatalog
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan -Finish) | Out-Null
+            if ($Fault -ne 'missing-one-off') { Set-CurrentObservation first }
+            if ($Fault -ne 'missing-event-log') { Set-CurrentEventEvidence }
+            switch ($Fault) {
+                'failed-one-off' {
+                    $path=Get-VerificationOneOffProofPath first
+                    $receipt=Read-Utf8Text -Path $path | ConvertFrom-Json
+                    $receipt.status='failed'
+                    Write-Utf8TextAtomic -Path $path -Value ($receipt | ConvertTo-Json -Depth 16)
+                }
+                'changed-artifact' { Write-Utf8TextAtomic -Path (Join-Path $root 'evidence/first.txt') -Value 'Different observation' }
+                'stale-load' { $script:ChangeTestState.lastConfigDesignerFingerprint='outdated' }
+                'unready-load' { $script:ChangeTestState.configLoadStatus='failed' }
+            }
+            # Both entry points must use the actual catalog reader and selector.
+            $runnerPlan=Get-ItlVanessaVerificationSelectionPlan
+            $directPlan=New-VerificationSelectionPlan -ApplicationFeatureFiles @() -RequireObservedReceipts
+            $runnerPlan.mode | Should -BeExactly 'reuse'
+            $directPlan.mode | Should -BeExactly $runnerPlan.mode
+            $runnerPlan.catalogAvailable | Should -BeFalse
+            $directPlan.catalogAvailable | Should -BeFalse
+            if ($Fault -eq 'none') {
+                $result=Complete-VerificationChange
+                $result.changeStatus | Should -BeExactly 'accepted'
+                $result.taskAccepted | Should -BeTrue
+            } else {
+                { Complete-VerificationChange } | Should -Throw $ErrorPattern
+                (Read-VerificationChange).status | Should -BeExactly 'pending'
+            }
+            Test-Path -LiteralPath (Join-Path $root 'tests/verification-suites.branch.json') | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $root '.agent-1c/verification-selection/proof.json') | Should -BeFalse
+        }
+    }
+
+    It 'checks selected Vanessa profiles with a valid change plan before reaching the infobase loader' {
+        $root=Join-Path $TestDrive 'План и профиль до загрузки'; New-ChangeFixture $root -Retained -NamedProfiles
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current UI fix'
+            $file=Write-CurrentPlan -Id existing-result
+            $plan=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json; $plan.checks=@(@{suiteId='existing'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            $script:ChangeLoadReached=$false
+            function Update-DevBranchBase { $script:ChangeLoadReached=$true; throw 'Unexpected load' }
+            function Assert-VerificationClassificationReady { param($Reason,[switch]$RequireVanessa,[switch]$RequireYAxUnit) }
+            function Invoke-DevBranchVanessaRuntimeRelease { }
+            { Invoke-DevBranchCheck } | Should -Throw '*ITL_VANESSA_TESTCLIENT_PROFILES_MISSING*Required*'
+            $script:ChangeLoadReached | Should -BeFalse
+            (Read-VerificationChange).status | Should -BeExactly 'pending'
+        }
+    }
+
+    It 'adopts valid unchanged legacy observations without another run and preserves them across pending replanning' {
+        $root=Join-Path $TestDrive 'Переход без повторного наблюдения'; New-ChangeFixture $root -LegacyOneOff
+        Enter-ChangeFixture $root {
+            Set-CurrentObservation legacy
+            $oldHash=(Get-FileHash -LiteralPath (Get-VerificationOneOffProofPath legacy)).Hash
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $file=Write-CurrentPlan
+            $plan=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $plan.criteria+=@([pscustomobject]@{id='legacy';expectedResult='Legacy result';decision='unaffected';reason='Other is unchanged and independent of Current.'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            @(Get-VerificationOneOffObligations).id | Should -Be @('first')
+            # A load and a further current fix do not erase that validated inheritance.
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix refined'
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Set-CurrentObservation first; Set-CurrentEventEvidence
+            (Complete-VerificationChange).changeStatus | Should -BeExactly 'accepted'
+            (Get-FileHash -LiteralPath (Get-VerificationOneOffProofPath legacy)).Hash | Should -BeExactly $oldHash
+            @((Read-VerificationChange).criteria|Where-Object{ $_.id -eq 'legacy' -and $_.passed }).Count | Should -Be 1
+        }
+    }
+
+    It 'keeps the always policy and only reports shared test support: <kind>' -TestCases @(@{kind='always'},@{kind='full'},@{kind='feature'},@{kind='unsettled'}) {
+        param($kind)
+        & {
+            . (Join-Path (Split-Path -Parent $helperPath) 'lib/agent-1c.verification-change.ps1')
+            function Get-VerificationCatalogValue { param($Value,$Name,$Default) $p=$Value.PSObject.Properties[$Name]; if($null -eq $p){$Default}else{$p.Value} }
+            function Read-VerificationChange { [pscustomobject]@{baseTree='base';checks=@();retainedDispositions=@([pscustomobject]@{suiteId='existing';decision='unaffected';reason='Unrelated change'})} }
+            function Assert-VerificationChangeCurrent { param($Change) }
+            function Get-VanessaVerificationFeaturesPath { 'tests/features' }
+            function Get-VanessaFeaturesPath { 'tests/features' }
+            function Get-VanessaApplicationFeatureFiles { param($FeaturePath) @() }
+            function Read-VerificationSuiteCatalog { param($ApplicationFeatureFiles) [pscustomobject]@{suites=@([pscustomobject]@{id='existing';purpose='acceptance';always=($kind -eq 'always')});assignments=@([pscustomobject]@{suiteId='existing';purpose='acceptance';path='tests/features/Existing.feature'});catalogPaths=@()} }
+            # 'full': a shared Vanessa step changed; 'feature': the suite's own feature file changed.
+            function Get-VerificationSelectionChangedPaths { param($BaseTree,$CurrentTree) switch($kind){'full'{@('tests/features/Libraries/Steps.feature')}'feature'{@('tests/features/Existing.feature')}default{@('src/cf/current.bsl')}} }
+            function Get-VerificationAcceptedMasterInput { param($ChangedPaths,$CurrentTree) [pscustomobject]@{importedPaths=@()} }
+            function Get-VerificationOwnerPaths { @() }
+            function Get-VerificationRelevantDependencyLockFingerprint { param($Treeish) 'same' }
+            function Get-VerificationRepoRelativePath { param($Path) $Path }
+            # 'unsettled': the suite failed at the adopted base or in this change.
+            function Read-VerificationSelectionProof { [pscustomobject]@{suiteEvidence=@([pscustomobject]@{id='existing';status=$(if($kind -eq 'unsettled'){'failed'}else{'passed'})})} }
+            function Test-VerificationSuiteReceiptSettled { param($Receipt) [string]$Receipt.status -cin @('passed','attested') }
+            $plan=[pscustomobject]@{mode='incremental';reason='';selectedSuiteIds=@('existing');acceptanceSuiteIds=@('existing');currentTree='tree'}
+            if ($kind -eq 'always') {
+                { Get-VerificationChangeSelectionPlan -Plan $plan } | Should -Throw '*VERIFICATION_CHANGE_ALWAYS_REQUIRED*'
+            } elseif ($kind -eq 'unsettled') {
+                { Get-VerificationChangeSelectionPlan -Plan $plan } | Should -Throw '*VERIFICATION_CHANGE_UNSETTLED_REQUIRED*'
+            } else {
+                # A changed shared step is reported; accepted results stay valid
+                # and the agent's exclusion stands.
+                $required=Get-VerificationChangeRequiredSuites -Change (Read-VerificationChange) -Catalog (Read-VerificationSuiteCatalog -ApplicationFeatureFiles @()) -CurrentTree 'tree'
+                @($required.suiteIds).Count | Should -Be 0
+                @($required.unaffectedSuiteIds) | Should -Be @('existing')
+                if ($kind -eq 'full') { ($required.infrastructureReasons -join ' ') | Should -Match "Shared Vanessa support changed at 'tests/features/Libraries/Steps.feature'" }
+                else { @($required.infrastructureReasons).Count | Should -Be 0 }
+            }
+        }
+    }
+
+    It 'previews the complete delta and supports a direct task without a new requirements document' {
+        $root=Join-Path $TestDrive 'Прямой фикс без документа'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            $script:ChangeTestState.lastVerificationStatus='passed'
+            $script:ChangeTestState.lastVerifiedFingerprint=Get-VerificationFingerprint
+            $script:ChangeTestState|Add-Member lastVerifiedLoadedBaseIdentity (Get-VerificationLoadedBaseIdentity -State $script:ChangeTestState)
+            $legacy=Get-VerificationState -State $script:ChangeTestState
+            $legacy.isFreshPassed | Should -BeFalse
+            ($legacy.assessmentIssues -join ';') | Should -Match 'VERIFICATION_CHANGE_REQUIRED'
+            $script:ChangeLoadReached=$false
+            function Update-DevBranchBase { $script:ChangeLoadReached=$true; throw 'Unexpected load' }
+            function Get-DevBranchKind { param($State) 'configuration' }
+            function Assert-VerificationClassificationReady { param($Reason,[switch]$RequireVanessa,[switch]$RequireYAxUnit) }
+            { Invoke-DevBranchCheck } | Should -Throw '*VERIFICATION_CHANGE_REQUIRED*'
+            $script:ChangeLoadReached | Should -BeFalse
+            $preview=Start-VerificationChange
+            @($preview.changedPaths) | Should -Be @('src/cf/current.bsl')
+            Test-Path -LiteralPath (Get-VerificationChangePath) | Should -BeFalse
+            $file=Write-CurrentPlan
+            $plan=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $plan.checks[0].inputPaths=@('untracked-tools/source.ps1')
+            { Get-VerificationChangeChecks -Plan $plan } | Should -Throw '*VERIFICATION_CHANGE_INPUT_SCOPE_REQUIRED*'
+            $plan.checks[0].inputPaths=@('src/cf/current.bsl')
+            $plan.requirementPaths=@(); $plan.criteria=@($plan.criteria|Where-Object id -eq 'AC-01')
+            $plan|Add-Member taskDescription 'Fix the requested current result'; $plan|Add-Member sourceReference 'Named user request for this direct fix'
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            { Assert-VanessaVerificationPreflight } | Should -Not -Throw
+            Set-CurrentObservation first; Set-CurrentEventEvidence
+            (Complete-VerificationChange).taskAccepted | Should -BeTrue
+            (Get-VerificationState -State $script:ChangeTestState).isFreshPassed | Should -BeTrue
+        }
+    }
+    It 'adopts the last recorded failed run as base and carries only its unsettled suites' {
+        $root=Join-Path $TestDrive 'Упавший прогон как база'; New-ChangeFixture $root -Retained
+        Enter-ChangeFixture $root {
+            # Earlier branch work was observed by a full cumulative run that
+            # failed in the only suite; a later edit is the change to plan.
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Procedure Current() Verified EndProcedure'
+            & git -C $root add -- src/cf/current.bsl; & git -C $root commit -qm 'verified branch work'
+            $runTree = Get-VerificationSelectionEffectiveTree
+            New-Item -ItemType Directory -Force -Path (Get-VerificationSelectionStateRoot) | Out-Null
+            $proofPath = Join-Path (Get-VerificationSelectionStateRoot) 'proof.json'
+            $branchStart = Start-VerificationChange
+            @($branchStart.changedPaths) | Should -Contain 'src/cf/current.bsl'
+            Write-Utf8TextAtomic -Path $proofPath -Value (@{schemaVersion=1;tree=$runTree;acceptanceSuiteIds=@('existing');suiteEvidence=@(@{schemaVersion=1;id='existing';status='failed';artifacts=@()})}|ConvertTo-Json -Depth 6)
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/other.bsl') -Value 'Procedure Other() Changed EndProcedure'
+            $preview = Start-VerificationChange
+            $preview.baseTree | Should -BeExactly $runTree
+            @($preview.changedPaths) | Should -Be @('src/cf/other.bsl')
+            @($preview.unsettledSuiteIds) | Should -Be @('existing')
+            # A run that did not record every planned suite is no boundary.
+            Write-Utf8TextAtomic -Path $proofPath -Value (@{schemaVersion=1;tree=$runTree;acceptanceSuiteIds=@('existing','removed');suiteEvidence=@(@{schemaVersion=1;id='existing';status='failed';artifacts=@()})}|ConvertTo-Json -Depth 6)
+            @((Start-VerificationChange).changedPaths) | Should -Contain 'src/cf/current.bsl'
+        }
+    }
+    It 'runs a covering suite by default, refuses its silent omission and honours an explicit exclusion in a fresh branch' {
+        $root=Join-Path $TestDrive 'Покрывающий набор с пробелами'; New-ChangeFixture $root -Retained
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $file=Write-CurrentPlan
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_SUITE_UNDECIDED: retained suites cover changed paths: 'existing' (src/cf/current.bsl)*"
+            # Excluded with a reason and no prior pass: nothing runs, and readiness
+            # does not demand the suite's receipt.
+            $plan=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $plan.retainedDispositions=@([pscustomobject]@{suiteId='existing';decision='unaffected';reason='Only a message text changed; the UI suite observes no text.'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            $selection=Get-ItlVanessaVerificationSelectionPlan
+            $selection.mode | Should -BeExactly 'reuse'
+            @($selection.selectedSuiteIds).Count | Should -Be 0
+            $selection.reason | Should -Match 'agent: existing\b'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Set-CurrentObservation first; Set-CurrentEventEvidence
+            (Complete-VerificationChange).changeStatus | Should -BeExactly 'accepted'
+        }
+        $kept=Join-Path $TestDrive 'Покрывающий набор оставлен'; New-ChangeFixture $kept -Retained
+        Enter-ChangeFixture $kept {
+            # Kept: the suite has no receipt in this fresh branch, so it runs.
+            Write-Utf8TextAtomic -Path (Join-Path $kept 'src/cf/current.bsl') -Value 'Current fix'
+            $file=Write-CurrentPlan
+            $plan=Read-Utf8Text -Path (Join-Path $kept $file)|ConvertFrom-Json
+            $plan.checks+=@([pscustomobject]@{suiteId='existing'})
+            Write-Utf8TextAtomic -Path (Join-Path $kept $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            @((Get-ItlVanessaVerificationSelectionPlan).selectedSuiteIds) | Should -Be @('existing')
+        }
+    }
+
+    It 'decides only acceptance suites and admits schema-1 owner inputs outside the base scopes' {
+        # Reproduces the PM5 deadlock: an explicit diagnostic suite covering a
+        # changed path, and an acceptance suite owning a probe outside src/tests.
+        $root=Join-Path $TestDrive 'Каталог схемы 1 с пробой'
+        $probe='tests/probes/kanban html/src/Проба.bsl'
+        $files=@{
+            'tests/features/Existing.feature'="Функционал: Existing UI`nСценарий: Existing result`nКогда Данные готовы`n"
+            'tests/features/Diagnostic.feature'="Функционал: Diagnostic UI`nСценарий: Diagnostic result`nКогда Данные готовы`n"
+            'tests/features/Probe.feature'="Функционал: Probe UI`nСценарий: Probe result`nКогда Данные готовы`n"
+            $probe='Procedure Probe() EndProcedure'
+            'tests/verification-suites.branch.json'=(@{schemaVersion=1;suites=@(
+                @{id='existing';purpose='acceptance';featurePaths=@('tests/features/Existing.feature');ownerPaths=@('src/cf/current.bsl')},
+                @{id='diagnostic';purpose='explicit';featurePaths=@('tests/features/Diagnostic.feature');ownerPaths=@('src/cf/current.bsl','tests/probes/kanban html/src/**')},
+                @{id='probe';purpose='acceptance';featurePaths=@('tests/features/Probe.feature');ownerPaths=@('src/cf/other.bsl','tests/probes/kanban html/src/**')})}|ConvertTo-Json -Depth 8)
+        }
+        foreach($relative in $files.Keys){
+            $path=Join-Path $root $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+            [IO.File]::WriteAllText($path,$files[$relative],[Text.UTF8Encoding]::new($false))
+        }
+        New-ChangeFixture $root -WithoutCatalog
+        Enter-ChangeFixture $root {
+            # Only the probe needs its own scope; inputs inside base scopes keep
+            # every existing fingerprint part unchanged.
+            @(Get-VerificationDeclaredInputScopes) | Should -Be @('tests/probes/kanban html/src')
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $file=Write-CurrentPlan
+            $message=try { Start-VerificationChange -EvidencePath $file | Out-Null; '' } catch { $_.Exception.Message }
+            $message | Should -BeLike "*VERIFICATION_CHANGE_SUITE_UNDECIDED: retained suites cover changed paths: 'existing' (src/cf/current.bsl).*"
+            $message | Should -Not -Match 'diagnostic'
+            $plan=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $plan.retainedDispositions=@(
+                [pscustomobject]@{suiteId='existing';decision='unaffected';reason='Only a message text changed; the UI suite observes no text.'},
+                [pscustomobject]@{suiteId='diagnostic';decision='unaffected';reason='Diagnostic only.'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_SUITE_INVALID: retainedDispositions name 'diagnostic'*"
+            $plan.retainedDispositions=@($plan.retainedDispositions|Where-Object suiteId -ne 'diagnostic')
+            $plan.checks+=@([pscustomobject]@{suiteId='probe'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            $selection=Get-ItlVanessaVerificationSelectionPlan
+            @($selection.selectedSuiteIds) | Should -Be @('probe')
+            $selection.reason | Should -Match 'agent: existing\b'
+            # A probe edit is now a verification input in every model.
+            $base=Get-VerificationSelectionEffectiveTree
+            Write-Utf8TextAtomic -Path (Join-Path $root $probe) -Value 'Procedure Probe() Changed EndProcedure'
+            @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree (Get-VerificationSelectionEffectiveTree)) | Should -Be @($probe)
+        }
+    }
+
+    It 'accepts a loaded-target check from the load and event log without an observation' {
+        $root=Join-Path $TestDrive 'Без наблюдения в базе'; New-ChangeFixture $root -WithoutCatalog
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Message text fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            $file=Write-CurrentPlan -Finish
+            $plan=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $plan.checks[0].admissibleProof=@('loaded-target')
+            $plan.paths[0].reason='Only the message text changed; loading the module is sufficient proof.'
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            { Start-VerificationOneOffProof -ObligationId first } | Should -Throw '*VERIFICATION_ONE_OFF_LOADED_TARGET*'
+            # Without the check's own event-log evidence the load alone is not enough.
+            { Complete-VerificationChange } | Should -Throw '*VERIFICATION_COMPONENT_PROOF_PENDING*'
+            Set-CurrentEventEvidence
+            $result=Complete-VerificationChange
+            $result.changeStatus | Should -BeExactly 'accepted'
+            $result.taskAccepted | Should -BeTrue
+        }
+    }
+
+    It 'drafts covering retained checks for review and refuses an unreviewed draft' {
+        $root=Join-Path $TestDrive 'Черновик плана с пробелами'; New-ChangeFixture $root -Retained
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/other.bsl') -Value 'Other fix'
+            $preview=Start-VerificationChange
+            @($preview.changedPaths) | Should -Be @('src/cf/current.bsl','src/cf/other.bsl')
+            @($preview.draftUncoveredPaths) | Should -Be @('src/cf/other.bsl')
+            $preview.draftPlanPath | Should -BeExactly '.agent-1c/verification-selection/change-plan.draft.json'
+            Test-Path -LiteralPath (Get-VerificationChangePath) | Should -BeFalse
+            $draft=Read-Utf8Text -Path (Join-Path $root $preview.draftPlanPath)|ConvertFrom-Json
+            @($draft.checks).Count | Should -Be 1
+            $draft.checks[0].suiteId | Should -BeExactly 'existing'
+            @($draft.paths).Count | Should -Be 1
+            $draft.paths[0].path | Should -BeExactly 'src/cf/current.bsl'
+            @($draft.paths[0].checkIds) | Should -Be @('existing-result')
+            $draft.paths[0].reason | Should -Match '^DRAFT: retained suite ''existing'' covers this path'
+            $draft.taskId | Should -Match '^[a-z0-9][a-z0-9._-]*$'
+
+            # Completing only the task fields still leaves the helper's reason unreviewed.
+            $draft.taskDescription='Fix current and other results'; $draft.sourceReference='Named user request'
+            $draft.criteria=@([pscustomobject]@{id='AC-01';expectedResult='Current result';decision='check';checkIds=@('existing-result','other-result')})
+            $draft.checks+=@([pscustomobject]@{id='other-result';expectedResult='Other result is correct';inputPaths=@('src/cf/other.bsl');admissibleProof=@('runtime-observation')})
+            $draft.paths+=@([pscustomobject]@{path='src/cf/other.bsl';checkIds=@('other-result');reason='Observe the changed other result once.'})
+            Write-Utf8TextAtomic -Path (Join-Path $root 'evidence/draft.json') -Value ($draft|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath 'evidence/draft.json' } | Should -Throw "*VERIFICATION_CHANGE_DRAFT_UNREVIEWED: 'src/cf/current.bsl'*"
+            $draft.paths[0].reason='Current result changed; the existing UI suite observes it.'
+            Write-Utf8TextAtomic -Path (Join-Path $root 'evidence/draft.json') -Value ($draft|ConvertTo-Json -Depth 10)
+            (Start-VerificationChange -EvidencePath 'evidence/draft.json').status | Should -BeExactly 'pending'
+        }
+    }
+
+    It 'covers unchanged master imports and verification-owner updates without impact decisions, but not a branch edit of an import' {
+        $root=Join-Path $TestDrive 'Импорт из master с пробелами'; New-ChangeFixture $root
+        $owner='.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1'
+        & git -C $root checkout -q -b itldev/change
+        [IO.File]::WriteAllText((Join-Path $root 'src/cf/current.bsl'),'Branch fix',[Text.UTF8Encoding]::new($false))
+        & git -C $root commit -qam 'branch fix'
+        & git -C $root checkout -q master
+        [IO.File]::WriteAllText((Join-Path $root 'src/cf/other.bsl'),'Master change',[Text.UTF8Encoding]::new($false))
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $root $owner)) | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root $owner),'# updated workflow owner',[Text.UTF8Encoding]::new($false))
+        # update-workflow pins a new verification runtime in the same workflow commit.
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dependency-lock.json'),'{"dependencies":{"itlOndemandMcp":{"version":"0.4.27","sha256":"new"}}}',[Text.UTF8Encoding]::new($false))
+        & git -C $root add -- .; & git -C $root commit -qm 'master change and workflow update'
+        & git -C $root checkout -q itldev/change
+        & git -C $root merge -q --no-edit master
+        $LASTEXITCODE | Should -Be 0
+        $owners=@('.agent-1c/dependency-lock.json',$owner)
+        Enter-ChangeFixture $root {
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            $preview=Start-VerificationChange
+            @($preview.changedPaths) | Should -Be @('src/cf/current.bsl')
+            @($preview.systemCoveredPaths.importedPaths) | Should -Be @('src/cf/other.bsl')
+            @($preview.systemCoveredPaths.verificationOwnerPaths) | Should -Be $owners
+            $file=Write-CurrentPlan
+            $change=Start-VerificationChange -EvidencePath $file
+            @($change.systemInput.importedPaths) | Should -Be @('src/cf/other.bsl')
+            @((Read-VerificationChange).systemInput.verificationOwnerPaths) | Should -Be $owners
+            [IO.File]::WriteAllText((Join-Path $root 'src/cf/other.bsl'),'Branch edit of the import',[Text.UTF8Encoding]::new($false))
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_PATH_PENDING: 'src/cf/other.bsl'*"
+        }
+    }
+    It 'names the declared and covering checks for an undecided path and covers a YAxUnit test module by its group' {
+        $root=Join-Path $TestDrive 'Модуль теста группы с пробелами'; New-ChangeFixture $root
+        $module='tests/yaxunit/CommonModules/УТ_ТекущийРезультат/Ext/Module.bsl'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $root $module)) | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root $module),'Procedure Existing() Export EndProcedure',[Text.UTF8Encoding]::new($false))
+        $catalog=@{schemaVersion=1;registrationPaths=@();groups=@(@{id='current';purpose='default-fast';modulePaths=@($module);ownerPaths=@('src/cf/current.bsl')})}
+        [IO.File]::WriteAllText((Join-Path $root 'tests/yaxunit-suites.branch.json'),($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+        # The retained group belongs to the branch baseline, not to the task delta.
+        & git -C $root add -- .; & git -C $root commit -q --amend --no-edit
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root $module) -Value 'Procedure Existing() Export EndProcedure Procedure NewCase() Export EndProcedure'
+            $file=Write-CurrentPlan
+            $p=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $p.paths=@(@{path=$module;checkIds=@();reason='A new case of the retained group.'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($p|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_PATH_UNCOVERED: '$module' lists no checkIds. No declared check has inputPaths that cover it*Declared check ids: 'first'.*"
+            $p.paths[0].checkIds=@('yaxunit/missing')
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($p|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_CHECK_UNKNOWN: '$module' references undeclared check ids 'yaxunit/missing'. Declared check ids: 'first'.*"
+            $p.checks=@($p.checks[0],@{groupId='current'})
+            $p.paths[0].checkIds=@('first')
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($p|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_PATH_UNCOVERED: 'first' does not cover '$module'. Checks whose inputPaths cover it: 'yaxunit/current'.*"
+            $p.paths[0].checkIds=@('yaxunit/current')
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($p|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Not -Throw
+        }
+    }
+    It 'keeps task remainder when switching mode and rejects changed observations and target generations' {
+        $root=Join-Path $TestDrive 'Режим не скрывает остаток'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan) | Out-Null
+            Set-CurrentObservation first; Set-CurrentEventEvidence; Complete-VerificationChange | Out-Null
+            $original=(Get-Command Get-EnvValue).ScriptBlock; $script:chosenModel='cumulative'
+            function Get-EnvValue { param($Name,$Default) if($Name -eq 'ITL_VERIFICATION_MODEL'){return $script:chosenModel}; & $original -Name $Name -Default $Default }
+            $legacy=Get-VerificationState -State $script:ChangeTestState
+            $legacy.taskAccepted | Should -BeFalse
+            $legacy.isFreshPassed | Should -BeFalse
+            @($legacy.acceptanceRemaining) | Should -Contain 'AC-02'
+            $script:chosenModel='change'
+            Write-Utf8TextAtomic -Path (Join-Path $root 'evidence/first.txt') -Value 'Altered result'
+            (Get-VerificationChangeAssessment -State $script:ChangeTestState -Fingerprint (Get-VerificationFingerprint)).passed | Should -BeFalse
+            Write-Utf8TextAtomic -Path (Join-Path $root 'evidence/first.txt') -Value 'Observed expected result'
+            $script:ChangeTestState.toolingInfoBaseGeneration='different target'
+            $assessment=Get-VerificationChangeAssessment -State $script:ChangeTestState -Fingerprint (Get-VerificationFingerprint)
+            $assessment.passed | Should -BeFalse
+            ($assessment.issues -join ';') | Should -Match 'VERIFICATION_CHANGE_TARGET_CHANGED'
+        }
+    }
+    It 'plans on a branch without a prepared runner and binds the runner at first use after preparation' {
+        $root=Join-Path $TestDrive 'Ветка без runner'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            # 2026-10-27 Develop upgrade: the negative stand plans before any
+            # Vanessa preparation, so its branch has no runner generation yet.
+            $script:ChangeTestState.PSObject.Properties.Remove('vanessaServiceInfoBaseGeneration')
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan) | Out-Null
+            $planned=Read-VerificationChange
+            [string]$planned.targetIdentity | Should -BeNullOrEmpty
+            $planned.unboundTargetIdentity | Should -Match '^[a-f0-9]{64}$'
+            [string](Assert-VerificationChangeReady -State $script:ChangeTestState).targetIdentity | Should -BeNullOrEmpty
+            # Every infobase target field stays strict while the runner is unbound.
+            $script:ChangeTestState.toolingInfoBaseGeneration='different target'
+            { Assert-VerificationChangeReady -State $script:ChangeTestState } | Should -Throw '*VERIFICATION_CHANGE_TARGET_CHANGED*'
+            $script:ChangeTestState.toolingInfoBaseGeneration='target'
+            $script:ChangeTestState | Add-Member -NotePropertyName vanessaServiceInfoBaseGeneration -NotePropertyValue 'runner' -Force
+            $bound=Assert-VerificationChangeReady -State $script:ChangeTestState
+            $bound.targetIdentity | Should -BeExactly (Get-VerificationRetainedTargetIdentity -State $script:ChangeTestState)
+            $stored=Read-VerificationChange
+            $stored.targetIdentity | Should -BeExactly $bound.targetIdentity
+            $stored.PSObject.Properties['unboundTargetIdentity'] | Should -BeNullOrEmpty
+            Set-CurrentObservation first; Set-CurrentEventEvidence
+            (Complete-VerificationChange).changeStatus | Should -BeExactly 'accepted'
+            # Once bound, a different runner is a different target.
+            $script:ChangeTestState.vanessaServiceInfoBaseGeneration='recreated runner'
+            { Assert-VerificationChangeReady -State $script:ChangeTestState } | Should -Throw '*VERIFICATION_CHANGE_TARGET_CHANGED*'
+        }
+    }
+    It 'plans on a new branch before its first tooling step through the tooling generation owner' {
+        $root=Join-Path $TestDrive 'Новая ветка без tooling'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            # 2026-10-27 Develop fresh: new-dev-branch leaves neither the tooling
+            # nor the runner generation before the first check plans its change.
+            foreach ($name in @('toolingInfoBaseGeneration', 'vanessaServiceInfoBaseGeneration')) { $script:ChangeTestState.PSObject.Properties.Remove($name) }
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan) | Out-Null
+            $generation=[string]$script:ChangeTestState.toolingInfoBaseGeneration
+            $generation | Should -Match '^[a-f0-9]{32}$'
+            [string](Read-VerificationChange).targetIdentity | Should -BeNullOrEmpty
+            # The established generation stays strict until the runner binds.
+            $script:ChangeTestState.toolingInfoBaseGeneration='recreated base'
+            { Assert-VerificationChangeReady -State $script:ChangeTestState } | Should -Throw '*VERIFICATION_CHANGE_TARGET_CHANGED*'
+            $script:ChangeTestState.toolingInfoBaseGeneration=$generation
+            $script:ChangeTestState | Add-Member -NotePropertyName vanessaServiceInfoBaseGeneration -NotePropertyValue 'runner' -Force
+            (Assert-VerificationChangeReady -State $script:ChangeTestState).targetIdentity | Should -BeExactly (Get-VerificationRetainedTargetIdentity -State $script:ChangeTestState)
+        }
+    }
+    It 'cannot mutate the frozen current scope or claim acceptance without its completed immutable record' {
+        $root=Join-Path $TestDrive 'Защита границы и приёмки'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan) | Out-Null
+            Set-CurrentObservation first; Set-CurrentEventEvidence
+            $change=Read-VerificationChange; $change.taskAccepted=$true; $change.status='accepted'
+            Write-Utf8TextAtomic -Path (Get-VerificationChangePath) -Value ($change|ConvertTo-Json -Depth 16)
+            (Get-VerificationChangeAssessment -State $script:ChangeTestState -Fingerprint (Get-VerificationFingerprint)).taskAccepted | Should -BeFalse
+            $file=Write-CurrentPlan
+            $plan=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json; $plan.taskId='forged-task'
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($plan|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw '*VERIFICATION_CHANGE_TASK_PENDING*'
+            $change.checks=@(); Write-Utf8TextAtomic -Path (Get-VerificationChangePath) -Value ($change|ConvertTo-Json -Depth 16)
+            { Read-VerificationChange } | Should -Throw '*VERIFICATION_CHANGE_RECORD_CHANGED*'
+        }
+    }
+    It 'uses existing retained evidence and an explicit unaffected disposition without creating or rerunning a scenario' {
+        $root=Join-Path $TestDrive 'Существующая регрессия'; New-ChangeFixture $root -Retained
+        Enter-ChangeFixture $root {
+            # This fixture isolates UI receipt reuse; applicability remains covered by its owning tests.
+            function Get-YAxUnitProductionApplicability { param($Catalog,$State,[switch]$ReadOnly,$OneOffObligations) [pscustomobject]@{classificationComplete=$true;issues=@();decisions=@()} }
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current UI fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            $file=Write-CurrentPlan -Id existing-result
+            $p=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json; $p.checks=@(@{suiteId='existing'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($p|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            Set-CurrentEventEvidence
+            { Complete-VerificationChange } | Should -Throw '*VERIFICATION_CHANGE_RETAINED_RUN_DUE*'
+            Write-Utf8TextAtomic -Path (Join-Path $root 'evidence/retained/junit.xml') -Value '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="Existing result" classname="Existing UI" /></testsuite>'
+            $selection=New-VerificationSelectionPlan -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
+            Complete-VerificationSelectionProof -Plan $selection -State $script:ChangeTestState -RunDirectory (Join-Path $root 'evidence/retained')
+            Set-CurrentEventEvidence; Complete-VerificationChange | Out-Null
+            $junitHash=(Get-FileHash -LiteralPath (Join-Path $root 'evidence/retained/junit.xml')).Hash
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Unrelated handler changed in the same UI module'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            $file=Write-CurrentPlan -Id second -ReuseFirst
+            $p=Read-Utf8Text -Path (Join-Path $root $file)|ConvertFrom-Json
+            $p.retainedDispositions=@(@{suiteId='existing';decision='unaffected';reason='The changed handler has no path to the previously checked command.'})
+            Write-Utf8TextAtomic -Path (Join-Path $root $file) -Value ($p|ConvertTo-Json -Depth 10)
+            Start-VerificationChange -EvidencePath $file | Out-Null
+            (New-VerificationSelectionPlan -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))).mode | Should -BeExactly 'reuse'
+            Set-CurrentObservation second; Set-CurrentEventEvidence
+            (Complete-VerificationChange).changeStatus | Should -BeExactly 'accepted'
+            (Get-FileHash -LiteralPath (Join-Path $root 'evidence/retained/junit.xml')).Hash | Should -BeExactly $junitHash
+        }
+    }
+}
+
+Describe 'Verification models and migration' {
+    It 'resumes the same one-time default after interruption <boundary>' -TestCases @(@{boundary='before-env'},@{boundary='after-env'}) {
+        param($boundary)
+        $root=Join-Path $TestDrive ("Прерывание перехода "+$boundary); New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root '.dev.env') -Value "OTHER=Кириллица с пробелом`r`n"
+            $script:InterruptMigration=$true
+            $originalWrite=(Get-Command Write-Utf8TextAtomic).ScriptBlock
+            $originalComplete=(Get-Command Complete-DotEnvPolicyReceipt).ScriptBlock
+            function Write-Utf8TextAtomic {
+                param($Path,$Value)
+                if($script:InterruptMigration -and $boundary -eq 'before-env' -and $Path -eq (Join-Path $root '.dev.env')) { throw 'Simulated interruption before env' }
+                & $originalWrite -Path $Path -Value $Value
+            }
+            function Complete-DotEnvPolicyReceipt {
+                param($Receipt,$Path)
+                if($script:InterruptMigration -and $boundary -eq 'after-env') { throw 'Simulated interruption after env' }
+                & $originalComplete -Receipt $Receipt -Path $Path
+            }
+            { Invoke-VerificationModelPolicyTransition } | Should -Throw '*Simulated interruption*'
+            $receipt=Get-DotEnvPolicyReceiptPath -Descriptor (Get-DotEnvPolicyTransitionDescriptor verification-model)
+            (Read-Utf8Text -Path $receipt|ConvertFrom-Json).status | Should -BeExactly 'applying'
+            $script:InterruptMigration=$false
+            Invoke-VerificationModelPolicyTransition | Out-Null
+            (Read-Utf8Text -Path $receipt|ConvertFrom-Json).status | Should -BeExactly 'completed'
+            (Read-Utf8Text -Path (Join-Path $root '.dev.env')) | Should -BeExactly "OTHER=Кириллица с пробелом`r`nITL_VERIFICATION_MODEL=change`r`n"
+        }
+    }
+
+    It 'defaults to change and keeps explicit cumulative and strict invalid settings' {
+        $root=Join-Path $TestDrive 'Настройки с пробелом'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            function Get-EnvValue { param($Name) '' }
+            Get-VerificationModel | Should -BeExactly 'change'
+            function Get-EnvValue { param($Name) 'cumulative' }
+            Get-VerificationModel | Should -BeExactly 'cumulative'
+            function Get-EnvValue { param($Name) 'invalid' }
+            { Get-VerificationModel } | Should -Throw '*VERIFICATION_MODEL_INVALID*'
+        }
+    }
+    It 'migrates an existing absent value once, preserves later cumulative and restores setting and marker together' {
+        $root=Join-Path $TestDrive 'Обновление с кириллицей'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            $before="OTHER=Кириллица с пробелом`r`n"
+            Write-Utf8TextAtomic -Path (Join-Path $root '.dev.env') -Value $before
+            $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('.dev.env','.agent-1c/migrations/verification-model-change-v1.json') -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
+            Invoke-VerificationModelPolicyTransition | Out-Null
+            (Read-Utf8Text -Path (Join-Path $root '.dev.env')) | Should -Be ($before+"ITL_VERIFICATION_MODEL=change`r`n")
+            Write-Utf8TextAtomic -Path (Join-Path $root '.dev.env') -Value ($before+"ITL_VERIFICATION_MODEL=cumulative`r`n")
+            Invoke-VerificationModelPolicyTransition | Out-Null
+            (Read-Utf8Text -Path (Join-Path $root '.dev.env')) | Should -Match 'cumulative'
+            Restore-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+            (Read-Utf8Text -Path (Join-Path $root '.dev.env')) | Should -BeExactly $before
+            Test-Path -LiteralPath (Join-Path $root '.agent-1c/migrations/verification-model-change-v1.json') | Should -BeFalse
+            Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+        }
+    }
+}
+
+Describe 'Current change proof and whole task acceptance' {
+    It 'accepts observed current behavior without a feature file and preserves task remainder (absent catalog: <WithoutCatalog>)' -TestCases @(@{WithoutCatalog=$false}, @{WithoutCatalog=$true}) {
+        param($WithoutCatalog)
+        $root=Join-Path $TestDrive ('Изменение без feature ' + $WithoutCatalog); New-ChangeFixture $root -WithoutCatalog:$WithoutCatalog
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Procedure Current() Message(42); EndProcedure'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            $plan=Write-CurrentPlan
+            Start-VerificationChange -EvidencePath $plan | Out-Null
+            $selection = Get-ItlVanessaVerificationSelectionPlan
+            $selection.mode | Should -BeExactly 'reuse'
+            $selection.catalogAvailable | Should -Be (-not $WithoutCatalog)
+            $selection.reason | Should -Match 'One-off obligations'
+            if ($WithoutCatalog) {
+                Complete-VerificationSelectionProof -Plan $selection
+                Test-Path -LiteralPath (Join-Path $root '.agent-1c/verification-selection/proof.json') | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $root 'tests/verification-suites.branch.json') | Should -BeFalse
+            }
+            { Complete-VerificationChange } | Should -Throw '*VERIFICATION_CHANGE_PENDING*'
+            Set-CurrentObservation first
+            Set-CurrentEventEvidence
+            $actual=Complete-VerificationChange
+            $actual.changeStatus | Should -BeExactly 'accepted'
+            $acceptedTree=(Read-VerificationChange).tree
+            & git -C $root gc --prune=now --quiet
+            $LASTEXITCODE | Should -Be 0
+            & git -C $root cat-file -e "$acceptedTree^{tree}"
+            $LASTEXITCODE | Should -Be 0 -Because 'the accepted base must survive collection of unreferenced temporary trees'
+            $actual.taskAccepted | Should -BeFalse
+            @($actual.remaining) | Should -Contain 'AC-02'
+            $history=(Read-VerificationChange).acceptedArtifact
+            $historyHash=(Get-FileHash -LiteralPath (Join-Path $root $history.path)).Hash
+            (Complete-VerificationChange).taskAccepted | Should -BeFalse
+            (Get-FileHash -LiteralPath (Join-Path $root $history.path)).Hash | Should -BeExactly $historyHash
+            @(Get-ChildItem -LiteralPath (Join-Path $root 'tests/features') -File).Count | Should -Be 0
+            $state=Get-VerificationState -State $script:ChangeTestState
+            $state.changeFreshPassed | Should -BeTrue
+            $state.isFreshPassed | Should -BeFalse
+            $state.taskAccepted | Should -BeFalse
+        }
+    }
+    It 'preserves prior acceptance through an unrelated config load and observes only the new change' {
+        $root=Join-Path $TestDrive 'Повтор без старого MCP'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Procedure Current() Message(42); EndProcedure'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan) | Out-Null
+            Set-CurrentObservation first; Set-CurrentEventEvidence; Complete-VerificationChange | Out-Null
+            $firstHash=(Get-FileHash -LiteralPath (Get-VerificationOneOffProofPath first)).Hash
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/other.bsl') -Value 'Procedure Other() Message(2); EndProcedure'
+            & git -C $root add -- src
+            & git -C $root commit -qm 'A new commit cannot reset the accepted base'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan -Id second -Path 'src/cf/other.bsl' -ReuseFirst -Finish) | Out-Null
+            @(Get-VerificationOneOffObligations).id | Should -Be @('second')
+            Set-CurrentObservation second; Set-CurrentEventEvidence
+            $actual=Complete-VerificationChange
+            $actual.taskAccepted | Should -BeTrue
+            (Get-FileHash -LiteralPath (Get-VerificationOneOffProofPath first)).Hash | Should -BeExactly $firstHash
+            (Get-VerificationState -State $script:ChangeTestState).isFreshPassed | Should -BeTrue
+            { Start-VerificationOneOffProof -ObligationId first } | Should -Throw '*VERIFICATION_ONE_OFF_OBLIGATION_MISSING*'
+        }
+    }
+    It 'rejects omitted source, omitted criteria and post-plan edits without advancing the base' {
+        $root=Join-Path $TestDrive 'Нельзя спрятать правку'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Changed current'
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/other.bsl') -Value 'Changed other'
+            $plan=Write-CurrentPlan
+            { Start-VerificationChange -EvidencePath $plan } | Should -Throw '*VERIFICATION_CHANGE_PATH_PENDING*'
+            & git -C $root checkout -- src/cf/other.bsl
+            $p=Read-Utf8Text -Path (Join-Path $root $plan)|ConvertFrom-Json
+            $p.criteria=@($p.criteria|Where-Object id -eq 'AC-01')
+            Write-Utf8TextAtomic -Path (Join-Path $root $plan) -Value ($p|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $plan } | Should -Throw '*VERIFICATION_CHANGE_ACCEPTANCE_INCOMPLETE*'
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan) | Out-Null
+            $base=(Read-VerificationChange).baseTree
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Changed again'
+            { Complete-VerificationChange } | Should -Throw '*VERIFICATION_CHANGE_STALE*'
+            (Read-VerificationChange).baseTree | Should -BeExactly $base
+            $script:ChangeTestState|Add-Member resetPhase 'git-reset-complete'
+            $script:ChangeTestState|Add-Member resetNewHead ('1'*40)
+            { Archive-VerificationChangeForReset -State $script:ChangeTestState } | Should -Throw '*VERIFICATION_CHANGE_RESET_OWNER_REQUIRED*'
+            Test-Path -LiteralPath (Get-VerificationChangePath) | Should -BeTrue
+            $script:ChangeTestState.resetPhase='runtime-initializing'
+            $oldHash=(Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash
+            Archive-VerificationChangeForReset -State $script:ChangeTestState
+            Test-Path -LiteralPath (Get-VerificationChangePath) | Should -BeFalse
+            (Get-FileHash -LiteralPath (Join-Path (Get-VerificationSelectionStateRoot) ('changes/reset-'+('1'*40)+'.json'))).Hash | Should -BeExactly $oldHash
+        }
+    }
+    It 'retires the previous task suite and one-off receipts before reset cleanup' {
+        $root=Join-Path $TestDrive 'Сброс доказательств'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            $selection=Get-VerificationSelectionStateRoot
+            New-Item -ItemType Directory -Force -Path (Join-Path $selection 'one-off/history') | Out-Null
+            $sources=[ordered]@{'proof.json'='{"schemaVersion":1,"suiteEvidence":[]}';'one-off/ui check.json'='{"status":"passed"}';'one-off/history/ui check-old.json'='{"status":"pending"}'}
+            foreach ($name in $sources.Keys) { [IO.File]::WriteAllText((Join-Path $selection $name),$sources[$name],[Text.UTF8Encoding]::new($true)) }
+            $hashes=@{}; foreach ($name in $sources.Keys) { $hashes[$name]=(Get-FileHash -LiteralPath (Join-Path $selection $name)).Hash }
+            $state=[pscustomobject]@{resetPhase='git-reset-complete';resetNewHead=('2'*40)}
+            { Archive-VerificationSelectionEvidenceForReset -State $state } | Should -Throw '*VERIFICATION_EVIDENCE_RESET_OWNER_REQUIRED*'
+            foreach ($name in $sources.Keys) { Test-Path -LiteralPath (Join-Path $selection $name) | Should -BeTrue -Because $name }
+            $state.resetPhase='runtime-initializing'
+            # An interrupted earlier attempt left a partial copy; the repeat replaces it.
+            $archive=Join-Path $selection ('changes/reset-'+('2'*40))
+            New-Item -ItemType Directory -Force -Path $archive | Out-Null
+            [IO.File]::WriteAllText((Join-Path $archive 'proof.json'),'{',[Text.UTF8Encoding]::new($false))
+            Archive-VerificationSelectionEvidenceForReset -State $state
+            foreach ($name in $sources.Keys) {
+                Test-Path -LiteralPath (Join-Path $selection $name) | Should -BeFalse -Because $name
+                (Get-FileHash -LiteralPath (Join-Path $archive $name)).Hash | Should -BeExactly $hashes[$name] -Because $name
+            }
+            Read-VerificationSelectionProof | Should -BeNullOrEmpty
+            Archive-VerificationSelectionEvidenceForReset -State ([pscustomobject]@{})
+        }
+    }
+    It 'cannot manufacture old acceptance or erase pending checks with a new task name' {
+        $root=Join-Path $TestDrive 'Не терять приёмку'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Changed'
+            $plan=Write-CurrentPlan -ReuseFirst
+            { Start-VerificationChange -EvidencePath $plan } | Should -Throw '*VERIFICATION_CHANGE_REUSE_UNPROVED*'
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan) | Out-Null
+            $p=Read-Utf8Text -Path (Join-Path $root $plan)|ConvertFrom-Json; $p.taskId='different'
+            Write-Utf8TextAtomic -Path (Join-Path $root $plan) -Value ($p|ConvertTo-Json -Depth 10)
+            { Start-VerificationChange -EvidencePath $plan } | Should -Throw '*VERIFICATION_CHANGE_TASK_PENDING*'
+        }
+    }
+}
+
+Describe 'Automatic re-registration of an unchanged plan in check-dev-branch' {
+    BeforeAll {
+        function Enter-RebindFixture {
+            param([string]$Root, [scriptblock]$Body)
+            New-ChangeFixture $Root
+            $module=Join-Path $Root 'src/cf/Общий модуль'
+            New-Item -ItemType Directory -Force -Path $module | Out-Null
+            [IO.File]::WriteAllText((Join-Path $module 'Модуль расчёта.bsl'),"Procedure Calc()`nEndProcedure`n",[Text.UTF8Encoding]::new($false))
+            & git -C $Root config core.autocrlf false
+            & git -C $Root add -- .
+            & git -C $Root commit -qm 'module with LF reference'
+            $script:RebindBody=$Body
+            Enter-ChangeFixture $Root {
+                $script:ChangeTestState | Add-Member createdFromCommit (Get-CurrentCommit)
+                function Get-DevBranchKind { param($State) 'configuration' }
+                function Assert-VerificationClassificationReady { param($Reason,[switch]$RequireVanessa,[switch]$RequireYAxUnit) }
+                function Invoke-DevBranchVanessaRuntimeRelease { throw 'stop-after-change-preflight' }
+                function Invoke-RebindCheck {
+                    $output=@(& { try { Invoke-DevBranchCheck } catch { "FAILURE: $($_.Exception.Message)" } } 6>&1 | ForEach-Object { [string]$_ })
+                    return ($output -join "`n")
+                }
+                function Set-RebindContent { param([string]$Text) [IO.File]::WriteAllText($script:RebindFull,$Text,[Text.UTF8Encoding]::new($false)) }
+                $script:RebindPath='src/cf/Общий модуль/Модуль расчёта.bsl'
+                $script:RebindFull=Join-Path $Root $script:RebindPath
+                Set-RebindContent "Procedure Calc()`n  Fixed = 1;`nEndProcedure`n"
+                $script:RebindPlan=Write-CurrentPlan -Path $script:RebindPath
+                $script:RebindFirst=Start-VerificationChange -EvidencePath $script:RebindPlan
+                . $script:RebindBody
+            }
+        }
+    }
+
+    It 'rebinds the unchanged plan to the edited tree, names line-ending repairs and stays deterministic except runToken' {
+        Enter-RebindFixture (Join-Path $TestDrive 'Цикл правки теста') {
+            # Repeating the manual registration on the same tree is deterministic.
+            $repeat=Start-VerificationChange -EvidencePath $script:RebindPlan
+            $strip={ param($v) $o=$v|ConvertTo-Json -Depth 16|ConvertFrom-Json; $o.PSObject.Properties.Remove('runToken'); $o.PSObject.Properties.Remove('lineEndingRepairedPaths'); $o|ConvertTo-Json -Depth 16 }
+            (& $strip $repeat) | Should -BeExactly (& $strip $script:RebindFirst)
+            $repeat.runToken | Should -Not -Be $script:RebindFirst.runToken
+
+            # Next debugging round: the agent edits the planned file with CRLF.
+            Set-RebindContent "Procedure Calc()`r`n  Fixed = 2;`r`nEndProcedure`r`n"
+            $text=Invoke-RebindCheck
+            $text | Should -Match 'stop-after-change-preflight'
+            $text | Should -Not -Match 'VERIFICATION_CHANGE_STALE'
+            $current=Read-VerificationChange
+            $current.tree | Should -BeExactly (Get-VerificationSelectionEffectiveTree)
+            $current.tree | Should -Not -Be $repeat.tree
+            $current.status | Should -BeExactly 'pending'
+            $current.runToken | Should -Not -Be $repeat.runToken
+            $text | Should -Match ([regex]::Escape("rebound to tree $($current.tree); line endings restored: $script:RebindPath."))
+            [IO.File]::ReadAllText($script:RebindFull) | Should -BeExactly "Procedure Calc()`n  Fixed = 2;`nEndProcedure`n"
+
+            # A further edit is again one command; an unchanged tree needs no rebind.
+            Set-RebindContent "Procedure Calc()`n  Fixed = 3;`nEndProcedure`n"
+            (Invoke-RebindCheck) | Should -Match 'line endings restored: <none>\.'
+            $token=(Read-VerificationChange).runToken
+            (Invoke-RebindCheck) | Should -Not -Match 'rebound to tree'
+            (Read-VerificationChange).runToken | Should -BeExactly $token
+        }
+    }
+
+    It 'keeps VERIFICATION_CHANGE_STALE without registering for <Case>' -TestCases @(
+        @{Case='a new path without a decision'},
+        @{Case='a planned path that is no longer changed'},
+        @{Case='an edited plan file'},
+        @{Case='an edited requirement file'},
+        @{Case='a changed assessor'}
+    ) {
+        param($Case)
+        $script:RebindCase=$Case
+        Enter-RebindFixture (Join-Path $TestDrive ('Барьер ' + $Case)) {
+            # The accepted base predates the module, so removing it restores the base.
+            if ($script:RebindCase -eq 'a planned path that is no longer changed') { Remove-Item -LiteralPath $script:RebindFull }
+            else { Set-RebindContent "Procedure Calc()`n  Fixed = 2;`nEndProcedure`n" }
+            switch ($script:RebindCase) {
+                'a new path without a decision' { Write-Utf8TextAtomic -Path (Join-Path $Root 'src/cf/other.bsl') -Value 'Other changed' }
+                'an edited plan file' { [IO.File]::AppendAllText((Join-Path $Root $script:RebindPlan), ' ') }
+                'an edited requirement file' { Write-Utf8TextAtomic -Path (Join-Path $Root 'requirements.md') -Value 'AC-01: Current result. AC-02: Web acceptance. Clarified.' }
+                'a changed assessor' { function global:Test-VerificationChangeAssessorRevision { 'changed' } }
+            }
+            try {
+                $before=(Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash
+                $text=Invoke-RebindCheck
+                $text | Should -Match 'FAILURE: VERIFICATION_CHANGE_STALE: .*begin-verification-change -VerificationEvidencePath'
+                $text | Should -Not -Match 'rebound to tree'
+                (Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash | Should -BeExactly $before
+                if ($script:RebindCase -eq 'a new path without a decision') {
+                    { Start-VerificationChange -EvidencePath $script:RebindPlan } | Should -Throw "*VERIFICATION_CHANGE_PATH_PENDING: 'src/cf/other.bsl'*"
+                }
+            } finally { Remove-Item -LiteralPath 'Function:\Test-VerificationChangeAssessorRevision' -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'never registers from selection planning' {
+        Enter-RebindFixture (Join-Path $TestDrive 'Выбор наборов без записи') {
+            Set-RebindContent "Procedure Calc()`n  Fixed = 2;`nEndProcedure`n"
+            $before=(Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash
+            { Get-VerificationChangeSelectionPlan -Plan ([pscustomobject]@{mode='full';selectedSuiteIds=@();acceptanceSuiteIds=@()}) } | Should -Throw '*VERIFICATION_CHANGE_STALE*'
+            (Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash | Should -BeExactly $before
+        }
+    }
+
+    It 'keeps an accepted change behind VERIFICATION_CHANGE_STALE' {
+        $root=Join-Path $TestDrive 'Принятое изменение'
+        New-ChangeFixture $root -WithoutCatalog
+        Enter-ChangeFixture $root {
+            function Get-DevBranchKind { param($State) 'configuration' }
+            function Assert-VerificationClassificationReady { param($Reason,[switch]$RequireVanessa,[switch]$RequireYAxUnit) }
+            function Invoke-DevBranchVanessaRuntimeRelease { throw 'stop-after-change-preflight' }
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan -Finish) | Out-Null
+            Set-CurrentObservation first; Set-CurrentEventEvidence
+            (Complete-VerificationChange).changeStatus | Should -BeExactly 'accepted'
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix after acceptance'
+            $before=(Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash
+            { Invoke-DevBranchCheck } | Should -Throw '*VERIFICATION_CHANGE_STALE*'
+            (Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash | Should -BeExactly $before
+            (Read-VerificationChange).status | Should -BeExactly 'accepted'
+        }
+    }
+}

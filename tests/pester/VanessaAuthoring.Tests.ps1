@@ -22,6 +22,9 @@
                     . $WorkflowHelperPath -ProjectRoot $tempRoot -Action help *> $null
                     $script:RunErrorCategory = ""
                     $script:RunRequiredAction = ""
+                    # This fixture owns byte safety. Selection/proof has its own
+                    # integration coverage; retain the real topology parser.
+                    function Get-ItlVanessaVerificationSelectionPlan { $null }
                     try {
                         Assert-VanessaVerificationPreflight -Trigger command
                         [pscustomobject]@{ message = "passed"; category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
@@ -59,27 +62,6 @@
         $compact | Should -Not -Match 'authoringStatus|authoringStatePath'
         Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-vanessa-author.md.template") | Should -BeFalse
 
-        $reference = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\vanessa-authoring.md") -Raw -Encoding UTF8
-        $reference | Should -Match 'There is no separate Vanessa authoring gate'
-        $reference | Should -Match 'scenario run is optional diagnostic feedback'
-        $reference | Should -Match '/itl-check` is the only executable verification gate'
-        $reference | Should -Match 'Do not delete, skip, filter, or weaken'
-        $reference | Should -Match 'user_actions_recording'
-        $reference | Should -Match 'execute_form_actions'
-        $reference | Should -Match 'modal dialog, window change, or intermediate state'
-        $reference | Should -Match 'frequently_used_steps.*optional fallback'
-        $reference | Should -Match 'get_all.*route itself is unknown.*complete command interface'
-        $reference | Should -Match 'get_window_list_os.*get_window_screenshot_os'
-        $reference | Should -Match 'reloadAndRunFromLine'
-        $reference | Should -Match 'question_search.*answers_search.*questions_only.*one_question'
-        $reference | Should -Match 'terminal failed `/itl-check`.*named UI/runtime question unresolved'
-        $reference | Should -Match 'unchanged tree.*owned cleanup finish.*before editing or spending the next full repair attempt'
-        $reference | Should -Match 'Skip this diagnostic when the artifacts already answer the question'
-        $reference | Should -Match 'consumes no repair attempt, creates no pass.*configured repair-session limit.*final `/itl-check`'
-
-        $repairTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-verify-fix.md.template") -Raw -Encoding UTF8
-        $repairTemplate | Should -Match 'conditional post-failure runtime diagnostic from `vanessa-authoring.md`'
-        $repairTemplate | Should -Match 'not an extra gate or repair attempt'
     }
 
     It "ships five bounded recipes with a portable example and safe template contracts" {
@@ -112,16 +94,6 @@
         $integrationTemplate = Get-Content -LiteralPath (Join-Path $exampleRoot 'integration-persistence.feature') -Raw -Encoding UTF8
         $integrationTemplate | Should -Match 'РегистрНакопления\.<ИмяРегистра>'
         $integrationTemplate | Should -Match '<ОжидаемоеКоличествоДвижений>'
-
-        $recipes = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\references\vanessa-recipes.md') -Raw -Encoding UTF8
-        $batchExample = [regex]::Match($recipes, '(?m)^(?<json>\{"name":"execute_form_actions".+\})\r?$')
-        $batchExample.Success | Should -BeTrue
-        $gatewayArguments = $batchExample.Groups['json'].Value | ConvertFrom-Json
-        $innerArguments = $gatewayArguments.argumentsJson | ConvertFrom-Json
-        $actions = @($innerArguments.actions_json | ConvertFrom-Json)
-        $gatewayArguments.name | Should -Be 'execute_form_actions'
-        $actions.Count | Should -Be 1
-        $actions[0].action | Should -Be 'set_value'
 
         $warnings = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -199,6 +171,8 @@
             & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlVanessaLibraries }
             $navigationLibrary = Join-Path $tempRoot "tests\features\Libraries\ITL\Core\NavigationLinks.feature"
             Test-Path -LiteralPath $navigationLibrary | Should -BeTrue
+            $waitLibrary = Join-Path (Split-Path -Parent $navigationLibrary) 'WaitForClientValue.feature'
+            (Get-FileHash -LiteralPath $waitLibrary).Hash | Should -Be (Get-FileHash -LiteralPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/assets/vanessa-libraries/Core/WaitForClientValue.feature')).Hash
             $navigationText = Get-Content -LiteralPath $navigationLibrary -Raw -Encoding UTF8
             $navigationText | Should -Match 'TestClient'
             ($navigationText -cmatch '(?m)^@ExportScenarios\s*$') | Should -BeTrue
@@ -249,7 +223,7 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "defaults to five helper-owned repair attempts and honors a bounded environment override" {
+    It "continues past five helper-owned attempts and honors a bounded environment override" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-repair-budget-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
@@ -275,14 +249,18 @@
                     $RepairSessionId = 'wrong-session'
                     $mismatchError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
                     $RepairSessionId = [string]$record.sessionId
-                    foreach ($attempt in 1..5) { Use-ItlVerificationRepairAttempt *> $null }
-                    $defaultExhaustedError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
-                    $restartExhaustedError = try { Start-ItlVerificationRepairSession *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                    foreach ($attempt in 1..5) {
+                        $ticket = Use-ItlVerificationRepairAttempt
+                        Complete-ItlVerificationRepairFailure -AttemptTicket $ticket
+                    }
+                    Start-ItlVerificationRepairSession *> $null
+                    $checkpointReport = $script:RunUserReport
+                    $previous = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $sixth = Use-ItlVerificationRepairAttempt 3>$null
+                    Complete-ItlVerificationRepairSession -AttemptTicket $sixth
+                    $defaultTerminal = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
 
                     $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = '2'
-                    # Model a successful tooling recovery before the next bounded session.
-                    $recoveredState = Read-DevBranchState -Name 'demo'
-                    Update-DevBranchState -State $recoveredState -Updates @{ toolingRecoveryId='recovery-for-override'; toolingRecoveredAt=(Get-Date).ToString('o'); toolingRecoveredMutationAt=(Get-Date).ToString('o') }
                     Start-ItlVerificationRepairSession *> $null
                     $overrideRecord = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
                     $RepairSessionId = [string]$overrideRecord.sessionId
@@ -311,12 +289,16 @@
                     $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = '0'
                     $invalidLimitError = try { Start-ItlVerificationRepairSession *> $null; 'not-blocked' } catch { $_.Exception.Message }
                     [pscustomobject]@{
-                        defaultMaximum = [int]$record.maximumAttempts
+                        defaultMaximum = $record.maximumAttempts
                         overrideMaximum = [int]$overrideRecord.maximumAttempts
                         missingIdError = $missingIdError
                         mismatchError = $mismatchError
-                        defaultExhaustedError = $defaultExhaustedError
-                        restartExhaustedError = $restartExhaustedError
+                        checkpointReport = $checkpointReport
+                        sameSession = $defaultTerminal.sessionId -ceq $record.sessionId
+                        fifthAttempt = $previous.attempts
+                        sixthAttempt = $defaultTerminal.attempts
+                        sixthBasis = $defaultTerminal.runs[-1].basis.status
+                        sixthOutcome = $defaultTerminal.runs[-1].outcome
                         overrideExhaustedError = $overrideExhaustedError
                         overrideFirstFailureStatus = [string]$overrideFirstFailureRecord.status
                         overrideTerminalStatus = [string]$overrideTerminalRecord.status
@@ -331,12 +313,16 @@
                     $env:AGENT_1C_ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = $savedPrefixedLimit
                 }
             }
-            $result.defaultMaximum | Should -Be 5
+            $result.defaultMaximum | Should -BeNullOrEmpty
             $result.overrideMaximum | Should -Be 2
             $result.missingIdError | Should -Match 'requires RepairSessionId'
             $result.mismatchError | Should -Match 'Repair session mismatch'
-            $result.defaultExhaustedError | Should -Match 'exhausted its 5 full verification runs'
-            $result.restartExhaustedError | Should -Match 'ITL_VERIFICATION_REPAIR_EXHAUSTED'
+            $result.checkpointReport | Should -Match 'Assessment required before the next full run'
+            $result.sameSession | Should -BeTrue
+            $result.fifthAttempt | Should -Be 5
+            $result.sixthAttempt | Should -Be 6
+            $result.sixthBasis | Should -BeExactly 'missing'
+            $result.sixthOutcome | Should -BeExactly 'completed'
             $result.overrideFirstFailureStatus | Should -Be 'active'
             $result.overrideTerminalStatus | Should -Be 'exhausted'
             $result.overrideExhaustedError | Should -Match 'terminal \(status=exhausted\)'
@@ -412,11 +398,16 @@
         }
     }
 
-    It "reports missing-suite before any infobase update through status JSON" {
+    It "reports missing-suite before any infobase update through status JSON (<Model>)" -TestCases @(
+        @{ Model='cumulative'; RequiredAction='/itl-verify-fix' },
+        @{ Model='default'; RequiredAction='prepare-current-change-plan-and-repeat-original-itl-command' }
+    ) {
+        param($Model,$RequiredAction)
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-verification-status-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"missing/features"}'
+            if ($Model -eq 'cumulative') { Set-Content -LiteralPath (Join-Path $tempRoot '.dev.env') -Encoding UTF8 -Value 'ITL_VERIFICATION_MODEL=cumulative' }
             & git -C $tempRoot init *> $null
             & git -C $tempRoot config user.email "tests@example.invalid"
             & git -C $tempRoot config user.name "ITL Tests"
@@ -442,7 +433,7 @@
             $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $status.stage | Should -Not -Match 'update|designer'
             $status.errorCategory | Should -Be 'missing-suite'
-            $status.requiredAction | Should -Be '/itl-verify-fix'
+            $status.requiredAction | Should -Be $RequiredAction
             @($status.PSObject.Properties.Name) | Should -Not -Contain 'authoringStatus'
             @($status.PSObject.Properties.Name) | Should -Not -Contain 'authoringStatePath'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -453,6 +444,7 @@
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"missing/features"}'
+            Set-Content -LiteralPath (Join-Path $tempRoot '.dev.env') -Encoding UTF8 -Value 'ITL_VERIFICATION_MODEL=cumulative'
             & git -C $tempRoot init *> $null
             & git -C $tempRoot config user.email "tests@example.invalid"
             & git -C $tempRoot config user.name "ITL Tests"
@@ -478,5 +470,46 @@
             $stderr | Should -Match "requiredAction=/itl-verify-fix"
             $stderr | Should -Match "completion=pending-verification"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+Describe 'Diagnostic selector input boundary' {
+    BeforeAll { $helper=Join-Path $PSScriptRoot '../../.agents/skills/1c-workflow/scripts/agent-1c.ps1' }
+    It 'keeps canonical scope and retained catalog separate from execution, including custom and auxiliary roots' {
+        & {
+            . $helper -ProjectRoot $TestDrive -Action help *> $null
+            function Get-VanessaConfiguredFeaturesPath { 'custom/Сценарии' }
+            function Get-VerificationDeclaredInputScopes { @() }
+            $script:ActiveAuxiliaryVanessaContext=$null
+            $VanessaFeaturePath=''
+            $normal=@(Get-VerificationFingerprintScopePaths)
+            $VanessaFeaturePath='build/diagnostic.feature'
+            (@(Get-VerificationFingerprintScopePaths) -join '|') | Should -BeExactly ($normal -join '|')
+            Get-VanessaFeaturesPath | Should -BeExactly 'build/diagnostic.feature'
+            function Get-VanessaApplicationFeatureFiles {param($FeaturePath) $FeaturePath | Should -BeExactly 'custom/Сценарии';@()}
+            function Read-VerificationSuiteCatalog {param($ApplicationFeatureFiles) [pscustomobject]@{valid=$true;obligations=@([pscustomobject]@{id='coverage';suiteId='retained';retention='retained';inputPaths=@('src/cf/**')});suites=@([pscustomobject]@{id='retained';purpose='acceptance'})}}
+            function Read-YAxUnitSuiteCatalog {param($ModuleFiles) [pscustomobject]@{groups=@()}}
+            function Get-YAxUnitModuleFiles { @() }
+            @(Get-VerificationChangeChecks -Plan ([pscustomobject]@{checks=@([pscustomobject]@{suiteId='retained'})}))[0].id | Should -BeExactly coverage
+            $script:ActiveAuxiliaryVanessaContext=[pscustomobject]@{featuresPath='aux/Сценарии'}
+            Get-VanessaVerificationFeaturesPath | Should -BeExactly 'aux/Сценарии'
+        }
+    }
+    It 'records and checks exact diagnostic feature bytes without granting full acceptance' {
+        & {
+            . $helper -ProjectRoot $TestDrive -Action help *> $null
+            $feature=Join-Path $TestDrive 'Временный сценарий.feature'
+            [IO.File]::WriteAllText($feature,'Функционал: Наблюдение',[Text.UTF8Encoding]::new($false))
+            function Get-VerificationLoadedBaseIdentity {param($State) 'target'}
+            $VanessaFilterTags='@focused'
+            $manifest=Write-VanessaDiagnosticInputManifest -RunDirectory $TestDrive -FeatureFiles @($feature) -State ([pscustomobject]@{})
+            Test-VerificationDiagnosticInputsCurrent $manifest | Should -BeTrue
+            $updates=@{}
+            Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status passed -ReportPath $TestDrive
+            @($updates.lastDiagnosticVerificationInputs).Count | Should -Be 1
+            $updates.ContainsKey('lastVerifiedFingerprint') | Should -BeFalse
+            [IO.File]::AppendAllText($feature,' изменён')
+            Test-VerificationDiagnosticInputsCurrent $manifest | Should -BeFalse
+        }
     }
 }

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("Targeted", "Smoke", "Fast", "Full", "Develop", "Release")]
     [string]$Mode = "Smoke",
@@ -8,22 +8,35 @@ param(
     [string]$AiRulesSource = "",
     [switch]$Offline,
     [string]$E2EProjectRoot = "",
+    [string]$AgentTarget = "",
+    [string]$FreshProjectsRoot = "C:\itlj",
     [string]$OutputDirectory = "build\test-results\local",
     [string]$QualificationPath = "build\test-results\qualification\full.json",
     [string]$DevelopQualificationPath = "build\test-results\qualification\develop.json",
-    [ValidateRange(1, 4)]
+    [ValidateRange(1, 8)]
     [int]$PesterWorkers = 3,
     [ValidateSet("Auto", "Restart")]
-    [string]$ReleaseResumeMode = "Auto"
+    [string]$ReleaseResumeMode = "Auto",
+    [string]$ReleaseCapabilities = "",
+    [string]$PrerunReleaseCapabilities = ""
 )
 
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
+
 $script:ExplicitAiRulesSource = $PSBoundParameters.ContainsKey("AiRulesSource") -and -not [string]::IsNullOrWhiteSpace($AiRulesSource)
+$pesterWorkersExplicit = $PSBoundParameters.ContainsKey("PesterWorkers")
 $effectiveMode = $(if ($Mode -eq "Fast") { "Smoke" } else { $Mode })
 if ($Mode -eq "Fast") { Write-Warning "Mode Fast is deprecated and now aliases Smoke. Use Targeted for a change or Smoke for a short source sanity check." }
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+# Unattended gate: stand actions started through the external window launcher
+# (init-project, new-dev-branch, close-dev-branch) run without a visible terminal.
+$env:ITL_AGENT_WINDOW_STYLE = "Hidden"
 $CoverageContract = @($CoverageContract | ForEach-Object { @(([string]$_) -split ',') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
 function Resolve-RepositoryPath {
@@ -64,14 +77,29 @@ function Get-CanonicalTextSha256 {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$script:sourceE2EArtifactBinding = $null
+$script:sourceE2EArtifactBindingPath = ''
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
 . (Join-Path $PSScriptRoot "develop-static-qualification.ps1")
 . (Join-Path $PSScriptRoot "develop-e2e-qualification.ps1")
+. (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 $qualityCatalog = Get-QualityContractCatalog -RepositoryRoot $repoRoot
+# Make a configured pwsh visible to every gate child; the complete inventory
+# requires it at its Pester stage.
+[void](Resolve-WorkflowGatePwsh -RepositoryRoot $repoRoot)
+$effectivePesterWorkers = Resolve-PesterWorkerCount -Mode $effectiveMode -RequestedWorkerCount $PesterWorkers -Explicit $pesterWorkersExplicit -Catalog $qualityCatalog
 $budgetPrefix = $effectiveMode.Substring(0, 1).ToLowerInvariant() + $effectiveMode.Substring(1)
 $modeTargetBudgetSeconds = [int]$qualityCatalog.budgets.("${budgetPrefix}TargetSeconds")
 $modeHardBudgetSeconds = [int]$qualityCatalog.budgets.("${budgetPrefix}HardSeconds")
+$selectedReleaseCapabilities = @($ReleaseCapabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+$releaseE2EHardBudgetSeconds = 0
+if ($effectiveMode -eq "Release") {
+    $releaseCatalog = Get-QualityReleaseStageCatalog -RepositoryRoot $repoRoot
+    $releaseBudget = Get-ReleaseE2EBudgetProjection -StageCatalog $releaseCatalog -QualityCatalog $qualityCatalog -RequireRelease:($selectedReleaseCapabilities.Count -eq 0) -ReleaseCapability $selectedReleaseCapabilities
+    $modeHardBudgetSeconds = [int]$releaseBudget.gateHardSeconds
+    $releaseE2EHardBudgetSeconds = [int]$releaseBudget.e2eHardSeconds
+}
 if ($modeTargetBudgetSeconds -le 0 -or $modeHardBudgetSeconds -lt $modeTargetBudgetSeconds) { throw "Invalid $effectiveMode target/hard budget in the quality contract catalog." }
 $pesterHardBudgetSeconds = [int]$qualityCatalog.budgets.fullHardSeconds
 if ($pesterHardBudgetSeconds -le 0) { throw "Invalid Full Pester hard budget in the quality contract catalog." }
@@ -87,6 +115,8 @@ $pesterResult = $null
 $qualifiedResult = $null
 $pesterVersion = ""
 $pesterShardSummary = $null
+$pesterInputIdentity = $null
+$pesterInputIdentityObserved = $false
 $failure = $null
 $aiRulesRelease = $null
 $forkSourceRoot = ""
@@ -95,6 +125,10 @@ $forkQualificationSha256 = ""
 $e2eReportPath = ""
 $developE2EReportPath = ""
 $developPlan = $null
+$script:developAncestorRoutes = @{}
+$script:developScenarioExecution = @{}
+$script:developCurrentStaticProof = $null
+$script:developJourneyInputs = @{}
 $developScript = ""
 $developRulesSource = ""
 $developQualificationRoot = ""
@@ -128,6 +162,134 @@ function Add-StageResult {
         finishedAt = [DateTime]::UtcNow.ToString("o")
         durationMs = $DurationMs
     }) | Out-Null
+}
+
+# The one owner of the shard runner's inputs. The Pester stage and its
+# diagnostic isolated rerun both start workers through invoke-pester-shards.ps1
+# with these arguments, so a rerun sees the same environment (AI rules source,
+# Vanessa source-build archive, declared external inputs, module path).
+function Get-PesterShardRunnerArguments {
+    param([string]$ShardOutputRoot, [string]$ShardJunitPath, [string]$ShardSelectionPath = "", [switch]$IsolatedRerun)
+    $arguments = @("-RepositoryRoot", $repoRoot, "-OutputRoot", $ShardOutputRoot, "-JunitPath", $ShardJunitPath)
+    if ($IsolatedRerun) { $arguments += @("-WorkerCount", "1", "-IsolatedRerun") }
+    else {
+        $arguments += @("-WorkerCount", [string]$effectivePesterWorkers, "-RequestedWorkerCount", [string]$PesterWorkers)
+        if (-not $pesterWorkersExplicit) { $arguments += "-WorkerCountDefaulted" }
+    }
+    if ($ShardSelectionPath) { $arguments += @("-SelectionPath", $ShardSelectionPath) }
+    if ($effectiveMode -notin @("Targeted", "Smoke") -and $resolvedAiRulesSource) { $arguments += @("-AiRulesSource", $resolvedAiRulesSource) }
+    return $arguments
+}
+
+# Diagnostic only: after a Pester failure, rerun the failed files once, serially
+# and alone, to tell a nondeterministic failure from a reproducible one. The gate
+# still fails either way; no proof, cache entry or registration comes from it.
+# A file reproduces only when one of its originally failed tests fails again;
+# a different test failing alone is not a reproduction.
+function Invoke-PesterIsolatedRerun {
+    $reportPath = Join-Path $outputRoot "pester-isolated-rerun.json"
+    $report = [ordered]@{ schemaVersion = 1; status = "skipped"; reason = ""; files = @() }
+    try {
+        $root = $repoRoot.TrimEnd('\') + '\'
+        function Get-PesterFailedCasesByFile([Xml.XmlDocument]$Document) {
+            $cases = @{}
+            foreach ($case in @($Document.SelectNodes('//testcase[failure or error]'))) {
+                $file = [string]$case.GetAttribute('classname')
+                if (-not $file) { $file = [string]$case.ParentNode.GetAttribute('name') }
+                if ($file -and [IO.Path]::IsPathRooted($file)) { $file = [IO.Path]::GetFullPath($file) }
+                if (-not $file.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { continue }
+                $file = $file.Substring($root.Length).Replace('\', '/')
+                if ($file -notlike 'tests/pester/*.Tests.ps1') { continue }
+                if (-not $cases.ContainsKey($file)) { $cases[$file] = New-Object System.Collections.Generic.List[string] }
+                $cases[$file].Add([string]$case.GetAttribute('name')) | Out-Null
+            }
+            return $cases
+        }
+        $failedCases = @{}
+        $observed = @{}
+        if (Test-Path -LiteralPath $junitPath -PathType Leaf) {
+            $document = New-Object Xml.XmlDocument; $document.XmlResolver = $null; $document.Load($junitPath)
+            # Tracked timings only order admission; the failed file's own time in
+            # this run is the evidence of how long its isolated rerun needs.
+            foreach ($suite in @($document.SelectNodes('//testsuite[@name and @time]'))) {
+                $file = [string]$suite.GetAttribute('name')
+                $seconds = 0.0
+                if ([IO.Path]::IsPathRooted($file) -and [double]::TryParse([string]$suite.GetAttribute('time'), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$seconds)) {
+                    $observed[(Split-Path -Leaf $file)] = $seconds
+                }
+            }
+            $failedCases = Get-PesterFailedCasesByFile $document
+        }
+        $failed = @($failedCases.Keys | Sort-Object -Unique)
+        if ($failed.Count -eq 0) { $report.reason = "no failed Pester file was reported" }
+        elseif ($failed.Count -gt 5) { $report.reason = "$($failed.Count) failed files suggest a systematic failure" }
+        else {
+            $timings = (Get-Content -LiteralPath (Join-Path $repoRoot "scripts\pester-timings.json") -Raw -Encoding UTF8 | ConvertFrom-Json).files
+            $estimate = 60
+            foreach ($file in $failed) {
+                $leaf = Split-Path -Leaf $file
+                $seconds = [Math]::Max($(if ($timings.PSObject.Properties[$leaf]) { [double]$timings.$leaf } else { 60 }), $(if ($observed.ContainsKey($leaf)) { [double]$observed[$leaf] } else { 0 }))
+                $estimate += [int][Math]::Ceiling(2 * $seconds)
+            }
+            $remaining = $modeHardBudgetSeconds - [int][Math]::Ceiling($overallStopwatch.Elapsed.TotalSeconds)
+            if ($remaining -lt $estimate) { $report.reason = "remaining budget ${remaining}s is below the ${estimate}s estimate" }
+            else {
+                $rerunRoot = Join-Path $outputRoot "pester-isolated-rerun"
+                New-Item -ItemType Directory -Force -Path $rerunRoot | Out-Null
+                $report.files = @(foreach ($file in $failed) {
+                    $name = [IO.Path]::GetFileNameWithoutExtension($file)
+                    $fileRoot = Join-Path $rerunRoot $name
+                    if (Test-Path -LiteralPath $fileRoot) { Remove-Item -LiteralPath $fileRoot -Recurse -Force }
+                    New-Item -ItemType Directory -Force -Path $fileRoot | Out-Null
+                    $selectionPath = Join-Path $fileRoot "selection.json"; $rerunJunitPath = Join-Path $fileRoot "pester.xml"
+                    [IO.File]::WriteAllText($selectionPath, (([ordered]@{ schemaVersion = 1; tests = @($file) } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+                    try {
+                        Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot "scripts\invoke-pester-shards.ps1") -Arguments @(Get-PesterShardRunnerArguments -ShardOutputRoot $fileRoot -ShardJunitPath $rerunJunitPath -ShardSelectionPath $selectionPath -IsolatedRerun) -TimeoutSeconds $estimate -NoProgressSeconds $estimate -LogName "pester-isolated-$name"
+                    } catch { }
+                    # Only a worker result is a verdict. A rerun stopped before its
+                    # result (deadline, crash) reproduced nothing: it stays skipped.
+                    $outcome = "skipped"
+                    $originalFailures = @($failedCases[$file] | Sort-Object -Unique)
+                    $isolatedFailures = @()
+                    $summaryPath = Join-Path $fileRoot "pester-shards\summary.json"
+                    if (Test-Path -LiteralPath $summaryPath -PathType Leaf) {
+                        try {
+                            $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                            if (@($summary.workers).Count -eq 1) {
+                                if ([string]$summary.status -eq "passed") { $outcome = "passed" }
+                                else {
+                                    if (Test-Path -LiteralPath $rerunJunitPath -PathType Leaf) {
+                                        $rerunDocument = New-Object Xml.XmlDocument; $rerunDocument.XmlResolver = $null; $rerunDocument.Load($rerunJunitPath)
+                                        $rerunCases = Get-PesterFailedCasesByFile $rerunDocument
+                                        if ($rerunCases.ContainsKey($file)) { $isolatedFailures = @($rerunCases[$file] | Sort-Object -Unique) }
+                                    }
+                                    $outcome = if (@($isolatedFailures | Where-Object { $_ -cin $originalFailures }).Count) { "failed" } else { "not-reproduced" }
+                                }
+                            }
+                        } catch { $outcome = "skipped" }
+                    }
+                    [pscustomobject][ordered]@{ path = $file; isolatedRerun = $outcome; originalFailures = $originalFailures; isolatedFailures = $isolatedFailures }
+                })
+                $report.status = if (@($report.files | Where-Object { $_.isolatedRerun -eq "passed" }).Count) { "passed-in-isolation" } elseif (@($report.files | Where-Object { $_.isolatedRerun -eq "failed" }).Count) { "reproduced" } else { "inconclusive" }
+            }
+        }
+    } catch { $report.status = "skipped"; $report.reason = "isolated rerun was not possible: $($_.Exception.Message)" }
+    [IO.File]::WriteAllText($reportPath, (($report | ConvertTo-Json -Depth 5) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    $passed = @($report.files | Where-Object { $_.isolatedRerun -eq "passed" } | ForEach-Object { $_.path })
+    $reproduced = @($report.files | Where-Object { $_.isolatedRerun -eq "failed" } | ForEach-Object { $_.path })
+    $different = @($report.files | Where-Object { $_.isolatedRerun -eq "not-reproduced" })
+    $unfinished = @($report.files | Where-Object { $_.isolatedRerun -eq "skipped" } | ForEach-Object { $_.path })
+    if ($report.status -eq "skipped") { return " Isolated rerun skipped: $($report.reason)." }
+    $text = ""
+    if ($passed.Count) { $text += " Isolated rerun: $($passed -join ', ') passed alone (nondeterministic; diagnose the unstable test, not the product)." }
+    if ($reproduced.Count) { $text += " Isolated rerun: $($reproduced -join ', ') failed again." }
+    # A different failure alone neither reproduces nor excuses the original one.
+    foreach ($entry in $different) {
+        $others = if (@($entry.isolatedFailures).Count) { @($entry.isolatedFailures) -join '; ' } else { 'no failed test case reported' }
+        $text += " Isolated rerun inconclusive: $($entry.path) did not repeat its failed tests; other tests failed alone ($others); see its pester-isolated log."
+    }
+    if ($unfinished.Count) { $text += " Isolated rerun inconclusive: $($unfinished -join ', ') ended without a worker result; see its pester-isolated log." }
+    return $text
 }
 
 function Invoke-GateStage {
@@ -186,10 +348,14 @@ function Ensure-DevelopE2ERoute {
     param(
         [Parameter(Mandatory = $true)][string]$Journey,
         [Parameter(Mandatory = $true)][object]$Plan,
-        [string]$Reason = "owner-selected public journey"
+        [string]$Reason = "owner-selected public journey",
+        [switch]$DeferForStatic
     )
+    if($qualityCatalog.developJourneys.PSObject.Properties['scenarios']) {
+        return Invoke-DevelopScenarioJourney -Journey $Journey -Plan $Plan -DeferForStatic:$DeferForStatic
+    }
     $routePath = Join-Path $script:developQualificationRoot ("develop-e2e-$Journey.json")
-    $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot
+    $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
     $standStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
     if (Restore-DevelopE2EQualification -RepositoryRoot $repoRoot -OutputPath $routePath -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256) {
         if (@($script:stages | Where-Object { [string]$_['name'] -eq "develop-e2e-$Journey" }).Count -eq 0) {
@@ -198,10 +364,39 @@ function Ensure-DevelopE2ERoute {
         return $routePath
     }
 
+    $reuseDiagnostics=[Collections.Generic.List[object]]::new()
+    $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -Diagnostics $reuseDiagnostics -FreshProjectsRoot ([string](Get-Variable -Name FreshProjectsRoot -ValueOnly -ErrorAction SilentlyContinue))
+    if(-not $inputIdentity) { Add-DevelopReuseDiagnostic -Diagnostics $reuseDiagnostics -Code 'COMPLETE_BINDING_UNAVAILABLE' }
+    $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $repoRoot -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -InputIdentity $inputIdentity -StaticProof $script:developCurrentStaticProof -AllowPendingStatic:$DeferForStatic -Diagnostics $reuseDiagnostics
+    if ($ancestor -and [string]$ancestor.continuation.proofKind -eq 'pending-current-static') {
+        Write-Host "Develop E2E ${Journey}: matching SHA-verified journey inputs; waiting for the current candidate's complete static proof."
+        return $null
+    }
+    if ($ancestor) {
+        # Preserve the historical report bytes and execution identity. The current
+        # combined qualification owns the checked continuation, not a new execution.
+        Copy-Item -LiteralPath $ancestor.reportPath -Destination $routePath -Force
+        if (-not (Test-Path -LiteralPath $routePath -PathType Leaf) -or (Get-FileHash -LiteralPath $routePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ancestor.sha256) { throw 'DEVELOP_E2E_CONTINUATION_CORRUPT' }
+        $script:developAncestorRoutes[$Journey] = $ancestor
+        Add-ReusedStage -Name "develop-e2e-$Journey" -Reason 'SHA-verified ancestor journey with complete matching inputs and exact candidate static continuation' -Detail $routePath
+        return $routePath
+    }
+
+    if($reuseDiagnostics.Count) {
+        $Reason += '; reuse rejected: ' + (@($reuseDiagnostics | ForEach-Object {
+            $_.code + $(if($_.inputs.Count){' ['+($_.inputs -join ', ')+']'})
+        }) -join '; ')
+        Write-Host "Develop E2E ${Journey}: $Reason"
+    }
     $rawPath = Join-Path $outputRoot ("develop-e2e-$Journey-raw.json")
     Invoke-GateStage -Name "develop-e2e-$Journey" -Reason $Reason -Detail $rawPath -Body {
-        $journeyHardSeconds = if ($Journey -eq "upgrade") { 1200 } else { 2100 }
-        Invoke-PowerShellChild -ScriptPath $script:developScript -Arguments @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey) -TimeoutSeconds $journeyHardSeconds -NoProgressSeconds 900 -LogName "develop-e2e-$Journey"
+        $beforeInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -FreshProjectsRoot ([string](Get-Variable -Name FreshProjectsRoot -ValueOnly -ErrorAction SilentlyContinue))
+        $script:developJourneyInputs[$Journey] = $beforeInputs
+        $journeyHardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $qualityCatalog -Journey $Journey
+        $developArguments = @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey, "-FreshProjectsRoot", $FreshProjectsRoot)
+        if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $developArguments += @("-AgentTarget", $AgentTarget) }
+        if ($script:sourceE2EArtifactBindingPath) { $developArguments += @('-ArtifactBindingPath', $script:sourceE2EArtifactBindingPath) }
+        Invoke-PowerShellChild -ScriptPath $script:developScript -Arguments $developArguments -TimeoutSeconds $journeyHardSeconds -NoProgressSeconds 900 -LogName "develop-e2e-$Journey"
         if (-not (Test-Path -LiteralPath $rawPath -PathType Leaf)) { throw "Develop E2E $Journey summary was not created." }
         $raw = Get-Content -LiteralPath $rawPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $result = @($raw.journeys | Where-Object { [string]$_.name -eq $Journey }) | Select-Object -First 1
@@ -209,11 +404,14 @@ function Ensure-DevelopE2ERoute {
             [string]$raw.candidate.tree -ne $tree -or @($raw.requestedJourneys).Count -ne 1 -or [string]$raw.requestedJourneys[0] -ne $Journey -or [string]$result.status -ne "passed") {
             throw "Develop E2E $Journey did not qualify the exact candidate tree: $([string]$raw.error)"
         }
-        $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot
+        $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
         $standStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
         $routeReport = New-DevelopE2ERouteReport -RepositoryRoot $repoRoot -Plan $Plan -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -JourneyResult $result
         [IO.File]::WriteAllText($routePath, (($routeReport | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-        [void](Save-DevelopE2EQualification -RepositoryRoot $repoRoot -ReportPath $routePath -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256)
+        $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -FreshProjectsRoot ([string](Get-Variable -Name FreshProjectsRoot -ValueOnly -ErrorAction SilentlyContinue))
+        # Binding is cache eligibility, not a barrier to the actual passed run.
+        if (-not $beforeInputs -or -not $inputIdentity -or [string]$beforeInputs.fingerprint -cne [string]$inputIdentity.fingerprint) { $inputIdentity = $null }
+        [void](Save-DevelopE2EQualification -RepositoryRoot $repoRoot -ReportPath $routePath -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -InputIdentity $inputIdentity)
     } | Out-Null
     return $routePath
 }
@@ -263,7 +461,15 @@ function Stop-GateChildProcessTree {
     param([object]$Process)
     if (-not $Process -or $Process.HasExited) { return }
     $processId = [int]$Process.Id
-    if ($env:OS -eq "Windows_NT") { & taskkill.exe /PID $processId /T /F *> $null } else { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue }
+    if ($env:OS -eq "Windows_NT") {
+        # Windows PowerShell raises redirected native stderr as a terminating
+        # error under Stop. A descendant that exits during the kill makes
+        # taskkill report "could not be terminated", which replaced the
+        # caller's timeout reason and skipped the wait below (2026-11 runs).
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try { & taskkill.exe /PID $processId /T /F *> $null } finally { $ErrorActionPreference = $previousPreference }
+    } else { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue }
     try { $Process.WaitForExit() } catch {}
 }
 
@@ -313,6 +519,7 @@ function Wait-PowerShellChildProcess {
         }
         if (($now - $lastHeartbeat).TotalSeconds -ge 30) {
             Write-Host "ITL gate stage '$($Child.logName)': elapsed=${elapsedSeconds}s; noProgress=${idleSeconds}s; hardRemaining=$($effectiveTimeoutSeconds - $elapsedSeconds)s."
+            Update-GateMemoryTelemetry
             $lastHeartbeat = $now
         }
     }
@@ -334,14 +541,153 @@ function Invoke-PowerShellChild {
 }
 
 function Complete-ParallelGateStage {
-    param([string]$Name, [string]$Reason, [string]$Detail, [object]$Child, [int]$TimeoutSeconds)
+    param([string]$Name, [string]$Reason, [string]$Detail, [object]$Child, [int]$TimeoutSeconds, [int]$NoProgressSeconds = 600, [string[]]$ProgressPaths = @())
     try {
-        Wait-PowerShellChildProcess -Child $Child -TimeoutSeconds $TimeoutSeconds
+        Wait-PowerShellChildProcess -Child $Child -TimeoutSeconds $TimeoutSeconds -NoProgressSeconds $NoProgressSeconds -ProgressPaths $ProgressPaths
         Add-StageResult -Name $Name -Status "passed" -Execution "executed" -Reason $Reason -Detail $Detail -StartedAt $Child.startedAt -DurationMs ([int64]([DateTime]::UtcNow - $Child.startedAt).TotalMilliseconds)
+        # Collection can occur long after this parallel child exits. Retain the
+        # enclosing interval and record actual execution separately for ETA.
+        try {
+            $exitAt=$Child.process.ExitTime.ToUniversalTime()
+            $startAt=$Child.process.StartTime.ToUniversalTime()
+            if($exitAt -ge $startAt) {
+                Set-StageMetrics -Name $Name -Metrics ([ordered]@{
+                    timingKind='process-exit';processDurationMs=[int64]($exitAt-$startAt).TotalMilliseconds;
+                    collectionDelayMs=[int64][math]::Max(0,([DateTime]::UtcNow-$exitAt).TotalMilliseconds)
+                })
+            }
+        } catch { } # Unavailable telemetry cannot reject a successful check.
     } catch {
         Add-StageResult -Name $Name -Status "failed" -Execution "executed" -Reason $Reason -Detail $_.Exception.Message -StartedAt $Child.startedAt -DurationMs ([int64]([DateTime]::UtcNow - $Child.startedAt).TotalMilliseconds)
         throw
     }
+}
+
+# A concurrent stand stage starts only with this reservation per running
+# stage: available memory plus host commit headroom below the same 90% line
+# the Pester runner keeps. Otherwise the stage stays in the sequential path.
+$script:parallelStageAvailableBytes = 2GB
+$script:parallelStageCommitBytes = 4GB
+$script:gateMemoryTelemetry = [ordered]@{ samples = 0; minAvailableBytes = -1L; maxCommittedBytes = 0L; commitLimitBytes = 0L }
+$script:stagePreruns = [ordered]@{}
+
+function Get-GateMemorySnapshot {
+    try {
+        $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -OperationTimeoutSec 2 -ErrorAction Stop
+        return [pscustomobject]@{ availableBytes = [long]$memory.AvailableBytes; committedBytes = [long]$memory.CommittedBytes; commitLimitBytes = [long]$memory.CommitLimit }
+    } catch { return $null }
+}
+
+function Update-GateMemoryTelemetry {
+    $telemetry = Get-Variable -Name gateMemoryTelemetry -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -eq $telemetry) { return }
+    $snapshot = Get-GateMemorySnapshot
+    if (-not $snapshot) { return } # Unavailable telemetry cannot reject a check.
+    $telemetry.samples++
+    if ($telemetry.minAvailableBytes -lt 0 -or $snapshot.availableBytes -lt $telemetry.minAvailableBytes) { $telemetry.minAvailableBytes = $snapshot.availableBytes }
+    if ($snapshot.committedBytes -gt $telemetry.maxCommittedBytes) { $telemetry.maxCommittedBytes = $snapshot.committedBytes }
+    $telemetry.commitLimitBytes = $snapshot.commitLimitBytes
+}
+
+function Test-GateParallelStageAdmission {
+    param([int]$Running, [AllowNull()][object]$Snapshot)
+    if (-not $Snapshot) { return $false }
+    $headroom = [long][Math]::Max(0.0, [double]$Snapshot.commitLimitBytes * 0.90 - [double]$Snapshot.committedBytes)
+    $stages = $Running + 1
+    return $Snapshot.availableBytes -ge ($stages * $script:parallelStageAvailableBytes) -and $headroom -ge ($stages * $script:parallelStageCommitBytes)
+}
+
+function Start-DevelopJourneyPreruns {
+    param([string[]]$Journeys)
+    # Longest journey first, so memory pressure defers the shorter one. Each
+    # child saves its own scenario proof; the sequential owner later consumes
+    # it only after the complete current static proof, or executes as before.
+    foreach ($journey in @($Journeys | Sort-Object { Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $qualityCatalog -Journey $_ } -Descending)) {
+        $journeyInput = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -FreshProjectsRoot $FreshProjectsRoot
+        if (-not $journeyInput) { continue } # Without a complete binding no reusable proof can result.
+        $records = @(Get-DevelopScenarioReusePlan $repoRoot $tree $journey $journeyInput $qualityCatalog -AllowPendingStatic -ProjectRoot $E2EProjectRoot)
+        $execute = @($records | Where-Object { $_.execution -in @('execute', 'setup') } | ForEach-Object { $_.id })
+        if ($execute.Count -eq 0) { continue }
+        Update-GateMemoryTelemetry
+        if (-not (Test-GateParallelStageAdmission -Running $script:stagePreruns.Count -Snapshot (Get-GateMemorySnapshot))) {
+            Write-Host "Develop E2E ${journey}: memory admission defers concurrent execution to the sequential journey path."
+            continue
+        }
+        $rawPath = Join-Path $outputRoot "develop-e2e-$journey-prerun-raw.json"
+        $arguments = @('-CandidateRoot', $repoRoot, '-ProjectRoot', $E2EProjectRoot, '-AiRulesSource', $script:developRulesSource,
+            '-OutputPath', $rawPath, '-Journey', $journey, '-Scenario', ($execute -join ','), '-FreshProjectsRoot', $FreshProjectsRoot)
+        if ($AgentTarget) { $arguments += @('-AgentTarget', $AgentTarget) }
+        if ($script:sourceE2EArtifactBindingPath) { $arguments += @('-ArtifactBindingPath', $script:sourceE2EArtifactBindingPath) }
+        $child = Start-PowerShellChildProcess -ScriptPath $script:developScript -Arguments $arguments -LogName "develop-e2e-$journey-prerun"
+        $script:stagePreruns["develop-e2e-$journey-prerun"] = [pscustomobject]@{ child = $child; blocking = $true; progressPaths = @()
+            timeoutSeconds = (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $qualityCatalog -Journey $journey)
+            reason = "concurrent scenario execution before static: $($execute -join ', ')"; detail = $rawPath }
+    }
+}
+
+function Invoke-ReleaseFixtureCandidatePreparation {
+    $fixtureRules = if ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource }
+    $fixturePath = Join-Path $outputRoot 'release-fixture.json'
+    Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot 'scripts/source-e2e-fixture.ps1') `
+        -Arguments @('-Action','Prepare','-Phase','Release','-ProjectRoot',$E2EProjectRoot,'-CandidateRoot',$repoRoot,
+            '-AiRulesSource',$fixtureRules,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-OutputPath',$fixturePath) -TimeoutSeconds 16800 -NoProgressSeconds 900 -LogName 'fixture-prepare-release'
+    $script:releaseFixtureRoot = [string](Get-Content -LiteralPath $fixturePath -Raw -Encoding UTF8 | ConvertFrom-Json).projectRoot
+}
+
+function Get-ReleaseE2EProgressPaths {
+    param([string]$ProjectRoot)
+    return @(
+        $outputRoot,
+        (Join-Path ([IO.Path]::GetFullPath($ProjectRoot)) ".agent-1c\locks"),
+        (Get-SourceE2ENativeLogsPath -ProjectRoot $ProjectRoot),
+        (Get-SourceE2ENativeLogsPath -ProjectRoot (Get-SourceE2EReleaseStand -ProjectRoot $ProjectRoot).worktreePath)
+    )
+}
+
+function Start-ReleaseStagePrerun {
+    param([string[]]$Capabilities)
+    # The Release gate still runs after Develop. Its own checkpoint admission
+    # reuses a passed stage of this exact fixture identity or executes again.
+    Update-GateMemoryTelemetry
+    if (-not (Test-GateParallelStageAdmission -Running $script:stagePreruns.Count -Snapshot (Get-GateMemorySnapshot))) {
+        Write-Host "Release E2E $($Capabilities -join ','): memory admission leaves the stage to the Release gate."
+        return
+    }
+    $startedAt = [DateTime]::UtcNow
+    try {
+        Invoke-ReleaseFixtureCandidatePreparation
+        $budget = Get-ReleaseE2EBudgetProjection -StageCatalog (Get-QualityReleaseStageCatalog -RepositoryRoot $repoRoot) -QualityCatalog $qualityCatalog -ReleaseCapability $Capabilities
+        $rulesSource = if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource }
+        $reportPath = Join-Path $outputRoot 'release-e2e-prerun-summary.json'
+        $arguments = @('-ProjectRoot', ([IO.Path]::GetFullPath($releaseFixtureRoot)), '-AiRulesSource', $rulesSource,
+            '-HelperPath', (Join-Path $repoRoot '.agents\skills\1c-workflow\scripts\agent-1c.ps1'), '-OutputPath', $reportPath,
+            '-ResumeMode', 'Auto', '-Capabilities', ($Capabilities -join ','))
+        if ($AgentTarget) { $arguments += @('-AgentTarget', $AgentTarget) }
+        $child = Start-PowerShellChildProcess -ScriptPath (Join-Path $repoRoot 'scripts\invoke-release-e2e.ps1') -Arguments $arguments -LogName 'release-e2e-prerun'
+        $script:stagePreruns['release-e2e-prerun'] = [pscustomobject]@{ child = $child; blocking = $false; timeoutSeconds = [int]$budget.e2eHardSeconds
+            progressPaths = @(Get-ReleaseE2EProgressPaths -ProjectRoot $releaseFixtureRoot)
+            reason = "speculative Release stages for the Release gate checkpoint: $($Capabilities -join ', ')"; detail = $reportPath }
+    } catch {
+        # Speculation never decides Develop; the Release gate prepares again.
+        Add-StageResult -Name 'release-e2e-prerun' -Status 'failed' -Execution 'speculative' -Reason 'Release gate executes these stages itself' -Detail $_.Exception.Message -StartedAt $startedAt -DurationMs ([int64]([DateTime]::UtcNow - $startedAt).TotalMilliseconds)
+    }
+}
+
+function Complete-StagePreruns {
+    $blockingFailure = $null
+    foreach ($name in @($script:stagePreruns.Keys)) {
+        $prerun = $script:stagePreruns[$name]
+        $script:stagePreruns.Remove($name)
+        $remaining = [int][Math]::Max(1, $prerun.timeoutSeconds - ([DateTime]::UtcNow - $prerun.child.startedAt).TotalSeconds)
+        try {
+            Complete-ParallelGateStage -Name $name -Reason $prerun.reason -Detail $prerun.detail -Child $prerun.child -TimeoutSeconds $remaining -NoProgressSeconds 900 -ProgressPaths $prerun.progressPaths
+        } catch {
+            # Every sibling still finishes and saves its own proof for repair.
+            if ($prerun.blocking) { if (-not $blockingFailure) { $blockingFailure = $_ } }
+            else { $stage = @($script:stages | Where-Object { [string]$_['name'] -eq $name } | Select-Object -Last 1); if ($stage.Count) { $stage[0]['execution'] = 'speculative' } }
+        }
+    }
+    if ($blockingFailure) { throw $blockingFailure }
 }
 
 function Resolve-AiRulesSource {
@@ -424,6 +770,9 @@ function Test-ForkQualification {
         $actualTests = @(Get-ChildItem -LiteralPath (Join-Path $SourceRoot "tests") -Recurse -File -Filter "*.ps1" | ForEach-Object { Get-RelativeRepositoryPath -Path $_.FullName -Root $SourceRoot })
         if (-not (Test-HasExactInventory -Entries @($q.inventory.tests) -ActualPaths $actualTests -Root $SourceRoot)) { return $false }
         $requiredScripts = @("scripts/check.ps1", "scripts/publish-fork-release.ps1")
+        if (Test-Path -LiteralPath (Join-Path $SourceRoot "scripts\full-check-contract.ps1")) {
+            $requiredScripts += "scripts/full-check-contract.ps1"
+        }
         if (-not (Test-HasExactInventory -Entries @($q.inventory.scripts) -ActualPaths $requiredScripts -Root $SourceRoot)) { return $false }
         $junit = if ([System.IO.Path]::IsPathRooted([string]$q.junit.path)) { [string]$q.junit.path } else { Join-Path $SourceRoot ([string]$q.junit.path).Replace('/', '\') }
         if (-not (Test-Path $junit -PathType Leaf)) { return $false }
@@ -443,12 +792,19 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\source-delivery-queue.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-component.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-plan.ps1"),
+        (Join-Path $repoRoot "scripts\delivery-native-plan.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-resources.ps1"),
+        (Join-Path $repoRoot "scripts\source-delivery-ref-cleanup.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-candidate.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-cleanup.ps1"),
         (Join-Path $repoRoot "scripts\develop-static-qualification.ps1"),
         (Join-Path $repoRoot "scripts\develop-e2e-qualification.ps1"),
+        (Join-Path $repoRoot "scripts\develop-e2e-scenarios.ps1"),
+        (Join-Path $repoRoot "scripts\ai-rules-native-inputs.ps1"),
+        (Join-Path $repoRoot "scripts\develop-journey-inputs.ps1"),
         (Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"),
+        (Join-Path $repoRoot "scripts\source-e2e-manifest-repair.ps1"),
+        (Join-Path $repoRoot "scripts\source-e2e-workflow-update.ps1"),
         (Join-Path $repoRoot "scripts\test-powershell-encoding.ps1"),
         (Join-Path $repoRoot "scripts\test-release-readiness.ps1"),
         (Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"),
@@ -456,6 +812,7 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"),
         (Join-Path $repoRoot "scripts\test-ai-rules-overlay-lock.ps1"),
         (Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"),
+        (Join-Path $repoRoot "scripts\invoke-pester-runtime.ps1"),
         (Join-Path $repoRoot "scripts\run-pester-shard.ps1"),
         (Join-Path $repoRoot "scripts\pester-timings.json"),
         (Join-Path $repoRoot "scripts\release-qualification.ps1"),
@@ -468,14 +825,32 @@ function Get-WorkflowGateScriptPaths {
     return @($paths | Sort-Object -Unique)
 }
 
+function Get-CurrentPesterInputIdentity {
+    if ($script:pesterInputIdentityObserved) { return $script:pesterInputIdentity }
+    $script:pesterInputIdentityObserved = $true
+    try {
+        $identityRoot = Join-Path $outputRoot 'pester-input-identity'
+        $arguments = @('-RepositoryRoot',$repoRoot,'-OutputRoot',$identityRoot,'-JunitPath',(Join-Path $identityRoot 'unused.xml'),'-InputIdentityOnly')
+        if ($resolvedAiRulesSource) { $arguments += @('-AiRulesSource',$resolvedAiRulesSource) }
+        Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot 'scripts/invoke-pester-shards.ps1') -Arguments $arguments -TimeoutSeconds 300 -NoProgressSeconds 120 -LogName 'pester-input-identity'
+        $identity = Get-Content -LiteralPath (Join-Path $identityRoot 'pester-shards/input-identity.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (Test-PesterInputIdentityRecord $identity) { $script:pesterInputIdentity = $identity }
+    } catch {
+        # Observation cannot qualify reuse; the ordinary scheduler remains the
+        # original task's execution route, including its unknown-input policy.
+        $script:pesterInputIdentity = $null
+    }
+    return $script:pesterInputIdentity
+}
+
 function Test-WorkflowQualification {
     param([string]$Path, [string]$Commit, [string]$Tree, [object]$ForkIdentity, [switch]$AllowIndependentExactTree)
     if (-not (Test-Path $Path -PathType Leaf)) { return $null }
     try {
         $q = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([int]$q.schemaVersion -notin @(1, 2, 3) -or [string]$q.kind -ne "itl-workflow-full-qualification" -or [string]$q.status -ne "passed" -or -not [bool]$q.reusable) { return $null }
+        if ([int]$q.schemaVersion -notin @(1,2,3,4) -or -not (Test-WorkflowFullQualificationRecord $q)) { return $null }
         if (-not [bool]$q.repository.worktreeClean) { return $null }
-        if ([int]$q.schemaVersion -eq 3 -and -not (Test-RecordedWorkflowContinuation -Record $q.continuation -Commit ([string]$q.repository.commit) -Tree ([string]$q.repository.tree))) { return $null }
+        if (([int]$q.schemaVersion -eq 3 -or ([int]$q.schemaVersion -eq 4 -and $q.PSObject.Properties['continuation'])) -and -not (Test-RecordedWorkflowContinuation -Record $q.continuation -Commit ([string]$q.repository.commit) -Tree ([string]$q.repository.tree))) { return $null }
         $evidenceCommit = if ([int]$q.schemaVersion -ge 2 -and [string]$q.repository.evidenceCommit) { [string]$q.repository.evidenceCommit } else { [string]$q.repository.commit }
         $continuation = $null
         $reuseArguments = @{
@@ -502,13 +877,11 @@ function Test-WorkflowQualification {
             [string]$q.fork.upstreamCommit -ne [string]$ForkIdentity.upstreamCommit) { return $null }
         $forkQualification = [string]$q.fork.qualificationPath
         if (-not (Test-Path -LiteralPath $forkQualification -PathType Leaf) -or (Get-FileHash -LiteralPath $forkQualification -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$q.fork.qualificationSha256).ToLowerInvariant()) { return $null }
-        $currentPester = Get-Module -ListAvailable Pester | Sort-Object Version -Descending | Select-Object -First 1
         $currentPlatform = if ($PSVersionTable.ContainsKey("Platform")) { [string]$PSVersionTable["Platform"] } else { "Win32NT" }
         $currentOs = if ($PSVersionTable.ContainsKey("OS")) { [string]$PSVersionTable["OS"] } else { [string][System.Environment]::OSVersion.VersionString }
-        if ([string]$q.environment.powershellVersion -ne [string]$PSVersionTable.PSVersion -or
-            [string]$q.environment.powershellEdition -ne [string]$PSVersionTable.PSEdition -or
-            [string]$q.environment.pesterVersion -ne [string]$currentPester.Version -or
-            [string]$q.environment.platform -ne $currentPlatform -or [string]$q.environment.os -ne $currentOs) { return $null }
+        $parentMatches = [string]$q.environment.powershellVersion -eq [string]$PSVersionTable.PSVersion -and
+            [string]$q.environment.powershellEdition -eq [string]$PSVersionTable.PSEdition -and
+            [string]$q.environment.platform -eq $currentPlatform -and [string]$q.environment.os -eq $currentOs
         if (-not $continuation) {
             $actualTests = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot "tests\pester") -Recurse -File -Filter "*.ps1" | ForEach-Object { Get-RelativeRepositoryPath -Path $_.FullName -Root $repoRoot })
             if (-not (Test-HasExactInventory -Entries @($q.inventory.tests) -ActualPaths $actualTests -Root $repoRoot)) { return $null }
@@ -518,71 +891,13 @@ function Test-WorkflowQualification {
         $junit = if ([System.IO.Path]::IsPathRooted([string]$q.junit.path)) { [string]$q.junit.path } else { Join-Path $repoRoot ([string]$q.junit.path).Replace('/', '\') }
         if (-not (Test-Path $junit -PathType Leaf)) { return $null }
         if ((Get-FileHash -LiteralPath $junit -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$q.junit.sha256).ToLowerInvariant()) { return $null }
-        return [pscustomobject]@{ qualification = $q; reuseKind = $reuseKind; evidenceCommit = $evidenceCommit; continuation = $continuation }
+        $canReusePester = [int]$q.schemaVersion -eq 4 -and [bool]$q.reusable -and $parentMatches -and -not $continuation -and
+            (Test-PesterInputIdentityMatch -Recorded $q.pesterInputs -Current (Get-CurrentPesterInputIdentity))
+        return [pscustomobject]@{ qualification = $q; reuseKind = $reuseKind; evidenceCommit = $evidenceCommit; continuation = $continuation; canReusePester=[bool]$canReusePester }
     } catch { return $null }
 }
 
-function Write-WorkflowQualification {
-    param(
-        [string]$Commit,
-        [string]$Tree,
-        [object]$Result,
-        [string]$EvidenceCommit,
-        [string]$ReuseKind,
-        [object]$SourceQualification = $null,
-        [object]$ContinuationProof = $null
-    )
-    $qualificationRoot = Split-Path -Parent $qualificationFullPath
-    $qualificationJunitPath = Join-Path $qualificationRoot "pester.xml"
-    New-Item -ItemType Directory -Force -Path $qualificationRoot | Out-Null
-    if (-not $SourceQualification -and (Test-Path -LiteralPath $junitPath -PathType Leaf)) {
-        Copy-Item -LiteralPath $junitPath -Destination $qualificationJunitPath -Force
-    }
-    if (-not (Test-Path -LiteralPath $qualificationJunitPath -PathType Leaf)) { throw "Reusable workflow qualification has no canonical JUnit evidence." }
-    $testInventory = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot "tests\pester") -Recurse -File -Filter "*.ps1" | Sort-Object FullName | ForEach-Object { New-InventoryEntry -Path $_.FullName -Root $repoRoot })
-    $scriptInventory = @(Get-WorkflowGateScriptPaths | ForEach-Object { New-InventoryEntry -Path $_ -Root $repoRoot })
-    $forkRecord = if ($SourceQualification) { $SourceQualification.fork } else {
-        [ordered]@{
-            repo = [string]$aiRulesRelease.repo; tag = [string]$aiRulesRelease.tag; commit = [string]$aiRulesRelease.commit; tree = [string]$aiRulesRelease.tree
-            upstreamRef = [string]$aiRulesRelease.upstreamRef; upstreamCommit = [string]$aiRulesRelease.upstreamCommit
-            qualificationPath = $forkQualificationPath; qualificationSha256 = $forkQualificationSha256
-        }
-    }
-    $qualification = [ordered]@{
-        schemaVersion = $(if ($ContinuationProof) { 3 } else { 2 })
-        kind = "itl-workflow-full-qualification"
-        status = "passed"
-        reusable = $true
-        repository = [ordered]@{ name = "1c-agent-workflow"; commit = $Commit; tree = $Tree; worktreeClean = $true; evidenceCommit = $EvidenceCommit; reuseKind = $ReuseKind }
-        fork = $forkRecord
-        environment = [ordered]@{
-            powershellVersion = [string]$PSVersionTable.PSVersion; powershellEdition = [string]$PSVersionTable.PSEdition
-            pesterVersion = $(if ($SourceQualification) { [string]$SourceQualification.environment.pesterVersion } else { $pesterVersion })
-            platform = $(if ($PSVersionTable.ContainsKey("Platform")) { [string]$PSVersionTable["Platform"] } else { "Win32NT" })
-            os = $(if ($PSVersionTable.ContainsKey("OS")) { [string]$PSVersionTable["OS"] } else { [string][System.Environment]::OSVersion.VersionString })
-        }
-        inventory = [ordered]@{ tests = $testInventory; scripts = $scriptInventory }
-        junit = [ordered]@{ path = Get-RelativeRepositoryPath -Path $qualificationJunitPath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $qualificationJunitPath -Algorithm SHA256).Hash.ToLowerInvariant() }
-        result = $Result
-        stages = @($stages | ForEach-Object { $_ })
-        startedAt = $startedAt.ToString("o")
-        finishedAt = [DateTime]::UtcNow.ToString("o")
-        durationMs = [int64]$overallStopwatch.ElapsedMilliseconds
-        error = $null
-    }
-    if ($ContinuationProof) {
-        $qualification["continuation"] = [ordered]@{
-            qualifiedCommit = [string]$ContinuationProof.qualifiedCommit
-            paths = @($ContinuationProof.paths)
-            scopes = @($ContinuationProof.scopes)
-            targetedRunPath = [string]$ContinuationProof.targetedRunPath
-            targetedRunSha256 = [string]$ContinuationProof.targetedRunSha256
-            targetedFinishedAt = [string]$ContinuationProof.targetedFinishedAt
-        }
-    }
-    [System.IO.File]::WriteAllText($qualificationFullPath, (($qualification | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
-    return $qualification
-}
+
 
 function Test-DevelopQualification {
     param([string]$Commit, [string]$Tree, [object]$FullProof = $null, [string]$ExpectedIdentitySha256 = "", [string]$ExpectedStandStateSha256 = "")
@@ -631,6 +946,13 @@ function Test-DevelopQualification {
                 if (-not $record -or [string]$record.evidenceCommit -notmatch '^[a-f0-9]{40}$' -or [string]$record.evidenceTree -notmatch '^[a-f0-9]{40}$') { return $null }
                 $journeyPath = if ([IO.Path]::IsPathRooted([string]$record.path)) { [string]$record.path } else { Join-Path $repoRoot ([string]$record.path).Replace('/', '\') }
                 $continued = [string]$record.execution -eq "continued"
+                if ($record.PSObject.Properties['inputIdentity'] -and $record.inputIdentity) {
+                    $rulesRoot = if ($aiRulesRelease -and $aiRulesRelease.PSObject.Properties['sourceRoot']) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource }
+                    $currentInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $rulesRoot -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -FreshProjectsRoot ([string](Get-Variable -Name FreshProjectsRoot -ValueOnly -ErrorAction SilentlyContinue))
+                    if (-not $currentInputs -or [string]$currentInputs.fingerprint -cne [string]$record.inputIdentity.fingerprint -or
+                        (Get-DevelopE2ECanonicalJsonSha256 -Value $record.inputIdentity.inventory) -cne [string]$record.inputIdentity.fingerprint -or
+                        ($continued -and -not (Test-RecordedWorkflowContinuation -Record $record.continuation -Commit $Commit -Tree $Tree))) { return $null }
+                }
                 # The writer carries valid baseline routes even when this change requires no new journeys.
                 if ([int]$qualification.schemaVersion -eq 4 -and $journey -notin $plannedJourneys -and -not $continued) { return $null }
                 $routeIdentitySha256 = if ($continued) { [string]$record.identitySha256 } else { [string]$qualification.identitySha256 }
@@ -638,10 +960,25 @@ function Test-DevelopQualification {
                 $routeValid = Test-DevelopE2ERouteReport -Path $journeyPath -Journey $journey -Tree ([string]$record.evidenceTree) -IdentitySha256 $routeIdentitySha256 -StandStateSha256 $ExpectedStandStateSha256
                 if (-not $routeValid) { return $null }
                 if ((Get-FileHash -LiteralPath $journeyPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$record.sha256).ToLowerInvariant()) { return $null }
+                $routeReport = Get-Content -LiteralPath $journeyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $routeInputs = if ($record.PSObject.Properties['inputIdentity']) { $record.inputIdentity } else { $null }
+                if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $repoRoot -Report $routeReport -CurrentCommit $Commit -CurrentTree $Tree -InputIdentity $routeInputs) { return $null }
             }
         } elseif ($ExpectedIdentitySha256) { return $null }
         return [pscustomobject]@{ qualification = $qualification; reuseKind = $reuseKind; continuation = $continuation }
     } catch { return $null }
+}
+
+function Update-DevelopQualificationFullBinding {
+    param([string]$Commit, [string]$Tree, [object]$PreviousFullProof, [string]$ExpectedIdentitySha256, [string]$ExpectedStandStateSha256)
+    $arguments = @{Commit=$Commit;Tree=$Tree;ExpectedIdentitySha256=$ExpectedIdentitySha256;ExpectedStandStateSha256=$ExpectedStandStateSha256}
+    $validated = Test-DevelopQualification @arguments -FullProof $PreviousFullProof
+    if (-not $validated) { throw 'Develop evidence changed during static requalification. Run Develop before Release.' }
+    $validated.qualification.fullQualificationSha256 = (Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText($developQualificationFullPath, (($validated.qualification | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    $current = Test-DevelopQualification @arguments
+    if (-not $current) { throw 'Develop evidence could not be bound to the freshly passed Full result.' }
+    return $current
 }
 
 function Write-DevelopContinuationQualification {
@@ -678,36 +1015,12 @@ function Write-DevelopContinuationQualification {
         $qualification["journeys"] = $source.journeys
         if ([int]$source.schemaVersion -eq 4) { $qualification["plan"] = $source.plan }
     }
-    [IO.File]::WriteAllText($developQualificationFullPath, (($qualification | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-    return $qualification
-}
-
-function Write-DevelopQualification {
-    param([string]$Commit, [string]$Tree, [string]$ReportPath, [string]$IdentitySha256, [object]$JourneyRecords, [object]$Plan)
-    if (-not (Test-Path -LiteralPath $qualificationFullPath -PathType Leaf)) { throw "Develop qualification requires reusable Full evidence." }
-    $root = Split-Path -Parent $developQualificationFullPath
-    New-Item -ItemType Directory -Force -Path $root | Out-Null
-    $canonicalReport = Join-Path $root "develop-e2e-summary.json"
-    Copy-Item -LiteralPath $ReportPath -Destination $canonicalReport -Force
-    $qualification = [ordered]@{
-        schemaVersion = 4
-        kind = "itl-workflow-develop-qualification"
-        status = "passed"
-        reusable = $true
-        repository = [ordered]@{ commit = $Commit; tree = $Tree; evidenceCommit = $Commit; worktreeClean = $true }
-        fullQualificationSha256 = (Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        e2e = [ordered]@{ path = Get-RelativeRepositoryPath -Path $canonicalReport -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $canonicalReport -Algorithm SHA256).Hash.ToLowerInvariant() }
-        identitySha256 = $IdentitySha256
-        plan = $Plan
-        journeys = $JourneyRecords
-        finishedAt = [DateTime]::UtcNow.ToString("o")
-    }
-    [IO.File]::WriteAllText($developQualificationFullPath, (($qualification | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($developQualificationFullPath, (($qualification | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     return $qualification
 }
 
 function Get-DevelopE2EIdentitySha256 {
-    param([object]$ReleaseContext, [object]$ForkIdentity, [string]$ProjectRoot)
+    param([object]$ReleaseContext, [object]$ForkIdentity, [string]$ProjectRoot, [string]$AgentTarget = "")
 
     $root = [IO.Path]::GetFullPath($ProjectRoot)
     $projectConfig = Join-Path $root ".agent-1c\project.json"
@@ -719,11 +1032,20 @@ function Get-DevelopE2EIdentitySha256 {
         vanessaAutomationSha256 = [string]$ReleaseContext.artifacts.vanessaAutomation.sha256
         managedPackageSha256 = [string]$ReleaseContext.managedPackage.sha256
         projectRoot = $root.ToLowerInvariant()
+        clientSelection = Get-SourceE2EClientIdentity -ProjectRoot $root -AgentTarget $AgentTarget
         projectConfigSha256 = $(if (Test-Path -LiteralPath $projectConfig -PathType Leaf) { (Get-FileHash -LiteralPath $projectConfig -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
         standConfigSha256 = $(if (Test-Path -LiteralPath $standConfig -PathType Leaf) { (Get-FileHash -LiteralPath $standConfig -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
-        devEnvSha256 = $(if (Test-Path -LiteralPath $devEnv -PathType Leaf) { (Get-FileHash -LiteralPath $devEnv -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
+        devEnvSha256 = $(if (Test-Path -LiteralPath $devEnv -PathType Leaf) { Get-DeliveryStableDotEnvSha256 -Path $devEnv } else { "" })
         powershellVersion = [string]$PSVersionTable.PSVersion
         powershellEdition = [string]$PSVersionTable.PSEdition
+    }
+    if (Test-Path -LiteralPath $standConfig -PathType Leaf) {
+        $config = Get-Content -LiteralPath $standConfig -Raw -Encoding UTF8 | ConvertFrom-Json
+        $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $root -Config $config
+        if ($positiveRoot) {
+            $identity['positiveStandIdentitySha256'] = Get-DevelopE2EIdentitySha256 -ReleaseContext $ReleaseContext `
+                -ForkIdentity $ForkIdentity -ProjectRoot $positiveRoot -AgentTarget $AgentTarget
+        }
     }
     return Get-DevelopE2ECanonicalJsonSha256 -Value $identity
 }
@@ -736,9 +1058,18 @@ try {
     $worktreeCleanAtStart = @(& git status --porcelain).Count -eq 0
     $resolvedAiRulesSource = $(if ($effectiveMode -in @("Full", "Develop", "Release")) { Resolve-AiRulesSource } else { "" })
     $sourceIsLocal = $resolvedAiRulesSource -and (Test-Path -LiteralPath $resolvedAiRulesSource -PathType Container)
+    $developNeedsStand = $false
+    if ($effectiveMode -eq 'Develop') {
+        if (-not $BaseRef) { throw "Develop E2E requires BaseRef so live journey ownership cannot be inferred from an unbounded candidate." }
+        $script:developPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog
+        # With a supplied stand retain the existing route-continuation proof
+        # needed by a following Release. A stand-free static support candidate
+        # cannot create or replace that live qualification.
+        $developNeedsStand = @($developPlan.journeys).Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($E2EProjectRoot)
+    }
 
     if ($effectiveMode -in @("Develop", "Release")) {
-        if ([string]::IsNullOrWhiteSpace($E2EProjectRoot)) { throw "$effectiveMode mode requires -E2EProjectRoot for the dedicated stand." }
+        if (($effectiveMode -eq 'Release' -or $developNeedsStand) -and [string]::IsNullOrWhiteSpace($E2EProjectRoot)) { throw "$effectiveMode mode requires -E2EProjectRoot for the dedicated stand." }
         if (-not $worktreeCleanAtStart) { throw "$effectiveMode requires a clean candidate worktree." }
     }
     if ($effectiveMode -eq "Release") {
@@ -748,11 +1079,6 @@ try {
     if ($sourceIsLocal) {
         try { $aiRulesRelease = Get-LocalForkRelease -SourceRoot ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) } catch { if ($effectiveMode -eq "Release") { throw } }
     }
-    if ($effectiveMode -eq "Release") {
-        $releaseFullProof = Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
-        if (-not $releaseFullProof) { throw "Release requires reusable Full evidence or an exact Targeted continuation for the candidate tree." }
-    }
-
     $trackedBefore = @(& git status --porcelain --untracked-files=no)
     Invoke-GateStage -Name "git-diff-check" -Reason "always-run preflight" -Body {
         & git diff --check HEAD -- .
@@ -768,17 +1094,58 @@ try {
             $encoding = Get-Content -LiteralPath $encodingPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([string]$encoding.status -ne "passed") { throw "PowerShell encoding preflight reports '$([string]$encoding.status)'." }
         } | Out-Null
+        # A changed on-demand MCP build input must be repinned in the lock before
+        # Pester; unrelated changes skip the build (see ondemand-mcp-lock.ps1).
+        $onDemandLockPath = Join-Path $outputRoot "ondemand-mcp-lock.json"
+        Invoke-GateStage -Name "ondemand-mcp-lock" -Reason "register-time locked on-demand MCP build identity" -Detail $onDemandLockPath -Body {
+            $lockArguments = @("-Action", "Verify", "-RepositoryRoot", $repoRoot, "-OutputPath", $onDemandLockPath)
+            if ($BaseRef) { $lockArguments += @("-BaseRef", $BaseRef) }
+            Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot "scripts\ondemand-mcp-lock.ps1") -Arguments $lockArguments -TimeoutSeconds 600 -NoProgressSeconds 300 -LogName "ondemand-mcp-lock"
+            $onDemandLock = Get-Content -LiteralPath $onDemandLockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$onDemandLock.status -eq "failed") { throw [string]$onDemandLock.reason }
+        } | Out-Null
+    }
+
+    $releaseFixtureRoot = $E2EProjectRoot
+    if ($effectiveMode -in @('Develop','Release')) {
+        $fixturePlan = if ($effectiveMode -eq 'Develop') { $developPlan } else { $null }
+        if ($effectiveMode -eq 'Release' -or @($fixturePlan.journeys).Count -gt 0) {
+            Invoke-GateStage -Name 'qualification-fixture-inputs' -Reason 'capture immutable phase baselines once through the installed snapshot owner' -Body {
+                $fixtureScript = Join-Path $repoRoot 'scripts/source-e2e-fixture.ps1'
+                # Capture both main phases before Develop identity is established; Release
+                # then reuses the same descriptors without invalidating passed Develop.
+                foreach ($phase in @('Release','Develop')) {
+                    $arguments = @('-Action','Capture','-Phase',$phase,'-ProjectRoot',$E2EProjectRoot,'-AgentTarget',$AgentTarget,
+                        '-OutputPath',(Join-Path $outputRoot ('fixture-'+$phase.ToLowerInvariant()+'-capsule.json')))
+                    Invoke-PowerShellChild -ScriptPath $fixtureScript -Arguments $arguments -TimeoutSeconds 7800 -NoProgressSeconds 900 -LogName ('fixture-capture-'+$phase.ToLowerInvariant())
+                }
+                $config = Get-Content -LiteralPath (Join-Path $E2EProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $E2EProjectRoot -Config $config
+                if ($positiveRoot) {
+                    Invoke-PowerShellChild -ScriptPath $fixtureScript -Arguments @('-Action','Capture','-Phase','Develop','-ProjectRoot',$positiveRoot,
+                        '-AgentTarget',$AgentTarget,'-OutputPath',(Join-Path $outputRoot 'fixture-positive-capsule.json')) -TimeoutSeconds 7800 -NoProgressSeconds 900 -LogName 'fixture-capture-positive'
+                }
+            } | Out-Null
+        }
+        if ($effectiveMode -eq 'Release') {
+            Invoke-GateStage -Name 'qualification-fixture-candidate' -Reason 'prepare the exact installed candidate before Release readiness' -Body {
+                Invoke-ReleaseFixtureCandidatePreparation
+            } | Out-Null
+        }
     }
 
     if ($effectiveMode -in @("Full", "Develop", "Release")) {
         $releaseContextPath = Join-Path $outputRoot "release-context.json"
         $readinessScript = Join-Path $repoRoot "scripts\test-release-readiness.ps1"
         Invoke-GateStage -Name "release-readiness" -Reason "aggregate dependency, candidate, encoding, and stand preflight" -Detail $releaseContextPath -Body {
-            $readinessArguments = @("-Mode", $effectiveMode, "-RepositoryRoot", $repoRoot, "-OutputPath", $releaseContextPath)
+            $readinessMode = if ($effectiveMode -eq 'Develop' -and -not $developNeedsStand) { 'Full' } else { $effectiveMode }
+            $readinessArguments = @("-Mode", $readinessMode, "-RepositoryRoot", $repoRoot, "-OutputPath", $releaseContextPath)
+            if ($BaseRef) { $readinessArguments += @('-BaseRef', $BaseRef) }
             if ($Offline) { $readinessArguments += "-Offline" }
             $readinessRulesSource = if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } elseif ($sourceIsLocal) { [System.IO.Path]::GetFullPath($resolvedAiRulesSource) } else { "" }
             if ($readinessRulesSource) { $readinessArguments += @("-AiRulesSource", $readinessRulesSource) }
-            if ($effectiveMode -in @("Develop", "Release")) { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot))) }
+            if ($effectiveMode -eq 'Release' -or $developNeedsStand) { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($releaseFixtureRoot))) }
+            if ($AgentTarget) { $readinessArguments += @('-AgentTarget', $AgentTarget) }
             if ($effectiveMode -eq "Release") { $readinessArguments += @("-ResumeMode", $ReleaseResumeMode) }
             Invoke-PowerShellChild -ScriptPath $readinessScript -Arguments $readinessArguments -TimeoutSeconds 300 -LogName "release-readiness"
             if (-not (Test-Path -LiteralPath $releaseContextPath -PathType Leaf)) { throw "Release readiness context was not created." }
@@ -787,7 +1154,17 @@ try {
             $archivePath = [string]$script:releaseContext.artifacts.vanessaAutomation.path
             if (-not $archivePath) { throw "Release readiness did not resolve the Vanessa Automation archive." }
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archivePath
+            if ($effectiveMode -eq 'Release' -or $developNeedsStand) {
+                $script:sourceE2EArtifactBinding = Resolve-SourceE2EArtifactBinding -RepositoryRoot $repoRoot -ArchivePath $archivePath -Offline:$Offline
+                $script:sourceE2EArtifactBindingPath = Join-Path $outputRoot 'source-e2e-artifacts.json'
+                [IO.File]::WriteAllText($script:sourceE2EArtifactBindingPath, ($script:sourceE2EArtifactBinding | ConvertTo-Json -Depth 5), $utf8NoBom)
+            }
         } | Out-Null
+    }
+
+    if ($effectiveMode -eq "Release") {
+        $releaseFullProof = Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
+        if (-not $releaseFullProof) { throw "Release requires passed Full evidence or an exact Targeted continuation for the candidate tree." }
     }
 
     if ($effectiveMode -eq "Develop") {
@@ -795,11 +1172,11 @@ try {
         $script:developScript = Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"
         $script:developRulesSource = $(if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
         if (-not $developRulesSource) { throw "Develop E2E requires a local exact controlled-fork checkout." }
-        $script:developPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog
         $script:developQualificationRoot = Split-Path -Parent $developQualificationFullPath
         New-Item -ItemType Directory -Force -Path $developQualificationRoot | Out-Null
         $earlyPlan = [pscustomobject][ordered]@{
             schemaVersion = 1; kind = "itl-develop-e2e-journey-plan"; reason = [string]$developPlan.reason
+            scenarios = $(if($developPlan.PSObject.Properties['scenarios']){$developPlan.scenarios}else{[pscustomobject]@{}})
             paths = @($developPlan.paths); contracts = @($developPlan.contracts); journeys = @($developPlan.journeys)
             unknownPaths = @($developPlan.unknownPaths); matchedFullPaths = @($developPlan.matchedFullPaths)
         }
@@ -809,14 +1186,19 @@ try {
         foreach ($journey in @($qualityCatalog.developJourneys.failFastOrder | ForEach-Object { [string]$_ })) {
             if (-not $canRunFailFast) { continue }
             if ($journey -notin @($developPlan.journeys | ForEach-Object { [string]$_ })) { continue }
-            [void](Ensure-DevelopE2ERoute -Journey $journey -Plan $earlyPlan -Reason "owner-selected fail-fast $journey journey before complete Pester")
+            [void](Ensure-DevelopE2ERoute -Journey $journey -Plan $earlyPlan -Reason "owner-selected fail-fast $journey journey before complete Pester" -DeferForStatic)
+        }
+        if ($developNeedsStand -and $qualityCatalog.developJourneys.PSObject.Properties['scenarios']) {
+            Start-DevelopJourneyPreruns -Journeys $plannedEarlyJourneys
+            $prerunCapabilities = @($PrerunReleaseCapabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+            if ($prerunCapabilities.Count -gt 0) { Start-ReleaseStagePrerun -Capabilities $prerunCapabilities }
         }
     }
 
     $releaseDevelopIdentitySha256 = ""
     $releaseDevelopStandStateSha256 = ""
     if ($effectiveMode -eq "Release") {
-        $releaseDevelopIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
+        $releaseDevelopIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
         $releaseDevelopStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
         $releaseDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree -FullProof $releaseFullProof -ExpectedIdentitySha256 $releaseDevelopIdentitySha256 -ExpectedStandStateSha256 $releaseDevelopStandStateSha256
         if (-not $releaseDevelopProof) { throw "Release requires a reusable route-aware Develop qualification with the current runtime identity. Run Develop once before Release." }
@@ -836,7 +1218,7 @@ try {
         } else {
             Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
         }
-        if ($qualificationMatch) {
+        if ($qualificationMatch -and $qualificationMatch.canReusePester) {
             $reuseQualification = $true
             $existingQualification = $qualificationMatch.qualification
             $qualificationReuseKind = [string]$qualificationMatch.reuseKind
@@ -854,7 +1236,7 @@ try {
     if ($effectiveMode -in @("Full", "Develop", "Release") -and -not $reuseQualification -and -not ($Offline -and -not $sourceIsLocal) -and $forkReadyForParallel) {
         $compatibilityPath = Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"
         $compatibilitySource = $(if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
-        $parallelCompatibility = Start-PowerShellChildProcess -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource) -LogName "ai-rules-compatibility"
+        $parallelCompatibility = Start-PowerShellChildProcess -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource, '-E2EProjectRoot', $E2EProjectRoot, '-AgentTarget', $AgentTarget, '-FreshProjectsRoot', $FreshProjectsRoot, '-TransitionProofPath', (Join-Path (Split-Path -Parent $qualificationFullPath) 'fork-transitions.json')) -LogName "ai-rules-compatibility"
     }
 
     if ($reuseQualification) {
@@ -866,6 +1248,10 @@ try {
         Add-ReusedStage -Name "pester" -Reason $pesterReuseReason -Detail $qualificationFullPath
     } else {
         Invoke-GateStage -Name "pester" -Reason $(if ($effectiveMode -in @("Targeted", "Smoke")) { "$effectiveMode owner inventory" } else { "complete workflow inventory" }) -Body {
+          try {
+            # A complete inventory must not skip Core-host cases; stop before
+            # the long run instead of after it.
+            if ($effectiveMode -notin @("Targeted", "Smoke")) { [void](Resolve-WorkflowGatePwsh -RepositoryRoot $repoRoot -Required) }
             if ($effectiveMode -in @("Targeted", "Smoke")) {
                 $selectionPath = Join-Path $outputRoot "test-selection.json"
                 if ($effectiveMode -eq "Targeted") {
@@ -883,7 +1269,8 @@ try {
                 $selection = Get-Content -LiteralPath $selectionPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 if ($effectiveMode -eq "Targeted") {
                     $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
-                    Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers, "-SelectionPath", $selectionPath) -TimeoutSeconds $modeHardBudgetSeconds -NoProgressSeconds 300 -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-selection-shards"
+                    $shardArguments = @(Get-PesterShardRunnerArguments -ShardOutputRoot $outputRoot -ShardJunitPath $junitPath -ShardSelectionPath $selectionPath)
+                    Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments $shardArguments -TimeoutSeconds $modeHardBudgetSeconds -NoProgressSeconds 300 -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-selection-shards"
                     $selectionResult = Get-Content -LiteralPath (Join-Path $outputRoot "pester-shards\summary.json") -Raw -Encoding UTF8 | ConvertFrom-Json
                     $script:pesterShardSummary = $selectionResult
                 } else {
@@ -897,8 +1284,7 @@ try {
                 $script:pesterResult = [pscustomobject]@{ Result = $(if ([string]$selectionResult.status -eq "passed") { "Passed" } else { "Failed" }); PassedCount = [int]$selectionResult.passed; FailedCount = [int]$selectionResult.failed; SkippedCount = [int]$selectionResult.skipped }
             } else {
                 $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
-                $shardArguments = @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers)
-                if ($resolvedAiRulesSource) { $shardArguments += @("-AiRulesSource", $resolvedAiRulesSource) }
+                $shardArguments = @(Get-PesterShardRunnerArguments -ShardOutputRoot $outputRoot -ShardJunitPath $junitPath)
                 Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments $shardArguments -TimeoutSeconds $pesterHardBudgetSeconds -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-shards"
                 $shardSummaryPath = Join-Path $outputRoot "pester-shards\summary.json"
                 if (-not (Test-Path -LiteralPath $shardSummaryPath -PathType Leaf)) { throw "Pester shard summary was not created." }
@@ -908,6 +1294,10 @@ try {
                 $script:pesterResult = [pscustomobject]@{ Result = $(if ([string]$shardSummary.status -eq "passed") { "Passed" } else { "Failed" }); PassedCount = [int]$shardSummary.passed; FailedCount = [int]$shardSummary.failed; SkippedCount = [int]$shardSummary.skipped }
             }
             if ([string]$script:pesterResult.Result -ne "Passed") { throw "Pester did not pass: result=$($script:pesterResult.Result), failed=$($script:pesterResult.FailedCount)." }
+          } catch {
+            # The shard runner exits non-zero on failed tests; diagnose either way.
+            throw "$($_.Exception.Message)$(Invoke-PesterIsolatedRerun)"
+          }
         } | Out-Null
         if ($pesterShardSummary) {
             Set-StageMetrics -Name "pester" -Metrics ([ordered]@{
@@ -917,6 +1307,8 @@ try {
                 cacheLookupMs = [int64]$pesterShardSummary.cacheLookupMs
                 workerSpanMs = [int64]$pesterShardSummary.workerSpanMs
                 identityInventoryMs = [int64]$pesterShardSummary.identityInventoryMs
+                runtimeProbeMs = [int64]$pesterShardSummary.runtimeProbeMs
+                runtimeIdentityStatus = [string]$pesterShardSummary.runtimeIdentityStatus
                 legacyDigestCount = [int]$pesterShardSummary.legacyDigestCount
             })
         }
@@ -959,7 +1351,7 @@ try {
                 $compatibilityPath = Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"
                 Invoke-GateStage -Name "ai-rules-compatibility" -Reason "workflow-to-fork integration boundary" -Detail $resolvedAiRulesSource -Body {
                     $compatibilitySource = $(if ($forkSourceRoot) { $forkSourceRoot } else { $resolvedAiRulesSource })
-                    Invoke-PowerShellChild -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource) -TimeoutSeconds 600 -LogName "ai-rules-compatibility"
+                    Invoke-PowerShellChild -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource, '-E2EProjectRoot', $E2EProjectRoot, '-AgentTarget', $AgentTarget, '-FreshProjectsRoot', $FreshProjectsRoot, '-TransitionProofPath', (Join-Path (Split-Path -Parent $qualificationFullPath) 'fork-transitions.json')) -TimeoutSeconds 600 -LogName "ai-rules-compatibility"
                 } | Out-Null
             }
         }
@@ -987,18 +1379,32 @@ try {
         }
         if ($effectiveMode -eq "Develop" -and $existingQualification) {
             [void](Save-DevelopStaticQualification -RepositoryRoot $repoRoot -QualificationRoot (Split-Path -Parent $qualificationFullPath) -Tree $tree)
+            $script:developCurrentStaticProof = Save-DevelopE2ECurrentStaticProof -QualificationPath $qualificationFullPath -Commit $commit -Tree $tree
         }
     }
+    if ($script:stagePreruns.Count -gt 0) { Complete-StagePreruns }
 
     if ($effectiveMode -eq "Release" -and [string]$releaseDevelopProof.reuseKind -eq "targeted-continuation") {
         [void](Write-DevelopContinuationQualification -Commit $commit -Tree $tree -SourceProof $releaseDevelopProof -ContinuationProof $releaseDevelopProof.continuation)
         $releaseDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 $releaseDevelopIdentitySha256 -ExpectedStandStateSha256 $releaseDevelopStandStateSha256
         if (-not $releaseDevelopProof) { throw "Release continuation did not materialize an exact reusable Develop qualification." }
+    } elseif ($effectiveMode -eq 'Release' -and -not $reuseQualification) {
+        # Requalifying static inputs does not invent a new E2E success. Recheck
+        # the original routes against the current stand and newer failures,
+        # then bind that same evidence to the newly passed Full record.
+        $releaseDevelopProof = Update-DevelopQualificationFullBinding -Commit $commit -Tree $tree -PreviousFullProof $releaseFullProof -ExpectedIdentitySha256 $releaseDevelopIdentitySha256 -ExpectedStandStateSha256 $releaseDevelopStandStateSha256
     }
 
-    if ($effectiveMode -eq "Develop") {
+    if ($effectiveMode -eq 'Develop' -and -not $developNeedsStand) {
+        $developE2EReportPath = Join-Path $outputRoot 'develop-e2e-summary.json'
+        $staticCompletion = [ordered]@{ schemaVersion=1; kind='itl-develop-static-completion'; status='passed';
+            candidate=[ordered]@{commit=$commit;tree=$tree}; plan=$developPlan; journeys=[ordered]@{} }
+        [IO.File]::WriteAllText($developE2EReportPath, ($staticCompletion | ConvertTo-Json -Depth 16), $utf8NoBom)
+        [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $developE2EReportPath -JourneyRecords ([ordered]@{}) -Plan $developPlan -StaticOnly)
+    }
+    if ($effectiveMode -eq "Develop" -and $developNeedsStand) {
         $developE2EReportPath = Join-Path $outputRoot "develop-e2e-summary.json"
-        $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
+        $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
         $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
         $developFullProof = if ($existingQualification) { [pscustomobject]@{ qualification = $existingQualification } } else { $null }
         $exactDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree -FullProof $developFullProof -ExpectedIdentitySha256 $developIdentitySha256 -ExpectedStandStateSha256 $developStandStateSha256
@@ -1008,6 +1414,7 @@ try {
         $qualificationRoot = $developQualificationRoot
         New-Item -ItemType Directory -Force -Path $qualificationRoot | Out-Null
         $routeRecords = [ordered]@{}
+        $script:developAncestorRoutes = @{}
         $plannedJourneys = @($developPlan.journeys | ForEach-Object { [string]$_ })
         $allJourneys = @("upgrade", "fresh")
         $baseCommit = (& git rev-parse $BaseRef).Trim()
@@ -1025,8 +1432,12 @@ try {
             foreach ($journey in @($allJourneys | Where-Object { $_ -notin $plannedJourneys })) {
                 $property = $baseline.journeys.PSObject.Properties[$journey]
                 $record = if ($property) { $property.Value } else { $null }
+                if (-not $record -or ([int]$baseline.schemaVersion -eq 4 -and -not $record.PSObject.Properties['execution'])) {
+                    $baselineValid = $false
+                    break
+                }
                 $path = if ($record -and [IO.Path]::IsPathRooted([string]$record.path)) { [string]$record.path } elseif ($record) { Join-Path $repoRoot ([string]$record.path).Replace('/', '\') } else { "" }
-                $baselineRouteIdentitySha256 = if ([string]$record.execution -eq "continued") { [string]$record.identitySha256 } else { [string]$baseline.identitySha256 }
+                $baselineRouteIdentitySha256 = if ($record.PSObject.Properties['execution'] -and [string]$record.execution -eq "continued") { [string]$record.identitySha256 } else { [string]$baseline.identitySha256 }
                 if (-not $record -or $baselineRouteIdentitySha256 -notmatch '^[a-f0-9]{64}$' -or
                     -not (Test-DevelopE2ERouteReport -Path $path -Tree ([string]$record.evidenceTree) -Journey $journey -IdentitySha256 $baselineRouteIdentitySha256 -StandStateSha256 $developStandStateSha256) -or
                     (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$record.sha256).ToLowerInvariant()) {
@@ -1045,19 +1456,41 @@ try {
             }
         }
         if (-not $baselineValid -and $plannedJourneys.Count -gt 0 -and $plannedJourneys.Count -lt $allJourneys.Count) {
-            throw "DEVELOP_E2E_CONTINUATION_REQUIRED: an unowned journey has no valid prior proof; refusing to widen the routed plan and rerun earlier journeys."
+            if((Get-Variable -Name qualityCatalog -ErrorAction SilentlyContinue) -and $qualityCatalog.developJourneys.PSObject.Properties['scenarios']) {
+                foreach($unselected in @($allJourneys | Where-Object {$_ -notin $plannedJourneys})) {
+                    $continuationPlan=$developPlan | ConvertTo-Json -Depth 24 | ConvertFrom-Json
+                    $continuationPlan.journeys=@($allJourneys)
+                    $continuedPath=Invoke-DevelopScenarioJourney -Journey $unselected -Plan $continuationPlan -ReuseOnly
+                    $prior=$script:developAncestorRoutes[$unselected]
+                    $routeRecords[$unselected]=[ordered]@{path=Get-RelativeRepositoryPath -Path $continuedPath -Root $repoRoot;
+                        sha256=(Get-FileHash -LiteralPath $continuedPath -Algorithm SHA256).Hash.ToLowerInvariant();
+                        evidenceCommit=$prior.report.repository.commit;evidenceTree=$prior.report.repository.tree;
+                        identitySha256=$prior.report.identitySha256;standStateSha256=$developStandStateSha256;
+                        execution='continued';inputIdentity=$prior.inputIdentity;continuation=$prior.continuation}
+                }
+                $baselineValid=$true
+            }
+            if(-not $baselineValid) {
+                throw "DEVELOP_E2E_CONTINUATION_REQUIRED: an unowned journey has no valid prior proof; refusing to widen the routed plan and rerun earlier journeys."
+            }
         }
         $effectivePlan = [pscustomobject][ordered]@{
             schemaVersion = 1; kind = "itl-develop-e2e-journey-plan"; reason = [string]$developPlan.reason
+            scenarios = $(if($developPlan.PSObject.Properties['scenarios']){$developPlan.scenarios}else{[pscustomobject]@{}})
             paths = @($developPlan.paths); contracts = @($developPlan.contracts); journeys = @($plannedJourneys)
             unknownPaths = @($developPlan.unknownPaths); matchedFullPaths = @($developPlan.matchedFullPaths)
         }
         foreach ($journey in $plannedJourneys) {
             $routePath = Ensure-DevelopE2ERoute -Journey $journey -Plan $effectivePlan -Reason "owner-selected public $journey journey"
-            $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
+            $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
             $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
-            if (-not (Test-DevelopE2ERouteReport -Path $routePath -Tree $tree -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256)) { throw "Develop E2E $journey route proof is invalid after execution or restore." }
-            $routeRecords[$journey] = [ordered]@{ path = Get-RelativeRepositoryPath -Path $routePath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $routePath -Algorithm SHA256).Hash.ToLowerInvariant(); evidenceCommit = $commit; evidenceTree = $tree; identitySha256 = $developIdentitySha256; standStateSha256 = $developStandStateSha256; execution = $(if (@($stages | Where-Object { [string]$_.name -eq "develop-e2e-$journey" -and [string]$_.execution -eq "reused" }).Count -gt 0) { "reused" } else { "executed" }) }
+            $ancestor = if ($script:developAncestorRoutes.ContainsKey($journey)) { $script:developAncestorRoutes[$journey] } else { $null }
+            $evidenceTree = if ($ancestor) { [string]$ancestor.report.repository.tree } else { $tree }
+            $routeIdentitySha256 = if ($ancestor) { [string]$ancestor.report.identitySha256 } else { $developIdentitySha256 }
+            if (-not (Test-DevelopE2ERouteReport -Path $routePath -Tree $evidenceTree -Journey $journey -IdentitySha256 $routeIdentitySha256 -StandStateSha256 $developStandStateSha256)) { throw "Develop E2E $journey route proof is invalid after execution or restore." }
+            $routeRecords[$journey] = [ordered]@{ path = Get-RelativeRepositoryPath -Path $routePath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $routePath -Algorithm SHA256).Hash.ToLowerInvariant(); evidenceCommit = $(if ($ancestor) { [string]$ancestor.report.repository.commit } else { $commit }); evidenceTree = $evidenceTree; identitySha256 = $developIdentitySha256; standStateSha256 = $developStandStateSha256; execution = $(if ($ancestor) { 'continued' } elseif (@($stages | Where-Object { [string]$_.name -eq "develop-e2e-$journey" -and [string]$_.execution -eq "reused" }).Count -gt 0) { "reused" } else { "executed" }) }
+            if ($ancestor) { $routeRecords[$journey]['identitySha256'] = $routeIdentitySha256; $routeRecords[$journey]['inputIdentity'] = $ancestor.inputIdentity; $routeRecords[$journey]['continuation'] = $ancestor.continuation }
+            elseif($qualityCatalog.developJourneys.PSObject.Properties['scenarios']) {$routeRecords[$journey]['inputIdentity']=$script:developJourneyInputs[$journey]}
         }
         if ($plannedJourneys.Count -gt 0) {
             foreach ($journey in $allJourneys) { if (-not $routeRecords.Contains($journey)) { throw "Develop E2E has no valid '$journey' journey evidence." } }
@@ -1070,7 +1503,8 @@ try {
 
     if ($effectiveMode -eq "Release") {
         Add-ReusedStage -Name "develop-e2e" -Reason "exact or ancestor same-tree Develop qualification" -Detail $developQualificationFullPath
-        Invoke-GateStage -Name "ondemand-mcp-catalogs" -Reason "real backend catalogs are mandatory for release" -Detail "assets/ondemand-mcp/compatibility.json" -Body {
+        if ($selectedReleaseCapabilities.Count -eq 0 -or $selectedReleaseCapabilities -contains "ondemand-mcp") {
+        Invoke-GateStage -Name "ondemand-mcp-catalogs" -Reason "real backend catalogs are mandatory for the on-demand capability" -Detail "assets/ondemand-mcp/compatibility.json" -Body {
             $compatibilityPath = Join-Path $repoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"
             $compatibility = Get-Content -LiteralPath $compatibilityPath -Raw -Encoding UTF8 | ConvertFrom-Json
             foreach ($family in @("roctup", "vanessa-ui")) {
@@ -1089,19 +1523,34 @@ try {
                 }
             }
         }
+        }
         $e2eReportPath = Join-Path $outputRoot "release-e2e-summary.json"
         $e2eScript = Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"
         $releaseHelperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-GateStage -Name "release-e2e" -Reason "always-run release runtime proof" -Detail $e2eReportPath -Body {
             $releaseRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
-            $releaseProgressPaths = @($outputRoot, (Join-Path ([IO.Path]::GetFullPath($E2EProjectRoot)) ".agent-1c\locks"))
-            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode) -TimeoutSeconds 7200 -NoProgressSeconds 900 -ProgressPaths $releaseProgressPaths -LogName "release-e2e"
+            $releaseProgressPaths = @(Get-ReleaseE2EProgressPaths -ProjectRoot $releaseFixtureRoot)
+            $releaseE2EArguments = @("-ProjectRoot", ([System.IO.Path]::GetFullPath($releaseFixtureRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode)
+            if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $releaseE2EArguments += @("-AgentTarget", $AgentTarget) }
+            if ($selectedReleaseCapabilities.Count -gt 0) { $releaseE2EArguments += @("-Capabilities", ($selectedReleaseCapabilities -join ',')) }
+            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments $releaseE2EArguments -TimeoutSeconds $releaseE2EHardBudgetSeconds -NoProgressSeconds 900 -ProgressPaths $releaseProgressPaths -LogName "release-e2e"
             if (-not (Test-Path -LiteralPath $e2eReportPath -PathType Leaf)) { throw "Release E2E summary was not created: $e2eReportPath" }
             $e2eSummary = Get-Content -LiteralPath $e2eReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([int]$e2eSummary.schemaVersion -ne 3) { throw "Release E2E summary schema must be 3; actual: $($e2eSummary.schemaVersion)." }
             if ([string]$e2eSummary.status -ne "passed") { throw "Release E2E summary reports '$($e2eSummary.status)': $([string]$e2eSummary.error)" }
-            if ([bool]$e2eSummary.onDemandMcpTestFixture) { throw "Release E2E used the test-only on-demand MCP fixture." }
-            if ([bool]$e2eSummary.seedParallelTestFixture) { throw "Release E2E used the test-only seed-parallel fixture." }
+            $effectiveReleaseCapabilities = @($e2eSummary.selectedCapabilities | ForEach-Object { [string]$_ })
+            if ($selectedReleaseCapabilities.Count -gt 0 -and @($selectedReleaseCapabilities | Where-Object { $effectiveReleaseCapabilities -cnotcontains [string]$_ }).Count -gt 0) {
+                throw "Release E2E capability scope mismatch: requested '$($selectedReleaseCapabilities -join ',')', executed '$($effectiveReleaseCapabilities -join ',')'."
+            }
+            $selectedReleaseCapabilities = $effectiveReleaseCapabilities
+            foreach ($capability in $effectiveReleaseCapabilities) {
+                $stageProperty = $e2eSummary.stages.PSObject.Properties[$capability]
+                if ($capability -eq "server-reset" -and -not [bool]$e2eSummary.serverResetConfigured -and [string]$e2eSummary.serverResetStatus -eq "unverified") { continue }
+                if (-not $stageProperty -or [string]$stageProperty.Value.status -ne "passed") { throw "Release E2E capability '$capability' has no passed evidence." }
+            }
+            if ($effectiveReleaseCapabilities -contains "ondemand-mcp" -and [bool]$e2eSummary.onDemandMcpTestFixture) { throw "Release E2E used the test-only on-demand MCP fixture." }
+            if ($effectiveReleaseCapabilities -contains "seed-parallel" -and [bool]$e2eSummary.seedParallelTestFixture) { throw "Release E2E used the test-only seed-parallel fixture." }
+            if ($effectiveReleaseCapabilities -contains "seed-parallel") {
             if (-not [bool]$e2eSummary.seedParallelBranchRuntimeConcurrent -or -not [bool]$e2eSummary.seedParallelLiteRefreshConcurrent -or
                 -not [bool]$e2eSummary.seedParallelRefreshAllPassed -or -not [bool]$e2eSummary.seedParallelDirtyCheckpointPassed -or
                 -not [bool]$e2eSummary.seedParallelFileResetPassed -or
@@ -1111,6 +1560,8 @@ try {
                 [int]$e2eSummary.seedParallelBaselineCount -lt 0) {
                 throw "Release E2E did not prove latest-only file seed, parallel branch runtime, dirty refresh-all, and archived file reset."
             }
+            }
+            if ($effectiveReleaseCapabilities -contains "server-reset") {
             if ([bool]$e2eSummary.serverResetConfigured) {
                 if ([string]$e2eSummary.serverResetStatus -ne "passed" -or -not [bool]$e2eSummary.seedParallelServerResetPassed) {
                     throw "Configured Release server-reset did not pass."
@@ -1118,11 +1569,15 @@ try {
             } elseif ([string]$e2eSummary.serverResetStatus -ne "unverified") {
                 throw "Release without a server stand must report server-reset as unverified."
             }
+            }
+            if ($effectiveReleaseCapabilities -contains "ondemand-mcp") {
             if ([int]$e2eSummary.onDemandRoctupToolCount -ne 13 -or [int]$e2eSummary.onDemandVanessaToolCount -ne 38) { throw "Release E2E did not prove both complete on-demand MCP catalogs." }
             if ([int]$e2eSummary.onDemandRoctupPublicToolCount -ne 2 -or [int]$e2eSummary.onDemandVanessaPublicToolCount -ne 2) { throw "Release E2E did not prove both compact on-demand MCP gateway surfaces." }
             if ([int]$e2eSummary.onDemandVanessaInstances -ne 2 -or -not [bool]$e2eSummary.onDemandVanessaSecondSurvived) { throw "Release E2E did not prove isolated concurrent Vanessa facade instances." }
+            if (-not [bool]$e2eSummary.onDemandVanessaSerializedHandoff) { throw "Release E2E did not prove serialized database handoff between concurrent Vanessa facades." }
             if ([int]$e2eSummary.maxConcurrentSessions -lt 1 -or [int]$e2eSummary.maxConcurrentSessions -gt 3) { throw "Release E2E did not prove maxConcurrentSessions=3; observed $([int]$e2eSummary.maxConcurrentSessions)." }
             if ([int64]$e2eSummary.ownedProcessExitWaitMs -lt 0 -or [int64]$e2eSummary.ownedProcessExitWaitMs -gt 15000) { throw "Release E2E owned process exit wait exceeded 15000 ms: $([int64]$e2eSummary.ownedProcessExitWaitMs) ms." }
+            }
         } | Out-Null
     }
 
@@ -1139,6 +1594,9 @@ try {
         Stop-GateChildProcessTree -Process $parallelCompatibility.process
     }
     $failure = $_.Exception.Message
+    # Running stand stages finish within the remaining budget and keep their
+    # own scenario/stage proof for repair; their outcome cannot mask $failure.
+    if ($script:stagePreruns.Count -gt 0) { try { Complete-StagePreruns } catch { Write-Warning "Concurrent stage also failed: $($_.Exception.Message)" } }
 } finally {
     $overallStopwatch.Stop()
     $commit = [string](& git rev-parse HEAD 2>$null)
@@ -1165,10 +1623,19 @@ try {
         tree = $tree
         worktreeClean = (-not $dirty)
         offline = [bool]$Offline
+        releaseCapabilities = $(if ($effectiveMode -eq "Release") { @($selectedReleaseCapabilities) } else { @() })
+        pesterWorkers = [ordered]@{
+            requested = [int]$PesterWorkers
+            explicit = [bool]$pesterWorkersExplicit
+            effective = [int]$effectivePesterWorkers
+        }
+        memory = $script:gateMemoryTelemetry
         aiRulesRelease = $aiRulesRelease
         qualificationPath = $qualificationFullPath
         developQualificationPath = $developQualificationFullPath
         developE2eReportPath = $developE2EReportPath
+        journeyInputIdentities = $script:developJourneyInputs
+        journeyScenarioExecution = $script:developScenarioExecution
         e2eReportPath = $e2eReportPath
         releaseContextPath = $releaseContextPath
         qualificationReuseKind = $qualificationReuseKind

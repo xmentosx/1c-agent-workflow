@@ -1,0 +1,71 @@
+Vanessa Automation 1.2.043.42-itl-r12
+
+This binary distribution is built from Pr-Mex/vanessa-automation
+tag 1.2.043.42, commit a0ce2ee9803dd69be52f682e5cf49e0938fd33f1,
+with source-controlled ITL patches.
+
+The upstream compatibility version remains 1.2.043.42. The downstream
+revision itl-r12 identifies the patch and is not an upstream release.
+
+Vanessa Automation is distributed under the BSD 3-Clause License. The
+complete upstream copyright notice, license conditions, and disclaimer are
+included in LICENSE at the root of the binary distribution.
+
+The patch preserves the ITL MCP callbacks, selected-feature tree, row navigation,
+TestClient port ownership, and the paired file-code channel with VAExtension.
+It also backports progress-token and independent If/Else fixes and replaces
+ping-based wait fallbacks with local sleep commands.
+
+The patched VAExtension must be built and qualified with this EPF before
+installation.
+
+The HTML hyperlink and button forms retain the client click path and remove
+unused server controls whose command handlers are absent in upstream source.
+
+The report variant layout uses its requested report manager for the existing
+UniversalReport-specific calls and their four/three-argument fallback. The two
+system-form wrappers resolve their platform-owned sysForm namespace through
+a closed client helper and retain their opening and callback behavior.
+
+The canonical cumulative patch pins full Git indexes. It retains all r3 source
+hunks and can be reproduced independently of repository object counts.
+
+Revision itl-r8 retains r4 and preserves primary tabular-cell assertion details
+when optional attachment creation fails. Secondary attachment errors are appended;
+comparison, retry and failure semantics remain unchanged. This recipe and its
+paired extension require exact native qualification before installation/release.
+
+Current-window expression failures are rethrown after the existing log entry. Existing wait limits, successful execution and optional helper close behavior are retained.
+
+Diagnostic PNG I/O failures are logged separately and finish the original error report through its existing owner. Explicit screenshot failures and successful attachments retain their contracts.
+
+Pre-execution feature rejection uses a qualified MCP error; pending request notifications are cleared through existing setters. Runtime, transport and unknown execution failures retain their existing handling.
+
+Revision itl-r10 retains r8. An ITL agent launch is marked by
+ITLAgentLaunch in the VAParams dopparams structure; manual launches keep the
+upstream behavior. In an agent launch the plain built-in code steps run through
+the paired file-code channel without opening a TestClient form or using the OS
+clipboard, the TestClient window is not activated on connection, OS keyboard and
+mouse input activates the TestClient immediately before it, and the all-windows
+screenshot captures the TestClient process window instead of the whole screen.
+
+Revision itl-r11 retains r10. In an agent launch the clipboard code steps
+(на клиенте / на сервере / в привилегированном режиме через буфер обмена)
+run through the same paired file-code channel as the plain code steps, so an
+exception or a compilation error fails the step with its original text; without
+the channel an agent launch rejects them. Manual launches keep the clipboard route.
+run_scenario with filePath reloads the current file text in the all,
+reloadAndRun and reloadAndRunFromLine modes, rejects a file changed during the
+load and reports featureFile and featureSha256 of the executed bytes. An MCP feature load rejects a character that XML 1.0 forbids
+with file:line:column. navigate_to_row reports success only for a settled current
+row that matches the criteria and otherwise reports the actual row. For an HTML
+document field, click_hyperlink uses the HTML document click; an agent launch
+retries a failed click by text in the TestClient DOM through the paired
+VAExtension form, opening closed details ancestors, and lists the anchors found.
+
+Revision itl-r12 retains r11. A TestClient port is occupied only while a TCP
+socket listens on it: on Windows a netstat row whose foreign address is the
+unspecified 0.0.0.0:0 or [::]:0, independent of the system language, and on
+Linux a LISTEN row of ss -ltn. TIME_WAIT, ESTABLISHED and CLOSE_WAIT sockets
+left by a closed client no longer make its assigned port busy, so the client
+restarts on that port instead of failing with ITL_TESTCLIENT_NO_FREE_PORT.

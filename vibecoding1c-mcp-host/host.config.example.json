@@ -10,10 +10,16 @@
     "ONEC_AI_TOKEN": "<local-1c-assistant-token>",
     "BOOKSTACK_TOKEN_ID": "<bookstack-readonly-token-id>",
     "BOOKSTACK_TOKEN_SECRET": "<bookstack-readonly-token-secret>",
-    "MANTIS_API_TOKEN": "<mantis-readonly-api-token>"
+    "MANTIS_API_TOKEN": "<mantis-readonly-api-token>",
+    "MCP_OPERATOR_TOKEN": "",
+    "SPPR_EMBEDDING_KEY": ""
   },
   "embedding": {
     "model": "intfloat/multilingual-e5-base"
+  },
+  "betaProjectIndex": null,
+  "templatesSearchServer": {
+    "enableWriteTools": false
   },
   "codeMetadataSearchServer": {
     "resetDatabase": false,
@@ -31,12 +37,27 @@
     "reindexIntervalHours": 24,
     "indexOnStartup": true,
     "maxIndexPages": null,
-    "semanticMinScore": 0.82,
+    "semanticMinScore": null,
+    "chunkTokens": 1024,
+    "chunkOverlap": 64,
+    "embeddingProviderOrder": [],
+    "embeddingQueryCacheTtlSeconds": 86400,
     "timeoutSeconds": 20
   },
   "mantisTicketServer": {
+    "image": "",
     "baseUrl": "http://mantis.itland.local",
     "attachmentCachePath": "D:/ITL/MCP/vibecoding1c/mantis-ticket/attachments",
+    "statePath": "D:/ITL/MCP/vibecoding1c/mantis-ticket/index",
+    "indexEnabled": false,
+    "syncIntervalSeconds": 30,
+    "syncProjectIds": [],
+    "embeddingWorkers": 4,
+    "embeddingBatchSize": 32,
+    "embeddingTimeoutSeconds": 120,
+    "monthlyBudgetUsd": 5,
+    "writeEnabled": false,
+    "attachmentExtractEnabled": false,
     "timeoutSeconds": 20,
     "maxAttachmentBytes": 26214400,
     "maxInlineTextChars": 16000,
@@ -44,6 +65,10 @@
       "enabled": true,
       "languages": [ "rus", "eng" ]
     }
+  },
+  "spprServer": {
+    "configPath": "D:/ITL/MCP/sppr/collector.json",
+    "credentialPath": "D:/ITL/MCP/sppr/secrets/collector.json"
   },
   "helpSearchServer": {
     "platformVersion": "8.3.24.1548",
@@ -58,7 +83,7 @@
   },
   "toolsListProxy": {
     "enabled": true,
-    "serverIds": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "code", "graph" ],
+    "serverIds": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "sppr", "code", "graph" ],
     "portOffset": 4000,
     "image": "itl/mcp-tools-list-proxy:local"
   },
@@ -74,13 +99,30 @@
       "pollSeconds": 5
     }
   },
+  "storageRetention": {
+    "enabled": false,
+    "lowSpaceGiB": 50,
+    "reserveGiB": 20,
+    "cacheTargetGiB": 10,
+    "cacheUnusedDays": 7,
+    "minimumAgeDays": 14,
+    "keepAccepted": 2,
+    "cleanupIntervalHours": 24,
+    "compactEnabled": false,
+    "compactDay": "Sunday",
+    "compactAt": "03:30",
+    "compactWindowMinutes": 30,
+    "compactMinimumGiB": 10,
+    "vhdPath": ""
+  },
   "nightlyIndex": {
     "enabled": false,
     "at": "02:00",
     "taskName": "ITL MCP Host Nightly Index",
     "timeoutMinutes": 480,
     "pollSeconds": 15,
-    "configIds": []
+    "configIds": [],
+    "aiGatewayRestart": false
   },
   "enabledServers": {
     "global": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis" ],

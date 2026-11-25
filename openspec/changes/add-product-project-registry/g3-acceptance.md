@@ -1,0 +1,61 @@
+# G3: согласованная приёмка и остаток до выпуска
+
+Решение пользователя от 2026-10-25: **G3 принят и закрыт в проверенном PM5-контуре**. Эта граница едина для add-product-project-registry и add-scoped-cognee-memory. Она заменяет прежнее требование держать весь G3 открытым до полной платформенной/client/lifecycle матрицы. Исторические отчёты, failures и незакрытые агрегатные checkbox ниже в документах сохраняют факт на дату записи, но не определяют текущий статус G3. Непроверенные клетки не становятся PASS, заявленная поддержка не сокращается.
+
+## Принятый контур
+
+PM5, локальный Windows 11, Kilo и Cursor; Codex принят только в доказанной core/API области. Приёмка опирается на существующие результаты разных зафиксированных срезов; это не утверждение, что все клиенты и сценарии повторены на одном последнем commit. Последний G3-LD1 повтор и регистрация выделены отдельно.
+
+| Область | Итог и доказательство |
+|---|---|
+| Каталог, выбор/ассоциация, обновление контекста | Принят проверенный installed PM5 subset: rename, typical/custom, замена/удаление СППР/Mantis links, functionality/home; [metadata proof](evidence/g3-project-metadata-functional-2026-10-24.md) |
+| Различия проекта и MCP-источника | Registry model и custom → typical / ПРОФ → КОРП приняты; название/версия/индексация из registry, обязательных патчей Code/Graph нет; [source model](evidence/g3-registry-source-model-2026-10-21.md) |
+| Нативные Code/Graph | Kilo/Cursor IDE reads/reload приняты в [current PM5 proof](evidence/g3-pm5-native-clients-2026-10-24.md); Codex useful reads/deny/reload/new thread — только [core/API](evidence/g3-remaining-qualification-2026-10-24.md), без Desktop/model UI |
+| BookStack, СППР, Mantis | Серверные scopes/negative controls, exact links и routing/writer operation-ID fixtures приняты в [матрице](evidence/g3-final-qualification-2026-10-20.md). Реальное создание Mantis не выполнялось и не объявляется PASS; оно не является новым требованием закрытия G3 |
+| Конфликты, custom/disabled MCP, offline | Приняты проверенные PM5 пути с сохранением пользовательских настроек; [owner repair](evidence/g3-owned-mcp-defer-repair-2026-10-22.md) и последующая [итоговая квалификация](evidence/g3-completion-2026-10-23.md) |
+| Транзакции и восстановление | Приняты выполненные cancel/partial/pinned resume/owned restore, damaged receipt, same-user concurrency и foreign-edit/byte-preservation пути; [итоговый PM5 proof](evidence/g3-completion-2026-10-23.md). Это не покрытие всех возможных fault combinations |
+| Legacy PM5 | Первый unattended update, поздняя ассоциация и compatibility restore приняты на отдельной capsule-копии; [lifecycle proof](evidence/g3-pm5-lifecycle-2026-10-24.md). Capsule не заменяет fresh init или currentness отсутствующего original live seed |
+| Managed downgrade / G3-LD1 | Исходный direct downgrade main+sibling принят: exit0, clean/pending0, exact old helpers/pins, CF/DB/history сохранены; [integrated native proof](evidence/g3-legacy-executor-integrated-2026-10-25.md). Прежние downgrade blockers закрыты |
+| Startup/cost | Существующие warm и dynamic результаты сохранены; [cost repair](evidence/g3-publisher-cost-repair-2026-10-24.md). Допустимое пользователем превышение warm median 49.731 мс — ACCEPTED DEVIATION, не PASS порога и не повод продолжать оптимизацию ради закрытия G3 |
+| Регистрация реализации | Source head bf5a46e6ff84a355f603578ea98e3f77631ec32d принят в product-project-registry-g2; Targeted 1833 passed / 0 failed / 0 skipped. Native implementation 7ba9f0a3 и регистрация разделены; текущая документационная регистрация — отдельная запись штатного delivery ledger |
+
+На этой границе незакрытых воспроизведённых функциональных блокеров G3 нет. Новые сценарии автоматически не добавляются. Конкретный новый дефект или расширение квалификации требуют отдельной постановки; регистрация документации по обычному source-delivery с Targeted не является новым G3 canary.
+
+## Отдельный остаток до выпуска
+
+**Решение пользователя 2026-10-28:** первый пилот проводится в проверенном
+контуре **PM5 / Windows 11**. Остальные R1–R5 явно остаются UNVERIFIED и не
+блокируют именно этот согласованный пилот; полный заявленный охват ими не
+подтверждён. Поддержка не сокращается, OpenCode остаётся SKIPPED, Codex CLI
+не объявляется Desktop/model UI proof. [Общий checkpoint и последующие действия](../../../docs/ai-rules-r50-release-readiness.md#согласованный-первый-пилот-2026-10-28).
+Новый Develop cc4994c0 прошёл upgrade/fresh; закрываются только фактически
+выполненные маршруты этого кандидата, не все возможные R3 случаи. QP5,
+дальнейшие публикация и рабочая миграция этой оговоркой не выполняются.
+
+Это конечный список оставшихся обязательств полного охвата, а не продолжение закрытого G3. R6 выполнен отдельным поручением; R1–R5 учитываются с согласованной пилотной оговоркой выше. Отсутствие стенда означает UNVERIFIED, а не PASS. Подготовка стендов и исполнение требуют отдельного поручения; запрет Gate 6 не обходится.
+
+| ID | Открытая работа | Условие готовности |
+|---|---|---|
+| R1 | Реальная изолированная установленная PM4 | Installed proof; существующие PM4 source/file fixtures не заменяют стенд |
+| R2 | Windows 10 / Server 2019+, терминальные и независимые пользовательские сессии | Platform/session evidence при сохранении заявленной поддержки; same-user Win11 proof не переносится автоматически |
+| R3 | Full fresh init, положительные new branch/fork/refresh, оставшиеся foreground choose/create/later пути | Исходные lifecycle задачи завершены штатными владельцами, включая отдельный допуск к затрагиваемому Gate 6; недоступный live seed не подменён capsule currentness |
+| R4 | Codex Desktop/model UI, остальные native clients и полная platform/lifecycle матрица | Реальные activation/read/reload доказательства для соответствующего выпускного охвата. OpenCode SKIPPED по решению пользователя и не блокирует принятый G3; пропуск не является PASS или удалением поддержки |
+| R5 | Остальные cold/remote/platform/client cost области | Отдельная выпускная оценка с честной областью измерений; без нового runtime SLA и без повторов ради уже принятого небольшого warm превышения |
+| R6 | **ВЫПОЛНЕНО:** согласованное наполнение опубликовано | SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`; registry AC-36–38 и registry dependency memory AC-44 закрыты, [квитанция](evidence/r6-publication-2026-10-25.md) |
+
+[R6 закрыт](evidence/r6-publication-2026-10-25.md): пользователь согласовал кандидат,
+main registry Git подтвердил `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`, immutable reader проверил
+8/8 контекстов на одном опубликованном snapshot. Optional homes осознанно отложены
+для registry-only; общая память не разрешена. R6 больше не является открытым
+блокером. R1–R5 остаются явными выпускными qualification obligations; их нельзя
+молча зачеркнуть или считать полным платформенным PASS. При недоступности
+доказательства решение принимается отдельно перед выпуском, поддержка автоматически
+не сокращается.
+
+Реальная внешняя запись Mantis и standalone unavailable-executor/fault combinations не доказаны; это ограничения доказательств, а не новые автоматически назначенные сценарии. Выпускные действия выполняются только по обычному отдельно разрешённому delivery процессу.
+
+## Связь с памятью и границы разрешения
+
+Зависимость «принятый installed registry G3» закрыта только в описанном контуре. G4/G5, MO и QP0–QP4 впоследствии завершены в согласованных границах; их [актуальный статус](../add-scoped-cognee-memory/tasks.md) заменяет прежнюю формулировку о ещё не реализованной памяти. G1/Q1–Q7, G2, D9, шесть областей, единый resolver/applied snapshot, canonical knowledge home, optional OpenViking и ownership ai_rules_1c не изменены. Для иных платформ/клиентов наследуется R1–R5; память не создаёт второй updater или вторую матрицу реестра. Наполнение AC-44 использует единый R6.
+
+Новые Gate 6, QP5, рабочая миграция, публикация/push workflow и PR в этом чате не запускаются без отдельного допуска. Публикация данных реестра выполнена как R6; публикация cc4994c0 в develop другим процессом учтена отдельно. OpenSpec changes не архивируются: остаются пилотный cutover и дальнейший выпускной остаток. Исторические доказательства и sealed artifacts не изменяются.

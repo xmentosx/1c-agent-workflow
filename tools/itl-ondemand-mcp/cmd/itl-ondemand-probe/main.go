@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,8 +18,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/xmentosx/1c-agent-workflow/tools/itl-ondemand-mcp/internal/childprocess"
 )
 
 type runtimeState struct {
@@ -37,9 +43,101 @@ type probeSession struct {
 	session *mcp.ClientSession
 	count   int
 	state   *runtimeState
+	stderr  *probeStderr
 }
 
-const gatewayCallTool = "call_tool"
+type probeStderr struct {
+	mu   sync.Mutex
+	data bytes.Buffer
+}
+
+func (s *probeStderr) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.Write(p)
+}
+
+func (s *probeStderr) offset() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.Len()
+}
+
+func (s *probeStderr) since(offset int) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return bytes.Clone(s.data.Bytes()[offset:])
+}
+
+func executionGuardWait(log []byte) (time.Duration, error) {
+	var maximum time.Duration
+	for _, line := range bytes.Split(log, []byte{'\n'}) {
+		if !bytes.Contains(line, []byte(`"msg":"waiting for database execution"`)) {
+			continue
+		}
+		var event struct {
+			Message     string  `json:"msg"`
+			WaitSeconds float64 `json:"waitSeconds"`
+		}
+		if err := json.Unmarshal(line, &event); err != nil {
+			return 0, fmt.Errorf("invalid execution guard wait evidence: %w", err)
+		}
+		if event.Message != "waiting for database execution" || math.IsNaN(event.WaitSeconds) ||
+			math.IsInf(event.WaitSeconds, 0) || event.WaitSeconds < 0 {
+			return 0, fmt.Errorf("invalid execution guard wait evidence")
+		}
+		wait := time.Duration(event.WaitSeconds * float64(time.Second))
+		if wait > maximum {
+			maximum = wait
+		}
+	}
+	return maximum, nil
+}
+
+func effectiveExitWait(wall, guard time.Duration) (time.Duration, error) {
+	if guard < 0 || guard > wall {
+		return 0, fmt.Errorf("execution guard wait %s exceeds facade close time %s", guard, wall)
+	}
+	return wall - guard, nil
+}
+
+func (s *probeSession) closeMeasured() (time.Duration, time.Duration, time.Duration, error) {
+	offset := s.stderr.offset()
+	started := time.Now()
+	closeErr := s.session.Close()
+	wall := time.Since(started)
+	guard, evidenceErr := executionGuardWait(s.stderr.since(offset))
+	if evidenceErr != nil {
+		return 0, guard, wall, evidenceErr
+	}
+	exitWait, measureErr := effectiveExitWait(wall, guard)
+	if measureErr != nil {
+		return 0, guard, wall, measureErr
+	}
+	if closeErr != nil {
+		return 0, guard, wall, closeErr
+	}
+	return exitWait, guard, wall, nil
+}
+
+const (
+	gatewayCallTool        = "call_tool"
+	gatewayPublicToolCount = 2
+)
+
+const (
+	facadeCleanupTimeout     = 90 * time.Second
+	facadeTerminateDuration  = 2 * time.Minute
+	defaultProbeTimeout      = 10 * time.Minute
+	vanessaSmokeProbeTimeout = 30 * time.Minute
+)
+
+func probeTimeout(vanessaSmoke bool) time.Duration {
+	if vanessaSmoke {
+		return vanessaSmokeProbeTimeout
+	}
+	return defaultProbeTimeout
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -56,22 +154,39 @@ func run() error {
 	helper := flag.String("helper", "", "agent-1c.ps1 path")
 	tool := flag.String("tool", "", "safe live tool to call")
 	argumentsJSON := flag.String("arguments-json", "{}", "tool arguments")
+	sequencePath := flag.String("sequence-json", "", "JSON file of ordered inner calls [{name,arguments}], using one facade session")
 	instances := flag.Int("instances", 1, "number of simultaneous facade clients")
 	output := flag.String("output", "", "evidence JSON path")
 	idleTimeout := flag.Duration("idle-timeout", 10*time.Minute, "facade backend idle timeout")
 	verifyIdle := flag.Bool("verify-idle", false, "keep stdio open and prove idle cleanup")
 	vanessaSmoke := flag.Bool("vanessa-ui-smoke", false, "connect the managed TestClient and call UI/OS screenshot tools")
+	verifyMissingState := flag.Bool("verify-missing-state-recovery", false, "remove this probe's Vanessa runtime record and prove same-connection recovery")
 	vanessaFeature := flag.String("vanessa-feature", "", "release feature file for Vanessa open/check authoring smoke")
 	vanessaSecondaryFeature := flag.String("vanessa-secondary-feature", "", "second release feature file for Vanessa cold reloadAndRun smoke")
+	flag.StringVar(&relayExe, "relay", "", "itl-ondemand-relay executable; every facade session then runs through it")
 	flag.Parse()
-	if *exe == "" || *projectRoot == "" || *catalog == "" || *helper == "" || *tool == "" {
-		return fmt.Errorf("--exe, --project-root, --catalog, --helper, and --tool are required")
+	if *exe == "" || *projectRoot == "" || *catalog == "" || *helper == "" || (*tool == "" && *sequencePath == "") {
+		return fmt.Errorf("--exe, --project-root, --catalog, --helper, and --tool or --sequence-json are required")
 	}
 	if *family != "roctup" && *family != "vanessa-ui" {
 		return fmt.Errorf("invalid --family %q", *family)
 	}
 	if *instances < 1 || *instances > 2 {
 		return fmt.Errorf("--instances must be 1 or 2")
+	}
+	if *verifyMissingState && (!*vanessaSmoke || *family != "vanessa-ui" || *sequencePath != "") {
+		return fmt.Errorf("--verify-missing-state-recovery requires the isolated Vanessa UI smoke")
+	}
+	var sequence []probeCall
+	if *sequencePath != "" {
+		if *tool != "" || *argumentsJSON != "{}" || *instances != 1 || *vanessaSmoke || *verifyIdle {
+			return fmt.Errorf("--sequence-json uses one session and cannot combine with --tool, --arguments-json, multiple instances, --vanessa-ui-smoke, or --verify-idle")
+		}
+		var err error
+		sequence, err = readProbeSequence(*sequencePath, *catalog)
+		if err != nil {
+			return err
+		}
 	}
 	var arguments any
 	if err := json.Unmarshal([]byte(*argumentsJSON), &arguments); err != nil {
@@ -82,27 +197,45 @@ func run() error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout(*vanessaSmoke))
 	defer cancel()
+	if sequence != nil {
+		return runSequenceProbe(ctx, *exe, *family, *projectRoot, *catalog, *helper, *idleTimeout, *output, sequence, expectedCount)
+	}
 	connected := make([]*probeSession, 0, *instances)
 	connectedTestClients := 0
 	maxConcurrentSessions := 0
 	ownedProcessExitWait := time.Duration(0)
+	maximumGuardWait := time.Duration(0)
+	maximumFacadeCloseWait := time.Duration(0)
 	observeConcurrency := func() {
 		current := len(connected) + connectedTestClients
 		if current > maxConcurrentSessions {
 			maxConcurrentSessions = current
 		}
 	}
-	observeExitWait := func(started time.Time) {
-		elapsed := time.Since(started)
-		if elapsed > ownedProcessExitWait {
-			ownedProcessExitWait = elapsed
+	closeObserved := func(item *probeSession) error {
+		exitWait, guardWait, wallWait, err := item.closeMeasured()
+		if err != nil {
+			return err
 		}
+		if exitWait > ownedProcessExitWait {
+			ownedProcessExitWait = exitWait
+		}
+		if guardWait > maximumGuardWait {
+			maximumGuardWait = guardWait
+		}
+		if wallWait > maximumFacadeCloseWait {
+			maximumFacadeCloseWait = wallWait
+		}
+		return nil
 	}
 	vanessaFileAuthoringOutcome := ""
 	var vanessaFileAuthoringCalls []string
 	vanessaScenarioEvidencePassed := false
+	serializedFacadeHandoffPassed := false
+	secondSurvived := false
+	initial := make([]runtimeState, 0, *instances)
 	defer func() {
 		for _, item := range connected {
 			_ = item.session.Close()
@@ -115,30 +248,39 @@ func run() error {
 		}
 		connected = append(connected, item)
 		observeConcurrency()
-		if item.count != 2 {
-			return fmt.Errorf("facade gateway tools/list count=%d, expected=2; internal catalog count=%d", item.count, expectedCount)
+		if item.count != gatewayPublicToolCount {
+			return fmt.Errorf("facade gateway tools/list count=%d, expected=%d; internal catalog count=%d", item.count, gatewayPublicToolCount, expectedCount)
 		}
-		stopHeartbeat := keepSessionsAlive(ctx, connected[:len(connected)-1], *idleTimeout, *tool, arguments)
-		result, err := callInnerTool(ctx, item.session, *tool, arguments)
+		var result *mcp.CallToolResult
+		if index > 0 {
+			previous := connected[len(connected)-2]
+			releasePrevious := func() error {
+				return closeObserved(previous)
+			}
+			var releasedPrevious bool
+			result, releasedPrevious, err = callWithFacadeHandoff(ctx, item.session, releasePrevious, *tool, arguments, 2*time.Second)
+			if releasedPrevious {
+				connected = connected[1:]
+				serializedFacadeHandoffPassed = true
+				secondSurvived = true
+			}
+		} else {
+			result, err = callInnerTool(ctx, item.session, *tool, arguments)
+		}
 		if err != nil {
-			stopHeartbeat()
 			return fmt.Errorf("call %s: %w", *tool, err)
 		}
 		if result.IsError {
-			stopHeartbeat()
 			return fmt.Errorf("call %s returned a tool error: %#v", *tool, result.StructuredContent)
 		}
 		runtimeRoot := filepath.Join(*projectRoot, ".agent-1c", "mcp", "ondemand", *family)
-		states, err := waitForStateCount(runtimeRoot, index+1, 30*time.Second)
+		states, err := waitForStateCount(runtimeRoot, len(connected), 30*time.Second)
 		if err != nil {
-			stopHeartbeat()
 			return err
 		}
 		known := map[string]bool{}
-		for _, connectedItem := range connected[:len(connected)-1] {
-			if connectedItem.state != nil {
-				known[connectedItem.state.InstanceID] = true
-			}
+		for _, state := range initial {
+			known[state.InstanceID] = true
 		}
 		for stateIndex := range states {
 			if !known[states[stateIndex].InstanceID] {
@@ -147,9 +289,9 @@ func run() error {
 			}
 		}
 		if item.state == nil {
-			stopHeartbeat()
 			return fmt.Errorf("could not bind facade session to its runtime state")
 		}
+		initial = append(initial, *item.state)
 		if *vanessaSmoke {
 			if *family != "vanessa-ui" {
 				return fmt.Errorf("--vanessa-ui-smoke requires --family vanessa-ui")
@@ -159,11 +301,9 @@ func run() error {
 				observeConcurrency()
 			})
 			if err != nil {
-				stopHeartbeat()
 				return err
 			}
 			if err := validateVanessaScenarioEvidence(*projectRoot, item.state.InstanceID, *vanessaFeature, *vanessaSecondaryFeature); err != nil {
-				stopHeartbeat()
 				return err
 			}
 			vanessaScenarioEvidencePassed = true
@@ -176,30 +316,33 @@ func run() error {
 				}
 			}
 		}
-		stopHeartbeat()
 	}
 
 	runtimeRoot := filepath.Join(*projectRoot, ".agent-1c", "mcp", "ondemand", *family)
-	states, err := waitForStateCount(runtimeRoot, *instances, 30*time.Second)
-	if err != nil {
+	if err := validateInstanceHistory(*family, initial, serializedFacadeHandoffPassed); err != nil {
 		return err
 	}
-	if err := distinctInstances(*family, states); err != nil {
-		return err
+	var missingStateEvidence *missingStateRecoveryEvidence
+	if *verifyMissingState {
+		item := connected[len(connected)-1]
+		missingStateEvidence, err = verifySessionMissingStateRecovery(ctx, runtimeRoot, *item.state,
+			func(name string, args any) (*mcp.CallToolResult, error) {
+				return callInnerTool(ctx, item.session, name, args)
+			}, proveRecoveryProcessesExited)
+		if err != nil {
+			return fmt.Errorf("same-connection missing-state recovery: %w", err)
+		}
+		item.state = &missingStateEvidence.Replacement
 	}
-	initial := append([]runtimeState(nil), states...)
 
-	secondSurvived := false
-	if *instances == 2 {
-		closeStarted := time.Now()
-		if err := connected[0].session.Close(); err != nil {
+	if *instances == 2 && !secondSurvived {
+		if err := closeObserved(connected[0]); err != nil {
 			return fmt.Errorf("close first facade: %w", err)
 		}
 		connected = connected[1:]
 		if _, err := waitForStateCount(runtimeRoot, 1, 30*time.Second); err != nil {
 			return fmt.Errorf("first facade cleanup: %w", err)
 		}
-		observeExitWait(closeStarted)
 		result, err := callInnerTool(ctx, connected[0].session, *tool, arguments)
 		if err != nil || result.IsError {
 			return fmt.Errorf("second facade stopped with the first: err=%v result=%#v", err, result)
@@ -220,9 +363,8 @@ func run() error {
 			return fmt.Errorf("post-idle restart: %w", err)
 		}
 	}
-	closeStarted := time.Now()
 	for _, item := range connected {
-		if err := item.session.Close(); err != nil {
+		if err := closeObserved(item); err != nil {
 			return fmt.Errorf("close facade: %w", err)
 		}
 	}
@@ -230,14 +372,18 @@ func run() error {
 	if _, err := waitForStateCount(runtimeRoot, 0, 30*time.Second); err != nil {
 		return fmt.Errorf("EOF cleanup: %w", err)
 	}
-	observeExitWait(closeStarted)
 
 	evidence := map[string]any{
-		"schemaVersion": 2, "family": *family, "publicToolCount": 2, "catalogToolCount": expectedCount,
+		"schemaVersion": 2, "family": *family, "publicToolCount": gatewayPublicToolCount, "catalogToolCount": expectedCount,
 		"tool": *tool, "instances": initial, "secondSurvivedFirstClose": secondSurvived,
-		"cleanupPassed": true, "idleCleanupPassed": idleCleanupPassed, "vanessaUiSmokePassed": *vanessaSmoke,
+		"serializedFacadeHandoffPassed": serializedFacadeHandoffPassed,
+		"cleanupPassed":                 true, "idleCleanupPassed": idleCleanupPassed, "vanessaUiSmokePassed": *vanessaSmoke,
 		"maxConcurrentSessions": maxConcurrentSessions, "ownedProcessExitWaitMs": ownedProcessExitWait.Milliseconds(),
+		"executionGuardWaitMs": maximumGuardWait.Milliseconds(), "facadeCloseWaitMs": maximumFacadeCloseWait.Milliseconds(),
 		"capturedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if missingStateEvidence != nil {
+		evidence["missingStateRecovery"] = missingStateEvidence
 	}
 	if *vanessaSmoke {
 		evidence["vanessaFileAuthoringOutcome"] = vanessaFileAuthoringOutcome
@@ -246,12 +392,19 @@ func run() error {
 		evidence["vanessaSecondaryFeature"] = *vanessaSecondaryFeature
 		evidence["vanessaScenarioEvidencePassed"] = vanessaScenarioEvidencePassed
 	}
-	raw, _ := json.MarshalIndent(evidence, "", "  ")
-	if *output != "" {
-		if err := os.MkdirAll(filepath.Dir(*output), 0o755); err != nil {
+	return writeProbeEvidence(*output, evidence)
+}
+
+func writeProbeEvidence(output string, evidence any) error {
+	raw, err := json.MarshalIndent(evidence, "", "  ")
+	if err != nil {
+		return err
+	}
+	if output != "" {
+		if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(*output, append(raw, '\n'), 0o600); err != nil {
+		if err := os.WriteFile(output, append(raw, '\n'), 0o600); err != nil {
 			return err
 		}
 	}
@@ -259,38 +412,165 @@ func run() error {
 	return nil
 }
 
-func keepSessionsAlive(ctx context.Context, sessions []*probeSession, idleTimeout time.Duration, tool string, arguments any) func() {
-	if len(sessions) == 0 || idleTimeout <= 0 {
-		return func() {}
+type probeCall struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+type probeCallEvidence struct {
+	Name      string              `json:"name"`
+	Arguments map[string]any      `json:"arguments"`
+	Result    *mcp.CallToolResult `json:"result,omitempty"`
+	Error     string              `json:"error,omitempty"`
+}
+
+func readProbeSequence(path, catalogPath string) ([]probeCall, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	interval := idleTimeout / 3
-	if interval < 250*time.Millisecond {
-		interval = 250 * time.Millisecond
+	raw = bytes.TrimPrefix(raw, []byte{0xef, 0xbb, 0xbf})
+	if !utf8.Valid(raw) {
+		return nil, fmt.Errorf("sequence JSON is not valid UTF-8")
 	}
-	stop := make(chan struct{})
-	var workers sync.WaitGroup
-	for _, item := range sessions {
-		workers.Add(1)
-		go func(session *mcp.ClientSession) {
-			defer workers.Done()
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-stop:
-					return
-				case <-ticker.C:
-					_, _ = callInnerTool(ctx, session, tool, arguments)
-				}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	decoder.UseNumber()
+	var calls []probeCall
+	if err := decoder.Decode(&calls); err != nil {
+		return nil, fmt.Errorf("decode sequence JSON: %w", err)
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return nil, fmt.Errorf("sequence JSON must contain one array")
+	}
+	if len(calls) == 0 {
+		return nil, fmt.Errorf("sequence JSON must contain at least one call")
+	}
+	catalogRaw, err := os.ReadFile(catalogPath)
+	if err != nil {
+		return nil, err
+	}
+	var catalog struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(catalogRaw, &catalog); err != nil {
+		return nil, err
+	}
+	known := make(map[string]bool, len(catalog.Tools))
+	for _, tool := range catalog.Tools {
+		known[tool.Name] = true
+	}
+	for index := range calls {
+		if calls[index].Name == "" || !known[calls[index].Name] {
+			return nil, fmt.Errorf("sequence call %d names an unknown catalog tool %q", index+1, calls[index].Name)
+		}
+		if calls[index].Arguments == nil {
+			calls[index].Arguments = map[string]any{}
+		}
+	}
+	return calls, nil
+}
+
+func executeProbeSequence(ctx context.Context, session *mcp.ClientSession, calls []probeCall, closeOwned func() error) (records []probeCallEvidence, err error) {
+	defer func() {
+		if closeErr := closeOwned(); closeErr != nil {
+			if err == nil {
+				err = fmt.Errorf("close owned facade: %w", closeErr)
+			} else {
+				err = fmt.Errorf("%w; close owned facade: %v", err, closeErr)
 			}
-		}(item.session)
+		}
+	}()
+	for _, call := range calls {
+		if err := ctx.Err(); err != nil {
+			return records, err
+		}
+		result, callErr := callInnerTool(ctx, session, call.Name, call.Arguments)
+		record := probeCallEvidence{Name: call.Name, Arguments: call.Arguments, Result: result}
+		if callErr == nil && (result == nil || result.IsError) {
+			callErr = fmt.Errorf("tool returned an error result")
+		}
+		if callErr != nil {
+			record.Error = callErr.Error()
+		}
+		records = append(records, record)
+		if callErr != nil {
+			return records, fmt.Errorf("sequence call %d %s: %w", len(records), call.Name, callErr)
+		}
 	}
-	var once sync.Once
-	return func() {
-		once.Do(func() { close(stop) })
-		workers.Wait()
+	return records, nil
+}
+
+func runSequenceProbe(ctx context.Context, exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration, output string, calls []probeCall, expectedCount int) error {
+	item, err := connect(ctx, exe, family, projectRoot, catalog, helper, idleTimeout)
+	if err != nil {
+		return err
+	}
+	var exitWait, guardWait, wallWait time.Duration
+	cleanupPassed := false
+	closeOwned := func() error {
+		var closeErr error
+		exitWait, guardWait, wallWait, closeErr = item.closeMeasured()
+		if closeErr == nil {
+			_, closeErr = waitForStateCount(filepath.Join(projectRoot, ".agent-1c", "mcp", "ondemand", family), 0, 30*time.Second)
+		}
+		cleanupPassed = closeErr == nil
+		return closeErr
+	}
+	var records []probeCallEvidence
+	if item.count != gatewayPublicToolCount {
+		err = fmt.Errorf("facade gateway tools/list count=%d, expected=%d", item.count, gatewayPublicToolCount)
+		if closeErr := closeOwned(); closeErr != nil {
+			err = fmt.Errorf("%w; close owned facade: %v", err, closeErr)
+		}
+	} else {
+		records, err = executeProbeSequence(ctx, item.session, calls, closeOwned)
+	}
+	evidence := map[string]any{
+		"schemaVersion": 2, "family": family, "publicToolCount": item.count, "catalogToolCount": expectedCount,
+		"sequenceCalls": records, "requestedCallCount": len(calls), "sequenceCompleted": err == nil,
+		"cleanupPassed": cleanupPassed, "ownedProcessExitWaitMs": exitWait.Milliseconds(),
+		"executionGuardWaitMs": guardWait.Milliseconds(), "facadeCloseWaitMs": wallWait.Milliseconds(),
+		"capturedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err != nil {
+		evidence["error"] = err.Error()
+	}
+	if writeErr := writeProbeEvidence(output, evidence); writeErr != nil {
+		return fmt.Errorf("sequence outcome %v; write evidence: %w", err, writeErr)
+	}
+	return err
+}
+
+func callWithFacadeHandoff(ctx context.Context, session *mcp.ClientSession, releasePrevious func() error, name string, arguments any, wait time.Duration) (*mcp.CallToolResult, bool, error) {
+	type outcome struct {
+		result *mcp.CallToolResult
+		err    error
+	}
+	completed := make(chan outcome, 1)
+	go func() {
+		result, err := callInnerTool(ctx, session, name, arguments)
+		completed <- outcome{result: result, err: err}
+	}()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case value := <-completed:
+		return value.result, false, value.err
+	case <-timer.C:
+		if err := releasePrevious(); err != nil {
+			return nil, false, fmt.Errorf("close first facade for queued handoff: %w", err)
+		}
+		select {
+		case value := <-completed:
+			return value.result, true, value.err
+		case <-ctx.Done():
+			return nil, true, ctx.Err()
+		}
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
 	}
 }
 
@@ -312,10 +592,11 @@ func callInnerTool(ctx context.Context, session *mcp.ClientSession, name string,
 }
 
 func connect(ctx context.Context, exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration) (*probeSession, error) {
-	command := exec.Command(exe, "serve", "--family", family, "--project-root", projectRoot, "--catalog", catalog, "--helper", helper, "--idle-timeout", idleTimeout.String())
-	command.Stderr = os.Stderr
+	command := facadeCommand(exe, family, projectRoot, catalog, helper, idleTimeout)
+	stderr := &probeStderr{}
+	command.Stderr = io.MultiWriter(os.Stderr, stderr)
 	client := mcp.NewClient(&mcp.Implementation{Name: "itl-ondemand-live-probe", Version: "0.1.0"}, nil)
-	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: time.Minute}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: facadeTerminateDuration}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("connect facade: %w", err)
 	}
@@ -333,7 +614,60 @@ func connect(ctx context.Context, exe, family, projectRoot, catalog, helper stri
 		}
 		cursor = page.NextCursor
 	}
-	return &probeSession{session: session, count: count}, nil
+	return &probeSession{session: session, count: count, stderr: stderr}, nil
+}
+
+// relayExe, when set, makes every probe session reach the facade through the
+// relay the client entries use, so Release qualifies the relay with the facade.
+var relayExe string
+
+func facadeCommand(exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration) *exec.Cmd {
+	args := []string{"serve", "--family", family, "--project-root", projectRoot, "--catalog", catalog, "--helper", helper, "--idle-timeout", idleTimeout.String(), "--cleanup-timeout", facadeCleanupTimeout.String()}
+	if relayExe == "" {
+		return childprocess.Command(exe, args...)
+	}
+	server := "itl-probe-" + family
+	if err := writeRelayDescriptor(projectRoot, server, family, exe, args); err != nil {
+		// The relay reports the missing descriptor through its own error.
+		fmt.Fprintln(os.Stderr, "write relay descriptor:", err)
+	}
+	return childprocess.Command(relayExe, "--project-root", projectRoot, "--server", server)
+}
+
+// writeRelayDescriptor writes the launch descriptor in the relay's contract
+// (cmd/itl-ondemand-relay) under a probe-only server name, never over the
+// project's own client servers. Identical content is written atomically.
+func writeRelayDescriptor(projectRoot, server, family, exe string, args []string) error {
+	raw, err := os.ReadFile(exe)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(raw)
+	descriptor, err := json.MarshalIndent(map[string]any{
+		"schemaVersion": 1, "server": server, "family": family, "facadePath": exe,
+		"facadeSha256": fmt.Sprintf("%x", sum[:]), "facadeVersion": "probe", "args": args,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(projectRoot, ".agent-1c", "mcp", "ondemand", "launch", server+".json")
+	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, descriptor) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), server+".*.tmp")
+	if err != nil {
+		return err
+	}
+	_, writeErr := temporary.Write(descriptor)
+	closeErr := temporary.Close()
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(temporary.Name())
+		return errors.Join(writeErr, closeErr)
+	}
+	return os.Rename(temporary.Name(), path)
 }
 
 func catalogToolCount(path string) (int, error) {
@@ -398,23 +732,37 @@ func waitForStateCountWithReader(root string, count int, timeout time.Duration, 
 	}
 }
 
-func distinctInstances(family string, states []runtimeState) error {
-	pids := map[int]bool{}
-	ports := map[int]bool{}
+func validateInstanceHistory(family string, states []runtimeState, releasedResourceReuse bool) error {
+	instanceIDs := map[string]bool{}
+	runtimePIDs := map[int]bool{}
+	runtimePorts := map[int]bool{}
+	for _, state := range states {
+		if state.InstanceID == "" || instanceIDs[state.InstanceID] || state.PID <= 0 || runtimePIDs[state.PID] {
+			return fmt.Errorf("runtime history does not have distinct instance IDs and positive PIDs: %#v", states)
+		}
+		if state.Port <= 0 || (!releasedResourceReuse && runtimePorts[state.Port]) {
+			return fmt.Errorf("concurrent runtime instances do not have distinct positive ports: %#v", states)
+		}
+		instanceIDs[state.InstanceID] = true
+		runtimePIDs[state.PID] = true
+		runtimePorts[state.Port] = true
+	}
+	if family != "vanessa-ui" {
+		return nil
+	}
+	testClientPIDs := map[int]bool{}
 	testClientPorts := map[int]bool{}
 	for _, state := range states {
-		if state.PID <= 0 || state.Port <= 0 || pids[state.PID] || ports[state.Port] {
-			return fmt.Errorf("runtime instances do not have distinct positive PID/port values: %#v", states)
+		if state.TestClientProfile != "itl-ondemand" || state.TestClientPort <= 0 || (!releasedResourceReuse && testClientPorts[state.TestClientPort]) {
+			return fmt.Errorf("Vanessa runtime history does not have valid managed TestClient profile/ports: %#v", states)
 		}
-		pids[state.PID] = true
-		ports[state.Port] = true
-		if family == "vanessa-ui" {
-			if state.TestClientProfile != "itl-ondemand" || state.TestClientPID <= 0 || pids[state.TestClientPID] || state.TestClientPort <= 0 || testClientPorts[state.TestClientPort] {
-				return fmt.Errorf("Vanessa instances do not have distinct managed TestClient profiles/ports: %#v", states)
-			}
-			pids[state.TestClientPID] = true
-			testClientPorts[state.TestClientPort] = true
+		if state.TestClientPID > 0 && (runtimePIDs[state.TestClientPID] || testClientPIDs[state.TestClientPID]) {
+			return fmt.Errorf("Vanessa runtime history reuses a positive TestClient PID: %#v", states)
 		}
+		if state.TestClientPID > 0 {
+			testClientPIDs[state.TestClientPID] = true
+		}
+		testClientPorts[state.TestClientPort] = true
 	}
 	return nil
 }
@@ -435,20 +783,20 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		proof     string
 	}{
 		{name: "run_scenario", arguments: map[string]any{"filePath": featurePath, "mode": "reloadAndRun"}, proof: "run_scenario:cold"},
-		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:cold"},
+		{name: "get_vanessa_automation_state", arguments: map[string]any{}, proof: "get_vanessa_automation_state:cold"},
 		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:cold"},
 		{name: "run_scenario", arguments: map[string]any{"filePath": featurePath, "mode": "reloadAndRun"}, proof: "run_scenario:hot"},
-		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:hot"},
+		{name: "get_vanessa_automation_state", arguments: map[string]any{}, proof: "get_vanessa_automation_state:hot"},
 		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:hot"},
 		{name: "run_scenario", arguments: map[string]any{"filePath": secondaryFeaturePath, "mode": "reloadAndRunFromLine", "lineNumber": 5}, proof: "run_scenario:from-line-cold"},
-		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:from-line-cold"},
+		{name: "get_vanessa_automation_state", arguments: map[string]any{}, proof: "get_vanessa_automation_state:from-line-cold"},
 		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:from-line-cold"},
 		{name: "open_feature_file", arguments: map[string]any{"filePath": secondaryFeaturePath}, proof: "open_feature_file:secondary"},
 		{name: "check_syntax", arguments: map[string]any{"filePath": secondaryFeaturePath}, proof: "check_syntax:secondary"},
 		{name: "load_features", arguments: map[string]any{"path": secondaryFeaturePath}, proof: "load_features:secondary"},
 		{name: "select_scenario", arguments: map[string]any{"name": "MCP cold B"}, proof: "select_scenario:secondary"},
 		{name: "run_scenario", arguments: map[string]any{"mode": "selected"}, proof: "run_scenario:selected"},
-		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:selected"},
+		{name: "get_vanessa_automation_state", arguments: map[string]any{}, proof: "get_vanessa_automation_state:selected"},
 		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:selected"},
 	} {
 		result, err := callInnerTool(ctx, session, call.name, call.arguments)
@@ -466,7 +814,7 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		arguments any
 	}{
 		{name: "get_environment_data", arguments: map[string]any{}},
-		{name: "connect_test_client", arguments: map[string]any{"profileName": "itl-ondemand"}},
+		{name: "manage_test_client", arguments: map[string]any{"action": "connect", "profileName": "itl-ondemand"}},
 		{name: "get_window_list_testclient", arguments: map[string]any{}},
 		{name: "get_window_list_os", arguments: map[string]any{}},
 	} {
@@ -480,7 +828,7 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		if call.name == "get_window_list_os" {
 			osWindows = result
 		}
-		if call.name == "connect_test_client" && observeTestClient != nil {
+		if call.name == "manage_test_client" && observeTestClient != nil {
 			observeTestClient(1)
 		}
 	}
@@ -606,7 +954,7 @@ func waitForTestClientWindowTitle(ctx context.Context, port int, timeout time.Du
 	deadline := time.Now().Add(timeout)
 	script := `& { param([int]$Port) $pattern='(?i)-TPort\s+'+[regex]::Escape([string]$Port)+'(?:\s|$)'; foreach($native in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { [string]$_.CommandLine -match '(?i)/TESTCLIENT' -and [string]$_.CommandLine -match $pattern })) { $title=[string](Get-Process -Id $native.ProcessId -ErrorAction SilentlyContinue).MainWindowTitle; if($title){$title; break} } }`
 	for {
-		command := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script, strconv.Itoa(port))
+		command := childprocess.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script, strconv.Itoa(port))
 		raw, err := command.Output()
 		if err == nil && strings.TrimSpace(string(raw)) != "" {
 			return strings.TrimSpace(string(raw)), nil

@@ -3,11 +3,70 @@
     $RepoRoot = $context.RepoRoot
     $DeliveryScript = Join-Path $RepoRoot "scripts\source-delivery.ps1"
     $DeliverySourcePaths = @($DeliveryScript)
-    foreach ($name in @("source-delivery-supervisor.ps1", "source-delivery-queue.ps1", "source-delivery-process.ps1", "source-delivery-component.ps1", "source-delivery-plan.ps1", "source-delivery-resources.ps1", "source-delivery-candidate.ps1", "source-delivery-cleanup.ps1")) {
+    foreach ($name in @("source-delivery-supervisor.ps1", "source-delivery-queue.ps1", "source-delivery-process.ps1", "source-delivery-release-recovery.ps1", "source-delivery-component.ps1", "client-mcp-build.ps1", "vanessa-source-build-archive.ps1", "source-delivery-plan.ps1", "source-delivery-resources.ps1", "source-delivery-ref-cleanup.ps1", "source-delivery-evidence.ps1", "source-proof-json.ps1", "source-delivery-candidate.ps1", "source-delivery-integrity.ps1", "source-delivery-cleanup.ps1")) {
         $path = Join-Path $RepoRoot ("scripts\" + $name)
         if (Test-Path -LiteralPath $path -PathType Leaf) { $DeliverySourcePaths += $path }
     }
-    $DeliverySourceText = @($DeliverySourcePaths | ForEach-Object { Get-Content -LiteralPath $_ -Raw -Encoding UTF8 }) -join [Environment]::NewLine
+    # Shared by proof ownership and the frozen supervisor fixture: the files a
+    # script loads statically, so a new delivery module needs no manual list.
+    $script:DeliverySourceAsts = @{}
+    function Get-DeliverySourceAst([string]$Relative) {
+        if (-not $script:DeliverySourceAsts.ContainsKey($Relative)) {
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot $Relative), [ref]$tokens, [ref]$errors)
+            @($errors) | Should -BeNullOrEmpty -Because "$Relative must parse"
+            $script:DeliverySourceAsts[$Relative] = $ast
+        }
+        return $script:DeliverySourceAsts[$Relative]
+    }
+
+    # Static `. (Join-Path $PSScriptRoot 'x')` loads, relative to the loading file.
+    $script:DeliveryStaticLoads = @{}
+    function Get-DeliveryStaticLoads([string]$Relative) {
+        if ($script:DeliveryStaticLoads.ContainsKey($Relative)) { return $script:DeliveryStaticLoads[$Relative] }
+        $directory = (Split-Path -Parent $Relative).Replace('\', '/')
+        $ast = Get-DeliverySourceAst $Relative
+        $script:DeliveryStaticLoads[$Relative] = @(foreach ($command in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.InvocationOperator -eq 'Dot' }, $true)) {
+            $text = $command.CommandElements[0].Extent.Text
+            if ($text -match '^\(Join-Path \$PSScriptRoot [''"]([^''"$]+)[''"]\)$') {
+                ($directory + '/' + $Matches[1]).Replace('\', '/')
+            } elseif ($text -match '^\(Join-Path \(Split-Path -Parent \$PSScriptRoot\) [''"]([^''"$]+)[''"]\)$') {
+                $parent = (Split-Path -Parent $directory).Replace('\', '/')
+                $(if ($parent) { $parent + '/' + $Matches[1] } else { $Matches[1] }).Replace('\', '/')
+            }
+        })
+        return $script:DeliveryStaticLoads[$Relative]
+    }
+
+    function Get-DeliveryStaticLoadClosure([string[]]$Roots) {
+        $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+        $pending = New-Object System.Collections.Generic.Queue[string]
+        foreach ($root in $Roots) { $pending.Enqueue($root) }
+        while ($pending.Count) {
+            $relative = $pending.Dequeue()
+            if (-not $seen.Add($relative)) { continue }
+            if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $relative) -PathType Leaf)) { throw "Statically loaded file is missing: $relative" }
+            foreach ($loaded in @(Get-DeliveryStaticLoads $relative)) { $pending.Enqueue($loaded) }
+        }
+        return @($seen | Sort-Object)
+    }
+
+    # A text assertion names the exact module it reads; -All is reserved for
+    # whole-implementation negatives. SourceDeliveryProofOwnership proves each
+    # named file is a Pester proof input of the consuming test.
+    function Get-DeliverySourceText {
+        param([string[]]$Name, [switch]$All)
+        if ($All -eq [bool]$Name) { throw 'Get-DeliverySourceText requires exactly one of -Name or -All.' }
+        $selected = if ($All) { @($DeliverySourcePaths) } else {
+            @($Name | ForEach-Object {
+                $leaf = $_
+                $match = @($DeliverySourcePaths | Where-Object { (Split-Path -Leaf $_) -ceq $leaf })
+                if ($match.Count -ne 1) { throw "Unknown delivery source '$leaf'." }
+                $match[0]
+            })
+        }
+        return (@($selected | ForEach-Object { Get-Content -LiteralPath $_ -Raw -Encoding UTF8 }) -join [Environment]::NewLine)
+    }
 
     function Get-DeliveryFunctionDefinitions {
         param([string[]]$Names)
@@ -59,11 +118,23 @@
         & git -C $root push --quiet -u origin develop *> $null
         $fakeGate = Join-Path $root "fake-gate.ps1"
         Set-Content -LiteralPath $fakeGate -Encoding UTF8 -Value @'
-param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot, [string]$ReleaseResumeMode); $CoverageContract = @($CoverageContract -split ','); if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }
+param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot, [string]$ReleaseResumeMode, [string]$ReleaseCapabilities); $CoverageContract = @($CoverageContract -split ','); if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot 'build') | Out-Null
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-modes.log') -Encoding UTF8 -Value $Mode
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-candidates.log') -Encoding UTF8 -Value ("$Mode " + (& git rev-parse HEAD).Trim())
 if ($Mode -eq 'Targeted') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-target-bases.log') -Encoding UTF8 -Value $BaseRef }
 if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-resume.log') -Encoding UTF8 -Value $ReleaseResumeMode }
+if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-capabilities.log') -Encoding UTF8 -Value $ReleaseCapabilities }
+if ($Mode -eq 'Full' -and $env:ITL_TEST_FAIL_DELIVERY_FULL -eq 'true') { exit 15 }
+if ($Mode -eq 'Full' -and (Test-Path -LiteralPath 'broken.marker')) {
+    # A registered range carries a defect: report its failing Pester file as the real worker would.
+    $shards = Join-Path (Get-Location) 'build\test-results\local\pester-shards'
+    New-Item -ItemType Directory -Force -Path $shards | Out-Null
+    $suite = [Security.SecurityElement]::Escape((Join-Path (Get-Location) (Get-Content -LiteralPath 'broken.marker' -Raw).Trim()))
+    Set-Content -LiteralPath (Join-Path $shards 'worker-1.xml') -Encoding UTF8 -Value ('<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="' + $suite + '" tests="1" failures="1" errors="0"><testcase name="fixture" status="Failed"><failure message="broken"/></testcase></testsuite></testsuites>')
+    exit 16
+}
 if ($Mode -eq 'Full') {
     $qualification = Join-Path (Get-Location) 'build\test-results\qualification'
     New-Item -ItemType Directory -Force -Path $qualification | Out-Null
@@ -73,6 +144,7 @@ if ($Mode -eq 'Full') {
         kind = 'itl-workflow-full-qualification'; status = 'passed'; reusable = $true
         repository = [ordered]@{ commit = $head; tree = $tree; worktreeClean = $true }
         result = [ordered]@{ passed = 1; failed = 0; skipped = 0 }
+        finishedAt = [DateTime]::UtcNow.ToString('o')
     }
     Set-Content -LiteralPath (Join-Path $qualification 'full.json') -Encoding UTF8 -Value ($full | ConvertTo-Json -Depth 6)
 }
@@ -97,11 +169,11 @@ exit 0
 '@
         $fakePromoter = Join-Path $root "fake-compatibility-promoter.ps1"
         Set-Content -LiteralPath $fakePromoter -Encoding UTF8 -Value @'
-param([string]$RepositoryRoot, [string]$QualificationPath)
+param([string]$RepositoryRoot, [string]$QualificationPath, [string]$CheckedAt)
 $lockPath = Join-Path $RepositoryRoot 'templates\dependency-lock.json'
 $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $lock.dependencies.aiRules1c.compatibilityStatus = 'passed'
-$lock.dependencies.aiRules1c.compatibilityCheckedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+$lock.dependencies.aiRules1c.compatibilityCheckedAt = $(if ($CheckedAt) { $CheckedAt } else { [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') })
 [IO.File]::WriteAllText($lockPath, (($lock | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\compatibility-promoter.log') -Encoding UTF8 -Value $QualificationPath
 '@
@@ -143,7 +215,19 @@ exit 0
     }
     function Remove-DeliveryFixture {
         param([object]$Fixture)
-        if ($Fixture) {
-            & git -C $Fixture.root worktree prune *> $null; Remove-Item -LiteralPath $Fixture.root -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $Fixture.remote -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not $Fixture) { return }
+        # Delivery runs create registration, supervisor and candidate worktrees
+        # of this fixture in the system temp; prune alone would orphan them.
+        $root = [IO.Path]::GetFullPath([string]$Fixture.root).TrimEnd('\')
+        if (Test-Path -LiteralPath (Join-Path $root '.git') -PathType Container) {
+            $tokens = @(& { param($helper, $repository) . $helper; Get-RepositoryGitPathList -RepositoryRoot $repository -Arguments @('worktree', 'list', '--porcelain', '-z') } (Join-Path $RepoRoot 'scripts\git-path-list.ps1') $root)
+            $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+            foreach ($token in @($tokens | Where-Object { ([string]$_).StartsWith('worktree ') })) {
+                $path = [IO.Path]::GetFullPath(([string]$token).Substring(9)).TrimEnd('\')
+                if ([string]::Equals($path, $root, [StringComparison]::OrdinalIgnoreCase)) { continue }
+                & git -C $root worktree remove --force --force -- $path *> $null
+                if ((Test-Path -LiteralPath $path) -and $path.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue }
+            }
         }
+        & git -C $root worktree prune *> $null; Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $Fixture.remote -Recurse -Force -ErrorAction SilentlyContinue
     }

@@ -2,13 +2,224 @@
 
 Windows x64 stdio facade for the ITL branch-local ROCTUP and Vanessa UI MCP backends.
 
-The executable is registered once in the active client's project MCP config. Its default gateway surface publishes only `resolve_tool` and `call_tool`; the versioned full compatibility catalog remains internal. `resolve_tool` searches that catalog without starting 1C. For parameterized calls, `call_tool.argumentsJson` carries one JSON-encoded inner object so schema-restricting model clients cannot erase unknown nested property names; `arguments={}` remains the no-argument and backward-compatible object form, and the two forms are mutually exclusive. The facade parses and validates the selected inner tool arguments, asks the private workflow broker to start a backend, initializes its Streamable HTTP MCP session, verifies the complete actual catalog, and only then forwards the call unchanged. Backend ports and processes never appear in client configuration. `--surface full` keeps the prior direct-catalog surface as a diagnostic fallback.
+The executable is registered once in the active client's project MCP config. Its default gateway surface publishes `resolve_tool` and `call_tool`; the versioned full compatibility catalog remains internal. `resolve_tool` searches that catalog without starting 1C. For parameterized calls, `call_tool.argumentsJson` carries one JSON-encoded inner object so schema-restricting model clients cannot erase unknown nested property names; `arguments={}` remains the no-argument object form, and the two forms are mutually exclusive. The facade parses and validates the selected inner tool arguments, acquires an execution guard for that one call, asks the private workflow broker to start a backend, initializes its Streamable HTTP MCP session, verifies the complete actual catalog, and only then forwards the call unchanged. Backend ports and processes never appear in client configuration. `--surface full` keeps the prior direct-catalog surface as a diagnostic fallback; it uses the same call-scoped execution boundary.
 
 For Vanessa, the broker leases separate MCP-manager and TestClient ports, creates the reserved `itl-ondemand` TestClient profile, and starts Vanessa Automation with silent/fail-closed VanessaExt installation. Editor-only calls leave TestClient stopped. Before a TestClient-dependent call, the facade reuses a proven owned process or runs the shared capacity/license preflight, starts one owned process, proves its port, auto-connects the reserved profile, and requires a positive logical-connection postcondition. A capacity failure permits one shared exact-dev-infobase cleanup and one admission retry; source-infobase, other-branch, and ambiguous processes remain fail-closed. Idle or stdio-EOF cleanup remains ownership-scoped and unsafe-action protection is never edited automatically.
 
-Every forwarded call appends schema-v2 evidence under `.agent-1c/mcp/ondemand/<family>/`. Evidence stores outcome/result code, catalog and instance identity, argument SHA, and—when applicable—the project-relative feature path, feature SHA, and scenario line. Failed calls also store a sanitized short result message and backend log path. Vanessa runtime/editor exception text is returned as `ITL_VANESSA_TOOL_RESULT_FAILED` even when the upstream MCP response incorrectly reports `IsError=false`; raw arguments, secrets, configuration content, successful result content, and scenario content are never persisted.
+Every forwarded call appends schema-v3 evidence under `.agent-1c/mcp/ondemand/<family>/`. Evidence stores outcome/result code, catalog and instance identity, argument SHA, and—when applicable—the project-relative feature path, feature SHA, and scenario line. Failed calls also store a sanitized short result message and backend log path. Vanessa runtime/editor exception text is returned as `ITL_VANESSA_TOOL_RESULT_FAILED` even when the upstream MCP response incorrectly reports `IsError=false`; raw arguments, secrets, configuration content, successful result content, and scenario content are never persisted.
 
-If a registered backend refuses a connection, the facade asks the private broker to compare the registered PID and port with the ownership record under the existing runtime/start locks. Only a dead PID or a verified owned PID with an unavailable port is stale; an unverified live PID fails closed. The broker atomically claims and removes the stale runtime, starts one replacement with a new instance ID, and the facade retries the original call once only when the compatibility contract marks it read-only/idempotent or it is in the conservative Vanessa idempotency policy. Other calls return `ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED` with the old/new instance IDs and an explicit manual-review action; their outcome is treated as unknown and they are never replayed automatically.
+If its runtime JSON disappears between completed calls, the same facade
+recovers its backend without replacing the external MCP connection. Only a
+confirmed stop removes a registration, so its absence means an owner (normally
+a lifecycle drain) already retired the instance. The broker's launch snapshot,
+kept in facade memory and carried only inside the call's execution invocation,
+selects at most what this facade started: a manager or TestClient whose PID,
+exact start time and EXE still match is stopped, its exact leases are released,
+and a new instance starts. A reused PID, another owner of the old ports, a
+replaced lease or an unidentified exact-base session is left untouched and never
+blocks the replacement. If even that stop stays unconfirmed, the facade drops
+the old backend and starts fresh within the same call. Missing JSON is never
+reconstructed. A modifying call with unknown outcome is never replayed.
+
+Every MCP tool request owns one phase deadline, including the existing default
+ten-minute phase when metadata is absent. Nested broker calls inherit its
+remaining time without restarting it or extending a shorter parent deadline.
+The five-minute fallback still applies to broker calls outside a request phase;
+cleanup retains its separate bounded owner budget. Unknown modifying outcomes
+are never replayed merely because a deadline expired. An expired call keeps
+`ITL_ONDEMAND_BACKEND_CALL_FAILED` and adds `callOutcome: unknown`,
+`partialEffectsPossible`, the count and in-memory snapshot of the last progress
+notification received for that call (`lastProgress`: number, total, message),
+and the next action. The failed call has already stopped the owned backend, so
+its result store is gone: a modifying call needs a read-only state probe before
+any retry. Without a caller `progressToken` no progress is requested.
+
+A transport failure without an answer (for example HTTP 504) keeps the same
+code with the same `callOutcome: unknown`, `partialEffectsPossible` and next
+action, plus `backendStopped: true`: the next call starts a fresh backend, so
+`itl_recover_connection` is not needed.
+
+ROCTUP answers a rejected `execute_code` as an ordinary result
+`{"success":false,"dangerous_keywords":[...]}` when a dangerous keyword is not
+auto-allowed by the branch profile (`ROCTUP_DATA_CHANGES=auto`, or no desktop
+for the confirm dialog). The facade returns it as
+`ITL_ROCTUP_DANGEROUS_KEYWORDS_REJECTED` with `callOutcome: not-started`, the
+keywords, `action: route-code-through-vanessa-code-step` and that route in the
+text, and keeps the backend. A user's refusal in the dialog has no keyword list
+and is returned unchanged.
+
+A Vanessa `ACTION_FAILED` that names a disconnected TestClient returns
+`ITL_VANESSA_TESTCLIENT_NOT_CONNECTED` with `action: itl_recover_connection`;
+the facade does not recover or replay it automatically.
+
+Any other Vanessa `ACTION_FAILED` or `INVALID_PARAMS` protocol error is an
+answer from a tool handler that has already stopped, so the facade keeps the
+backend and its TestClient, as after a successful call, and returns the code as
+a tool error with `callOutcome: failed`, `partialEffectsPossible: true`,
+`automaticRetryPerformed: false` and `action: inspect-form-state-before-retry`.
+An uncoded protocol error, a transport failure and a deadline still stop the
+owned backend.
+
+When a TestClient this facade already used is replaced and the agent did not
+close it, the next call that acts on open forms (form tools and `run_scenario`
+in `selected`, `fromCurrentStep` or `reloadAndRunFromLine`) is not sent: it
+returns `ITL_VANESSA_TESTCLIENT_REPLACED` with `callOutcome: not-started` and
+the continuation to rebuild the state in one self-contained scenario. A
+self-contained `run_scenario` (`all`, the default, or `reloadAndRun`) runs and
+its result carries the same code as a note. The notice is reported once.
+
+A `run_scenario` or `get_test_results` answer that contains Vanessa's scenario
+report is returned as that report even when a failed step quotes a runtime
+marker; the markers still classify editor answers. Vanessa itl-r17 answers a
+failed `execute_feature_step` with `ITL_VANESSA_STEP_FAILED` and a line whose
+status is not Success with `ITL_VANESSA_STEP_NOT_PROVEN` inside a successful MCP
+completion, because facades before 0.4.36 stop the backend on any JSON-RPC
+error; the facade returns both
+as tool errors with `stepExecuted: true`. A successful step gets a note that it
+ran without its scenario context. When the project's `compatibility.json` pins another facade version
+than the running process, every result gets `ITL_ONDEMAND_FACADE_SUPERSEDED`
+as a note; the call itself is handled normally. Under the relay
+(`ITL_ONDEMAND_RELAY=1`) the note asks to repeat `update-workflow` instead of
+reconnecting the client.
+
+## Relay
+
+`cmd/itl-ondemand-relay` is the stable client command once the dependency lock
+pins `itlOndemandRelay` (OpenSpec `ondemand-facade-relay`). The client entry is
+`<relay> --project-root <root> --server <name>`; the workflow writes the
+resolved facade launch (path, SHA-256, version, `serve` arguments) to
+`.agent-1c/mcp/ondemand/launch/<server>.json`. The relay forwards MCP lines
+unchanged and, before a request with nothing in flight, replaces the facade
+when that descriptor changed: it closes the old facade's input (its owned
+backend stop), starts the new one, replays `initialize`, sends
+`notifications/tools/list_changed` and notes `ITL_ONDEMAND_FACADE_REPLACED` on
+the next tool result. A missing or mismatched new facade keeps the current one
+with `ITL_ONDEMAND_RELAY_FACADE_KEPT`; with none it answers
+`ITL_ONDEMAND_RELAY_FACADE_UNAVAILABLE`. A facade that exits answers its
+in-flight calls with `ITL_ONDEMAND_FACADE_EXITED` (`callOutcome: unknown`, never
+replayed) and is restarted on the next call (`ITL_ONDEMAND_FACADE_RESTARTED`),
+at most 3 times in 5 minutes, then `ITL_ONDEMAND_RELAY_RESTART_LIMIT`. Lifecycle
+evidence, without payloads, is `.agent-1c/mcp/ondemand/<family>/relay-<server>.jsonl`.
+`scripts/Build-ItlOnDemandMcp.ps1` builds the relay next to the facade. The
+first switch to the relay changes the client entries once and needs one client
+restart; later facade updates do not.
+The dependency lock pins the relay as `itlOndemandRelay`;
+`scripts/ondemand-mcp-lock.ps1 -Action Repin` repins it with the facade and
+needs `-RelayVersion` when its bytes change. The Release `ondemand-mcp` stage
+runs `itl-ondemand-probe -relay` through the exact pinned relay for both
+families.
+
+The guard never outlives its call. An owned stop is retried briefly within the
+call; if it stays unconfirmed, the execution still ends: the facade releases
+the guard, forgets that backend (its registration stays for the lifecycle drain
+or `repair-dev-branch-tooling`), reports `EXECUTION_GUARD_CLEANUP_UNCONFIRMED`
+with the call's outcome, and starts the next call under a new instance ID. An
+unconfirmed idle stop drops the backend the same way. An idle stop encountering
+a registration already removed by lifecycle continues through the guarded stop
+of its own launch snapshot. (Facades up to 0.4.29 instead retained the guard
+until the same facade proved cleanup; that blocked PM5 branches for hours on
+2026-11-08.)
+
+For both families the agent can call `call_tool` with
+`name="itl_recover_connection", arguments={}`. This facade-owned operation is
+discoverable through `resolve_tool` without starting 1C and is also exposed on
+the full surface. It uses the existing stop owner, then initializes and verifies
+a usable backend under a fresh call guard; an unconfirmed stop of the old backend
+is reported (`cleanupConfirmed: false`) instead of blocking the new one. Its
+cleanup, admission and cold readiness share the existing request-phase budget
+(ten minutes by default or the caller's remaining phase); it never restarts that
+budget or extends a shorter caller deadline. Startup phases report elapsed and
+remaining milliseconds; broker errors preserve cancellation and bounded redacted
+output even when the helper exits without a result marker. No
+PID, base, lease or foreign instance selector is accepted, and no previous tool
+operation is replayed. An unknown modifying outcome remains unknown even when
+the connection is recovered; inspect its effect before deciding to issue it again.
+The gateway remains two tools; its call description adds only the recovery route.
+
+Facades do not talk to each other. Because no facade holds a guard between
+calls, a waiter of another chat only waits for an active call to finish; a
+leftover holder or 1C process of this worktree from an older facade is released
+by `repair-dev-branch-tooling`. The cross-chat mailbox and the obsolete-facade
+`repair-connections` adapter were removed in 0.4.30; their leftover files under
+`connections/` and `connection-recovery/` are ignored by runtime inventory.
+
+Primary errors retain their dispatch outcome. When upstream succeeds but cleanup
+fails, the response remains an error and includes the successful content and
+structured upstream result. Existing evidence records retain the execution ID
+and append sanitized `cleanup-failed` events for call finalization and idle
+cleanup; successful payloads are returned to the client, never persisted there.
+
+Successfully forwarded progress notifications append separate events to
+`<instance>.progress.jsonl`, correlated by `progressEvidenceId`. The completion
+record's `progressNotificationsForwarded` is a snapshot at that moment, not a
+claim that asynchronous notification handlers have drained. Internal unique
+tokens isolate consecutive calls that reuse a caller token; the caller still
+receives its original token. Routes remain valid for late notifications until
+their backend session closes. Arbitrary progress text and caller tokens are not
+persisted. This avoids blocking final results on guessed notification delays.
+
+If a registered backend refuses a connection, the facade asks the private broker to compare the registered PID and port with the ownership record under the existing runtime/start locks. Only a dead PID, a verified owned PID with a proven-absent port, or an owned instance marked `start-unconfirmed` (mark-running or stop could not prove its port owner) is stale; an unverified live PID or an unknown port owner fails closed. The listener owner comes from `Listen` rows or, when the TCP table hides listeners, from the server side of the broker's own loopback connection; TestClient ports keep the previous State=0 source. The broker atomically claims and removes the stale runtime, starts one replacement with a new instance ID, and the facade retries the original call once only when the compatibility contract marks it read-only/idempotent or it is in the conservative Vanessa idempotency policy. Other calls return `ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED` with the old/new instance IDs, an explicit manual-review action and a bounded reason in its text; their outcome is treated as unknown and they are never replayed automatically. A stop that cannot prove the port owner of a live registered process keeps the process and returns `ITL_ONDEMAND_STOP_PORT_OWNER_UNVERIFIED` with its continuation. An exited registered process (absent PID, or a PID now naming another start) never blocks its stop: registration and leases are retired without a port proof, a listener with the instance's executable and markers (the same backend restarted under a new PID) is stopped, any other listener is left running, and the port allocator skips a port it cannot bind. The facade performs ROCTUP `close_1c_session` and `restart_1c_session` itself through the owned stop (restart then starts a fresh backend); they never reach the backend, so the registration always names the live process and no launcher command is returned. Start, mark-running, stop and recovery failures, including a failed cleanup after a failed start, are appended to the instance `*.evidence.jsonl` with `lifecycleStep`, `phase`, code and redacted reason even when no backend was established.
+
+The performance adapter supplies `_meta.itlPhaseRemainingMs` on tool calls to
+carry its remaining phase budget through HTTP and broker startup. Ordinary calls
+retain a ten-minute request budget; inherited budgets may extend to 24 hours and
+never extend an earlier caller deadline. HTTP transport has no separate shorter
+wall-clock cap. `--cleanup-timeout` controls owned EOF shutdown (default one
+minute); forced shutdown remains unproven cleanup at the adapter boundary.
+
+Each forwarded call acquires the `execution-guards-v2` resource set before any
+backend/native work and releases it after the atomic result and owned cleanup.
+The warmed idle backend is deliberately independent of database ownership and
+never keeps a resource between calls. Nested broker/native work receives a
+signed execution context and must stay within the outer call's declared resource
+set; it neither reacquires nor expands the guard. Same-base calls wait visibly,
+different-base calls remain independent, and diagnostic JSON is never lock
+authority. A timeout or interruption cancels and drains only the exact owned
+call/process tree; historical failure state does not block a later call. Shared
+server-base execution requires one configured execution host and rejects an
+ambiguous multi-host plan before launch.
+
+Private stdio runtimes may stop a proven idle backend without a new database
+admission. The local call gate excludes preparation, calls and recovery; the
+native owner validates the retained launch identity under a per-instance file
+lease. Vanessa uses this path only after the registered TestClient process and
+listener are gone. A live child falls back to guarded cleanup; interactive
+profiles and unresolved persistent/arbitrary activity keep their guarded path.
+The process-only schema cannot authorize launch, recovery, bulk stop or a
+database context, and old helpers reject it rather than silently downgrading.
+Before this stop attempt, the facade retires its local HTTP transport and closes
+the SDK session without a network DELETE. Its receive loop ends while native
+ports remain reserved; no late close request can reach a replacement listener.
+The live-child fallback retains the native owner and its guarded continuation.
+
+`close_test_client` confirms the original child's physical exit before returning
+success and releasing its call guard. Its nested `complete-test-client-close`
+operation can finish only that exact owned child; manager, port reservations and
+last registered recovery identity remain. Logical disconnect is unchanged.
+Every runtime mutation reserves its sorted instance set before reading state.
+The canonical record remains visible until confirmed cleanup, and stale writes,
+replacement identity and unfinished legacy removal claims cannot report clean
+completion. There is no database-wide or startup lock on idle manager cleanup.
+
+Interactive profiles use a persistent owner bound to their caller identity.
+A failed stop retains ownership for an explicit retry. The facade's guard record
+carries the worktree root and `holderState` (`active-native-call`, `recovering`)
+so waiting commands can name it. Terminal facade shutdown
+confirms bounded owned cleanup, closes its MCP transport and records the failure
+result. A caller must not reuse another execution's signed context to bypass
+waiting. The local source build and matching dependency lock
+are preparatory evidence; publishing this component still requires its exact
+source and executable to pass Release E2E for ROCTUP and Vanessa.
+
+The `designer-agent-safe-mode` stdin subcommand also accepts a transient
+`projectTestsCapability` issued by the opted-in project tooling owner. Its UTF-8
+payload and HMAC use the existing live execution context and bind the exact
+registered test extension, content proof, infobase, Designer process, listener
+and SSH key. The facade generates the five fixed connect/set SafeMode/get/
+disconnect/shutdown commands; caller-supplied commands and protection changes
+are refused. The nested guard cannot reacquire or enlarge its parent's resources.
+This is separate from the unchanged fixed tooling-extension sequences. See
+[project test settings](../../.agents/skills/1c-workflow/references/yaxunit-tests.md).
 
 Build the release asset from the repository root:
 
@@ -17,3 +228,28 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Build-ItlOnDemandMcp.ps1
 ```
 
 The resulting SHA256 must be copied into `templates/dependency-lock.json` in the same workflow release that publishes the asset. Compatibility catalogs must be generated from a real backend `tools/list` response with `scripts/New-ItlOnDemandCatalog.ps1`; hand-authored catalogs are not release-qualified.
+
+The existing `ondemand-mcp` E2E stage also requires the Vanessa probe's
+`-verify-missing-state-recovery` evidence. On the isolated stand it removes only
+its bound runtime record, calls the original `manage_test_client(connect)` on
+the same external session, checks the replacement through a window-list call,
+and independently observes that both original native PIDs have exited. It never
+stops processes or restores runtime JSON itself. Missing proof fails acceptance;
+the normal facade owner retains responsibility for cleanup and continuation.
+The report includes the original record's SHA256 and safe instance fields,
+without lease tokens. Probe unit tests do not qualify real 1C recovery.
+
+Smoke may include a normal idle restart. Before fault injection, the probe makes
+one read-only call on the original session and binds its current runtime record.
+Instance and artifact identity must remain unchanged; the injection still checks
+the exact freshly bound PID/port values and refuses contradictory records.
+
+A previously armed idle callback becomes a no-op after terminal close or a newer
+call supersedes its generation. It must not request database admission with an
+expired context after waiting for recovery, or discard pending cleanup evidence.
+The explicit owned-stop path still owns native cleanup and its confirmation;
+guarded idle cleanup retains admission and its post-admission generation check.
+When another holder keeps the base for the callback's whole admission budget,
+the still-current callback is armed again for the next idle interval: a warm
+backend never survives until stdio EOF merely because one cleanup attempt met a
+helper's guard.

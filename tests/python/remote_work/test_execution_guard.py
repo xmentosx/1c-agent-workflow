@@ -1,0 +1,293 @@
+import json
+import io
+import multiprocessing
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from itl_remote.common import WorkError, process_identity
+from itl_remote.execution_guard import (ExecutionGuard, canonical_base, canonical_resources,
+                                        decode_execution_context, resource_key, target_execution,
+                                        _OsHandle)
+from itl_remote.execution_guard import encode_execution_context
+from itl_remote.execution_guard_host import read_request
+from itl_remote.execution_guard_holders import inventory
+
+
+def _hold(root, resources, ready, release):
+    with ExecutionGuard(root, resources, "test-owner", timeout=5):
+        ready.set()
+        release.wait(5)
+
+
+def _acquire_and_report(root, resources, queue, delay=0.0):
+    if delay:
+        time.sleep(delay)
+    started = time.monotonic()
+    with ExecutionGuard(root, resources, "test-waiter", timeout=5):
+        queue.put(time.monotonic() - started)
+
+
+class ExecutionGuardTests(unittest.TestCase):
+    def test_host_accepts_initial_utf8_bom_and_preserves_unicode_path(self):
+        request = {"schemaVersion": 1, "root": "C:\\Корень с пробелом",
+                   "bases": [{"kind": "file", "path": "C:\\База с пробелом"}],
+                   "operation": "test-owner", "executionId": "a" * 32, "timeout": 3600}
+        line = "\ufeff" + json.dumps(request, ensure_ascii=False) + "\n"
+        with mock.patch("sys.stdin", io.StringIO(line)):
+            self.assertEqual(read_request(), request)
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / "execution-guards-v2"
+        self.base_a = {"kind": "file", "path": str(Path(self.temp.name) / "База с пробелом")}
+        self.base_b = {"kind": "file", "path": str(Path(self.temp.name) / "Другая база")}
+        self.a = canonical_resources([self.base_a])
+        self.b = canonical_resources([self.base_b])
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_canonical_file_identity_handles_spaces_and_cyrillic(self):
+        same = {"kind": "file", "path": str(Path(self.temp.name) / "." / "База с пробелом")}
+        self.assertEqual(resource_key(self.base_a), resource_key(same))
+        self.assertEqual("file", canonical_base(self.base_a)["kind"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows named-mutex namespace")
+    def test_windows_authority_is_shared_across_logon_sessions(self):
+        handle = _OsHandle(self.root, self.a[0])
+        self.assertTrue(handle.name.startswith("Global\\ITL.ExecutionGuard.V2."))
+
+    def test_server_identity_requires_exact_server_and_infobase(self):
+        first = resource_key({"kind": "server", "server": "Srv", "infobase": "Base"})
+        self.assertEqual(first, resource_key({"kind": "server", "cluster": "srv", "name": "base"}))
+        self.assertEqual(first, resource_key({"kind": "server", "path": "srv/Base"}))
+        self.assertEqual(first, resource_key({"kind": "server", "path": 'Srvr="Srv";Ref="Base";'}))
+        self.assertNotEqual(first, resource_key({"kind": "server", "server": "srv2", "infobase": "base"}))
+
+    def test_same_base_waits_and_different_base_does_not(self):
+        ready = multiprocessing.Event()
+        release = multiprocessing.Event()
+        owner = multiprocessing.Process(target=_hold, args=(self.root, self.a, ready, release))
+        owner.start()
+        self.assertTrue(ready.wait(5))
+        queue = multiprocessing.Queue()
+        different = multiprocessing.Process(target=_acquire_and_report,
+                                            args=(self.root, self.b, queue))
+        same = multiprocessing.Process(target=_acquire_and_report,
+                                       args=(self.root, self.a, queue))
+        different.start()
+        same.start()
+        self.assertLess(queue.get(timeout=5), 1.0)
+        release.set()
+        self.assertGreaterEqual(queue.get(timeout=5), 0.01)
+        for process in (different, same, owner):
+            process.join(5)
+            self.assertEqual(0, process.exitcode)
+
+    def test_multi_resource_waiter_never_holds_partial_set(self):
+        ready = multiprocessing.Event()
+        release = multiprocessing.Event()
+        owner = multiprocessing.Process(target=_hold, args=(self.root, self.b, ready, release))
+        owner.start()
+        self.assertTrue(ready.wait(5))
+        queue = multiprocessing.Queue()
+        combined = multiprocessing.Process(target=_acquire_and_report,
+                                            args=(self.root, self.a + self.b, queue))
+        combined.start()
+        deadline = time.monotonic() + 5
+        records = []
+        while time.monotonic() < deadline:
+            records = list((self.root / "waiters").glob("*.json"))
+            if records:
+                break
+            time.sleep(0.02)
+        self.assertTrue(records)
+        raw_a = _OsHandle(self.root, self.a[0])
+        self.assertTrue(raw_a.try_acquire(), "the waiting multi-resource job retained a partial handle")
+        raw_a.release()
+        release.set()
+        self.assertGreaterEqual(queue.get(timeout=5), 0.01)
+        for process in (combined, owner):
+            process.join(5)
+            self.assertEqual(0, process.exitcode)
+
+    def test_reentrant_acquisition_requires_inherited_context(self):
+        with ExecutionGuard(self.root, self.a, "outer", timeout=2):
+            with self.assertRaisesRegex(WorkError, "REENTRANT"):
+                with ExecutionGuard(self.root, self.a, "inner", timeout=2):
+                    self.fail("same-process acquisition was recursively admitted")
+
+    def test_owner_death_releases_os_authority(self):
+        ready = multiprocessing.Event()
+        release = multiprocessing.Event()
+        owner = multiprocessing.Process(target=_hold, args=(self.root, self.a, ready, release))
+        owner.start()
+        self.assertTrue(ready.wait(5))
+        owner.terminate()
+        owner.join(5)
+        with ExecutionGuard(self.root, self.a, "after-crash", timeout=2):
+            pass
+
+    def test_corrupt_and_terminal_diagnostics_do_not_block(self):
+        state = self.root / "executions" / "old.json"
+        state.parent.mkdir(parents=True)
+        state.write_text("not-json", encoding="utf-8")
+        with ExecutionGuard(self.root, self.a, "new", timeout=2) as guard:
+            current = json.loads(guard.state_path.read_text(encoding="utf-8"))
+            self.assertEqual("running", current["state"])
+
+    def test_cancel_stops_only_waiter(self):
+        ready = multiprocessing.Event()
+        release = multiprocessing.Event()
+        owner = multiprocessing.Process(target=_hold, args=(self.root, self.a, ready, release))
+        owner.start()
+        self.assertTrue(ready.wait(5))
+        cancel = self.root / "cancel"
+        cancel.parent.mkdir(parents=True, exist_ok=True)
+        cancel.write_text("cancel", encoding="utf-8")
+        with self.assertRaisesRegex(WorkError, "EXECUTION_GUARD_CANCELLED"):
+            with ExecutionGuard(self.root, self.a, "cancelled", timeout=2, cancel_path=cancel):
+                self.fail("cancelled waiter was admitted")
+        self.assertTrue(owner.is_alive())
+        release.set()
+        owner.join(5)
+
+    def test_phase_deadline_bounds_guard_wait(self):
+        ready = multiprocessing.Event()
+        release = multiprocessing.Event()
+        owner = multiprocessing.Process(target=_hold, args=(self.root, self.a, ready, release))
+        owner.start()
+        self.assertTrue(ready.wait(5))
+        try:
+            deadline = time.monotonic_ns() + 75_000_000
+            with self.assertRaisesRegex(WorkError, "PHASE_DEADLINE_EXPIRED"):
+                with ExecutionGuard(self.root, self.a, "deadline", timeout=2,
+                                    phase_deadline=deadline):
+                    self.fail("expired phase was admitted")
+        finally:
+            release.set()
+            owner.join(5)
+
+    def test_nested_context_is_signed_and_cannot_expand_resources(self):
+        with ExecutionGuard(self.root, self.a, "outer", timeout=2) as outer:
+            context = outer.context()
+            payload = decode_execution_context(context["encoded"], context["key"], self.a)
+            self.assertEqual(outer.execution_id, payload["executionId"])
+            with self.assertRaisesRegex(WorkError, "RESOURCE_EXPANSION"):
+                decode_execution_context(context["encoded"], context["key"], self.a + self.b)
+            wrong = bytearray(context["key"])
+            wrong[0] ^= 1
+            with self.assertRaisesRegex(WorkError, "SIGNATURE"):
+                decode_execution_context(context["encoded"], bytes(wrong), self.a)
+
+    @unittest.skipUnless(os.name == "nt", "retained terminated process handles are a Windows boundary")
+    def test_exited_supervisor_cannot_validate_context_while_its_windows_identity_is_still_queryable(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            identity = process_identity(child.pid)
+            payload = {"schemaVersion": 1, "protocol": "execution-guards-v2",
+                       "executionId": "a" * 32, "operation": "original-owner",
+                       "resources": self.a, "supervisor": identity}
+            key = b"k" * 32
+            encoded = encode_execution_context(payload, key)
+            self.assertEqual(identity, decode_execution_context(encoded, key, self.a)["supervisor"])
+            child.terminate()
+            child.wait(timeout=10)
+            # Popen retains its Windows handle: PID/creation identity alone can
+            # still match after exit. The original liveness boundary must reject.
+            self.assertEqual(identity, process_identity(child.pid))
+            with self.assertRaisesRegex(WorkError, "EXECUTION_CONTEXT_INVALID"):
+                decode_execution_context(encoded, key, self.a)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=10)
+
+    def test_record_names_worktree_and_holder_phase_without_changing_admission(self):
+        project = str(Path(self.temp.name) / "Рабочая копия с пробелом")
+        with ExecutionGuard(self.root, self.a, "facade-call", timeout=2, project_root=project,
+                            holder_state="active-native-call") as guard:
+            record = json.loads(guard.state_path.read_text(encoding="utf-8"))
+            self.assertEqual(project, record["projectRoot"])
+            self.assertEqual("active-native-call", record["holderState"])
+            guard.set_holder_state("cleanup-unconfirmed")
+            record = json.loads(guard.state_path.read_text(encoding="utf-8"))
+            self.assertEqual("cleanup-unconfirmed", record["holderState"])
+            self.assertEqual("running", record["state"])
+            with self.assertRaisesRegex(WorkError, "HOLDER_STATE_INVALID"):
+                guard.set_holder_state("finished")
+        with self.assertRaisesRegex(WorkError, "HOLDER_STATE_INVALID"):
+            ExecutionGuard(self.root, self.a, "bad", holder_state="unknown")
+
+    def test_host_publishes_holder_phase_on_request(self):
+        project = str(Path(self.temp.name) / "Рабочая копия")
+        request = {"schemaVersion": 1, "root": str(self.root), "bases": [self.base_a],
+                   "operation": "ondemand-roctup-call", "executionId": "c" * 32, "timeout": 5,
+                   "projectRoot": project, "holderState": "active-native-call"}
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[3] /
+                                                       ".agents/skills/itl-remote-runner/scripts"))
+        host = subprocess.Popen([sys.executable, "-B", "-X", "utf8", "-u", "-m", "itl_remote.execution_guard_host"],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8",
+                                env=environment)
+        def exchange(value):
+            print(json.dumps(value, ensure_ascii=True), file=host.stdin, flush=True)
+            while True:
+                event = json.loads(host.stdout.readline())
+                if event.get("event") != "waiting":
+                    return event
+
+        try:
+            self.assertEqual("admitted", exchange(request)["event"])
+            event = exchange({"action": "state", "holderState": "cleanup-unconfirmed"})
+            self.assertEqual(("state", "cleanup-unconfirmed"), (event["event"], event["holderState"]))
+            self.assertIn("HOLDER_STATE_INVALID", exchange({"action": "state", "holderState": "done"})["error"])
+            listed = inventory(self.root, [self.base_a])["holders"]
+            self.assertEqual(1, len(listed))
+            self.assertTrue(listed[0]["alive"])
+            self.assertEqual((project, "cleanup-unconfirmed"), (listed[0]["projectRoot"], listed[0]["holderState"]))
+            self.assertEqual("released", exchange({"action": "release", "result": "succeeded"})["event"])
+        finally:
+            host.stdin.close()
+            host.wait(timeout=10)
+
+    def test_holder_inventory_selects_overlap_and_marks_dead_and_shared_holders(self):
+        state = self.root / "executions"
+        state.mkdir(parents=True)
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait(timeout=10)
+        identity = process_identity(os.getpid())
+        records = {
+            "live": {"resources": self.a + self.b, "pid": os.getpid(), "supervisor": identity, "state": "running"},
+            "dead": {"resources": self.a, "pid": dead.pid, "supervisor": {"pid": dead.pid, "creationId": "gone"},
+                     "state": "running"},
+            "finished": {"resources": self.a, "pid": os.getpid(), "supervisor": identity, "state": "succeeded"},
+            "unrelated": {"resources": self.b, "pid": os.getpid(), "supervisor": identity, "state": "running"},
+        }
+        for name, value in records.items():
+            value.update(protocol="execution-guards-v2", executionId=name, operation=name, holderState="idle")
+            (state / (name + ".json")).write_text(json.dumps(value), encoding="utf-8")
+        (state / "broken.json").write_text("not-json", encoding="utf-8")
+        listed = {item["executionId"]: item for item in inventory(self.root, [self.base_a], [self.base_b])["holders"]}
+        self.assertEqual({"live", "dead"}, set(listed))
+        self.assertTrue(listed["live"]["alive"])
+        self.assertTrue(listed["live"]["touchesShared"])
+        self.assertFalse(listed["dead"]["alive"])
+        self.assertFalse(listed["dead"]["touchesShared"])
+        self.assertEqual("idle", listed["dead"]["holderState"])
+
+    def test_target_rejects_multi_host_server_configuration(self):
+        target = {"workspace": self.temp.name,
+                  "infoBase": {"kind": "server", "server": "srv", "infobase": "base"},
+                  "execution": {"hosts": ["one", "two"]}}
+        with self.assertRaisesRegex(WorkError, "MULTI_HOST"):
+            target_execution(target)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,12 @@
+{
+    "schemaVersion":  1,
+    "project":  "PM5 (read-only copy, 2026-11-03 incident report item 8.3)",
+    "files":  [
+                  {
+                      "path":  "1c-20261103-092351-091-40172-01de3bdd.out.txt",
+                      "sha256":  "1692d27c992c873aa0753c7f272a1d177a4ed85b31f990cc01ef481e7ce1720c",
+                      "source":  "logs/1c/1c-20261103-092351-091-40172-01de3bdd.log",
+                      "extraction":  "verbatim /CheckModules -AllExtensions /Out log"
+                  }
+              ]
+}

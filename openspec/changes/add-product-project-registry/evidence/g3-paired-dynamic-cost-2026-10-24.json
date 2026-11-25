@@ -1,0 +1,1362 @@
+{
+  "schemaVersion": 1,
+  "scope": "G3-B5 current PM5 paired publisher-only / endpoint / valid-cache offline cost; measurement complete for this subset, no full G3 or dynamic performance acceptance",
+  "sourceCommit": "2caf6caf0686570b763ff9788161ebe831f982d1",
+  "installedCommit": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+  "identity": {
+    "originRevision": "c943f8e6ca1f536b2c3692e4bf4115d8daf84351",
+    "roots": [
+      {
+        "changed": [],
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "head": "565cfade88413715297ede2bb55591a8431cab6e",
+        "untracked": []
+      },
+      {
+        "changed": [],
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "head": "b8f35248cc8c8c3709564d5b4e8e75b1e4af8aca",
+        "untracked": []
+      }
+    ],
+    "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+    "sourceCommit": "2caf6caf0686570b763ff9788161ebe831f982d1",
+    "baseline": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\identity-after.json",
+    "runtime": [
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        "sha256": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+        "sha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1",
+        "sha256": "e3cf8bfc951a75d966ca4fab8e8bd7819e756b65b6dffd3e41c4983d12cb8428",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-jsonc.ps1",
+        "sha256": null,
+        "sourceEqualsInstalled": true
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+        "sha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
+        "sha256": "dc8c5776be672b638ecba0159db7f011724ab11495f24f8c4bf73f1e0546c0e8",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+        "sha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+        "sha256": "7959c8fb846516305a2a43d39bcd46f98d5ed265e5c1ef50c75cb16ed34d66fc",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        "sha256": "5413a3442d5fc92e60460eda5550737574f609d429b20a15f26bbfaa49db9a67",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1",
+        "sha256": "5cf5a7a2d337fa40cf36e0220c326e29a100b838325bc7b3bf85f6434e59f818",
+        "sourceEqualsInstalled": true
+      }
+    ],
+    "utc": "2026-10-24T10:18:17.0548713Z",
+    "workflowCommit": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "bytes": 3295928320
+    }
+  },
+  "host": {
+    "extraInputs": [
+      {
+        "path": ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        "sourceAndInstalledSha256": "9e0f210cde5f745a8dceb0df55d1c7ede0c6f5196a09023f44ea14f136f8ea30",
+        "initialSeriesToFixedSeriesUnchanged": true
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.jsonc.ps1",
+        "sourceAndInstalledSha256": "b6ed7f442796458d7e3c8312e95d850585da6a226c3379513e80d7dd99563b03",
+        "initialSeriesToFixedSeriesUnchanged": true
+      }
+    ],
+    "engine": {
+      "edition": "Desktop",
+      "version": "5.1.26100.9711",
+      "executable": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+    },
+    "utc": "2026-10-24T10:18:15.3242072Z",
+    "os": {
+      "Caption": "Майкрософт Windows 11 Домашняя",
+      "Version": "10.0.26300",
+      "BuildNumber": "26300"
+    },
+    "effectiveAdministrator": false
+  },
+  "measurements": {
+    "utc": "2026-10-24T10:17:30.431699+00:00",
+    "publicCalls": 230,
+    "qualifiedSamples": 120,
+    "exploratorySamples": 80,
+    "blocksPerMode": 20,
+    "modelTurns": 0,
+    "primaryObserver": "off",
+    "p95Method": "nearest rank ceil(.95*n), n=20; delta computed within each pair",
+    "fixedOriginInvocationHash": "bb2cefb29d64558b441683ca0e9d40348d02e539b8a4d9913208166b77e5d304",
+    "modes": [
+      {
+        "mode": "publisher-only",
+        "pairs": [
+          {
+            "block": 1,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 17037.6734,
+            "legacyMs": 12021.1347,
+            "deltaMs": 5016.538699999999,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-01-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-01-legacy-result.json"
+          },
+          {
+            "block": 2,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 18372.4769,
+            "legacyMs": 11492.6978,
+            "deltaMs": 6879.779100000002,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-02-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-02-legacy-result.json"
+          },
+          {
+            "block": 3,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 21308.3133,
+            "legacyMs": 12076.5362,
+            "deltaMs": 9231.777100000001,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-03-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-03-legacy-result.json"
+          },
+          {
+            "block": 4,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 18870.7307,
+            "legacyMs": 12064.1402,
+            "deltaMs": 6806.5905,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-04-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-04-legacy-result.json"
+          },
+          {
+            "block": 5,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 16703.944600000003,
+            "legacyMs": 10598.2931,
+            "deltaMs": 6105.651500000002,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-05-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-05-legacy-result.json"
+          },
+          {
+            "block": 6,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 16425.486,
+            "legacyMs": 10987.1103,
+            "deltaMs": 5438.3757000000005,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-06-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-06-legacy-result.json"
+          },
+          {
+            "block": 7,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 15931.2636,
+            "legacyMs": 10833.921100000001,
+            "deltaMs": 5097.342499999999,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-07-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-07-legacy-result.json"
+          },
+          {
+            "block": 8,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 14673.438,
+            "legacyMs": 10592.364000000001,
+            "deltaMs": 4081.0739999999987,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-08-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-08-legacy-result.json"
+          },
+          {
+            "block": 9,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 15292.1025,
+            "legacyMs": 10559.055,
+            "deltaMs": 4733.047500000001,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-09-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-09-legacy-result.json"
+          },
+          {
+            "block": 10,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 16821.8733,
+            "legacyMs": 8905.3659,
+            "deltaMs": 7916.507399999999,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-10-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-10-legacy-result.json"
+          },
+          {
+            "block": 11,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 14598.6717,
+            "legacyMs": 8280.0521,
+            "deltaMs": 6318.6196,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-11-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-11-legacy-result.json"
+          },
+          {
+            "block": 12,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 14366.549,
+            "legacyMs": 10330.4127,
+            "deltaMs": 4036.1363,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-12-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-12-legacy-result.json"
+          },
+          {
+            "block": 13,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 15365.2451,
+            "legacyMs": 9059.5515,
+            "deltaMs": 6305.6936000000005,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-13-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-13-legacy-result.json"
+          },
+          {
+            "block": 14,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 14700.628,
+            "legacyMs": 8054.6813,
+            "deltaMs": 6645.9467,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-14-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-14-legacy-result.json"
+          },
+          {
+            "block": 15,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 15871.1478,
+            "legacyMs": 8735.7652,
+            "deltaMs": 7135.382600000001,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-15-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-15-legacy-result.json"
+          },
+          {
+            "block": 16,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 15674.8907,
+            "legacyMs": 11879.906200000001,
+            "deltaMs": 3794.9844999999987,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-16-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-16-legacy-result.json"
+          },
+          {
+            "block": 17,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 14914.477,
+            "legacyMs": 11475.8346,
+            "deltaMs": 3438.6424000000006,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-17-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-17-legacy-result.json"
+          },
+          {
+            "block": 18,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 18256.7988,
+            "legacyMs": 10122.6685,
+            "deltaMs": 8134.130300000001,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-18-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-18-legacy-result.json"
+          },
+          {
+            "block": 19,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 17795.426600000003,
+            "legacyMs": 9387.733900000001,
+            "deltaMs": 8407.692700000001,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-19-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-19-legacy-result.json"
+          },
+          {
+            "block": 20,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 14248.949200000001,
+            "legacyMs": 11064.0419,
+            "deltaMs": 3184.9073000000008,
+            "catalogStdoutBytes": 1562,
+            "legacyStdoutBytes": 1973,
+            "catalogResult": "fixed-publisher-only-20-catalog-result.json",
+            "legacyResult": "fixed-publisher-only-20-legacy-result.json"
+          }
+        ],
+        "catalog": {
+          "n": 20,
+          "medianMs": 15901.2057,
+          "p95NearestRankMs": 18870.7307,
+          "minMs": 14248.949200000001,
+          "maxMs": 21308.3133,
+          "meanMs": 16361.50431
+        },
+        "legacy": {
+          "n": 20,
+          "medianMs": 10595.328550000002,
+          "p95NearestRankMs": 12064.1402,
+          "minMs": 8054.6813,
+          "maxMs": 12076.5362,
+          "meanMs": 10426.063310000001
+        },
+        "pairedDelta": {
+          "n": 20,
+          "medianMs": 6205.672550000001,
+          "p95NearestRankMs": 8407.692700000001,
+          "minMs": 3184.9073000000008,
+          "maxMs": 9231.777100000001,
+          "meanMs": 5935.441000000001
+        },
+        "stdoutBytes": {
+          "catalog": [
+            1562
+          ],
+          "legacy": [
+            1973
+          ]
+        }
+      },
+      {
+        "mode": "endpoint",
+        "pairs": [
+          {
+            "block": 1,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 21785.6279,
+            "legacyMs": 12097.151,
+            "deltaMs": 9688.4769,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-01-catalog-result.json",
+            "legacyResult": "fixed-endpoint-01-legacy-result.json"
+          },
+          {
+            "block": 2,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 21499.338200000002,
+            "legacyMs": 9767.3366,
+            "deltaMs": 11732.001600000001,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-02-catalog-result.json",
+            "legacyResult": "fixed-endpoint-02-legacy-result.json"
+          },
+          {
+            "block": 3,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 20415.915800000002,
+            "legacyMs": 8510.476,
+            "deltaMs": 11905.439800000002,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-03-catalog-result.json",
+            "legacyResult": "fixed-endpoint-03-legacy-result.json"
+          },
+          {
+            "block": 4,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 19032.188000000002,
+            "legacyMs": 11577.8245,
+            "deltaMs": 7454.363500000001,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-04-catalog-result.json",
+            "legacyResult": "fixed-endpoint-04-legacy-result.json"
+          },
+          {
+            "block": 5,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 13797.198400000001,
+            "legacyMs": 5927.8330000000005,
+            "deltaMs": 7869.365400000001,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-05-catalog-result.json",
+            "legacyResult": "fixed-endpoint-05-legacy-result.json"
+          },
+          {
+            "block": 6,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 12331.5447,
+            "legacyMs": 6370.1059000000005,
+            "deltaMs": 5961.4388,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-06-catalog-result.json",
+            "legacyResult": "fixed-endpoint-06-legacy-result.json"
+          },
+          {
+            "block": 7,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 13531.7011,
+            "legacyMs": 6200.5164,
+            "deltaMs": 7331.1847,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-07-catalog-result.json",
+            "legacyResult": "fixed-endpoint-07-legacy-result.json"
+          },
+          {
+            "block": 8,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 14155.5396,
+            "legacyMs": 6701.9343,
+            "deltaMs": 7453.6053,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-08-catalog-result.json",
+            "legacyResult": "fixed-endpoint-08-legacy-result.json"
+          },
+          {
+            "block": 9,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 16407.513600000002,
+            "legacyMs": 7151.2927,
+            "deltaMs": 9256.220900000002,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-09-catalog-result.json",
+            "legacyResult": "fixed-endpoint-09-legacy-result.json"
+          },
+          {
+            "block": 10,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 20001.8279,
+            "legacyMs": 7755.2266,
+            "deltaMs": 12246.6013,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-10-catalog-result.json",
+            "legacyResult": "fixed-endpoint-10-legacy-result.json"
+          },
+          {
+            "block": 11,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 20124.681800000002,
+            "legacyMs": 9323.3019,
+            "deltaMs": 10801.379900000002,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-11-catalog-result.json",
+            "legacyResult": "fixed-endpoint-11-legacy-result.json"
+          },
+          {
+            "block": 12,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 24118.195,
+            "legacyMs": 9295.1505,
+            "deltaMs": 14823.0445,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-12-catalog-result.json",
+            "legacyResult": "fixed-endpoint-12-legacy-result.json"
+          },
+          {
+            "block": 13,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 24041.2904,
+            "legacyMs": 9451.7289,
+            "deltaMs": 14589.561500000002,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-13-catalog-result.json",
+            "legacyResult": "fixed-endpoint-13-legacy-result.json"
+          },
+          {
+            "block": 14,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 17389.6413,
+            "legacyMs": 10486.811800000001,
+            "deltaMs": 6902.829499999998,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-14-catalog-result.json",
+            "legacyResult": "fixed-endpoint-14-legacy-result.json"
+          },
+          {
+            "block": 15,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 17949.180800000002,
+            "legacyMs": 7662.5722000000005,
+            "deltaMs": 10286.608600000001,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-15-catalog-result.json",
+            "legacyResult": "fixed-endpoint-15-legacy-result.json"
+          },
+          {
+            "block": 16,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 19398.073800000002,
+            "legacyMs": 7717.7794,
+            "deltaMs": 11680.294400000002,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-16-catalog-result.json",
+            "legacyResult": "fixed-endpoint-16-legacy-result.json"
+          },
+          {
+            "block": 17,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 16678.2775,
+            "legacyMs": 7488.626200000001,
+            "deltaMs": 9189.6513,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-17-catalog-result.json",
+            "legacyResult": "fixed-endpoint-17-legacy-result.json"
+          },
+          {
+            "block": 18,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 25800.286200000002,
+            "legacyMs": 9129.201500000001,
+            "deltaMs": 16671.0847,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-18-catalog-result.json",
+            "legacyResult": "fixed-endpoint-18-legacy-result.json"
+          },
+          {
+            "block": 19,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 24830.8205,
+            "legacyMs": 12888.4776,
+            "deltaMs": 11942.342900000001,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-19-catalog-result.json",
+            "legacyResult": "fixed-endpoint-19-legacy-result.json"
+          },
+          {
+            "block": 20,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 25682.2324,
+            "legacyMs": 12509.4729,
+            "deltaMs": 13172.7595,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1956,
+            "catalogResult": "fixed-endpoint-20-catalog-result.json",
+            "legacyResult": "fixed-endpoint-20-legacy-result.json"
+          }
+        ],
+        "catalog": {
+          "n": 20,
+          "medianMs": 19699.95085,
+          "p95NearestRankMs": 25682.2324,
+          "minMs": 12331.5447,
+          "maxMs": 25800.286200000002,
+          "meanMs": 19448.553745
+        },
+        "legacy": {
+          "n": 20,
+          "medianMs": 8819.83875,
+          "p95NearestRankMs": 12509.4729,
+          "minMs": 5927.8330000000005,
+          "maxMs": 12888.4776,
+          "meanMs": 8900.640995
+        },
+        "pairedDelta": {
+          "n": 20,
+          "medianMs": 10543.994250000002,
+          "p95NearestRankMs": 14823.0445,
+          "minMs": 5961.4388,
+          "maxMs": 16671.0847,
+          "meanMs": 10547.912750000001
+        },
+        "stdoutBytes": {
+          "catalog": [
+            1630
+          ],
+          "legacy": [
+            1956
+          ]
+        }
+      },
+      {
+        "mode": "offline",
+        "pairs": [
+          {
+            "block": 1,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 11348.6037,
+            "legacyMs": 8711.921400000001,
+            "deltaMs": 2636.6822999999986,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-01-catalog-result.json",
+            "legacyResult": "offline2-offline-01-legacy-result.json"
+          },
+          {
+            "block": 2,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 13083.8003,
+            "legacyMs": 9101.8431,
+            "deltaMs": 3981.9572000000007,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-02-catalog-result.json",
+            "legacyResult": "offline2-offline-02-legacy-result.json"
+          },
+          {
+            "block": 3,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 14040.499,
+            "legacyMs": 8991.4174,
+            "deltaMs": 5049.0815999999995,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-03-catalog-result.json",
+            "legacyResult": "offline2-offline-03-legacy-result.json"
+          },
+          {
+            "block": 4,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 13768.893900000001,
+            "legacyMs": 8068.162600000001,
+            "deltaMs": 5700.7313,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-04-catalog-result.json",
+            "legacyResult": "offline2-offline-04-legacy-result.json"
+          },
+          {
+            "block": 5,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 11192.3852,
+            "legacyMs": 8656.4254,
+            "deltaMs": 2535.9598000000005,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-05-catalog-result.json",
+            "legacyResult": "offline2-offline-05-legacy-result.json"
+          },
+          {
+            "block": 6,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 11619.4845,
+            "legacyMs": 8504.1211,
+            "deltaMs": 3115.3634,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-06-catalog-result.json",
+            "legacyResult": "offline2-offline-06-legacy-result.json"
+          },
+          {
+            "block": 7,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 14265.752900000001,
+            "legacyMs": 7496.4753,
+            "deltaMs": 6769.277600000001,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-07-catalog-result.json",
+            "legacyResult": "offline2-offline-07-legacy-result.json"
+          },
+          {
+            "block": 8,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 11574.236,
+            "legacyMs": 7948.953,
+            "deltaMs": 3625.2830000000004,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-08-catalog-result.json",
+            "legacyResult": "offline2-offline-08-legacy-result.json"
+          },
+          {
+            "block": 9,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 11648.299500000001,
+            "legacyMs": 8383.885,
+            "deltaMs": 3264.4145000000008,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-09-catalog-result.json",
+            "legacyResult": "offline2-offline-09-legacy-result.json"
+          },
+          {
+            "block": 10,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 12392.0998,
+            "legacyMs": 8373.972600000001,
+            "deltaMs": 4018.127199999999,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-10-catalog-result.json",
+            "legacyResult": "offline2-offline-10-legacy-result.json"
+          },
+          {
+            "block": 11,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 13395.6006,
+            "legacyMs": 10260.618400000001,
+            "deltaMs": 3134.9821999999986,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-11-catalog-result.json",
+            "legacyResult": "offline2-offline-11-legacy-result.json"
+          },
+          {
+            "block": 12,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 12884.7461,
+            "legacyMs": 9164.1999,
+            "deltaMs": 3720.5462000000007,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-12-catalog-result.json",
+            "legacyResult": "offline2-offline-12-legacy-result.json"
+          },
+          {
+            "block": 13,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 13007.3672,
+            "legacyMs": 9502.639000000001,
+            "deltaMs": 3504.7281999999996,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-13-catalog-result.json",
+            "legacyResult": "offline2-offline-13-legacy-result.json"
+          },
+          {
+            "block": 14,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 12758.4626,
+            "legacyMs": 8877.001900000001,
+            "deltaMs": 3881.4606999999996,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-14-catalog-result.json",
+            "legacyResult": "offline2-offline-14-legacy-result.json"
+          },
+          {
+            "block": 15,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 12267.351,
+            "legacyMs": 8263.6415,
+            "deltaMs": 4003.709500000001,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-15-catalog-result.json",
+            "legacyResult": "offline2-offline-15-legacy-result.json"
+          },
+          {
+            "block": 16,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 11703.5809,
+            "legacyMs": 8806.818000000001,
+            "deltaMs": 2896.7628999999997,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-16-catalog-result.json",
+            "legacyResult": "offline2-offline-16-legacy-result.json"
+          },
+          {
+            "block": 17,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 12533.8001,
+            "legacyMs": 8339.696600000001,
+            "deltaMs": 4194.103499999999,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-17-catalog-result.json",
+            "legacyResult": "offline2-offline-17-legacy-result.json"
+          },
+          {
+            "block": 18,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 12907.5467,
+            "legacyMs": 8299.5236,
+            "deltaMs": 4608.0231,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-18-catalog-result.json",
+            "legacyResult": "offline2-offline-18-legacy-result.json"
+          },
+          {
+            "block": 19,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 13844.2258,
+            "legacyMs": 9021.8366,
+            "deltaMs": 4822.3892,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-19-catalog-result.json",
+            "legacyResult": "offline2-offline-19-legacy-result.json"
+          },
+          {
+            "block": 20,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 11827.7279,
+            "legacyMs": 8422.4169,
+            "deltaMs": 3405.3109999999997,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1214,
+            "catalogResult": "offline2-offline-20-catalog-result.json",
+            "legacyResult": "offline2-offline-20-legacy-result.json"
+          }
+        ],
+        "catalog": {
+          "n": 20,
+          "medianMs": 12646.13135,
+          "p95NearestRankMs": 14040.499,
+          "minMs": 11192.3852,
+          "maxMs": 14265.752900000001,
+          "meanMs": 12603.223185
+        },
+        "legacy": {
+          "n": 20,
+          "medianMs": 8580.27325,
+          "p95NearestRankMs": 9502.639000000001,
+          "minMs": 7496.4753,
+          "maxMs": 10260.618400000001,
+          "meanMs": 8659.778465000001
+        },
+        "pairedDelta": {
+          "n": 20,
+          "medianMs": 3801.00345,
+          "p95NearestRankMs": 5700.7313,
+          "minMs": 2535.9598000000005,
+          "maxMs": 6769.277600000001,
+          "meanMs": 3943.44472
+        },
+        "stdoutBytes": {
+          "catalog": [
+            1189
+          ],
+          "legacy": [
+            1214
+          ]
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "label": "fixed-endpoint-diagnostic-catalog",
+        "scenario": "endpoint",
+        "variant": "catalog",
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "startupCalls": 1,
+        "startupMs": 17618.2207,
+        "commonToMainMs": 17630.2232,
+        "wholeCliMs": 23304.2495,
+        "outcome": "full-managed-sync",
+        "evidence": "fixed-endpoint-diagnostic-catalog-result.json"
+      },
+      {
+        "label": "fixed-endpoint-diagnostic-legacy",
+        "scenario": "endpoint",
+        "variant": "legacy",
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "startupCalls": 0,
+        "startupMs": null,
+        "commonToMainMs": 38.0662,
+        "wholeCliMs": 10185.5491,
+        "outcome": "full-managed-sync",
+        "evidence": "fixed-endpoint-diagnostic-legacy-result.json"
+      },
+      {
+        "label": "fixed-publisher-only-diagnostic-catalog",
+        "scenario": "publisher-only",
+        "variant": "catalog",
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "startupCalls": 1,
+        "startupMs": 18993.8696,
+        "commonToMainMs": 19021.317900000002,
+        "wholeCliMs": 27456.6607,
+        "outcome": "full-managed-sync",
+        "evidence": "fixed-publisher-only-diagnostic-catalog-result.json"
+      },
+      {
+        "label": "fixed-publisher-only-diagnostic-legacy",
+        "scenario": "publisher-only",
+        "variant": "legacy",
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "startupCalls": 0,
+        "startupMs": null,
+        "commonToMainMs": 57.6011,
+        "wholeCliMs": 14842.1658,
+        "outcome": "full-managed-sync",
+        "evidence": "fixed-publisher-only-diagnostic-legacy-result.json"
+      },
+      {
+        "label": "offline2-offline-diagnostic-catalog",
+        "scenario": "offline",
+        "variant": "catalog",
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "startupCalls": 1,
+        "startupMs": 6876.01,
+        "commonToMainMs": 6887.667100000001,
+        "wholeCliMs": 16273.5663,
+        "outcome": "full-managed-sync",
+        "evidence": "offline2-offline-diagnostic-catalog-result.json"
+      },
+      {
+        "label": "offline2-offline-diagnostic-legacy",
+        "scenario": "offline",
+        "variant": "legacy",
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "startupCalls": 0,
+        "startupMs": null,
+        "commonToMainMs": 37.7036,
+        "wholeCliMs": 8860.189,
+        "outcome": "legacy-provider-connections-preserved",
+        "evidence": "offline2-offline-diagnostic-legacy-result.json"
+      }
+    ],
+    "failedPreflights": [
+      {
+        "label": "byte-observed-endpoint-diagnostic-catalog",
+        "publicExitCode": 0,
+        "result": "byte-observed-endpoint-diagnostic-catalog-result.json",
+        "kind": "harness-assertion-or-parser-interop"
+      },
+      {
+        "label": "endpoint-endpoint-diagnostic-catalog",
+        "publicExitCode": 0,
+        "result": "endpoint-endpoint-diagnostic-catalog-result.json",
+        "kind": "harness-assertion-or-parser-interop"
+      },
+      {
+        "label": "observed-publisher-only-diagnostic-catalog",
+        "publicExitCode": 0,
+        "result": "observed-publisher-only-diagnostic-catalog-result.json",
+        "kind": "harness-assertion-or-parser-interop"
+      },
+      {
+        "label": "offline-offline-diagnostic-legacy",
+        "publicExitCode": 0,
+        "result": "offline-offline-diagnostic-legacy-result.json",
+        "kind": "harness-assertion-or-parser-interop"
+      },
+      {
+        "label": "paired-endpoint-diagnostic-catalog",
+        "publicExitCode": 0,
+        "result": "paired-endpoint-diagnostic-catalog-result.json",
+        "kind": "harness-assertion-or-parser-interop"
+      },
+      {
+        "label": "publisher-only-diagnostic-catalog",
+        "publicExitCode": 0,
+        "result": "publisher-only-diagnostic-catalog-result.json",
+        "kind": "harness-assertion-or-parser-interop"
+      }
+    ],
+    "exploratoryResults": [
+      "endpoint2-endpoint-01-catalog-result.json",
+      "endpoint2-endpoint-01-legacy-result.json",
+      "endpoint2-endpoint-02-catalog-result.json",
+      "endpoint2-endpoint-02-legacy-result.json",
+      "endpoint2-endpoint-03-catalog-result.json",
+      "endpoint2-endpoint-03-legacy-result.json",
+      "endpoint2-endpoint-04-catalog-result.json",
+      "endpoint2-endpoint-04-legacy-result.json",
+      "endpoint2-endpoint-05-catalog-result.json",
+      "endpoint2-endpoint-05-legacy-result.json",
+      "endpoint2-endpoint-06-catalog-result.json",
+      "endpoint2-endpoint-06-legacy-result.json",
+      "endpoint2-endpoint-07-catalog-result.json",
+      "endpoint2-endpoint-07-legacy-result.json",
+      "endpoint2-endpoint-08-catalog-result.json",
+      "endpoint2-endpoint-08-legacy-result.json",
+      "endpoint2-endpoint-09-catalog-result.json",
+      "endpoint2-endpoint-09-legacy-result.json",
+      "endpoint2-endpoint-10-catalog-result.json",
+      "endpoint2-endpoint-10-legacy-result.json",
+      "endpoint2-endpoint-11-catalog-result.json",
+      "endpoint2-endpoint-11-legacy-result.json",
+      "endpoint2-endpoint-12-catalog-result.json",
+      "endpoint2-endpoint-12-legacy-result.json",
+      "endpoint2-endpoint-13-catalog-result.json",
+      "endpoint2-endpoint-13-legacy-result.json",
+      "endpoint2-endpoint-14-catalog-result.json",
+      "endpoint2-endpoint-14-legacy-result.json",
+      "endpoint2-endpoint-15-catalog-result.json",
+      "endpoint2-endpoint-15-legacy-result.json",
+      "endpoint2-endpoint-16-catalog-result.json",
+      "endpoint2-endpoint-16-legacy-result.json",
+      "endpoint2-endpoint-17-catalog-result.json",
+      "endpoint2-endpoint-17-legacy-result.json",
+      "endpoint2-endpoint-18-catalog-result.json",
+      "endpoint2-endpoint-18-legacy-result.json",
+      "endpoint2-endpoint-19-catalog-result.json",
+      "endpoint2-endpoint-19-legacy-result.json",
+      "endpoint2-endpoint-20-catalog-result.json",
+      "endpoint2-endpoint-20-legacy-result.json",
+      "paired-publisher-only-01-catalog-result.json",
+      "paired-publisher-only-01-legacy-result.json",
+      "paired-publisher-only-02-catalog-result.json",
+      "paired-publisher-only-02-legacy-result.json",
+      "paired-publisher-only-03-catalog-result.json",
+      "paired-publisher-only-03-legacy-result.json",
+      "paired-publisher-only-04-catalog-result.json",
+      "paired-publisher-only-04-legacy-result.json",
+      "paired-publisher-only-05-catalog-result.json",
+      "paired-publisher-only-05-legacy-result.json",
+      "paired-publisher-only-06-catalog-result.json",
+      "paired-publisher-only-06-legacy-result.json",
+      "paired-publisher-only-07-catalog-result.json",
+      "paired-publisher-only-07-legacy-result.json",
+      "paired-publisher-only-08-catalog-result.json",
+      "paired-publisher-only-08-legacy-result.json",
+      "paired-publisher-only-09-catalog-result.json",
+      "paired-publisher-only-09-legacy-result.json",
+      "paired-publisher-only-10-catalog-result.json",
+      "paired-publisher-only-10-legacy-result.json",
+      "paired-publisher-only-11-catalog-result.json",
+      "paired-publisher-only-11-legacy-result.json",
+      "paired-publisher-only-12-catalog-result.json",
+      "paired-publisher-only-12-legacy-result.json",
+      "paired-publisher-only-13-catalog-result.json",
+      "paired-publisher-only-13-legacy-result.json",
+      "paired-publisher-only-14-catalog-result.json",
+      "paired-publisher-only-14-legacy-result.json",
+      "paired-publisher-only-15-catalog-result.json",
+      "paired-publisher-only-15-legacy-result.json",
+      "paired-publisher-only-16-catalog-result.json",
+      "paired-publisher-only-16-legacy-result.json",
+      "paired-publisher-only-17-catalog-result.json",
+      "paired-publisher-only-17-legacy-result.json",
+      "paired-publisher-only-18-catalog-result.json",
+      "paired-publisher-only-18-legacy-result.json",
+      "paired-publisher-only-19-catalog-result.json",
+      "paired-publisher-only-19-legacy-result.json",
+      "paired-publisher-only-20-catalog-result.json",
+      "paired-publisher-only-20-legacy-result.json"
+    ],
+    "otherSamples": {
+      "unindexedUnprofiled": 11,
+      "allPassedDiagnostics": 13
+    }
+  },
+  "protocol": {
+    "reason": "Initial online series additionally changed VIBECODING1C_MCP_REGISTRY_REPO, part of Get-ItlProductProjectNoOpInputs invocationHash (context.ps1:464). Those 80 online samples are exploratory, not the requested isolated workload.",
+    "fixedControl": "Same private origin URL and VIBECODING1C_MCP_* values as preparation; switch only private refs/heads/main between synthetic target commits outside clocks; seed cache including .git/config restored exactly; assert adopted invocationHash equals seed for bound online calls",
+    "excludedWorkload": "80 online exploratory samples retained separately; no timing outlier filtering",
+    "recordedUtc": "2026-10-24T09:55:19.4749811Z",
+    "primary": {
+      "blocksPerMode": 20,
+      "publisherOnlyPrefix": "fixed",
+      "offlinePrefix": "offline2",
+      "allQualifiedSamplesRetained": true,
+      "endpointPrefix": "fixed"
+    },
+    "offline": "Existing 20 pairs retained: original private origin environment unchanged, cached remote deliberately unavailable in both variants",
+    "noRuntimeChange": true
+  },
+  "caseSemantics": {
+    "utc": "2026-10-24T10:16:57.106362+00:00",
+    "baseRevision": "c943f8e6ca1f536b2c3692e4bf4115d8daf84351",
+    "cases": [
+      {
+        "scenario": "publisher-only",
+        "targetUrl": "",
+        "targetRevision": "1148732c806772e34eac97fe4cccac343d2483b0",
+        "home": "home-seed"
+      },
+      {
+        "scenario": "endpoint",
+        "targetUrl": "http://127.0.0.1:9/g3-paired-endpoint",
+        "targetRevision": "fad7b8c082df571a829c7f0878bca629659a632f",
+        "home": "home-seed"
+      },
+      {
+        "scenario": "offline",
+        "targetUrl": "",
+        "targetRevision": null,
+        "home": "home-offline"
+      }
+    ],
+    "publisherOnlyChangedFields": [
+      "publishedAt"
+    ],
+    "endpointChangedFields": [
+      "hosts[dev-ermakov].servers[graph].url"
+    ],
+    "verified": true
+  },
+  "preservation": {
+    "originalGuardPaths": 46,
+    "allBytesAndMtimePreserved": true,
+    "historicalFiles": 21,
+    "historicalRoots": 4,
+    "capsuleArtifacts": 11,
+    "priorManifestFiles": 2640,
+    "leaseReleased": true
+  },
+  "rawEvidence": {
+    "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\paired-modes-20261024",
+    "manifest": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\paired-modes-20261024\\raw-evidence-manifest.json",
+    "sha256": "7cc2561cd9a1e3b6234c41259436a7f46f244a94d5ab40651fbc54eea80ce522",
+    "files": 2952,
+    "lateDeliveryEvidenceSeparate": true
+  },
+  "notRun": [
+    "OpenCode skipped by user",
+    "Gate 6",
+    "G4",
+    "working project migration",
+    "workflow or shared registry publication",
+    "1C launch",
+    "live Code/Graph calls",
+    "model turns"
+  ],
+  "limitations": [
+    "Current-package legacy feature baseline, not historical pre-G3 package",
+    "Endpoint catalog updates Kilo and Cursor; legacy requested Kilo only",
+    "Legacy offline WARN preserves provider connections but does not complete full managed sync; catalog completes sync from valid applied context",
+    "Valid cache plus loopback connection refusal; not cold clone, stalled transport or remote SLA",
+    "Windows11 local warm filesystem; no OS cache flush or dedicated-host isolation",
+    "Warm no-op 1000/2000ms goals unchanged; not applied to unlike dynamic workloads",
+    "80 online samples excluded by workload mismatch, not latency/outlier filtering; all retained raw",
+    "Whole CLI delta includes differences in completed work; instrumented diagnostics not subtracted",
+    "No token billing estimate from UTF-8 output bytes; no always-on text/schema/tool changes"
+  ]
+}

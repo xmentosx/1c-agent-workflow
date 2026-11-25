@@ -1,0 +1,2964 @@
+# Measurement and workflow reliability implementation ledger
+
+This source-maintenance plan records seventeen tasks from the original seven PM5
+investigations and the follow-up handoffs. It is not installed-project guidance. A completed
+source change, registration, publication, installation and live acceptance are
+different milestones; none implies the next one.
+
+## Required contracts
+
+- Measure an existing database without requiring its configuration to match a
+  development checkout. Measurement does not authorize configuration updates,
+  extension installation or data writes.
+- Decide whether source-level analysis is necessary. Reuse matching modules or
+  capture the target database configuration and relevant extensions separately
+  from the working tree. Match actual packet identities and versions, not just
+  the database address. Preserve raw packets for later mapping.
+- Coordinate access by database identity across projects, branches, chats and
+  execution hosts. Hold ownership through preparation, the complete series,
+  necessary source capture, restoration and cleanup. Queue time is not timing.
+- Nested processes inherit ownership. A crash or network interruption does not
+  authorize replay or assuming that surviving database work has stopped.
+- Uncoordinated external sessions remain observable limitations; never stop
+  foreign processes. Distinct databases may execute concurrently.
+
+## Work and acceptance
+
+Scope clarification for item 4: the user requested coordinated database access
+across projects, branches, chats and hosts, including waiting instead of
+interference. Safe handling of an interrupted owner follows from that contract.
+Automatic forward continuation of `reset-dev-branch` was an implementation
+choice, not a separately requested user task. Keep it visible as subitem 4b;
+do not conflate its full automation with the core queue requirement (4a).
+Core admission, waiting, native-session ownership, truthful failure reporting
+and verified release remain the first priority. The detailed reset continuation
+work below remains open where unverified, but further expansion of 4b must not
+indefinitely displace the other unfinished numbered tasks.
+
+Item 4a acceptance clarification: a stuck or ambiguous owner must not leave
+callers waiting forever. A dead waiter can be removed automatically because it
+never entered the database. A live admitted owner has bounded waiting and an
+explicit diagnostic/cancellation route; elapsed time alone must not revoke its
+access. An interrupted admitted owner needs script-owned inspection of surviving
+work and restoration before release. Recovery failure must remain actionable,
+with the exact owner, ticket, coordinator and next diagnostic step. Unrelated
+databases must continue independently. Full acceptance includes getting a
+blocked database back into service through a supported helper, not merely
+returning `needs-attention`; unsupported recovery cases remain open.
+
+The current candidate also closes the four compatibility entrypoint omissions:
+`update1cbase`, `loadfrom1cbase`, `getconfigfiles`, and `deploy-and-test` now join
+database admission before lifecycle locking. Dumps reserve their actual target;
+deploy-and-test reserves managers and test-profile databases and uses command
+classification before admission. Eleven focused Pester cases passed (ten in the
+combined run and the corrected classification fixture separately), plus the
+Python operation-set completeness check. Terminal timeout/recovery diagnostics
+now include the owner and a structured next action without lease tokens. Four
+multi-process queue regressions passed for bounded live-owner waiting, dead
+waiter removal, dead-owner diagnostics and failed cleanup; they also exercise
+independent-database progress and admission after normal release. These are
+local protocol proofs, not installed 1C or multi-host acceptance.
+
+Read-only dump recovery now covers `loadfrom1cbase`, `getconfigfiles` and
+`dump-dev-branch-extension` only when every native journal entry is a
+`designer-dump-config-to-files` operation. Any write/unknown native purpose,
+surviving database user or unresolved database-restoration duty still prevents
+release. Seven focused recovery regressions passed, including the original
+unsupported-write and repository-capture cases. Native file-base proof at
+`C:/va канал/dump-admission-400f2c3b` used actual 1C 8.3.27.2130: the helper was
+interrupted after Designer dumped files and before installing the source tree;
+public `access-recover-workflow` released ticket
+`6e41d1e66b874e8c950ce6c7bf92d6d3` as `workflow-read-only-dump`, retaining the
+original `interrupted` outcome and staged dump. A subsequent public
+`loadfrom1cbase` succeeded and left zero active tickets. `conf.cfg` was unchanged.
+The physical 1CD hash differed after the subsequent native invocation; this
+proof does not claim byte-identical database storage across 1C sessions.
+
+Failed `check-dev-branch` and `repair-dev-branch-tooling` operations now have
+bounded recovery adapters. They require the original producer to have exited,
+the immutable continuation to bind the exact target and Vanessa service
+generations, and two live observations of every reserved resource. An existing
+file database must have zero sessions and exclusive file access. Only the exact
+planned service generation may be fully absent; an absent business database,
+foreign resource or partially created service directory remains blocked.
+Recovery preserves the interrupted result and cannot create a passed check or
+tooling-readiness claim. Real PM5 tickets `dfd01bca1cdc4bbf9317ee6c6a92b6b7`,
+`59776e51a0ba4007ba48230d7c12bad3` and the subsequent failed-check tickets were
+released through these adapters with their original evidence retained.
+
+Ordinary one-shot Enterprise launches under a persistent database owner now
+perform the same fresh descendant-release observation before the outer ticket
+can close. A real ordinary PM5 check then completed with YAxUnit 2/2, Vanessa
+1/1, zero new event-log errors and a normally released queue. Nonpersistent
+local calls retain their prior no-wait behavior. `conf.cfg` was unchanged.
+Server and multi-host recovery remain open.
+
+| ID | Priority | Deliverable | Required acceptance | Current evidence |
+|---|---|---|---|---|
+| 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
+| 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
+| 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; automatic checkout-export catalogs and per-module reuse implemented and verified through a native technical export; persistent-adapter/Designer capacity and PM5/UFA acceptance pending |
+| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. Phase-aware admission permits ROCTUP reads with one test run and upgrades the same ticket for mutations. Failed verification and tooling-repair tickets now recover only after immutable-plan validation, dead-owner proof and two full-resource observations; exact absent planned Vanessa generations are handled without accepting the interrupted result. Persistent ordinary Enterprise launches prove descendant release. Real PM5 recovery and a normally released YAxUnit/Vanessa check passed. The server candidate requires a bounded `recovery-observe` provider before native start and binds observations to its SHA. Live server and multi-host acceptance stay open |
+| 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
+| 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Public classification routing and nested-scenario source fixes are implemented. Explicit group requests now compose the entire source result before delivery, reserve all participant databases together, retain per-recipient progress and reconcile interrupted Git writes, durable phase receipts, or a source-bound terminal Designer outcome. Legacy unbound outcomes, server recovery and installed acceptance remain open |
+| 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Immutable provenance survives a pre-runtime engine crash. Incremental snapshots now retain verified repetitions, handshake/command/source-capture phases and compact hashed profile references; an actual crash between repetitions preserves the completed sample without replay. Runtime-specific loaded-state provenance and installed acceptance remain open |
+| 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; correction registered at e00ba67 with 63 passed Targeted tests; both native client families propagate through selection, proof and engine coverage; delivery and fresh remote thick-client capture remain open |
+| 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation failure reproduced and corrected in r10; native build succeeded with all service bases released; 16e5b84 registered with 532 passed Targeted tests; delivery and installed UI acceptance remain open |
+| 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Correlated r11 producer/receiver registered at 75a36db with 578 passed Targeted tests; final paired native build and four real file-base command cases verified, including propagated failure and server modes, with all owned sessions released. PID-zero cross-client misrouting and occupied-port reuse were corrected in r12; native two-client A/B/A passed with distinct ports and r12 registered at b6f23f1. The r13 source candidate adds durable restart reconciliation for exact owner/request/code identity, terminal response reuse, safe unpublished/unclaimed continuation and fail-closed claimed/foreign/ambiguous cases. A platform-only form compilation defect found during r13 native acceptance is corrected, the build now rejects a missing VAExtension step cache, and paired native r13 A/B/A passes with three correlated replies, two isolated channels and all database admissions released. Real producer-process interruption resumes the terminal response through the ordinary send/wait steps with one effect and a durable acknowledgement. Exact-owner cleanup now removes only fully acknowledged protocol files and the empty channel generation; native restart acceptance leaves no protocol files or generation directory. The workflow lock and compatibility catalog select the exact r13 ZIP and paired CFE, and component finalization publishes and verifies both from the same Release-qualified archive. Normal delivery and original BDR acceptance remain open |
+| 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Shared cleanup now accepts actual current/legacy producer layouts, protects active/retained records sharing a filename, and reconciles obsolete generations after verified deletion; 32 ledger/cleanup tests pass; five real debt records checked read-only; normal delivered-supervisor cleanup remains pending |
+| 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
+| 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
+| 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass. The phase-aware candidate also removes the whole-check runtime writer and permits ROCTUP during Vanessa/YAxUnit test execution while preserving exclusive preparation. Delivered facade/PM5, competing chats and server acceptance remain open |
+| 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients. All 21 original findings remain retained. Findings 1.1 and 5.2 are mechanically contradicted; confirmed defect 5.4 is resolved in PM5 commit 25c19d0ac with YAxUnit 2/2, Vanessa 1/1 and zero new event-log errors. The retained outcome is `adjudicated-mixed`; normal workflow delivery remains open |
+| 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Main correction registered at 546aad7 with 592 passed tests; original branch11 evidence yields 24 captures, one named conflict and four absent entries; native English metadata names are recognized; exact native silent-repeat completion is reported separately as already owned by `REPOSITORY_USER`, while unknown/truncated logs remain unconfirmed; delivered public-command acceptance remains open |
+| 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Main correction registered at 38555f5 with 604 passed tests; actual branch11 metadata identifies three new constants; root-only native capture and separate later module capture confirmed in a fresh technical repository; shared ownership across both phases implemented; installed two-chat/two-host acceptance, export reporting and delivery remain open |
+
+Implementation order: establish item 4 with the timeout and source-capture
+contracts and resolve the concrete export deadlock in item 14; complete items
+1-3; then 5-8, 12, the accepted-master selection contract in 13 and AI-review
+adjudication in 15, followed by 9-11. Items 13-15 have their own acceptance below;
+linking them to related tasks does not remove them from the plan. Each coherent source change
+gets directly owned checks, a local commit and RegisterChange. Publication and
+live installation/acceptance must be recorded explicitly, using normal helpers.
+Investigations close only with an implemented correction or evidence explaining
+why no workflow change is appropriate; an unresolved hypothesis stays open.
+
+## Item 11: release snapshot cleanup implementation and remaining acceptance
+
+The current E2E producer writes `baseline.dt` and `post-config.dt` below its run
+root, but the cleanup owner only recognized older filename-prefixed snapshots.
+Four producer-path regressions reproduced the rejection before the correction.
+The shared resource cleanup now accepts the current
+`.agent-1c/runs/release-e2e/<run>/snapshots/` layout, the resumable legacy
+`.agent-1c/release-e2e-runs/<run>/snapshots/` layout, and the older
+`.agent-1c/snapshots/` filename contract. Tests execute the producer's actual path
+assignments and `Set-E2ERunPaths`, so a future producer change must remain aligned.
+
+Two further regressions reproduced unsafe deletion when an old pending record
+shared a filename and SHA with another retained or active snapshot record.
+Such records now protect their path until their ownership is released or the
+existing retention policy expires. The policy remains the two newest failed
+plans for at most seven days; a future `retainUntil` on a `cleanup-pending`
+successful/evicted resource does not itself mean it remains retained.
+
+SHA checks, active-process and tracked-drift guards remain required. Unknown
+paths/names and reparse points below the owned worktree are rejected without
+deleting files. After a matching pending owner removes a snapshot, obsolete
+records for that now-missing filename are reconciled in the same sweep. A stale
+SHA alone never authorizes deleting a new or unidentified generation.
+
+All 25 ledger tests plus seven cleanup integration tests pass (32/32), including
+the original culture/retention cases, current and legacy layouts, foreign paths,
+junction redirection, changed SHA, active/dirty worktrees, retained ownership,
+expiration and same-pass reconciliation. Paths contain spaces and Cyrillic
+together. Read-only examination of five real debt records accepts their layouts:
+three match current file hashes, while two refer to older generations of a reused
+filename. Evidence is in the snapshot-cleanup source worktree under
+`build/diagnostics/release-snapshot-cleanup/qualification.json`.
+
+Remaining acceptance: register/deliver the correction and execute normal
+`source-delivery.ps1 -Action Cleanup` with a stable supervisor that contains it.
+The entrypoint currently selects the supervisor from `origin/master`, so a local
+source correction alone does not replace the executing cleanup implementation.
+No real snapshot or shared ledger entry was manually removed or rewritten during
+this work. Actual debt retirement and unchanged retained/foreign resources must
+be verified after the normal delivered helper sweep.
+
+## Added task 12: advisory command-handler diagnostics and agent behavior
+
+Source: [Валидатор форм: пустой Action блокирует…](codex://threads/01a085aa-b4b8-75d2-a92e-acd4725b2d8d),
+with `D:/Git/PM5 КОРП - Codex - 1-branch11/handoffs/handoff-20260909-local-form-validator.md`.
+The handoff reports that form-validate v1.8 Check8 classified missing/empty
+command Action as an error and blocked preparation on five forms/14 commands.
+It cites the platform's disabled-command behavior when no handler exists. This
+must be verified against the relevant platform documentation and current owner
+implementation; the installed workaround is evidence, not the upstream source.
+
+The user's additional requirement covers the agent's reaction as well as the
+validator: missing/empty command handlers must be reported to the user as
+non-blocking advice. They must not fail preparation, refresh, verification or
+completion merely because that diagnostic remains, and must not enter a
+mandatory repair loop. This category does not authorize creating empty BSL
+handler procedures, adding dummy Action bindings, removing commands, or other
+business-source changes solely to silence the warning. Implementing a command's
+behavior belongs to a separately requested functional change. The priority P1
+above is the priority of fixing workflow behavior, not the diagnostic severity.
+
+1. Reproduce absent, empty and whitespace Action plus a valid bound command;
+   distinguish an unspecified Action from an existing procedure with an empty
+   body. Inspect actual update cases in the referenced PM5 projects, beginning
+   with the five retained forms/14 commands, and verify the platform contract.
+2. Locate the actual validator in the controlled `itl_ai_rules_1c` fork and its
+   current pin. If the defect persists, fix its diagnostic severity there on the
+   prescribed upgrade/release branch. Do not add dummy business handlers, remove
+   business commands, disable source-integrity or patch another installed copy.
+3. Trace warning propagation through workflow/helper output and agent rules.
+   Correct the owning guidance so the agent reports the form/command and the
+   advisory nature of the finding, continues authorized work, and does not
+   invent a mandatory fix or a confirmation request just for this warning.
+   A warning must remain advisory through every wrapper and completion check.
+4. Preserve regressions for genuinely invalid event-handler bindings (separate
+   from this command-handler category), duplicate command IDs,
+   invalid callType and malformed XML. Reuse the retained 13-case reproducer as
+   evidence, verifying its actual scope before adopting it upstream.
+5. Deliver the owning fork correction and workflow pin through normal intake;
+   remove only the now-redundant local workaround through managed update.
+6. Qualify branch11 refresh and the complete check on the delivered version.
+   Retain a regression with the command handler still empty: the warning is
+   visible, no gate fails because of it, and no dummy handler or Action binding
+   is added to product sources. Check agent-facing guidance for the same behavior.
+   The task reports local Vanessa 49/49, YAxUnit 118/118 and validator 13/13;
+   those results do not establish upstream delivery or installed-candidate proof.
+
+Related follow-ups from the same task remain tracked under item 6: verify the
+documented classification action against compact-runner dispatch, exact-HEAD
+resume behavior, and why four nested Vanessa scenarios disappeared in the
+combined run despite passing separately (3/3 and 1/1). Later aggregate success
+does not prove that the runtime cause was corrected. Each needs reproduction,
+an owning-layer fix if confirmed, and a regression preserving combined nesting.
+
+### Item 6 follow-ups: explicit implementation and acceptance
+
+Rechecked against all available messages in task
+`01a085aa-b4b8-75d2-a92e-acd4725b2d8d`, including its fourth handoff. These
+subtasks remain independently open; completing master-input selection in item 13
+does not close them.
+
+**6a — Public classification command, P1.** The installed documentation tells
+the agent to run `run-itl-command.ps1 -Action validate-test-classification`, but
+that compact runner rejects the action while the underlying helper supports it.
+Reproduce with the reported installed version and compare current entrypoint
+validation, dispatch and generated references. Select one supported public route,
+implement missing dispatch or correct the owning documentation, and keep this
+classification-only action read-only: it must not start 1C, run business tests or
+manufacture verification proof. Acceptance: the exact documented command works
+in an installed project, reports ready/missing-suite/unowned-path distinctly,
+preserves tracked files and proof, and remains covered by an entrypoint/dispatch
+contract regression. Do not work around the defect by disabling classification.
+
+The source reproducer confirms that the compact runner rejects this action before
+dispatch, including both successful and failed classification results. The public
+allowlist now accepts the existing helper action; the reference spells out the
+exact compact invocation. Three process-boundary cases preserve ready,
+missing-catalog and missing-owner diagnostics, exit codes, and an existing proof
+file in a path containing Cyrillic and spaces. They invoke the real runner,
+helper and classification owner against isolated project catalogs, and preserve
+the original feature bytes. No classification or verification policy is loosened. Registration and
+the installed-project public command acceptance must still be recorded.
+
+The first registration gate exposed an exit-path failure in the unchanged
+lifecycle cancellation reproducer: cancelled JSON was emitted, but the process
+returned `0x80131029` instead of 2. The CLR names this code
+[`HOST_E_EXITPROCESS_TIMEOUT`](https://github.com/dotnet/coreclr/blob/v2.0.0/src/inc/corerror.xml).
+That observation alone does not prove the particular shutdown race. Extending
+the same real-runner reproducer established a deterministic defect:
+`Environment.Exit` prevents the calling script's finally block from executing.
+The runner now returns with PowerShell `exit`, retaining its result code and
+allowing caller cleanup. All ten lifecycle waiting tests pass with the added
+finally assertion; no holder, lock, cancellation assertion or timeout was weakened.
+
+**6b — Missing nested scenarios in a combined Vanessa run, P1.** The handoff
+reports 49 expected scenarios but only 45 loaded, despite both nested feature
+files being present in `FeaturesToRun` and execution-features. Separate runs
+passed 3/3 and 1/1. Moving the two unchanged files into the root restored the
+49-scenario aggregate; that is a local workaround, not proof that nested loading
+works. Preserve the original nested layout in the reproducer. Inspect selection,
+staging and the pinned Vanessa tree/filter behavior to establish the owning layer;
+the reported loss of directory nodes with retained levels is a hypothesis to test.
+Fix the confirmed owner or qualify a supported dependency update through its
+normal delivery route. Acceptance: the original combined nested layout loads and
+executes all 49 expected scenarios exactly once, including paths with spaces and
+Cyrillic together. Compare expected and actual scenario identities, not only
+counts; omitted or duplicated scenarios cannot produce a passing complete-suite
+result. Retain focused regressions for multiple nesting levels and mixed root /
+nested files. Moving fixtures to the root or lowering the expected count is not
+an acceptable correction.
+
+The item 6b algorithm defect is now reproduced with unchanged BSL excerpts from
+pinned Vanessa commit `f3a01778a14d29b38204685deea0131274d438ff`. With directory
+nodes and mixed nested file levels present, FeaturesToRun retains three files
+but the tree builder produces one root feature with the other two beneath it.
+The feature loader descends only through non-feature rows. A candidate `itl-r9`
+patch resets selected file levels after removing directory nodes, preserving
+every physical path and the explicit selection order. The unfiltered directory
+walk remains unchanged; no feature file is moved to the root.
+
+Four executable OneScript regressions cover the failing baseline, the candidate
+with ordinary/reordered selection and multiple nesting levels, and unfiltered
+traversal. Fourteen retained artifact contracts pass for both r8 and r9. The
+OneScript test has no reusable shard proof until the complete installed engine
+identity is modeled; both ordinary and legacy cache routes enforce this.
+The workflow still pins r8, and r9 is a source candidate only: native compilation,
+the actual combined PM5 49-scenario layout, retained MCP behavior, artifact hashes
+and normal component delivery remain open. The helper's build selector accepts
+an explicit r9 candidate without changing its default or installed dependency.
+
+The focused Windows PowerShell 5.1 group passes 40/40 tests, including the full
+local gate contract and the explicit no-reuse decision for the external runtime.
+
+The first normal registration exposed a completion-path defect: the OneScript
+worker passed, but the shard runner required a cache entry even though its digest
+was intentionally empty. A new process-boundary reproducer failed with the same
+error. Completion now requires persistence only for cacheable digests; unknown
+runtime identity still prevents all reuse. The new test executes the same passed
+file twice through the real runner and proves two executions with no digest or
+reuse. It and the retained owner-input/cache-invalidation case pass. The initial
+failed summary, error log and worker result are retained under
+`build/diagnostics/vanessa-nested-selection/first-registration-failure` in the
+implementation checkout. Registration must be retried for the corrected source.
+
+**6c — Resume after a corrective descendant commit, P1 investigation.** After
+the local validator correction was committed, ordinary resume rejected a changed
+HEAD with `LIFECYCLE_MERGE_POST_HEAD_MISMATCH`. The task reports taking the
+documented corrective-descendant/check route. The exact-HEAD guard itself is not
+established as defective. Reproduce that transition and verify that the helper's
+diagnostic and agent-facing reference identify the supported next action. If the
+route is already correct, close this investigation with concrete evidence; if
+routing or recovery is broken, fix that owner and retain a regression. Acceptance:
+the legitimate descendant resumes through the prescribed helper and fresh check,
+while an unrelated HEAD or mismatched operation remains rejected. No manual
+lifecycle edits, lock removal or weakening of exact-tree proof is permitted.
+
+Item 6c investigation confirms the existing exact-HEAD guard is intentional.
+The retained branch11 execution record reports a normal corrective commit
+`7b34371e3497febb6fcdbf86f21d3542aab2369b`, followed by the mismatch and the
+documented full-check route. Read-only Git inspection confirms its single parent
+is merge `d3dc12487121170e3ebd3df210c51099c68e4187` (parents
+`bc1ccc75f265c4733d653ab956e15bacd7b18a06` and
+`823b335f568e656b440810a988c7716912558878`). The incident does not justify
+accepting arbitrary changed HEADs during ordinary resume.
+
+The confirmed gap is actionable routing: the original mismatch only printed
+expected/actual commits. A validated refresh checkpoint with a proven descendant
+in the same branch now retains that failure and records `requiredAction=/itl-check`.
+The diagnostic explains the required fresh full check, configuration load and
+Enterprise normalization and routes to the existing lifecycle reference.
+It neither clears the transaction nor starts verification automatically.
+
+Six focused lifecycle/compact cases pass on Windows PowerShell 5.1 across the
+focused runs. They cover a direct corrective commit after a merge, a corrective
+commit after the helper cursor, stale proof, retained strict cursor recovery,
+and five negative identity/checkpoint cases, plus transport of a structured
+recovery action through the real compact runner. The positive cases serialize
+the failed run status, prove state is unchanged before fresh proof, and only
+then complete recovery. Source registration at
+`a468fb311925635a4349a87e3e1d6011de042156` passed 538 tests with zero failures
+or skips in 508306 ms, clean tree `dfcecf3c9f01dad2bbee673bb52c2546e1bf5a73`.
+Installed public-command acceptance remains pending; the historical branch11 successful full check is incident
+evidence, not delivery proof of this new diagnostic.
+
+The remaining messages are covered separately: empty command actions by item 12,
+accepted master inputs by item 13, export/ROCTUP coordination by item 14, and
+unsupported or disputed AI findings by item 15. Local successful checks and
+export recovery are evidence for those incidents, not automatic closure of their
+shared implementation and delivered acceptance.
+
+## Starting source and evidence
+
+- Source baseline: `2d390d654a6dbcbaf72b4097f0e209d55b2b8582`.
+- Worktree: `codex/workflow-measurement-reliability`.
+- Existing fixes for tooling generations, primary YAxUnit errors, facade-owned
+  TestClient startup, pending refresh recovery and delivery timestamps already
+  exist in the baseline. Do not repeat their implementation.
+- Named live acceptance routes: local PM5 branch4/branch10 profiles, branch6
+  long calculation, and authorized UFA/private Tabakov remote capture. Inspect
+  current owners and installed state before operating any route.
+
+## Implementation evidence
+
+Item 4 first source slice implements a filesystem coordinator with ordered,
+atomic resource-set admission, explicit alias registration, inherited ownership,
+cancellation, crash distinction and portable-engine integration. Focused tests
+exercise separate processes and the real fixture engine, not live 1C/SMB. The
+public result distinguishes execution-host-only and configured authority scope.
+Lifecycle/facade integration, supported recovery and actual multi-host proof
+remain open. No installed project or target database has been changed.
+
+Local verification: `python -X utf8 -m unittest discover -s
+tests/python/remote_work -v` passed 69/69, including 21 admission/integration
+cases. These are separate-process and fixture-engine checks on Windows; they
+are not evidence of real two-host SMB admission or 1C runtime qualification.
+
+Item 1 source slice includes ServerEmulation, requires the correct families for
+each base kind, retains incomplete profile artifacts and exposes coverage in the
+engine verdict. Discovery rejects duplicate owned IDs and foreign identities;
+uncertain attach attempts receive cleanup, whose failures reach cleanupErrors.
+Eleven focused profile tests passed, including engine-level partial/error paths.
+Fixtures derive from retained 8.3.27.2074 branch4 packets with native identities;
+their provenance records original hashes. Offline analysis of the full originals
+found both families: client 37 modules/4299 lines, server emulation 63 modules/
+11421 lines. Client-only input remains incomplete. This verifies retained real
+data analysis, not a new live capture with the delivered collector.
+
+Items 2/7 next source slice introduces per-phase timeout overrides, inherited
+execution-host deadlines, independent cleanup, cancellation without replay, and
+truthful facade shutdown errors. Python engine/adapter tests pass 87/87; the Go
+component suite and reproducible build pass. A retained deadline after simulated
+301-second elapsed time verifies removal of the Python default cap; this is not
+a real 16-23-minute 1C run. Go request metadata propagates the remaining budget
+through HTTP and broker startup without the earlier 10/5-minute caps. Version
+0.4.10 is a local candidate until exact Release E2E and component publication.
+
+The full Go suite exposed a pre-existing progress evidence race: go-sdk v1.6.1
+dispatches notification handlers asynchronously relative to request responses.
+A completed response therefore cannot guarantee those handlers already updated
+the final counter. Successful forwarding now gets a separate correlated event;
+the completion counter is explicitly a snapshot. The prior transport assertion
+is retained against events, with an additional deterministic regression that
+holds one notification until after two completed calls reusing a caller token.
+Both calls retain isolated evidence. The two progress tests passed 25 repeated
+runs; no notification delay or guessed sleep is added to the runtime.
+
+Items 2/7 registered as `0e3f771079b3b4d44e498d9fb69196dd571e36ea` after
+Targeted passed. Version fixture mismatches were corrected without changing the
+old-version rejection, exact-hash or backend ownership assertions. Publication,
+installation and long-running live acceptance remain separate open milestones.
+
+Item 3 first source slice adds native identity/version bindings, byte hashes,
+line-range validation, manifest-relative paths and explicit optional/required
+source analysis. Fourteen focused tests use retained native packet shapes and
+synthetic UTF-8/CRLF sources to exercise matching and mismatch behavior. This is
+an analyzer contract, not proof of a source capture from a real database. The
+authoritative manifest producer and read-only target capture are implemented in
+the next slice below; full end-to-end acceptance remains required.
+
+Item 3 next slice adds an explicit optional/required scenario source policy and
+the inherited-lease capture phase. Fixed Designer operations read the database
+configuration plus its extensions, then load/export only in an owned scratch
+base. Native object versions and module properties produce the source bindings;
+unmatched or ambiguous exports stay unresolved. Process cleanup failures retain
+the database admission, and raw profile coverage survives source-analysis failure.
+Python checks passed 114/114 and the owned Pester file passed 7/7 before the final
+progress/cleanup diagnostics addition; registration verifies the final tree.
+
+Real source-capture qualification on 8.3.27.2074 used an isolated technical base
+under `build/diagnostics/source-capture-live/Снимок базы b34fa6d8357e42749523c17e8e66adac`.
+Its database module returns `database`, while a fresh export of its editable
+Designer module returns `designer-only`. Capture preserved the database version,
+exported the YAXUNIT extension and removed its extraction scratch base without
+cleanup errors. `qualification.json` records the exact paths and hashes; snapshot
+`93cbd9ee41a1450582170e517ceb8930` retains the nine successful native steps.
+This is live configuration/export evidence on an owned fixture, not a new PM5
+measurement or proof of snapshot reuse. The first extension fixture lacked its
+borrowed Russian language; a corrected fixture supplied that dependency. No
+runtime assertion or target-capture operation was weakened to qualify it.
+
+The next item 3 slice adds explicit native-module selection to scenarios and the
+offline CLI. Missing selections stay unmet; excluded rows remain visible.
+Execution-host pinned source manifests are checked before capture, with exact
+module versions and byte hashes. Reused sources and their binding evidence are
+copied into the new run. Complete selected coverage skips Designer; partial reuse
+retains matching modules and captures remaining bindings. Invalid cache entries
+are diagnostic and may be repaired by capture. Synthetic/native-packet tests
+cover drift, conflicts, source removal, selected scope and engine capture routing.
+This does not yet prove PM5/UFA integration or produce checkout bindings without
+existing authoritative source evidence.
+
+Source capture now has a candidate integration for releasing its own persistent
+client before requesting a Designer slot. Only a missing binding triggers early
+Vanessa shutdown; verified cache reuse skips it. Shutdown uses the run's existing
+facade ownership and source-capture deadline, checks the job identity and terminal
+acknowledgement, and leaves scenario restoration to final cleanup under the same
+database lease. Custom workloads may supply `commands.quiesce` for their owned
+clients. Final Vanessa cleanup is idempotent after the early shutdown. Twenty-four
+focused engine/source-reuse/adapter tests passed, including ordering after
+verification, retained admission, suppressed capture on shutdown failure, foreign
+ownership rejection and repeated cleanup. These are protocol fixtures; actual
+one-slot 1C/Vanessa capture and PM5/UFA acceptance remain open.
+The adapter's nine tests also passed after fixing overlapping cleanup requests:
+callers wait for the common terminal acknowledgement, even if a daemon already
+closing cannot reply to the later request. No additional scenario restoration
+is introduced by this shutdown.
+
+Registration of the lifecycle-admission unit found two distinct defects: an
+auxiliary regression still expected the old 18-operation inventory, and master
+planning deleted inherited empty environment variables through .NET Framework's
+empty-string setter semantics. The inventory now explicitly includes all 22
+operations, retaining equality checks between entrypoint and both validators.
+Process-environment restoration skips unchanged values and preserves changed
+empty values through the Windows environment API. Three focused PS5 checks
+passed for successful/failed planning and empty values both untouched and
+overwritten inside the temporary master context. Registration remains pending
+until the combined candidate passes; neither failed run is acceptance evidence.
+
+Items 3/4 capacity integration removes the automatic stop-all-target-sessions
+callbacks from on-demand MCP and Vanessa verification. Admission waits outside
+the allocator lock, honors cancellation and the original performance deadline,
+and retries only a capacity rejection proven to precede any native start attempt.
+Impossible requests and uncertain launch results are not retried. Source capture
+and portable 1C launch now import the target workspace's `.dev.env` session ceiling.
+An exited single-process leader no longer leaves a phantom reservation merely
+because its launching PowerShell is alive; promised child reservations remain.
+
+The native fixture at `build/diagnostics/source-capture-live/Ожидание сеанса a1ff903c6a3d48298f1648d166e6347b`
+qualified waiting on 8.3.27.2074 with the configured limit of one: client PID 48344
+remained alive until the fixture owner stopped it, then Designer PID 35704 ran
+`list-extensions` successfully. Its result records 1.324 seconds of admission
+wait and no cleanup errors. Native qualification exposed Windows hostname casing
+differences between Python/.NET and the stale single-process reservation; both
+were corrected without changing the contention workload. A prior diagnostic
+log reader also needed file sharing while redirect output remained open.
+Failed technical-run access records remain retained for supported coordinator
+recovery; none was edited to retry the measurement. This is session-capacity
+evidence, not the still-required multi-host operation-queue qualification or
+automatic quiescence of an operation's persistent client when no slot exists.
+The prior Vanessa topology assertion explicitly required stopping every target
+base's sessions on capacity failure. The user's shared-base requirement replaces
+that behavior with waiting; topology, feature selection and scenario-count
+assertions remain, with a ban on that destructive callback and behavioral waiting
+regressions plus the native contention qualification above.
+
+Item 4 recovery protocol now provides read-only revisioned inspection and an
+exclusive recovery owner for the original complete resource set. Old inherited
+tokens and late original-owner releases are fenced; original ownership and
+attempt history remain available. A trusted operation adapter must perform live
+verification before completion; a success flag or dead process is insufficient.
+Incomplete/crashed recovery retains attention, while active recovery preserves
+FIFO waiters. Separate-process regressions exercise these coordinator contracts.
+This is not live 1C recovery: operation-specific verifiers/restoration adapters,
+reconciliation of retained technical-run debts, and multi-host proof remain open.
+Focused admission/recovery checks passed 33/33; the owning RemotePerformance
+Pester suite passed 8/8, including the complete portable Python suite. The public
+inspection command also read retained technical-run ticket
+`cbbfb220f6c2418fa12c72721b1c85e3` and reported its cleanup-unproven condition;
+it did not claim or release that database.
+
+Item 4 next slice connects the recovery protocol to immutable portable jobs.
+Original admission records bind the request and target before execution. Pinned
+scenario hooks inspect real state, optionally quiesce owned work, and restore
+only after quiescence is proven. Every resource requires fresh correlated
+observations and hashed artifacts; a successful command exit alone cannot
+release the resource set. Local commands and queued SSH/exchange requests share
+the implementation. Recovery status is separate from the unchanged measurement
+result, and a completed restoration is inspected before deciding whether another
+restoration call is necessary. Recovery-only inherited tokens cannot run normal
+measurement jobs.
+
+The native caller channel now uses the same coordinator through private stdio,
+with a PowerShell adapter and no second lock algorithm. Separate-process tests
+cover portable/native exclusion, complete resource sets, unrelated databases,
+inheritance, cancellation, failed cleanup and parent disconnection. A real
+PowerShell parent crash closes its pipe host and leaves the original database
+reservation for recovery. Tokens are excluded from progress and error messages.
+The first PS5.1 execution exposed multiple `Get-Command python` matches being
+joined as one executable name; selecting the first application fixes the native
+launch without changing the process/Unicode-path test. Invalid inheritance also
+exits while stdin is still open, without a buffered-reader finalization failure.
+
+Entrypoint integration remains open. Inspection identified two required ordering
+constraints: database admission precedes lifecycle/runtime locks, and persistent
+facade stop/idle cleanup uses existing ownership rather than queuing behind an
+operation waiting for that backend to close. The complete initial resource set
+must include a pinned newly generated Vanessa manager base when one is needed.
+These are requirements of item 4, not optional follow-up investigations.
+
+The service-base producer now separates read-only planning from creation.
+`Get-VanessaServiceInfoBasePlan` selects a qualified existing manager or pins a
+new generation and its resource path. `Ensure-VanessaServiceInfoBase` accepts
+that admission plan and revalidates the relevant state, marker, database presence
+and currently verified template before any 1C call. It rejects changed inputs,
+redirected paths and a new-generation path occupied during the wait. It never
+executes template paths supplied by the serialized plan. Existing callers use
+the same planner internally; moving their initial planning before global
+admission remains part of the lifecycle/facade integration.
+
+All 31 Vanessa Designer Agent tests passed, including eight new admission-plan
+cases. A real pipe-owner queue reserves target plus manager atomically and a
+real blocked wait changes an input before admission; creation is rejected before
+the mocked native boundary. Native CREATE/Restore calls in these tests are
+fixtures, so they are not live 1C qualification. Qualified reuse, unchanged state
+during planning, missing database, occupied path, template replacement and
+malformed plans are covered with paths containing spaces and Cyrillic together.
+
+Entrypoint integration is in development in the database-entrypoints checkout.
+The Go private-pipe client in `tools/itl-ondemand-mcp/database_access*.go` now
+shares the Python coordinator and has focused process-boundary checks. The
+production PowerShell broker now exposes the read-only complete-resource plan
+and accepts a private, context-scoped proof from Go children. With that explicit
+context it revalidates actual resources through a native inherited pipe host
+before taking the start lock or dispatching an operation. Ensure/recover pass a
+freshly checked, pinned manager plan through `Ensure-VanessaMcpInstalled`;
+stop uses recorded runtime connections without planning a new manager. A
+single-instance context cannot authorize stop-all. Target, manager generation or
+template drift is rejected before native work; the same manager becoming
+qualified for reuse after our own creation is accepted with its fresh input hash.
+No process-global proof override is used for concurrent Go broker calls.
+
+Sixteen planning/admission Pester cases pass, including native inherited
+ownership and missing/replaced runtime cleanup cases. A Go-to-PowerShell-to-Python process-boundary regression reaches
+the simulated 1C launch only under a live parent and rejects the same proof after
+release; the private token is absent from returned diagnostics. All Go tests and
+nine Python pipe-host regressions passed. Before the latest runtime integration,
+full OnDemandMcp Pester reported 61/63:
+the changed executable does not match the old candidate hash, and the identical
+source-build install case consequently attempts a download and fails. The build
+pin must be updated with the completed component, not by weakening these checks.
+This WIP is not registered, published or qualified as installed facade exclusion.
+
+The pipe protocol's new `validate` control rechecks inherited fencing/outer-owner
+liveness before another call. `runtime.callNamed` now acquires cancellable
+per-backend serialization, global database ownership, then the runtime read lock.
+Standalone ownership survives the tool response and idle period; idle/stop
+inherits that same owner and releases only after broker cleanup succeeds. A
+regular inherited call closes its backend before returning control. Cached calls
+recheck target, manager/template and resource scope before using their existing
+connection. Private `itlDatabaseAccess` metadata is consumed locally and removed
+before forwarding to the backend. Process environment is not overridden globally.
+
+Eight runtime integration tests use real Python owners and an HTTP MCP backend
+with a simulated native 1C boundary. They cover two projects on one base,
+unrelated-base concurrency, cancellation while another call is active, inherited
+cleanup/private metadata, failed stop followed by confirmed retry, missing runtime
+state, cached-target drift, the explicit outer-owned interactive lifetime, and a
+Windows exclusive runtime writer. No waiting caller acquires a local runtime lock
+before global admission. The latest full Go suite passed; the directly affected
+Pester group passes 16/16. These are source/process-boundary results, not live 1C
+or installed component qualification.
+
+The broker retains cleanup uncertainty when its caller's native state is missing
+or incomplete. A known PID/port must also match the caller's recorded process
+start time before strict stop. Recovery attempts track both the original and
+replacement instance; absence alone never clears pending native work. Durable
+confirmed-cleanup evidence for internal recovery/pre-launch failure paths still
+needs completion so a proven no-work failure does not manufacture recovery debt.
+
+Standalone manual profile ownership now has a source implementation. A hidden
+Windows owner process holds the coordinator reservation after the launching
+helper exits; generation-scoped open/stop requests cannot replay an interrupted
+open. Stop cancels only the accepted request, waits for its completion, then
+performs strict native cleanup before releasing the reservation. A failed stop
+keeps ownership and permits an explicit stop retry. A crashed owner retains
+recovery debt and cannot silently restart native work. Status checks native PID,
+creation time and executable identity. Public control files contain no private
+lease proof. The PowerShell profile marker routes stop/status to this owner;
+legacy profiles retain their original lifecycle route.
+
+Native subprocess tests cover launcher exit, reservation exclusion, normal stop,
+exact-process owner crash, scoped cancellation, failed cleanup and request replay.
+A separate qualification crossed two actual Codex command invocations: the
+launcher command completed, the owner remained alive and excluded a competing
+reservation, then a second command stopped it and reacquired the database.
+Evidence is retained in the integration worktree at
+`build/diagnostics/profile-owner/Ручной профиль через завершение команды/qualification.json`.
+It explicitly records `native1C=false`: real Windows/Python process ownership is
+proven; the 1C boundary is simulated. The final-response reader also handles the
+race where normal stop persists its response and exits between the client's
+initial file read and process inspection. Missing final evidence remains an error.
+The full Go suite at that stage passed (18.2 seconds); the manual-profile Pester
+file and database-admission Pester group each passed 16/16.
+
+The explicit `stop-dev-branch-test-clients` entrypoint now delegates an existing
+manual profile stop to its owner before database admission and local locks. It
+then reserves its target, recorded service base and matching runtime managers;
+unrelated runtime databases are excluded and no new service base is created.
+After local lock acquisition, it rechecks the resource set and live reservation
+before invoking the existing strict cleanup. Successful cleanup releases the
+reservation; an admission/precondition failure with no native work also releases
+it, while an unconfirmed native stop retains recovery debt. A live inherited
+reservation is validated and remains owned by its parent after nested cleanup.
+Shared coordinator settings are used by this entrypoint and the facade planner.
+
+Eight new cleanup-admission tests use the actual Python pipe owner with a
+simulated native stop boundary. They cover exclusion before local locking,
+recorded-resource selection, manager drift, failed cleanup, owner-mediated stop
+ordering/failure, inherited ownership and entrypoint ordering. The three directly
+affected cleanup/profile Pester files pass 38/38; the facade admission group
+passes 16/16. This is not yet installed/real-1C cleanup qualification.
+
+Manual-profile reuse is now bound to a caller ID in configuration, public owner
+state and every mutating control request. Codex defaults to `CODEX_THREAD_ID`;
+non-chat use supports explicit `-VanessaProfileOwnerId` or a newly generated
+session ID returned in the report. An unidentified caller never adopts another
+session's ID from branch state. A different caller waits before opening; foreign
+open/stop/cancel requests are rejected by both client and owner. Cancellation of
+that wait does not stop the active pair. After confirmed cleanup and process exit,
+the waiting caller can start its own owner generation. Reports preserve the old
+start time only for reuse of the same generation and caller.
+
+A native two-launcher regression now starts two caller processes against one
+branch concurrently and proves feature preservation plus admission of the second
+caller after normal stop of the first. It exposed Windows sharing/access races
+on control files. Control-file reads/atomic rename now retry only bounded native
+sharing/access conflicts; owner lifetime locks are never stolen and native open
+requests are not replayed. Process inspection retries transient access denial but
+never treats denial itself as proof of exit. A losing startup waits for the
+verified other owner rather than reclaiming its native pair. The final full Go
+suite passes (22.1 seconds); the current profile and cleanup-admission Pester files
+pass 26/26. The two-launcher test uses actual Windows processes and Python leases
+with simulated 1C; installed two-chat/real-1C acceptance remains pending.
+
+Remaining integration before registration/delivery:
+
+- Complete per-action lifecycle resource planning and admission before its local
+  locks, including service and scratch bases. Do not reserve unrelated bases.
+- Integrate the persistent manual owner with branch-wide cleanup invoked by
+  verification preflight and lifecycle admission. These paths still have
+  legacy writer-lock/stop sequencing and must not stop an owner's native clients
+  behind its reservation or hold a writer lock while asking it to stop. Preserve
+  standalone manual use and qualify its actual 1C windows before delivery.
+- Qualify caller-bound manual-profile waiting with two actual chats and real 1C,
+  including installed non-chat owner-ID propagation and observable wait progress.
+- Integrate full-resource planning and native cleanup with composed measurement
+  owners; distinguish confirmed pre-launch failure from an interrupted launch.
+- Resolve and qualify installed Python/runtime availability before delivery:
+  Python 3.11+ was already a prerequisite for remote jobs and measurements, but
+  the shared database queue broadens that dependency to ordinary integrated
+  operations. Managed user-local provisioning and offline bundle support are
+  now implemented below; ordinary end-user operations no longer assume a
+  development interpreter in PATH. The previous explicit interpreter override
+  remains supported. Clean-cache/no-PATH native qualification passes; normal
+  package delivery and installed-project qualification remain required. Keep
+  this as explicit delivery work, not a development-only note.
+  Update the finished component's
+  version/build pin, run its owned registration checks, and retain exact real
+  Release E2E proof for both backend families before publishing its asset.
+- Complete live 1C recovery observations, PM5/UFA and multi-host qualification.
+
+This remains an unregistered integration WIP and is not a completed global gate.
+
+Persistent backend lifetime must be included in admission: returning a tool
+response alone does not free a database held by an idle backend. Calls on one
+backend require cancellable serialization; idle/stop uses its existing owner.
+An inherited facade backend must be stopped before returning control to the
+outer operation unless an explicit outer-lifetime cleanup contract owns it.
+This prevents a cached backend from outliving a released measurement lease.
+Actual 1C recovery observations and multi-host qualification remain required.
+
+Focused tests use SQLite changes and separate processes, including a killed
+Windows recovery owner after the restoration commit. They verify one original
+action, no repeated restoration after that crash, honest failed-measurement
+status, cancellation, bounded hangs, missing/tampered evidence and changed input
+rejection. Initial fixture failures exposed unclosed SQLite connections in the
+test harness; explicit closing fixed teardown without weakening the workload or
+assertions. Real 1C/Vanessa recovery adapters, legacy technical-run reconciliation
+and two-host live proof remain open. Partial-artifact collection is implemented
+as described below; it does not replace recovery or quiescence evidence.
+Focused recovery checks passed 28/28 and the owning RemotePerformance suite
+passed 8/8 (including the portable Python inventory). The queued transport path
+was additionally exercised through the public `worker --once` command: one
+restoration, one original action, and no action on duplicate request delivery.
+
+Item 7 now supports explicit `collect --allow-partial` on local and remote
+routes. Without a result it returns a diagnostic manifest, retaining the observed
+job state even when an engine crash left it as `running`. It never manufactures
+result.json, changes job state, replays work or releases a database lease.
+Each downloaded file is hash verified, including the inventoried prefix of an
+appending log; replaced/truncated bytes fail without a completed manifest.
+Private recovery contexts stay excluded, and output cannot overwrite previous
+evidence or write into the exchange spool. Focused regressions reproduce an
+actual subprocess crash without a result and exercise local, exchange and CLI
+RPC collection with paths containing spaces and Cyrillic together. Full remote
+host acceptance and scenario provenance remain separate open requirements.
+All twelve focused collection regressions and the owning RemotePerformance
+suite passed (8/8, including the complete portable Python inventory). Missing or
+unreadable job state is recorded as unavailable without hiding available logs.
+
+Item 12 source correction is prepared as controlled fork
+`itl-main-410951e7-r34@ed2a1e3b44ace1e359d922adfcb70c3dfb874f3b`.
+The schema-3 reconstruction verifies all 195 decisions; the fork Full gate
+passed 99/99 on its clean committed tree. The workflow lock remains `pending`
+until ordinary delivery qualifies and promotes it. No remote fork ref was
+published by this preparation.
+
+The validator, managed-form router, verification gate and error-fixer agree:
+report unassigned command Action to the user and continue; no mandatory repair,
+dummy handlers, automatic binding or command removal. The host helper exposes
+form warnings with their source path even under `WarningPreference=Stop`, while
+retaining the validator exit code for actual structural errors. Ten reset/merge
+cases preserve the original staged, unstaged, reverted-index and explicit-repair
+topologies, with both advisory commands and genuinely duplicate command IDs.
+The former regression's unassigned Action is no longer a valid structural-error
+fixture; the duplicate-ID case retains its blocking and path-selection contract.
+All 198 lifecycle tests passed on the changed implementation.
+
+The new validator was run read-only against all five retained branch11 forms:
+all exited zero and reported the same 14 unassigned command actions. Form and
+module hashes stayed unchanged. Evidence is retained under
+`build/diagnostics/form-command-advisory/` (`verify.json`, `branch11-forms.json`).
+The nine focused validator tests also cover mixed warnings/errors and warning
+counts not exhausting MaxErrors. The invalid-callType fixture retains the
+extension BaseForm precondition from the original reproducer. Full branch11
+refresh/check after managed delivery, including removal of the local workaround,
+remains open; current source replay is not installed runtime qualification.
+Dependency and migration checks passed 35/35, including r33-to-r34 for all ten
+supported clients. Candidate preparation initially changed unrelated dependency
+statuses and retained revision 33 in the migration fixture; both were corrected
+without changing eligibility assertions or the protected user-modified cases.
+
+## Added task 13: accepted master input in verification selection
+
+Source: the updated [Валидатор форм: пустой Action блокирует…](codex://threads/01a085aa-b4b8-75d2-a92e-acd4725b2d8d)
+and `D:/Git/PM5 КОРП - Codex - 1-branch11/handoffs/handoff-20260909-verification-master-input.md`.
+
+Problem: after accepting master, the next ordinary check compares the effective
+tree with the previous verification proof. Thirteen imported master paths have
+no owner in this branch's test catalog, so selection stops before 1C starts and
+asks for additional tests/classification. The current shared
+`New-VerificationSelectionPlan` has this unconditional unowned-path branch and
+does not distinguish accepted input from the branch's own implementation.
+This is a selection defect, not evidence of a defect in master business logic.
+
+Implementation:
+
+1. Define and record accepted-master provenance using the actual branch ancestry
+   and an immutable Git reference. Compare against the effective tree including
+   staged and unstaged edits, through the existing temporary-index mechanism;
+   never replace or modify the user's index. Do not assume the current master
+   tip has already been accepted by the branch.
+2. Evaluate every relevant changed path before choosing the plan. Proven imported
+   master input may select the full existing acceptance set without requiring
+   new tests or invented ownerPaths for that input. A branch-owned unknown path
+   still requires classification even when an imported path occurs first. A
+   modified imported file must be evaluated as a branch change. Keep malformed
+   or incomplete test catalogs rejected and preserve the normal own-change gates.
+3. Preserve the distinction between acceptance and explicit profiling suites;
+   ordinary checks must not start performance experiments as a fallback. Keep
+   the existing Vanessa/YAxUnit layers and incremental/reuse semantics where
+   their proofs remain applicable.
+4. Report the accepted reference, imported paths, own paths, selected suites and
+   reason for full compatibility verification. Passing existing acceptance tests
+   proves only that tested behavior remains compatible; it does not establish
+   full business correctness or newly authored coverage of all master changes.
+5. Generalize the local CF-only correction deliberately. Cover CF and CFE with
+   their real source roots, deletions, renames, new files, changes in both diff
+   orders, mixed staged/unstaged content, absent/ahead/unrelated master, invalid
+   trees and Git errors. Unproven provenance must not grant the imported-input
+   exception. Reuse the 13 real paths and the 15-case reproducer; retain prior
+   incremental/reuse and catalog-negative regressions.
+6. Fix the shared selection owner, update `verification-suite-selection.md`,
+   register and deliver normally, then repeat the full branch11 check on the
+   delivered helper. Preserve all 38 option values and existing optimization
+   regression coverage. Remove only the identified obsolete local workaround
+   through the managed update path, preserving unrelated changes.
+
+Evidence: the handoff records Pester 15/15 and successful canonical check
+`compact-20260909-163435-297-2d8737a7`: YAxUnit 118/118, Vanessa 49/49, no failures
+or skips, and unchanged 38 options. These are reported local results, not shared
+delivery proof. Item 6 still owns its separate classification-command dispatch,
+exact-HEAD resume and multi-branch convergence checks; they are not closed by
+this selector correction.
+
+Shared implementation now resolves one immutable common ancestor from pinned
+local master and branch tips. It compares the effective tree against that
+accepted commit through the NUL-delimited Git path helper, including configured
+extension roots, additions, deletions and rename pairs. A newer master tip is
+not assumed accepted. Missing/unrelated master, ambiguous ancestry, malformed
+trees and Git errors grant no provenance exception. Modified imports remain
+branch-owned. Imported paths trigger complete existing acceptance, while all
+delta paths are examined before imported/support/runtime full-suite reasons
+can be applied; a different unknown own path still requires classification.
+The plan and successful proof retain the accepted reference, commit, both tips
+and imported/branch paths. Existing generic first-check/no-proof fallbacks and
+catalog prerequisites remain unchanged.
+
+All 24 new Git/contract cases plus 13 existing selection tests passed (37/37).
+They cover CF, CFE, configured Cyrillic/spaced extension roots, literal bracketed
+paths, additions, deletions, renames, staged/unstaged imports, index-only drift,
+own changes before/after imported paths, newer/missing/unrelated master,
+ambiguous ancestry, Git errors and mixed support/runtime plus unowned changes.
+All real-tree cases verify that the user's index bytes remain unchanged.
+
+Read-only replay against branch11 HEAD
+`5aabbffdce1efc34e7ce041597b5ed6401ee1b2b` and master
+`9ce64fc77c98a0d5421577fd25a14ed75e781c91` recognized all 13 retained unowned
+imported paths and kept the branch-modified optimization form module separate.
+The actual index and existing verification proof hashes were unchanged; no 1C
+process was started. Evidence is retained in the source selection worktree at
+`build/diagnostics/accepted-master/qualification.json`. The same 13 path names
+are added to the isolated Git regression without copying business code.
+This is source/provenance proof, not a new business check or installed delivery.
+
+## Added task 14: export blocked by its own ROCTUP runtime coordination
+
+Source: the same updated task and
+`D:/Git/PM5 КОРП - Codex - 1-branch11/handoffs/handoff-20260909-export-roctup-lock.md`.
+
+Problem: a successful check was followed by a read-only ROCTUP query and ordinary
+export. With unchanged configuration the load was skipped; Designer produced a
+CF and logged successful completion, but the helper waited for the file infobase
+to be released. ROCTUP kept it open, while `close_1c_session` was denied by the
+export's exclusive `runtime-mcp.lock`. Thus the waiting export prevented the
+session closure needed by its completion condition. No official manifest was
+created, so the isolated CF was not a completed export.
+
+Implementation:
+
+1. Reproduce the exact sequence with an active facade backend and skipped load.
+   Trace `Export-DevBranchResult`, `Export-DevBranchResultFile`, `Invoke-Designer`
+   and its invocation-release probe together with the runtime lease. Preserve
+   the distinction between process completion, database availability and artifact
+   validity; determine which postcondition this read-only DumpCfg actually needs.
+2. Implement the smallest evidence-backed correction: either arrange normal
+   shutdown of the operation's owned backend before exclusive export admission,
+   or use a justified operation-specific read-only completion condition. Preserve
+   authoritative Designer completion, owned-process evidence, log/error checks,
+   artifact stability and hashes. File existence or a success log alone is not
+   enough. Do not broadly disable database-release checks for mutating operations.
+3. Integrate with item 4's database identity and ownership protocol. Required
+   nested closure/cleanup inherits the operation lease and must not reacquire
+   the same lock. Never bypass the broker/shared lease, remove lock files, or
+   stop unrelated 1C sessions. A conflicting owner must have a bounded,
+   diagnosable wait/cancel path, with no circular dependency on the waiting job.
+4. Add public-path regressions for check/query/export, skipped and actual load,
+   active owned and foreign backends, two competing chats, failed Designer,
+   incomplete output, cancellation and retry. Cover CF and CFE and retain server
+   support; record backend-specific live proof separately rather than inferring
+   it from the file-base incident. A forced helper exit remains failed and may
+   never manufacture a successful manifest or trigger unproven replay.
+5. Preserve fresh verification proof when business sources/runtime inputs have
+   not changed. An export-coordination failure alone is not a reason to rerun
+   all business tests. Complete normal export with the official manifest and
+   matching SHA on a delivered helper, without manual process interruption.
+
+Evidence: the handoff identifies failed export
+`compact-20260909-164419-033-22de3835`. Only the exact waiting helper was stopped;
+the normal parent recorded failure and completed its lifecycle record. After
+normal `close_1c_session`, retry `compact-20260909-164938-375-a2802801` succeeded
+with fresh passed, CF and `.cf.manifest.json`. This confirms operational recovery,
+not an upstream fix. Historical PIDs from that handoff must not be reused for
+future operations. The source correction and its current qualification follow.
+
+The shared `Invoke-Designer` now omits the exclusive file-base release probe only
+for the exact standalone `/DumpCfg <file> [-Extension <name>]` shapes used by
+CF/CFE export. Owned Designer process completion, exit status, error-log checks
+and stable nonempty output remain required. Unknown/combined commands, DumpIB
+and mutating operations retain their prior release conditions. This eliminates
+the demonstrated circular dependency without a backend close or lock bypass.
+
+The original completion condition failed the CF/CFE regression with an actually
+held file handle. After correction, 14 new cases plus all 31 existing Designer
+completion cases pass. New public `Export-DevBranchResult` cases use the real
+export and manifest producers with a simulated native boundary and skipped load;
+they verify hashes and fresh evidence, and reject source drift, lost freshness,
+nonzero Designer exit and surviving owned processes without a manifest. Separate
+negative cases retain the release requirement for DumpIB and mixed dump/update.
+
+Live technical qualification on platform 8.3.27.2074 created a new file base and
+loaded the retained technical configuration plus YAXUNIT extension. With its
+guarded thin client alive and holding the base open, real CF and CFE exports each
+completed in about 5.9 seconds; actual manifests and hashes matched. The session
+limit stayed 3 and only the created client was stopped during cleanup. Evidence:
+`build/diagnostics/export-shared-base/Экспорт с открытым клиентом f8f78dfb660043aab85e8658effa2f46/qualification.json`.
+These technical manifests truthfully say `warn-unverified`; no PM5 business gate
+or live public facade qualification is inferred. An earlier qualification-script
+variable collided with the helper's typed Client parameter; that failed run and
+the identity-checked cleanup of its own client are retained separately. The
+fixture was corrected without modifying product behavior or clearing locks.
+
+Remaining item-14 acceptance: delivered check/query/export through the live
+facade, actual-load behavior under coordination, two competing chats, cancellation
+and retry ownership, and server-family evidence. Item 4 still owns the broader
+cross-project/cross-host database admission contract.
+
+## Added task 15: unsupported AI review and false blocking findings
+
+Source: the fourth handoff in
+[Валидатор форм: пустой Action блокирует…](codex://threads/01a085aa-b4b8-75d2-a92e-acd4725b2d8d),
+`D:/Git/PM5 КОРП - Codex - 1-branch11/handoffs/handoff-20260909-ai-review-false-positive.md`,
+and the retained `release-preparation-20260909-final/ENGINE-REVIEW-RECOVERY.md`
+with both raw review responses and `release-static-evidence.json` under
+`C:/Users/xment/.codex/visualizations/2026/09/08/01a08088-9d59-75f3-8387-c54fee76082f/`.
+
+Problem: the first review returned only ITS links, without substantive analysis.
+One explicitly authorized repeat returned three must-fix recommendations. The
+retained rebuttal identifies an inverted parameter-passing claim, an access to
+a nonexistent cache field despite an existing guard, and an unconditional
+calendar restriction that ignores a separate astronomical-duration path. These
+are reported rebuttals to inspect against the exact original validation unit;
+they are not a new independent audit of the PM5 engine in this workflow task.
+An inherited or out-of-scope risk must be distinguished from a disproven claim.
+
+The current controlled-fork rules require correction plus a clean confirming
+response, prohibit repeats on unchanged code, and prescribe documenting the
+remaining nondeterministic findings. They do not define how such documentation
+can result in a valid acceptance decision. An agent can therefore become stuck
+or make an incorrect source edit solely to satisfy an AI recommendation. The
+confirmed defect is this missing evidence/decision contract; a defect in the MCP
+server implementation or in PM5 business logic is not established by the handoff.
+
+Implementation:
+
+1. Preserve and replay the original evidence without another live validator
+   call: validation-unit content/hash, source snapshot, tool identity and call
+   parameters, timestamps, raw responses and individual findings. Check each
+   rebuttal against the submitted code and relevant primary documentation.
+   Record separately: confirmed defect, disproven finding, unsupported claim,
+   inherited/out-of-scope risk, and unresolved finding. The last three categories
+   must not silently become false positives or accepted changes.
+2. Define a result for an unusable response (`unsupported-result`): links alone,
+   empty output, wrong scope or missing analysis cannot count as a clean review.
+   Specify an explicit bounded recovery allowance and the evidence needed to
+   use it, coordinated with the existing per-validator call budget. Record the
+   recovery reason and result. Exhaustion remains visibly unverified; do not
+   keep requesting the same review until it happens to return green text.
+3. Define evidence-based adjudication for an actual finding. Retain the original
+   severity and text, exact source references, proof/reproducer, disposition,
+   decision authority and rationale. Specify which mechanically verifiable
+   contradictions the workflow may resolve autonomously under the new policy;
+   ambiguous business semantics or risk acceptance require a concrete decision
+   from the authorized user/reviewer. A request to implement a change does not
+   itself waive a reported risk, and the tool authoring a finding does not make
+   that finding authoritative evidence of a defect.
+4. Make the final result distinguish a clean tool response from acceptance with
+   adjudicated findings (`adjudicated-false-positive`). Such acceptance requires
+   an allowed decision for every blocking finding; any unresolved blocker keeps
+   the corresponding gate open. Bind decisions to the validation unit and its
+   relevant context; changed inputs invalidate affected decisions. Preserve
+   syntax, logic, metadata, runtime and fresh-proof requirements independently.
+   Neither passing business tests nor a manually edited proof file substitutes
+   for the required AI-review disposition. No business edit is required merely
+   to appease a disproven recommendation.
+5. Reconcile the canonical retry, verification, final-review and error-fixer
+   rules in the controlled `itl_ai_rules_1c` fork on an upgrade/release branch.
+   Update the MCP usage reference and all generated rule variants through their
+   owners. Where the workflow consumes these results, add structured decision
+   evidence and truthful reporting/export eligibility; do not patch an installed
+   project or loosen all blocking diagnostics. An MCP-server change is a separate
+   conditional subtask only if the retained response contract proves one needed.
+6. Add regressions for links-only/empty output, the three retained findings,
+   mixed true/false blockers, incomplete rebuttal, inherited risk, missing
+   authority, exhausted retry allowance, stale or changed validation units,
+   altered raw evidence and actual syntax/runtime failure. Prove that false
+   advice cannot force harmful edits and that unresolved or genuine defects
+   cannot gain acceptance through this route. Tests must exercise the actual
+   evidence consumer where one exists, as well as consistency of the rules.
+7. Register and deliver through the normal controlled-fork/workflow process.
+   Reassess the retained branch11 evidence using the delivered policy and record
+   its actual disposition. Reuse valid syntax/runtime proof where applicable;
+   no new runtime run is required solely to interpret an unchanged review.
+   This task closes only with consistent delivered rules and acceptance evidence,
+   or an explicit evidenced finding that a proposed conditional code change is
+   unnecessary. Unresolved review findings remain visible in the plan.
+
+Current evidence: the handoff reports the unchanged engine SHA256
+`578DCB5A64DAA5F7BBCE239143A67DEC89B2CE752841761700437CCB1045882B`, standalone
+syntax with zero errors, and the existing check
+`compact-20260909-163435-297-2d8737a7` (YAxUnit 118/118, Vanessa 49/49). These
+results do not establish a clean AI-review pass. Neither product code nor proof
+files were changed in that episode; no source correction for item 15 is claimed.
+
+Item 15 source work has now started in the isolated controlled-fork candidate
+`D:/Git/itl_ai_rules_1c-r35-review-adjudication`, branch
+`upgrade/main-410951e7-r35` (the future immutable release is
+`release/itl-main-410951e7-r35`), rebuilt from the unchanged pinned upstream
+`410951e74fd3e6b7a763cf49757935b9a34d3f31` using the normal Prepare helper.
+The 124 reviewed r34 results were restored only after their ledger text hashes
+were verified (including intentional absent paths and UTF-8 BOM decoding).
+The tagged r34 stand remains unchanged. The new canonical
+`verification-ai-evidence.md` defines evidence preservation, one in-budget
+unsupported-result recovery, autonomous mechanical rebuttal versus authorized
+risk decisions, freshness and truthful outcomes. Gate, retry, delivery, root and
+six agent call sites route to it. The existing four ValidatorExecutionPolicy
+tests pass. This is uncommitted work, not a qualified r35 release: complete
+conflict/consumer inventory, case-based regressions, original-evidence assessment,
+installation coverage, path-ledger hashes, version pins, fork qualification and
+normal workflow registration/delivery remain required.
+
+The r35 candidate is now committed at
+`25df9fdc5a27a87b96c40fc1c8ca7a63ac09ed28` (tree
+`a2da2dd3517711641c3cf926bc5343e44ad682b8`). The normal reconstruction Verify
+passed all 197 path decisions. Actual installation/validator-policy tests passed
+16/16. After the redirected qualification path exposed a missing UTF-8 console
+boundary, the fork entrypoint was corrected and the final hidden Full gate passed
+100/100 with a clean tree (209610 ms).
+The first Full run found only an empty retired opsx directory left by this
+checkout's reconstruction; its absence requirement was retained, the confirmed
+empty/untracked directory removed, and the complete gate then passed unchanged.
+The normal publisher preview passed and created the local immutable r35 refs
+without Push; no remote ref was changed. Workflow dependency and migration
+tests passed 35/35 against the new pending pin. Registration and delivery remain
+separate, as does independent assessment of the original branch11 findings.
+
+The facade/update admission candidate was registered at `6f74741` with 903
+passing Targeted tests, no failures/skips and a clean tree (757319 ms; tree
+`5c33871b0d64e54c13adbbd8565f7526d9e05d1b`). The shared integration branch
+fast-forwarded to it. This is source qualification, not completion of the
+remaining per-action, two-chat, real-1C or multi-host requirements in item 4.
+
+## Item 4: exact database scope after source load
+
+The post-load MCP refresh previously stopped every registered backend in the
+branch, including auxiliary databases. It now stops only backends for the database
+identified by the load result and checks the current branch target against that
+recorded identity before cleanup. `Load-ConfigFromFiles` returns the actual kind
+and path for both completed and skipped loads; a missing identity cannot turn into
+stop-all. This applies to update, source synchronization, refresh and result export
+through their existing shared post-load route.
+
+Five focused regressions cover file/server targets, preservation of auxiliary
+ROCTUP and Vanessa runtimes, missing identity, changed target and skipped load.
+The server case also exposed Windows path parsing of unequal quoted connection
+strings; the match helper now returns false for non-file strings rejected by path
+APIs, while exact opaque server matches retain their existing behavior. Load-proof
+tests verify the identity producer for completed recovery and an unchanged load.
+
+This fixes post-load cleanup scope. It does not by itself complete admission
+before lifecycle locks, native-operation cleanup accounting, or real 1C acceptance.
+
+Registered as `0e75c4457fd42b492b9035cfcc01fef3043c98b7` in queue
+`workflow-measurement-reliability`; the owning Targeted run passed in 736.695
+seconds. An earlier registration attempt stopped at selector validation because
+the new test file lacked a quality-contract owner; adding it to `mcp-hosts`
+resolved that defect without weakening or skipping the regression. The isolated
+registration worktree is clean. The database-integration worktree now uses this
+registered commit as its base; its remaining uncommitted changes were preserved.
+No publication or installed-project acceptance is claimed for this correction.
+
+## Item 4: native-operation accounting before aggregate release
+
+The shared session launch boundary now supports an aggregate operation journal.
+Each nested launch has its own record and becomes pending immediately before the
+native start attempt. A capacity or preparation failure before that boundary can
+release the aggregate; a thrown launch without a process handle remains uncertain.
+Removing a session-capacity reservation or returning from a background launcher
+does not confirm that its database work has stopped. The journal retains the
+returned process object and distinguishes separate launches even on the same base.
+
+Designer supplies its existing invocation-specific descendant-release evidence
+and actual launcher-exit result after completion-probe cleanup. Business failure
+can coexist with confirmed native cleanup; a surviving owned process cannot.
+Unrelated sessions do not prevent this owned-process proof. A later contradictory
+observation withdraws an earlier release confirmation. No aggregate entrypoint is
+enabled by this slice alone: update admission, Enterprise completion accounting,
+runtime-drain accounting and actual shared-base acceptance remain required.
+
+Nine journal regressions cover prelaunch rejection, uncertain start, background
+lifetime, both parts of release proof, contradictory evidence and nested launches.
+The retained public CF/CFE export reproducer also asserts journal release on
+success/business failure and retained ownership for a surviving Designer process,
+while keeping an unrelated database holder open. These use simulated native 1C
+boundaries; they do not establish live concurrent database admission.
+
+The next unregistered slice requires owned-process completion for Enterprise
+normalization after configuration load. Ordinary Enterprise calls retain their
+existing completion contract. The new probe composes with an application probe,
+uses the existing bounded native process inventory, and requires a fresh second
+empty observation after the quiet interval, not merely a cached empty result.
+A delayed descendant therefore keeps ownership pending. Nonzero launcher exits
+still fail the operation even when native cleanup is confirmed; the native wait
+can explicitly retain its bounded post-exit probe on failure for this purpose.
+The focused seven-case fixture includes unrelated clients, delayed and surviving
+owned children, application completion failure, uncertain launch, nonzero exit
+and unchanged ordinary-call behavior. This still does not activate update's
+aggregate admission or replace runtime-drain ownership accounting.
+
+## Item 4: Enterprise owned-process completion
+
+Enterprise normalization after a configuration load now explicitly waits for its
+owned native processes. Ordinary Enterprise calls retain their previous contract.
+The bounded process inventory supplies two fresh empty observations separated by
+a quiet interval; a cached result alone cannot confirm release. An asynchronous
+scan remains pending without discarding the first completed empty observation.
+Application-result stability is measured independently of those pending scans,
+so the existing grace period cannot be reset forever by normal worker polling.
+
+A nonzero native exit remains an application failure even when native cleanup
+succeeds. The caller explicitly enables bounded post-exit probing on failure to
+avoid releasing an uncertain descendant or confusing business failure with
+unconfirmed cleanup. Missing native proof never produces successful normalization.
+The update call site requests this behavior; its existing lifecycle regression
+now checks that request. Nine focused cases include pending scans, delayed and
+surviving descendants, inherited application-probe stability, unrelated clients,
+uncertain start, native failure and unchanged ordinary-call behavior.
+
+The first lifecycle run exposed the pending-scan and grace-period interaction;
+its four original branch-creation reproducers are retained. A diagnostic using a
+real command process and the real bounded CIM worker confirms normal completion
+after the correction. This is native process-control evidence, not live 1C/PM5
+acceptance. Registration and delivered database-admission acceptance remain
+separate milestones.
+
+Item 4 update admission is wired in the unregistered integration worktree
+before lifecycle locks, with target/recorded-manager revalidation, inherited
+private proof, per-native-launch resource/fencing checks and native journal
+release. Its mutation drain preserves foreign sessions and retains unconfirmed
+owned cleanup instead of using stop-all-infobase fallback. All ten real
+Python-host admission cases pass after the nested protocol correction below.
+This is not yet delivered or complete.
+
+## Item 4: nested database ownership and cleanup evidence
+
+The Enterprise completion slice is registered at `248d7f6`: its normal Targeted
+gate passed 554 tests with no failures or skips and a clean worktree. Publication
+and installed 1C acceptance remain separate.
+
+A permanent integration reproducer found that an inherited native host could
+report uncertain cleanup while its parent still released the shared database.
+The coordinator now records each borrowed participant under the parent's ticket.
+Admission and release use the same allocator mutex. A live, crashed or uncertain
+participant prevents a clean root release; merely closing its OS process or pipe
+does not prove that its native database work stopped. A successful child removes
+only its own participation, including when another descendant remains active.
+
+The pipe host reports the actual release disposition and validates its current
+fencing authority without creating another work participant. A completed workload
+with unresolved nested cleanup remains needs-attention in its authoritative result,
+preserving collected measurements. Source capture keeps its participation through
+scratch cleanup and distinguishes a known capture failure from unproven native
+cleanup. Recovery retains old participant evidence until fresh full-resource
+verification; current recovery participants must finish before release, and old
+fenced children cannot modify the new recovery generation.
+
+Inherited admission requires participant protocol v1. Its private proof is
+domain-separated from the stored owner token, so old children cannot silently
+borrow new ownership without registering; new children reject legacy parents
+which cannot preserve their records. Existing top-level tickets still serialize
+through the same authority. A diagnostic loaded the actual pre-participant
+implementation from `248d7f6` and confirmed rejection in both directions before
+database work. Ordinary recovery upgrades only the newly claimed generation.
+
+Focused evidence: 52 access/host/recovery/runtime Python tests and 14 source
+capture tests pass. The integration worktree's ten update-admission Pester cases
+now pass, including the original failing borrowed-host case. Its Go facade suite
+also passes with explicit child-disconnect and failed-cleanup cases. Those facade
+and update entrypoint changes are separate unregistered integration work; this
+protocol slice does not claim delivered cross-chat or cross-host 1C acceptance.
+
+The four unchanged branch-creation reproducers now pass (4/4, 66.47 seconds),
+including resume and legacy checkout mode. The nine focused Enterprise cases
+also pass. The participant protocol was subsequently registered at `d934199`:
+its owning Targeted gate passed 50 Pester tests, including the portable Python
+suite, with no failures or skips and a clean worktree.
+
+## Item 4: facade and update admission integration candidate
+
+The integration candidate connects facade calls and development-base updates to
+the shared coordinator. It pins target/manager resources before local locks,
+revalidates them after waiting, and holds native ownership through cleanup.
+Standalone interactive profiles retain a caller-bound owner after their launcher
+exits. Native uncertainty keeps the reservation unavailable for competing work;
+neither a closed pipe nor an absent caller proves native release.
+
+A failed inherited broker request before native work now releases only that
+request's participation. Previously, refusal at the local start lock incorrectly
+left an uncertain child behind even though no native call occurred. A native
+start failure still leaves recovery evidence. Both paths have permanent tests;
+the parent's previous native work is never declared quiescent by this distinction.
+
+Terminal facade close now closes its HTTP MCP transport even when bounded native
+cleanup fails. It preserves the native/backend evidence and disconnects the
+private owner without claiming successful database release. Persistent profile
+stop uses a separate retryable cleanup path so an explicit stop retry can still
+finish under its existing owner. The original failed-stop/retry test remains;
+the new inherited-failure regression also proves that a fenced parent cannot
+restart native work and that terminal cleanup does not leak the HTTP session.
+
+The 0.4.11 candidate was built from the current Go source. Its executable SHA256
+is `aaf13fb5d51f8dac37560d1d0aa643484fd31240beedfa03342e1f429b8af0a2`;
+the dependency lock and deterministic-build assertion use that same value.
+The full Go suite passed in 25.822 seconds. The final OnDemandMcp and
+DevBranchLifecycle Pester run passed 263 tests with no failures or skips
+(325.26 seconds), including the current build pin and broker admission cases.
+These results precede this candidate's normal RegisterChange gate.
+
+The independent public classification/runner cleanup correction was registered
+at `ccce8af`: Targeted passed 664 tests with no failures or skips and a clean
+worktree (498412 ms; 31 executed workers and one valid reused worker). Advancing
+the integration base to that registered commit preserved all 435 tracked and
+untracked source-file byte hashes and left the index unstaged.
+
+This candidate does not complete item 4. Remaining work includes admission for
+all other lifecycle actions and complete service/scratch resource sets, native
+recovery adapters, installed two-chat/manual-profile acceptance, real PM5/UFA
+and two-host coordination. The component has not been tagged or published;
+exact-source/executable Release E2E for both ROCTUP and Vanessa remains required.
+
+## Added task 16: complete repository-lock reports after partial failure
+
+Source: user request and [Использовать результат ITL](codex://threads/01a087cd-0fee-7112-afe0-6774f6f38ed8),
+branch11 run `compact-20260909-231456-271-f748a8ca`. Read-only inspection of its
+`repository-lock.log` confirms 24 successful captures, one object held by
+Проценко2 (`Справочник.упо_Планы.Форма.ФормаЭлемента`), and four entries under
+objects absent from both configurations. The public failed result has an empty
+userReport and names only the conflict. No new repository operation was run.
+
+Current `Lock-ConfigRepositoryObjects` throws the parsed conflict before building
+its success-only report. Existing commit `0cad454` added conflict-owner reporting;
+that is not evidence that complete partial reporting was ever delivered. Compare
+source and installed versions during implementation rather than assuming a
+reintroduced regression from the user's recollection alone.
+
+Implementation and acceptance:
+
+1. Produce one structured per-object outcome inventory and the corresponding
+   Russian report on both success and failure. Preserve requested scope and
+   distinguish captured, already held by this repository user, conflict with
+   named owner, absent/new object and unconfirmed/not attempted. Do not infer
+   successful capture merely because an object is absent from conflict lines.
+2. Parse the platform's actual operation boundaries and retain evidence for each
+   outcome. Where logs cannot prove a result, use a supported read-only ownership
+   inspection or explicitly report unknown; never fabricate the owner.
+3. Persist report/artifacts before propagating failure. Keep partial failure
+   visibly unsuccessful and do not automatically unlock successfully captured
+   objects or retry the whole operation. Update compact transport and the
+   generated explicit wrapper so the full failure report is returned, including
+   its existing file fallback when output is too large. Preserve secret redaction.
+4. Retain the exact 24-success/one-conflict/four-absent reproducer and cover
+   multiple owners, existing ownership, unrecognized/truncated logs, cancellation,
+   zero/all success, missing objects and a report larger than the compact limit.
+   Verify the public wrapper response, not only the parser. Repository ownership
+   remains shared state coordinated under item 4.
+5. Deliver normally and confirm a partial-conflict run on an authorized technical
+   repository. Report all objects and owners without manually disturbing foreign
+   locks. The original branch11 source repository is evidence, not an implicit
+   target for another lock/unlock operation in this task.
+
+Item 16 implementation evidence: the helper now records every requested object
+in `repository-lock-result.json`, preserving observed capture/conflict/absence
+and leaving missing or contradictory evidence unconfirmed. It writes its full
+Russian report before propagating native failure. Confirmed captures before a
+truncated operation end are retained without claiming the operation succeeded.
+Repeated capture lines do not inflate counts, unrelated log entries do not enter
+the request inventory, and a failed new launch cannot reuse a prior log. Only a
+redacted log is included in the report. The explicit wrapper preserves reports
+on failure and uses the same absolute-file fallback for a long report.
+
+Five new outcome cases and both retained lifecycle lock cases pass. A separate
+public compact-runner test preserves all 90 capture lines, the conflicting owner,
+the absent object and requiredAction while retaining exit 1 and a bounded JSON
+response. Read-only parsing of the exact original branch11 object-list XML and
+redacted platform log reproduces 24 captured, one conflict with Проценко2 and four
+absent objects; evidence is in the implementation worktree at
+`build/diagnostics/repository-lock-report/branch11-original-outcomes.json`.
+No source repository lock/unlock operation was repeated. Distinguishing
+already-owned objects where the platform exposes that state, other native log
+variants, normal delivery and a fresh authorized technical repository run remain
+separate acceptance work. Root dependencies remain item 17 below.
+
+The r35 workflow pin was registered at `a1178d0`: Targeted passed 229 tests with
+no failures/skips and a clean tree (150906 ms; tree
+`8aa59a772fb9e713e335ab2377acb62e6fdb44c0`). The cumulative integration branch
+contains it; the fork and workflow remain unpublished.
+
+## Added task 17: configuration-root dependency for top-level additions
+
+User requirement: adding a top-level catalog, document, common form, common
+module, constant, session parameter, role or another top-level metadata object
+requires capture of the configuration root. Adding a form, attribute or other
+child of an existing object does not trigger this rule.
+
+The current transfer planner skips Configuration.xml and maps changed object
+files independently. Its XML writer uses includeChildObjects=true for full
+objects; blindly adding the root as another full object would widen the request
+to the entire configuration and must not be the implementation.
+
+Implementation and acceptance:
+
+1. Determine actual top-level additions against the pinned comparison input and
+   effective current metadata, including committed, staged, unstaged and untracked
+   changes. Use object identities and metadata structure to distinguish additions
+   from modified existing objects, nested additions, renames and moves. Git/path
+   or XML ambiguity must be explicit before the mutation, not guessed from a
+   filename or a changed Configuration.xml alone.
+2. Add one explicit root-only lock dependency with includeChildObjects=false
+   using the platform-supported identity. Explain in the report which new objects
+   require it. Preserve exact object/child scopes for all other entries; root
+   ownership is not recursive ownership of the configuration.
+3. Coordinate dependency order so an unavailable root is reported with its owner
+   and dependent additions remain incomplete. New objects absent from the source
+   repository are reported as new/dependent; never claim that the root lock alone
+   means those objects were individually captured. Do not load configuration or
+   create objects as a side effect of /itl-lock-objects.
+4. Test the metadata categories named by the user and another supported category,
+   several additions requiring one root, an already-owned/foreign-owned root,
+   Cyrillic and spaces, mixed new/existing objects, dirty/untracked additions,
+   renames and malformed metadata. Negative cases retain no root capture for a
+   new form or attribute inside an existing object. Verify serialized object-list
+   scope and a real technical repository roundtrip; no full-configuration fallback.
+5. Update the lock helper, transfer/root-dependency report and generated command
+   guidance together, integrate the outcome inventory from item 16, register and
+   deliver normally. Preserve all earlier plan items; these are additional tasks,
+   not replacements for database coordination or AI-review correction.
+
+Item 16 registration completed at `546aad7`: Targeted passed 592 tests with zero
+failures/skips and a clean tree (`f50275a4566f0d2a01d31c7d3605c9711e1e48c3`,
+707074 ms). The cumulative branch includes the packet; it remains unpublished.
+
+Item 17 source implementation now compares changed top-level descriptor UUIDs
+against the pinned baseline. It includes committed, staged, dirty and untracked
+descriptors, recognizes renamed identities and replacement UUIDs at the same
+path, and validates new objects against the effective Configuration.xml list.
+Malformed XML, duplicate identity, type/path disagreement or missing root
+membership stops the lock request before any native mutation. Nested forms and
+attributes do not introduce a root dependency. Non-descriptor Ext XML is not
+misread as a metadata identity. This enrichment runs for the lock command;
+ordinary export planning retains its existing behavior.
+
+The serializer uses the separate `<Configuration includeChildObjects="false"/>`
+element, as documented in the platform's official
+[object-list examples](https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Appendix_3._Description_and_location_of_internal_files/3.31._Object_list_file/3.31.5._Examples/?language=en).
+The helper makes a root-only request before requesting the other objects. A
+classified foreign-owner conflict skips only the dependent top-level additions
+and still requests all independent changed objects. An unclassified root launch,
+transport or timeout failure stops before another mutation because the first
+result is uncertain. Both paths retain the root's separate redacted log and
+observed owner/outcome in the full report. New objects absent from the source
+configuration remain absent; root ownership does not turn them into individually
+captured objects. Native exit zero without a per-object observation remains
+unconfirmed in the outcome inventory.
+
+Focused root/report tests pass, plus the retained lifecycle transfer/lock cases.
+Coverage includes eight top-level categories, one root for
+multiple additions, Cyrillic and whitespace in the same paths, nested additions,
+renames, replacement identity, ambiguity before mutation, root/second-phase
+conflicts and preservation of both phase outcomes. These are source and fixture
+results. Actual native already-owned/root-name semantics, a technical repository
+roundtrip, shared ownership across the entire dependency sequence (item 4),
+installed delivery and adding root dependencies to the export transfer report
+remain acceptance/follow-up work. No new lock/unlock against the original PM5
+source repository was performed.
+
+A read-only run of the new planner against the named branch11 checkout resolves
+31 planned entries without unresolved paths against comparison commit
+`4f0cf2f5da743e8710bd56e99f58d9a0339bc6c4`. It adds a root dependency for the three
+new plan-editor constants (background-ready tables, packed tree restoration and
+packed table restoration), while the new nested subsystem does not trigger one.
+This confirms parsing of the actual PM5 metadata inventory; no Designer was
+started and it is not a native ownership roundtrip.
+
+Item 17 registration completed at `38555f5`: Targeted passed 604 tests with zero
+failures/skips and a clean tree (`9c604df68ca1c9651b593a56de769574adaf762d`,
+696759 ms). The cumulative branch includes both repository-lock packets; no
+workflow or component publication has occurred.
+
+The source-lock command now enters the shared database queue before its local
+lifecycle lock and retains one ownership proof through both the root and object
+requests and confirmed cleanup. Its resource is the source infobase, not the
+branch or Vanessa service base. The post-wait check resolves the source target
+again; target drift stops before native execution. Existing unrelated owners
+are waited for, not stopped. Unsupported/non-repository branch diagnostics stay
+with the original action without acquiring an unrelated resource.
+
+The shared-host tests cover file and server identities, a competing source
+owner, an independently available branch base, target drift and the unchanged
+proof at both native request boundaries. They observe exclusion until the
+caller releases ownership. The native launches in that boundary test are
+fixtures: actual installed two-chat/two-host behavior and recovery remain part
+of item 4 acceptance, and native repository ownership remains item 17 acceptance.
+
+Item 5 evidence is pinned to merge
+`e53505ccd39bd024cf56245b010ad1ea36ebeab4` in branch6. Its first parent is
+`a8d8312785b393348d585c508d8d6c15dada592b`, second parent
+`77ba2ef1c135802fef6de34a92bb86307ba7f0d6`. For the economy data-model module,
+the first-parent blob is `8aa7f46e7ea0f4c3e1c56e5b8cd49a74349324e9`; both the
+second parent and merge result use `4f61dc17876e42d36af4f047988c148752933f76`.
+Thus this case retained the second-parent file wholesale. The later branch6
+task reports restoring only the E2 phase, with unchanged code outside it and a
+fresh 11/11 YAxUnit plus 2/2 Vanessa result. Its historical
+`analysis-economy-20260909/restore-proof.json` records the before/after hashes
+and the scope assertion. These are retained incident/repair facts, not a current
+performance claim or permission to repeat a product-source restoration. The
+remaining change belongs to workflow conflict-resolution evidence and prevention.
+
+The Vanessa r9 source candidate and non-reusable Pester completion correction
+were registered together at `f89c7a66440191b7f031594e3f87019cb9c73ad7`.
+Targeted passed 498 tests with zero failures/skips on a clean tree
+`26a33b75868481bc4189b270933f8c95516c8050`
+in 492422 ms. The installed dependency still pins r8; compiled r9 and the original
+49-scenario runtime acceptance remain outstanding.
+
+Items 16/17 native acceptance now includes a fresh owned technical file base and
+repository under the admission worktree's
+`build/diagnostics/root-native/Проба с пробелом afce99ab`. Platform 8.3.27.2130
+successfully captured only the root, repeated the root request, separately
+captured CaptureProbe, then released the two explicitly requested objects.
+The module's later capture confirms that the root request did not recursively
+capture it. All native launches used the existing per-infobase admission guard.
+No original PM5 repository was mutated.
+
+The native logs exposed English metadata names inside Russian operation text:
+`Configuration` and `CommonModule.CaptureProbe`. The outcome parser now converts
+only metadata type positions through the existing collection labels, preserving
+object identifiers. It handles both language variants for capture, conflict and
+absence without counting duplicate observations twice. Read-only re-parsing of
+the retained native logs now recognizes the root and module captures. The
+repeated root request contains only the native repository-lock success marker.
+A requested item with no other observation is now classified as `already-owned`
+only when Designer exits successfully, this exact marker is present and
+`REPOSITORY_USER` is known. New captures remain `captured`; missing, truncated,
+contradictory and unrecognized logs remain `unconfirmed`. This uses the supported
+lock result and avoids reading the repository's private storage format.
+
+All 21 focused report/root tests pass on Windows PowerShell 5.1, including the native
+language variant, preserved English-looking object identifiers, foreign owners,
+irregular type names, mixed new/already-owned outcomes and the exact silent
+repeat response. Installed
+delivery, a fresh partial-conflict public-command run and two-chat/two-host
+acceptance remain open.
+
+Source database ownership across both lock phases was registered at
+`a52eba493cc8cc8718d2d496590bdb84aab70693`: Targeted passed 552 tests with
+zero failures/skips, clean tree `fc76225a505d3dd776cc55b075063c6c434127fd`,
+496731 ms. This remains source proof, not installed two-host qualification.
+
+A further request for one nonexistent constant in the same owned technical
+repository failed with native exit 1 and an explicit absence list, without an
+operation-start marker. The parser now retains that absence evidence while
+preserving the failure. The exact native log is
+`logs/1c/1c-20260910-010348-850-10740-99f369e0.log` below that probe directory.
+The report test file passes all eight cases after this correction. The root
+test file's twelve cases passed before this absence-only parser correction;
+registration performs the required combined owner verification.
+
+Native repository report follow-ups were registered at
+`88ace9e058569bd9f8ddd0d80bb70c0dba6e0e9c`: Targeted passed 536 tests,
+zero failures/skips, clean tree `ad5c2cfe56b67de31391b0c72007e887508d8449`,
+474058 ms. The cumulative source branch includes this packet; publication and
+installed acceptance remain outstanding.
+
+## Vanessa build admission and the conf.cfg constraint
+
+The user explicitly forbids workflow edits to `conf.cfg`; terminal-server users
+may lack write permission. The old builder's temporary protection edit is
+removed, including its restore path. The replacement restores the existing
+SHA-qualified `service-infobase.dt` into an owned build-only base and launches
+the cache preparation under `itl_vanessa_service`, whose per-base/user protection
+setting is already prepared. No business base or installed configuration is
+changed by this build.
+
+The builder plans the compile scratch base, single-build scratch base and service
+base before starting 1C, reserves their complete set through the common database
+queue, and uses the shared session-capacity guard for OneScript proxies as well
+as direct qualification launches. The native journal requires observed release
+of owned descendants; a surviving child or unknown launch retains recovery debt
+and the build directory. An unrelated user's client does not prevent release.
+
+Pinned upstream Compile.os and MakeVASingle.os bytes remain unchanged. Separate
+hash-checked execution copies select the planned scratch path, the pinned 1C
+executable and the prepared service user, and suppress only the final directory
+window. The original synchronous Enterprise cache-building call is retained.
+Explicit platform selection also fixes a reproduced preflight rejection when
+8.5 is installed alongside the required 8.3.27.2130; the executable's manifest
+version check remains mandatory.
+
+The focused group passes 26/26 on Windows PowerShell 5.1/Pester 5.8. It includes
+real Python queue owners competing for each of the three resources, independent
+resource admission, full-set release, and native-boundary failures for surviving
+children, nonzero exits and unknown starts. Both complete execution copies pass
+the pinned OneScript engine's syntax check.
+
+Native r9 compilation subsequently completed on platform 8.3.27.2130 and
+OneScript 1.9.4.16, with the original source layout under
+`C:/va сборка/bcf14d42`. The observed Enterprise cache-builder command used
+`/N"itl_vanessa_service"`; RestoreIB and all three native stages completed.
+The private runtime result confirms release, and a fresh independent queue owner
+then acquired and released the entire actual three-base set without waiting.
+The user protection file's existence and SHA were identical before and after;
+evidence is retained under `build/diagnostics/vanessa-build-no-conf` in this
+worktree. The native run predates the added per-operation JSON telemetry fields;
+it proves the execution path, not those additional fields.
+
+The candidate ZIP SHA-256 is
+`ee3e0f86faf30951731b6bbaaf4fc6dd5ab294990d4ae558d989aaeb4302bc59`,
+EPF SHA-256 `856b773bd55f5b77b1d93c6793e62a12e0c9d1a4ba744ad5ce829b7b829457ac`.
+Its provenance and 32094350-byte archive are under
+`build/third-party/vanessa-automation/1.2.043.28-itl-r9`. This is a local candidate;
+the original combined 49-scenario case, retained MCP behavior, normal component
+delivery and installed acceptance remain pending. The installed pin remains r8.
+
+The build correction was registered as
+`c12320f2a6b38bdff912dfa4e5cbbb68be3a2968`: 509 Targeted tests passed with no
+failures/skips, tree `a93ecbd403681c976795bf4ec09b4ded2f75b2bf`, ledger duration
+498947 ms. Registration is not publication or installed acceptance.
+
+## Item 4: managed Python provision and offline portability
+
+`PythonRuntime.ps1` supplies the same interpreter to native database owners,
+the facade's public access-plan and Windows remote/performance entrypoints.
+The official CPython 3.13.15 NuGet distribution is pinned by archive SHA
+`05357887df50d3153efc681bdf432c321d3e2f9ce5788f99f4515b27e8fda0ac`.
+The source manifest includes all 1331 payload files with individual sizes/hashes;
+the package license is retained. There is no installer, global PATH/registry
+change, pip dependency installation, or 1C protection-file edit. NuGet's normal
+module lookup preserves existing scenario imports and PYTHONPATH; the isolated
+embeddable distribution was rejected after the actual access-host import failed.
+
+The package installer serializes processes against a shared per-user cache,
+verifies complete payload bytes before reuse, and selects a new immutable
+generation when files are damaged or redirected. Previously selected generations
+remain available to existing workers. Shallow executable paths fix the observed
+CreateProcess failure with the original combined Cyrillic/space cache path;
+the original path was retained in qualification. Explicit interpreter overrides
+are qualified as Python 3.11+ and retain errors instead of silently falling back.
+
+`Invoke-RemoteWork.ps1 export` includes the pinned package automatically. A
+recipient uses `Prepare-RemoteHost.ps1 -Offline` from the extracted bundle,
+without Python in PATH or an Internet download. The shared immutable-download
+module is included in the portable dependencies. The helper preserves the
+Python process's JSON stdout, diagnostic stderr and exit code: real Windows
+PowerShell 5.1 qualification found lost inherited output handles and then a
+VoidTaskResult contaminating the exit result; explicit concurrent byte-stream
+copies with suppressed task return values correct both. Worker launchers disable
+bytecode/user-site writes and foreign PYTHONHOME. Worker startup remains manual.
+
+Focused PS5.1/Pester 5.8 verification passes 93 cases across PythonRuntime,
+OnDemandMcp and RemotePerformance, including the portable Python inventory;
+VanessaBuildRuntime's nine cases also passed during the preceding combined run.
+Two real PowerShell installers select one verified generation from the same
+cache. Additional native qualification at `C:/itl автономный 68485339` exported,
+extracted and ran the public CLI from a complete bundle with a fresh cache,
+Python removed from PATH and invalid inherited PYTHONHOME. It created the
+original scenario, propagated argument error exit 2, acquired/released the
+database pipe owner, and retained unchanged interpreter bytes. Bundle SHA was
+`479b47c800c4fc98a186608ab2598e1ceca7f4f949fe004b88c39489ea591124`;
+this run preceded the later shared SHA-helper substitution. A subsequent actual
+public access-plan at `C:/itl план Python e61fd983` selected the managed executable
+with no Python in PATH and left its target database absent/unchanged.
+
+The Go database owner/broker/environment tests pass. The unpublished 0.4.11
+facade candidate was rebuilt; the exact executable SHA is now
+`fee2d384ec13f41b5c8483f43a1a83f5bd6482439c6d24c0ce15b4b6308108bb`.
+The package lock and exact-build regression follow this candidate. This is not
+component release proof: both backend families still require the real Release
+E2E stage before the executable can be published. The Python packet was
+registered as `3d6333a5e69e39ae14576ed41f7e5fe7d072049b`: Targeted passed 277
+tests, zero failures/skips, clean tree
+`3cb629459adfce61b111bd599045ab14cb5381a1`, ledger duration 225226 ms.
+The initial registration exposed a duplicate top-level BeforeAll in the Vanessa
+fixture; the consolidated preparation and its unchanged nine assertions passed
+through the same strict shard runner before successful registration. The
+canonical accumulation branch now contains the packet. Package delivery and
+installed-project acceptance remain pending.
+
+## Item 5: confirmed whole-parent replacement gap
+
+Read-only inspection of the original branch6 merge reconfirms its exact parents
+and result. Merge `e53505ccd39bd024cf56245b010ad1ea36ebeab4` has parents
+`a8d8312785b393348d585c508d8d6c15dada592b` and
+`77ba2ef1c135802fef6de34a92bb86307ba7f0d6`, with merge base
+`d3431bf6460fe83925f8495a785484d4e56490c6`.
+The affected common module's base, first-parent and second-parent blobs are
+`155a14808d4742ff27db094f5f7216a730b63264`,
+`8aa7f46e7ea0f4c3e1c56e5b8cd49a74349324e9` and
+`4f61dc17876e42d36af4f047988c148752933f76`. The result equals the second parent.
+The first-parent-to-result diff removes the complete functions/procedures
+`КонструкторПодготовкиСвойствОпцийТрансляцииБДРвБДДС`,
+`ДополнитьСвойстваОпцийТрансляцииБДРвБДДС` and
+`ДобавитьПотребностьЗначенийПоУмолчаниюБДДС`. No PM5 files were changed by this
+inspection.
+
+Before this correction, lifecycle recovery checked the exact parents, allowed paths, staged
+repairs and structural source integrity before its own merge commit. It had no
+comparison identifying replacement of both-sided changed content with one
+parent. The byte-preserving transition can also clear pending conflict paths
+before commit, so a prevention check cannot depend solely on the remaining
+conflict list. Prevention must inspect the actual parent/result blobs,
+retain an actionable report of discarded-side changes, and require a
+result-bound semantic decision for intentional replacement. Compatible repairs
+remain agent-owned; only evidence of incompatible business outcomes calls for
+a user decision. An unexplained whole-parent result must not become a successful
+helper-owned merge merely because XML/BSL structure is valid. This is the
+implementation boundary, not evidence of delivered prevention.
+
+The source correction now inspects actual parent/base/index blobs immediately
+before both initial and resumed helper-owned merge commits, after structural
+validation. It detects whole-parent replacement of a both-sided changed path,
+including deletion, and lost newly added BSL declarations even in mixed results.
+The guard does not depend on a surviving conflict list. It leaves source bytes,
+index and the pending lifecycle transaction intact on failure. Compatible repair
+continues through the same refresh, refresh-lite or close command; the helper
+creates the merge commit itself.
+
+Reports retain both original patches, exact blobs, missing declarations and a
+decision identity. Intentional replacements require an accountable semantic and
+verification explanation bound to the current risk report; incompatible intent
+also requires actual user authorization. This records evidence, not an automatic
+proof that the explanation is true. Reports live in common Git storage with a
+checkout-specific identity and survive linked-worktree removal.
+
+Two existing regressions exposed false positives where both parents inserted
+the exact same new metadata definition in different places. A narrow exception
+now proves equality of complete added BSL methods or XML definitions and checks
+that removing those additions restores the base. Different bodies, properties
+or existing XML order remain reviewable. The third initial failure exposed a
+fixture bug: static `Regex.Replace(input, pattern, replacement, 1)` interprets 1
+as RegexOptions.IgnoreCase and removes both copies, not just one. PS5.1 reproduced
+counts 2 -> 0 for that call and 2 -> 1 for the instance count overload. The fixture
+now removes one duplicate and asserts exactly one shared method survives. A
+separate regression retains the original all-copies-deleted failure and requires
+the guard to report loss from both parents.
+
+The nineteen focused tests cover compatible repairs, disguised loss, deletion,
+stale/malformed/authorized decisions, duplicate-addition equivalence and negative
+cases, common-Git report lifetime and actual refresh/refresh-lite/close resume.
+Read-only rerun against original merge `e53505ccd` after these exceptions still
+finds exactly the three named E2 declarations in the affected module; no PM5
+source was edited. Further negative cases exposed and corrected omission of
+identical-parent additions, a complete revert to the merge base, and attempted
+UTF-8 decoding of unrelated binary files. Binary replacement retains byte-level
+identity and an actionable report. A changed caller outside the flagged path
+also invalidates the decision: its identity includes all staged deltas without
+writing a Git tree or modifying the index.
+
+The earlier 216-test run lost its tool handle during an interruption and its
+process is no longer present; no final result artifact was requested for that
+run, so it is not counted as a full pass. The subsequent PS5.1/Pester 5.8 focused
+run passes 22/22 (19 new tests and the three original duplicate-repair cases) in
+49.74 seconds and retains JSON/XML results under the isolated worktree's
+`build/diagnostics/merge-preservation/focused-final.*`. Normal registration owns
+the final Targeted proof.
+Installed public-command acceptance remains required.
+
+## Item 8: native thick-client family on UFA
+
+The latest completed turn of task `01a07de3-b5ef-7922-9c35-3dccd94cdf25`
+("Проанализировать открытие формы") describes successful recovery after changing
+the profile executable from `1cv8.exe` to `1cv8c.exe`. Its retained original
+`plan-card-20260909-03` discovery response has SHA-256
+`42388d0abf75e8de38c96749fed649fc5335d7f706fcdd02277e26f9b214df9e`.
+The startup observation binds PID 76220 and its start time to session number 47;
+the response contains exactly one `Client` and one `Server` for that session and
+base instance. This was not multiple competing owned clients. The selector
+discarded the native `Client` family, retained its server, then called zero
+ManagedClient targets "ambiguous". The source runtime and engine also hardcoded
+ManagedClient in their required coverage, so changing only the selector would
+leave the measurement incomplete.
+
+The correction retains both native client families in exact session selection
+and derives required coverage from the discovered client type in runtime proof
+and engine setup. The configured executable is unchanged. A missing client is
+reported separately from multiple clients; two client targets, even of different
+families, still fail before attachment. Native packet types must match the proof,
+server or ServerEmulation coverage remains required, and foreign sessions are
+excluded. Old proofs without a type map retain their ManagedClient requirement.
+
+The committed discovery fixture preserves native types and identity relations
+from the incident, with only the database alias normalized and username removed.
+The reproducer failed on the original selector; a second new negative case also
+proved that mixing Client and ManagedClient previously hid a competing client.
+Focused identity, packet-coverage and engine suites now pass 29/29. Their synthetic
+packet variant is explicitly not real thick-client profile evidence. The existing
+thin-client UFA recovery remains historical evidence; a new short remote capture
+using the delivered correction is still required. No target database, worker
+profile or remote client was changed during this source diagnosis.
+
+## Registered merge-preservation and native-client corrections
+
+`1b08129a3382608038ab6d0e53ca35deb370db97` registered successfully with 618
+Targeted tests, zero failures, clean tree
+`5a06c53a2d20c7166119d007de4ed75e99f0e78c` and ledger duration 835525 ms.
+`e00ba67d7e503f6959de282cdf40af76b8091a09` then registered with 63 Targeted
+tests, zero failures, clean tree `fce24a36987436afbf1f701e6009ae34dec22f93`
+and ledger duration 70330 ms. The canonical accumulation worktree was fast-forwarded
+to each registered head. The queue retains base `2d390d654a6dbcbaf72b4097f0e209d55b2b8582`.
+Neither registration constitutes publication, installation or live acceptance.
+
+## Item 9: display captions used as Structure identifiers
+
+Pinned upstream Vanessa commit `f3a01778a14d29b38204685deea0131274d438ff`
+implements `navigate_to_row` in MCPVA's `ПереходКСтрокеТаблицы` function.
+It parses `row_criteria` into a Structure and inserts each column caption as a
+property name. The actual caption `Дата начала` therefore fails before any row
+navigation. This is reproduced by the exact original function under OneScript,
+while the ordinary `Код` case passes using the same test transport.
+
+Candidate `1.2.043.28-itl-r10` replaces only that criteria container with a map,
+normalizes its keys for the existing case-insensitive/last-value semantics and
+retains actual discovered captions for the navigation call. Multiple criteria
+still travel together through the original two-row parameter table; values
+containing equals signs remain intact. Unknown columns, empty input and a
+navigation no-match error retain their existing error paths and do not produce
+false success.
+
+The source fixture pins the original Git blob and function hash; tests apply the
+shipping patch hunks to that exact function. Twelve native OneScript cases cover
+the original failure and corrected dispatch/error contracts. Twenty-one artifact
+checks cover r8/r9/r10, and eight nested-feature tests cover r9 and r10 without
+changing the original nested paths. The UI transport doubles and candidate build
+are not claimed as real installed UI acceptance. The installed pin remains r8;
+r10 also retains r9's original-49-scenario correction for later joint acceptance.
+
+The r10 candidate was built through the guarded official Compile/MakeVASingle
+flow on platform 8.3.27.2130 and OneScript 1.9.4.16. Retained work root:
+`C:/va строки/a2ed2e19`. The runtime result reports all three stages successful
+and all three owned service databases released; a post-build check found no 1C
+process for this root. The builder does not edit `conf.cfg`.
+Candidate ZIP SHA-256 is
+`840f501ae4118bdf0c2ae70a2fe3857e47e5e54eb18b8027be5c66b731ecd160`,
+and its EPF SHA-256 is
+`b9f09b42c4a7b5a1eeeb1ce6701b9b408c182ddbb23037d40d3b11f5d514cec6`.
+Candidate provenance is retained in the isolated source worktree under
+`build/third-party/vanessa-automation/1.2.043.28-itl-r10/`.
+The candidate is neither published nor installed by this build.
+
+## Item 4 follow-up: detached native TestClient ownership
+
+The retained failure `C:/va канал/probe-c0865302` left TestClient PID 27584
+running in the second client database after the manager exited. Its intermediate
+parent was no longer available in the process inventory, so ancestry-only
+enumeration incorrectly reported release. The port allocator also assigned the
+second profile the first profile's port; fixing the port allocator alone does
+not repair the release proof.
+
+The current source captures each run's manager and client database identities,
+the complete assigned port set, and the unique VAParams path and SHA256 before
+launch. A client belongs to the run only when its database, role, assigned port
+and run-owned `/Out` path match. Manager ownership requires its database and
+exact VAParams marker. These descriptors are retained on the native operation
+record and passed to the bounded process-enumeration worker. Losing launcher
+ancestry no longer discards a matching client; another run using the same base
+and port remains excluded by its output path.
+
+The shared session launch boundary checks that VAParams still matches the
+captured hash after capacity waiting and before starting 1C. Ordinary Vanessa
+passes the run identity through `Invoke-Enterprise`, whose cleanup callback
+visits every captured client target before confirming native release. Cleanup
+failure preserves the unreleased operation; successful cleanup requires two
+fresh empty scoped observations and does not erase a native execution error.
+
+The real negative probe `C:/va канал/probe-85191677` retained the original
+two-client workload and the pre-port-fix EPF. It reproduced the wrong-database
+failure and surviving client PID 9736. The corrected build probe held the
+journal, rejected a competing request for the second base, stopped exactly one
+owned client, and admitted the competitor only after confirmed cleanup. The
+93 focused ownership, Enterprise, session-wait, build, cleanup and topology
+tests pass, including a foreign session with the same database and port but a
+different run output directory.
+
+The same workload through `Invoke-Enterprise` passed in
+`C:/va канал/probe-1abc7eef`: the journal remained unreleased before cleanup,
+the second-base competitor was rejected, one owned TestClient (PID 16076) was
+stopped, and the journal was confirmed before the aggregate owner released.
+The competitor was admitted after release. The original scenario still reports
+the expected wrong-database assertion from the deliberately retained old EPF;
+cleanup success is not represented as a successful business scenario.
+
+An earlier diagnostic callback in `probe-f1da2ba3` used a dynamically shadowed
+PowerShell result variable and failed before cleanup. The queue retained the
+resulting debt. Its exact ticket was recovered through `Recovery.complete`
+with a live scoped verifier covering all three resources; one owned TestClient
+was stopped, quiescence was confirmed, and the original failed result was
+preserved. This recovery adapter is diagnostic evidence, not yet a delivered
+general recovery command.
+
+The next source candidate persists native operations through the admitted pipe
+owner. It writes immutable snapshots under
+`native-operations/<ticket>/<journal>/<operation>/<identity>.json`, then atomically
+records their paths and hashes in the ticket's authoritative index before
+acknowledging publication. Process creation requires that acknowledgement.
+Records retain the complete admitted resource plan, captured process scopes,
+owner/run identity and helper-file hashes; tokens, passwords, native process
+objects and extra scope fields are excluded by explicit serialization.
+
+Each pipe participant has its own producer identity. A producer cannot overwrite
+another participant's journal, move outside its reserved resources, or rebind an
+already-started operation's inputs. Source lifecycle and build callers explicitly
+declare native journal protocol 1; a legacy caller is not silently treated as
+fully tracked. The reader checks every indexed snapshot and rejects missing or
+changed files, unsafe paths, missing owner manifests and untracked participants.
+Saved quiescence flags remain observations, never live recovery proof. A clean
+release request with an unresolved native intent retains needs-attention.
+
+Persistence initializes at the first operation, including build journals whose
+owner is attached after construction. Runtime drain records zero new sessions
+and persists its intent before cleanup; process launches still require positive
+session admissions. The 43 PowerShell integration cases, 11 journal/index Python
+cases and 15 real pipe-host Python cases pass. Detailed native index data stays
+out of ordinary admission and waiting messages.
+
+Registration of b4fb92d exposed a strict-mode failure when an inherited parent's
+optional project label was absent. Reading that label failed before native
+launch and caused a secondary owner-change error during fixture cleanup. The
+producer now treats missing operation/project labels as empty descriptive
+metadata while retaining all authority checks. The original inherited-uncertain
+launch scenario passes unchanged under explicit strict mode; a separate real
+pipe case proves that unlabeled owners persist intent and retain recovery debt.
+The corrected candidate is registered at a145121715144c2ed799619ea22aade8b7fbb3fc:
+993 tests passed, none failed; the Targeted ledger records 904921 ms. The
+canonical reliability worktree has advanced to this registered commit.
+
+The next check-admission correction connects `check-dev-branch` and
+`verify-dev-branch` to the same pre-lifecycle owner. Its plan includes the branch
+database, recorded managers, a pinned service-base generation and all database
+addresses exposed by the Vanessa profile manifest. The service initializer uses
+that exact generation on first preparation and reuses it afterwards. Changed
+targets after waiting are rejected before native work; an inherited operation
+cannot enlarge its parent's reservation. Ownership remains with the command
+through its action, postprocessing and cleanup.
+
+A focused reproducer with two profiles on different bases and `@Selected`
+previously generated both profiles in VAParams but passed only the selected
+base to native scope capture, causing `ONEC_NATIVE_RUN_CLIENT_TARGET_NOT_RESERVED`.
+The runner now passes its complete database resource set separately from session
+capacity. Both configured profiles remain available, every emitted address is
+covered, and selected scenarios still determine required session counts. This
+deliberately reserves every base exposed in that run's parameters; merely
+declaring another profile does not add a concurrent session reservation.
+
+An additional reproducer covers two named profiles on one database in separate
+scenarios. The requirement scanner correctly reported a peak of one, but the
+admission planner reserved two slots and could wait unnecessarily on a base
+whose limit was one. Per-database reservations now cannot exceed the selected
+run's known concurrency peak; two simultaneous clients still reserve two slots.
+
+The initial 111 focused checks and the 50-case affected rerun after the capacity
+correction pass. They cover the original filtered/unfiltered topology,
+Enterprise scope propagation and foreign-client preservation, real pipe-owner
+competition on every planned resource, unrelated-base concurrency, inherited
+subset rejection, target drift, and service-generation creation/reuse. The
+entrypoint set contract now explicitly includes both checks alongside update
+and repository locking. Registration and installed full-check acceptance remain
+open; the general recovery adapter and multi-host acceptance are not closed by
+this correction.
+
+Registration of 741a0d3 exposed four unchanged lifecycle-lock regressions:
+missing branch input was reported before conflict/continuation validation, and
+failed checks no longer wrote their normal lifecycle result. Input preparation
+is now a separate read-only phase. Its error is retained, lifecycle ownership
+and continuation are validated, and that original error is raised before any
+action. Actual admission failures (waiting, cancellation, recovery debt) remain
+before local locks. Invalid input never authorizes an unowned native call.
+
+Auxiliary update, dump, check, export and reset now join the shared admission
+route. Standalone contour maintenance retains its existing ability to operate
+without primary branch state. Auxiliary checks additionally reserve primary
+tooling, recorded and planned managers and all profile targets, mapping primary
+profiles onto the selected contour. Planning resolves addresses before the
+authorized update; runtime client launch still requires current readiness.
+
+The previous auxiliary drain unconditionally called the all-session stop helper.
+It now requires admitted ownership, records cleanup intent, stops only confirmed
+workflow backends, and waits for foreign sessions without stopping them. Failure
+to confirm owned cleanup retains recovery debt. Primary tooling cleanup during
+an auxiliary check is restricted to the separately admitted primary target;
+other profile databases do not become mutation targets. Source acceptance covers
+real pipe competition and the unchanged public managed-contour reset fixture.
+The 126 focused tests pass, including all four original lifecycle-lock failures;
+no original fixture, continuation assertion or workload was weakened. Registration
+of 50d7b8a exposed two unchanged authoring regressions: database-plan resolution
+masked missing-suite diagnostics on legacy branch state. Public Check/Verify
+now runs its existing read-only source preflight during preparation, before any
+database acquisition. Preparation errors still pass through lifecycle conflict
+and continuation validation; the action repeats preflight after waiting.
+
+The first real foreign-session fixture exposed missing CREATEINFOBASE release
+evidence before its external client was launched. The database had been created
+and restored, but the creation record remained unresolved. The native creation
+path now performs bounded live launcher/descendant release verification and
+persists its result. Unconfirmed release prevents the next RestoreIB even when
+the launcher exit code is zero. A failed launcher remains failed after clean
+release. The Vanessa build wrapper cannot overwrite this later observation with
+an earlier successful probe. Five creation cases and the original authoring,
+lifecycle, Designer completion and memory regressions pass (83 total); the three
+creation caller suites pass 63 cases, including stale build-proof rejection.
+
+The initial fixture `C:/va канал/foreign-75408a08` retained its failed result and
+ticket 51244bc0ea70433d9cfb235a19b46339. Exclusive Recovery checked unchanged
+indexed helper inputs, two live empty inventories and exclusive database-file
+access before releasing it; no process was stopped. A competitor was admitted
+afterward. This fixture created only its own fresh technical database and had
+no business workload or preexisting-database rollback duty.
+
+Complete live auxiliary acceptance passes in `C:/va канал/foreign-f05bc9d4`:
+guarded fresh creation and template restore release their native records;
+an independently owned TestClient remains alive through the external-session
+wait timeout; only its fixture owner closes it; a subsequent admitted drain
+succeeds. All three leases are released and no fixture process remains. An
+intermediate fixture `foreign-97790c5d` proved preservation but hit a diagnostic
+cleanup variable collision with the helper's typed Client parameter. Its
+original failed result is retained, with separate exact-identity cleanup proof;
+the corrected final fixture keeps the same workload and database topology.
+Combined registration, installed command and multi-host acceptance remain open.
+
+Primary result export and extension source dump now enter the same pre-lifecycle
+admission route. Result export reserves its branch database and recorded cleanup
+resources through configuration load, native CF/CFE production, validation and
+manifest completion. Read-only extension dump reserves only the target database:
+it neither drains nor prepares a Vanessa manager. Three new coordinator-backed
+cases cover waiting behind another project, continued exclusion after native
+exit until caller completion, and an independent manager remaining available.
+The owner suite passes 20 tests, with an exact set comparison between public
+routing and both planner/admission parameter contracts. Registration and real
+installed export/ROCTUP competition remain required.
+
+Registration of 1631abd reached an unchanged config-wait harness that copied the
+public helper and replaced Check-DevBranch with a no-native stub, but supplied
+neither a Git branch nor database state. The failure is the real admission
+planner's `git branch --show-current`, before the substituted action. Allowing
+that action to bypass admission would violate the new target-ownership contract.
+The harness now supplies a real disposable branch, suite, target identity,
+packaged admission dependencies and private coordinator. Its copied-helper path,
+waiter handshake, config/environment changes and original result assertions are
+unchanged. A third case retains the original absent-Git setup and requires
+rejection before the stub runs. All three cases pass; the two admitted cases
+also require their ticket to be released. No native 1C workload is introduced.
+
+Real parent-exit acceptance used `C:/va канал/probe-61553720`. An intentional
+exception before cleanup left one owned TestClient and ticket
+`92b9e49eb3e34d338498c6138a573336` in needs-attention. A fresh Python process read
+the authoritative index, checked the retained helper hashes and all three
+resources, then used the existing exclusive Recovery protocol with a live scoped
+PowerShell verifier. It stopped the owned client, confirmed quiescence and
+admitted a competitor only after recovery released the ticket. The original
+failed result and immutable native snapshots remain unchanged; recovery evidence
+is retained separately. The diagnostic workload has no snapshot/configuration
+rollback duty and its business scenario is still reported as failed.
+
+The combined primary check, auxiliary maintenance, primary export and extension
+dump admission changes are registered at
+`ddd0a9f19e6731ac76c57987dd9b391a2aee8613`. The canonical source worktree has
+advanced to that registered commit without publication or installed-project
+changes. This closes source registration of those routes, not their installed
+or multi-host acceptance.
+
+Tooling repair now participates in the same pre-lifecycle admission route. It
+reserves the primary target, recorded runtime cleanup resources and a pinned
+service generation before draining runtime or loading extensions. The existing
+service preparation consumes that generation rather than allocating another
+address inside the lock. Repair does not read the test-profile manifest or run
+test classification: those prerequisites belong to checks. Exact routing-set
+tests include the twelfth admitted operation. The 76 focused tests pass,
+including coordinator competition for each reserved database, repair success
+and extension failure without an early recovery receipt, and existing readiness
+contracts. Registration at `a40633dab47cd5ef25ac0d5074d5b34b28e3de07`
+passes 695 Targeted tests with no failures/skips. Real installed repair and
+server acceptance remain open.
+
+The general script-owned recovery adapter and its per-operation restoration
+contracts remain open. The helper-generation layer now retains immutable copies
+of core, runtime-values, sessions and Vanessa process-ownership code before the
+first native intent. Journals point to these retained paths and hashes, not the
+installed files that a later update can replace. A generation is derived from
+all four file hashes, published by an atomic directory move and reused only
+after complete validation. Only these code files are copied; project config,
+credentials and native command lines are excluded. Concurrent producers keep
+one complete generation, and changed archives are rejected without overwriting
+old recovery evidence.
+
+Explicit native-journal inspection can resolve the retained generation through
+the authoritative index. The resolver checks the full file set, archive scope,
+redirects, hashes and generation identity. It never imports today's installation
+as a fallback. Legacy records that retained only three original-file hashes do
+not acquire invented archive proof. Archived modules have a dedicated fresh
+verifier context; it does not execute the installed helper entrypoint or load
+current project settings. The portable bundle includes the same required code.
+
+The directly owned suites pass 28 PowerShell and 16 Python cases, plus 37
+portable-runtime cases. A separate process executes the archived enumeration
+worker after the original library files are removed, and the Python reader
+resolves a real PowerShell-produced journal. These prove retained process-tool
+availability, not successful crash recovery or configuration rollback. The
+operation-specific recovery adapter, pinned restoration implementation and
+generation-retention cleanup remain required. Archives must not be pruned while
+an unresolved journal can still require them.
+
+Helper-generation retention is registered at
+`002d08cae444d829c26c314c0a0fc61e65876f12`: Targeted passed 696 tests with no
+failures or skips. The canonical source worktree has advanced to this commit.
+
+The ongoing recovery block now records source-cursor restoration duties through
+the existing admitted owner's private pipe, before a configuration load starts.
+The authority indexes immutable duty records and retains the original
+ConfigDumpInfo bytes and hash outside OS temporary storage. A source snapshot
+can require unconditional restoration (check/export) or rollback only on failure
+(an ordinary load); a successful load explicitly commits the latter duty. An
+intermediate restore before full fallback or verification does not close the
+outer snapshot scope. Nested snapshot duties remain independent. Missing intent
+ACK prevents native work; a lost completion ACK after a successful partial load
+does not replay the load as a full fallback. A pending duty prevents normal
+database release even when no native process remains.
+
+The same block now tracks DT rollback duties for extension initialization and
+extension smoke. It pins the existing project-owned DT path and SHA256 without
+another database-sized copy. A restore must match the original target and DT;
+the caller keeps a read lease on the DT through native completion. The native
+restore record is correlated to the duty, and a nonzero exit or surviving child
+cannot provide successful restore evidence. Intermediate restores keep the duty
+pending until the outer caller finishes. Successful initialization commits only
+its conditional duty; a lost completion ACK retains its successful sources and
+snapshot instead of replaying rollback. Failed source/runtime cleanup retains
+the pending duty. Public initialization and extension smoke now join the same
+pre-lifecycle admission route (14 operations), including the planned service
+generation; smoke also reserves profile databases.
+
+Restoration intent retains the helper generation even before any native
+operation exists. Recovery inspection resolves those archived bytes, rejects a
+changed archive and never falls back to a current installed helper. Native and
+restoration collections cannot claim another participant's journal.
+
+Earlier focused source checks passed 17 PowerShell file/DT cases, 63 initialization and
+admission cases, 15 Python restoration cases, and 16 existing native journal and
+helper-generation cases. The PowerShell evidence is retained in
+`build/diagnostics/restoration-journal/snapshots-result.json` and
+`integrated-result.json` in the restoration-journal worktree. These fixtures use
+the real private coordinator and stub native execution; they do not prove an
+actual 1C database restore. No user database or conf.cfg was changed. The
+protocol still requires a separate operation restoration contract: snapshot
+duties are not proof of complete lifecycle-state recovery. The normal restart
+adapter, lifecycle-state reconciliation and live server/two-host acceptance
+remain part of the same unfinished recovery block.
+
+Real file-database DT acceptance now passes in `C:/va канал/dt-308e6342`
+on 1C 8.3.27.2130. The guarded fixture creates its own empty database, dumps a
+DT, changes the actual configuration name from `Конфигурация` to
+`ИТЛИзмененнаяКонфигурация`, confirms that change with a fresh native dump,
+then restores the DT through the normal snapshot wrapper. A subsequent native
+dump confirms the original name. The competing owner is refused while the duty
+is pending and admitted after completion. All eight native journal records
+confirm release, ticket `72ad06a9bc6a44988ff419187c0d54da` is released, and
+the conf.cfg SHA256 is unchanged. `result.json` retains the correlated restore
+record and observations; the reproducible harness is
+`build/diagnostics/restoration-journal/run-native-dt.ps1` in the working checkout.
+This proves an actual local configuration rollback, not business-data, server,
+installed-entrypoint or crash-restart acceptance.
+
+The new `itl_remote.native_recovery` entrypoint reconciles interrupted
+preparation before any native start. A fresh process claims the original ticket
+through exclusive Recovery, verifies that every original producer has exited
+on this host, resolves retained helper generations, validates every cursor
+snapshot, restores the oldest pending scope per destination and only then
+releases admission. Original native/duty records remain immutable and the
+business outcome remains interrupted. Unknown operations, live producers,
+corrupt/ambiguous snapshots, database rollback duties and any started native
+record require their corresponding adapter; saved quiescence never bypasses
+that boundary. Seven fresh-process/negative cases pass, plus a separate exact
+operation-set comparison with the public 14-operation admission route. This is
+the first restart phase; recovery after native work, lifecycle-state
+reconciliation and installed routing are still unfinished within item 4.
+
+Native launch ownership is now persisted before process creation as an exact
+mode, target, `/Out` path and UTC lower bound on process creation time. The
+ordinary, visible and background launch helpers share this capture. The matcher
+rejects another target/output/mode or an older process with a reused PID; missing
+creation-time evidence cannot become an empty owned-process inventory. No
+credentials or full command lines enter these records. Twenty-nine directly
+owned PowerShell checks pass, including retained-journal serialization and the
+existing orphaned Vanessa client cases.
+
+Started-operation recovery now runs a fresh PowerShell inspector from each
+producer's retained helper generation. Under exclusive Recovery it takes two
+live local inventories and checks exclusive access to every file database.
+Observation files have unique correlation IDs and hashes and remain separate
+from the original failed journal. Repository capture has its own reconciliation
+rule: retain all object claims and the interrupted report, and release only the
+database admission after both observations confirm no sessions and an accessible
+database file. An independently open file handle prevents release. Other started
+operations still require their database/state restoration adapter; server
+inspection is explicitly unfinished. The ten restart cases pass; the repository
+cases use a file-access sentinel, not a real configuration repository.
+
+The original restart test exposed Windows PowerShell inheriting PowerShell 7's
+module path through OwnedProcess, making Get-FileHash unavailable. The shared
+launcher now selects the existing Windows PowerShell environment preparation,
+as the synchronous capture helper already does. The unchanged failing restart
+path passes after this implementation fix. Both the environment contract and a
+real owned Windows PowerShell process with a deliberately incompatible inherited
+module path pass their focused regressions.
+
+The actual DT roundtrip also passes with the new native scopes in
+`C:/va канал/dt-ad865ffe`. All seven process launches have their captured scope;
+the eighth record is the no-launch runtime drain. All eight are released, ticket
+`a302d5322ab148e792345323f54cf79a` is released, the configuration name is restored,
+and conf.cfg is unchanged. This is still local technical-base evidence; full
+DT/state restart reconciliation and installed/server acceptance remain open.
+
+The DT restart consumer now captures and validates a pinned lifecycle manifest
+beside the original snapshot: branch state, original environment, project
+configuration, the exact platform executable and the initially empty/absent
+`src/cfe/<extension>` directory. The coordinator stores paths/hashes rather than
+credentials. Changed snapshots, sidecars, checkout identity or redirected paths
+are rejected before native rollback. Sidecars use exclusive creation and remain
+with a pending snapshot; completed normal cleanup removes them.
+
+`native_database_restore.restore` runs the archived native helper through a new
+private inherited recovery participant, preserving the outer database admission.
+Its inheritance proof travels through stdin, never a saved context or command
+line. Original producer records remain immutable. The new completed restoration
+duty, native operation and before/after live observations form separate evidence.
+The exact archived module set now includes the session registry implementation
+(`ports`); the shared target comparison lives in `runtime-values`. Fresh-process
+acceptance exposed these previously implicit dependencies. A dependency-closure
+regression covers them, while old four-module archives remain readable for
+inspection and cannot masquerade as a qualified native rollback generation.
+
+Preliminary DT-only restart evidence is retained at `C:/va канал/dt-restart-40791dcb`:
+the producer changed Configuration Name from `Конфигурация` to
+`ИТЛИзмененнаяКонфигурация`, then exited before rollback. A new process restored
+the original DT, and an independent guarded dump confirmed `Конфигурация` again
+(`restart-restore.json`, `restart-configuration-proof.json`). The competing
+caller waited before interruption. The outer ticket deliberately remains pending
+full lifecycle reconciliation; database restoration alone does not release it.
+Subsequent complete recovery is verified at `C:/va канал/dt-restart-994fb595`
+(ticket `d2b013f2aca244e08e44f84d858b6de3`) and, with the actual initialization
+resource plan, at `C:/va канал/dt-restart-03f2dc43`
+(ticket `401781b02028497eaa5e37cf5733f321`). In both runs the producer changed the
+configuration and exited before rollback. A separate process restored the DT,
+original environment and branch state, invalidated old verification/tooling
+receipts, and preserved interrupted source bytes in a local quarantine. An
+independent guarded dump confirmed the original configuration name. The outer
+tickets were released only after full reconciliation; a subsequent competing
+caller was admitted. Each `restart-full-proof.json` records unchanged conf.cfg.
+
+The second run reserves both the main database and its planned service generation.
+An unused service path is accepted only when its original absence was captured
+before mutation and both live observations still find the entire path absent.
+A missing or damaged existing database is not treated as an unused resource.
+Another mutated business database requires its own restoration snapshot. Recovery
+also refuses a changed checkout branch or source subsequently staged/committed
+in Git. Original journal records remain immutable; completion evidence is separate.
+Snapshots, sidecars and interrupted source quarantine remain available for review.
+
+The public `access-recover-workflow` command now invokes this consumer through
+`Invoke-RemoteWork.ps1` and its managed Python runtime. Focused context checks pass
+18 PowerShell snapshot cases; retained generation and persistence groups pass
+8 each. Python restoration/lifecycle/restart checks pass 36 cases, followed by
+three focused Git/public-command checks and one additional-database regression.
+The private PowerShell input boundary passes with an incompatible inherited
+PowerShell 7 module path. Native evidence is from local technical file databases;
+it does not substitute for installed, server or two-host acceptance.
+
+The complementary interruption boundary is qualified at
+`C:/va канал/dt-restart-7b244330`, ticket `987f892b62644c0e898a46763b4dc1f9`.
+Here the producer acknowledged a successful initialization commit and removed
+its completed snapshot, then exited before admission release. Recovery preserves
+the committed result: an independent native dump still finds
+`ИТЛИзмененнаяКонфигурация`, and source/state/environment hashes are unchanged.
+Both reserved resources admit a subsequent caller; conf.cfg is unchanged.
+`completion-recovery-proof.json` records this separately from rollback evidence.
+The adapter requires an indexed commit, completed native work before that commit
+and fresh live observations. Six focused cases cover removed snapshots, pending
+cursor duties, later native work, another business database, a damaged service
+base and an independent open database handle. This does not qualify completed
+rollback or smoke finalization, or turn an interrupted command into fresh passed.
+
+The first registration attempt stopped on two documentation checks: expanded
+root guidance exceeded its existing word budget and changed a protected literal.
+Detailed batching rules now live in `docs/local-quality-gate.md`; AGENTS routes
+to them. The original hard limits and behavioral requirements are preserved.
+All 35 directly owned parser/documentation checks pass after this correction.
+The next registration reached the file-duty tests and exposed their remaining
+four-helper expectation. Native restart had already demonstrated why `ports`
+is required. That test now verifies the exact five filenames and their hashes;
+all 11 file-duty cases pass. No runtime behavior or release assertion was weakened.
+
+Verification batching: retain this connected recovery block in one working
+change, run directly affected behavior/reproducer checks during implementation,
+and register only when the block is coherent. Do not start another Targeted run
+for each intermediate journal or helper change.
+Abrupt interruption during launch, installed command
+acceptance and the remaining facade admission paths still require work.
+
+This evidence does not close item 4: the remaining operation/phase adapters,
+including later completion phases without a pending snapshot, server recovery,
+installed entrypoints and two-host competition remain open. Live foreign-session
+evidence above covers the auxiliary drain on a local
+technical file database; it does not establish server or two-host acceptance.
+No `conf.cfg` changes are part of this correction.
+
+### Item 4: reset and refresh process continuation (in progress)
+
+The unregistered `codex/workflow-lifecycle-admission` candidate reserves the
+branch, recorded managers and a replacement service-generation address before
+`reset-dev-branch` or full/lite refresh enters lifecycle locks. Full refresh also
+reserves the main worktree's source database and the fixed file-seed database
+directory. Standalone `sync-master` reserves those master resources without
+requiring an initialized development branch or reserving its unrelated database.
+A fresh
+helper publishes its own immutable resource plan through the existing private
+owner channel. The authority checks the parent reference, ticket generation,
+operation, project, target and complete reserved resource set; a changed service
+template can select only a generation already reserved by the parent. Plans
+and retained native helper hashes remain available for restart inspection even
+if the producer never reached its first native launch.
+
+Reset now saves `git-reset-complete` before handing changed helper/template
+content to a fresh process, releases its seed reader before dispatch, and
+revalidates the original pinned seed on continuation. Legacy helpers reject the
+required protocol parameter before their action body. This does not claim an
+automatic recovery adapter for interrupted reset/refresh database mutations:
+those phases still retain admission when recovery cannot prove completion.
+Source planning restores the caller's complete process environment after reading
+master configuration, including keys introduced only by master's `.dev.env`.
+Sync repeats source identity validation after switching to master context;
+file-seed copying waits for foreign sessions before modifying the old artifact
+or manifest. Bootstrap, server and two-host acceptance remain open.
+
+Focused evidence: 43 Python coordinator/journal/recovery tests passed; the
+PowerShell admission, resource-plan inheritance and retained-helper groups
+passed after fixing the fresh-process fixture and updating operation-set
+coverage. The real-worktree reset fixture retains one archive, original master
+and seed contract across the handoff; native Designer work in that fixture is
+simulated. These are source/protocol checks, not installed-project or native
+1C reset acceptance. No Targeted registration, delivery or `conf.cfg` edit has
+been performed for this unfinished block.
+
+The additional master/seed block passes 24 focused Pester cases and the Python
+entrypoint/recovery operation-set regression. Native public `sync-master`
+acceptance passed at `C:/va канал/master-admission-34820bc4`: another owner held
+the source until the sync request was recorded waiting, with no lifecycle lock
+taken. After release, the helper copied the technical source into its seed,
+ran real Designer export, committed the configuration, published a ready seed
+whose artifact SHA matched, and released both resources on ticket
+`0785b8208e2e46de98c42bef6745677c`. The next competitor was admitted, source
+database bytes and `conf.cfg` were unchanged, and the fixture Git tree was clean.
+Evidence is `.agent-1c/native-master-proof.json` plus `sync-status.json` under
+that root; the reproducible harness is retained at
+`build/diagnostics/lifecycle-admission/native-master.ps1`. This proves the local
+technical file-source route, not repository-backed/server synchronization or
+an installed PM5 full refresh.
+
+The same candidate now acknowledges successful lifecycle completion through the
+private owner pipe for sync-master, reset and both refresh variants. The
+authority binds that immutable acknowledgement to the producer's admitted plan
+and exact journal index. Pending native work, active child participants (for
+the outer producer) and pending restoration duties prevent completion. Further
+native records, restoration duties or producers cannot be added after the outer
+completion is acknowledged. A completed child does not seal unfinished parent
+work. The ordinary helper publishes only after the action returns successfully;
+a delegating parent publishes only after its child reports terminal success.
+
+Recovery of that completed operation still checks that producers have exited
+and obtains fresh native observations for every reserved database. It preserves
+the finished result and labels the original invocation interrupted; it does not
+replay sync/reset/refresh or claim fresh verification. Unacknowledged in-flight
+phases continue to require their operation-specific recovery adapters.
+
+The connected journal/completion tests pass 63 Python and 14 PowerShell cases.
+Native interruption acceptance passed at
+`C:/va канал/master-admission-1f66ed50`: the producer completed real sync-master,
+acknowledged completion, then exited with code 19 before releasing admission.
+`access-recover-workflow` released ticket
+`ceb5dd8f3a04451fa23b1944bf8adfea` through
+`workflow-completed-lifecycle`. Two live samples covered both source and seed,
+with zero sessions and exclusive file access. The source and seed hashes and
+Git HEAD were preserved; the native journal still contains one Designer
+operation, and a subsequent competitor acquired both resources. `conf.cfg`
+remained unchanged. See `.agent-1c/native-master-proof.json`, `crash-point.json`,
+`completion-recovery.json` and the retained `recovery-observations` under that
+root. This is local sync-master completion evidence; reset/full-refresh and
+server recovery runtime acceptance remain open.
+
+The reset continuation now also pins the seed generation, source identity,
+artifact kind/path/SHA256/size and exact event-log baseline bytes in its saved
+reset inputs. A matching configuration fingerprint alone no longer permits a
+later seed containing different data. Resume validates these inputs, the
+original archive and the expected branch HEAD before restoring the database;
+dirty or newly committed user changes are preserved. An interrupted older
+reset without a recorded seed identity cannot silently adopt the current seed.
+Server seed restoration now verifies the DT hash before invoking its provider,
+matching the file restore's existing copy-hash-before-replacement contract.
+
+These guards establish the inputs required by the in-flight recovery adapter.
+Retained access to a seed replaced after interruption remains implementation
+work, along with bootstrap admission and server/two-host runtime acceptance.
+The saved local state alone is not authority to release an interrupted database
+owner; the forward-resume adapter and its qualification are described below.
+
+The focused reset checks pass nine cases across the initial run and affected
+reruns. Three real-worktree/fresh-process cases cover concurrent branches,
+helper handoff and interruption/resume. The interrupted case rejects seven
+independent changes (seed generation, database bytes with an updated manifest,
+baseline bytes, damaged archive, dirty source, committed source and a missing
+legacy pin), preserves the target and original archive, then completes with
+the original inputs despite a later master commit. Separate file/server reader
+lease and valid/corrupt server DT provider cases pass. Native database calls
+in these reset fixtures are simulated; this is not native reset recovery or
+installed-project acceptance. No additional broad gate was run for this step.
+
+Reset now publishes each saved phase through the private database-owner pipe
+before proceeding to the next mutation. The authority stores an immutable,
+hash-indexed chain from archive-pending through archive-complete,
+git-reset-complete, runtime-initializing and complete. The chain binds the
+original master/old HEAD, branch/target, seed identity and archive to the
+admitted continuation plan, including a fresh child producer. It rejects phase
+skips, regressions, changed inputs and changes to a confirmed archive or new
+HEAD. A completion acknowledgement seals this chain with the native journal.
+An unfinished chain prevents normal release or a generic preparation-recovery
+release; it requires the operation-specific forward-resume adapter below.
+
+The connected reset/continuation/native/completion/recovery suite passes 51
+Python tests. Eight focused PowerShell tests pass, including all five phase
+acknowledgements through the actual owner subprocess/private pipe, immutable
+record hashes, a competing caller blocked at every phase, final release and
+admission of that caller afterwards. Fresh-helper inheritance and the three
+real-worktree reset cases also pass. These fixtures simulate 1C operations;
+native reset/restore interruption acceptance remains open. This lifecycle
+candidate is still unregistered and has not modified `conf.cfg`.
+
+The reset recovery adapter now dispatches `Resume-NativeReset.ps1` under the
+same ticket and a new recovery fencing generation. Cross-generation plan
+inheritance is permitted only by the current recovery attempt's authorization
+for the exact indexed checkpoint and parent continuation. Ordinary inheritance
+still rejects obsolete generations. The private proof is passed through stdin;
+the context and result artifacts contain no lease credential.
+
+Before dispatch the adapter validates the Git branch/HEAD/master tree, preserves
+tracked or untracked user changes, and obtains fresh native observations for
+every reserved resource. The worker acquires lifecycle locks after joining the
+recovery owner, revalidates the saved inputs and continues from the confirmed
+phase. If local state is exactly one phase ahead of the authority (a crash
+between state persistence and acknowledgement), the helper resumes the confirmed
+phase in memory without manually rewriting state. Existing archive reuse and
+exact-master commit logic handle already-completed intermediate steps. The
+adapter releases only after the continuation producer's completion record,
+complete reset chain, exact resulting Git tree and fresh final observations
+are verified. Pending restoration duties retain ownership for further recovery.
+
+This connected increment passes 24 Python journal/inheritance/completion cases,
+eight focused PowerShell cases and two adapter/worker cases. The worker case
+runs a real Windows PowerShell process, private ownership host, Git checkout,
+archive validation and production file-seed replacement with state one phase
+ahead of its ACK. It retains the original archive/master/seed and admits the
+next competitor only after completion. Its 1C session inspection and tooling
+initialization are explicit fixtures, so it is not native 1C recovery proof.
+The separate checkout case preserves user changes and rejects a switched branch.
+Fresh-process execution exposed a missing scoped import of the checkpoint pipe
+publisher; the owning lifecycle function now loads that dependency itself.
+
+Remaining reset work includes native file-base interruption acceptance, seed
+retention if the shared seed was replaced, interrupted Git-tree replacement,
+pending nested restoration duties and server recovery/inspection. These stay
+in item 4; the successful transport/file fixture does not close them. No broad
+gate, registration, publication or installation was performed for this increment.
+
+## Item 4a: a stalled participant must not wedge the queue
+
+The queue must bound each request's waiting time and report the blocking ticket,
+owner, operation, last progress and supported next action. A dead waiter that
+never entered the database is skipped. An admitted owner with uncertain native
+work cannot be discarded solely because its heartbeat expired: recovery first
+checks the actual sessions and any outstanding restoration duties. Unsupported
+or uncertain recovery returns actionable needs-attention within a bounded time;
+it must not leave the caller waiting forever. Independent database resources
+continue progressing. Supported recovery must permit a subsequent request after
+release, without manual edits to tickets or lock files. Live hung owners require
+bounded operation deadlines and cancellation through their owning helper.
+
+Acceptance includes a dead waiting client, a dead admitted owner, a live hung
+operation, a stuck recovery worker, a foreign surviving 1C process, and a normal
+native command failure. Verify bounded caller outcomes, preserved foreign work,
+independent-resource progress and successful subsequent admission. The remaining
+server/two-host and installed-project cases remain required; automatic reset
+continuation (4b) must not delay completing this queue contract.
+
+A real repository capture reproduced one ordinary-failure wedge on 2026-09-10:
+the launcher returned exit code 1 for an object held by owner-a before asynchronous
+owned-process enumeration completed. Ticket 57e74642591f4a4cb0c63a2ae3d7f038
+therefore retained cleanup debt. The supported repository-capture recovery
+adapter released it after two fresh observations, retaining repository claims.
+The Designer correction waits for owned release even after nonzero exit and
+does not require successful dump/log artifacts on that failure path. It preserves
+the nonzero outcome rather than converting cleanup confirmation to success.
+
+All 35 Designer completion tests pass, including four delayed-release failure
+cases covering capture, repository update, source dump and CF dump. The public
+capture rerun in C:/va канал/lock-report-e7a4d4f0 still reported owner-a's conflict
+and the missing new object, while ticket 11735d9d5a894f0b9a62389fbaf86374 released
+normally and access-status returned an empty active list. The first public run
+also confirmed the free module and the separately requested configuration root
+as captured. On repeat, the platform did not re-report those existing claims;
+they remain explicitly unconfirmed in the repeat report. conf.cfg SHA-256 stayed
+dcb4feb4560908a33ff76cef6d59a8607d66c849a417e4387ed7f25f1032f5d4.
+This is technical file-base evidence, not installed/server acceptance.
+
+## Item 3: preserve exported module bytes before producing bindings
+
+The source producer previously pinned ConfigDumpInfo.xml but computed a new
+module hash when building a binding. A reproducer edited Module.bsl after export
+and obtained a valid binding to the unchanged index's old native version. Fresh
+capture now retains hashes for exported XML metadata and BSL files (including
+empty modules). Binding requires the original metadata and module hashes; an
+unsealed or modified snapshot cannot be repaired by hashing its current files.
+The UUID, native version, property and extension checks remain independent.
+
+Native acceptance also exposed a repository-bound target failure: Designer
+returns exit 0 and its documented offline-repository startup notice when no
+repository credentials are supplied with /DisableStartupDialogs. The fixed
+English helper output is now parsed with that exact notice retained as a
+diagnostic; unknown diagnostics remain rejected. The failed original run is
+C:/va канал/source-integrity-a65732ad. The same repository-bound target then
+captured successfully at C:/va канал/source-integrity-2f4daf3c. Its runtime
+configuration was empty, although its Designer configuration contained modules;
+that first retry proves the repository notice behavior, not module bindings.
+
+After populating only this owned technical target's runtime configuration,
+C:/va канал/source-integrity-c180243c proves both native export and a binding
+for CommonModule.CaptureProbe. Editing its exported module caused
+SOURCE_CAPTURE_MODULE_CHANGED_OR_UNSEALED; the harness restored the exact source
+bytes afterward. No active queue tickets remained, and conf.cfg retained its
+previous SHA-256. This source change passes 18 capture/producer cases plus 13
+selection/reuse cases. It is not a new profiler measurement, Vanessa one-slot
+quiescence proof, automatic checkout-binding production or PM5/UFA acceptance;
+those item 3 requirements remain open.
+
+## Item 3: automatic evidence from native checkout exports
+
+Full configuration and extension exports now record a local catalog only after
+successful source installation. It contains the native export index and hashes
+of metadata/BSL files, tied to the workspace and export root. Catalog write
+failure is advisory and cannot undo the completed export, including under
+PowerShell WarningPreference=Stop. Failed native export or CFE validation does
+not publish a new catalog. Nothing is added inside src/cf or src/cfe.
+
+The measurement engine discovers these catalogs automatically and copies matched
+source bytes into its run. Native object/property/version and extension name
+must match; opaque extId values remain distinct in each resulting identity.
+The retained index allows unchanged modules to remain usable after a different
+module or the current checkout index changed. Edited modules are unresolved and
+use target capture. Inconsistent catalog/index evidence is diagnostic and never
+authorizes rehashing current sources as the old version.
+
+Native qualification C:/va канал/checkout-binding-815eab5c ran the actual shared
+Dump-ConfigToFilesFromInfoBase against the owned repository-bound technical base
+and produced its catalog. Both CommonModule.CaptureProbe and CommonModule.FreeProbe
+initially reused correctly. After changing FreeProbe and the current dump index,
+only unchanged CaptureProbe reused; both local edits stayed intact. The native
+profile identities for this producer test came from the exported index, not a
+claimed new profiler measurement. Queue tickets released and conf.cfg stayed
+unchanged. Eighteen selection/reuse tests pass, including engine discovery with
+no configured manifest and no Designer/client shutdown. Three PowerShell cases
+cover configuration publication, failed/successful extension validation and
+unavailable optional catalog storage. The standalone checkout-binding producer
+gap is implemented; new PM5/UFA profiling and one-slot adapter/capture acceptance
+remain open.
+
+## Item 10: correlated client-code outcomes
+
+See [the source diagnosis and paired protocol](vanessa-client-code-channel.md).
+The original BDR retained report confirms the nested OpenClipboard exception;
+a later zero clipboard-owner handle does not prove who held it during the failure.
+The earlier missing native clipboard object is a separate readiness failure.
+The source correction does not modify conf.cfg or replace product assertions.
+
+The paired r11 patch retains the row/nested-feature fixes and changes the actual
+Vanessa file-step producer, waiting callback and VAExtension receiver. Original
+fixtures reproduce missing-monitor false success and request deletion without a
+reply after void success or thrown client code. Native OneScript regressions
+cover correlated outcomes, multiline code, malformed requests, wrong response
+identity, uncertain completion, output-publication failure, two competing native
+processes, replay after lost response and execution while OpenClipboard is held.
+Repeated waiting must retain the original failure rather than interpreting its
+structured error response as a successful legacy value.
+
+The first paired native build completed at C:/va канал/19447ea3, releasing all
+three service bases. It precedes the repeated-wait correction and is intermediate
+build evidence only. The r13 source candidate adds an immutable channel manifest,
+durable pending intent and post-delivery acknowledgement. After a producer restart
+the exact connection can reuse a terminal response, publish an interrupted request
+or let an unclaimed request execute once. A claim without a response, a changed
+command and more than one pending request remain explicit errors and never permit
+replay. Native r13 acceptance found and corrected an 8.3.27 form-module syntax
+error that silently removed VAExtension from the generated step cache. The build
+now fails closed on that omission. Exact build `C:/va канал/18ec28e6` and run
+`r13-probe-f1e83dd1` pass the paired two-client A/B/A scenario with distinct
+ports/databases, two channel generations, three correlated replies and complete
+database release.
+
+The first real producer-process interruption exposed one further public-step gap:
+monitor startup recovered the durable request and terminal response, then reset
+`_ИмяФайлаПоследнегоСобытия` before the ordinary wait step. The shared monitor
+initialization now clears that value only for a new channel. The focused channel
+suite passes 69/69. Rebuilt r13 at `C:/vabld-r13/fc371c22` produced EPF SHA-256
+`d1081a36addc5cac8cb3d67823cb49864d4c06940bc4a37871e889dbd0699ed8`
+and paired CFE SHA-256
+`847dba1e28b34261436941fbfe8640eddaf6376cfb44b0a12ff8089938610887`.
+Native run `C:/va канал/r13-restart-871eeee5` terminated the first TestManager
+after one client effect, resumed through the same public send/wait sequence in a
+new TestManager, wrote one acknowledgement and retained exactly one effect line.
+JUnit passed 1/1 and all three native operation records confirmed quiescence;
+database admission released.
+
+The channel now removes an exact owned generation only after every pending
+request has an acknowledgement with the matching protocol, request id and owner.
+Claimed work without a terminal response, foreign ownership and incomplete
+generations remain intact for diagnosis or restart. After removing the `events`
+directory, it removes the `itl-<uuid>` parent only when that parent is empty.
+The focused channel suite passes 69/69, including retained incomplete work and
+completed-generation cleanup. Patched-artifact checks separately apply the
+shipping patch to the pinned upstream tree.
+
+Final paired build `C:/vabld-r13/1dd07882` produced candidate ZIP SHA-256
+`a96234b5a939734f2345f1e1b010b637c6c94350b8a4debfcae99945dcaf14f5`,
+EPF SHA-256
+`16190daa221760630b6d198c5eec794c3c336b38b07599deb289e22a58b43b84`
+and CFE SHA-256
+`16170f5be0529d0653cfe544e202c925a229de7a27458670b106d1bf2c3cba9f`.
+Native restart run `C:/va канал/r13-restart-c100fc9e` retained one pending,
+event, claim and terminal response after interrupting the first manager. The
+second manager reused that response, passed JUnit 1/1 and left one effect line;
+after acknowledgement it left zero pending/event/claim/response/acknowledgement
+files and zero channel-generation directories. All three native operations
+confirmed quiescence and database admission released. The workflow dependency
+lock and on-demand compatibility manifest now select that exact r13 ZIP plus
+`VAExtension.1.29-itl-r13.cfe`. Release readiness validates the paired CFE inside
+the archive and its provenance, while component finalization extracts, uploads
+and verifies both immutable assets under the same release tag. Focused delivery,
+readiness, lock, installer and compatibility checks pass 22/22 under Windows
+PowerShell 5.1. Installed guidance, the original BDR scenario and normal delivery
+remain required before item 10 closes.
+
+Item 9 registration is now confirmed: 16e5b840b9b111dfaf701dca5cd48767c465100c,
+Targeted 532 passed / 0 failed, ledger duration 536908 ms. This does not establish
+installed row-navigation or the original combined 49-scenario acceptance.
+
+## Items 4a and 6: pair synchronization participates in database admission
+
+The pair helper previously locked both worktrees and loaded both databases
+without joining shared database admission. It could therefore interfere with a
+measurement or wait for a database while holding a lifecycle lock needed by its
+owner. The public sync-dev-branches route now requests both participant databases
+and their recorded runtime/manager resources as one atomic resource set before
+lifecycle locking. Identical resources are deduplicated. Both projects must use
+the same coordinator; planning restores the caller's process environment.
+
+After waiting, each participant's branch, project, target, coordinator and current
+runtime resources are checked before checkpointing or loading. A changed target
+or new unreserved manager fails before mutation. Cleanup in either project may
+use only that participant's admitted target, preserving foreign sessions. An
+ordinary failure releases finished native work through the shared journal;
+uncertain native work retains explicit bounded recovery diagnostics, never a TTL
+unlock. The public admission and recovery operation sets remain aligned.
+
+The directly owned pair/admission suite passed 50 tests and the native recovery
+suite passed 21, including operation-set completeness. The pair cases cover a
+busy second database, release and subsequent admission, shared database aliases
+between the two participants, target/manager/branch drift, different coordinators,
+restored peer environment and rejection before a direct unadmitted source edit.
+These are source/protocol tests, not a new native 1C synchronization or two-host
+qualification. Group aggregation, explicit final recipients and resumable source
+propagation remain separate unfinished parts of item 6. Admission alone does not
+claim that earlier peers receive changes collected from later peers.
+
+## Items 4a and 7: retain conditions before waiting and release failed preflight
+
+Previously measurement conditions were written only into the final result,
+while the private context was intentionally excluded from collection. A worker
+crash before that result, or a long database wait, therefore left collected
+progress without the complete resolved scenario settings. provenance.json now
+records the validated request/scenario hashes, input hashes and sizes, parameters,
+repeats/warmups, permitted operations, requested route, executor/host, readiness,
+phase budgets, source-analysis selection and declared data/source/environment
+identities before admission. Runtime identity remains a separate proof; the
+manifest does not claim that profile declarations describe the actual loaded
+configuration. Credentials and private target/lease settings are not copied.
+
+The final result references the original manifest hash. Post-wait validation
+rejects changed manifest bytes without replacing them. Partial collection obtains
+these conditions during admission and after an actual worker process exits 77
+before starting a workload. Retrying that interrupted job retains needs-attention
+and never manufactures a result or replays its action. The immutable submitted
+package remains necessary to reproduce the actual input file contents.
+
+The regression also exposed an unnecessary queue wedge: a changed package or
+worker profile detected after admission, before any runtime work, inherited the
+generic exception cleanup debt. That bounded input-validation block now explicitly
+releases its finished admission before returning the original error. This does
+not alter failure handling after runtime starts. Tests retain unknown-cleanup
+blocking, validate subsequent admission after a preflight refusal, and verify
+that cancellation/changed inputs produce only the provenance file, with no
+context, workload or result. Existing no-runtime assertions were updated for this
+new diagnostic artifact; no runtime admission or cancellation check was removed.
+
+Focused execution, admission, profile-engine and collection coverage passes 31
+cases. Source registration, installed remote collection and native 1C runtime
+phase/identity acceptance remain separate milestones.
+
+## Item 6: explicit group delivery and retained recipient progress
+
+The public synchronization helper accepts a UTF-8 `BranchSyncRequestPath` with
+explicit peer and recipient arrays. It freezes the request bytes and all database
+resources before waiting, then locks those same worktrees. All source inputs are
+checkpointed and pinned before composition. Internal aggregate commits preserve
+three-way merge ancestry without joining the live branches' histories. The final
+source is validated before any propagation; every recipient gets an independent
+commit, its own dump cursor and its original non-source files. A source-only peer
+does not receive the aggregate or a database load.
+
+The atomic checksummed plan retains pinned input heads, common source fingerprint,
+pending installations, recipient commits and load status. It resumes a late
+source conflict without losing earlier peers, reconciles a durable Git ref after
+a failed plan write, and reuses a persisted successful load receipt only when
+group id, source fingerprint and current HEAD match. Final completion rechecks
+all recipients even after interruption of marker cleanup. Unexpected source
+bytes, staged blobs, unrelated changes or moved recipient heads are retained and
+reported; the installer never discards them to force progress.
+
+Sixteen focused Windows PowerShell 5.1 real-Git cases pass, using paths containing
+spaces and Cyrillic together. They cover full and selected delivery, independent
+parents/cursors, temporary-index isolation, late conflict resolution, journal
+write loss, durable load receipts, unknown native outcomes, changed final HEADs,
+foreign staged content, unrelated peer work and malformed request membership.
+The native database load and metadata validator are explicit test boundaries;
+these fixtures do not claim live 1C acceptance. Two additional real pipe-owner
+admission cases pass: a busy third participant leaves earlier databases available,
+then release admits all six resources; a changed third manager cannot be drained.
+The earlier pair/admission baseline passed all 38 cases before the group-only
+hardening. Registration owns the cumulative Targeted check.
+
+The subsequent source-group phase unit below adds supported reconciliation at
+acknowledged boundaries. Native effects after an intent without a completion
+receipt still require their own adapter; potentially partial Enterprise updates
+must not be replayed. That remaining diagnostic does not close queue recovery
+task 4a or item 6. Qualify the public installed group route and original
+multi-branch workflow; server and multi-host acceptance also remain open. Do not
+expand reset continuation 4b as a substitute.
+
+## Item 7: preserve completed repetitions before the series finishes
+
+Previously `progress.json` contained only command phases. Handshake readiness and
+action waits were absent, and verified timings remained solely in engine memory
+until finalization. The incremental snapshot now retains iteration kind/status,
+verified samples, handshake and command phase outcomes, source-capture progress,
+cleanup failures and the immutable provenance reference. A real engine process
+exiting 77 before starting its second repetition leaves the first verified sample
+collectable, with the series still running and no final result. A subsequent job
+execution refuses replay and preserves the original snapshot bytes.
+
+Profile output is written immediately after collection, before workload
+verification. Progress links its path and SHA256 with separate coverage and
+workload-verification fields. It does not duplicate native packet rows or copy
+private context/lease settings. Hashes are calculated only when profile artifacts
+are produced/remapped. Source-analysis completion or failure refreshes those
+references and retains the manifest/resolution information already owned by the
+source adapter; it does not invent actual loaded-state identity from declarations.
+
+The focused engine/runtime/profile/collection batch passed 63 cases; its one
+incorrect new error-text expectation was diagnosed and corrected against the
+public verify helper, then passed separately. The helper writes the failed
+business-check JSON and exits 1, so the engine correctly reports COMMAND_FAILED
+and preserves failed verification rather than reaching its later result-parser
+error. Assertions still require no accepted timing, the failed check, failed
+phase and failed iteration. Additional cases prove that warmups do not enter
+timing samples, progress writes do not overlap actual handshake measurement
+intervals, failed cleanup retains samples without completion, and command-launch
+failure leaves a failed phase. Registration, installed acceptance and detailed
+adapter-specific loaded-state evidence remain separate.
+
+The first registration exposed one stale expectation in the broader 316-case
+Python owner suite: its long-deadline regression expected only command phases,
+whereas handshake readiness and action are now deliberately retained as well.
+The exact expected sequence now includes those two phases and additionally
+checks every persisted phase budget against the original scenario overrides.
+The original 1800-second child-action inheritance and independent prepare/cleanup
+assertions remain unchanged; no timeout, workload or precondition was relaxed.
+
+The loaded-state continuation now turns the retained runtime/profile data into a
+public hash-bound contract. Each profile packet is checked again against the owned
+job, client session, database instance, target ID and target type. The result and
+progress expose the actual native configuration versions and versioned identities
+of executed modules separately from declared source/data/environment labels.
+Time-only measurements state that loaded-state evidence is unavailable.
+
+No source dump is added to an ordinary profile. When line mapping is requested,
+verified existing bindings remain reusable; unresolved selected modules trigger
+the existing post-measurement target-base capture under the same admission lease.
+The engine verifies its artifact inventory, copies the exact used module bytes
+into the run and binds them by hash. Selective analysis is assessed against its
+requested modules. The evidence explicitly declines whole-configuration source
+and database-data claims because executed profiler packets cannot prove either.
+Focused runtime, profile, source-reuse and progress tests cover mismatched
+declarations, no-analysis, captured target source, optional failure, partial raw
+coverage and time-only behavior. Installed/UFA runtime acceptance remains part of
+the cumulative acceptance milestone.
+
+## Items 4a and 6: retain acknowledged group load phases
+
+The group loader now writes an intent before each Designer load, Enterprise
+normalization, runtime refresh, cursor commit and branch-state update. The shared
+database coordinator acknowledges completion before the local plan records it.
+Receipts bind the group, every participant target, the canonical versioned source
+fingerprint, source commit and exact native journal snapshot. A failed local plan
+write is reconciled from that receipt. Completed Designer/Enterprise work is
+reused, including when runtime refresh failed afterwards. Cursor continuation
+permits only its acknowledged bytes and preserves foreign working/index edits.
+The saved group pins its coordinator, preventing retry through a different queue.
+
+Public workflow recovery can release a crashed group at a retained phase boundary
+after checking that the original producer exited, every reserved database is
+idle/exclusive in two live observations, and no later native records or pending
+restorations exist. Unused absent Vanessa manager directories are recognized for
+each group participant. Recovery does not change source, database or branch state;
+the original group helper reconciles and finishes the saved steps afterwards.
+No lease is stolen by age and independent databases remain available.
+
+The shared file restoration journal also now binds a peer's ConfigDumpInfo duty
+to that peer's checkout, rather than the initiating checkout. This preserves the
+destination boundary when the same admitted journal spans several projects.
+
+Validation includes real Git worktrees and the real PowerShell/Python pipe owner,
+plus an actual child-process crash and Windows process/file inspection. The
+native Designer/Enterprise calls in Git integration tests are fixture boundaries;
+the recovery test database is a file-access sentinel, not a functional 1C database.
+These results must not be reported as installed 1C or server qualification.
+
+Focused coverage passes 41 PowerShell cases across group synchronization, pair
+synchronization and cursor restoration, and 10 Python phase-protocol cases. The
+initial integration run exposed a real boundary mismatch: canonical source
+fingerprints contain the `v2|git-tree-sha256|` prefix, which the new consumer now
+validates intact. Two test-fixture issues (the saved coordinator instance used
+for failure injection and a dynamically shadowed PowerShell fixture context)
+were corrected without weakening the original scenarios. Registration owns the
+single cumulative Targeted run for this unit.
+
+The next recovery unit closes the file-base crash window between a successful
+Designer return and the group phase receipt. Before process creation, the native
+journal now binds a load to the exact project, source commit, canonical source
+fingerprint, source tree, CF/CFE path, content kind, extension name and actual
+partial/full attempt. After exit, owned-process release, log checks and artifact
+checks, Designer records a separate terminal outcome. A failed partial attempt
+and its successful full fallback remain distinct records.
+
+If the PowerShell producer then exits before publishing the phase receipt, the
+recovery adapter still requires two live idle/exclusive observations. It accepts
+only one last successful load whose contract matches the pending phase and exact
+database, commits that load's on-failure ConfigDumpInfo duty without changing its
+current bytes, and writes the missing phase receipt with a reconstructed load
+result. The group helper then resumes at Enterprise normalization; it does not
+run Designer again. A pending outcome, changed fingerprint/commit/target,
+unsupported native operation, missing cursor duty, live session, or legacy
+record without the effect contract stays `needs-attention`. This automatic path
+currently inherits the file-base-only recovery inspector; server reconciliation
+and installed native crash acceptance remain open.
+
+Remaining: a native effect without a high-level completion receipt cannot be
+declared safely repeatable merely because its launcher exited. That case retains
+its partial report and needs operation-specific reconciliation. Bootstrap/new
+branch admission, server recovery, multi-host and installed acceptance remain in
+the original plan; this unit does not replace them with reset work.
+
+## Item 15: original branch11 review adjudication, 2026-09-10
+
+The retained six-method validation unit was compared mechanically with the
+current branch11 module. All six method bodies still match; module SHA256 remains
+`578DCB5A64DAA5F7BBCE239143A67DEC89B2CE752841761700437CCB1045882B`, although
+the branch HEAD is now `e3a49a8b148c9fd82dcb371fefe2fc3ab7b5b76f`. Both original
+responses remain unchanged. A complete inventory retains all 21 findings,
+including the three explicitly stated must-fix items; no new validator or 1C
+runtime calls were made.
+
+Under the prepared r35 policy, findings 1.1 and 5.2 have mechanically checkable
+contradictions: the documented BSL reference-parameter semantics and the guard
+present in the exact submitted unit before both cache lookup and insertion.
+Finding 5.4 was a confirmed product error-handling defect, although the proposed
+unconditional guard was unsafe. Astronomical date arithmetic legitimately does
+not consume the working calendar. PM5 branch `itldev/review-calendar-error`
+implements the case-specific correction in commit `25c19d0ac`: working duration
+without an element or plan calendar records `НеОпределенКалендарь` and stops,
+while astronomical duration still calculates without calendar data. Guards in
+the calling early-date procedures prevent the controlled `Неопределено` result
+from reaching date comparison. The normal branch check passed YAxUnit 2/2,
+Vanessa 1/1 and zero new event-log errors. The retained review outcome is now
+`adjudicated-mixed`, not `adjudicated-false-positive` or a clean AI response.
+
+Product context was checked through BookStack: page 192 `Расчет сроков` and page
+236 `Календари`, both `updated_at=2025-11-25T08:56:39.000000Z`, supplied from its
+MCP cache. They distinguish astronomical units from working-calendar units,
+document plan-calendar inheritance and explicitly require a calculation error
+when neither element nor plan calendar exists. No newer product revision was
+asserted. The official language source
+was also checked:
+https://kb.1ci.com/1C_Enterprise_Platform/FAQ/Development/Standards/1C_Enterprise_script/.
+
+Retained report and hash-bound machine inventory:
+`C:/Users/xment/.codex/visualizations/2026/09/10/01a08571-0c9d-7981-a7bc-91a792ec45f9/review-adjudication/REVIEW.md`
+and adjacent `adjudication.json` / `validation-unit.bsl`.
+
+Remaining: deliver and qualify r35's mixed-outcome behavior through the normal
+installed route. No additional AI call is required or permitted by the
+already-used one-repeat authorization. The workflow must retain 5.4 as a
+confirmed and resolved defect, rather than relabel it as a false positive, and
+must not manufacture a clean tool response or host proof.
+
+## Item 4a: initialization and fork admission, 2026-09-10
+
+Initialization, workspace adoption, new configuration/extension branches and
+forking now use the same database coordinator as measurements and updates. The
+entrypoint, plan validator and recovery operation inventories contain the same
+29 operations. The wizard establishes the source connection before its native
+phase; source/seed preparation and the new target use separate admissions with
+local lifecycle locks released before either wait. A retained seed avoids an
+unnecessary live-source reservation. Forking releases the source only after its
+immutable snapshot is complete, then waits for the target.
+
+Runtime handoffs re-read project configuration and reject changes to .dev.env or
+the database target during waiting. Initialization reserves the target and the
+exact prospective Vanessa manager together, preserving saved target manager
+inputs on resume. Fork state no longer imports the source manager identity; a
+resumed fork keeps only the target's own admitted manager. Completed phases
+publish acknowledgement before normal release, using the existing journal and
+recovery protocol. No conf.cfg edits or new reset-continuation mechanism are
+part of this change.
+
+Twenty focused initialization/fork/context tests pass, including thirteen with
+real PowerShell/Python pipe
+owners and competing leases, including bounded waiting without local locks,
+independent progress, nested release, environment drift, saved manager reuse,
+adopted runtime roots and both source-to-target handoffs. The server-identity
+case is a protocol fixture, not server runtime acceptance. The completion and
+recovery operation contracts pass 29 Python tests. Existing lifecycle/seed and
+workspace coverage is included in the owning verification; registration owns
+the single Targeted gate for this coherent unit.
+
+Remaining work is unchanged: reconcile unknown native effects before releasing
+an interrupted admitted owner, and qualify actual server/two-host/installed
+routes. These front-door additions do not by themselves close item 4a.
+
+## Items 4 and 14: concurrent ROCTUP reads during verification, 2026-09-10
+
+The earlier single-mode coordinator made a persistent read-only ROCTUP facade
+exclusive for the lifetime of its backend. A branch check therefore waited even
+after preparation was complete. The project-local `runtime-mcp.lock` also held a
+coarse writer for the whole check, so changing only the database queue would not
+have restored the previously supported ROCTUP and Vanessa concurrency.
+
+The current source candidate keeps one coordinator and one ticket. Tickets now
+declare `shared-read`, `test-run` or `exclusive`. ROCTUP uses `shared-read`;
+branch verification, YAxUnit and an active Vanessa UI MCP runtime use
+`test-run`; those test modes are compatible with ROCTUP. Two test runs on the
+same database remain mutually exclusive. Measurements, configuration loads,
+extension installation and legacy clients remain exclusive. Recovery and
+`needs-attention` records block every mode.
+
+When a check discovers that source, service-base or test extensions must change,
+its existing ticket requests `exclusive`. That pending request blocks later
+readers to prevent writer starvation and waits for existing readers to release.
+After preparation it changes the same ticket back to `test-run`. Vanessa UI MCP
+does the same around backend preparation and recovery, so its editor and
+scenario calls can coexist with a ROCTUP reader after required tooling and
+manager-base mutations finish. No second queue, lease, TTL or competing
+stalled-session controller is introduced. A dead waiter is still removable; a
+dead admitted owner still requires the existing journal recovery. Inherited
+work cannot broaden shared authority into a mutation grant.
+
+For check, verify and deploy-and-test the exact database ticket replaces the
+whole-action `runtime-mcp.lock` writer. Their lifecycle lock remains held, so two
+lifecycle actions in the same worktree cannot overlap. Other actions retain the
+runtime writer. ROCTUP reads concurrent with tests are live reads and may observe
+data being changed by the tests; the contract does not promise a transactional
+snapshot.
+
+Focused protocol evidence covers shared readers with one test run, rejection of
+a second test run, writer fairness during an exclusive transition, preservation
+of the ticket ID across both transitions, Vanessa backend preparation under
+exclusive followed by ROCTUP-compatible runtime, legacy-exclusive behavior and
+the PowerShell/Go facade boundary. Installed file/server and two-host acceptance
+is still required before closing items 4 and 14.
+
+## Item 4: provider-bound server recovery, 2026-09-11
+
+Local process absence cannot prove that a server infobase has no surviving
+cluster session. The source candidate therefore extends the existing server
+provider contract instead of adding a second lock, TTL or stale-owner service.
+Before the first native record for any server resource, `serverBaseCopyScript`
+must finish its schema-2 capability probe within 30 seconds and advertise
+`recovery-observe`. Failure occurs before 1C starts, so the ordinary database
+owner can release without recovery debt.
+
+The provider path and SHA are stored in every new native intent. Recovery runs
+only on the original producer host, validates the retained provider before and
+after each call, and asks it twice for the exact normalized `/S` identity. The
+strict response contains no session identities or credentials: only the caller
+observation ID, exact infobase, database-presence flag, integer session count and
+an exclusive flag that must equal `sessionCount == 0`. A missing database,
+surviving session, changed provider, ambiguous binding, malformed response,
+timeout or provider failure keeps `needs-attention`. Nothing stops a foreign
+session or steals the ticket.
+
+The existing journal, fencing token, recovery attempt audit, cancellation and
+operation-specific effect adapter remain authoritative. The server observer
+only supplies the live quiescence fact which the file-base path obtained from an
+exclusive `1Cv8.1CD` handle. Focused evidence passes 14 native-journal Python
+tests, the provider-backed server recovery case, and 10 PowerShell generation /
+native-observation tests. A real provider against a server base and two execution
+hosts sharing one coordinator are still required before claiming installed
+server recovery.

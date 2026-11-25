@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "kind": "itl-gate-stand-fixture",
+  "platformVersion": "8.3.27.2130",
+  "formatVersion": "2.20",
+  "configurationPath": "cf",
+  "negative": {
+    "sourcePath": "src/cf/DataProcessors/ITLОбработкаПроверкиОбработчиковФормы/Forms/ФормаПроверкиОбработчиковСДлиннымИменем/Ext/Form/Module.bsl",
+    "replacementPath": "negative/Module.bsl",
+    "diagnostic": "Обработка.ITLОбработкаПроверкиОбработчиковФормы.Форма.ФормаПроверкиОбработчиковСДлиннымИменем.Форма Отсутствует обработчик:  Форма \"ПриСозданииНаСервере\""
+  },
+  "release": {
+    "modulePath": "src/cf/CommonModules/ITLСерверныйОбщийМодуль/Ext/Module.bsl",
+    "markerPath": "release/marker.bsl",
+    "featurePath": "tests/features/workflow-release-e2e.feature",
+    "featureSourcePath": "release/workflow-release-e2e.feature"
+  },
+  "autoUpdateEntryPoints": [
+    "ОбновлениеИнформационнойБазы.ВыполнитьОбновлениеИнформационнойБазы",
+    "ОбновлениеИнформационнойБазыСлужебный.ЗаписатьПодтверждениеЛегальностиПолученияОбновлений"
+  ]
+}

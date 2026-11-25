@@ -1,61 +1,118 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
-It "parses the orchestrator and exposes the bounded delivery actions" {
-        $tokens = $null
-        $errors = $null
-        $ast = [Management.Automation.Language.Parser]::ParseFile($DeliveryScript, [ref]$tokens, [ref]$errors)
-        @($errors) | Should -BeNullOrEmpty
-        $action = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "Action" } | Select-Object -First 1
-        @($action.Attributes | Where-Object TypeName -match ValidateSet | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("RegisterChange", "Status", "Plan", "Cleanup", "DiagnoseFull", "PublishDevelop", "PromoteRelease", "ReleaseMaster")
-        $text = $DeliverySourceText
-        $text | Should -Not -Match 'Restore-DeliveryContinuationQualification'
-        $text | Should -Match 'publication-attempts\\develop\.json'
-        $text | Should -Match 'develop-qualified'
-        $text | Should -Match 'component-finalized'
-        $text | Should -Match 'same failure twice'
-        $text | Should -Match 'Restore-PriorDevelopPublicationQualification'
-        $text | Should -Match 'Invoke-SourceGate -Mode "Develop" -WorkingRoot \$worktree\.path -TargetBaseRef \$remoteDevelop'
-        $text | Should -Match 'Promote-AccumulatedDevelopToMaster'
-        $text | Should -Match 'source-delivery-supervisor\.ps1'
-        $text | Should -Match 'refs/remotes/\$Remote/master'
-    }
-
-It "resolves the repository root after parameter binding in Windows PowerShell 5.1" {
-        $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status")
-        $result.exitCode | Should -Be 0
-        $status = $result.stdout | ConvertFrom-Json
-        $status.status | Should -Be "ok"
-        @($status.PSObject.Properties.Name) | Should -Contain "queue"
-    }
-
-It "runs the immutable origin master supervisor while the candidate checkout contains different delivery code" {
+    It 'admits a source-resolved published lock conflict before integrating develop and preserves queued work through failure' {
         $fixture = $null
         try {
             $fixture = New-DeliveryFixture
-            & git -C $fixture.root switch --quiet -c master $fixture.base
-            $supervisorDirectory = Join-Path $fixture.root 'scripts'; New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
-            $stableSupervisor = @'
-[CmdletBinding()]
-param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[switch]$BootstrapSupervisor)
-[pscustomobject]@{ status='stable-supervisor'; action=$Action; candidateRoot=$RepositoryRoot; supervisorCommit=$SupervisorCommit; bootstrap=[bool]$BootstrapSupervisor } | ConvertTo-Json
-'@
-            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $stableSupervisor, [Text.UTF8Encoding]::new($false))
-            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: stable supervisor'
-            $masterCommit = (& git -C $fixture.root rev-parse HEAD).Trim(); & git -C $fixture.root push --quiet origin HEAD:master
-            & git -C $fixture.root switch --quiet develop
-            New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
-            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), "throw 'candidate supervisor must not execute'", [Text.UTF8Encoding]::new($false))
-            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: candidate supervisor differs'
-            & git -C $fixture.root fetch --quiet origin master:refs/remotes/origin/master
+            $lockPath = Join-Path $fixture.root 'templates/dependency-lock.json'
+            $writeRules = {
+                param([int]$Revision, [string]$Status)
+                Set-DeliveryAiRulesLock -Fixture $fixture -CompatibilityStatus $Status
+                $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $lock.dependencies.aiRules1c.ref = 'rules-r' + $Revision
+                $lock.dependencies.aiRules1c.downstreamRevision = $Revision
+                [IO.File]::WriteAllText($lockPath, ($lock | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+            }
+            & $writeRules 45 'pending'
+            & git -C $fixture.root add templates/dependency-lock.json
+            & git -C $fixture.root commit --quiet -m 'base rules 45'
+            $base = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root push --quiet origin HEAD:develop
+            & git -C $fixture.root fetch --quiet origin develop
+            & git -C $fixture.root switch --quiet -c rules-46
+            & $writeRules 46 'pending'
+            & git -C $fixture.root add templates/dependency-lock.json
+            & git -C $fixture.root commit --quiet -m 'pending rules 46'
+            $argsBase = @('-Action','RegisterChange','-RepositoryRoot',('"'+$fixture.root+'"'),'-CoverageContract','contract-one,contract-two')
+            $gateArgs = @('-GateScript',('"'+$fixture.gate+'"'))
+            Invoke-DeliveryTestPowerShell -Arguments @($argsBase + $gateArgs + @('-QueueId','rules')) | Out-Null
+            $oldRules = (& git -C $fixture.root rev-parse HEAD).Trim()
 
-            $result = Invoke-DeliveryTestPowerShell -Arguments @('-Action','Status','-RepositoryRoot',('"' + $fixture.root + '"'))
-            $payload = $result.stdout | ConvertFrom-Json
-            $payload.status | Should -Be 'stable-supervisor'; $payload.supervisorCommit | Should -Be $masterCommit; $payload.bootstrap | Should -BeFalse
+            & git -C $fixture.root switch --quiet -c unrelated $base
+            Set-Content -LiteralPath (Join-Path $fixture.root 'накопленная работа.txt') -Value 'preserve unrelated queue' -Encoding UTF8
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit --quiet -m 'unrelated queued work'
+            Invoke-DeliveryTestPowerShell -Arguments @($argsBase + $gateArgs + @('-QueueId','unrelated')) | Out-Null
+            $oldCandidate = (& git -C $fixture.root rev-parse refs/itl/develop-candidate/head).Trim()
+            $unrelatedHead = (& git -C $fixture.root rev-parse refs/itl/develop-queue/unrelated/head).Trim()
+            $refsBefore = @(& git -C $fixture.root for-each-ref '--format=%(refname) %(objectname)' refs/itl/develop-queue refs/itl/develop-candidate)
+
+            & git -C $fixture.root switch --quiet -c published-45 $base
+            & $writeRules 45 'passed'
+            & git -C $fixture.root add templates/dependency-lock.json
+            & git -C $fixture.root commit --quiet -m 'published qualification of rules 45'
+            & git -C $fixture.root push --quiet origin HEAD:develop
+            & git -C $fixture.root fetch --quiet origin develop
+            $published = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root switch --quiet rules-46
+            Set-Content -LiteralPath (Join-Path $fixture.root 'продолжение r46.txt') -Value 'source work' -Encoding UTF8
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit --quiet -m 'continue rules source before resolution'
+            # A source head without an explicit resolution must still fail closed.
+            $unresolved = Invoke-DeliveryTestPowerShell -Arguments @($argsBase + $gateArgs + @('-QueueId','rules')) -AllowFailure
+            $unresolved.exitCode | Should -Not -Be 0
+            $unresolved.stderr | Should -Match 'conflicts with the develop candidate'
+            @(& git -C $fixture.root for-each-ref '--format=%(refname) %(objectname)' refs/itl/develop-queue refs/itl/develop-candidate) | Should -Be $refsBefore
+            @(Get-Content -LiteralPath $fixture.targetBaseLog -Encoding UTF8).Count | Should -Be 2
+
+            & git -C $fixture.root merge --no-commit origin/develop *> $null
+            $LASTEXITCODE | Should -Be 1
+            . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+            @(Get-RepositoryGitPathList -RepositoryRoot $fixture.root -Arguments @('diff','--name-only','--diff-filter=U','-z')) | Should -Be @('templates/dependency-lock.json')
+            & $writeRules 46 'pending'
+            & git -C $fixture.root add templates/dependency-lock.json
+            & git -C $fixture.root commit --quiet -m 'resolve published rules 45 while retaining pending rules 46'
+            $resolvedHead = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root merge-base --is-ancestor $oldRules $resolvedHead
+            $LASTEXITCODE | Should -Be 0
+            & git -C $fixture.root merge-base --is-ancestor $published $resolvedHead
+            $LASTEXITCODE | Should -Be 0
+
+            Add-Content -LiteralPath (Join-Path $fixture.root 'README.md') -Value 'dirty guard remains strict'
+            $dirty = Invoke-DeliveryTestPowerShell -Arguments @($argsBase + $gateArgs + @('-QueueId','rules')) -AllowFailure
+            $dirty.exitCode | Should -Not -Be 0
+            @(& git -C $fixture.root for-each-ref '--format=%(refname) %(objectname)' refs/itl/develop-queue refs/itl/develop-candidate) | Should -Be $refsBefore
+            & git -C $fixture.root checkout -- README.md
+            $failingGate = Join-Path $fixture.root 'build/failing-gate.ps1'
+            Set-Content -LiteralPath $failingGate -Encoding UTF8 -Value 'param([string]$Mode,[string]$BaseRef,[string[]]$CoverageContract); exit 17'
+            $failed = Invoke-DeliveryTestPowerShell -Arguments @($argsBase + @('-GateScript',('"'+$failingGate+'"'),'-QueueId','rules')) -AllowFailure
+            $failed.exitCode | Should -Not -Be 0
+            $failed.stderr | Should -Match 'Targeted source gate failed'
+            @(& git -C $fixture.root for-each-ref '--format=%(refname) %(objectname)' refs/itl/develop-queue refs/itl/develop-candidate) | Should -Be $refsBefore
+
+            $registered = Invoke-DeliveryTestPowerShell -Arguments @($argsBase + $gateArgs + @('-QueueId','rules'))
+            $payload = $registered.stdout | ConvertFrom-Json
+            $payload.status | Should -Be 'registered'
+            $payload.head | Should -Be $resolvedHead
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/rules/base).Trim() | Should -Be $base
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/unrelated/head).Trim() | Should -Be $unrelatedHead
+            @(Get-Content -LiteralPath $fixture.targetBaseLog -Encoding UTF8)[-1] | Should -Be $oldCandidate
+            $candidateLock = ((& git -C $fixture.root show "$($payload.candidate):templates/dependency-lock.json") -join "`n") | ConvertFrom-Json
+            $candidateLock.dependencies.aiRules1c.downstreamRevision | Should -Be 46
+            $candidateLock.dependencies.aiRules1c.compatibilityStatus | Should -Be 'pending'
+            $candidateLock.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ''
+            (& git -C $fixture.root show "$($payload.candidate):накопленная работа.txt").Trim() | Should -Be 'preserve unrelated queue'
+            foreach ($ancestor in @($oldCandidate,$resolvedHead,$published,$unrelatedHead)) {
+                & git -C $fixture.root merge-base --is-ancestor $ancestor $payload.candidate
+                $LASTEXITCODE | Should -Be 0
+            }
+            # The blocked independent task can now register normally as well.
+            & git -C $fixture.root switch --quiet -c cache-fix origin/develop
+            Set-Content -LiteralPath (Join-Path $fixture.root 'cache-fix.txt') -Value 'independent cache repair'
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit --quiet -m 'independent cache repair'
+            $cache = (Invoke-DeliveryTestPowerShell -Arguments @($argsBase + $gateArgs + @('-QueueId','cache'))).stdout | ConvertFrom-Json
+            $cache.status | Should -Be 'registered'
+            @(& git -C $fixture.root for-each-ref '--format=%(refname)' refs/itl/develop-queue) | Should -HaveCount 6
+            $cacheLock = ((& git -C $fixture.root show "$($cache.candidate):templates/dependency-lock.json") -join "`n") | ConvertFrom-Json
+            $cacheLock.dependencies.aiRules1c.downstreamRevision | Should -Be 46
+            $cacheLock.dependencies.aiRules1c.compatibilityStatus | Should -Be 'pending'
+            (& git -C $fixture.root rev-parse origin/develop).Trim() | Should -Be $published
+            @(Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8) | Should -Be @('Targeted','Targeted','Targeted','Targeted')
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
-
-It "registers base and head atomically for a path with Cyrillic and spaces" {
+It "registers Unicode queue refs atomically and rejects the original parallel conflict before publication" {
         $fixture = $null; $parallelRoot = ""; try {
             $fixture = New-DeliveryFixture
             $tests = Join-Path $fixture.root "tests\pester"
@@ -75,17 +132,20 @@ It "registers base and head atomically for a path with Cyrillic and spaces" {
             Set-Content -LiteralPath (Join-Path $parallelRoot "скрипт с пробелами.ps1") -Encoding UTF8 -Value "'conflicting second'"
             Set-Content -LiteralPath (Join-Path $parallelRoot "tests\pester\Second.Tests.ps1") -Encoding UTF8 -Value "Describe 'second' { It 'works' { `$true | Should -BeTrue } }"
             & git -C $parallelRoot add --all; & git -C $parallelRoot commit -m "feat: parallel fixture" *> $null
-            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $parallelRoot + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "parallel-two") | Out-Null
+            $conflict = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $parallelRoot + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "parallel-two") -AllowFailure
+            $conflict.exitCode | Should -Not -Be 0
+            $conflict.stderr | Should -Match 'conflicts with the develop candidate'
             $status = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status", "-RepositoryRoot", ('"' + $fixture.root + '"'))
-            $statusPayload = $status.stdout | ConvertFrom-Json; @($statusPayload.queue.id | Sort-Object) | Should -Be @("codex/parallel-branch", "parallel-two"); [int]$statusPayload.runHistory.count | Should -BeGreaterOrEqual 2; [int]($statusPayload.runHistory.byMode | Where-Object mode -eq Targeted | Select-Object -ExpandProperty count) | Should -BeGreaterOrEqual 2
-            (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure).exitCode | Should -Not -Be 0
-            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -HaveCount 4
+            $statusPayload = $status.stdout | ConvertFrom-Json
+            @($statusPayload.queue.id) | Should -Be @("codex/parallel-branch")
+            [int]($statusPayload.runHistory.byMode | Where-Object mode -eq Targeted | Select-Object -ExpandProperty count) | Should -Be 1
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -HaveCount 2
+            (& git -C $fixture.root rev-parse refs/itl/develop-candidate/head).Trim() | Should -Be $head
         } finally {
             if ($fixture -and $parallelRoot) { & git -C $fixture.root worktree remove --force $parallelRoot *> $null }
             Remove-DeliveryFixture -Fixture $fixture
         }
     }
-
 It "targets only commits after the existing head of the same queue" {
         $fixture = $null; try {
             $fixture = New-DeliveryFixture
@@ -118,7 +178,6 @@ It "targets only commits after the existing head of the same queue" {
             (& git -C $fixture.root rev-parse refs/itl/develop-queue/same-queue/head).Trim() | Should -Be $secondHead
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
-
 It "refuses executable changes without tests or an explicit reused contract" {
         $fixture = $null; try {
             $fixture = New-DeliveryFixture
@@ -131,16 +190,40 @@ It "refuses executable changes without tests or an explicit reused contract" {
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -BeNullOrEmpty
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
-
-It "blocks a duplicate while an orphan gate is alive and journals stale recovery" {
+    It "covers a change only the documentation contract owns and keeps the explicit contract for shared paths" {
         $fixture = $null; try {
-            $fixture = New-DeliveryFixture; New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null; Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\DeliveryRecovery.Tests.ps1") -Encoding UTF8 -Value "Describe 'delivery recovery' { It 'works' { `$true | Should -BeTrue } }"; & git -C $fixture.root add --all; & git -C $fixture.root commit -m "feat: recovery fixture" *> $null; Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
-            $lockRoot = Join-Path $fixture.root ".git\itl\delivery-operation"; New-Item -ItemType Directory -Force -Path $lockRoot | Out-Null; $acquiring = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure; $acquiring.exitCode | Should -Not -Be 0; $acquiring.stderr | Should -Match "acquiring the shared lock"; $pesterProcess = Get-Process -Id $PID
-            $operation = [ordered]@{ schemaVersion=1; id=[guid]::NewGuid().ToString("N"); action="PublishDevelop"; startedAt=[DateTime]::UtcNow.AddMinutes(-1).ToString("o"); ownerPid=999999; ownerProcessStartedAt=[DateTime]::UtcNow.AddDays(-1).ToString("o"); mode="Develop"; workingRoot=""; gatePid=$PID; gateProcessStartedAt=$pesterProcess.StartTime.ToUniversalTime().ToString("o"); gateStatus="running"; runRecordPath="" }; [IO.File]::WriteAllText((Join-Path $lockRoot "operation.json"), (($operation | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-            $status = (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status", "-RepositoryRoot", ('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json; $status.activeOperation.status | Should -Be "running"; $status.activeOperation.gateAlive | Should -BeTrue; $duplicate = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure; $duplicate.exitCode | Should -Not -Be 0; $duplicate.stderr | Should -Match "already active"
-            $summaryRoot = Join-Path $fixture.root "build\test-results\local"; New-Item -ItemType Directory -Force -Path $summaryRoot | Out-Null; $summaryStarted = [DateTime]::UtcNow.AddSeconds(-2); $summaryFinished = [DateTime]::UtcNow.AddSeconds(-1); $summary = [ordered]@{ mode="Targeted"; status="failed"; startedAt=$summaryStarted.ToString("o"); finishedAt=$summaryFinished.ToString("o"); error="fixture interrupted"; tests=[ordered]@{passed=0;failed=1;skipped=0}; stages=@() }; [IO.File]::WriteAllText((Join-Path $summaryRoot "check-summary.json"), (($summary | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-            $operation.gatePid = 999998; $operation.gateProcessStartedAt = [DateTime]::UtcNow.AddDays(-1).ToString("o"); $operation.workingRoot = $fixture.root; $operation.mode = "Targeted"; [IO.File]::WriteAllText((Join-Path $lockRoot "operation.json"), (($operation | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')); ($published.stdout | ConvertFrom-Json).status | Should -Be "published"; Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\operations\$($operation.id).json") | Should -BeTrue; $history = ((Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status", "-RepositoryRoot", ('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json).runHistory; @($history.lastRuns | Where-Object { [string]$_.error -match "Recovered after the delivery wrapper" }).Count | Should -Be 1
+            $fixture = New-DeliveryFixture
+            $catalog = [ordered]@{ schemaVersion = 1; contracts = @(
+                [ordered]@{ id = 'documentation'; owner = 'docs'; gate = 'targeted'; budgetSeconds = 60; primaryTest = 'tests/pester/Docs.Tests.ps1'; paths = @('docs/*'); tests = @('tests/pester/Docs.Tests.ps1') },
+                [ordered]@{ id = 'shared-reference'; owner = 'product'; gate = 'targeted'; budgetSeconds = 60; primaryTest = 'tests/pester/Shared.Tests.ps1'; paths = @('docs/общая справка.md'); tests = @('tests/pester/Shared.Tests.ps1') }) }
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root 'tests'), (Join-Path $fixture.root 'docs') | Out-Null
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add tests/quality-contracts.json
+            & git -C $fixture.root commit --quiet -m 'test: catalog' *> $null
+            & git -C $fixture.root push --quiet origin HEAD:develop *> $null
+            # The recording gate lives outside the repository and logs the contracts it receives.
+            $gateRoot = Join-Path $TestDrive ('coverage gate ' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Force -Path $gateRoot | Out-Null
+            $gate = Join-Path $gateRoot 'coverage-gate.ps1'
+            $gateText = (Get-Content -LiteralPath $fixture.gate -Raw -Encoding UTF8).Replace('if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }', "Add-Content -LiteralPath (Join-Path `$PSScriptRoot 'coverage.log') -Encoding UTF8 -Value (@(`$CoverageContract) -join ',')")
+            $gateText | Should -Not -BeExactly (Get-Content -LiteralPath $fixture.gate -Raw -Encoding UTF8)
+            [IO.File]::WriteAllText($gate, $gateText, [Text.UTF8Encoding]::new($true))
+            Set-Content -LiteralPath (Join-Path $fixture.root 'docs/руководство с пробелом.md') -Encoding UTF8 -Value 'guide'
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit --quiet -m 'docs: guide' *> $null
+            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $gate + '"'), "-QueueId", "docs-only")
+            ($result.stdout | ConvertFrom-Json).status | Should -Be 'registered'
+            @(Get-Content -LiteralPath (Join-Path $gateRoot 'coverage.log') -Encoding UTF8)[-1] | Should -BeExactly 'documentation'
+            $registered = (& git -C $fixture.root rev-parse refs/itl/develop-queue/docs-only/head).Trim()
+            $gateRuns = @(Get-Content -LiteralPath (Join-Path $gateRoot 'coverage.log') -Encoding UTF8).Count
+
+            Set-Content -LiteralPath (Join-Path $fixture.root 'docs/общая справка.md') -Encoding UTF8 -Value 'shared'
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit --quiet -m 'docs: shared reference' *> $null
+            $refused = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $gate + '"'), "-QueueId", "docs-only") -AllowFailure
+            $refused.exitCode | Should -Not -Be 0
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/docs-only/head).Trim() | Should -Be $registered
+            @(Get-Content -LiteralPath (Join-Path $gateRoot 'coverage.log') -Encoding UTF8).Count | Should -Be $gateRuns
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
 }

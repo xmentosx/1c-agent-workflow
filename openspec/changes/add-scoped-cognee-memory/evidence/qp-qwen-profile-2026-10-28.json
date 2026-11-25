@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "qualificationKind": "native-profile-and-index; source admission completed only with linked QP4 evidence",
+  "date": "2026-10-28",
+  "profile": "cognee-qwen4096-v1",
+  "candidateInstanceId": "cognee-qwen-prod-20261028-v1",
+  "principalId": "4b5e843d-9d33-4e84-9970-4c81c4bdff1d",
+  "imageDigest": "sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820",
+  "openApiSha256": "41584822e9403d6fd96966f285714c004e5c77fff72c26514d72d99268bbbe8a",
+  "embeddingProvider": "openai_compatible",
+  "embeddingModel": "qwen/qwen3-embedding-8b",
+  "embeddingDimensions": 4096,
+  "cacheSize": 6,
+  "rateLimitEnabled": false,
+  "graphBufferBytes": 268435456,
+  "cpu": 2,
+  "memoryBytes": 5368709120,
+  "memoryAndSwapTotalBytes": 5368709120,
+  "frontendRecallSeconds": 20,
+  "frontendRememberSeconds": 60,
+  "nativeAppWithoutDiagnosticWrapper": true,
+  "nativeCompletedOriginals": 50,
+  "nativeDatasets": 12,
+  "frozenCurrentOriginalsEqual": true,
+  "nativeIndex": {
+    "originals": 50,
+    "datasets": 12,
+    "fullFrozenPayloadSetEqual": true,
+    "nativeIndexRows": 50,
+    "ru21Seconds": 13.312248,
+    "ru21Rows": 32,
+    "unscopedCalls": 0,
+    "goldExposed": false,
+    "resource": {
+      "utc": "2026-10-28T10:17:03.060165+00:00",
+      "memory.current": "4260368384",
+      "memory.peak": "5092737024",
+      "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "cpu.stat": "usage_usec 717385278\nuser_usec 555774879\nsystem_usec 161610399\ncore_sched.force_idle_usec 0\nnr_periods 24592\nnr_throttled 254\nthrottled_usec 3604148\nnr_bursts 0\nburst_usec 0"
+    }
+  },
+  "linkedAcceptanceReport": "qp-preparation-2026-10-28.md",
+  "reusedEvidence": [
+    {
+      "path": "openspec/changes/add-scoped-cognee-memory/evidence/qwen-lru6-recheck-2026-10-28.md",
+      "sha256": "5bf317b85f15373552d7463ecf3e2c85e48da65609a95777ad5db76a7e01e82b"
+    },
+    {
+      "path": "openspec/changes/add-scoped-cognee-memory/evidence/qwen-lru6-codex-answers-2026-10-28.md",
+      "sha256": "50e89030110c6b61e0769971183b8b4f9df6e3802fb7307a7b7066e1cb0cf030"
+    }
+  ],
+  "clientCutover": false,
+  "releaseAdmission": false
+}

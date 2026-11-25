@@ -3,9 +3,9 @@
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
     $HelperPath = $context.HelperPath
-    $script:TargetAiRulesRef = "itl-main-410951e7-r33"
-    $script:TargetAiRulesCommit = "9309bfbbc9f8d844a21bce55178c2e0d72eaf965"
-    $script:TargetAiRulesRevision = 33
+    $script:TargetAiRulesRef = "itl-main-410951e7-r36"
+    $script:TargetAiRulesCommit = "451c5a52e5b614c67406445d4af4b636da043aec"
+    $script:TargetAiRulesRevision = 36
 
     function New-AiRulesMigrationFixture {
         param(
@@ -68,16 +68,48 @@
         Set-Content -LiteralPath (Join-Path $Root "templates\project.json") -Encoding UTF8 -Value ($targetConfig | ConvertTo-Json -Depth 10)
         Set-Content -LiteralPath (Join-Path $Root "templates\dependency-lock.json") -Encoding UTF8 -Value ($targetLock | ConvertTo-Json -Depth 10)
         Set-Content -LiteralPath (Join-Path $Root ".ai-rules.json") -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+        $decisions=@{}
+        if ($CurrentRepo -in @('https://github.com/comol/ai_rules_1c.git','https://github.com/xmentosx/itl_ai_rules_1c.git') -and $CurrentDownstreamRevision -lt $script:TargetAiRulesRevision) { $decisions.aiRules1c='workflow' }
+        $selection=@{schemaVersion=1;worktrees=@(@{worktreePath=$Root;decisions=$decisions})}
+        Set-Content -LiteralPath (Join-Path $Root 'dependency-selection.json') -Encoding UTF8 -Value ($selection | ConvertTo-Json -Depth 10)
     }
 }
 
 Describe "ai_rules_1c migration planning" {
+    It 'reports legacy migration without rewriting stale ownership markers' {
+        $root = Join-Path $TestDrive 'Диагностика проекта с пробелом'
+        New-AiRulesMigrationFixture -Root $root
+        $relative = '.codex/rules/diagnostic.md'
+        $rulePath = Join-Path $root $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $rulePath) -Force | Out-Null
+        [IO.File]::WriteAllText($rulePath, "Preserve this rule.`n", [Text.UTF8Encoding]::new($false))
+        $manifestPath = Join-Path $root '.ai-rules.json'
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.files | Add-Member -NotePropertyName $relative -NotePropertyValue ([pscustomobject]@{
+            source='content/rules/diagnostic.md'; installedHash=(Get-FileHash -LiteralPath $rulePath).Hash.ToLowerInvariant(); userModified=$true
+        })
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        $before = (Get-FileHash -LiteralPath $manifestPath).Hash
+        $result = & {
+            . $HelperPath -ProjectRoot $root -Action help -DependencySelectionFile (Join-Path $root 'dependency-selection.json') *> $null
+            Write-AiRules1cStatusLines 6> $null
+            $afterReport=(Get-FileHash -LiteralPath $manifestPath).Hash
+            $plan=Get-AiRulesMigrationPlan
+            $afterUpdatePlan=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            [pscustomobject]@{afterReport=$afterReport;updatePlanStatus=$plan.status;markerAfterUpdatePlan=$afterUpdatePlan.files.PSObject.Properties[$relative].Value.userModified}
+        }
+        $result.afterReport | Should -Be $before
+        $result.updatePlanStatus | Should -Be eligible
+        $result.markerAfterUpdatePlan | Should -BeFalse
+        (Get-FileHash -LiteralPath $rulePath).Hash.ToLowerInvariant() | Should -Be $manifest.files.PSObject.Properties[$relative].Value.installedHash
+    }
+
     It "stays dormant until a verified fork baseline is configured" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-dormant-" + [guid]::NewGuid().ToString("N"))
         try {
             New-AiRulesMigrationFixture -Root $tempRoot -ConfigureTarget $false
             $plan = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null
                 Get-AiRulesMigrationPlan
             }
             $plan.status | Should -Be "dormant"
@@ -98,9 +130,9 @@ Describe "ai_rules_1c migration planning" {
                 -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef "itl-main-a421cf44-r1" `
                 -CurrentCommit "dc9a767f0cb77418bcae3c52521594b183c1b879" `
                 -CurrentUpstreamCommit "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826" -CurrentDownstreamRevision 1 -UserModified $true
-            $customPlan = & { . $HelperPath -ProjectRoot $customRoot -Action help *> $null; Get-AiRulesMigrationPlan }
-            $modifiedPlan = & { . $HelperPath -ProjectRoot $modifiedRoot -Action help *> $null; Get-AiRulesMigrationPlan }
-            $controlledModifiedPlan = & { . $HelperPath -ProjectRoot $controlledModifiedRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $customPlan = & { . $HelperPath -ProjectRoot $customRoot -Action help -DependencySelectionFile (Join-Path $customRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
+            $modifiedPlan = & { . $HelperPath -ProjectRoot $modifiedRoot -Action help -DependencySelectionFile (Join-Path $modifiedRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
+            $controlledModifiedPlan = & { . $HelperPath -ProjectRoot $controlledModifiedRoot -Action help -DependencySelectionFile (Join-Path $controlledModifiedRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
             $customPlan.status | Should -Be "custom"
             $customPlan.suppressRegularUpdate | Should -BeTrue
             $modifiedPlan.status | Should -Be "user-modified"
@@ -108,6 +140,32 @@ Describe "ai_rules_1c migration planning" {
             $controlledModifiedPlan.status | Should -Be "user-modified"
         } finally {
             Remove-Item -LiteralPath $customRoot, $modifiedRoot, $controlledModifiedRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "blocks an edited legacy AGENTS.md even before the installer marks it userModified" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-root-drift-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot
+            $rootPath = Join-Path $tempRoot 'AGENTS.md'
+            [IO.File]::WriteAllText($rootPath, "Original managed root`n", [Text.UTF8Encoding]::new($false))
+            $manifestPath = Join-Path $tempRoot '.ai-rules.json'
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $manifest.files | Add-Member -NotePropertyName 'AGENTS.md' -NotePropertyValue ([pscustomobject][ordered]@{
+                source = 'AGENTS.md'
+                installedHash = (Get-FileHash -LiteralPath $rootPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            })
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+            [IO.File]::AppendAllText($rootPath, "User addition`n", [Text.UTF8Encoding]::new($false))
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
+            $plan.status | Should -Be 'user-modified'
+            $plan.eligible | Should -BeFalse
+            $changedPaths = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; @(Get-AiRulesManifestUserModifiedPaths) }
+            $changedPaths | Should -Contain 'AGENTS.md'
+            [IO.File]::ReadAllText($rootPath) | Should -Match 'User addition'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -123,7 +181,7 @@ Describe "ai_rules_1c migration planning" {
             $manifest.files | Add-Member -NotePropertyName ".dev.env" -NotePropertyValue ([pscustomobject]@{ source = "content/root-templates/.dev.env"; installedHash = "upstream"; userModified = $true })
             Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
 
-            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "eligible"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -155,7 +213,13 @@ Describe "ai_rules_1c migration planning" {
             })
             Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
 
-            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $beforeManifest = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash
+            $marked = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; @(Get-AiRulesManifestUserModifiedPaths) }
+            @($marked) | Should -Not -Contain 'USER-RULES.md'
+            (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash | Should -Be $beforeManifest
+            (Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).files.'USER-RULES.md'.userModified | Should -BeTrue
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "eligible"
             $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeFalse
@@ -164,7 +228,10 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "keeps USER-RULES blocking when content outside the ITL overlay changed" {
+    It "preserves user policy in declared templates while protecting undeclared managed USER-RULES" -ForEach @(
+        @{PlacedOnce=$true;ExpectedStatus='eligible'},
+        @{PlacedOnce=$false;ExpectedStatus='user-modified'}
+    ) {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-user-rules-custom-" + [guid]::NewGuid().ToString("N"))
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
@@ -182,16 +249,21 @@ Describe "ai_rules_1c migration planning" {
             $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $manifest.files | Add-Member -NotePropertyName "USER-RULES.md" -NotePropertyValue ([pscustomobject]@{
                 source = "USER-RULES.md"
-                template = $true
+                template = $PlacedOnce
                 installedHash = $installedHash
                 userModified = $true
             })
             Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
 
-            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
-            $plan.status | Should -Be "user-modified"
+            $manifestHash = (Get-FileHash -LiteralPath $manifestPath).Hash
+            $policyHash = (Get-FileHash -LiteralPath $userRulesPath).Hash
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
+            $plan.status | Should -Be $ExpectedStatus
             $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeTrue
+            (Get-FileHash -LiteralPath $manifestPath).Hash | Should -Be $manifestHash
+            (Get-FileHash -LiteralPath $userRulesPath).Hash | Should -Be $policyHash
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -234,7 +306,7 @@ Describe "ai_rules_1c migration planning" {
             })
             Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
 
-            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "eligible"
             $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeFalse
@@ -261,7 +333,7 @@ Describe "ai_rules_1c migration planning" {
             })
             Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
 
-            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "eligible"
             $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeFalse
@@ -279,7 +351,7 @@ Describe "ai_rules_1c migration planning" {
                 -CurrentCommit "6396b1538339ce1ff025cd6f2a24ccb8ff742e1e" `
                 -CurrentUpstreamCommit "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826" `
                 -CurrentDownstreamRevision 4
-            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "eligible"
             $plan.sourceKind | Should -Be "controlled-fork"
             $plan.fromCommit | Should -Be "6396b1538339ce1ff025cd6f2a24ccb8ff742e1e"
@@ -300,7 +372,7 @@ Describe "ai_rules_1c migration planning" {
                 -CurrentCommit "af82570afca06c40a9588c8a678bf3665bba4870" `
                 -CurrentUpstreamCommit "b4d9875b15c6d93f493035aee51f077126e72a21" `
                 -CurrentDownstreamRevision 11
-            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "eligible"
             $plan.fromDownstreamRevision | Should -Be 11
             $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision
@@ -322,7 +394,7 @@ Describe "ai_rules_1c migration planning" {
                     -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" `
                     -CurrentDownstreamRevision 12 `
                     -CurrentTool $client
-                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 12 -Because $client
                 $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
@@ -346,7 +418,7 @@ Describe "ai_rules_1c migration planning" {
                     -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" `
                     -CurrentDownstreamRevision 13 `
                     -CurrentTool $client
-                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 13 -Because $client
                 $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
@@ -370,7 +442,7 @@ Describe "ai_rules_1c migration planning" {
                     -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" `
                     -CurrentDownstreamRevision 14 `
                     -CurrentTool $client
-                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 14 -Because $client
                 $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
@@ -394,7 +466,7 @@ Describe "ai_rules_1c migration planning" {
                     -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" `
                     -CurrentDownstreamRevision 15 `
                     -CurrentTool $client
-                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 15 -Because $client
                 $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
@@ -418,7 +490,7 @@ Describe "ai_rules_1c migration planning" {
                     -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" `
                     -CurrentDownstreamRevision 16 `
                     -CurrentTool $client
-                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 16 -Because $client
                 $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
@@ -442,7 +514,7 @@ Describe "ai_rules_1c migration planning" {
                     -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" `
                     -CurrentDownstreamRevision 17 `
                     -CurrentTool $client
-                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 17 -Because $client
                 $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
@@ -466,7 +538,7 @@ Describe "ai_rules_1c migration planning" {
                     -CurrentUpstreamCommit "5ae333ed49dc66989e305b286acc93691bb96926" `
                     -CurrentDownstreamRevision 18 `
                     -CurrentTool $client
-                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 18 -Because $client
                 $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
@@ -488,14 +560,14 @@ Describe "ai_rules_1c migration planning" {
                 -CurrentCommit $script:TargetAiRulesCommit `
                 -CurrentUpstreamCommit "410951e74fd3e6b7a763cf49757935b9a34d3f31" `
                 -CurrentDownstreamRevision $script:TargetAiRulesRevision
-            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "current"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
-    It "plans monotonic r11 through r32 to r33 migration for all ten clients" {
+    It "plans monotonic r11 through r35 to r36 migration for all ten clients" {
         $releases = @(
             [pscustomobject]@{ revision = 11; ref = "itl-main-b4d9875b-r11"; commit = "af82570afca06c40a9588c8a678bf3665bba4870"; upstream = "b4d9875b15c6d93f493035aee51f077126e72a21" },
             [pscustomobject]@{ revision = 12; ref = "itl-main-72665287-r12"; commit = "16e9e44318a79d9e82c12b19e6759cdf6492d9a4"; upstream = "72665287e77361aea3aaf866fef163d98f0fabcd" },
@@ -518,15 +590,18 @@ Describe "ai_rules_1c migration planning" {
             [pscustomobject]@{ revision = 29; ref = "itl-main-410951e7-r29"; commit = "334a5ac6caeececc0a83d214c9f5ba6c98603190"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
             [pscustomobject]@{ revision = 30; ref = "itl-main-410951e7-r30"; commit = "dfe4fd1250b0c14c83be9f2c16ef62d8fc521add"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
             [pscustomobject]@{ revision = 31; ref = "itl-main-410951e7-r31"; commit = "01193bce08e0b1808bdf290af17d225bb99ccebe"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
-            [pscustomobject]@{ revision = 32; ref = "itl-main-410951e7-r32"; commit = "507ac7cb8f6da63f1dc38e91c34d70164e5ff01b"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" }
+            [pscustomobject]@{ revision = 32; ref = "itl-main-410951e7-r32"; commit = "507ac7cb8f6da63f1dc38e91c34d70164e5ff01b"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
+            [pscustomobject]@{ revision = 33; ref = "itl-main-410951e7-r33"; commit = "9309bfbbc9f8d844a21bce55178c2e0d72eaf965"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
+            [pscustomobject]@{ revision = 34; ref = "itl-main-410951e7-r34"; commit = "ed2a1e3b44ace1e359d922adfcb70c3dfb874f3b"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
+            [pscustomobject]@{ revision = 35; ref = "itl-main-410951e7-r35"; commit = "25df9fdc5a27a87b96c40fc1c8ca7a63ac09ed28"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" }
         )
         $clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
         foreach ($release in $releases) {
             foreach ($client in $clients) {
-                $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-r33-$($release.revision)-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
+                $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-r34-$($release.revision)-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
                 try {
                     New-AiRulesMigrationFixture -Root $tempRoot -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef $release.ref -CurrentCommit $release.commit -CurrentUpstreamCommit $release.upstream -CurrentDownstreamRevision $release.revision -CurrentTool $client
-                    $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                    $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
                     $plan.status | Should -Be "eligible" -Because "r$($release.revision) $client"
                     $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because "r$($release.revision) $client"
                     $plan.target.ref | Should -Be $script:TargetAiRulesRef -Because "r$($release.revision) $client"
@@ -566,11 +641,11 @@ Describe "ai_rules_1c migration planning" {
             $invalidManifest.files | Add-Member -NotePropertyName $invalidRelative -NotePropertyValue ([pscustomobject]@{ source = "content/rules/invalid.bin"; installedHash = $invalidHash; userModified = $true })
             Set-Content -LiteralPath $invalidManifestPath -Encoding UTF8 -Value ($invalidManifest | ConvertTo-Json -Depth 10)
 
-            $matchingPlan = & { . $HelperPath -ProjectRoot $matchingRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $matchingPlan = & { . $HelperPath -ProjectRoot $matchingRoot -Action help -DependencySelectionFile (Join-Path $matchingRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
             $matchingPlan.status | Should -Be "eligible"
             (Get-Content -LiteralPath $matchingManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).files.$textRelative.userModified | Should -BeFalse
 
-            $invalidPlan = & { . $HelperPath -ProjectRoot $invalidRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $invalidPlan = & { . $HelperPath -ProjectRoot $invalidRoot -Action help -DependencySelectionFile (Join-Path $invalidRoot 'dependency-selection.json') *> $null; Get-AiRulesMigrationPlan }
             $invalidPlan.status | Should -Be "user-modified"
             (Get-Content -LiteralPath $invalidManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).files.$invalidRelative.userModified | Should -BeTrue
         } finally {
@@ -591,7 +666,7 @@ Describe "ai_rules_1c migration planning" {
             }
 
             $matchingPlan = & {
-                . $HelperPath -ProjectRoot $matchingRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $matchingRoot -Action help -DependencySelectionFile (Join-Path $matchingRoot 'dependency-selection.json') *> $null
                 function Get-Vibecoding1cMcpSelectionCompleteness { [pscustomobject]@{ isComplete = $true; reasons = @() } }
                 function Get-Vibecoding1cMcpReadyClientConfigNames { @("1C-docs-mcp") }
                 function New-AiRules1cMcpConfigSnapshot { [ordered]@{} }
@@ -608,7 +683,7 @@ Describe "ai_rules_1c migration planning" {
             $matchingManifest.files.'.codex/config.toml'.userModified | Should -BeFalse
 
             $changedPlan = & {
-                . $HelperPath -ProjectRoot $changedRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $changedRoot -Action help -DependencySelectionFile (Join-Path $changedRoot 'dependency-selection.json') *> $null
                 function Get-Vibecoding1cMcpSelectionCompleteness { [pscustomobject]@{ isComplete = $true; reasons = @() } }
                 function Get-Vibecoding1cMcpReadyClientConfigNames { @("1C-docs-mcp") }
                 function New-AiRules1cMcpConfigSnapshot { [ordered]@{} }
@@ -625,7 +700,7 @@ Describe "ai_rules_1c migration planning" {
             $changedManifest.files.'.codex/config.toml'.userModified | Should -BeTrue
 
             $unknownPlan = & {
-                . $HelperPath -ProjectRoot $matchingRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $matchingRoot -Action help -DependencySelectionFile (Join-Path $matchingRoot 'dependency-selection.json') *> $null
                 $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
                 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 $manifest.files.'.codex/config.toml'.userModified = $true
@@ -672,7 +747,7 @@ Describe "ai_rules_1c migration planning" {
             [System.IO.File]::WriteAllText((Join-Path $customRoot ".kilo\kilo.json"), $customKiloJson, (New-Object System.Text.UTF8Encoding $false))
 
             $managedPlan = & {
-                . $HelperPath -ProjectRoot $managedRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $managedRoot -Action help -DependencySelectionFile (Join-Path $managedRoot 'dependency-selection.json') *> $null
                 function Get-AiRules1cMcpClientConfigPaths { @((Join-Path $script:ProjectRoot ".kilo\kilo.json")) }
                 function Get-Vibecoding1cMcpSelectionCompleteness { [pscustomobject]@{ isComplete = $true; reasons = @() } }
                 function Get-Vibecoding1cMcpReadyClientConfigNames { @("1c-code-metadata-mcp", "1c-graph-metadata-mcp") }
@@ -689,7 +764,7 @@ Describe "ai_rules_1c migration planning" {
             $managedPlan.status | Should -Be "eligible"
 
             $customPlan = & {
-                . $HelperPath -ProjectRoot $customRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $customRoot -Action help -DependencySelectionFile (Join-Path $customRoot 'dependency-selection.json') *> $null
                 function Get-AiRules1cMcpClientConfigPaths { @((Join-Path $script:ProjectRoot ".kilo\kilo.json")) }
                 function Get-Vibecoding1cMcpSelectionCompleteness { [pscustomobject]@{ isComplete = $true; reasons = @() } }
                 function Get-Vibecoding1cMcpReadyClientConfigNames { @("1c-code-metadata-mcp") }
@@ -719,7 +794,7 @@ Describe "ai_rules_1c transactional migration" {
             [System.IO.File]::WriteAllText($runtimeSentinel, "runtime", (New-Object System.Text.UTF8Encoding $false))
 
             $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null
                 $snapshot = New-AiRulesMigrationSnapshot
                 $payloadWorktrees = Join-Path $snapshot.payloadRoot ".kilo\worktrees"
                 [System.IO.File]::WriteAllText((Join-Path $script:ProjectRoot ".kilo\kilo.json"), "changed", (New-Object System.Text.UTF8Encoding $false))
@@ -742,7 +817,7 @@ Describe "ai_rules_1c transactional migration" {
         try {
             New-AiRulesMigrationFixture -Root $tempRoot -CurrentRepo "https://example.invalid/custom-rules.git" -CurrentRef "custom-v1"
             $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null
                 Invoke-AiRulesBaselineMigration
             }
             $result.migrated | Should -BeFalse
@@ -764,7 +839,7 @@ Describe "ai_rules_1c transactional migration" {
         try {
             New-AiRulesMigrationFixture -Root $tempRoot -UserModified $true
             $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null
                 Invoke-AiRulesBaselineMigration
             }
             $result.status | Should -Be "user-modified"
@@ -772,7 +847,7 @@ Describe "ai_rules_1c transactional migration" {
             @($report.userModifiedFiles) | Should -Contain ".codex/rules/example.md"
 
             $assertion = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null
                 $script:RunErrorCategory = ""
                 $script:RunRequiredAction = ""
                 try {
@@ -808,7 +883,7 @@ Describe "ai_rules_1c transactional migration" {
             $kiloBefore = (Get-FileHash -Algorithm SHA256 -LiteralPath $kiloPath).Hash
             $localStateBefore = (Get-FileHash -Algorithm SHA256 -LiteralPath $localStatePath).Hash
             $migrationOutput = @(& {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null
                 function Invoke-AiRulesMigrationCandidatePreflight { param([object]$Plan); Write-Output "preflight progress"; return [pscustomobject]@{ root = "fixture" } }
                 function Update-AiRules1c { Set-Content -LiteralPath (Join-Path $script:ProjectRoot "migration-applied.txt") -Encoding ASCII -Value "applied" }
                 Invoke-AiRulesBaselineMigration
@@ -850,7 +925,7 @@ Describe "ai_rules_1c transactional migration" {
             $manifestBefore = Get-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Raw -Encoding UTF8
             $failure = ""
             & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -DependencySelectionFile (Join-Path $tempRoot 'dependency-selection.json') *> $null
                 function Invoke-AiRulesMigrationCandidatePreflight { param([object]$Plan); Write-Output "preflight progress"; return [pscustomobject]@{ root = "fixture" } }
                 function Update-AiRules1c {
                     Set-Content -LiteralPath (Join-Path $script:ProjectRoot ".agent-1c\project.json") -Encoding ASCII -Value "damaged"
@@ -874,6 +949,49 @@ Describe "ai_rules_1c transactional migration" {
         } finally {
             Remove-Variable -Name migrationFailure -Scope Script -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'Rules selection in an admitted workflow transition' -Tag WorkflowDependencyTransaction {
+    It 'keeps the standalone monotonic guard but adopts the exact qualified bundle selected by the update owner' {
+        $root=Join-Path $TestDrive 'Rules transition project'
+        New-AiRulesMigrationFixture -Root $root -CurrentRepo 'https://github.com/xmentosx/itl_ai_rules_1c.git' -CurrentRef 'itl-main-5700f54-r42' -CurrentCommit '827e5ccaa7e319dc5871555f7e997093478359c4' -CurrentUpstreamCommit ('a'*40) -CurrentDownstreamRevision 42
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            (Get-AiRulesMigrationPlan).status | Should -Be not-newer
+            $installed=Read-DependencyLockManifest
+            $script:admittedDependencyPlan=New-WorkflowDependencyPlan -Template (New-DefaultDependencyLockManifest) -InstalledTemplate $installed -Manifest $installed
+            @($script:admittedDependencyPlan.blocked).Count | Should -Be 0
+            $script:admittedDependencyPlan | Add-Member -NotePropertyName workflowTransition -NotePropertyValue $true
+            function Get-WorkflowUpdatePendingSnapshot { [pscustomobject]@{receipt=@{dependencyPlan=$script:admittedDependencyPlan};snapshot=@{records=@()}} }
+            $continued=Get-AiRulesMigrationPlan
+            $continued.eligible | Should -BeTrue
+            $continued.target.ref | Should -Be 'itl-main-410951e7-r36'
+            (Get-WorkflowDependencyEntry -Name aiRules1c).commit | Should -Be '451c5a52e5b614c67406445d4af4b636da043aec'
+        }
+    }
+}
+Describe 'Qualified rules fork exception' -Tag WorkflowDependencyTransaction {
+    It 'admits an incomparable fork only with the explicit qualified hotfix decision' {
+        $root=Join-Path $TestDrive 'Qualified rules fork'
+        New-AiRulesMigrationFixture -Root $root
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $baseline=New-DefaultDependencyLockManifest
+            $pin=ConvertTo-Agent1cHashtable $baseline.dependencies.aiRules1c
+            $pin.repo='https://example.invalid/qualified-rules.git'; $pin.ref='itl-fix-r99'; $pin.commit=('c'*40); $pin.downstreamRevision=99
+            $scope=@{worktreePath=$root;decisions=@{aiRules1c='workflow'};hotfixes=@{incident=@{reason='qualified fork correction';dependencies=@{aiRules1c=$pin}}}}
+            $DependencySelectionFile=Join-Path $root 'fork-selection.json'
+            Write-Utf8Text -Path $DependencySelectionFile -Value (@{schemaVersion=1;worktrees=@($scope)}|ConvertTo-Json -Depth 30)
+            {Get-WorkflowDependencyEntry -Name aiRules1c} | Should -Throw '*DEPENDENCY_SELECTION_REQUIRED*'
+            $scope.decisions.incident='hotfix'
+            Write-Utf8Text -Path $DependencySelectionFile -Value (@{schemaVersion=1;worktrees=@($scope)}|ConvertTo-Json -Depth 30)
+            $target=Get-AiRulesBaselineTarget
+            $target.isConfigured | Should -BeTrue
+            $target.repo | Should -Be 'https://example.invalid/qualified-rules.git'
+            $target.commit | Should -Be ('c'*40)
+            (Get-WorkflowDependencyEntry -Name aiRules1c).ref | Should -Be 'itl-fix-r99'
         }
     }
 }

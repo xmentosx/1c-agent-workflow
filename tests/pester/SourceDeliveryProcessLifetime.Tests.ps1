@@ -1,4 +1,7 @@
-﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
+﻿BeforeAll {
+    . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1")
+    . (Join-Path $RepoRoot "scripts/quality-contracts.ps1")
+}
 
 Describe "Source develop queue and delivery" {
 It "classifies failures without widening the selected route" {
@@ -8,6 +11,8 @@ It "classifies failures without widening the selected route" {
         (Get-DeliveryFailureClass -Message 'QUALITY_OWNER_MISSING') | Should -Be 'test-contract'
         (Get-DeliveryFailureClass -Message 'invalid parameter invocation') | Should -Be 'invocation'
         (Get-DeliveryFailureClass -Message 'port 1545 is occupied') | Should -Be 'environment'
+        (Get-DeliveryFailureClass -Message "Targeted source gate failed with exit code 1.`npester-selection-shards stopped after remaining mode budget 3593 seconds.") | Should -Be 'environment'
+        (Get-DeliveryFailureClass -Message 'Pester admission waiting for host physical/commit memory; pending=12') | Should -Be 'environment'
         (Get-DeliveryFailureClass -Message 'DELIVERY_PLAN identity mismatch') | Should -Be 'supervisor'
         (Get-DeliveryFailureClass -Message 'behavior assertion failed') | Should -Be 'product'
     }
@@ -30,6 +35,51 @@ It "keeps the delivery wrapper budget above the authoritative child gate budget"
         { Get-SourceGateHardBudgetSeconds -Mode 'Targeted' -WorkingRoot $missingRoot } | Should -Throw '*Quality contract catalog is missing*'
         (Get-SourceGateHardBudgetSeconds -Mode 'Targeted' -WorkingRoot $missingRoot -AllowMissingCatalog) | Should -Be 7500
         (Get-SourceGateHardBudgetSeconds -Mode 'Targeted' -WorkingRoot $RepoRoot -AllowMissingCatalog) | Should -Be 7500
+    }
+
+It "does not shorten an authoritative Develop or Release gate to a reused plan estimate" {
+        foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names @('Get-SourceGateHardBudgetSeconds', 'Get-SourceGateSupervisionBudgetSeconds'))) {
+            Invoke-Expression $definition.Extent.Text
+        }
+        $developAllowance = Get-SourceGateHardBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot
+        $releaseAllowance = Get-SourceGateHardBudgetSeconds -Mode Release -WorkingRoot $RepoRoot
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 900) | Should -Be $developAllowance
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $RepoRoot -PlanBudgetSeconds 900) | Should -Be $releaseAllowance
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 6000) | Should -Be ([Math]::Max($developAllowance, 6000))
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds ($developAllowance + 600)) | Should -Be ($developAllowance + 600)
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 900 -InjectedGate) | Should -Be 900
+    }
+
+It "bounds taskkill teardown and keeps a direct kill fallback" {
+        $definition = Get-DeliveryFunctionDefinitions -Names @('Stop-DeliveryProcessTree') | Select-Object -First 1
+        $definition | Should -Not -BeNullOrEmpty
+        $text = $definition.Extent.Text
+        $text | Should -Match '\[int\]\$TimeoutMilliseconds = 5000'
+        $text | Should -Match 'Test-DeliveryProcessCreationIdentity -ProcessId \$processId -CreatedAt \$processStartedAt'
+        $text | Should -Match '\$killer\.WaitForExit\(\$remaining\)'
+        $text | Should -Not -Match '\$killer\.WaitForExit\(\)'
+        $text | Should -Match '\$descendantCreatedAt -gt \$processExitedAt'
+        $text | Should -Match 'Test-DeliveryProcessCreationIdentity -ProcessId \$descendantId -CreatedAt \$descendantCreatedAt'
+        $text | Should -Match '\$Process\.WaitForExit\(\$remaining\)'
+    }
+
+It "rejects reused root and foreign descendant identities without invoking a real kill" {
+        $definitions = @(Get-DeliveryFunctionDefinitions -Names @('Test-DeliveryProcessCreationIdentity', 'Stop-DeliveryProcessTree'))
+        Invoke-Expression (($definitions | Sort-Object { if ($_.Name -eq 'Test-DeliveryProcessCreationIdentity') { 0 } else { 1 } } | ForEach-Object Extent | ForEach-Object Text) -join "`n")
+        $createdAt = [DateTime]::UtcNow.AddMinutes(-1)
+        $fakeRoot = [pscustomobject]@{ Id=2147483000; HasExited=$true; StartTime=$createdAt.ToLocalTime(); ExitTime=$createdAt.AddSeconds(1).ToLocalTime() }
+        $fakeRoot | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param([int]$Milliseconds); return $true }
+        Mock Get-Process {
+            [pscustomobject]@{ Id=$Id; HasExited=$false; StartTime=$createdAt.AddMinutes(1).ToLocalTime() }
+        }
+        Mock Stop-Process {}
+
+        Stop-DeliveryProcessTree -Process $fakeRoot -TimeoutMilliseconds 50 -CapturedDescendants @(
+            [pscustomobject]@{ processId=2147483001; createdAt=$createdAt.AddSeconds(2) },
+            [pscustomobject]@{ processId=2147483002; createdAt=$createdAt.AddMilliseconds(500) }
+        )
+
+        Assert-MockCalled Stop-Process -Times 0 -Exactly
     }
 
 It "converts typed and round-trip delivery timestamps without current-culture stringification" {
@@ -96,7 +146,11 @@ $child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo', '-N
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'child.pid'), [string]$child.Id, [Text.UTF8Encoding]::new($false))
 while ($true) { Start-Sleep -Seconds 1 }
 '@
-            $functions = @(Get-DeliveryFunctionDefinitions -Names @('Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob', 'Invoke-SourceGate', 'Invoke-ComponentPublicationFinalizer'))
+            # The wrapper runs the real gate closure; only its run-record and operation writers are substituted below.
+            . (Join-Path $PSScriptRoot 'FunctionClosure.TestSupport.ps1')
+            $gateClosure = @(Get-TestFunctionClosure -Path @(Join-Path $RepoRoot 'scripts/source-delivery-process.ps1') -Root @('Invoke-SourceGate') -Exclude @('Update-DeliveryOperation', 'Write-DeliveryRunRecord'))
+            $functions = @($gateClosure) + @(Get-DeliveryFunctionDefinitions -Names @('Invoke-ComponentPublicationFinalizer'))
+            $identityDefinition = $functions | Where-Object Name -eq 'Test-DeliveryProcessCreationIdentity' | Select-Object -First 1
             $stopDefinition = $functions | Where-Object Name -eq 'Stop-DeliveryProcessTree' | Select-Object -First 1
             $startDefinition = $functions | Where-Object Name -eq 'Start-DeliveryProcess' | Select-Object -First 1
             $closeJobDefinition = $functions | Where-Object Name -eq 'Close-DeliveryProcessJob' | Select-Object -First 1
@@ -119,10 +173,7 @@ while ($true) { Start-Sleep -Seconds 1 }
             $escapedRoot = $tempRoot.Replace("'", "''")
             $escapedGate = $gatePath.Replace("'", "''")
             $runspaceBody = @(
-                $stopDefinition.Extent.Text
-                $startDefinition.Extent.Text
-                $closeJobDefinition.Extent.Text
-                $gateDefinition.Extent.Text
+                @($gateClosure | ForEach-Object { $_.Extent.Text })
                 @'
 function Update-DeliveryOperation {
     param([hashtable]$Values)
@@ -131,6 +182,7 @@ function Update-DeliveryOperation {
     }
 }
 function Write-DeliveryRunRecord { return 'test-run.json' }
+function Get-DeliveryCommonGitDirectory { return (Join-Path $script:TestRoot 'common git') }
 '@
                 "`$script:Root = '$escapedRoot'"
                 "`$script:GateScript = '$escapedGate'"
@@ -165,6 +217,12 @@ function Write-DeliveryRunRecord { return 'test-run.json' }
             } while ([DateTime]::UtcNow -lt $exitDeadline)
             $gateAlive | Should -BeFalse
             $childAlive | Should -BeFalse
+            # The killed supervisor's gate slot is free without any recovery
+            # step; its stale holder record is not reported as live.
+            $slotPath = Join-Path $tempRoot 'common git\itl\gate-slots\slot-0.lock'
+            (Get-Content -LiteralPath $slotPath -Raw -Encoding UTF8) | Should -Match ('"pid":' + $wrapper.Id + ',')
+            $slot = [IO.File]::Open($slotPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+            $slot.Dispose()
         } finally {
             if ($wrapper -and -not $wrapper.HasExited) { Stop-Process -Id $wrapper.Id -Force -ErrorAction SilentlyContinue }
             foreach ($processId in @($gatePid, $childPid)) { if ($processId -gt 0) { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue } }
@@ -186,13 +244,14 @@ $child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo', '-N
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'finalizer-child.pid'), [string]$child.Id, [Text.UTF8Encoding]::new($false))
 while ($true) { Start-Sleep -Seconds 1 }
 '@
-            $names = @('Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob', 'ConvertTo-DeliveryNativeArgument', 'Invoke-ComponentPublicationFinalizer')
+            $names = @('Test-DeliveryProcessCreationIdentity', 'Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob', 'ConvertTo-DeliveryNativeArgument', 'Invoke-ComponentPublicationFinalizer')
             $functions = @(Get-DeliveryFunctionDefinitions -Names $names)
             foreach ($name in $names) { ($functions | Where-Object Name -eq $name | Select-Object -First 1) | Should -Not -BeNullOrEmpty }
 
             $escapedRoot = $tempRoot.Replace("'", "''")
             $escapedFinalizer = $finalizerPath.Replace("'", "''")
             $runspaceBody = @(
+                ($functions | Where-Object Name -eq 'Test-DeliveryProcessCreationIdentity' | Select-Object -First 1).Extent.Text
                 ($functions | Where-Object Name -eq 'Stop-DeliveryProcessTree' | Select-Object -First 1).Extent.Text
                 ($functions | Where-Object Name -eq 'Start-DeliveryProcess' | Select-Object -First 1).Extent.Text
                 ($functions | Where-Object Name -eq 'Close-DeliveryProcessJob' | Select-Object -First 1).Extent.Text

@@ -1,4 +1,4 @@
-Describe "Vanessa Designer Agent safe-mode reconciliation" {
+﻿Describe "Vanessa Designer Agent safe-mode reconciliation" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -10,8 +10,9 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $LifecycleText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
     }
 
-    It "keeps LoadCfg unchanged and reconciles each Vanessa extension in its own infobase" {
-        $VanessaText | Should -Match ([regex]::Escape('-DesignerArgs @("/LoadCfg", $CfePath, "-Extension", $ExtensionName, "/UpdateDBCfg")'))
+    It "checks each CFE before database apply and reconciles each Vanessa extension in its own infobase" {
+        $VanessaText | Should -Match ([regex]::Escape('-CfePath $CfePath -ExtensionName $ExtensionName'))
+        $LifecycleText | Should -Match ([regex]::Escape("@('/LoadCfg', `$CfePath, '-Extension', `$ExtensionName, '/UpdateDBCfg')"))
         $VanessaText | Should -Match 'function Set-VanessaMcpExtensionUnsafeMode'
         $VanessaText | Should -Match 'config extensions properties set --extension \$ExtensionName --safe-mode no'
         $VanessaText | Should -Match '(?s)-ExtensionName "client_mcp".*?-InfoBasePath \$serviceInfoBase\.path'
@@ -35,7 +36,22 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $VanessaText | Should -Match ([regex]::Escape("log='`$logPath'"))
     }
 
-    It "accepts readiness only when the expected live PID owns the listener" {
+    It "closes the background native operation only after owned Designer Agent cleanup is confirmed" {
+        $functionText = [regex]::Match(
+            $VanessaText,
+            'function Set-VanessaMcpExtensionUnsafeMode[\s\S]*?^}',
+            [Text.RegularExpressions.RegexOptions]::Multiline
+        ).Value
+        $functionText | Should -Match 'Start-OneCProcessBackground[^\r\n]*-NativeOperationEvidence \$nativeOperationEvidence'
+        $functionText | Should -Match '\$nativeRecord = \$nativeOperationEvidence\.record'
+        $functionText | Should -Match 'Confirm-OneCNativeOperationRelease -Record \$nativeRecord'
+        $functionText | Should -Match '-LauncherExited \(\[bool\]\$cleanup\.confirmed\)'
+        $functionText | Should -Match 'designer-agent-owned-process-release'
+        $functionText | Should -Match 'Complete-OneCNativeOperationOutcome -Record \$nativeRecord -Status \$\(if \(\$operationSucceeded -and \$cleanup\.confirmed\) \{ ''succeeded'' \} else \{ ''failed'' \}\)'
+    }
+
+    It 'accepts readiness only when the expected live PID owns the listener (State=<ListenerState>)' -TestCases @(@{ListenerState='Listen'},@{ListenerState=0}) {
+        param($ListenerState)
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
@@ -44,8 +60,10 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
             function Get-NetTCPConnection {
                 [CmdletBinding()]
                 param([string]$State, [int]$LocalPort)
-                return [pscustomobject]@{ OwningProcess = 7311 }
+                return [pscustomobject]@{ State=$ListenerState;RemotePort=0;OwningProcess = 7311 }
             }
+            # A State=0 listener is proven through the server side of an own connection.
+            function Get-ItlTcpConnectionProbe { [pscustomobject]@{ outcome = 'connected'; localPort = 50001; owners = @(7311); rows = @(); error = '' } }
             $fixtureProcess = [pscustomobject]@{ Id = 7311; StartTime = $script:fixtureStartTime; HasExited = $false }
             Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
         }
@@ -55,7 +73,8 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $result.ownerPids | Should -Be @(7311)
     }
 
-    It "reports a foreign listener instead of accepting a raw open port" {
+    It 'reports a foreign listener instead of accepting a raw open port (State=<ListenerState>)' -TestCases @(@{ListenerState='Listen'},@{ListenerState=0}) {
+        param($ListenerState)
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
@@ -64,8 +83,9 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
             function Get-NetTCPConnection {
                 [CmdletBinding()]
                 param([string]$State, [int]$LocalPort)
-                return [pscustomobject]@{ OwningProcess = 9901 }
+                return [pscustomobject]@{ State=$ListenerState;RemotePort=0;OwningProcess = 9901 }
             }
+            function Get-ItlTcpConnectionProbe { [pscustomobject]@{ outcome = 'connected'; localPort = 50002; owners = @(9901); rows = @(); error = '' } }
             $fixtureProcess = [pscustomobject]@{ Id = 7312; StartTime = $script:fixtureStartTime; HasExited = $false }
             Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
         }
@@ -73,6 +93,53 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $result.ready | Should -BeFalse
         $result.status | Should -Be "owner-mismatch"
         $result.ownerPids | Should -Be @(9901)
+    }
+
+    It 'rejects a reused PID even when its start time differs by only one millisecond' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:fixtureStartTime=[DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { [pscustomobject]@{Id=7312;StartTime=$script:fixtureStartTime.AddMilliseconds(1)} }
+            function Test-TcpPortOpen { throw 'must reject identity before checking the listener' }
+            function Get-ItlTcpListenerOwnership { throw 'must reject identity before checking the listener' }
+            $process=[pscustomobject]@{Id=7312;StartTime=$script:fixtureStartTime;HasExited=$false}
+            $readiness=Wait-VanessaDesignerAgentReady -Process $process -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
+            $cleanup=Stop-VanessaDesignerAgentOwnedProcess -Process $process -ExpectedStartTime $script:fixtureStartTime
+            [pscustomobject]@{readiness=$readiness;cleanup=$cleanup}
+        }
+        $result.readiness.ready | Should -BeFalse
+        $result.readiness.status | Should -Be identity-changed
+        $result.cleanup.confirmed | Should -BeFalse
+    }
+
+    It 'cleans the original opened native process while preserving a different process returned by PID lookup' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $owned=$null; $foreign=$null
+            try {
+                $exe=Join-Path $PSHOME 'powershell.exe'
+                $owned=Start-Process -FilePath $exe -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -WindowStyle Hidden -PassThru
+                $foreign=Start-Process -FilePath $exe -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -WindowStyle Hidden -PassThru
+                $null=$owned.Handle
+                $null=$foreign.Handle
+                $started=$owned.StartTime
+                $script:foreignProcessFixture=$foreign
+                function Get-Process { $script:foreignProcessFixture }
+                $cleanup=Stop-VanessaDesignerAgentOwnedProcess -Process $owned -ExpectedStartTime $started
+                $again=Stop-VanessaDesignerAgentOwnedProcess -Process $owned -ExpectedStartTime $started
+                [pscustomobject]@{cleanup=$cleanup;again=$again;ownedExited=$owned.HasExited;foreignAlive=(-not $foreign.HasExited)}
+            } finally {
+                foreach ($item in @($owned,$foreign)) {
+                    if ($null -ne $item) {
+                        try { if (-not $item.HasExited) { $item.Kill(); $item.WaitForExit(10000) | Out-Null } } finally { $item.Dispose() }
+                    }
+                }
+            }
+        }
+        $result.cleanup.confirmed | Should -BeTrue
+        $result.again.confirmed | Should -BeTrue
+        $result.ownedExited | Should -BeTrue
+        $result.foreignAlive | Should -BeTrue
     }
 
     It "preserves the exit code when Designer Agent dies before readiness" {
@@ -95,6 +162,7 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
             $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
             function Get-Process { return [pscustomobject]@{ Id = 7314; StartTime = $script:fixtureStartTime } }
             function Test-TcpPortOpen { return $false }
+            function Get-ItlTcpListenerOwnership { [pscustomobject]@{ status = 'absent'; owners = @(); diagnostic = 'status=absent fixture' } }
             $fixtureProcess = [pscustomobject]@{ Id = 7314; StartTime = $script:fixtureStartTime; HasExited = $false }
             Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
         }
@@ -102,6 +170,21 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $result.ready | Should -BeFalse
         $result.status | Should -Be "timeout"
         $result.processAlive | Should -BeTrue
+    }
+
+    It "keeps polling an unknown listener owner and reports inspection failure with evidence" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { return [pscustomobject]@{ Id = 7315; StartTime = $script:fixtureStartTime } }
+            function Get-ItlTcpListenerOwnership { [pscustomobject]@{ status = 'unknown'; owners = @(); diagnostic = 'status=unknown source=none error=CIM unavailable' } }
+            $fixtureProcess = [pscustomobject]@{ Id = 7315; StartTime = $script:fixtureStartTime; HasExited = $false }
+            Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
+        }
+
+        $result.ready | Should -BeFalse
+        $result.status | Should -Be "listener-inspection-failed"
+        $result.detail | Should -Match "CIM unavailable"
     }
 
     It "redacts secrets from the Designer Agent log tail" {
@@ -170,6 +253,58 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $result.first | Should -Not -Match '[^\x00-\x7F]'
         $result.second | Should -Not -Be $result.first
         $VanessaText | Should -Match 'ITL_DESIGNER_AGENT_HOST_KEY_PATH_NON_ASCII'
+    }
+
+    It "falls back to the Git for Windows ssh-keygen when Windows OpenSSH cannot create a host key" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-designer-key-fallback-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $previousRoot = [Environment]::GetEnvironmentVariable("VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT", "Process")
+                try {
+                    $keyRoot = Join-Path $tempRoot "keys"
+                    $systemKeygen = Join-Path $tempRoot "Windows\System32\OpenSSH\ssh-keygen.exe"
+                    $gitExe = Join-Path $tempRoot "Git\cmd\git.exe"
+                    $gitKeygen = Join-Path $tempRoot "Git\usr\bin\ssh-keygen.exe"
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $systemKeygen), (Split-Path -Parent $gitExe), (Split-Path -Parent $gitKeygen) | Out-Null
+                    Set-Content -LiteralPath $systemKeygen, $gitExe, $gitKeygen -Value "fixture" -Encoding ASCII
+                    [Environment]::SetEnvironmentVariable("VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT", $keyRoot, "Process")
+                    $script:keygenCalls = [System.Collections.Generic.List[string]]::new()
+                    function Get-Command {
+                        param([string]$Name, [object]$ErrorAction)
+                        if ($Name -eq "ssh-keygen.exe") { return [pscustomobject]@{ Source = $systemKeygen } }
+                        if ($Name -eq "git.exe") { return [pscustomobject]@{ Source = $gitExe } }
+                        return $null
+                    }
+                    function Invoke-NativeProcessAndWaitResult {
+                        param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds)
+                        $script:keygenCalls.Add($FilePath) | Out-Null
+                        if ($FilePath -eq $systemKeygen) { return [pscustomobject]@{ ExitCode = 255 } }
+                        $fileIndex = [Array]::IndexOf($Arguments, "-f")
+                        $privatePath = [string]$Arguments[$fileIndex + 1]
+                        [IO.File]::WriteAllText($privatePath, "PRIVATE", (New-Object Text.UTF8Encoding $false))
+                        [IO.File]::WriteAllText("$privatePath.pub", "PUBLIC", (New-Object Text.UTF8Encoding $false))
+                        return [pscustomobject]@{ ExitCode = 0 }
+                    }
+                    $state = [pscustomobject]@{ safeDevBranchName = "fallback"; stateProjectRoot = $RepoRoot; worktreePath = $RepoRoot }
+                    $keys = Ensure-VanessaDesignerAgentHostKey -State $state
+                    [pscustomobject]@{
+                        calls = @($script:keygenCalls)
+                        expectedSystem = $systemKeygen
+                        expectedGit = $gitKeygen
+                        privateExists = Test-Path -LiteralPath $keys.privateKeyPath -PathType Leaf
+                        publicExists = Test-Path -LiteralPath $keys.publicKeyPath -PathType Leaf
+                    }
+                } finally {
+                    [Environment]::SetEnvironmentVariable("VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT", $previousRoot, "Process")
+                }
+            }
+            $result.calls | Should -Be @($result.expectedSystem, $result.expectedGit)
+            $result.privateExists | Should -BeTrue
+            $result.publicExists | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "builds canonical file infobase connection strings for native 1C arguments" {
@@ -438,10 +573,16 @@ param([string]$OutputPath, [string]$Value)
         }
         $onDemandStart = [regex]::Match(
             $OnDemandText,
-            'function Start-ItlOnDemandBackendInstance[\s\S]*?^}',
+            'function Start-ItlOnDemandBackendInstance\s*\{[\s\S]*?^}',
             [Text.RegularExpressions.RegexOptions]::Multiline
         ).Value
-        $onDemandStart | Should -Match '\$serviceInfoBase\.user'
+        $onDemandStart | Should -Match ([regex]::Escape("-OwnerFunction 'Start-ItlOnDemandBackendInstanceCore' -OwnerArguments `$PSBoundParameters"))
+        $onDemandStartCore = [regex]::Match(
+            $OnDemandText,
+            'function Start-ItlOnDemandBackendInstanceCore\s*\{[\s\S]*?^}',
+            [Text.RegularExpressions.RegexOptions]::Multiline
+        ).Value
+        $onDemandStartCore | Should -Match '\$serviceInfoBase\.user'
         ($VanessaText + $OnDemandText) | Should -Not -Match 'conf\.cfg|DisableUnsafeActionProtection|UnsafeActionProtectionBypass'
     }
 

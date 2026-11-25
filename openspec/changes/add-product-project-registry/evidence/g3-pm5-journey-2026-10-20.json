@@ -1,0 +1,778 @@
+{
+  "schemaVersion": 1,
+  "observedUtc": "2026-10-20T10:03:58.779455+00:00",
+  "outcome": "G3_PM5_NATIVE_SUBSET_EXPANDED_FULL_G3_BLOCKED",
+  "scope": "Native PM5 selection, association, real private-write failure, recovery, foreground update and branch continuation in the exact existing isolated copy. No G4, working migration, external registry write or workflow publication.",
+  "sourceQualificationHead": "ceac8326316790e52cf22a0b3946cae36ac5aa93",
+  "installedSelectionRuntime": "2f996692108d60d39d32801bfaef4e60e3338a8d",
+  "stand": {
+    "projectRoot": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project",
+    "branchRoot": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch",
+    "masterBefore": "888bc98d72775627ccf952d1e2666b7901728de5",
+    "branchBefore": "02f3b39e81edf6379f59aa7c5653e7644d087312",
+    "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "pilotCatalogSha": "0e040ccae17caf9b2521d33a3b18b66daa6ba9c4",
+    "fullRegistry": {
+      "head": "68526306d9f95ace64cd3e08487cf8e4a626b529",
+      "copiedSha256": "f6b2cf7454bc8e9917e266c98da68a01bcad79d7d86a5b3c0abc6bee69408cc7",
+      "sourceSha256": "f6b2cf7454bc8e9917e266c98da68a01bcad79d7d86a5b3c0abc6bee69408cc7",
+      "localOnly": true,
+      "sourcePath": "C:\\Users\\xment\\AppData\\Local\\ITL\\MCP\\vibecoding1c\\registry\\registry.json"
+    },
+    "platform": "Non-elevated Windows 11 / Windows PowerShell 5.1; real interactive ConPTY console for select/new/update; no additional Windows or PM4 stand"
+  },
+  "controls": [
+    {
+      "id": "list-preview-unknown",
+      "status": "passed-subset",
+      "expected": "List approved pilot, preview without binding, unknown ID rejected before writes",
+      "actual": "Installed native list/preview; CATALOG_PROJECT_UNKNOWN exit 1, no new association"
+    },
+    {
+      "id": "foreground-select",
+      "status": "passed-subset",
+      "expected": "Explicit ID, derive family, separate memory opt-in",
+      "actual": {
+        "projectId": "pm5-core-development",
+        "productId": "pm5-corp",
+        "operationId": "b23d02f06f4f411f9d4ac97381d9d582",
+        "revision": "0e040ccae17caf9b2521d33a3b18b66daa6ba9c4",
+        "memoryOptIn": false,
+        "activeClientContext": "unverified"
+      }
+    },
+    {
+      "id": "foreground-new-pending",
+      "status": "passed-subset",
+      "expected": "No write access yields retained stable ID without sending request",
+      "actual": {
+        "projectId": "project-9be4643ef8fb46d58971bd2f01ecf73d",
+        "status": "prepared-request",
+        "publication": "local-pending",
+        "retrySameId": true,
+        "memoryOptIn": false
+      }
+    },
+    {
+      "id": "physical-write-failure",
+      "status": "passed-subset",
+      "expected": "Real file sharing failure after binding, no applied marker, main phase blocked",
+      "actual": {
+        "writeExit": 1,
+        "status": "partial",
+        "operationId": "b22943c8c027454db16afc75a22def3f",
+        "appliedMarker": false,
+        "newBranchBlockedBeforeMain": true
+      }
+    },
+    {
+      "id": "native-resume-restore",
+      "status": "passed-subset",
+      "expected": "Resume same operation/SHA, restore owned binding/private field, never infer whole legacy/package recovery",
+      "actual": {
+        "operationId": "b22943c8c027454db16afc75a22def3f",
+        "revision": "0e040ccae17caf9b2521d33a3b18b66daa6ba9c4",
+        "resumed": "completed",
+        "restored": "restored",
+        "bindingAfterRestore": null,
+        "appliedAfterRestore": null,
+        "physicalSelectionFileRemains": true
+      }
+    },
+    {
+      "id": "foreground-next-update-later",
+      "status": "failed",
+      "expected": "Catalog preferences do not enable legacy MCP; successful package update may offer explicit later",
+      "actual": {
+        "exitCode": 1,
+        "outerError": "WORKFLOW_UPDATE_POST_COPY_INCOMPLETE",
+        "innerError": "ITL_MCP_RECONCILE_INTEGRITY_FAILED",
+        "offerReached": false,
+        "laterInjected": false,
+        "snapshot": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-rollback-4b39dcb858ce4a5cab1b94e793eff19f",
+        "phase": "post-copy-failed",
+        "preUpdateHead": "e554af9d0acc95d01da4d37eed9898d7fb072b55",
+        "sourceCommit": "ceac8326316790e52cf22a0b3946cae36ac5aa93"
+      }
+    },
+    {
+      "id": "existing-full-endpoint-registry",
+      "status": "confirmed-blocker-read-only",
+      "expected": "Distinguish missing fixture common endpoints from catalog-only enrollment failure",
+      "actual": {
+        "error": "ITL_MCP_RECONCILE_INTEGRITY_FAILED: selected MCP replacements are not ready and the current kilocode config is already incomplete. notReady=[1c-code-metadata-mcp, 1c-graph-metadata-mcp] missingClient=[1C-docs-mcp, 1c-templates-mcp, 1c-syntax-checker-mcp, 1c-code-check-mcp, 1c-ssl-mcp, 1c-code-metadata-mcp, 1c-graph-metadata-mcp, BookStack-product-docs-mcp, itl-mantis-ticket-mcp, sppr-knowledge] selection=[code/project has no per-server selection; graph/project has no per-server selection].",
+        "protectedStateUnchanged": true,
+        "fullRegistrySha256": "f6b2cf7454bc8e9917e266c98da68a01bcad79d7d86a5b3c0abc6bee69408cc7"
+      }
+    },
+    {
+      "id": "package-recovery-status",
+      "status": "passed-diagnostic-only",
+      "expected": "Preserve and inspect pending exact-source bytes, do not force rollback/finalization",
+      "actual": {
+        "exitCode": 0,
+        "changedPathCount": 0,
+        "resumedOrRolledBack": false
+      }
+    },
+    {
+      "id": "fork-initial-precondition",
+      "status": "blocked-stand-precondition",
+      "actual": {
+        "masterHeadUnchanged": true,
+        "masterEnvUnchanged": true,
+        "result": {
+          "exitCode": 1,
+          "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fork-native\\fork-dev-branch-436ac1f14031490da7c9c76b582d0bd7.stdout.log",
+          "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fork-native\\fork-dev-branch-436ac1f14031490da7c9c76b582d0bd7.stderr.log",
+          "durationMs": 9475
+        },
+        "summary": {
+          "action": "fork-dev-branch",
+          "status": "failed",
+          "stage": "start",
+          "stageDetail": "Starting helper action 'fork-dev-branch'",
+          "confirmationRequired": false,
+          "nextAction": "update-dev-branch-base",
+          "artifacts": [
+            "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124111-224-b12d78fb\\console.log",
+            "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124111-224-b12d78fb\\status.json"
+          ],
+          "error": "ITL_INFOBASE_APPLICATION_NOT_READY: operation='fork-dev-branch' reasons='configuration-fingerprint-mismatch,config-load-status-pending' requiredAction=update-dev-branch-base retryAction=repeat-original-operation-once.",
+          "errorCategory": "infobase-readiness",
+          "requiredAction": "update-dev-branch-base",
+          "blockerClassification": "",
+          "blockerRequiresUserDecision": false,
+          "blockerRetryOriginalCommand": false,
+          "blockerAction": null,
+          "blockerOwner": null,
+          "recoveryStatus": "",
+          "ownedProcessesStopped": [],
+          "foreignProcessesStopped": [],
+          "databaseReleased": false,
+          "retryOriginalCommand": false,
+          "refreshMasterCommit": "",
+          "devBranch": "",
+          "worktreePath": "",
+          "extensionInitializationStatus": "",
+          "userReport": "",
+          "resultPath": "",
+          "resultManifestPath": "",
+          "sourceIntegrityReportPath": "",
+          "responseStyle": {
+            "mode": "auto",
+            "level": "full",
+            "active": true,
+            "profile": "caveman-full",
+            "taskClass": "execution"
+          },
+          "liveness": "",
+          "noProgressSeconds": 0,
+          "timeoutRemainingSeconds": 0,
+          "ownedProcessIds": [],
+          "cpuDeltaMilliseconds": 0,
+          "workingSetMb": 0,
+          "logGrowthBytes": 0,
+          "logPath": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124111-224-b12d78fb\\console.log",
+          "statusPath": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124111-224-b12d78fb\\status.json"
+        },
+        "observedUtc": "2026-10-20T09:41:20.3494233Z",
+        "target": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\fork-g3-catalog"
+      }
+    },
+    {
+      "id": "branch-owned-application-continuation",
+      "status": "failed",
+      "actual": {
+        "summary": {
+          "action": "update-dev-branch-base",
+          "status": "failed",
+          "stage": "config-load.designer-wait",
+          "stageDetail": "liveness=probe-running; probePhase=invocation-release-confirmation; probeAge=0s",
+          "confirmationRequired": false,
+          "nextAction": "Read only the last 80 lines of console.log and address the reported runner failure.",
+          "artifacts": [
+            "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+            "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log",
+            "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124246-250-caff120d\\console.log",
+            "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124246-250-caff120d\\status.json"
+          ],
+          "error": "GATE6_CHECK_FAILED: step=configuration; command=/CheckConfig; process exit=101; /DumpResult=101; /Out has 1 warning/error diagnostic(s); result=C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result; log=C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log; diagnostics=Обработка.упо_ПомощникПереходаИзРМ4ВРМ5.Форма.Форма.Форма Возможно ошибочное свойство: \"упоОшибкиОтраженияДокументовВПроектномБюджетировании\". Do not apply the database configuration; correct or adjudicate the source findings and repeat the original operation.",
+          "errorCategory": "runner",
+          "requiredAction": "",
+          "blockerClassification": "",
+          "blockerRequiresUserDecision": false,
+          "blockerRetryOriginalCommand": false,
+          "blockerAction": null,
+          "blockerOwner": null,
+          "recoveryStatus": "",
+          "ownedProcessesStopped": [],
+          "foreignProcessesStopped": [],
+          "databaseReleased": false,
+          "retryOriginalCommand": false,
+          "refreshMasterCommit": "",
+          "devBranch": "",
+          "worktreePath": "",
+          "extensionInitializationStatus": "",
+          "userReport": "",
+          "resultPath": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+          "resultManifestPath": "",
+          "sourceIntegrityReportPath": "",
+          "responseStyle": {
+            "mode": "auto",
+            "level": "full",
+            "active": true,
+            "profile": "caveman-full",
+            "taskClass": "execution"
+          },
+          "liveness": "running-waiting-release",
+          "noProgressSeconds": 8,
+          "timeoutRemainingSeconds": 3530,
+          "ownedProcessIds": [],
+          "cpuDeltaMilliseconds": 0,
+          "workingSetMb": 0,
+          "logGrowthBytes": 0,
+          "logPath": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124246-250-caff120d\\console.log",
+          "statusPath": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124246-250-caff120d\\status.json"
+        },
+        "result": {
+          "exitCode": 1,
+          "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\branch-application-native\\update-dev-branch-base-57dc2b24398f406abcdc6ebb700749ab.stdout.log",
+          "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\branch-application-native\\update-dev-branch-base-57dc2b24398f406abcdc6ebb700749ab.stderr.log",
+          "durationMs": 1035394
+        },
+        "observedUtc": "2026-10-20T10:00:01.2284000Z"
+      }
+    },
+    {
+      "id": "gate6-owned-rollback",
+      "status": "passed-recovery-subset",
+      "expected": "Reject original finding before database apply and restore snapshot/cursor with native release",
+      "actual": {
+        "sourceFingerprint": "v2|git-tree-sha256|56bb357dd8139232e329011f4873a73938bbd4877a064b91614e51314ee37614",
+        "cursorRestored": true,
+        "snapshotRestored": true,
+        "rejectionPath": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+        "applyStarted": false,
+        "snapshotSha256": "faefe7b1ce594dae2d18fe3f7b7f0697ace80eaba4e4ff9e432ad672cb97179c",
+        "nativeOperationsReleased": true
+      }
+    },
+    {
+      "id": "existing-branch-local-context",
+      "status": "passed-subset",
+      "actual": {
+        "projectId": "pm5-core-development",
+        "projectRoot": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch",
+        "catalogRevision": "68526306d9f95ace64cd3e08487cf8e4a626b529",
+        "memoryOptIn": false,
+        "newForkInheritance": "unverified"
+      }
+    },
+    {
+      "id": "same-fork-retry",
+      "status": "not-run",
+      "actual": {
+        "status": "not-run",
+        "reason": "Required native continuation failed Gate6 and restored the unchanged pending baseline; do not repeat an unchanged blocked fork or bypass readiness."
+      }
+    }
+  ],
+  "blocker": {
+    "id": "G3-CATALOG-LEGACY-ENROLLMENT",
+    "owner": "Existing ITL productProject private selection / legacy vibecoding1c reconcile / update owners",
+    "causalEvidence": "Before catalog setup selection path was absent; catalog-only writes materialized defaults with servers=[]; owned catalog restore retains the physical selection file; later update enters legacy reconcile based on file presence. Same Code/Graph failure reproduced by real PlanOnly against full existing registry.",
+    "requiredContinuation": "Owner fix preserving configured legacy MCP/custom settings and readiness guards; repeat original no-selection -> select/new/later -> restore -> update/offer/late-return journey on a new owned copy of the same capsule with the exact fixed candidate. Keep this failed snapshot pinned to ceac8326; never substitute a new SHA in its receipt. Do not erase files, invent legacy selections, weaken integrity guards, patch ai_rules_1c or add a memory workaround."
+  },
+  "seedValidation": {
+    "passed": true,
+    "seedHead": "9ee1073525eae722222b9696bfa623e757f1bd09",
+    "fullOwnerValidation": true,
+    "seconds": 108.46108489999999,
+    "observedUtc": "2026-10-20T09:48:34.1881812Z",
+    "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "descriptorSha256": "ab2f3a01476c3ef065ed5416f2e1814a2ec38fd006b7d1ff43cccf7eea22db07"
+  },
+  "workloadBefore": {
+    "master": {
+      "src/cf": "53a9c5c3256d9ee6851ca367a5457dd5b5660a73",
+      "src/cfe": null,
+      "tests/features": "420e755eb736eeb581895cc760ba6b91b8d2d8a7"
+    },
+    "branch": {
+      "src/cf": "79d912aee1e711c0bcefd4660131902c1b731e3e",
+      "src/cfe": null,
+      "tests/features": "f5b55f819a8b30180b3efb203fe0738b075a060b"
+    }
+  },
+  "openSpecValidation": {
+    "registry": "Change 'add-product-project-registry' is valid",
+    "memory": "Change 'add-scoped-cognee-memory' is valid"
+  },
+  "finalPreservation": {
+    "gate6": {
+      "sourceFingerprint": "v2|git-tree-sha256|56bb357dd8139232e329011f4873a73938bbd4877a064b91614e51314ee37614",
+      "cursorRestored": true,
+      "snapshotRestored": true,
+      "rejectionPath": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+      "applyStarted": false,
+      "snapshotSha256": "faefe7b1ce594dae2d18fe3f7b7f0697ace80eaba4e4ff9e432ad672cb97179c",
+      "nativeOperationsReleased": true
+    },
+    "remainingOwnedProcesses": [],
+    "branch": {
+      "root": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch",
+      "head": "02f3b39e81edf6379f59aa7c5653e7644d087312",
+      "changed": [
+        ".agent-1c/project.json"
+      ],
+      "hashes": {
+        ".agent-1c/project.json": "38dc82628f9d2898247e5bdea17c67ad9b9a9884e73c2f60b4cf70632a4d306a",
+        ".kilocode/mcp.json": null,
+        ".kilo/mcp.json": null,
+        ".agent-1c/mcp/product-context-applied.json": "dc57bbe4cd748213baeda92f01a1a362ae08cc711b272737de03771254d974e5",
+        ".agent-1c/mcp/product-context-operation.json": "786d67ff72d44e2b5ae3b70365dc8ca8b5cda3b2c55c96e43fe6e856b2a7d0c4",
+        ".agent-1c/mcp/vibecoding1c-selection.json": "2e053ca674101ad485d42094ade428c1cb6d9f60a3614767d2fd7ee5c2d25e70"
+      },
+      "trees": {
+        "src/cf": "79d912aee1e711c0bcefd4660131902c1b731e3e",
+        "src/cfe": null,
+        "tests/features": "f5b55f819a8b30180b3efb203fe0738b075a060b"
+      }
+    },
+    "master": {
+      "root": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project",
+      "head": "e554af9d0acc95d01da4d37eed9898d7fb072b55",
+      "changed": [
+        ".agent-1c/dependency-lock.json"
+      ],
+      "hashes": {
+        ".agent-1c/project.json": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        ".kilocode/mcp.json": null,
+        ".kilo/mcp.json": null,
+        ".agent-1c/mcp/product-context-applied.json": null,
+        ".agent-1c/mcp/product-context-operation.json": "5aa3784442b23d67ee1a1909ee00ac55485d16f4ca8984b0f9d4fa61d7396d55",
+        ".agent-1c/mcp/vibecoding1c-selection.json": "0bbb95fb84ff79ee5f82a9ae676d1b92e928ed957c29764b63f9f26fbf03a01e"
+      },
+      "trees": {
+        "src/cf": "53a9c5c3256d9ee6851ca367a5457dd5b5660a73",
+        "src/cfe": null,
+        "tests/features": "420e755eb736eeb581895cc760ba6b91b8d2d8a7"
+      }
+    },
+    "sameForkRetry": {
+      "status": "not-run",
+      "reason": "Required native continuation failed Gate6 and restored the unchanged pending baseline; do not repeat an unchanged blocked fork or bypass readiness."
+    },
+    "observedUtc": "2026-10-20T10:01:39.3277473Z",
+    "businessTreesUnchanged": true
+  },
+  "limits": [
+    "Full G3/AC-39 and memory AC-43/G5 remain open",
+    "No successful foreground post-update offer/later proof after this failure",
+    "Catalog restore does not prove legacy enrollment or package rollback compatibility",
+    "No actual client reload/tool catalog or expected-source namespace admission",
+    "No original new-from-master initialization proof; additional PM4/Win10/Server terminal stands absent",
+    "No full token/startup/walkthrough acceptance; runtime and always-on client instructions unchanged by this documentation-only task",
+    "Mandatory release population registry 5.7/AC-36-38 and memory AC-44 remain open"
+  ],
+  "harnessCorrections": [
+    "Native wrapper initially did not propagate child exit; fixed with initialized LASTEXITCODE, raw logs retained",
+    "Null-binding output formatting corrected after JSON already saved",
+    "One mistyped snapshot ID corrected against real transaction directory; invalid request and exact successful status retained",
+    "Empty endpoint registry suitable only for association fixture; separate exact existing full registry read-only control kept",
+    "Initial readiness failure remains retained; only prescribed native owner continuation may prepare the isolated DB"
+  ],
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\after-new.json",
+      "sha256": "5b8d00cfd29e7cd622d9d5f8edd8cd35ab8c4bdfa82e3cb73586af3f40fcc662",
+      "bytes": 46368
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\after-restore.json",
+      "sha256": "d4fb5b9df60c73af6e850e08081a869492d79686708561ee072acb2206ede530",
+      "bytes": 18785
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\after-resume.json",
+      "sha256": "4a6ed4321015082e570f8326362dea1486b875c821cccba6c5879d6786b900fd",
+      "bytes": 35322
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\after-select.json",
+      "sha256": "0a0fdbc502146b1f93e6402dee6ee122795e95986d64804644254e01b27d5daf",
+      "bytes": 34336
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\before.json",
+      "sha256": "35e9fbdbc09932c7d7e4e7b72b10bdd150adf7eac91a0e8b3c1a36d21739bab3",
+      "bytes": 2850
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\branch-application-driver.log",
+      "sha256": "4e4db81ff66332e0c2052a6b31bb2b2e3589ee5c5c894dd2794b2e806a189ee4",
+      "bytes": 6013
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\branch-application-native\\update-dev-branch-base-57dc2b24398f406abcdc6ebb700749ab.stderr.log",
+      "sha256": "df61334ba3fbda4f19f18adea717fb34593fb814596251c16c0b8e4eb7d28d4c",
+      "bytes": 52309
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\branch-application-native\\update-dev-branch-base-57dc2b24398f406abcdc6ebb700749ab.stdout.log",
+      "sha256": "67a293a7f0c142ad6e46154dc9b80c12fd64930653d5561f87d360fe1dfadecc",
+      "bytes": 3167
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\branch-application-ready.ps1",
+      "sha256": "d8502a92a5c64eaa4cfbdca3545ea9c755634c14da1c39f5cb33e2ee818cd4dd",
+      "bytes": 671
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\branch-application-result.json",
+      "sha256": "f5ccc85a35a8b59795209b313ce839460b47edb7b05626ef008d6125b6581f03",
+      "bytes": 5410
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\branch-before-fork.json",
+      "sha256": "1d7ddc722f6322b4386a515fed3e3adda37975a5645d5c3173353fa359ad92d3",
+      "bytes": 443189
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\branch-final.json",
+      "sha256": "e32c0779c9b46a32f1f048073f73addd155cbb0adbf0cb2bdec5cdedaff58c5a",
+      "bytes": 443189
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\branch-select.log",
+      "sha256": "03ce579acc6b51924b8a0fecb1b3a82cf0d58e836facd1b113602e132e3f5f55",
+      "bytes": 222
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\catalog-cli.ps1",
+      "sha256": "2c16e8f178f1f16e65c0b30da3cec065cbebd8b62fcea17ccb936aee33566c0e",
+      "bytes": 1003
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\common.ps1",
+      "sha256": "eb6e101520406d46d715c070cdd782d0be4617b3772c71c94637868392fba416",
+      "bytes": 2320
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\completed-status.log",
+      "sha256": "ef5ddfec8fb91259ca365bae335e7faab3db6dba04f89fafab168df123daf714",
+      "bytes": 414
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\diagnose-reconcile.ps1",
+      "sha256": "bcca0bfa14406d8b44db2466096c55729109e3361b6b910da4c6819de5eb5fd6",
+      "bytes": 1242
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fault-driver.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fault-result.json",
+      "sha256": "96c6e0c33863bf41a2fa93732a0cb580c1089fa08f74f7e837a270a23b0b0a3d",
+      "bytes": 199
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fault-select.stderr",
+      "sha256": "678b88de46aac5270c4e8b834ed6ddf692fa7fdb51d6fb552a8b6e2babdb79a9",
+      "bytes": 328
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fault-select.stdout",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fault.ps1",
+      "sha256": "61d768e6f980ed078a2ca188a335406f5739ac5ef596e33d236349dcd319410c",
+      "bytes": 2392
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\final-check.json",
+      "sha256": "42a5a8a6e94f6df65797559f3bbd17574561faca1ddb4dfe4529bc7ea4f9b370",
+      "bytes": 3965
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\final-check.ps1",
+      "sha256": "aab07fac7712407d3b4883932bac75b7bdbe8c39210c1fc1e3f2763a802245cb",
+      "bytes": 1997
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\foreground-new.transcript.txt",
+      "sha256": "84efeacebf26e0c271c062a3045d741194d5a5bdca618a479c3a13349d9bb9f8",
+      "bytes": 2572
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\foreground-select.transcript.txt",
+      "sha256": "efaaf9d3d2a2c994de305f306b447ef510365d7675e3e1ea6b190841cc1c4453",
+      "bytes": 2497
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\foreground-update-later-r2.transcript.txt",
+      "sha256": "9a1d6603c2726ab1a171252bcbe1d732f745104528cb2d75a5c3a3936b16f8aa",
+      "bytes": 6289
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\foreground-update-later.transcript.txt",
+      "sha256": "a515f5c4f8dca842d824633e79b2cee62f57e18fff4d3dad68e86f9e42bdaf20",
+      "bytes": 1648
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fork-driver.log",
+      "sha256": "d2345c080576fa660b0ac3b7306d7f62b18a9cc9d58c439b69c63e8ef9cdc0ff",
+      "bytes": 121
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fork-native\\fork-dev-branch-436ac1f14031490da7c9c76b582d0bd7.stderr.log",
+      "sha256": "0dc4e5bfb7f1d6dd1e3feed681dbc792b77ac20186ea7476d7bfe1540696a607",
+      "bytes": 396
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fork-native\\fork-dev-branch-436ac1f14031490da7c9c76b582d0bd7.stdout.log",
+      "sha256": "850f0b58086bdd05fe44ffdd448bfbe2560f5b3f688c9c9d98fac9edb2492a80",
+      "bytes": 1936
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fork-pm5.ps1",
+      "sha256": "7cf361bea33f7d5bfdd278a2ddfbb3e79997c7cf48f6a3290aa47568d043439f",
+      "bytes": 1697
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fork-precondition-result.json",
+      "sha256": "b52bf58793b9f95129d7a86248c28c2b1f95d8e6785a844a7ae6305ea6f0ce0b",
+      "bytes": 4248
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\fork-result.json",
+      "sha256": "b52bf58793b9f95129d7a86248c28c2b1f95d8e6785a844a7ae6305ea6f0ce0b",
+      "bytes": 4248
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\full-registry-provenance.json",
+      "sha256": "aa7ddd877add3393367c0590868559c5df089d1afc59eb892e06796c04e1e976",
+      "bytes": 371
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\full-registry-reconcile-diagnostic.json",
+      "sha256": "babd11ad6378be12235790452c24c4693943d391b3b5a076e223840d03179ced",
+      "bytes": 6096
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\inspect.ps1",
+      "sha256": "204b6f86c88b20dcf4378e64d4c3ead5e82187a2ccb372430d0a2231ac174592",
+      "bytes": 1185
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\list.log",
+      "sha256": "fda3b69e733fe69e3409ea8fc811bab6cc02a663d7972da56f81a449bb7e1573",
+      "bytes": 176
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\master-final.json",
+      "sha256": "071d167d8d899b273bc07e03a8b8b3a3ffe8f26224824bec7a92f38e4d366696",
+      "bytes": 28233
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\memory-openspec-validation.log",
+      "sha256": "ac0368ff6c9e7efaac0feca8670d0e264cf03114681e7abeaac7cc326b7c8891",
+      "bytes": 44
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\partial-status.log",
+      "sha256": "79ec616bc55493c5e595167e65ec6b404153c206311e8b1711a596a799833771",
+      "bytes": 953
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\partial.json",
+      "sha256": "6ac05ab685816a9979eb04aacd40363724f1d65f1338b1aa2fdbe08453f69585",
+      "bytes": 19246
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\pending-main-result.json",
+      "sha256": "0cf2dcb97c9a613eca22c795403c361cb2c19659427c43b233f944bf329c04a2",
+      "bytes": 104
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\pending-main.stderr",
+      "sha256": "bfe420260fdc942537cbf594350462e402cc248c9f37a5cc8a5eeeb7515c6cb1",
+      "bytes": 297
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\pending-main.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\prepare-full-registry.ps1",
+      "sha256": "64397886eec27da2cb0ceabe2517833b68a608b98f33b4c81e0eebc54432a6eb",
+      "bytes": 1334
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\prepare.ps1",
+      "sha256": "f844f74d2c481f65077e3253b114c16f4a9eeb2571b94ae6f02915ae86092599",
+      "bytes": 1660
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\preview.log",
+      "sha256": "1c16db70c7f71911066a4d1cb71a6101d6a4d4c104799abfee653e96a2c7dd02",
+      "bytes": 706
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\reconcile-diagnostic.log",
+      "sha256": "a63552fca82adbe977be50b0bfca259eebd541b1463dbed70622056b540d288c",
+      "bytes": 496
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\registry-openspec-validation.log",
+      "sha256": "55c0a9360e6774d5f191edc2a2f835964bc440456bca0dd3359480a590bc1515",
+      "bytes": 48
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\restore-new.log",
+      "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6",
+      "bytes": 2
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\restore.log",
+      "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6",
+      "bytes": 2
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\restored-clean-master.json",
+      "sha256": "a16b26fe97186403fb693633dba7445123401dc9e0088a504aa93877d5a61446",
+      "bytes": 842
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\restored-resumed.log",
+      "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6",
+      "bytes": 2
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\resume.log",
+      "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6",
+      "bytes": 2
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\retain-results.py",
+      "sha256": "a98150b93b22482b000a0e20d014e0af6f119c16b800582f63e98c0d6ec94b98",
+      "bytes": 11298
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\retry-draft.log",
+      "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6",
+      "bytes": 2
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\seed-validation.json",
+      "sha256": "6c73ddb4ef88255be70dc8fcb4210bd6fcf120c81b2880ad19f573f4bc6f2b9f",
+      "bytes": 397
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\seed-validation.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\seed-validation.ps1",
+      "sha256": "0c66284add4faf95cc7da0a7cb5e5c953f21b313e83da0614b54a867ddb89dc1",
+      "bytes": 1018
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\unknown-preview.log",
+      "sha256": "3d9edd6d0383711788dec94bd98c6b6571a65e6e504811c9423155fff7c5c627",
+      "bytes": 202
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\update-foreground.ps1",
+      "sha256": "3364d4f27a19012d425e72ca7570fd315f8338cc42d76e6b62f2ade4f0784d4e",
+      "bytes": 451
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\update-recovery-status-r2-result.json",
+      "sha256": "b076c89f4544d9c41c06a0cd77ae4aae9499cb2734361f8e8281b8690b2a3152",
+      "bytes": 133
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\update-recovery-status-r2.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\update-recovery-status-r2.stdout",
+      "sha256": "d9989c9760731158032eb2727320801c73cd7ac5709f2b701353080f9a1079cf",
+      "bytes": 947
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\update-recovery-status-result.json",
+      "sha256": "cb17b0d970a2acb44d23c1b8865fa1b2264c2c382fa715d211a2d17064dec889",
+      "bytes": 134
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\update-recovery-status.ps1",
+      "sha256": "1d5db70192b801300e0b1d0e9276d8b2753c209c94aa453f13de779ec281a2a3",
+      "bytes": 819
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\update-recovery-status.stderr",
+      "sha256": "eccb3e607d32d6566ec9a4905c461e4b839016b055e7e92c61e384fbf711da90",
+      "bytes": 247
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\journey-20261020\\update-recovery-status.stdout",
+      "sha256": "b6b1b59305517926fc7f5c99c4074d8022249ff2df19ce6fbb50f52f79acfc4e",
+      "bytes": 35
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-rollback-4b39dcb858ce4a5cab1b94e793eff19f\\transaction.json",
+      "sha256": "29e0d3c263379dba391f7b7c922839cd67a00fddf42d14c2e355889f893879bd",
+      "bytes": 282550
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124111-224-b12d78fb\\console.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124111-224-b12d78fb\\status.json",
+      "sha256": "6a7253ab0eb2f75604e0eb0a7abdd1bbff9be52f6252341cd25e9043848c342d",
+      "bytes": 4075
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+      "sha256": "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+      "bytes": 2739
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log",
+      "sha256": "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+      "bytes": 141700
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124246-250-caff120d\\console.log",
+      "sha256": "f78dd8645e4d7947c7e5d99928a889138e6ff2a4e4fae8b6062167a201028907",
+      "bytes": 9106
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\.agent-1c\\runs\\compact-20261020-124246-250-caff120d\\status.json",
+      "sha256": "9d83ef85c5651a9a60474ea3c949e82f12f463e1b28f3ecc1f932039cc1f365c",
+      "bytes": 6246
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result",
+      "sha256": "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+      "bytes": 6
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log",
+      "sha256": "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+      "bytes": 93
+    }
+  ]
+}

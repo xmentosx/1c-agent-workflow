@@ -24,23 +24,24 @@ For a mapped routine, make the helper the first and only tool action after one s
 - branch source exchange: `sync-dev-branches`; peer name
 - resume pending extension setup internally: `init-dev-branch-extension`
 - post-change check: `check-dev-branch`
+- explicit full `CheckConfig` request: `check-dev-branch -ResultPurpose production`; no deployment or publication
 - explicitly requested base load without tests: `update-dev-branch-base`
 - exact compatibility alias for the normal check: `verify-dev-branch`
 - refresh from source: `refresh-dev-branch`
 - synchronize master and rebuild the latest-only seed: `sync-master`
 - refresh only from the current master without source/seed access: `refresh-dev-branch-lite`
-- export CF/CFE: `export-dev-branch-result`
+- export CF/CFE: `export-dev-branch-result`; verbatim report + known-context `## Итог задачи`, else report only; no tools/inference
 - explicit advanced close: `close-dev-branch`
 
 ## Command Template
 
-From the project root, run mutations and long checks with `timeout_ms >= 3900000` (or above the configured Designer timeout). Do not use `120000 ms`; `status`/`help` do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
+From project root, run mutations/long checks with `timeout_ms >= 3900000`; default `init-project`/`sync-master` need `>= 14700000`. Exceed overrides. A client with a lower foreground cap (Claude Code) uses `run_in_background: true` and awaits its notification. Do not use `120000 ms`; `status`/`help` do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action <action>
 ```
 
-Use it for `init-*`, `update-*`, `check-*`, `verify-*`, `refresh-*`, `export-*`, and client switching. Short read-only `status`, `help`, and MCP status/catalog actions may call `agent-1c.ps1` directly; honor the exit code.
+Short read-only `status`, `help`, and MCP status/catalog actions may call `agent-1c.ps1` directly; honor its exit code.
 
 Branch creation and advanced close use the same runner with `-Windowed` so safety confirmation remains visible:
 
@@ -51,14 +52,14 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 For CFE, use `Cfe` plus `-ExtensionSourcePath`. Unknown extension values may be omitted for pending first-entry setup.
 
-On `status=succeeded`, the final response must be exactly the non-empty `userReport` Markdown, including for refresh. It includes MCP/Browser state and advice. Do not translate it, use a code fence, convert it to a table, rename or merge fields, reorder or omit lines, summarize, substitute `requiredAction`, or read `console.log`. `-UseCurrentWorktree` is explicit-only.
+On `status=succeeded`, the final response must be exactly the non-empty `userReport` Markdown. It includes MCP/Browser state and advice. Do not translate it, use a code fence, convert it to a table, rename or merge fields, reorder or omit lines, summarize, substitute `requiredAction`, or read `console.log`. `-UseCurrentWorktree` is explicit-only.
 
 `classify-tests-after-refresh:*`: follow `advanced-actions.md` in the same task;
 split oversized/mixed feature files yourself. Do not ask the developer to classify.
 
 Current-branch actions infer `itldev/<name>`; do not ask for a branch name. Data/UI work uses the matching MCP skill. `/itl-check` is Vanessa Automation verification, not MCP.
 
-When the user requests an executable milestone or completion check, run `check-dev-branch` directly; do not pre-run base update or `/deploy-and-test`. Do not add `VanessaFeaturePath` or `VanessaFilterTags` to a final run. Its stderr heartbeat reports stage, elapsed time, liveness, no-progress time, timeout remaining, owned PIDs, CPU/log deltas, and working set. Never kill 1C manually: the helper warns at `stalled-suspected`, applies its bounded stall timeout, and cleans up exact tracked processes. Liveness never replaces or weakens the independent Designer memory guard or overall hard timeout.
+When the user requests an executable milestone or completion check, run `check-dev-branch` directly; do not pre-run base update or `/deploy-and-test`. Do not add `VanessaFeaturePath` or `VanessaFilterTags` to a final run. Stderr heartbeat shows stage and liveness. Never kill 1C manually: the helper warns at `stalled-suspected`, applies its bounded stall timeout, and cleans up exact tracked processes. Liveness never replaces or weakens the independent Designer memory guard or overall hard timeout.
 
 For export/close, obey the helper's `verificationPolicy`.
 
@@ -66,14 +67,14 @@ For export/close, obey the helper's `verificationPolicy`.
 
 Read `status`, exit code, `errorCategory`, `requiredAction`, and `nextAction`.
 
-- If Kilo behavior disagrees with the Intent Map, run `status`, compare the reported expected skill contract/SHA, and ask for `/reload` before treating it as a source defect. ITL cannot inspect or clear Kilo's internal cache/worktrees.
+- Kilo Intent Map mismatches follow the client-cache diagnostic in `references/workflow-incidents.md` under `1c-workflow`.
 - `status=failed` means failed. Never relabel it as skipped; never call it ready, verified, or done.
 - For `ITL_INFOBASE_APPLICATION_NOT_READY`, run `update-dev-branch-base`; retry the original once.
 - Report the action, concise error, and artifact paths. Read 80 console-log tail lines only for unclassified `runner` failure.
-- Follow `requiredAction` or `nextAction` exactly; classification uses `advanced-actions.md`. Ask only for an explicitly missing value.
-- Before recovery edits, apply the installed `USER-RULES.md` runner/fixture/product ownership, unchanged-rerun, and unrelated-dirty-change guards.
+- Follow `requiredAction`/`nextAction`; classification uses `advanced-actions.md`. Suspected workflow defects use `references/workflow-incidents.md` in `1c-workflow`.
+- Before recovery edits, apply the installed `USER-RULES.md` runner/fixture/product ownership, unchanged-rerun, and unrelated-dirty-change guards. Ask only for missing input or permission not already given.
 - For an agent-made change with `requiredAction=/itl-verify-fix`, continue through the active client's explicit `itl-verify-fix` wrapper. If that surface is unavailable, activate full `1c-workflow` and its one matching recovery reference. Do not return completion to the user. Standalone diagnostics only report failure.
 - `fix-and-repeat-original-check`: repeat its scope without repair. `repeat-original-diagnostic-without-repair-session`: keep the filter. `stop-repair-and-resume-original-task`: resume.
-- Completion requires fresh passed evidence after the last edit; partial/skipped is insufficient.
+- Verified completion requires fresh passed evidence after the last edit; partial/skipped remains unverified.
 
 For first-time project bootstrap, follow `AGENT-INSTALL.md`.

@@ -223,12 +223,13 @@ Describe "Branch-safe Vanessa runtime cleanup" {
 
         $vanessaText | Should -Match 'function Invoke-DevBranchVanessaRuntimeRelease'
         $vanessaText | Should -Match 'function Stop-DevBranchTestClients[\s\S]*Invoke-DevBranchVanessaRuntimeRelease'
-        $lifecycleText | Should -Match 'function Stop-DevBranchRuntimeBeforeInfobaseMutation[\s\S]*Invoke-DevBranchVanessaRuntimeRelease'
+        $lifecycleText | Should -Match 'function Stop-DevBranchRuntimeBeforeInfobaseMutation[\s\S]*OneCExecutionDrainRequest'
+        $lifecycleText | Should -Match 'function Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard[\s\S]*Invoke-DevBranchVanessaRuntimeRelease[\s\S]*Stop-ItlOnDemandBackends'
         $lifecycleText | Should -Match 'function Save-ReleaseE2EInfobaseSnapshot[\s\S]*Stop-DevBranchRuntimeBeforeInfobaseMutation'
         $lifecycleText | Should -Match 'function Close-DevBranch[\s\S]*Stop-DevBranchRuntimeBeforeInfobaseMutation'
     }
 
-    It "delegates infobase release to the Vanessa primitive and drains ROCTUP separately" {
+    It "plans infobase release before admission and drains Vanessa plus ROCTUP under the execution guard" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-runtime-lifecycle-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
@@ -256,17 +257,37 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 function Get-RoctupMcpRuntimeInfo { [pscustomobject]@{ processAlive = $false } }
                 function Get-OwnVanessaTestProcesses { @() }
                 function Get-ItlOnDemandRuntimeInstances { param([switch]$Strict); @() }
+                function Get-OneCInfoBaseSessionProcesses { @() }
 
                 Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "fixture mutation" 6>$null
+                $plannedRequest = $script:OneCExecutionDrainRequest
+                $callsBeforeGuard = $script:VanessaCalls
+                Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard -Request $plannedRequest 6>$null
+                $callsAfterFirst = $script:VanessaCalls
+                function Get-OneCInfoBaseSessionProcesses { [pscustomobject]@{ pid = 91234 } }
+                $foreignError = ""
+                try { Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard -Request $plannedRequest 6>$null }
+                catch { $foreignError = $_.Exception.Message }
                 [pscustomobject]@{
+                    planned = ($null -ne $plannedRequest)
+                    callsBeforeGuard = $callsBeforeGuard
+                    callsAfterFirst = $callsAfterFirst
                     vanessaCalls = $script:VanessaCalls
                     reason = $script:VanessaReason
                     family = $script:DrainedFamily
                     infoBasePath = $script:DrainedBase
+                    foreignError = $foreignError
                 }
             }
 
-            $result.vanessaCalls | Should -Be 1
+            $result.planned | Should -BeTrue
+            $result.foreignError | Should -Match 'EXECUTION_GUARD_EXTERNAL_CONFLICT'
+            $result.foreignError | Should -Match 'operation=.fixture mutation.'
+            $result.foreignError | Should -Match 'target=.file:'
+            $result.foreignError | Should -Match 'no foreign process was stopped'
+            $result.callsBeforeGuard | Should -Be 0
+            $result.callsAfterFirst | Should -Be 1
+            $result.vanessaCalls | Should -Be 2
             $result.reason | Should -Be "fixture mutation"
             $result.family | Should -Be "roctup"
             $result.infoBasePath | Should -Be (Join-Path $tempRoot "base")
@@ -412,6 +433,56 @@ Describe "Branch-safe Vanessa runtime cleanup" {
         }
     }
 
+    It "publishes Vanessa progress heartbeat and detects a bounded real stall" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-liveness-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "run") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $RunStatusPath = Join-Path $tempRoot "runner-status.json"
+                $script:StatusWrites = 0
+                function Write-RunStatus { param([string]$Status); $script:StatusWrites++ }
+                function Get-OwnVanessaTestProcesses { param($State,$TestPorts,$RunParamsPath,[switch]$RequireInspection); @() }
+                $run = Join-Path $tempRoot "run"
+                $log = Join-Path $run "vanessa.log"
+                [IO.File]::WriteAllText($log, "a", [Text.UTF8Encoding]::new($false))
+                $monitor = New-VanessaRunLivenessMonitor -RunDirectory $run -TimeoutSeconds 1800
+                $monitor.lastLogLength = 1
+                $monitor.lastPublishedAtUtc = [DateTime]::UtcNow.AddSeconds(-20)
+                [IO.File]::AppendAllText($log, "progress", [Text.UTF8Encoding]::new($false))
+                $probe = [pscustomobject]@{timeoutRemainingSeconds=1700}
+                Update-VanessaRunLiveness -Monitor $monitor -ProbeContext $probe -State ([pscustomobject]@{}) -TestPorts @(48051) -RunParamsPath (Join-Path $run "VAParams.json")
+                $active = [pscustomobject]@{liveness=$script:RunLiveness;growth=$script:RunLogGrowthBytes;writes=$script:StatusWrites;stall=$script:RunStallTimeoutRemainingSeconds
+                    published=$script:RunTimeoutRemainingSeconds;grace=$monitor.ownerGraceSeconds}
+                $monitor.lastLogLength = (Get-Item -LiteralPath $log).Length
+                $monitor.lastEvidenceAtUtc = [DateTime]::UtcNow.AddSeconds(-3)
+                $monitor.lastProbeAtUtc = [DateTime]::MinValue
+                $monitor.lastPublishedAtUtc = [DateTime]::UtcNow.AddSeconds(-20)
+                $monitor.stallWarningSeconds = 1
+                $monitor.stallTimeoutSeconds = 2
+                $message = try {
+                    Update-VanessaRunLiveness -Monitor $monitor -ProbeContext $probe -State ([pscustomobject]@{}) -TestPorts @(48051) -RunParamsPath (Join-Path $run "VAParams.json")
+                    ""
+                } catch { $_.Exception.Message }
+                [pscustomobject]@{active=$active;stalled=$message}
+            }
+            $result.active.liveness | Should -Be "running-active"
+            $result.active.growth | Should -BeGreaterThan 0
+            $result.active.writes | Should -BeGreaterThan 0
+            $result.active.stall | Should -BeGreaterThan 0
+            # PM5 2026-11-17: the runner extended exactly to the Vanessa deadline
+            # and killed the helper before it could report its own timeout. The
+            # published budget keeps the run's post-timeout work; the 1C stop
+            # still uses Vanessa's own remaining time (1700 s here).
+            $result.active.grace | Should -Be 180
+            $result.active.published | Should -Be 1880
+            $result.stalled | Should -Match '^ITL_VANESSA_STALL_TIMEOUT\b'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "publishes and clears exact Vanessa run evidence in lifecycle and helper status" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-run-evidence-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -461,7 +532,9 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 }
             }
 
+            [int]$result.publishedLifecycle.activeVanessaRun.schemaVersion | Should -Be 2
             $result.publishedLifecycle.activeVanessaRun.operationId | Should -Be $result.publishedLifecycle.operationId
+            $result.publishedLifecycle.activeVanessaRun.testClientInfoBasePath | Should -Be (Join-Path $tempRoot ".agent-1c\infobases\branch1")
             [int]$result.publishedLifecycle.activeVanessaRun.ownerPid | Should -BeGreaterThan 0
             [int]$result.publishedLifecycle.activeVanessaRun.processId | Should -BeGreaterThan 0
             $result.publishedLifecycle.activeVanessaRun.testPorts | Should -Be @(48054, 48055)

@@ -1,0 +1,720 @@
+﻿function Get-VerificationModel {
+    $value = ([string](Get-EnvValue -Name 'ITL_VERIFICATION_MODEL')).Trim().ToLowerInvariant()
+    if (-not $value) { return 'change' }
+    if ($value -notin @('change', 'cumulative')) {
+        throw 'VERIFICATION_MODEL_INVALID: ITL_VERIFICATION_MODEL must be change or cumulative. Correct the setting and repeat the original command.'
+    }
+    return $value
+}
+
+function Get-VerificationChangePath {
+    return (Join-Path (Get-VerificationSelectionStateRoot) 'current-change.json')
+}
+
+function Archive-VerificationChangeForReset {
+    param([Parameter(Mandatory=$true)][object]$State)
+    $path=Get-VerificationChangePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+    # Only the reset owner, after its exact-master commit, retires a task; ordinary planning cannot.
+    $newHead=[string](Get-StateValue $State 'resetNewHead' '')
+    if ([string](Get-StateValue $State 'resetPhase' '') -cne 'runtime-initializing' -or $newHead -cnotmatch '^[0-9a-f]{40}$') { throw 'VERIFICATION_CHANGE_RESET_OWNER_REQUIRED: resume the original reset owner; preserve current acceptance.' }
+    $saved=Join-Path (Get-VerificationSelectionStateRoot) ('changes/reset-' + [string]$State.resetNewHead + '.json')
+    Write-Utf8TextAtomic -Path $saved -Value (Read-Utf8Text -Path $path)
+    if ((Get-FileHash -LiteralPath $saved -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash) { throw 'VERIFICATION_CHANGE_RESET_ARCHIVE_CHANGED: preserve current acceptance and resume reset.' }
+    Remove-Item -LiteralPath $path -Force
+}
+
+function Read-VerificationChange {
+    $path = Get-VerificationChangePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $value = Read-Utf8Text -Path $path | ConvertFrom-Json -ErrorAction Stop
+    if ([int]$value.schemaVersion -ne 1 -or [string]$value.model -cne 'change') {
+        throw 'VERIFICATION_CHANGE_INVALID: preserve current-change.json and restore it through its verification owner.'
+    }
+    if ([string](Get-VerificationCatalogValue -Value $value -Name scopeIdentity -Default '') -cne (Get-VerificationChangeScopeIdentity -Change $value)) { throw 'VERIFICATION_CHANGE_RECORD_CHANGED: preserve the impact plan; repeat begin-verification-change through its owner instead of editing runtime state.' }
+    return $value
+}
+
+function Get-VerificationChangeScopeIdentity {
+    param([Parameter(Mandatory=$true)][object]$Change)
+    $criteria = @($Change.criteria | ForEach-Object {
+        [ordered]@{id=$_.id;expectedResult=$_.expectedResult;decision=$_.decision;reason=(Get-VerificationCatalogValue -Value $_ -Name reason -Default '');checkIds=@(Get-VerificationCatalogValue -Value $_ -Name checkIds -Default @())}
+    })
+    $value=[ordered]@{taskId=$Change.taskId;baseTree=$Change.baseTree;tree=$Change.tree;targetIdentity=$Change.targetIdentity;checkerIdentity=$Change.checkerIdentity;checks=@($Change.checks);paths=@($Change.paths);criteria=$criteria;requirements=@($Change.requirements);planArtifact=$Change.planArtifact;retainedDispositions=@($Change.retainedDispositions);inheritedEvidence=@(Get-VerificationCatalogValue -Value $Change -Name inheritedEvidence -Default @());priorAcceptedArtifact=(Get-VerificationCatalogValue -Value $Change -Name priorAcceptedArtifact -Default $null)}
+    $unbound=[string](Get-VerificationCatalogValue -Value $Change -Name unboundTargetIdentity -Default '')
+    if ($unbound) { $value.unboundTargetIdentity=$unbound }
+    $system=Get-VerificationCatalogValue -Value $Change -Name systemInput -Default $null
+    if ($null -ne $system) { $value.systemInput=[ordered]@{acceptedMasterCommit=[string]$system.acceptedMasterCommit;importedPaths=@($system.importedPaths);verificationOwnerPaths=@($system.verificationOwnerPaths)} }
+    return (Get-VerificationSelectionSha256 -Text ($value|ConvertTo-Json -Depth 16 -Compress))
+}
+
+function Get-VerificationChangeTarget {
+    param([Parameter(Mandatory=$true)][object]$State)
+    # The Vanessa runner is prepared inside the first check, so planning cannot
+    # require it. The unbound identity keeps every other target field strict;
+    # the first observation after runner preparation binds the exact runner.
+    # A new branch has no tooling generation until its first tooling step;
+    # establish it through that owner so the infobase identity stays strict.
+    if (-not [string](Get-StateValue -State $State -Name 'toolingInfoBaseGeneration' -Default '')) { $State=Ensure-DevBranchToolingGeneration -State $State }
+    $projection=[ordered]@{}
+    $names=if ($State -is [Collections.IDictionary]) { @($State.Keys) } else { @($State.PSObject.Properties.Name) }
+    foreach ($name in $names) {
+        $projection[[string]$name]=if ([string]$name -like 'vanessaServiceInfoBase*') { '' } else { Get-StateValue -State $State -Name ([string]$name) -Default $null }
+    }
+    $projection['vanessaServiceInfoBaseGeneration']='runner-unbound'
+    $bound=if ([string](Get-StateValue -State $State -Name 'vanessaServiceInfoBaseGeneration' -Default '')) { Get-VerificationRetainedTargetIdentity -State $State } else { '' }
+    return [pscustomobject]@{identity=$bound;unbound=(Get-VerificationRetainedTargetIdentity -State ([pscustomobject]$projection))}
+}
+
+function Get-VerificationChangeCheckerIdentity {
+    $parts = @('verification-change-v1')
+    foreach ($name in @(Get-Command -CommandType Function '*-VerificationChange*' | Select-Object -ExpandProperty Name | Sort-VerificationIdentityStrings)) {
+        $command = Get-Command -Name $name -CommandType Function
+        $parts += "$($command.Name)=$($command.Definition.Replace("`r`n", "`n"))"
+    }
+    return (Get-VerificationSelectionSha256 -Text ($parts -join "`n"))
+}
+
+function Assert-VerificationChangeCurrent {
+    param([Parameter(Mandatory = $true)][object]$Change)
+    if ([string]$Change.tree -cne (Get-VerificationSelectionEffectiveTree) -or
+        [string]$Change.checkerIdentity -cne (Get-VerificationChangeCheckerIdentity)) {
+        throw "VERIFICATION_CHANGE_STALE: source or its assessor changed. Preserve evidence, update the impact plan '$([string]$Change.planArtifact.path)' with begin-verification-change -VerificationEvidencePath, then repeat the original command; accepted master input and verification-owner paths need no new decision, and the accepted base is unchanged."
+    }
+    if (@($Change.requirements).Count -gt 0) { Assert-VerificationArtifactReferences -Artifacts @($Change.requirements) }
+    Assert-VerificationArtifactReferences -Artifacts @($Change.planArtifact)
+    $inherited=@(Get-VerificationCatalogValue -Value $Change -Name inheritedEvidence -Default @())
+    if ($inherited.Count -gt 0 -and ($Change.status -ne 'accepted' -or $null -eq (Read-VerificationChangeAcceptedRecord -Change $Change -Current))) { Assert-VerificationArtifactReferences -Artifacts $inherited }
+}
+
+function Read-VerificationChangeAcceptedRecord {
+    param([Parameter(Mandatory=$true)][object]$Change, [switch]$Current)
+    if (-not $Change.acceptedArtifact) { return $null }
+    Assert-VerificationArtifactReferences -Artifacts @($Change.acceptedArtifact)
+    $accepted = Read-Utf8Text -Path (Resolve-ProjectPath ([string]$Change.acceptedArtifact.path)) | ConvertFrom-Json
+    Assert-VerificationArtifactReferences -Artifacts @($accepted.observedArtifacts)
+    if ($accepted.status -cne 'accepted' -or [string]$accepted.scopeIdentity -cne (Get-VerificationChangeScopeIdentity -Change $accepted)) {
+        throw 'VERIFICATION_CHANGE_ACCEPTED_INVALID: preserve the accepted archive and restore it through the verification owner.'
+    }
+    $matchesCurrent=[string]$accepted.runToken -ceq [string]$Change.runToken -and [string]$accepted.scopeIdentity -ceq [string]$Change.scopeIdentity
+    if ($Current -and -not $matchesCurrent) { return $null }
+    if (-not $matchesCurrent) {
+        $prior=Get-VerificationCatalogValue -Value $Change -Name priorAcceptedArtifact -Default $null
+        if ($null -eq $prior -or [string]$prior.path -cne [string]$Change.acceptedArtifact.path -or [string]$prior.sha256 -cne [string]$Change.acceptedArtifact.sha256 -or [string]$accepted.tree -cne [string]$Change.baseTree) { throw 'VERIFICATION_CHANGE_BASE_CHANGED: preserve the frozen prior accepted base; restore the current record through its owner.' }
+    }
+    return $accepted
+}
+
+function Assert-VerificationChangeReady {
+    param([Parameter(Mandatory=$true)][object]$State)
+    $change=Read-VerificationChange
+    if ($null -eq $change) {
+        Set-RunFailureContext -Category missing-suite -RequiredAction 'prepare-current-change-plan-and-repeat-original-itl-command'
+        throw 'VERIFICATION_CHANGE_REQUIRED: use begin-verification-change to inspect the full unaccepted delta; it writes a draft plan (draftPlanPath) proposing covering retained checks. Complete the draft, then repeat with -VerificationEvidencePath <plan.json>; no history or criteria will be discarded.'
+    }
+    Assert-VerificationChangeCurrent -Change $change
+    $target=Get-VerificationChangeTarget -State $State
+    $changed='VERIFICATION_CHANGE_TARGET_CHANGED: prepare and observe the current plan on the exact authorized target.'
+    if ([string]$change.targetIdentity) {
+        if ([string]$change.targetIdentity -cne $target.identity) { throw $changed }
+    } elseif ([string](Get-VerificationCatalogValue -Value $change -Name unboundTargetIdentity -Default '') -cne $target.unbound) {
+        throw $changed
+    } elseif ($target.identity) {
+        # First use after runner preparation binds it for the rest of the change.
+        $change.targetIdentity=$target.identity
+        $change.PSObject.Properties.Remove('unboundTargetIdentity')
+        $change.scopeIdentity=Get-VerificationChangeScopeIdentity -Change $change
+        Write-Utf8TextAtomic -Path (Get-VerificationChangePath) -Value (($change | ConvertTo-Json -Depth 16) + "`n")
+    }
+    return $change
+}
+
+function Get-VerificationChangeBaseTree {
+    param([Parameter(Mandatory = $true)][object]$State, [AllowNull()][object]$Previous)
+    if ($null -ne $Previous) {
+        if ($Previous.acceptedArtifact) {
+            $accepted = Read-VerificationChangeAcceptedRecord -Change $Previous
+            return [string]$accepted.tree
+        }
+        return [string]$Previous.baseTree
+    }
+    # Adopt only an existing owner boundary, never the caller's HEAD: the last
+    # successful check, or the last observed run that recorded a passed or
+    # failed receipt for every acceptance suite of its plan. Suites unsettled
+    # there are not proved at the base; Get-VerificationChangeRequiredSuites
+    # requires them until they pass.
+    $proof = Read-VerificationSelectionProof
+    $receipts = @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @())
+    $lastPassed = [string](Get-StateValue -State $State -Name 'lastVerificationStatus' -Default '') -ceq 'passed' -and
+        [string](Get-StateValue -State $State -Name 'lastVerifiedFingerprint' -Default '')
+    $recordedIds = @(Get-VerificationCatalogValue -Value $proof -Name 'acceptanceSuiteIds' -Default @() | ForEach-Object { [string]$_ })
+    $settledRun = $recordedIds.Count -gt 0 -and
+        @($recordedIds | Where-Object { $id = $_; @($receipts | Where-Object { [string]$_.id -ceq $id }).Count -ne 1 }).Count -eq 0
+    if ($null -ne $proof -and [string]$proof.tree -match '^[a-f0-9]{40}$' -and ($lastPassed -or $settledRun)) {
+        foreach ($receipt in @($receipts | Where-Object { [string]$_.status -ceq 'passed' })) {
+            Assert-VerificationArtifactReferences -Artifacts @($receipt.artifacts)
+        }
+        foreach ($receipt in @($receipts | Where-Object { [string]$_.status -ceq 'attested' })) { Assert-VerificationSuiteAttestation -Receipt $receipt }
+        return [string]$proof.tree
+    }
+    $base = Get-DevBranchResultTransferBaseCommit -State $State
+    $tree = ([string](Get-GitOutput @('rev-parse', "$base^{tree}"))).Trim()
+    if ($tree -notmatch '^[a-f0-9]{40}$') { throw 'VERIFICATION_CHANGE_BASE_MISSING: restore the branch lifecycle baseline through its existing owner; do not adopt HEAD as a verified base.' }
+    return $tree
+}
+
+function Get-VerificationChangeAcceptanceSuiteIds {
+    # The one set of retained Vanessa suites a change plan decides (a suiteId
+    # check or a retainedDispositions entry) and a check can select. Explicit
+    # diagnostic suites are never selected by a check and cannot accept the
+    # task, so registration and execution need no decision for them.
+    param([Parameter(Mandatory = $true)][object]$Catalog)
+    return @((Get-VerificationCatalogValue -Value $Catalog -Name assignments -Default @()) | Where-Object purpose -eq 'acceptance' |
+        ForEach-Object { [string]$_.suiteId } | Select-Object -Unique)
+}
+
+function Get-VerificationChangeChecks {
+    param([Parameter(Mandatory = $true)][object]$Plan)
+    $checks = @($Plan.checks)
+    if ($checks.Count -eq 0) { throw 'VERIFICATION_CHANGE_CHECKS_MISSING: declare sufficient current checks and their expected results in the impact plan.' }
+    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+    if (-not $catalog.valid) { throw "VERIFICATION_CHANGE_CATALOG_INVALID: $(@($catalog.issues) -join '; ')" }
+    $yax = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
+    $result = @()
+    foreach ($check in $checks) {
+        $suiteId=[string](Get-VerificationCatalogValue -Value $check -Name 'suiteId' -Default '')
+        $groupId=[string](Get-VerificationCatalogValue -Value $check -Name 'groupId' -Default '')
+        if ($suiteId -and $groupId) { throw 'VERIFICATION_CHANGE_RETAINED_AMBIGUOUS: reference exactly one suiteId or groupId.' }
+        if ($suiteId -or $groupId) {
+            $bound = @(if ($suiteId) { $catalog.obligations | Where-Object { $_.suiteId -ceq $suiteId } } else { $yax.obligations | Where-Object { $_.groupId -ceq $groupId } })
+            if ($bound.Count -ne 1 -or $bound[0].retention -cne 'retained') { throw 'VERIFICATION_CHANGE_RETAINED_UNKNOWN: reference an existing retained suiteId or groupId; do not invent its result.' }
+            $entry = @(if ($suiteId) { $catalog.suites | Where-Object id -CEQ $suiteId } else { $yax.groups | Where-Object id -CEQ $groupId })
+            if ($entry.Count -ne 1 -or $entry[0].purpose -notin @('acceptance','default-fast')) { throw 'VERIFICATION_CHANGE_RETAINED_EXPLICIT: reference normal acceptance/default-fast coverage, or capture the existing named diagnostic run through a current one-off JUnit receipt. Its diagnostic status alone cannot accept the task.' }
+            $result += $bound[0]
+            continue
+        }
+        if (-not (Get-VerificationCatalogValue -Value $check -Name 'retention' -Default '')) { $check | Add-Member retention 'one-off' }
+        if (-not (Get-VerificationCatalogValue -Value $check -Name 'retentionReason' -Default '')) { $check | Add-Member retentionReason 'Current change evidence; retention is decided separately.' }
+        if (-not (Get-VerificationCatalogValue -Value $check -Name 'cadence' -Default '')) { $check | Add-Member cadence 'explicit' }
+        if ([string]$check.retention -cne 'one-off') { throw 'VERIFICATION_CHANGE_CHECK_INVALID: reference retained coverage by suiteId/groupId, or declare an observed one-off check.' }
+        $result += @(Read-VerificationObligationDecisions -Catalog ([pscustomobject]@{schemaVersion=2;obligations=@($check)}) -CatalogPath (Get-VerificationChangePath) -Runner vanessa)
+    }
+    if (@($result.id | Sort-Object -Unique).Count -ne $result.Count) { throw 'VERIFICATION_CHANGE_CHECK_DUPLICATE: check ids must be unique.' }
+    $scopes=@(Get-VerificationFingerprintScopePaths | ForEach-Object { ([string]$_ -replace '\\','/').TrimEnd('/') })
+    foreach ($check in $result) {
+        foreach ($pattern in @($check.inputPaths)) {
+            $prefix=([string]$pattern -replace '[*?\[].*$', '').TrimEnd('/')
+            if (@($scopes | Where-Object { $prefix -ieq $_ -or $prefix.StartsWith(([string]$_).TrimEnd('/')+'/',[StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) { throw "VERIFICATION_CHANGE_INPUT_SCOPE_REQUIRED: '$pattern' is outside the known 1C/test input envelope. Declare its bounded inputPaths through the existing verification catalog before preparing this plan; ignored or unsnapshotted inputs cannot prove the current code." }
+        }
+    }
+    return $result
+}
+
+function Get-VerificationChangeSystemInput {
+    # Accepted master imports and workflow-owned verification code are not branch
+    # work: master input is the accepted base and a verification-owner change
+    # selects every suite, so the impact plan needs no per-path decision.
+    param([string[]]$ChangedPaths, [string]$CurrentTree)
+    $master = Get-VerificationAcceptedMasterInput -ChangedPaths $ChangedPaths -CurrentTree $CurrentTree
+    $owners = @($ChangedPaths | Where-Object { $_ -cin @(Get-VerificationOwnerPaths) })
+    $imported = @($master.importedPaths)
+    return [pscustomobject][ordered]@{
+        acceptedMasterCommit = $(if ($imported.Count -gt 0) { [string]$master.acceptedCommit } else { '' })
+        importedPaths = $imported; verificationOwnerPaths = $owners; paths = @($imported + $owners)
+    }
+}
+
+function New-VerificationChangeDraftPlan {
+    # A starting point, not a decision: retained coverage whose obligation
+    # inputPaths already cover a changed path is proposed with a DRAFT reason
+    # the agent must replace; every other path is listed as uncovered.
+    param([string[]]$ChangedPaths, [AllowNull()][object]$Previous, [string[]]$MasterSidePaths = @(), [string[]]$ImportedPaths = @())
+    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+    $yax = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
+    $retained = @()
+    $valid = [bool](Get-VerificationCatalogValue -Value $catalog -Name valid -Default $false)
+    $acceptance = @(if ($valid) { Get-VerificationChangeAcceptanceSuiteIds -Catalog $catalog })
+    foreach ($obligation in @(if ($valid) { Get-VerificationCatalogValue -Value $catalog -Name obligations -Default @() })) {
+        $suiteId = [string](Get-VerificationCatalogValue -Value $obligation -Name suiteId -Default '')
+        if ($suiteId -and [string]$obligation.retention -ceq 'retained' -and $suiteId -cin $acceptance) {
+            $retained += [pscustomobject]@{ id = [string]$obligation.id; kind = 'suiteId'; owner = $suiteId; inputPaths = @($obligation.inputPaths) }
+        }
+    }
+    foreach ($obligation in @(Get-VerificationCatalogValue -Value $yax -Name obligations -Default @())) {
+        $groupId = [string](Get-VerificationCatalogValue -Value $obligation -Name groupId -Default '')
+        $group = @(Get-VerificationCatalogValue -Value $yax -Name groups -Default @() | Where-Object { [string]$_.id -ceq $groupId })
+        if ($groupId -and [string]$obligation.retention -ceq 'retained' -and $group.Count -eq 1 -and [string]$group[0].purpose -ceq 'default-fast') {
+            $retained += [pscustomobject]@{ id = [string]$obligation.id; kind = 'groupId'; owner = $groupId; inputPaths = @($obligation.inputPaths) }
+        }
+    }
+    $checks = [ordered]@{}; $paths = @(); $uncovered = @()
+    $bothSides = @($ChangedPaths | Where-Object { $_ -cin $MasterSidePaths })
+    foreach ($path in $ChangedPaths) {
+        $overlap = if ($path -cin $bothSides) { ' Master changed it too: check the merged result.' } else { '' }
+        $covering = @($retained | Where-Object { @($_.inputPaths | Where-Object { Test-VerificationRepoPathPattern -Path $path -Pattern $_ }).Count -gt 0 })
+        if ($covering.Count -eq 0) { $uncovered += $path; continue }
+        foreach ($item in $covering) { $checks["$($item.kind):$($item.owner)"] = [ordered]@{ $item.kind = $item.owner } }
+        $names = (@($covering | ForEach-Object { "$($_.kind -replace 'Id$','') '$($_.owner)'" }) -join ', ')
+        $paths += [ordered]@{ path = $path; checkIds = @($covering.id); reason = "DRAFT: retained $names covers this path.$overlap Keep it only if this change needs its observation in the base; otherwise declare it unaffected with your reason and choose the sufficient check." }
+    }
+    # A suite whose area master and the branch both changed is proposed for
+    # the agent's decision; master input alone proposes nothing.
+    $overlapSuites = [ordered]@{}
+    foreach ($item in @($retained | Where-Object kind -eq 'suiteId')) {
+        $p = @($item.inputPaths)
+        $masterHit = @($ImportedPaths | Where-Object { $i = $_; @($p | Where-Object { Test-VerificationRepoPathPattern -Path $i -Pattern $_ }).Count -gt 0 })
+        $branchHit = @($ChangedPaths | Where-Object { $b = $_; @($p | Where-Object { Test-VerificationRepoPathPattern -Path $b -Pattern $_ }).Count -gt 0 })
+        if ($masterHit.Count -gt 0 -and $branchHit.Count -gt 0 -and -not $checks.Contains("suiteId:$($item.owner)")) {
+            $overlapSuites[$item.owner] = [ordered]@{ suiteId = $item.owner; decision = 'run'; reason = "DRAFT: master ($($masterHit -join ', ')) and the branch ($($branchHit -join ', ')) both changed this suite's area. Run it only if the merged behavior needs observation for this change; otherwise unaffected with your reason." }
+        }
+    }
+    $taskId = [string](Get-VerificationCatalogValue -Value $Previous -Name taskId -Default '')
+    if (-not $taskId) {
+        $branchName = [string](Get-Variable -Name DevBranchName -ValueOnly -ErrorAction SilentlyContinue)
+        $taskId = ($branchName.ToLowerInvariant() -replace '[^a-z0-9._-]+', '-').Trim('-', '.', '_')
+        if ($taskId -notmatch '^[a-z0-9][a-z0-9._-]*$') { $taskId = 'change' }
+    }
+    $draft = [ordered]@{
+        taskId = $taskId; taskDescription = ''; sourceReference = ''
+        requirementPaths = @(Get-VerificationCatalogValue -Value $Previous -Name requirements -Default @() | ForEach-Object path)
+        checks = @($checks.Values); paths = $paths
+        criteria = @(Get-VerificationCatalogValue -Value $Previous -Name criteria -Default @()); retainedDispositions = @($overlapSuites.Values)
+    }
+    $draftPath = Join-Path (Get-VerificationSelectionStateRoot) 'change-plan.draft.json'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $draftPath) | Out-Null
+    Write-Utf8TextAtomic -Path $draftPath -Value (($draft | ConvertTo-Json -Depth 10) + "`n")
+    return [pscustomobject]@{ path = (Get-VerificationRepoRelativePath -Path $draftPath); uncoveredPaths = @($uncovered); masterOverlapPaths = @($bothSides); overlapSuiteIds = @($overlapSuites.Keys) }
+}
+
+function Start-VerificationChange {
+    param([string]$EvidencePath = '')
+    if ((Get-VerificationModel) -cne 'change') { throw 'VERIFICATION_CHANGE_MODEL: select ITL_VERIFICATION_MODEL=change before preparing a change plan.' }
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'begin-verification-change'
+    if (-not $EvidencePath) {
+        $previous = Read-VerificationChange
+        $base = Get-VerificationChangeBaseTree -State $state -Previous $previous
+        $tree = Get-VerificationSelectionEffectiveTree
+        $changed = @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree $tree)
+        $system = Get-VerificationChangeSystemInput -ChangedPaths $changed -CurrentTree $tree
+        $decide = @($changed | Where-Object { $_ -cnotin $system.paths })
+        # Paths master changed since this change's base: their intersection
+        # with the branch delta is where a merge could have combined both sides.
+        $masterSide = @()
+        try {
+            if ($system.acceptedMasterCommit) {
+                $masterTree = ([string](Get-GitOutput @('rev-parse', "$($system.acceptedMasterCommit)^{tree}"))).Trim()
+                $masterSide = @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree $masterTree)
+            }
+        } catch { $masterSide = @() }
+        # The draft is a convenience: an unreadable catalog leaves the preview intact.
+        try { $draft = New-VerificationChangeDraftPlan -ChangedPaths $decide -Previous $previous -MasterSidePaths $masterSide -ImportedPaths @($system.importedPaths) }
+        catch { $draft = [pscustomobject]@{ path = ''; uncoveredPaths = $decide; issue = $_.Exception.Message } }
+        return [pscustomobject]@{
+            model='change';status='planning';baseTree=$base;tree=$tree
+            changedPaths=$decide
+            unsettledSuiteIds=@(try { Get-VerificationChangeUnsettledSuites -AcceptanceSuiteIds @(Get-VerificationChangeAcceptanceSuiteIds -Catalog (Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath)))) } catch { @() })
+            draftPlanPath=$draft.path
+            draftUncoveredPaths=$draft.uncoveredPaths
+            draftMasterOverlapPaths=@(Get-VerificationCatalogValue -Value $draft -Name masterOverlapPaths -Default @())
+            draftOverlapSuiteIds=@(Get-VerificationCatalogValue -Value $draft -Name overlapSuiteIds -Default @())
+            draftNote=$(if ($draft.path) { 'Edit the draft: replace every DRAFT reason, decide each uncovered path, add the task description, source and criteria, then pass it as -VerificationEvidencePath.' } else { "No draft: $($draft.issue) Prepare the plan manually." })
+            systemCoveredPaths=[pscustomobject]@{acceptedMasterCommit=$system.acceptedMasterCommit;importedPaths=$system.importedPaths;verificationOwnerPaths=$system.verificationOwnerPaths;reason='No impact decision: master input is the accepted base and the verification owner runs every suite; overlaps with branch changes are proposed in the draft.'}
+            taskId=(Get-VerificationCatalogValue -Value $previous -Name taskId -Default '')
+            criteria=@(Get-VerificationCatalogValue -Value $previous -Name criteria -Default @())
+            requirementPaths=@(Get-VerificationCatalogValue -Value $previous -Name requirements -Default @() | ForEach-Object path)
+        }
+    }
+    $full = Resolve-ProjectPath $EvidencePath
+    $relative = Get-VerificationRepoRelativePath -Path $full
+    $plan = Read-Utf8Text -Path $full | ConvertFrom-Json -ErrorAction Stop
+    if ([string]$plan.taskId -notmatch '^[a-z0-9][a-z0-9._-]*$') { throw 'VERIFICATION_CHANGE_TASK_INVALID: use a stable taskId for this feature and its acceptance.' }
+    $previous = Read-VerificationChange
+    if ($null -ne $previous -and [string]$previous.taskId -cne [string]$plan.taskId -and -not [bool](Get-VerificationChangeTaskAssessment -Change $previous).accepted) {
+        throw 'VERIFICATION_CHANGE_TASK_PENDING: finish or explicitly resolve the previous task acceptance; a new task name cannot discard its remaining criteria.'
+    }
+    $lineEndingRepairs = @(Repair-OneCSourceLineEndings)
+    $base = Get-VerificationChangeBaseTree -State $state -Previous $previous
+    $tree = Get-VerificationSelectionEffectiveTree
+    $changed = @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree $tree)
+    $target = Get-VerificationChangeTarget -State $state
+    $checks = @(Get-VerificationChangeChecks -Plan $plan)
+    foreach ($known in @(Get-VerificationCatalogOneOffObligations)) {
+        $current = @($checks | Where-Object id -eq $known.id)
+        if ($current.Count -gt 0 -and ((Get-VerificationOneOffObligationHash -Obligation $current[0]) -cne (Get-VerificationOneOffObligationHash -Obligation $known))) {
+            throw 'VERIFICATION_CHANGE_EXISTING_CHECK_CHANGED: a current plan cannot silently redefine an existing one-off obligation.'
+        }
+    }
+    $coverage = @($plan.paths)
+    $system = Get-VerificationChangeSystemInput -ChangedPaths $changed -CurrentTree $tree
+    foreach ($path in $changed) {
+        $entry = @($coverage | Where-Object { [string]$_.path -ceq $path })
+        if ($entry.Count -eq 0 -and $path -cin $system.paths) { continue }
+        if ($entry.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$entry[0].reason)) {
+            throw "VERIFICATION_CHANGE_PATH_PENDING: '$path' needs one impact decision, reason and sufficient checkIds; update the plan and repeat begin-verification-change."
+        }
+        if (([string]$entry[0].reason).TrimStart().StartsWith('DRAFT:', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "VERIFICATION_CHANGE_DRAFT_UNREVIEWED: '$path' still has the helper's DRAFT reason; replace it with your impact decision and repeat begin-verification-change."
+        }
+        $ids = @($entry[0].checkIds)
+        $declared = "Declared check ids: $((@($checks.id) | ForEach-Object { "'$_'" }) -join ', ')."
+        $covering = @($checks | Where-Object { @($_.inputPaths | Where-Object { Test-VerificationRepoPathPattern -Path $path -Pattern $_ }).Count -gt 0 } | ForEach-Object { "'$($_.id)'" })
+        $coveringText = if ($covering.Count -gt 0) { "Checks whose inputPaths cover it: $($covering -join ', ')." } else { 'No declared check has inputPaths that cover it; declare one.' }
+        if ($ids.Count -eq 0) {
+            throw "VERIFICATION_CHANGE_PATH_UNCOVERED: '$path' lists no checkIds. $coveringText $declared"
+        }
+        $unknown = @($ids | Where-Object { $_ -notin @($checks.id) })
+        if ($unknown.Count -gt 0) {
+            throw "VERIFICATION_CHANGE_CHECK_UNKNOWN: '$path' references undeclared check ids $((@($unknown) | ForEach-Object { "'$_'" }) -join ', '). $declared"
+        }
+        foreach ($id in $ids) {
+            $check = @($checks | Where-Object id -eq $id)[0]
+            if (@($check.inputPaths | Where-Object { Test-VerificationRepoPathPattern -Path $path -Pattern $_ }).Count -eq 0) {
+                throw "VERIFICATION_CHANGE_PATH_UNCOVERED: '$id' does not cover '$path'. $coveringText"
+            }
+        }
+    }
+    if (@($coverage | Where-Object { [string]$_.path -cnotin $changed }).Count -gt 0) {
+        throw 'VERIFICATION_CHANGE_SCOPE_CHANGED: path decisions must describe exactly the helper-owned unaccepted delta, including deletions and uncommitted edits.'
+    }
+    # A retained acceptance suite covering a branch change runs by default;
+    # leaving it out needs the agent's explicit unaffected decision and reason.
+    # Registration and execution decide the same acceptance set.
+    $suiteCatalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+    $acceptance = @(Get-VerificationChangeAcceptanceSuiteIds -Catalog $suiteCatalog)
+    $dispositions = @(Get-VerificationCatalogValue -Value $plan -Name 'retainedDispositions' -Default @())
+    $notAcceptance = @($dispositions | ForEach-Object { [string]$_.suiteId } | Where-Object { $_ -and $_ -cnotin $acceptance } | Sort-Object -Unique)
+    if ($notAcceptance.Count -gt 0) {
+        throw "VERIFICATION_CHANGE_SUITE_INVALID: retainedDispositions name $((@($notAcceptance) | ForEach-Object { "'$_'" }) -join ', '), which are not retained acceptance suites. Remove them: a check never selects an explicit diagnostic suite, so it needs no decision."
+    }
+    $decidedSuites = @(@($checks | ForEach-Object { [string](Get-VerificationCatalogValue -Value $_ -Name 'suiteId' -Default '') }) +
+        @($dispositions | ForEach-Object { [string]$_.suiteId }) | Where-Object { $_ })
+    $undecided = @()
+    foreach ($obligation in @(Get-VerificationCatalogValue -Value $suiteCatalog -Name 'obligations' -Default @() | Where-Object { $_.retention -ceq 'retained' -and [string](Get-VerificationCatalogValue -Value $_ -Name 'suiteId' -Default '') -cin $acceptance })) {
+        $covers = @($changed | Where-Object { $p = $_; $p -cnotin $system.paths -and @($obligation.inputPaths | Where-Object { Test-VerificationRepoPathPattern -Path $p -Pattern $_ }).Count -gt 0 })
+        if ($covers.Count -gt 0 -and [string]$obligation.suiteId -cnotin $decidedSuites) {
+            $undecided += "'$($obligation.suiteId)' ($($covers[0])$(if ($covers.Count -gt 1) { " and $($covers.Count - 1) more" }))"
+        }
+    }
+    if ($undecided.Count -gt 0) {
+        throw "VERIFICATION_CHANGE_SUITE_UNDECIDED: retained suites cover changed paths: $(($undecided | Sort-Object -Unique) -join '; '). Keep each as a check (suiteId) or declare retainedDispositions run|unaffected with your reason."
+    }
+    $requirements = @(New-VerificationArtifactReferences -Paths @(Get-VerificationCatalogValue -Value $plan -Name requirementPaths -Default @() | ForEach-Object { Resolve-ProjectPath ([string]$_) }))
+    if ($null -ne $previous -and [string]$previous.taskId -ceq [string]$plan.taskId) {
+        $oldPaths = @($previous.requirements | ForEach-Object path)
+        if (@($oldPaths | Where-Object { $_ -notin @($requirements.path) }).Count -gt 0) {
+            throw 'VERIFICATION_CHANGE_REQUIREMENTS_OMITTED: preserve the referenced task requirements; a new plan cannot hide acceptance by changing documents.'
+        }
+    }
+    if (($requirements.Count -eq 0 -and ([string]::IsNullOrWhiteSpace([string](Get-VerificationCatalogValue -Value $plan -Name taskDescription -Default '')) -or [string]::IsNullOrWhiteSpace([string](Get-VerificationCatalogValue -Value $plan -Name sourceReference -Default '')))) -or @($plan.criteria).Count -eq 0) { throw 'VERIFICATION_CHANGE_ACCEPTANCE_MISSING: reference existing task requirements and list every acceptance criterion, including pending ones.' }
+    $sameTask = $null -ne $previous -and [string]$previous.taskId -ceq [string]$plan.taskId
+    $previousCriteria = @(if ($sameTask) { Get-VerificationCatalogValue -Value $previous -Name 'criteria' -Default @() })
+    $acceptedPrevious = if ($sameTask -and $previous.acceptedArtifact) { Read-VerificationChangeAcceptedRecord -Change $previous } else { $null }
+    $requiredIds = @($previousCriteria | ForEach-Object { [string]$_.id })
+    if ($null -eq $previous) { $requiredIds += @(Get-VerificationCatalogOneOffObligations | ForEach-Object { [string]$_.id }) }
+    foreach ($artifact in $requirements) {
+        $text = Read-Utf8Text -Path (Resolve-ProjectPath ([string]$artifact.path))
+        $requiredIds += @([regex]::Matches($text, '\bAC-\d+\b') | ForEach-Object Value | Select-Object -Unique)
+    }
+    $criteria = @($plan.criteria)
+    $inheritedEvidence = @()
+    if (@($criteria.id | Sort-Object -Unique).Count -ne $criteria.Count -or @($requiredIds | Where-Object { $_ -cnotin @($criteria.id) }).Count -gt 0) {
+        throw 'VERIFICATION_CHANGE_ACCEPTANCE_INCOMPLETE: preserve every prior and declared AC criterion; omission does not waive acceptance.'
+    }
+    foreach ($criterion in $criteria) {
+        if (-not $criterion.id -or [string]::IsNullOrWhiteSpace([string]$criterion.expectedResult) -or $criterion.decision -notin @('check','pending','unaffected')) {
+            throw 'VERIFICATION_CHANGE_CRITERION_INVALID: each criterion needs id, expectedResult and decision=check|pending|unaffected.'
+        }
+        $prior = @($previousCriteria | Where-Object id -eq $criterion.id)
+        $known = @(Get-VerificationCatalogOneOffObligations | Where-Object id -eq $criterion.id)
+        if ($known.Count -eq 1 -and ([string]$criterion.expectedResult -cne [string]$known[0].expectedResult -or ($criterion.decision -eq 'check' -and $criterion.id -notin @($criterion.checkIds)))) {
+            throw 'VERIFICATION_CHANGE_EXISTING_ACCEPTANCE_CHANGED: preserve the declared expected result and observe that named obligation; an unrelated check cannot close it.'
+        }
+        if ($prior.Count -eq 1 -and [string]$prior[0].expectedResult -cne [string]$criterion.expectedResult) { throw 'VERIFICATION_CHANGE_REQUIREMENT_CHANGED: do not silently replace an accepted criterion; resolve the requirement change explicitly first.' }
+        if ($criterion.decision -eq 'check' -and (@($criterion.checkIds).Count -eq 0 -or @($criterion.checkIds | Where-Object { $_ -notin @($checks.id) }).Count -gt 0)) {
+            throw 'VERIFICATION_CHANGE_CRITERION_UNCOVERED: a checked criterion must reference current checkIds.'
+        }
+        $acceptedCriterion = @(if ($null -ne $acceptedPrevious) { $acceptedPrevious.criteria | Where-Object { $_.id -ceq $criterion.id -and $_.passed -and $_.expectedResult -ceq $criterion.expectedResult } })
+        $inherited = $false
+        if ($null -eq $previous -and $criterion.decision -eq 'unaffected' -and $known.Count -eq 1) {
+            # Initial adoption only: validate the old receipt against unchanged
+            # declared inputs and the exact still-loaded target before loading.
+            $oldAssessment=Get-VerificationOneOffProofAssessment -Obligation $known[0] -State $state -Treeish $tree
+            if ($oldAssessment.passed) {
+                $receipt=Read-Utf8Text -Path $oldAssessment.path | ConvertFrom-Json
+                $inputs=@($oldAssessment.path,(Resolve-ProjectPath ([string]$receipt.evidencePath)))+@($receipt.artifacts|ForEach-Object{Resolve-ProjectPath ([string]$_.path)})
+                $inheritedEvidence+=@(New-VerificationArtifactReferences -Paths $inputs)
+                $inherited=$true
+            }
+        }
+        if ($sameTask -and $null -eq $acceptedPrevious -and $criterion.decision -eq 'unaffected' -and $known.Count -eq 1 -and
+            $target.identity -and [string]$previous.targetIdentity -ceq $target.identity -and [string]$previous.checkerIdentity -ceq (Get-VerificationChangeCheckerIdentity) -and
+            @($previousCriteria | Where-Object { $_.id -ceq $criterion.id -and $_.decision -ceq 'unaffected' }).Count -eq 1) {
+            $priorEvidence=@(Get-VerificationCatalogValue -Value $previous -Name inheritedEvidence -Default @())
+            $oldPath=Get-VerificationRepoRelativePath -Path (Get-VerificationOneOffProofPath -ObligationId $criterion.id)
+            if (@($priorEvidence | Where-Object path -CEQ $oldPath).Count -eq 1 -and
+                (Get-VerificationObligationInputIdentity -Obligation $known[0] -Treeish $previous.tree) -ceq (Get-VerificationObligationInputIdentity -Obligation $known[0] -Treeish $tree)) {
+                Assert-VerificationArtifactReferences -Artifacts $priorEvidence
+                $inheritedEvidence += $priorEvidence
+                $inherited=$true
+            }
+        }
+        if ($criterion.decision -eq 'unaffected' -and ([string]::IsNullOrWhiteSpace([string]$criterion.reason) -or (-not $inherited -and ($null -eq $acceptedPrevious -or -not $target.identity -or [string]$acceptedPrevious.targetIdentity -cne $target.identity -or $acceptedCriterion.Count -ne 1)))) {
+            throw 'VERIFICATION_CHANGE_REUSE_UNPROVED: unaffected needs an accepted prior criterion and an explicit impact rationale.'
+        }
+    }
+    foreach ($criterion in $criteria) { $criterion | Add-Member -NotePropertyName passed -NotePropertyValue ($criterion.decision -eq 'unaffected') -Force }
+    foreach ($decision in @(Get-VerificationCatalogValue -Value $plan -Name 'retainedDispositions' -Default @())) {
+        if (-not $decision.suiteId -or $decision.decision -notin @('run','unaffected') -or [string]::IsNullOrWhiteSpace([string]$decision.reason)) { throw 'VERIFICATION_CHANGE_SUITE_INVALID: every retained-suite disposition needs an existing suite, decision and reason.' }
+        if (([string]$decision.reason).TrimStart().StartsWith('DRAFT:', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "VERIFICATION_CHANGE_DRAFT_UNREVIEWED: suite '$($decision.suiteId)' still has the helper's DRAFT reason; decide run or unaffected and give your reason."
+        }
+    }
+    $acceptedArtifact = Get-VerificationCatalogValue -Value $previous -Name 'acceptedArtifact' -Default $null
+    $value = [pscustomobject][ordered]@{
+        schemaVersion=1; model='change'; taskId=[string]$plan.taskId; status='pending'; runToken=[guid]::NewGuid().ToString('N')
+        baseTree=$base; tree=$tree; targetIdentity=$target.identity
+        checkerIdentity=(Get-VerificationChangeCheckerIdentity); checks=$checks; paths=$coverage; criteria=$criteria
+        requirements=$requirements; planArtifact=@(New-VerificationArtifactReferences -Paths @($full))[0]
+        inheritedEvidence=$inheritedEvidence
+        retainedDispositions=@(Get-VerificationCatalogValue -Value $plan -Name 'retainedDispositions' -Default @()); priorAcceptedArtifact=$acceptedArtifact; acceptedArtifact=$acceptedArtifact; taskAccepted=$false
+    }
+    # Failed/pending observations cannot disappear merely by preparing another plan.
+    if ($null -ne $previous -and $previous.status -eq 'pending' -and @($previous.checks.id | Where-Object { $_ -notin @($checks.id) }).Count -gt 0) {
+        throw 'VERIFICATION_CHANGE_CHECK_PENDING: preserve pending checks and failures when updating the impact plan.'
+    }
+    if (-not $target.identity) { $value | Add-Member -NotePropertyName unboundTargetIdentity -NotePropertyValue $target.unbound }
+    if (@($system.paths).Count -gt 0) {
+        $value | Add-Member -NotePropertyName systemInput -NotePropertyValue ([pscustomobject][ordered]@{acceptedMasterCommit=$system.acceptedMasterCommit;importedPaths=@($system.importedPaths);verificationOwnerPaths=@($system.verificationOwnerPaths)})
+    }
+    $value | Add-Member -NotePropertyName scopeIdentity -NotePropertyValue (Get-VerificationChangeScopeIdentity -Change $value)
+    Write-Utf8TextAtomic -Path (Get-VerificationChangePath) -Value (($value | ConvertTo-Json -Depth 16) + "`n")
+    # Reported only; the persisted record and its scope identity stay unchanged.
+    $value | Add-Member -NotePropertyName lineEndingRepairedPaths -NotePropertyValue $lineEndingRepairs
+    return $value
+}
+
+function Get-VerificationChangeRebindAssessment {
+    # The only owner of automatic re-registration: allowed solely when the tree
+    # changed and the agent's unchanged plan still decides exactly the current
+    # delta. Everything else keeps VERIFICATION_CHANGE_STALE and its continuation.
+    param([Parameter(Mandatory=$true)][object]$Change, [Parameter(Mandatory=$true)][object]$State)
+    $tree = Get-VerificationSelectionEffectiveTree
+    $result = [pscustomobject]@{eligible=$false; tree=$tree; reason=''}
+    if ([string]$Change.tree -ceq $tree) { $result.reason='tree unchanged'; return $result }
+    if ([string]$Change.status -cne 'pending') { $result.reason="change status is '$([string]$Change.status)'"; return $result }
+    if ([string]$Change.checkerIdentity -cne (Get-VerificationChangeCheckerIdentity)) { $result.reason='verification assessor changed'; return $result }
+    try {
+        Assert-VerificationArtifactReferences -Artifacts @($Change.planArtifact)
+        if (@($Change.requirements).Count -gt 0) { Assert-VerificationArtifactReferences -Artifacts @($Change.requirements) }
+    } catch { $result.reason='plan or requirement file changed'; return $result }
+    $target = Get-VerificationChangeTarget -State $State
+    if (([string]$Change.targetIdentity -and [string]$Change.targetIdentity -cne $target.identity) -or
+        (-not [string]$Change.targetIdentity -and [string](Get-VerificationCatalogValue -Value $Change -Name unboundTargetIdentity -Default '') -cne $target.unbound)) {
+        $result.reason='verification target changed'; return $result
+    }
+    $base = Get-VerificationChangeBaseTree -State $State -Previous $Change
+    $changed = @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree $tree)
+    $planned = @($Change.paths | ForEach-Object { [string]$_.path })
+    $system = Get-VerificationChangeSystemInput -ChangedPaths $changed -CurrentTree $tree
+    $decided = @($changed | Where-Object { $_ -cin $planned -or $_ -cnotin @($system.paths) })
+    if (@($decided | Where-Object { $_ -cnotin $planned }).Count -gt 0 -or @($planned | Where-Object { $_ -cnotin $changed }).Count -gt 0) {
+        $result.reason='changed paths differ from the plan paths'; return $result
+    }
+    $result.eligible = $true
+    return $result
+}
+
+function Update-VerificationChangeForCurrentTree {
+    # check-dev-branch entry only: repeat the same registration as
+    # begin-verification-change -VerificationEvidencePath <unchanged plan>.
+    param([Parameter(Mandatory=$true)][object]$State, [string[]]$RepairedPaths = @())
+    $change = Read-VerificationChange
+    if ($null -eq $change) { return $null }
+    $assessment = Get-VerificationChangeRebindAssessment -Change $change -State $State
+    if (-not $assessment.eligible) { return $null }
+    $updated = Start-VerificationChange -EvidencePath ([string]$change.planArtifact.path)
+    $repaired = @(@($RepairedPaths) + @($updated.lineEndingRepairedPaths) | Where-Object { $_ } | Sort-VerificationIdentityStrings -Unique)
+    Write-Host "Verification change plan '$([string]$change.planArtifact.path)' rebound to tree $([string]$updated.tree); line endings restored: $(if ($repaired.Count -gt 0) { $repaired -join ', ' } else { '<none>' })."
+    return $updated
+}
+
+function Get-VerificationChangeUnsettledSuites {
+    param([string[]]$AcceptanceSuiteIds = @())
+    $proof = Read-VerificationSelectionProof
+    return @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @() |
+        Where-Object { -not (Test-VerificationSuiteReceiptSettled -Receipt $_) -and [string]$_.id -cin $AcceptanceSuiteIds } | ForEach-Object { [string]$_.id } | Sort-Object -Unique)
+}
+
+function Get-VerificationChangeRequiredSuites {
+    # The acceptance suites the current change must observe. The agent's plan
+    # names them (checks by suiteId, run dispositions); the catalog's always
+    # policy and a changed branch feature file add to them. Branch start,
+    # master input, shared Vanessa support, the verification owner and the
+    # pinned runtime are reported, not selected.
+    param([Parameter(Mandatory = $true)][object]$Change, [Parameter(Mandatory = $true)][object]$Catalog, [string]$CurrentTree = '')
+    $acceptance = @(Get-VerificationChangeAcceptanceSuiteIds -Catalog $Catalog)
+    $ids = [Collections.Generic.List[string]]::new()
+    foreach ($check in @($Change.checks)) {
+        $suiteId = [string](Get-VerificationCatalogValue -Value $check -Name 'suiteId' -Default '')
+        if ($suiteId) { $ids.Add($suiteId) }
+    }
+    foreach ($decision in @($Change.retainedDispositions | Where-Object decision -eq 'run')) { $ids.Add([string]$decision.suiteId) }
+    $always = @((Get-VerificationCatalogValue -Value $Catalog -Name suites -Default @()) | Where-Object { $_.purpose -eq 'acceptance' -and $_.always } | ForEach-Object { [string]$_.id })
+    foreach ($id in $always) { $ids.Add($id) }
+    $infrastructure = @()
+    if (-not $CurrentTree) { $CurrentTree = Get-VerificationSelectionEffectiveTree }
+    $changed = @(Get-VerificationSelectionChangedPaths -BaseTree ([string]$Change.baseTree) -CurrentTree $CurrentTree)
+    $imported = @((Get-VerificationAcceptedMasterInput -ChangedPaths $changed -CurrentTree $CurrentTree).importedPaths)
+    $catalogRepoPaths = @((Get-VerificationCatalogValue -Value $Catalog -Name catalogPaths -Default @()) | ForEach-Object { Get-VerificationRepoRelativePath -Path $_ })
+    $featureRoot = ((Get-VanessaFeaturesPath) -replace '\\', '/').Trim('/')
+    foreach ($path in $changed) {
+        if ($path -in @(Get-VerificationOwnerPaths)) { $infrastructure += "The verification owner changed at '$path'."; continue }
+        if ($path -cin $imported -or $path -in $catalogRepoPaths) { continue }
+        $assignment = @((Get-VerificationCatalogValue -Value $Catalog -Name assignments -Default @()) | Where-Object path -eq $path)
+        if ($assignment.Count -eq 1) {
+            if ($assignment[0].purpose -eq 'acceptance') { $ids.Add([string]$assignment[0].suiteId) }
+            continue
+        }
+        if ($featureRoot -and $path.StartsWith("$featureRoot/", [StringComparison]::OrdinalIgnoreCase)) { $infrastructure += "Shared Vanessa support changed at '$path'." }
+    }
+    if ((Get-VerificationRelevantDependencyLockFingerprint -Treeish ([string]$Change.baseTree)) -cne (Get-VerificationRelevantDependencyLockFingerprint -Treeish $CurrentTree)) {
+        $infrastructure += 'The pinned verification runtime changed.'
+    }
+    # Shared test support, the verification owner and the runtime are reported
+    # only: earlier accepted results stay valid, and suites the plan selects
+    # exercise the changed support anyway. The agent decides what else to run.
+    $unaffected = @($Change.retainedDispositions | Where-Object decision -eq 'unaffected' | ForEach-Object { [string]$_.suiteId })
+    foreach ($id in $unaffected) {
+        if ($id -cin $always) { throw 'VERIFICATION_CHANGE_ALWAYS_REQUIRED: preserve the suite always policy; run its existing coverage before completing this change.' }
+    }
+    # A recorded failed or partial suite stays required until it passes: an
+    # unsettled base suite or a failed change run cannot be planned away.
+    $unsettled = @(Get-VerificationChangeUnsettledSuites -AcceptanceSuiteIds $acceptance)
+    foreach ($id in $unsettled) {
+        if ($id -cin $unaffected) { throw "VERIFICATION_CHANGE_UNSETTLED_REQUIRED: suite '$id' has no passed result; run it in this change instead of declaring it unaffected." }
+        $ids.Add($id)
+    }
+    $required = @($ids | Where-Object { $_ -cin $acceptance -and $_ -cnotin $unaffected } | Sort-Object -Unique)
+    return [pscustomobject]@{ suiteIds = $required; unaffectedSuiteIds = $unaffected; infrastructureReasons = $infrastructure }
+}
+
+function Get-VerificationChangeSelectionPlan {
+    param([Parameter(Mandatory = $true)][object]$Plan)
+    $change = Read-VerificationChange
+    if ($null -eq $change) { return $Plan }
+    Assert-VerificationChangeCurrent -Change $change
+    if ($Plan.mode -eq 'classification-required') { return $Plan }
+    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+    $acceptance = @(Get-VerificationChangeAcceptanceSuiteIds -Catalog $catalog)
+    foreach ($decision in @($change.retainedDispositions)) {
+        if ([string]$decision.suiteId -cnotin $acceptance -or $decision.decision -notin @('run','unaffected') -or -not $decision.reason) {
+            throw "VERIFICATION_CHANGE_SUITE_INVALID: disposition '$([string]$decision.suiteId)' needs a retained acceptance suite, run|unaffected and impact rationale; update the plan with begin-verification-change -VerificationEvidencePath."
+        }
+    }
+    $required = Get-VerificationChangeRequiredSuites -Change $change -Catalog $catalog -CurrentTree ([string](Get-VerificationCatalogValue -Value $Plan -Name currentTree -Default ''))
+    if (@($Plan.acceptanceSuiteIds).Count -eq 0) {
+        # No retained acceptance suite: keep the selector's own reuse reason.
+        $Plan | Add-Member -NotePropertyName changeRequiredSuiteIds -NotePropertyValue @() -Force
+        return $Plan
+    }
+    # A required suite runs when the cumulative selector found its inputs
+    # changed since the last proof or when no passed receipt exists for it.
+    $proof = Read-VerificationSelectionProof
+    $passed = @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @() | Where-Object { Test-VerificationSuiteReceiptSettled -Receipt $_ } | ForEach-Object { [string]$_.id })
+    $run = @($required.suiteIds | Where-Object { $_ -cin @($Plan.selectedSuiteIds) -or $_ -cnotin $passed })
+    $Plan.selectedSuiteIds = $run
+    $Plan.selectedFeatureFiles = @($catalog.assignments | Where-Object { $_.suiteId -in $run } | Select-Object -ExpandProperty fullPath -Unique)
+    $Plan.mode = if ($run.Count -eq 0) { 'reuse' } elseif ($run.Count -lt @($Plan.acceptanceSuiteIds).Count) { 'incremental' } else { 'full' }
+    $Plan.reason = "Change plan selects suites: $(if ($required.suiteIds.Count) { $required.suiteIds -join ', ' } else { '<none>' }); running: $(if ($run.Count) { $run -join ', ' } else { '<none>' })." +
+        $(if ($required.infrastructureReasons.Count) { ' Reported, not selected: ' + ($required.infrastructureReasons -join ' ') } else { '' }) +
+        $(if ($required.unaffectedSuiteIds.Count) { " Excluded by the agent: $($required.unaffectedSuiteIds -join ', ')." } else { '' })
+    $Plan | Add-Member -NotePropertyName changeRequiredSuiteIds -NotePropertyValue @($required.suiteIds) -Force
+    return $Plan
+}
+
+function Get-VerificationChangeTaskAssessment {
+    param([Parameter(Mandatory=$true)][object]$Change)
+    $accepted=$null
+    if ($Change.status -eq 'accepted' -and $Change.acceptedArtifact) {
+        $accepted=Read-VerificationChangeAcceptedRecord -Change $Change -Current
+    }
+    $remaining = @(if ($null -ne $accepted) { $accepted.criteria | Where-Object { -not $_.passed } | ForEach-Object id }
+        else { $Change.criteria | Where-Object decision -ne 'unaffected' | ForEach-Object id })
+    return [pscustomobject]@{accepted=($null -ne $accepted -and $remaining.Count -eq 0);remaining=$remaining}
+}
+
+function Get-VerificationChangeAssessment {
+    param([Parameter(Mandatory = $true)][object]$State, [string]$Fingerprint)
+    try {
+        $change = Assert-VerificationChangeReady -State $State
+        $files = @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+        $selection=Get-VerificationChangeSelectionPlan -Plan (New-VerificationCumulativeSelectionPlan -ApplicationFeatureFiles $files -YAxUnitVerificationPlanned -RequireObservedReceipts)
+        if ($selection.mode -eq 'classification-required' -or @($selection.selectedSuiteIds).Count -gt 0) { throw "VERIFICATION_CHANGE_RETAINED_RUN_DUE: $($selection.reason) Resolve classification and run the normal unfiltered check; current plan preparation cannot substitute for its observed retained result." }
+        # Suites outside the change's required set belong to the accepted base.
+        $assessment = Get-VerificationCumulativeProofAssessment -State $State -Fingerprint $Fingerprint -OneOffOverride @($change.checks | Where-Object retention -eq 'one-off') -RequiredSuiteIds @($selection.changeRequiredSuiteIds)
+        $task=Get-VerificationChangeTaskAssessment -Change $change
+        $assessment | Add-Member -NotePropertyName taskAccepted -NotePropertyValue ([bool]$task.accepted) -Force
+        $assessment | Add-Member -NotePropertyName acceptanceRemaining -NotePropertyValue @($task.remaining) -Force
+        return $assessment
+    } catch {
+        return [pscustomobject]@{passed=$false;issues=@($_.Exception.Message);oneOffIssues=@();taskAccepted=$false;acceptanceRemaining=@()}
+    }
+}
+
+function Complete-VerificationChange {
+    if ((Get-VerificationModel) -cne 'change') { throw 'VERIFICATION_CHANGE_MODEL: completion belongs to the change model.' }
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'complete-verification-change'
+    $assessment = Get-VerificationChangeAssessment -State $state -Fingerprint (Get-VerificationFingerprint)
+    if (-not $assessment.passed) { throw "VERIFICATION_CHANGE_PENDING: $(@($assessment.issues + $assessment.oneOffIssues) -join '; '). Satisfy the missing current check, then repeat complete-verification-change; do not restart successful checks." }
+    $change = Read-VerificationChange
+    if ($change.status -eq 'accepted') {
+        $completed = Read-VerificationChangeAcceptedRecord -Change $change -Current
+        if ($null -ne $completed) { return [pscustomobject]@{model='change';changeStatus='accepted';taskId=$completed.taskId;taskAccepted=[bool]$completed.taskAccepted;remaining=@($completed.criteria | Where-Object { -not $_.passed } | ForEach-Object id)} }
+    }
+    foreach ($criterion in @($change.criteria)) {
+        $criterion | Add-Member -NotePropertyName passed -NotePropertyValue ($criterion.decision -in @('check','unaffected')) -Force
+    }
+    $archived = @()
+    $allInputs = @((Resolve-ProjectPath ([string]$change.planArtifact.path))) + @($change.requirements | ForEach-Object { Resolve-ProjectPath ([string]$_.path) }) +
+        @(Get-VerificationCatalogValue -Value $change -Name inheritedEvidence -Default @() | ForEach-Object { Resolve-ProjectPath ([string]$_.path) })
+    foreach ($check in @($change.checks)) {
+        if (Test-VerificationLoadedTargetObligation -Obligation $check) { continue }
+        if ($check.retention -eq 'one-off') {
+            $proofPath = Get-VerificationOneOffProofPath -ObligationId ([string]$check.id)
+            $proof = Read-Utf8Text -Path $proofPath | ConvertFrom-Json
+            $inputs = @($proofPath, (Resolve-ProjectPath ([string]$proof.evidencePath))) + @($proof.artifacts | ForEach-Object { Resolve-ProjectPath ([string]$_.path) })
+        } elseif ((Get-VerificationCatalogValue -Value $check -Name 'suiteId' -Default '')) {
+            $proofPath = Join-Path (Get-VerificationSelectionStateRoot) 'proof.json'
+            $proof = @(Read-VerificationSelectionProof | ForEach-Object suiteEvidence | Where-Object id -eq $check.suiteId)[0]
+            $inputs = @($proofPath) + @($proof.artifacts | ForEach-Object { Resolve-ProjectPath ([string]$_.path) })
+        } else {
+            $proofPath = Join-Path (Get-VerificationSelectionStateRoot) ('changes/' + [string]$change.runToken + '/yaxunit.json')
+            $proof = Get-StateValue -State (Get-StateValue -State $state -Name 'lastVerificationComponentEvidence' -Default $null) -Name yaxunit -Default $null
+            Write-Utf8TextAtomic -Path $proofPath -Value ($proof | ConvertTo-Json -Depth 10)
+            $inputs = @($proofPath) + @($proof.artifacts | ForEach-Object { Resolve-ProjectPath ([string]$_.path) })
+        }
+        $allInputs += $inputs
+    }
+    foreach ($inputPath in @($allInputs | Select-Object -Unique)) {
+            $hash=(Get-FileHash -LiteralPath $inputPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $copy=Join-Path (Get-VerificationSelectionStateRoot) ('changes/' + [string]$change.runToken + '/' + $hash + '.evidence')
+            [IO.Directory]::CreateDirectory((Split-Path -Parent $copy)) | Out-Null
+            [IO.File]::Copy($inputPath, $copy, $true)
+            if ((Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash) { throw 'VERIFICATION_CHANGE_ARCHIVE_CHANGED: preserve the original artifacts and repeat completion.' }
+            $archived += @(New-VerificationArtifactReferences -Paths @($copy))
+    }
+    $change | Add-Member -NotePropertyName observedArtifacts -NotePropertyValue $archived -Force
+    $change.status='accepted'
+    $change.taskAccepted=@($change.criteria | Where-Object { -not $_.passed }).Count -eq 0
+    $history = Join-Path (Get-VerificationSelectionStateRoot) ('changes/' + [string]$change.runToken + '.json')
+    Write-Utf8TextAtomic -Path $history -Value (($change | ConvertTo-Json -Depth 16) + "`n")
+    # write-tree objects from an uncommitted accepted increment are otherwise
+    # unreachable. One local ref per worktree pins the authoritative latest base.
+    $sourceRef='refs/itl/verification-change/' + (Get-VerificationSelectionSha256 -Text (Get-FullPathNormalized $script:ProjectRoot))
+    Invoke-Git @('update-ref','--create-reflog',$sourceRef,[string]$change.tree)
+    $change.acceptedArtifact=@(New-VerificationArtifactReferences -Paths @($history))[0]
+    Write-Utf8TextAtomic -Path (Get-VerificationChangePath) -Value (($change | ConvertTo-Json -Depth 16) + "`n")
+    return [pscustomobject]@{model='change';changeStatus='accepted';taskId=$change.taskId;taskAccepted=$change.taskAccepted;remaining=@($change.criteria | Where-Object { -not $_.passed } | ForEach-Object id)}
+}

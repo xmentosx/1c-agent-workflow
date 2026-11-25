@@ -1,0 +1,911 @@
+# Design
+
+## Обязательная привязка перед переходом, 2026-10-29
+
+Пользователь согласовал [checkpoint](evidence/required-project-selection-2026-10-29.md):
+init/update без привязки выбирают только существующую опубликованную запись;
+создание отдельно, без later/пустого успешного перехода. Это решение заменяет
+прежнее optional post-update предложение ниже, сохраняя local overrides,
+отложенные необязательные интеграции и existing recovery owners.
+
+## Общее подключение Cognee, 2026-10-28
+
+[Memory owner](../add-scoped-cognee-memory/evidence/common-ops-2026-10-28.md)
+подготовил общий Qwen и Docker healthcheck/Portainer без изменения business registry.
+Native API не становится ещё одной Code/Graph MCP-ролью. Прежний adapter получает
+общий provider; per-project запись endpoint/key не нужна. Local IDs/pending,
+привязки и explicit off не менялись. LAN firewall checkpoint отдельно согласован
+и выполнен: [native LAN proof](../add-scoped-cognee-memory/evidence/common-lan-2026-10-28.md).
+Общий адрес и healthy tick не считаются QP5 или переключением клиентов.
+
+## Подготовка совместного выпуска, 2026-10-28
+
+[Единая записка](../../../docs/ai-rules-r50-release-readiness.md) согласована
+с memory change: r50 уже закреплён, выпускной допуск pending отдельно.
+Порядок init/update сохраняет единый выбор проекта, наследование настроек,
+явное later и существующее применение/восстановление с защитой local overrides.
+Business registry и роли источников не меняются; рабочая миграция и публикация
+не запускаются. Остаток R1–R5 не переоткрывает принятый G3.
+
+## Регистрация QP: согласование бюджета контекста, 2026-10-28
+
+[Memory validation evidence](../add-scoped-cognee-memory/test-plan.md#блокер-регистрации-qp-клиентский-контекст-2026-10-28)
+фиксирует stale ceiling общей комбинации и owner-local учёт+452байт только
+для присутствующего rollout command contract. Чужой template/runtime сохранены,
+запас прежний; registry/provider/QP поведение не меняется. Source registration
+не означает запуск cutover, Gate6, рабочей миграции или публикации.
+
+## QP: стык реестра с выбранным рабочим Cognee, 2026-10-28
+
+Канонический [план QP0–QP6/checkpoint](../add-scoped-cognee-memory/design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28) хранится у memory owner;
+второй план, индекс, migration manager или provider registry не создаётся.
+Qwen3-Embedding-8B/4096 выбран пользователем, но deployment/admission/switch
+не выполнены. BGE — сохранённый управляемый return path, не автоматический fallback.
+
+Не меняются published R6 SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`,
+productId/projectId/sourceId, optional canonical memoryHomeProductId/availableIn,
+различия типового MCP-источника и проекта, три роли и СППР/Mantis links.
+Например ERP+PM5 продолжает использовать свой erppm5-lts; Qwen не повод менять
+его Code/Graph или добавлять Cognee endpoint к каждому бизнес-проекту.
+
+Изменения native instance/dataset/data IDs разрешаются только existing memory
+MCP owner поверх того же validated/applied snapshot. Его deployment mapping
+связывает stable logical scope со старым/новым native ID и current raw hash;
+оно не публикуется в бизнес-реестр. Local workspace/workplace/taskCycle и
+источники pending сохраняются; один label не доказывает переноса. Native
+principal UUID существующего рабочего source сохраняется через полный restore,
+чтобы не изменить workplace. Для подтверждённого пустого рабочего старта новый
+ordinary account не наследует fixture identity; старые local state/pending остаются
+прежними. Это предусмотренная ветвь QP0, не миграция установленных проектов.
+
+Нормальные клиенты допускаются к одному проверенному комплекту, с preserved
+explicit off и existing setup/reload. QP4 profile admission/backup/reindex и
+поздние corrections/deletions при возврате — memory/host обязанности; reader,
+resolver, Startup, catalog sync и registry-only путь их не выполняют.
+Default-on требует готовых association/qualified provider/mapping; при нехватке
+данных memory unavailable не превращается в ошибку независимой работы.
+
+Пользователь разрешил QP0–QP4; [фактическая подготовка](../add-scoped-cognee-memory/evidence/qp-preparation-2026-10-28.md)
+создаёт только isolated memory candidate, без смены обычных клиентов.
+R1–R5, r50 compatibility и Gate6 не считаются закрытыми этим планом. R6/G3/G5
+не переоткрываются, рабочая миграция и публикация отдельно не разрешены.
+
+### Actual QP0–QP4 и неизменность реестра
+
+[Единый отчёт memory owner](../add-scoped-cognee-memory/evidence/qp-preparation-2026-10-28.md)
+фиксирует17новых native scopes по8product/8project IDs и organization itland,
+пустой main target и отдельные synthetic qualification datasets. Текущий main
+registry fc2f9f92daa05be117c7fc26e2621d8acb97e7be имеет byte-identical business
+inputs закреплённого0274a8ff. Published homes/availableIn/source roles не менялись;
+optional homes и base component scopes не угадывались. Source-qualified Qwen
+принимается existing memory policy owner наряду с BGE; обычные binding/applied
+settings и2старых unsent pending сохранены. QP4 fixture AUTO/off/fresh process
+подтверждены, normal-client setup/reload и registry current-applied proof при
+реальном cutover остаются QP5. Никакого второго registry qualification прохода.
+
+## Qwen cache6: полные ответы Codex, 2026-10-28
+
+[Native квалификация](../add-scoped-cognee-memory/evidence/qwen-lru6-codex-answers-2026-10-28.md) дополняет прежний RU21/72: те же шесть
+полных заданий теперь выполнены6/6, включая получение факта RU20 и корректный
+отказ RU24. Сохранены корпус/gold, точные prompts, бинарник/модель Codex,
+controlled policy и native frontend. Общий Cognee, шесть областей, canonical
+homes и различия проекта/MCP-источника прежние; ACL не добавляется.
+Профиль cache6/rate off/pool256MiB действует только на тестовой копии.
+20s бюджет frontend и исходные лимиты сохранены. Первый cold recall вернул
+частичные карточки у границы бюджета; это не заявление о полном покрытии.
+Median полного ответа44.552s — отдельная метрика от задержки embedding/search.
+Рабочая модель/registry не переключены; ingestion, installed/Desktop acceptance
+и выпуск этим не квалифицируются. Новый gate или runtime-слой не вводится.
+
+## Qwen native profile6: итог согласованной настройки, 2026-10-28
+
+[Единый actual result](../add-scoped-cognee-memory/evidence/qwen-lru6-recheck-2026-10-28.md): cache6/pacing off на изолированном Cognee без
+изменения его кода; pool256MiB/5GiB/2CPU и прежний20s budget сохранены.
+RU21 пройден, все72исходных requests получили ответ, p956.647s/max13.698s.
+Согласованная пара native settings пригодна для измеренного чтения; отдельные
+вклады не изолированы. Это не production model switch или новая роль registry.
+Canonical homes, шесть областей/common connection, ai_rules_1c и принятые
+G3/R6/G5/MO границы прежние; G6/рабочая миграция/публикация не запускались.
+
+
+
+## Исторический итог профиля cache4/pacing1s
+
+Итог28октября: полный identical index допущен;144/144 attempts и12/12 answers
+завершены. BGE72/72 и6/6 выполненных задач; Qwen32/72 и5/6. Нужные знания
+Qwen ранжирует лучше на успешных ответах, но20s availability недостаточна.
+Рабочая модель прежняя; конечное исследование закрыто, новый release gate не вводится.
+
+## RU-EMB: согласование продолжения с memory owner, 2026-10-27
+
+[Repair result](../add-scoped-cognee-memory/evidence/ru-embedding-repair-2026-10-27.md)
+фиксирует подключение, resource profile и preparation completion. Исправленный
+fixture не является новой моделью реестра: provider settings/credentials и
+embedding dimensions не дублируются в каталоге. Published SHA, association,
+canonical homes и различия проекта/MCP-источника прежние. G3/R6/G5/MO не
+переоткрываются; новое исследование не становится release gate.
+
+## RU-EMB: технический допуск сравнения, 2026-10-27
+
+[Единый memory result](../add-scoped-cognee-memory/evidence/ru-embedding-preflight-2026-10-27.md)
+фиксирует остановку Qwen до сравнения качества: OOM / 403 в двух штатных путях.
+Опубликованный каталог, association, homes и различия проекта/MCP-источника
+не меняются; второе хранилище embedding-настроек в реестр не вводится.
+G3/R6/G5/MO не переоткрываются, нового release gate нет.
+
+## MO — разрешённая реализация, 2026-10-27
+
+Пользователь согласовал checkpoint и разрешил MO0–MO4. MO0–MO3 реализованы
+в source; прежние B01–B12 и установленный N5 на r50 завершены.
+Доставка — отдельная штатная регистрация этого коммита, итог в общем queue ledger. [Единый отчёт MO](../add-scoped-cognee-memory/evidence/mo-implementation-2026-10-27.md)
+отделяет source/fixture/native/стоимость/доставку. Controlled fork r50 —
+a2cbdcef52316db426acedc852f495564189f1ca, template pin pending.
+Прежние запреты реализации ниже относятся к уже завершённому планированию.
+G3/R6 и конечный G5 не переоткрываются. Gate6/G6, рабочая миграция, публикация,
+push/PR и native OpenCode по-прежнему не запускаются.
+
+## Актуальное уточнение: память по умолчанию, 2026-10-27
+
+Общий Cognee следует default-on policy memory owner после готовой явной
+association/common setup, без второго memory opt-in. Явный off/disabled/отказ
+сохраняется; без prerequisites память unavailable, независимый каталог работает.
+Unbound legacy/no answer не получают guessed association или миграцию.
+G5 завершён в прежней границе; default-on/оптимизации реализованы текущим MO,
+его source/native/registration proof приведены в отдельном отчёте выше.
+
+[Единый MO0–MO4/checkpoint/MO-AC1–6](../add-scoped-cognee-memory/design.md#план-mo-default-on-и-оптимизация-памяти-2026-10-27)
+принадлежит памяти: до двух original GET, exact/qualified lexical/semantic route,
+полный контекст вместо одного payload. Registry даёт applied snapshot/home/
+applicability, не получает токены, native IDs/auth/readiness, новую endpoint роль
+или coordinator. R6 SHA0274a8ffb5a03ba7b856736c2b4a637ccbe98b73 прежний.
+Memory opt-in требования ниже исторические; явная project association с preview
+сохраняется. MO0–MO4 разрешены текущим запросом; Gate6/G6,
+рабочая миграция и публикация по-прежнему не разрешены.
+
+### Приёмка стыка MO — статус у memory owner в едином отчёте
+
+- MO-R1: ready explicit association передаёт snapshot/context прежнему setup
+  owner, без второго memory prompt; explicit off сохранён.
+- MO-R2: unbound/later/no answer/нет connection не даёт memory success и не
+  блокирует каталог; нет probes в pure resolver/Startup.
+- MO-R3: home и различия project/MCP-source прежние, routing/parallel reads
+  не расширяют scopes; key/native IDs вне Git, нет второго реестра.
+- MO-R4: default-on/optimization не получают proof G5/R6 автоматически;
+  эти критерии проверяются внутри ограниченного MO4 memory owner,
+  без отдельной новой матрицы/прогона каталога сейчас.
+
+## G5 dependency: конечный результат, 2026-10-27
+
+[Memory owner](../add-scoped-cognee-memory/evidence/g5-codex-completion-2026-10-27.md)
+фиксирует завершение исходного G5 контура, включая согласованную замену
+продолжения Cursor на native Codex CLI, установленную PM5 source6828/r49 и
+cancel/resume/owned restore/fresh read. Это не автоматическая квалификация
+Codex GUI attachment и не новый paired score. Старые proof/ошибки сохранены.
+Преимущество перед файлами не доказано; rollout требует прежнего отдельного
+решения о пользе/trade-off. Registry R6 SHA/данные/home/mapping не меняются,
+второй реестр/координатор не добавляется. Gate6/G6, рабочая миграция и публикация
+не выполняются. Ранние текущие G5 blocker summaries ниже исторические.
+
+## G5 B03/B09–B10: ограниченное продолжение, 2026-10-26
+
+[Единый memory report](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) фиксирует подготовленный repair оснастки B03 и
+фактический повтор шести сохранённых backend-запросов B09/B10:82 HTTP200,
+без Ladybug locks/recall errors. Native cache4→6, прежние image/data/account,
+параллелизм2 и лимиты2CPU/5GiB; старый контейнер и stopped backup сохранены.
+Это backend subset; полные ответы агента B03/B09/B10 не приняты. Пользователь
+сейчас работает на ПК, поэтому UI-ввод остановлен до свободного окна; состояние
+и восстановление тестовых настроек сохранены в continuation. G5/N5 остаток открыт,
+исходные оценки не заменены. Новых случаев, Gate6, рабочей миграции и публикации нет.
+
+## G5 N7 follow-up, 2026-10-26
+
+[Единый memory report](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) фиксирует зарегистрированный watchdog/API-key
+unit7b8 и bounded fair-selection repair с owner24/0. Пользователь исправил только
+B11 context на customer при прежнем эталоне; обе arms PASS. Follow-up9/12 PASS,
+B09/B10 native Ladybug lock failures, B03 unverified harness restart. G5 открыт;
+исходный baseline, N5 остаток и разделение source/native/registration сохранены.
+Registry SHA/home/business routing прежние. Gate6, рабочая миграция и публикация
+не выполняются; новых обязательных случаев нет.
+
+## G5: актуальный прогресс продолжения, 2026-10-26
+
+[Единый follow-up memory owner](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) заменяет прежний текущий
+статус остановки, сохраняя исходный sealed failure report. Source repairs
+установлены штатным update на обоих isolated PM5 roots. Reset/resume/history,
+шесть областей, canonical homes/applicability, actual Kilo/Cursor tools и
+stopped backup/restore с repair до admission подтверждены в описанных границах.
+N7: все 12 frozen pairs выполнены; на 11 однозначных задачах files11/11,
+Cognee5/11; B11 противоречив и не принят. D8 byte/token repair проверен source
+suite, но повтор B01 всё ещё пропускает целевой факт. Native N5 policy proof
+получен в описанной границе; broader writer matrix не объявляется закрытой.
+**G5 не принят**: польза retrieval не доказана; source/native/registration различаются.
+Shared native API key того же ordinary account проверен на штатно обновлённой
+PM5-копии: fresh stdio/exact read, одна запись/fresh read/точный retire.
+Часовой Bearer не требуется, Cognee patch и auth-refresh service не добавлены.
+Один common ordinary connection, без employee ACL; R6 SHA и бизнес-каталог
+не менялись, три homes только в qualification snapshot. OpenCode пропущен.
+Gate6, рабочая миграция и публикация workflow/fork/homes не выполняются.
+Более ранние «не запускать G5» и прежние blocker summaries ниже исторические.
+
+## Shared Cognee API-key compatibility, 2026-10-26
+
+Memory owner использует native API key общего ordinary account, без часового
+login JWT в основном подключении. Credential остаётся только в существующем
+user-local файле; Git-реестр хранит business/product/home/MCP routing, а не ключи.
+Замена credentials не меняет project/product IDs, canonical home, published R6
+SHA или resolver; association и обычный workflow не выполняют Cognee login.
+Bearer compatibility, ротация без restart и отсутствие auth replay принадлежат
+[memory owner](../add-scoped-cognee-memory/design.md), нового registry auth owner нет.
+
+## Память: общее подключение, 2026-10-26
+
+Первый выпуск памяти использует один технический Cognee connection/account,
+без членства, пользовательских ACL, outsider или grants из каталога. Шесть
+областей/канонический home определяют применимость и место записи. Business
+registry/resolver, три MCP-роли и Git write permissions остаются прежними.
+Native IDs/credential/currentness принадлежат memory owner; R6 SHA не меняется.
+[Сверка совместимости с существующим G4](../add-scoped-cognee-memory/g4-common-connection-alignment.md),
+[новый G5](../add-scoped-cognee-memory/g5-qualification-plan.md) — единые основания.
+Пока изменены документы; G5, Gate6, рабочая миграция и публикация запрещены.
+
+## Dependency G5: подготовленный план, 2026-10-26
+
+[Единый план у memory owner](../add-scoped-cognee-memory/g5-qualification-plan.md)
+сохраняет одного registry resolver/контекст и три MCP-роли. Предложены, но не
+назначены homes: `pm5-plan-model`/`pm5-project-requests` → `pm5-corp`,
+`pm5-payroll-allocation` → `erppm5`; они существуют и входят в `availableIn`.
+Owner confirmation предшествует qualification snapshot, затем перед выпуском
+памяти отдельно фиксируется published SHA подтверждённых правил и применимая
+proof. R6 опубликован без homes, остаётся принят; candidate native proof не
+выдаётся за публикацию. Registry не хранит Cognee IDs, home не заменяет
+MCP source (ERP+PM5 использует `erppm5-lts`). Подготовка/запуск G5 не разрешены,
+Gate 6, рабочая миграция и публикация workflow исключены.
+
+## G4 consumer: исходная реализация, 2026-10-26
+
+По отдельному одобрению реализован consumer памяти G4.
+[Единая source-матрица](../add-scoped-cognee-memory/evidence/g4-source-implementation-2026-10-26.md)
+фиксирует scope, fixtures, fork candidate и регистрацию отдельно от native G5.
+Потреблён один existing applied context/pinned snapshot/resolver; в каталоге
+остаются три MCP-роли. Mapping памяти — provider-local, не в реестре;
+новые homes/проекты/связи/данные не публиковались. R6 SHA
+`0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` и закрытый G3 прежние.
+G5, Gate6, рабочая миграция и публикация workflow не запускались и не разрешены.
+Исторические запреты G4 ниже относятся к прежним поручениям.
+
+
+## План потребителя памяти G4, 2026-10-25
+
+[План G4 у memory owner](../add-scoped-cognee-memory/g4-implementation-plan.md)
+потребляет один effective applied context прежнего registry owner: project/product,
+source origin/limitations, knowledge applicability и hashes. R6 закрыт на
+`0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`; нового fetch/updater, четвёртой MCP-роли,
+provider IDs/grants или auto-home в каталоге нет. Отложенные optional homes
+не назначаются этим планом; runtime-код общего маршрута не включает его без
+подтверждённой карты. Новых работ G3/Gate6/миграции/публикации план не запускает.
+
+## R6 закрыт: данные опубликованы, 2026-10-25
+
+Пользователь согласовал восьмипроектный кандидат и явно разрешил публикацию данных.
+[Единая публикационная квитанция](evidence/r6-publication-2026-10-25.md): main существующего Git-реестра,
+SHA **`0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`**; registry/catalog/relations прочитаны из одного commit,
+schema/reference и 8/8 resolved contexts passed. Актуальный publisher registry
+сохранён без ручных правок. Registry AC-36–38 и R6 выполнены; в memory AC-44
+закрыта зависимость наполнения. Optional homes отложены осознанно для registry-only;
+shared-product native приёмка, G4/G5 и R1–R5 от этого не становятся PASS.
+Runtime, MCP, ai_rules_1c и ownership не меняются. Разрешение относилось только
+к данным: G4/Gate6/рабочая миграция/публикация workflow не выполнялись.
+
+## R6: владелец timeout cleanup
+
+[Исправление подтверждённой причины Git deadline](evidence/r6-git-deadline-repair-2026-10-25.md) сохраняет existing cleanup owner и его authority. Неиспользуемые CIM-запросы к уже завершившимся Git parents исключены; live identity, pinned handle и ошибки lookup проверены. Original ProductProjectGitSave.Tests.ps1 и оба deadline assertions неизменны. Final focused5/0/0; source registration — отдельно через RegisterChange/Status. Memory не получает нового cleanup/updater, budget или installed state. Данные реестра/fae719c и принятая граница G3 не менялись; публикация и G4 не разрешены.
+
+## Актуальная граница G3 — согласована 2026-10-25
+
+**G3 закрыт в принятом PM5 / Windows 11 / Kilo и Cursor контуре; Codex — только core/API.** [Единая итоговая матрица и остаток до выпуска](g3-acceptance.md) определяет текущий статус, приоритетный перед историческими записями ниже. Непроверенные клетки не стали PASS; заявленная поддержка сохранена. Полная выпускная квалификация отделена от закрытого G3. G4, Gate 6, рабочая миграция и публикация workflow не разрешены; данные реестра опубликованы по отдельному разрешению R6.
+
+[G3-LD1 / integrated native PASS, 2026-10-25](evidence/g3-legacy-executor-integrated-2026-10-25.md): после сохранения обеих сторон конфликта повторён исходный single PM5 downgrade source7ba9→oldfa0, exit0/381883мс; main+sibling clean, old helper/pins0.4.15/schema1/locked, pending0 и CF/DB/history unchanged. Два downgrade blocker закрыты. Новых cases нет; регистрация отдельно подтверждается source-delivery Status. Full G3/AC18/39 и memory AC43/G5 открыты; OpenCode SKIPPED, Gate6/G4/рабочая миграция/публикация вне допуска.
+
+[Промежуточный mode repair до migration handoff, 2026-10-24](evidence/g3-managed-downgrade-mode-partial-2026-10-24.md): legacy wire/environment/argument исправлены, 97/0/0/0 owner tests. На той же PM5-копии direct downgrade прошёл прежнюю mode error, но exit1/87125мс на **G3-MANAGED-DOWNGRADE-AI-RULES-NOT-NEWER**; snapshot 400b27db91cc4fdb80a81e70a998ad29 сохранён. Named downgrade/G3/AC-39/memory AC-43/G5 ещё не приняты. Текущие процессы завершены; новые проверки/регистрация/lifecycle отложены на согласованное пользователем окно холодного A/B. OpenCode SKIPPED; Gate6/G4/рабочая миграция/публикация не выполнялись.
+
+[Исходный lifecycle PM5 до mode repair, 2026-10-24](evidence/g3-pm5-lifecycle-2026-10-24.md): новая отдельная capsule-копия прошла first unattended old-caller update (322555мс), поздний list/preview/select, отказ несовместимому пакету и restore-compatible. Actual downgrade FAIL: **G3-MANAGED-DOWNGRADE-DEPENDENCY-MODE**, старый post-copy не принимает mode=workflow. Snapshot/copy сохранены, recovery status работает только как диагностика. Fork остановлен до Gate6/создания worktree; full G3/AC-39 не принят. Исходный current PM5 сохранён. OpenCode SKIPPED; Gate6/G4/рабочая миграция/публикация не выполнялись.
+
+[Функциональные изменения каталога на current PM5, 2026-10-24](evidence/g3-project-metadata-functional-2026-10-24.md): 10/10 public commands в итоговом наборе; rename, typical/custom, СППР/Mantis links и functionality/home add/change/remove применены без client writes. Exact teardown 46/46, DB/старые roots/capsule сохранены. Новых workflow defects не найдено; полная G3/AC-39 и memory consumer/G5 не приняты. Warm excess принят пользователем; OpenCode SKIPPED; Gate6/G4/рабочая миграция/публикация не выполнялись.
+
+[G3 publisher-only/offline repair и повтор стоимости, 2026-10-24](evidence/g3-publisher-cost-repair-2026-10-24.md): две причины исправлены в existing context/journal owner, 101/0/0 tests и exact installed PM5 repeat; 20 пар/режим, paired delta median **1.170 / 4.002 / 1.494 с**. До/после не является чистой оценкой ускорения на общем занятом ПК. Дополнительные 20 full-window no-op дали **1049.731/1240.7921мс**: median goal1000мс превышена на 49.731мс, p95 goal2000мс выполнена; По решению пользователя от 2026-10-24 G3-PM5-WARM-STARTUP-MEDIAN закрыт как ACCEPTED DEVIATION: добавочные 49.731мс допустимы и не блокируют завершение G3; диагностика/оптимизация и повтор ради этого порога не требуются. Фактический результат относительно цели остаётся неизменным. Полная G3/AC-39 не принята. OpenCode SKIPPED; Gate6/G4/рабочая миграция/публикация не выполнялись.
+
+[Парная стоимость динамических режимов PM5, 2026-10-24](evidence/g3-paired-dynamic-cost-2026-10-24.md): 20 AB/BA пар на режим, 120 observer-off samples; paired delta median publisher-only / endpoint / offline **6.206 / 10.544 / 3.801 с**.80 online samples с дополнительной сменой origin URI сохранены отдельно и заменены полным fixed-URI повтором; offline 20 пар retained. Endpoint G3 обновляет два клиента против одного legacy; offline legacy сохраняет подключения без full sync. Измерительный пробел B5 этого subset закрыт, существенная задержка и полная cost/G3/AC-39 приёмка остаются открытыми. OpenCode SKIPPED; Gate6/G4/рабочая миграция/публикация не выполнялись.
+
+[Остаток G3 на текущем PM5, 2026-10-24](evidence/g3-remaining-qualification-2026-10-24.md): Codex core/API прошёл 11 реальных вызовов Code/Graph, включая полезные чтения, отказ для чужого проекта, reload и новую сессию без запуска модели. Три режима Startup прошли функционально; диагностические окна 5,426 / 6,896 / 3,532 с не являются парным замером добавочной стоимости. Матрица 39 AC и 12 клиентов обновлена: Kilo/Cursor сохраняют прежний pass, OpenCode — SKIPPED. Полная registry G3/AC-39 остаётся непринятой; точный остаток B1–B5 указан в отчёте. Сохранность стенда и истории подтверждена. Gate 6, G4, рабочая миграция и публикация не выполнялись.
+
+[Нативные клиенты на текущем PM5, 2026-10-24](evidence/g3-pm5-native-clients-2026-10-24.md): Kilo 7.8.15 / VS Code 1.142.0 и Cursor 3.27.12 выполнили по четыре реальных чтения Code/Graph до и после Reload Window. OpenCode 1.19.3 сохранил PM5-контекст и подключения после renderer reload, но квота модели заблокировала вызовы инструментов: **G3-OPENCODE-PROVIDER-QUOTA** [пропущен по решению пользователя](evidence/g3-opencode-skip-2026-10-24.md) в текущем прогоне; это не PASS и не устранение квоты. Смена версии первого Cursor и автоматические записи клиентов учтены отдельно; окончательная сохранность 46 путей, базы и истории подтверждена. Полная registry G3/AC-39 остаётся непринятой. Gate 6, G4, рабочая миграция и публикация не выполнялись.
+
+[Стоимость G3 и baseline, 2026-10-24](evidence/g3-cost-baseline-2026-10-24.md): сопоставимый current-package legacy unbound baseline подготовлен; 20 AB/BA блоков, 100 retained samples + 4 warmups. Полный Startup median/p95 **0.995591 / 1.168819 с**, цель 1/2 с выполнена; paired whole CLI без профилировщика **0.548018 / 1.428991 с**. Запас median всего 4.408850 мс, устойчивый SLA <1 с не доказан. Прежнее превышение6.314 мс не округлено в pass, подробные phase probes отделены от benchmark. G3-B5 закрыт для сопоставимого warm no-op PM5 subset; полная G3/AC-39 остаётся BLOCKED по остальным клеткам. Ниже сохранены исторические результаты; новую стоимость определяет этот отчёт. Gate6/G4/рабочая миграция/публикация не выполнялись.
+
+Квалификация G3.7 на 2026-10-20 сведена в [одну матрицу доказательств и остатка](evidence/g3-final-qualification-2026-10-20.md). Full AC-39 открыт. Последующий owner-local разбор Startup и cold receipt writes — [отдельный результат](evidence/g3-startup-repair-2026-10-20.md); исходные failures сохранены. Архитектура/checkpoint, engineering цели и критерии не ослабляются; G4, рабочая миграция и публикация не разрешены. Полный selected binding/client/platform proof и выпускное наполнение остаются самостоятельными условиями.
+
+Неизменённый Startup сначала обновляет checkout в прежнем deadline и сравнивает его SHA с проверенной root-bound applied квитанцией. Повторное использование её selected projection допустимо только при configured state, совпадающей привязке/семействе, отсутствии явного решения и совпадении прежних no-op inputs: локальные настройки/selection, client proof paths, dependency lock, исходники resolver/reader и схемы каталога. Нового постоянного кэша нет. При изменении или невозможности прочитать вход выполняется прежний полный разбор; offline сохраняет прежний WARN/continuation. В рамках существующего operation state SHA фиксируется даже при раннем reuse; последующее полное чтение остаётся на нём и не повторяет refresh. Полный reader получает три blob ID одной Git-командой до чтения JSON; каждый blob по-прежнему читается по неизменяемому SHA и проходит прежнюю валидацию.
+
+Обычный sync одного клиента использует тот же preview/apply owner и сравнивает фактические изменения, resolved context, overrides и существующие proofs каждого запрошенного client/owner. Различие только полного списка клиентов в settingsIntentHash не создаёт новую project-wide квитанцию. Неизменённые applied/operation receipts сохраняют bytes и время записи; новый клиент, ручная правка, изменение контекста или недостающий proof сохраняют прежний полный путь. Обновление fingerprint после действительного изменения входов отличается от повторного no-op и само по себе не подтверждает native MCP readiness.
+
+Historical `lastWritten` не является текущим владением: отсутствующий и уже снятый с ownership ключ можно повторно добавить обычным writer; physically present keys и still-owned manual deletion сохраняют прежнюю защиту. Повторное потребление закреплённой applied revision без нового решения сохраняет исходный defer, а explicit registry/keep-local/defer использует прежний resolver. [Owner repair и original PM5 proof](evidence/g3-owned-mcp-defer-repair-2026-10-22.md) не вводят нового состояния, migration или recovery owner; full G3/AC-39 остаётся открытым.
+
+## Context
+
+Мотивация и границы — в [proposal.md](proposal.md). Проверенные endpoints, дефекты фильтрации, отличие checkout от deployed source и ссылки на владельцев — в [inventory.md](inventory.md). Сейчас registry schema v2 выбирает endpoint по host/configuration; бизнес-проект, состав продукта и несколько проектов Mantis этим не выражаются. Клиентский writer уже владеет preflight, managed sections и receipts, но не даёт атомарность всех файлов. В существующем [dispatcher](../../../.agents/skills/1c-workflow/scripts/agent-1c.ps1) конфигурация читается до и после `Enter-Agent1cLifecycleOperation`, затем выполняется основная dispatch-фаза; автоматическую синхронизацию нужно включать в этот owner path, а не дублировать в каждой команде.
+
+## Goals / Non-Goals
+
+**Goals:** один воспроизводимый выбранный контекст проекта; независимое разрешение ролей; проверяемые источники; локальная работа с явно отложенными интеграциями; автоматическое обновление наследуемого контекста при запуске команд с сохранением overrides, разрешением конфликтов и восстановлением. Привязка legacy проекта к каталогу остаётся opt-in; для уже привязанного проекта отдельное включение автообновления не требуется.
+
+**Non-Goals:** новые координаторы, фоновые службы, proxy MCP и базы; управление поколениями индекса/обновление исходной 1С; реализация памяти или фоновой классификации знаний; новая ACL, учётные записи разработчика и team-memory уровень. Данные о применимости — контракт для будущих потребителей, а не запуск нового knowledge pipeline.
+
+## Decisions
+
+### 1. Каталог в том же Git, endpoint publication отдельно
+
+Будущее дерево общего реестра:
+
+```text
+registry.json                      # существующий publisher, schema v2
+catalog/
+  catalog.json                     # products, projects, sources, instances
+  product-relations.json           # derivedFrom, contains, requires, knowledgeAreas
+  schemas/                        # versioned validation contracts
+```
+
+Схемы и их исходные шаблоны принадлежат пакету ITL; рабочие записи продуктов/проектов принадлежат общему каталогу. Writer публикации endpoints сохраняет каталог, не генерирует его заново. Читатель получает один commit SHA и читает из него все связанные файлы. Неизвестная схема/битые ссылки блокируют только применение такого контекста, не уже работающий локальный проект. Полная запись сохраняется с unknown optional fields поддерживаемой схемы, без потери чужих данных.
+
+Альтернативы: поля внутри `registry.json` будут стираться publisher; отдельная БД/сервис добавляет runtime и сопровождение без нужного преимущества; второй endpoint catalog дублирует существующего владельца. Поэтому каталог ссылается на опубликованные descriptors, а не становится ещё одним publisher.
+
+### 2. Продукт, проект, источник и установка системы
+
+| Термин | Содержание и граница |
+|---|---|
+| Продукт | PM5 КОРП, PM5 ПРОФ, УНФ+PM5, ERP+PM5, соответствующие PM4 продукты, самостоятельное расширение; стабильный ID и общие настройки |
+| Проект | Типовая разработка или конкретная доработка заказчика; один базовый продукт, собственный ID, overrides и внешние связи |
+| Источник данных | Конкретный набор кода/графа/документов и способ обратиться к нему; термин «корпус» в пользовательском выборе не нужен |
+| Профиль | Необязательное уточнение продукта для фиксированной версии/LTS/варианта; не обязательный объект ежедневной работы |
+| Установка СППР/Mantis | Конкретный сервер/база с URL и стабильным `instanceId`; внутри неё выбираются native project IDs, это не отдельный проект продукта |
+
+IDs не меняются при переименовании, переносе ПК или endpoint. Типовой продукт и типовой проект могут быть в отношении 1:1, но их IDs различаются. У внешнего проекта свой code/graph при наличии индексов; общая инфраструктура/правила наследуются от ITL. Каталог не создаёт и не индексирует его код автоматически.
+
+Отдельный mandatory «профиль каждой версии» отвергнут: большинство работает с последней конфигурацией из хранилища, а будущий Git source delivery принадлежит своему lifecycle. Факт ревизии доказательства сохраняется и без профиля. Профиль ERP+PM5 LTS ссылается на наблюдаемый `erppm5-lts`; отсутствие источника обычного ERP+PM5 не маскируется LTS.
+
+### 3. Настраиваемая применимость знаний
+
+Синтаксис — versioned JSON, без исполняемых скриптов и DSL с произвольным кодом. Пример ниже показывает форму настроек и условные области; это не утверждение полного функционального состава реальных продуктов и не готовые данные для публикации:
+
+```json
+{
+  "schemaVersion": 1,
+  "relations": [
+    {"type": "derivedFrom", "productId": "pm5-prof", "fromProductId": "pm5-corp"},
+    {"type": "contains", "productId": "erp-pm5", "componentProductId": "pm5-corp"},
+    {"type": "contains", "productId": "erp-pm5", "componentProductId": "erp"},
+    {"type": "requires", "productId": "pm5-unf-extension", "requiredProductId": "unf"}
+  ],
+  "knowledgeAreas": {
+    "project-planning": {
+      "title": "Планирование проектов",
+      "availableIn": ["pm5-corp", "pm5-prof", "erp-pm5"],
+      "memoryHomeProductId": "pm5-corp"
+    },
+    "portfolio-management": {
+      "title": "Управление портфелем",
+      "availableIn": ["pm5-corp", "erp-pm5"]
+    },
+    "erp-cost-integration": {
+      "title": "Интеграция затрат с ERP",
+      "availableIn": ["erp-pm5"],
+      "requiresProducts": ["erp"],
+      "memoryHomeProductId": "erp-pm5"
+    }
+  }
+}
+```
+
+Все product IDs примера должны присутствовать в каталоге, включая ERP/УНФ-компоненты. `derivedFrom` документирует происхождение, а `availableIn` разрешает область; `contains` даёт состав для проверки зависимостей, не переносит любые знания родителя. Зависимость от конкретного варианта PM проверяется по явному правилу совместимости, не по одному префиксу имени. Для неизвестной версии/условия результат — «нужна проверка». Циклы происхождения/состава запрещены; невозможные зависимости диагностируются с цепочкой.
+
+Контракт знания отделяет `origin` (проект, источник, ревизия) от `applicability` (области, продукты/зависимости, условия, версии, состояние проверки) и `evidence` (объект/страница/код, ревизия, bounded результат проверки). Пустые зависимости — только отсутствие записанных зависимостей. Применимость требует положительного основания; внешний проект не обобщается автоматически.
+
+На практике агент для нового знания о планировании проверяет использованные объекты/функции и известное правило области, прикладывает evidence и использует подтверждённую карту. Если обнаружена зависимость от ERP, он ограничивает применимость составным продуктом. Если появляется новая общая область или неоднозначность доработки заказчика, он готовит предложение человеку; до подтверждения результат остаётся кандидатом. Этот change реализует модель и чистое разрешение правил, а не агента-классификатора или хранилище знаний. Ручная разметка каждого знания и автоматический перенос всего КОРП в ПРОФ отвергнуты.
+
+#### Каноническое место продуктового знания
+
+Для потребителя `add-scoped-cognee-memory` область поддерживает необязательное `knowledgeAreas.<area>.memoryHomeProductId`. Значение — один непустой стабильный product ID из `catalog.json` того же Git SHA, входящий в `availableIn` области. Схема не принимает массив homes/null/URL/native dataset ID; validator показывает конкретное поле при неизвестном продукте или home вне области. Отсутствие поля валидно: оно оставлено в примере `portfolio-management` специально, а не означает автоматически home КОРП. Переименование продукта не меняет ссылку.
+
+Home отвечает за одно место общего знания, `origin` — за место получения, `availableIn` и зависимости — за применимость. В примере независимый от ERP факт планирования из ERP+PM5 получает home PM5 КОРП и origin ERP+PM5; допустимый PM5 ПРОФ может его использовать. ERP-интеграция имеет home ERP+PM5 и не становится обычным PM-знанием. Реальные PM4/PM5, расширения и клиентские доработки не объединяются по имени/lineage. Назначение или смена home подтверждается человеком как общее правило; каждую запись в уже подтверждённой области заново согласовывать не нужно.
+
+Планируемый единый pure resolver отдаёт bounded selected knowledge context: текущий product ID, подтверждённые области/ограничения, их canonical home IDs, основания трёх состояний применимости и pinned revision/hash. Выборка кандидатов на чтение включает текущий product и homes только разрешённых областей; это не обход всех ancestors/descendants. Применимость конкретной заметки и grants дополнительно проверяет потребитель. Если общий факт не имеет home либо его области дают разные homes без однозначной классификации, назначение — «нужна проверка», исходный узкий project/task candidate остаётся у потребителя. Неизвестное назначение не означает разрешение писать в произвольный product dataset. В G2 business resolver реализован owner-local leaf того же endpoint registry; startup и installed apply остаются G3.
+
+Provider-local mapping переводит business product ID в подтверждённый native dataset ID у потребителя. Реестр не создаёт/не наполняет datasets, не выдаёт grants и не хранит native IDs/receipts/секреты памяти. Cognee остаётся общим MCP с отдельным qualified opt-in; home не добавляет четвёртую проектную роль, собственный URL или цепочку local/project/profile/product для endpoint памяти. При отсутствии Cognee каталог/resolver и их приёмка продолжают работать; доказательство native записи/чтения принадлежит memory change.
+
+Home и связанные выбранные правила входят в hash контекста применимости и обновляются тем же startup owner на одном снимке; отдельного fetch/updater, per-call LLM или always-on загрузки карты нет. Изменение только home не требует переписывания неизменных MCP client settings или native memory probe. После изменения/удаления home новый контекст показывает новую revision; реестр не переносит/копирует/удаляет старые заметки и не объявляет их миграцию или полноту поиска. Потребитель сохраняет origin/evidence/историческую привязку и сообщает о непроверенной полноте при смене места хранения; расширять context scope или автоматически читать все прежние homes нельзя. Любая отдельная миграция остаётся у владельца памяти, вне этого change.
+
+Альтернатива — хранить общий факт в исходном составном продукте и копировать по связанным продуктам — требует репликации и оставляет PM КОРП без надёжного пути поиска. Один подтверждённый home и явный read set дают этот путь без нового каталога, storage service или дублирования resolver. Контракт G2 реализован и прошёл pure qualification; подтверждённый минимальный seed не задаёт knowledge areas. Native/installed memory qualification остаётся у memory change.
+
+
+### Различия проекта и подключённого MCP-источника
+
+Действующая модель уточнена пользователем 2026-10-21. Технический registry уже публикует название/версию конфигурации и сведения об индексации через существующий index/publisher path. Для реестра и памяти этого достаточно вместе с явной бизнес-привязкой и обычной проверкой подключения. Источник не обязан совпадать с продуктом проекта; точный снимок каждого MCP-ответа не является условием готовности.
+
+| Владелец данных | Явно хранимые сведения |
+|---|---|
+| registry.json / существующий publisher | Host/server/config/endpoint, имеющиеся native selectors, configurationName/configurationVersion, status/indexedAt и уже публикуемые fingerprints. Это сведения MCP-источника, не автоматически версия локального проекта |
+| catalog.json / products и product-relations.json | Stable product IDs, происхождение/состав и подтверждённая карта knowledgeAreas/availableIn/зависимостей, включая различия КОРП/ПРОФ; один canonical home по прежнему optional правилу |
+| catalog.json / sources и projects | У источника — явное business origin productId и optional projectId; у binding Code/Graph — назначение (собственный проект / базовый продукт / справочный продукт) и существенные ограничения/ссылки. У проекта — base productId и краткие собственные доработки/условия с первичными ссылками |
+
+Это дополнение существующих записей и selected projection, без нового реестра, service или DSL. Реализованные optional поля: `sources[].origin={productId,projectId?}`, `projects[].customizations={summary,references?}`, `roles.code/graph.usage=project|base-product|reference-product` и `limitations={summary,references?}` у существующих product/profile/project/private role layers. `inherit` может уточнить назначение/ограничения источника нижнего слоя; родство продуктов само по себе MCP не выбирает. Summary ограничено 512 символами, references — 8 ссылками по 512 символов. Schema/resolver проверяет business references, включая принадлежность origin project продукту; явное `usage=project` с чужим origin project помечается `needs-review`. Факты вносятся/подтверждаются человеком через прежний authoring path; серверы их автоматически не классифицируют. Режим `own` означает явно выбранное подключение, не владение исходниками проекта. Неописанное происхождение/назначение показывается как `incomplete`, legacy установка не мигрируется и не получает угаданных значений.
+
+Доработанный проект PM5 КОРП может явно использовать типовой PM5 КОРП как основной Code/Graph source с назначением «базовый продукт». Агент знает, что custom code может отсутствовать в MCP, и проверяет затронутые доработки по исходникам/доказательствам проекта. Типовой PM5 ПРОФ может явно использовать MCP КОРП как справочный источник; общие и исключённые области проверяются по подтверждённой карте ПРОФ, найденный в КОРП объект не доказывает наличие в ПРОФ. Не нужно копировать общую карту в проекты или требовать отдельного MCP для каждого варианта/доработки.
+
+Preview и on-demand context содержат только выбранный project/base product, краткие отличия, source origin/назначение, registry version/index status и релевантные ограничения/ссылки. Полный каталог/карта/документы не входят в always-on context; memory consumer получает ту же проекцию, без второго resolver или нового probe.
+
+### 4. Роли, технические bindings и серверное соблюдение области
+
+`code`, `graph`, `productDocs` разрешаются по одному алгоритму: локальное переопределение → проект → выбранное необязательное уточнение → настройки продукта. `inherit` переходит ниже, `disabled` завершает разрешение, `own` требует полный `sourceId`. На первом этапе — один активный binding на роль. Им может быть явно выбранный собственный, базовый типовой или справочный source; происхождение и ограничения показаны независимо от продукта проекта. Дополнительный источник доступен явно с той же подписью, без silent fallback.
+
+`sourceId` указывает роль, reference на существующий `registry.json` (host/server/configuration), native namespace и способ server-side binding. Уже доступная generation/source revision может сохраняться как дополнительное evidence, не становится `projectId` и не требуется для G3. Полный технический binding берётся из registry, бизнес-происхождение/назначение — из каталога, название и версия конфигурации — из уже публикуемых полей. Доработки Code/Graph, новый sourceKey и native revision stamp для этого не требуются; связь не выводится из одного внутреннего ID. Полный URL, пароли и машинные пути не дублируются в бизнес-проектах: endpoints разрешаются через registry, credentials остаются локальными.
+
+Code/graph первого выпуска используют имеющиеся выделенные endpoints и проверяемую native область: project/index и namespace там, где он существует. Каталог не изобретает namespace для Code. Source, заявленный собственным источником всей составной конфигурации, не подменяется её PM-компонентом по новой метке. Явно выбранный MCP компонента допустим как справочный источник с ограничением, что он не описывает остальные части ERP/УНФ. Перестройка ingestion coordinator, graph business search и indexed revision каждого ответа не являются предпосылками. Выбранный binding, опубликованная версия source, его применимость и client activation разделены в checkpoint ниже.
+
+BookStack требует исправления владельца `server.py`: общая проверка стабильных selectors для cache/semantic/live, unknown-selector validation и проверка page membership. Для управляемой роли выбирается привязанный вид существующего MCP сервиса: URL вида `/mcp/views/<viewId>` с серверным разрешением `viewId → стабильные book/page selectors`. Это дополнительный маршрут того же сервера под тем же canonical client name, без proxy или нового процесса. Запросные фильтры могут только сужать этот вид; `read_page` также проверяет принадлежность. Старый глобальный URL остаётся совместимым для явного общего доступа. View не является ACL: все сотрудники сохраняют общий доступ, но выбранная область действительно ограничивает контекст проекта.
+
+Источник/вид должны существовать на сервере и быть опубликованы штатным host-путём прежде, чем роль объявляется ready. Каталог не запускает deployment и не создаёт вид сам. Если view ещё нет, настройка остаётся отложенной/неподтверждённой с конкретным продолжением. Одних per-call selectors в подсказке агенту недостаточно для автоматически настроенного endpoint; поэтому client materialization использует server-bound view. Расширение schemas ограничено параметрами, подробный список views загружается по запросу.
+
+### 5. СППР/Mantis: связь проекта, область поиска и маршруты
+
+В `instances` хранится установка системы, её тип и проверяемый адрес; credentials не хранятся. При одной установке пользовательский выбор использует default instance, но ID остаётся в модели. Пример проектной части, также иллюстративный, а не утверждённая карта PM5:
+
+```json
+{
+  "projectId": "pm5-core-development",
+  "productId": "pm5-corp",
+  "roles": {
+    "code": {"mode": "inherit"},
+    "graph": {"mode": "inherit"},
+    "productDocs": {"mode": "inherit"}
+  },
+  "links": {
+    "sppr": {"instanceId": "sppr-main", "projectId": "76bcfc1f-e8c2-4cd6-80ef-997b99bca476"},
+    "mantis": {
+      "instanceId": "mantis-main",
+      "projectIds": [609, 699, 815],
+      "searchProjectIds": [609, 699, 815],
+      "createRoutes": {"bug": 699, "feature": 815, "improvement": 815}
+    }
+  }
+}
+```
+
+Маршрут ссылается на один из связанных проектов; область поиска может быть их явным подмножеством. Неизвестная цель/назначение требует выбора для конкретного создания, не блокируя другие действия. Реестр ничего не создаёт в СППР/Mantis. СППР получает bounded project metadata в существующем MCP для выбора/проверки UUID; расширение области коллектора остаётся отдельной операцией. Точное поле `итлКодMantis` или ссылка служат связью, семантическая рекомендация имеет отдельную пометку.
+
+Mantis получает обратно совместимый `filters.project_ids: [id, ...]`; старый `project_id: id` сохраняется. Одновременные противоречивые scalar/list отвергаются, пустой список не означает global search. Область применяется до candidate cap во всех поисковых режимах, входит в fingerprint cursor. Прежний вызов без scope сохраняет поиск по доступному общему индексу; локальный проектный потребитель передаёт разрешённую область явно. Fan-out с последующим слиянием отвергнут как штатное решение: он не чинит раннее глобальное отсечение и при наблюдаемом времени 26–39 секунд умножает стоимость. Создание вызывает существующий Mantis writer, сохраняя operation ID/journal и его проверку разрешений.
+
+### 6. Bootstrap и хранение локального выбора
+
+До unattended мастер предлагает выбрать проект из каталога вместо вопроса «PM4 или PM5?» и получает обязательные локальные параметры существующего init. Базовый продукт, семейство PM4/PM5, необязательный профиль и интеграционные настройки определяются из выбранной записи. Для заполненной записи все настроенные проектные и общие MCP подключаются автоматически: отдельных вопросов о включении MCP, provider, host, конфигурации источника или подтверждения каждого подключения нет. Последующие команды автоматически обновляют наследуемые настройки по разделу 7; постоянного фонового процесса нет. Явные overrides/disabled сохраняются.
+
+Если запись неполная, мастер показывает, что подключится и что пока отложено; продолжение подключает готовые MCP и не запускает обязательный опрос о каждой недостающей интеграции. Отдельный осознанный шаг «создать запись / дополнить недостающие данные» задаёт вопросы только о неизвестном. Отсутствующая СППР/Mantis связь сама по себе допустима. Для роли `inherit`, пока нет binding, desired mode сохраняется, readiness вычисляется как deferred; ручной `disabled` не используется вместо defer. Намеренное ручное отключение или отложенное применение доступно отдельной настройкой и не требует повторного диалога при каждом init.
+
+Случайно незаполненный обязательный выбор проекта/продукта или локальный параметр, отказ локальных safety checks и ошибка предусмотренного автоматического подключения сохраняют исходный failure/recovery путь. Отсутствие необязательного binding допускается, но неполадка заполненного endpoint не объявляется успешным defer. Готовность локального проекта определяется существующим lifecycle; готовность каждой интеграции — отдельная вычисленная информация. Новое глобальное состояние проекта draft не вводится. Общий Mantis по явному issue ID доступен и без links; создание требует target только для самой операции.
+
+Tracked `project.json` хранит `projectId`, базовый `productId` для проверки согласованности, необязательный `profileId` и общие проектные параметры. Формат расширяется с совместимой версией/проверкой возможностей helper. Существующая ignored selection хранит личные overrides; ignored применённый snapshot содержит Git SHA, schema version, разрешённые роли/links, profile hash и provenance. Pending непубликованная запись и готовая заявка содержат тот же ID, но не смешиваются с подтверждённым remote snapshot. Никаких credentials/абсолютных личных путей в Git.
+
+Resolver — чистый контракт, без собственных блокировок/процессов. В on-demand контекст попадает только выбранный проект, относящиеся к нему правила/источники и краткий readiness; полный каталог и все проекты Mantis не загружаются в always-on инструкции.
+
+### 7. Сохранение в Git и автоматическое обновление при запуске команд
+
+Сохранение новой записи выполняется из изолированного временного Git checkout, не в source checkout и не поверх общего reader cache. Base фиксируется, запись валидируется, commit/push выполняется обычным fast-forward путём. При non-fast-forward читается новый tip и сравниваются base/current/proposed записи; независимые изменения объединяются и повторно проверяются. Конфликт одной записи возвращает diff; retry ограничен по числу/времени и имеет продолжение с новым preview. Неизвестный исход push проверяется по стабильному ID/содержимому до повтора. Без Git write access готовится заявка, без отправки сообщения. Это использование существующего Git, без новой общей очереди и global lock.
+
+Обычная верхнеуровневая команда workflow привязанного проекта автоматически выполняет одну синхронизацию перед основной фазой, после определения project root и допуска существующего lifecycle owner. Обновляются наследуемые MCP, связи/области поиска и маршруты Mantis/СППР без повторного init и обновления пакета workflow. Отдельное подтверждение неконфликтного обновления не требуется; выводится краткая разница «как было → как стало» и основание Git. Читатель каталога и client writer остаются прежними владельцами. Startup hook не повторяется во вложенных helpers и внутренних broker calls: они получают закреплённый execution context. Исходный выбор при init учитывается как та же единственная материализация, без второго обновления в конце мастера.
+
+Например, в реестре изменились Mantis `searchProjectIds` и endpoint `graph`. Следующая обычная команда автоматически обновляет Mantis и наследуемый graph; собственный локальный `graph` override остаётся без вопроса. Полностью переопределённый локальный список Mantis сохраняется целиком, без добавления элементов из нового общего списка. Локальное намеренное отключение или отложенное применение — тоже сохранённый выбор; новый binding включает лишь ранее отсутствовавшую наследуемую роль без такого выбора. До следующего запуска команды локальные файлы сами по себе не меняются: watcher/служба не нужны.
+
+Справка, чтение статуса, read-only диагностика/preview и resume/restore не запускают автоприменение, поэтому остаются способом разобраться с ошибкой или конфликтом. Проекты без каталожной привязки сохраняют прежнее поведение. При реализации набор обычных, read-only и recovery actions проверяется на полноту по существующему dispatcher; отдельные команды не вводят собственную политику. Ручная операция «Обновить настройки проекта из реестра» и preview остаются дополнительными входами в тот же механизм, а не обязательным ежедневным шагом; её точное CLI-имя пока не закреплено.
+
+Порядок применения, отдельный от сохранения каталога в remote Git:
+
+1. Сделать одну ограниченную deadline попытку проверить tip для верхнеуровневого запуска; при необходимости прочитать валидный согласованный snapshot. Зафиксировать Git SHA, разрешить только выбранный контекст и сравнить его hash с applied. Изменение одного publisher timestamp не переписывает clients. Нет конфигурационного diff — нет записи файлов, полного обхода endpoints, поиска Mantis или повторных функциональных probes неизменённых MCP.
+2. Построить план applied baseline / current local / new selected context. Явные overrides сохраняются автоматически. Неоднозначная ручная правка управляемого значения показывает три состояния и вопрос: сохранить локальное как override, принять реестр или отложить весь план. При откладывании основная команда продолжает по валидному текущему локальному контексту на прежней ревизии каталога с явным статусом отложенного: уже существующая ручная правка не откатывается к baseline, новый план ничего не пишет. Изменение базового продукта требует отдельного явного выбора, а не автоподмены.
+3. До решения по обнаруженным конфликтам новый план ничего не пишет и основная команда не запускается. Без возможности диалога вернуть bounded «требуется решение пользователя», конкретный diff и способ продолжить через того же owner; отсутствие ответа не является согласием. Сохранённый override предотвращает повтор того же вопроса. После решения повторно проверить hashes, не затирая изменения, возникшие во время диалога.
+4. Существующий ITL MCP owner выполняет set preflight всех принадлежащих операции файлов/clients, пишет собственные секции с input hashes и receipts. Отмена до записи не меняет состояние; конкурентный конфликт после начала записи остаётся partial result, а не поводом затирать чужую правку.
+5. Проверить материализацию и только затронутые bindings безопасными MCP calls. Applied marker записать последним после обязательных проверок; затем передать согласованный контекст основной фазе команды. Частичная запись или ошибка нового подключения не допускает выполнение основной команды по смешанному контексту: сохраняется pinned план и штатное resume/restore. Справка/диагностика остаются доступны. Remote каталог из-за локальной ошибки не откатывается.
+
+Недоступность/timeout проверки реестра при валидном applied snapshot сохраняет локальную работу по нему с указанием Git-основания и непроверенной свежести. Невалидный новый snapshot не уничтожает прежний. Без валидного локального основания нельзя угадывать источники: доступна диагностика и существующий ручной/defer путь. Сетевые повторы ограничены, запуск команды не приводит к бесконечному ожиданию общего реестра.
+
+Запись новых client settings и изменение набора tools в уже открытой сессии различаются. Если клиент поддерживает штатное переподключение, оно выполняется существующим adapter path; иначе результат сообщает о необходимой перезагрузке/новой сессии. До подтверждённого перечитывания нельзя объявлять активным новый MCP-контекст текущего клиента. Основная фаза не использует старый tool catalog под видом нового; продолжение, требующее именно нового подключения, выполняется после предусмотренного клиентом перечитывания.
+
+Альтернатива с обязательной ручной командой обновления отвергнута уточнением пользователя: она заставляла помнить о синхронизации. Постоянный watcher сложнее выбранного startup шага и не нужен. Массовый hook в каждом wrapper или собственный updater дублировал бы sequencing/recovery; используется один ITL путь с existing operation context и client receipts.
+
+Restore возвращает только принадлежащие операции секции/файлы из receipts при совпадающем ownership/hash, сохраняя чужие изменения. Если это невозможно без их потери, owner показывает конкретный конфликт и действие продолжения; автоматическое затирание запрещено. Новый preview вместо resume — явное начало нового плана. Remote обновление каталога автоматически не откатывается из-за локальной ошибки. Миграция не обновляет конфигурацию 1С, не меняет базовый продукт и не проходит по другим worktrees.
+
+### Архитектурный checkpoint
+
+**Checkpoint G3, 2026-10-19: согласован пользователем; source реализация G3 разрешена.** По [package-architecture.md](../../../docs/package-architecture.md) отдельно рассматриваются installed binding/rollback и автоматический вход перед lifecycle/verification/export. G4 и миграция действующих установок явно отложены; compatibility код проверяется только на изолированных fixtures, без запуска перехода в рабочих проектах. Наполнение/публикация данных и пакета сохраняют отдельные границы. Одобрение зафиксировано прямым сообщением пользователя, отдельный approval manifest не нужен.
+
+**Инвариант:** основная команда использует один pinned project context; settings не затирают overrides/External MCP, частичная запись не выдаётся за применённый/активный контекст. Владелец разрешения — pure G2 resolver; владелец одной локальной операции применения и восстановления — существующий MCP/client owner внутри допуска существующего lifecycle dispatcher. Это расширение его операции, не второй coordinator/lock family/state machine.
+
+| Граница | Предлагаемый владелец и изменение | Что остаётся за прежним владельцем |
+|---|---|---|
+| Каталог / remote save | `agent-1c.vibecoding1c-mcp.ps1` использует G2 reader/resolver; Git save работает в отдельном temp checkout, stable ID/base и read-back неизвестного push | Endpoint publisher меняет только registry.json; Git CAS защищает remote. Reader cache не становится writable authoring checkout |
+| Installed binding / настройки | `core`/setup и существующая ignored selection: общие IDs/capability в project.json; overrides/defer/pending/applied SHA и hashes в прежнем local state | Секреты/личные пути не попадают в Git; продукт/конфигурация 1С, соседние roots и terminal users не мигрируются |
+| Apply / recovery | `Write-ItlClientMcpEndpointSet` и его ownership/receipts: сохраняемый план до первой записи, receipts каждого подтверждённого write, applied marker последним; тот же owner предоставляет status/cancel/pinned resume/owned restore | Persistent plan/resume/restore добавлены этому owner в source G3 и проверены fixtures; полная installed приёмка остаётся открытой. Атомарность нескольких файлов не обещается |
+| Startup / nested calls | Один вход в agent-1c dispatcher после lifecycle admission/повторного Read-ProjectConfig и до основной фазы; все callers получают одну revision/plan identity | Native infobase admission остаётся на прежней phase boundary. Internal broker и nested calls не запускают второй fetch/apply и не приобретают расширенный guard |
+| Источники | Code/Graph используют имеющиеся registry metadata и native API, source origin/назначение и отличия задаются catalog owner. BookStack view/filter, СППР metadata и Mantis scope/routes сохраняют своих server/consumer owners | Обязательных Code/Graph backend patches нет; ACL, индексы/collectors, внешний writer journal и idempotency не переезжают в catalog owner; production deployment отдельно |
+
+**Минимальные случаи для этой границы.** (1) У записанного проекта в remote изменились graph и Mantis scope: следующая обычная команда должна применить оба из одного SHA до основной фазы, сохранив local code override. (2) После записи client A извне изменён client B: marker не продвигается, основная фаза не стартует; status и resume/restore сохраняют чужие байты. (3) Вложенный broker после первого шага не повторяет startup. AC-23–26/39 fixtures реализованы в source G3; полный original installed canary не принят. Pure resolver не может обеспечить side effects/recovery; ручной обязательный update не выполняет согласованное автоприменение. Расширение текущего owner достаточнее нового watcher/службы/межпроектного manager.
+
+**Состояние и конкуренция.** Один operation ID закрепляет выбранный SHA, before/current/new проекции, hashes всех затронутых inputs и receipts; незавершённый план не заменяется latest tip. Сохранение remote записи и local apply имеют разные outcomes. Две сессии одного root используют существующий lifecycle/ownership допуск и повторную hash-проверку перед writes; новый глобальный lock не вводится. Restore изменяет только owned sections при подтверждённых hashes, сохраняет новые чужие правки и никогда не откатывает remote каталог. Cancel до writes оставляет исходные файлы, после частичной записи сохраняет recoverable plan; cleanup чужих процессов не допускается. Новые private state fields не дублируют lifecycle state.
+
+**Ожидание и продолжение.** Предлагаемые G3 пределы: одна remote tip/fetch попытка в общем network deadline **10 s** на top-level startup; save/проверка неизвестного push — общий **60 s**, не более **двух** публикационных попыток, read-back до повтора. Expiry возвращает конкретное продолжение без false success. Git children запускаются через существующий UTF-8 child-process owner с non-interactive credentials; завершаются только собственные children, без raw PID cleanup. Явные source probes сохраняют owner timeouts и выполняются при изменении binding/приёмке, не на unchanged startup; Mantis search не входит в 10 s. Локальные writes имеют stage/status и cooperative cancel между записями, не принудительное завершение чужого клиента. Ожидания существующих lifecycle locks/основной команды не переопределяются этими network бюджетами.
+
+| Ситуация | Результат и agent-usable continuation |
+|---|---|
+| Offline/timeout/невалидный новый снимок, есть валидный applied | Сохранить прежнюю revision и работать по ней с WARN актуальности; явный refresh/preview позже тем же owner |
+| Нет валидного основания для нового binding | Не угадывать IDs; legacy «позже» либо дополнить/выбрать проект в setup. Стоп только зависимого подключения/операции, независимая диагностика доступна |
+| Реальный конфликт / unattended без ответа | До writes показать applied/local/registry и keep-local override / accept / defer. Defer сохраняет валидный current local; без ответа — needs-user-action, не согласие |
+| Partial / неподтверждённый write | Не запускать основную фазу по смешанному контексту; status/cancel/resume/restore используют тот же pinned plan без startup replan |
+| Client config записан, tools ещё старые | Раздельные configured/active результаты; штатный reload либо явное разрешённое пользователем new-chat/fork продолжение. Стоп только фазы, которой требуется новое подключение, независимая работа продолжается |
+
+Новые runtime FAIL допустимы лишь при потере данных, неверном target, нарушении явной границы или false-success evidence. Неисправность необязательной/неиспользуемой интеграции не становится глобальным барьером; заполненный endpoint с ошибкой не переименовывается в осознанный defer. Продолжения должны быть исполняемыми входами существующего setup/select/client owner с точным синтаксисом в результате; диагностический текст сам их не заменяет.
+
+**Совместимость и цена.** Все clients из действующего `Get-ItlClientAdapterRegistry`, их canonical names/formats/JSONC и штатный reload; standard user, PowerShell 5.1, Windows 10/11/Server 2019+ local/terminal, пробелы+кириллица. Только current-root managed files, существующие user-local cache и временный Git; без elevation, machine ACL/services и cross-user state. До первой binding записи проверяется capability. Штатный downgrade/установка старого пакета требует compatible owned restore или останавливается до замены поддерживающего helper; произвольно запущенный исторический helper, чей Read-ProjectConfig игнорирует неизвестные поля, новой защитой не объявляется. Legacy unbound не меняется.
+
+В G3.0 записать baseline, в G3.7 сравнить no-op/publisher-only/change/offline: число network/probe/write вызовов, elapsed и bytes всех изменённых client surfaces. Цель добавочного warm local no-op — median ≤1 s, p95 ≤2 s на фиксированном stand, минимум 20 повторов; это измеряемая engineering цель, не новый runtime FAIL. Отдельно проверить network deadline 10 s; отсутствие измерений не считается выполнением. Полный каталог/карта и истории не загружаются always-on, новые LLM calls/usage ledger не нужны. Материальное превышение требует owner-local оптимизации или уточнения checkpoint с измерениями, не урезания safety/support.
+
+**Граница выпуска.** Наполнение по задачам 1.9–1.11/5.7 и AC-36–38 обязательно до первого registry-only и memory выпуска; G3 использует подготовленные fixtures/подтверждённый canary subset, пока весь выпускной набор собирается отдельно. Без наполнения функциональная готовность G3 не равна приёмке всего change/разрешению публикации. Канонические homes optional, native mapping и memory readiness принадлежат G4/G5; выбор проекта память не включает.
+
+**Решающее доказательство и откат:** обычная команда после изменения MCP/Mantis завершает прежнюю исходную задачу; отдельные fixtures доказывают конфликт/unattended/defer/partial/pinned resume/offline/nested. Canary также проходит new bootstrap и legacy update→choose/create/later→association→reload, branch inheritance и compatible downgrade с сохранением custom MCP. Полная platform/client matrix и выпускной SHA/evidence обязательны в своей приёмке, непроверенное помечается unverified. Откат — через этого же owner к совместимым owned settings/binding, не удаление projectId/reset базы. После двух циклов без acceptance/owner-narrowing progress сравнить снятие startup interception, owner-local вариант и новый shared design по package policy. Новый owner/resource/admin prerequisite/migration вне этой границы требует нового рассмотрения. Последующим прямым запросом checkpoint одобрен и source G3 начат; G4 и миграция действующих установок не разрешены.
+
+### План реализации основы G2
+
+Текущий результат: G2 реализован на source base `181e1da00a08e56d2d0ac57d24a92e7187484e06`; 42 focused owner tests passed на Windows PowerShell 5.1, минимальный seed подтверждён и подготовлен, не опубликован. Фактическая граница и ограничения — test-plan. D9 отдельно одобрен; текущий запрос явно запрещает G4 и installed migration. Таблица ниже сохраняет порядок/критерии выполненного среза.
+
+Это конкретный будущий срез без изменения установленных проектов. Просмотрены локальные source bases: основной checkout `c900620e6569ce4cec39e30abfa3f8ce2c150ce1`, memory worktree `e9dc695d3b792179f10c35898ba02daebf0bb66c`. Перед кодом выбрать актуальный base в отдельном чистом worktree и повторно проверить перечисленных владельцев; эти старые bases не являются рекомендацией начать реализацию на них. Это исторические bases постановки; выполненный G2 использует актуальный base, указанный выше.
+
+**Владелец и точки изменения.** `.agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1` уже содержит `Ensure-Vibecoding1cMcpRegistry`, `Read-Vibecoding1cMcpRegistry` и selection reader. Там подключается один business snapshot reader/resolver; схемы и чистые функции можно вынести в owner-local файл той же `lib`, без service/manager/нового процесса. `vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1` владеет `New-RegistryPayload`, `Write-MergedRegistryPayload`, `Publish-Registry`: сохранность каталога доказывается на этом пути. Схемы/шаблоны поставляет ITL, рабочие записи остаются в общем Git. Не добавляется runtime-зависимость на Python, Cognee или новую библиотеку схем; проверка поддерживаемого JSON-контракта должна работать на PowerShell 5.1.
+
+| Шаг | Конкретный результат будущего изменения | Проверка завершения |
+|---|---|---|
+| G2.1 — схема и fixtures | Версия 1 для `catalog/catalog.json` и `catalog/product-relations.json`, package-owned schema/templates; IDs, products/projects/sources/instances, optional profiles, три роли и home | AC-02/03/27: positive/negative JSON, rename, duplicate/missing reference, cycles, scalar home в availableIn; missing home валиден. Примеры помечены synthetic |
+| G2.2 — снимок | Reader принимает repository + зафиксированный commit, читает `registry.json` и оба business файла строго из его дерева, затем валидирует целиком | AC-01/03: tip меняется между чтениями, missing file/unknown version/mixed snapshot отклоняются; previous local context не меняется. Legacy endpoint-only reader остаётся совместимым; нет трёх независимых latest fetch |
+| G2.3 — selected context | Чистое разрешение трёх ролей, ссылок СППР/Mantis, применимости/home/read candidates из одного снимка; bounded результат с provenance | AC-05–07/27/28: override → project → optional profile → product, own/disabled/inherit, разные hosts/configs; ERP/ПРОФ/customer ограничения, no-home/ambiguous home. Никаких сетевых source probes или client writes |
+| G2.4 — publisher preservation | Существующий publisher обновляет только принадлежащую ему endpoint publication и сохраняет business files/unknown optional fields; legacy schema v2 и другие hosts прежние | AC-01/29: temporary Git fixture через owner publish path, включая его retry, сравнивает bytes/hashes catalog до/после. Чужие staged/dirty файлы не попадают в publish; проверка path lists через штатный NUL helper, без нового writer каталога |
+| G2.5 — seed и handoff | Подготовлен минимальный подтверждённый seed для выбранного пилотного проекта и consumer fixture памяти; общий каталог не заполняется автоматически | AC-02/06/27–29/35: существующие источники отделены от synthetic примеров; ответственным подтверждены реальные product/area/home и имеющиеся routes, отсутствующие связи остаются deferred. Записи подготовлены, но не опубликованы |
+
+Порядок: G2.1 → G2.2 → G2.3; G2.4 опирается на G2.1/2 и может идти независимо от resolver. После G2.3/4 проверяется интерфейс, затем подтверждается seed G2.5. Это последовательность срезов одной feature; source-регистрация остаётся у обычного delivery owner, отдельной очереди этапов нет. Сохранение новой записи пользователем с Git push/готовой заявкой (задача 1.7, AC-04), bootstrap/selection/update, applied snapshot, client reload и server fixes входят в G3, а не скрыто в G2.
+
+#### Интерфейс G2 для потребителя памяти
+
+Ниже обязательные смысловые поля одного результата resolver, не отдельный API, manifest или registry:
+
+- `projectId`, `productId`, optional `profileId`, `catalogRevision` — один commit SHA и поддерживаемые версии/проверенные hashes входов; mutable checkout не считается pinned snapshot.
+- `roles.code/graph/productDocs` — desired mode, resolved source reference, provenance или причина отсутствия binding. Это разрешённые настройки, а не подтверждённая live readiness. СППР/Mantis links несут business/native references без внешних вызовов.
+- Выбранные `knowledgeAreas` — применимость с одним из трёх статусов/основанием, ограничения и optional canonical home; product read candidates = текущий продукт и homes разрешённых областей, с сохранённой привязкой каждой области. Список не выдаёт grants и не открывает dataset целиком для всех фактов.
+- Отдельные детерминированные hashes проекций role/settings и knowledge applicability: без `publishedAt`, порядка JSON-ключей и чужих проектов. Изменение только home меняет knowledge hash, а неизменные client settings не переписываются; новый SHA всё равно виден как новое основание. Полные GUID/maps в always-on context не загружаются.
+
+**Граница готовности интерфейса:** будущие код reader/resolver/publisher и consumer fixtures прошли AC-01–03/05–07/27–29/35 на одном source base; контракт доступен памяти и его revision зафиксирована. Одних документов или mock желаемого результата недостаточно. Synthetic fixture допускается для проверки интерфейса; разрешение работать с конкретным общим home требует подтверждённой карты/native mapping. Полный выход G2 дополнительно включает подготовленный seed G2.5. Интерфейс может разблокировать G4 только вместе с native G1 и отдельно одобренным D9; G3/installed acceptance и все AC всего registry change этим не закрываются.
+
+**Проверки и стоимость.** Расширяются owner tests `tests/pester/McpConfig.Tests.ps1` и `tests/pester/HostTooling.Tests.ps1`; объёмные table-driven catalog fixtures допустимо выделить в один focused owner test, без копии resolver. Используются временный Git repo, две revisions, synthetic каталог и путь с пробелами/кириллицей. Доказать отсутствие network/MCP/LLM calls у pure resolution, отсутствие записей в selection/project/client files и bounded размер выбранной проекции при добавлении чужих проектов. Неизменность context/hash важнее фиктивной оценки экономии токенов. Startup timing, platform/client canary и исходный installed путь проверяются в G3/G5. После отдельного разрешения кода — одна соответствующая owner Targeted регистрация, без дополнительных broad gates лишь ради завершения среза.
+
+### План реализации G3
+
+Source boundary текущего среза: existing client writer предоставляет точные plan projections, before-write intent и receipts. On-demand `agent-1c.product-project-runtime.ps1` сохраняет ignored root-local plan до первой записи, pinned context/ID, before/current proof по затронутым ключам и marker last. Resume/restore используют тот же writer и исходный SHA; неизвестный результат записи сверяется с сохранёнными physical before/after hashes и переходом ownership, похожий URL не даёт права присвоить ключ. OpenCode восстанавливается по каждому из четырёх физических слоёв; unrelated edits после подтверждённой записи сохраняются, edits затронутых ключей требуют разрешения. Сохраняемые native entries/TOML sections нужны только для точного owned restore и остаются в ignored local state. Бизнес-каталог их не содержит.
+
+Реальные continuation входят в существующие `vibecoding1c-mcp-select -CatalogAction resume|restore|cancel` и `vibecoding1c-mcp-status -CatalogAction status`. Cooperative cancel только сигнализирует текущему operation ID, не получает writer authority и не заменяет receipts; проверяется между client writes. Resume/restore допускаются обычным lifecycle owner. Статус не читает latest tip/полный каталог и не объявляет активный MCP context подтверждённым. Последующий source срез подключает binding, конфликтный диалог, bootstrap/startup и fixture canary основной команды; native client activation и полный installed/platform proof остаются отдельной приёмкой G3.7.
+
+Фактический source G3.3–6: tracked `productProject` хранит schema/capability и business IDs, ignored selection — overrides/defer, pending records с исходным base/SHA и отдельный `memoryOptIn=false`. Binding и preferences включены в тот же durable plan, marker последний. Для нового init сохраняется стадия `binding-only` до unattended; поздняя MCP материализация использует эту ревизию. Legacy JSON/config route сохранён, обязательные прежние failure/cancel guards не сняты. Catalog roles не проходят второй legacy configId-опрос; explicit local/provider overrides и PM4 product-docs guard сохранены. Package-owned compatibility descriptor проверяется до copy; реальный `restore-compatible` того же owner восстанавливает начальную owned baseline, а не просто удаляет ID.
+
+Единственный startup hook находится после lifecycle admission/повторного чтения config и до основной фазы. Bound команды используют one-SHA snapshot; вложенные/broker вызовы не получают новый network check. Partial запрещает основную фазу даже до первой binding write, status/recovery доступны. No-op ускоряется только при совпавших resolved projection и hashes native/config/selection/ownership/helper inputs, CLI/environment intent; в applied marker хранится hash окружения, без его значений. Изменение входа возвращает полный preview. Это receipt прежнего owner, без отдельного cache manager. Он не заменяет native readiness или права памяти. Publisher/home-only update сохраняет неизменные client settings.
+
+On-demand context содержит Mantis search filters/purpose routes и exact SPPR link. Явный issue ID можно читать глобально; явно пустой `project_ids` остаётся пустым. Missing creation route требует target конкретной операции, не становится общей настройкой; payload сохраняет прежний writer operation ID/journal. Git denial/lost reply оставляет stable draft и original base; явный повтор create повторяет сохранённую заявку, публикация подтверждается exact read-back snapshot без изменения reader checkout. После successful interactive update choose/new/later — отдельный outcome; unattended/empty answer не являются consent/defer. Reconcile ai_rules defaults сохраняет другие owner families; их явный sync остаётся у прежнего package/client owner. G4, реальные installed migration и наполнение не начаты.
+
+План ниже конкретизирует существующие задачи, не создаёт параллельную очередь или второй список исполнения. Вход: completed G2 на `29501656` (проверяемое source основание подготовки этого плана), отдельное одобрение checkpoint выше и отдельное разрешение apply выбранного среза. Перед кодом проверить актуальный develop/queue и owners на чистом source base; planning HEAD не объявляется будущим актуальным base. G1/D9 памяти и полное выпускное наполнение не prerequisites разработки G3.
+
+| Срез | Зависимость, владелец / existing задачи | Конкретный результат и приёмка |
+|---|---|---|
+| G3.0. Допуск и baseline | G2 + approval/разрешение кода; 1.1, 5.5 | Зафиксированы source/stand/client versions, полный action/broker inventory с auto/bypass/recovery классификацией, existing operation/ownership scope и исходные timing/context samples. Политика одна в dispatcher, новые actions не обходят классификацию. AC-19/20/25/26/39 |
+| G3.1. Сохранение записей | После G3.0, registry owner; 1.7 | Изолированный Git authoring, validate/save или готовая неотправленная заявка, stable ID, two-attempt/60 s CAS/reconcile и unknown push read-back. Local bare fixtures: independent/same-record race, denied write, lost reply; reader cache/source checkout не меняются. AC-04/39 |
+| G3.2. Источники и scopes | После G3.0; независим от G3.1; catalog/consumer и прежние server owners; 2.1–2.6 | Code/Graph: registry metadata + явные source origin/назначение/отличия и existing connect/read/scope без новых backend builds/stamps. BookStack selector/view cache/semantic/live/read, СППР bounded metadata/exact links и Mantis project_ids/routes сохраняют прежнюю квалификацию нужных изменений. Проверенный build нужен там, где сервер действительно менялся; из него не возникает обязанность менять Code/Graph. AC-08–12/20 |
+| G3.3. Один local apply/recovery | G3.0; MCP/core/client owner; 3.3, 4.1/2/4/7 | Версионированная binding/capability, private override/defer/pending/applied projection, full-input preview и persisted plan/receipts/marker-last. G2 resolver единственный; product family для bootstrap берётся из проверенных данных, не из имени/префикса ID. Fault injection/cancel/race/restore проходит через реальный client writer для всех affected formats. Конфликтные правки не перезаписываются. AC-07/14–18/24/26/32/39 |
+| G3.4. Новый bootstrap | G3.1/3 и готовность используемых G3.2 roles; core/setup; 3.1/2/4/5 | Project selection/create/дополнение до unattended, один preview/apply, no per-MCP вопросы, incomplete optional bindings осознанно deferred. PM4/PM5 и совместимые продукты без mandatory profiles; настроенные общие MCP сохраняются. Happy/failure/cancel с original init result и actual active-client observation. AC-13/20/22 |
+| G3.5. Startup существующей привязки | G3.3 + нужные G3.2; dispatcher/MCP; 4.1–3/6/7 | Один bounded check→one-SHA resolve→three-way apply→основная фаза, manual refresh/preview тем же owner; pending recovery/read-only bypass, nested context, offline valid baseline, no-op без probe/writes. Затронутый новый MCP проверяется/перечитывается штатно; новый tools catalog не выводится из JSON. AC-15–17/23–26/29/39 |
+| G3.6. Совместимость старой установки | G3.3–5; existing update/setup; 4.4/8/9/10 | Код сценария package success→choose/create/later→preview/association с first current baseline; separate memory unavailable/off continuation без native calls. Fixtures: saved later, no answer/unattended, partial/pinned recovery, downgrade. Затем только отдельно разрешённый canary; массовая миграция и G4 не следуют из code apply. AC-18/30–34/39 |
+| G3.7. Конечный путь и handoff | Нужные G3.1–6; lifecycle/client/server owners; 4.5, 5.1–6 | Branch rematerialization, targeted owner suites и installed canary сохраняют исходную задачу, Unicode/standard-user/local/terminal и весь affected client matrix. Fresh source identity, partial/reload/downgrade proof и timing/context comparison; чужие roots/настройки неизменны. Требуемая непроверенная клетка остаётся blocker своей приёмки. AC-18–21/25/26/39 |
+| Наполнение и первый выпуск | После G2 параллельно разрешённым срезам; registry data owner, 1.9–1.11/5.7 | Подтверждённый перечень продуктов/проектов → записи/настройки → карта основных функций/источники/optional homes → один опубликованный SHA → coverage/identity proof. Тестировать наполнение можно локально до публикации; общая запись и пакетный выпуск отдельно разрешаются. AC-36–38, memory AC-44 |
+
+Порядок: G3.0 → {G3.1, G3.2, G3.3}; G3.4 после G3.1/3 и нужных source capabilities; G3.5 после G3.3 и нужных source capabilities; G3.6 после G3.3–5; G3.7 завершает применимые пути. Неготовый неиспользуемый сервер не блокирует независимый код, но заявленная интеграция без scope proof не ready. Полное наполнение должно завершиться до первого выпуска обеих функций и не подменяется G3.7 canary subset. Начата source реализация G3.1/G3.2; фактическая граница зафиксирована в test-plan/tasks, остальные срезы не объявляются выполненными.
+
+Готовность различается явно: **G3 implementation/owner proof** → **G3 installed canary по отдельному разрешению** → **первый выпуск после наполнения AC-36–38 и обязательной приёмки**. Регистрация source commit не равна ни одному последующему live результату. Память получает прежний pinned business context; её G4 не запускается, AC-44 остаётся самостоятельной будущей проверкой зависимости.
+
+### Наполнение к первому выпуску
+
+Это обязательная подготовка данных после основы G2, отдельная от её минимального seed и от реализации G3/G4. До первого выпуска каталога и до первого выпуска использующей его памяти ответственный человек подтверждает состав выпускного набора; готовность фиксируется в приёмочном evidence со ссылкой на один точный Git SHA каталога, отношений и endpoint descriptors. Подготовленный snapshot должен быть опубликован в существующем Git-реестре отдельным разрешённым действием и проверен из него до допуска первого выпуска. Копии примеров в templates и успешный G2 handoff этого не доказывают. Подтверждение списка не позволяет заменить согласованное семейство одним пилотом.
+
+1. **Продукты и проекты.** Набор охватывает PM4 и PM5: КОРП, ПРОФ, УНФ+PM, ERP+PM; используемые самостоятельные расширения и нужные ERP/УНФ-компоненты. Фиксируются реальные названия, стабильные разные product/project IDs, происхождение, состав и зависимости. До наполнения составляется перечень действующих типовых и внешних проектов: все проекты первого выпуска включены, остальные явно перечислены вне его границ с причиной. У каждого включённого проекта один базовый продукт, отмечены доработки заказчика; типовой продукт и проект не сливаются в один ID. Неизвестные факты остаются блокерами готовности соответствующей записи, а не выдуманными значениями.
+2. **Настройки.** Для каждого включённого проекта проверяется итог `code`, `graph`, `productDocs` с учётом product/profile/project и provenance, hosts/configIds/source selectors; СППР instance/project и Mantis instances/search scopes/purpose routes. Режимы `inherit`/`own`/`disabled` сохраняются. Для отсутствующей необязательной связи явно фиксируются осознанный defer/неприменимость, причина и способ дополнить запись в существующих metadata или приёмочном evidence; новых состояний схемы не требуется. Пустое поле без разбора не считается проверенной настройкой. Необходимый для заявленного пути источник требует read-only live identity/scope proof по существующим AC-08–12; JSON не доказывает readiness. Каталог не содержит secrets, native memory IDs или grants и не создаёт внешние проекты/индексы.
+3. **Карта основной функциональности.** Человек подтверждает достаточный перечень основных областей и различий продуктов: краткое назначение, явный `availableIn`, зависимости/ограничения и границы доработок, ссылки на первичную документацию/код и проверенную ревизию. Полная документация остаётся в BookStack/источнике продукта, карта — в существующем `catalog/product-relations.json` и его metadata; новый каталог функций или обязательный профиль каждой версии не вводятся. Покрытие перечня сверяется таблицей «область → продукты/компоненты → ограничения → основание», без необходимости перечислять каждый объект конфигурации. Новые/изменённые общие правила и назначенные homes подтверждаются человеком. Optional `memoryHomeProductId` остаётся optional: осознанное отсутствие home не мешает registry-only выпуску, но не разрешает общее сохранение памяти; для заявленного shared-memory сценария требуется подтверждённый home, а native mapping/currentness отдельно проверяет memory owner.
+
+Работа отражена в задачах 1.9–1.11 и 5.7, приёмка — AC-36–38. Это проверка подготовки выпуска, без нового runtime barrier, сервиса, постоянно загружаемого контекста или автоматического обхода всех продуктов. Agent получает прежнюю bounded selected projection, детали карты — по запросу; рост каталога проверяется по AC-20/25/35. Наполнение можно готовить параллельно дальнейшим этапам после отдельного поручения; это уточнение не начинает ни его, ни G3/G4. Реестр по-прежнему выпускается независимо от Cognee, но не с одним пилотным seed вместо согласованного набора.
+
+## Risks / Trade-offs
+
+- **Старый исходник и более новый deployed MCP** → перед кодом перейти на согласованный актуальный base; серверную правку делать в owner source, не исправлять установленную копию.
+- **Неверно утверждённая бизнес-карта** → примеры отделены от seed data; первый набор products/areas/routes подтверждается ответственным человеком, неизвестные данные остаются deferred.
+- **Registry говорит о версии, а индекс о другой ревизии** → показывать происхождение каждого поля, сверять полную identity и не обещать неподтверждённую точную версию.
+- **Нет отдельного источника ПРОФ/компонента PM** → честная неподтверждённая/отложенная роль; явный базовый источник при необходимости; каталог не создаёт фиктивный индекс.
+- **Частичные client writes** → existing receipts, marker last, pinned resume/owned restore; не обещать атомарность, которой нет.
+- **Два пользователя терминального сервера** → user-local cache/temp/receipts и существующая isolation; concurrent fixtures и terminal stand, без shared writable fallback под видом эквивалентности.
+- **API scope принят только на одном пути** → negative controls для cache/semantic/live/read/cursor и исходного воспроизводителя; assertions не ослаблять.
+- **Startup обновление задержало команду или повторилось в broker** → конечный deadline, один check на top-level context, no-op без probes; матрица dispatcher actions и nested-call regression.
+- **Конфликт заблокировал путь его устранения** → status/read-only диагностика и pinned resume/restore обходят автоприменение; interactive выбор либо конкретное продолжение non-interactive, без молчаливого принятия.
+
+## Migration Plan
+
+### Общий порядок двух changes
+
+Порядок G0–G6 согласован с `add-scoped-cognee-memory` 2026-10-19. Это зависимости и доказательства готовности, не новый runtime coordinator или разрешение запускать этапы сейчас. Задачи — [tasks.md](tasks.md), критерии — [test-plan.md](test-plan.md).
+
+| Этап | Работа и зависимость | Критерий выхода |
+|---|---|---|
+| G0. Границы и миграция | Перед каждым зависимым срезом проверить его source base и требуемую границу: G2 — pure contract; G3 — installed registry checkpoint; G4 — D9 памяти, версии helper/fork и native G1 | Owners, первый переход, baseline/stand и recovery описаны. Одобрение D9 не требуется для независимого G2; документы и native proof не подменяют approval или разрешение кода |
+| G1. Native Cognee | Независимая от каталога квалификация Q1–Q7 действующей редакции memory test-plan; можно параллельно G2/G3 | Exact version/API/identity и harmless evidence: shared IDs/scope/durable/status/current original в допущенном store, precise correction/revoke; Q5 — native admin допуск областей после контролируемого restore с датой/интервалом потери, Q7 — ограниченный профиль и достаточные измерения всего прогона. Не требуется автоматическое сохранение поздних изменений поверх старого backup или usage каждой внутренней операции. Неизвестное не ноль; новые Q5/Q7 не закрываются изменением текста. До допуска нельзя разрабатывать memory binding |
+| G2. Основа реестра | После соответствующей проверки G0: G2.1–5 выше; schemas, one-SHA reader/publisher preservation, три роли, applicability/home resolver и подготовленный подтверждённый seed | Интерфейс: AC-01–03/05–07/27–29/35 с кодом и consumer fixture; полный G2 добавляет seed. AC-04 Git save относится к G3. Cognee/D9 памяти и installed migration не зависимости G2 |
+| G3. Установленный каталог | После G2 и готовности нужных источников: пользовательское Git save/заявка, bootstrap, legacy association, startup update, client reload, offline/conflict/recovery | Новая и старая установки завершают исходный путь; нужные MCP подтверждают source scope; пропуск миграции сохраняет legacy. Registry AC-04/08–26/31–34 и обязательные stands имеют evidence |
+| G4. Память | После успешного G1, квалифицированного G2 interface и отдельного одобрения D9/разрешения кода: native-backed binding, шесть scopes, cycle/continuation/pending, compatible fork/host policy | Memory owner regressions доказывают scope/status/currentness и первый opt-in без reset. Код G4 может идти параллельно оставшимся server работам G3; установленный canary требует применённый registry context |
+| G5. Совместная приёмка | После соответствующего установленного пути G3 и G4: legacy upgrade → association → memory opt-in → new chat/reset/update, paired costs | Доказаны исходная задача, отсутствие чужих/устаревших фактов, сохранность настроек, PM home и client admission/cache reset/new context после restore. Paired сравнение охватывает ingestion/reuse/context/ресурсы с measured/estimated/unknown; claims экономии только по подтверждённым сопоставимым данным. Fixtures не заменяют native/installed proof |
+| Наполнение к первому выпуску | После G2, отдельно от минимального seed; подготовка продуктов/проектов/настроек и карты может идти параллельно следующим разрешённым этапам | Задачи 1.9–1.11/5.7 и AC-36–38: подтверждённый выпускной набор и опубликованный snapshot одного SHA с проверенными связями/картой; нет подмены пилотом. Обязателен перед первым registry-only выпуском и первым выпуском памяти, не условие начала G3/G4 |
+| G6. Постепенное внедрение | После приёмки выпускаемой функции и обязательного наполнения: выделенные установки, проверка отключения/owned restore, затем расширение | Каталог может быть принят и выпущен отдельно без G1/G4/G5 памяти, выполнив AC-36–38. Для памяти дополнительно обязательны её G5 и проверка того же наполненного контекста; расширение rollout требует подтверждённой пользы либо явно принятого trade-off |
+
+Source исправления BookStack/Mantis/СППР допустимо вести параллельно G2. Непройденный Cognee proof задерживает только зависимую память; он не блокирует разработку/приёмку реестра. Частичная готовность источника не объявляется приёмкой всего registry change. Публикация каждого результата остаётся отдельной source-delivery операцией по действующим правилам.
+
+### Переход существующего локального проекта
+
+1. Существующий `update-workflow` сначала выполняет обычное обновление совместимого пакета с сохранением custom MCP/локальных настроек. Новая версия сама не назначает business project и не включает память. Успех обновления пакета, привязка к каталогу и readiness памяти показываются раздельно.
+2. После первого успешного интерактивного обновления с поддержкой каталога, если `projectId` отсутствует и пользователь ещё не выбрал «позже», existing setup owner предлагает **выбрать проект / создать новый / сделать позже**. Продукт/путь/endpoint могут подсказать кандидата, но не назначают проект автоматически. Создание использует прежний validated Git save/готовую заявку, без отправки сообщений и без обязательного per-MCP опроса.
+3. «Позже» сохраняется в existing ignored user-local selection этого локального проекта, не в общем каталоге или настройках других пользователей. Повторные обычные команды/обновления не задают тот же вопрос; явный вход в существующую настройку проекта позволяет привязать позже. В unattended или при отсутствии ответа ассоциация не принимается: обновление пакета может завершиться, legacy route сохраняется, показывается способ продолжить. Отсутствие ответа не записывается как согласие или пользовательский defer.
+4. Выбор показывает один preview текущего и каталожного контекста: project/product/profile, MCP и СППР/Mantis, сохраняемые overrides/disabled и конфликты. Для первой ассоциации старого applied snapshot ещё нет: existing writer фиксирует current hashes/секции и prospective baseline, не выдумывает прежний registry base. Нестандартные настройки не затираются; неоднозначность требует решения. Нет каталога/cache — нельзя угадать IDs, доступно «позже»/явное дополнение.
+5. После выбора и разрешения конфликтов прежний owner пишет общую привязку и ignored snapshot/receipts с marker last. Миграция не запускает повторный init/reset базы, не меняет конфигурацию/базовый продукт самостоятельно и не затрагивает другие worktrees. Отмена до writes ничего не меняет; partial association имеет status/pinned resume/owned restore и не объявляется успешной. Успешное обновление пакета не скрывает ошибку отдельной ассоциации. Новый MCP context активен только после штатного reload.
+6. Уже привязанный проект не выбирается повторно: subsequent startup использует прежний one-snapshot updater, overrides/conflicts/offline и pinned recovery. Новые ветки наследуют binding через lifecycle с материализацией своего root; существующие соседние ветки массово не мигрируются.
+7. В том же мастере допустим отдельный шаг **включить память / позже**. Он доступен только при qualified Cognee, совместимой паре helper/fork и validated registry context. Выбор каталожного проекта не считается opt-in памяти, не обходит `TOOL off/required` и не порождает вопросы о каждой из шести областей. `add-scoped-cognee-memory` владеет первичными local IDs/current cycle, legacy notes и native qualification; этот change их не реализует.
+
+Решение «позже» и recovery используют текущие selection/receipts/owner; новой общей очереди, watchdog или системы миграций нет. Для registry-only приёмки memory-step проверяется fixture как выключенный/неквалифицированный, без установки Cognee. Откат привязки восстанавливает owned настройки/снимок через прежнего owner, а не просто удаляет `projectId`; downgrade с неподдерживаемой schema явно требует совместимости/restore.
+
+До опубликованных серверных возможностей source role остаётся неподтверждённой; выпуск local catalog не объявляет live scope исправленным. Развёртывание servers, публикация каталога и пакетная доставка — отдельные операции в пределах будущего разрешения, не автоматическое следствие постановки. Обычная будущая source-доставка следует `commit → RegisterChange` по `AGENTS.md`; запись в каталог не заменяет публикацию пакета.
+
+## Open Questions
+
+Согласованные архитектурные вопросы закрыты; повторно выбирать ACL, account mapping, mandatory version profiles или storage не требуется. Для обязательного наполнения к первому выпуску остаются конкретные данные: выпускной перечень продуктов/проектов, окончательные названия/IDs, подтверждённая карта `knowledgeAreas` и optional memory homes, book/page selectors и purpose-маршруты. G2 реализует home contract, но минимальный seed не является готовой выпускной картой. Подтверждение вынесено в 1.9–1.11/5.7 и AC-36–38; незаполненное обязательное не закрывается общим defer. Допустимое отсутствие необязательных интеграций/home сохраняется по описанным условиям.
+
+Рутинные детали реализации: точное имя поля совместимой версии `project.json`, размещение чистого resolver внутри текущего helper и способ экспонировать bounded metadata в существующих tools. Их выбирают по актуальному owner source без расширения контракта. Фактическая доступность Windows/terminal canary stand определяется перед приёмкой; отсутствие stand означает «не проверено», а не снятие поддержки.
+
+### Фактическая граница квалификации G3
+
+Последующий прогон 2026-10-19 на существующих `dev-ermakov` MCP подтвердил 5/5 transport handshakes и отдельные Graph/СППР/native timeout/Unicode subsets, но обнаружил failed BookStack selector, неподдерживаемый Mantis `project_ids` и отсутствие СППР project metadata. Полные G3.7/AC-39 остаются непринятыми; [test-plan](test-plan.md#квалификация-g3-на-существующих-mcp-2026-10-19) владеет доказательствами/продолжением, memory change только потребляет этот статус. Это не новый architecture checkpoint и не изменение критериев ради доступного стенда.
+
+Существующие MCP допустимо переиспользовать при достаточных capabilities/проверенном build. Отдельная копия каждого сервера не обязательна; обновление существующего deployment остаётся отдельным разрешённым действием. Для state-changing bootstrap/recovery/legacy canary требуются изолированные test roots/базы и native client context, чтобы запрет миграции рабочих проектов сохранялся. Наличие конфигурации/HTTP 200/версии SDK не заменяет source identity, server scope и actual client activation. Заявленная Windows/terminal поддержка не сокращается из-за отсутствующего proof.
+
+### Фактический server handoff, 2026-10-20
+
+Отдельно разрешённое обновление существующих BookStack/Mantis/СППР завершено через SSH и прежний host maintenance owner. Python source commit `893ed31fe25bf8b55ac17551812751370e669036` наложен на точные прежние image dependencies; mounts/параметры запуска сохранены, прежние контейнеры остановлены и удержаны для отката. Единственное добавление конфигурации — qualification view BookStack `g3-canary-page-13`; это не продуктовая привязка или наполнение реестра. Application identity подтверждена image IDs и hashes `/app` sources, отдельно от MCP framework version. [Результаты, resource/surface measurements и пределы](test-plan.md#обновление-трёх-mcp-и-повторная-квалификация-2026-10-20) принадлежат этому change. Native server proof не закрывает actual client activation или весь AC-39; память использует ту же зависимость без нового provider/updater. Требования и checkpoint не расширены, G4/рабочая миграция/публикация workflow остаются отложенными.
+
+### Граница взаимодействия после native PM5 canary
+
+Продолжение квалификации на runtime `d17f29da` подтвердило server/file/startup subsets, но нарушило AC-31: compact-runner создаёт скрытую Windows console; её физическая доступность не означает доступность пользовательского ввода. После успешных package writes/commits `Invoke-ItlProductProjectPostUpdateOffer` удержал команду в `Read-Host`. [Исходный failed result](test-plan.md#продолжение-g3-codegraph-pm5-клиенты-и-startup-2026-10-20) сохранён. Исправление принадлежит общему `Test-InteractiveInputAvailable`: существующий `RunLogPath` с original `compact-*` channel означает недоступный пользовательский ввод до проверки stdin. Он уже передаётся старым runner и сохраняется через fresh post-copy process; новый marker/state не нужен. Остальные foreground/windowed channels сохраняют прежнюю stdin-проверку, без Win32 visibility heuristics и изменения terminal support. Все callers используют один input owner; existing required-input failures/continuations остаются у своих actions. [Native повтор на `2f996692`](test-plan.md#исправление-скрытой-консоли-и-повтор-pm5-2026-10-20) завершился штатно без consent/defer. Foreground interactive choose/new/later проверяется отдельно. Новая служба, memory coordinator, runtime barrier, ручная правка lifecycle state или принудительный later не вводятся; reproducer сохраняет исходную console topology. Shared authority/installed migration и always-on context не расширены.
+
+Единственная source правка касается qualification factory: `Get-SourceE2EFixtureCapsule` приводит supplied root к полному пути до сравнения sealed admission; slash/`.` aliases не требуют нового workflow acknowledgement. Immutable capsule/DT/receipts и source guards сохраняются. Регрессия сохраняет whitespace+Cyrillic path и проверяет отсутствие записи в descriptor; fixture N-1 выбирается из общего опубликованного ancestor, когда reader отстаёт от текущего `origin/develop`. Это source-only stateless исправление, не новый installed owner/барьер/миграция или always-on context.
+
+### Граница catalog-only preferences и legacy MCP enrollment
+
+Первый PM5 continuation 2026-10-20 выявил blocker **G3-CATALOG-LEGACY-ENROLLMENT**: сохранение catalog preferences создаёт существующий `vibecoding1c-selection.json`, а legacy reconcile считает наличие этого файла достаточным входом в настройку прежнего набора MCP. После owned restore привязки и без legacy server selections следующий update требует Code/Graph и завершается `ITL_MCP_RECONCILE_INTEGRITY_FAILED`. Read-only `PlanOnly` на полном существующем endpoint registry подтвердил тот же отказ; пустой endpoint registry первого прогона добавлял другие missing endpoints, но не объясняет Code/Graph failure. Последующий owner fix и границы повторной приёмки описаны ниже.
+
+Существующий контракт сохраняется: выбор/создание проекта, явное later и личные catalog preferences не являются согласием на legacy MCP setup или memory opt-in. Исправление и повтор original journey принадлежат действующим selection/reconcile/update owners G3, с сохранением реально настроенных legacy MCP, custom entries и guard для отказа предусмотренного подключения. Нового updater, memory состояния, per-MCP анкеты, автоматического consent или ослабления readiness guard это не разрешает. До приёмки повторного whole-command proof foreground offer/поздний возврат, compatibility restore и G3.7 остаются открытыми; подробности и оставшиеся branch controls — [test-plan](test-plan.md#pm5-выбор-ассоциация-и-восстановление-2026-10-20).
+
+Owner fix `8ee68833…` записывает только сохранённое свойство `productProject` через существующий JSON writer, не materialize defaults legacy reader и не меняет native `updatedAt`/servers/unknown fields. Если созданный catalog-only файл после owned restore пуст, он удаляется после прежней проверки input hash; чужие native поля сохраняются. Исторический пустой native файл сохраняет свою прежнюю семантику через значения legacy reader при первом добавлении private property. Единственный stateless `Test-Vibecoding1cMcpLegacySelectionPresent` различает отсутствие/файл только с `productProject` и историческое native тело; его используют automatic reconcile, package refresh и unbound inheritance. Bound branch materialization остаётся у прежнего catalog path. Никакого persisted enrollment flag, migration, нового файла/owner/lock, повышения прав или always-on context нет; legacy configured/incomplete/explicit disabled и повреждённые JSON не объявляются catalog-only ради обхода guard.
+
+Реальный переход версии `8ee68833…` → `4f484a70…` прошёл прежний reconcile failure, но обнаружил ещё одну границу input: captured post-copy child создаётся с `CreateNoWindow`, а `Read-Host` в нём не получает input foreground caller. Одной печати вопроса с newline недостаточно: пустой input в caller не завершил вопрос. Прерванная попытка и штатная очистка child сохраняются отдельно от successful whole-command proof. Optional offer переносится в существующий caller `Complete-WorkflowUpdatePostCopyFromSnapshot` после exact child terminal, retained receipt identity, branch completion и snapshot finalization. Lifecycle continuation не задаёт этот вопрос даже при false-positive `IsInputRedirected=false`; unattended caller по прежнему input guard ничего не спрашивает и не записывает consent/defer. Для перехода со старого caller доступен следующий явный `catalog select`; полноценный foreground offer проверяется отдельным настоящим переходом между версиями с новым caller. Новый IPC/prompt bridge, runtime marker, operation owner или изменение shared process capture не требуются.
+
+Native qualification обязана достигнуть исходного post-copy: same-source update после завершённого rollout штатно идёт только через `workflow-update.resume-branches`; такой exit 0 не доказывает исправление legacy reconcile. Повтор использует новую owned copy той же sealed capsule, исходную последовательность select/restore/new/restore и реальный переход между двумя чистыми source commits с неизменным workload. Старый failed snapshot/pin не переписывается. Full G3/AC-39 и обязательное release population остаются отдельными условиями.
+
+Итог native повтора зафиксирован в [test-plan](test-plan.md#итог-повтора-enrollment-2026-10-20). Старый caller при установке нового runtime ещё не выполняет перенесённый offer; это G3-LEGACY-CALLER-OFFER, а не согласованное исключение из SHALL первого successful interactive предложения. Отдельный catalog select сохраняет доступ к настройке, но не закрывает этот AC. Перенос только в новый caller был промежуточным решением; следующий owner-local контракт его заменяет.
+
+### First-upgrade input у того же lifecycle owner
+
+Исправление G3-LEGACY-CALLER-OFFER возвращает optional offer в новый post-copy child после retained snapshot и полного branch rollout. Старый foreground caller уже передаёт signed operation ID/owner PID и ждёт этот child; изменения старой установки до первого update не требуются. On-demand console leaf подключает child к существующей консоли **того же проверенного lifecycle owner**, сохраняя stdout/stderr pipes. Проверяются текущие record/operation ID/action/root/PID, живой owner с удерживаемыми locks и та же Windows session; произвольный PID или неподтверждённый continuation не допускаются. `ReadConsoleW` и локальный dynamic-scope `Read-Host` обслуживают прежние catalog вопросы/валидацию, включая вложенные choose/new/conflict, без копирования бизнес-логики; console mode/handle/attachment освобождаются в finally. Обычный foreground catalog command использует прежний ввод.
+
+Это stateless leaf существующей операции, использующей уже переданные полномочия на foreground input: отдельного owner, процесса-посредника, IPC, marker, persisted input state, machine service, lock или elevation нет; общий process capture и его unattended semantics не меняются. Leaf загружается только при optional interactive offer. Для intermediate caller с прежним post-return hook существующий `LifecycleOperationTerminalWrittenByContinuation` подавляет повторный вопрос, в том числе после пустого ответа. Compact/unattended guard срабатывает до подключения; без ответа нет consent/defer. Ошибка подключения оставляет package outcome и прежний `catalog select` continuation, но не считается принятым first-upgrade AC.
+
+Приёмка требует native первого foreground update **неизменённой** старой PM5 capsule, а не установки нового caller и следующего update. Прежние failed attempts сохраняются. Unicode nested input, empty/later, отсутствие duplicate, invalid-owner/unattended и cleanup проверяются отдельными focused owner tests; actual PM5 journey доказывается отдельно. Gate 6, G4, рабочая миграция и публикация исключены. Always-on instructions/context delta = 0; provider/LLM calls = 0; дополнительная стоимость только у явного interactive offer, измеряется по исходному сценарию.
+
+Native квалификация c264cbe5 закрыла G3-LEGACY-CALLER-OFFER для первого foreground PM5 upgrade от fa0e3c без предварительного обновления caller. Исторические попытки выше сохранены; их перенос offer только в parent заменён контрактом first-upgrade input. Дополнительный поздний restore обнаружил G3-CATALOG-RESTORE-FORMAT: semantic equality descriptor не равна точному восстановлению bytes/clean Git. Его exact baseline/diff остаются у settings/apply/recovery owner; ручная canonicalization или commit не могут закрыть приёмку. [Результаты](test-plan.md#первое-обновление-legacy-caller-2026-10-20). Full G3, Gate 6, G4 и release population этим proof не закрыты.
+
+Owner-local исправление G3-CATALOG-RESTORE-FORMAT (`a2e6931e`) добавляет исходный UTF-8 текст descriptor и before/after file hashes в существующий ignored operation receipt, до физической записи binding. Writer возвращает исходные bytes только при точном совпадении текущего файла со своей записью и проверенном restore intent. При стороннем изменении файла остаётся прежний merge только owned property с сохранением несвязанных значений и запретом конфликта привязки. Receipt переносится в existing compatibility baseline; прерывание и возобновление используют тот же operation ID. Старые receipts без текста сохраняют прежнюю semantic recovery, без обещания восстановить потерянный формат. Нового файла/owner/lock/migration/always-on context нет; private later и memory opt-in не меняются.
+
+Focused 89/89 подтверждает source contract, но исходный native replay пока блокирован fixture: штатный factory отказал до создания новой copy из-за отсутствующего source `1Cv8.1CD`. Sealed capsule, её admission и прежняя dirty copy не заменялись/не очищались. [Текущий результат](test-plan.md#точный-restore-descriptor-2026-10-20); G3-CATALOG-RESTORE-FORMAT остаётся открытым по native acceptance, вместе с full G3 и прежними release conditions.
+
+## Согласованный recovery из capsule, 2026-10-20
+
+Пользователь отдельно согласовал восстановление PM5-стенда из сохранившейся capsule после отсутствия raw source 1Cv8.1CD. Владелец — существующий source-e2e-fixture factory; добавляется только явный source-only Prepare Develop с полным путём capsule, её закреплённым SHA-256 и положительным объявленным бюджетом места под восстановленную базу. Обычные Capture/Prepare, их live-seed/currentness checks, Recapture и Release/publication route не меняются и не переключаются на recovery автоматически. Восстановленный raw 1CD не объявляется исходным файлом с прежним SHA.
+
+Перед materialization обязательны SHA manifest и всех его artifacts, phase Develop, published N-1 workflow ancestor и соответствие выбранного source project capsule. DT/source.bundle/state/context применяются существующими clone/context/native CREATEINFOBASE/RestoreIB owners, с прежними guards, use lease, durable claim, bounded child deadlines и failure retention. Capacity preflight получает явный бюджет (для PM5 4 GiB при сохранённом измерении производной базы около 3.30 GB), не ноль вместо неизвестного размера; бюджет и его declared basis фиксируются в том же claim. Ни нового manager/state machine/lock, ни автоматического восстановления старого seed нет. Новая scope не содержит старые copy; recovery не очищает их. В существующем claim явно различаются live-seed и sealed-capsule admission, чтобы последующий результат не выдавался за доказательство currentness оригинала.
+
+Приёмка G3-CATALOG-RESTORE-FORMAT сохраняет исходный workload: одна и та же capsule c2c570fe…, прежние Git commits/pending/cursor/context и ai_rules_1c r43; исходный установленный caller fa0e3c без catalog hook/binding/private selection, без предварительного update caller. Native последовательность: первый foreground update → фактический later → capture unsorted descriptor bytes и clean master/branch → select pm5-core-development → restore → точные bytes/clean roots/private later/legacy false/memory off. Проверить data restore существующим native RestoreIB на том же DT, hashes business trees, сохранность capsule/старого seed descriptor и original failed diff. Исчезнувший raw seed остаётся unavailable, его currentness не заявляется. Full G3 и полная source-delivery qualification этим bounded recovery не закрываются. Gate 6 не исправляется и не запускается; G4, рабочая миграция и публикация запрещены.
+
+Native recovery завершён на runtime source b4338057: exact capsule restored в новый owned PM5 target, исходный caller fa0e3c/no hook/no binding/no selection и clean roots подтверждены. Первые две попытки upgrade остановились при acquisition locked on-demand 0.4.24 (соединение закрыто; отдельный HEAD probe URL дал 404). Штатный builder произвёл exact locked SHA b1cf660c… с passed Go tests; existing process-only source-build override позволил продолжить тот же pinned post-copy. Это не публикация/Release proof компонента и не uninterrupted first-command success. После фактического later поздний select/restore восстановил descriptor bytes/clean roots; его Git blob 37a8e07b… совпадает с исходным reproducer, raw restored DB c323a334… побайтно совпадает с прежней failed copy. Capsule, старый seed/failed copy и семь Gate 6 artifacts сохранены. Native G3-CATALOG-RESTORE-FORMAT закрыт в approved snapshot scope; normal live-seed currentness unavailable, full G3 и условия выпуска открыты. Подробности/стоимость/ограничения — [результаты](test-plan.md#результат-recovery-pm5-из-capsule-2026-10-20).
+
+## Source/client qualification, 2026-10-20
+
+[Native result](evidence/g3-source-client-qualification-2026-10-20.md) подтверждает фактические Codex app-server tool calls PM4/PM5 и reload на новых private fixtures. Exact host/server/config preflight сохраняется, live identity admission не реализован: правильный и неверный namespace остаются unverified. Native tool availability не означает business binding readiness или точную версию источника. Остальные frontend/client/platform критерии открыты. Это evidence существующего AC-08/20/26, без нового owner/probe/barrier, G4, рабочей миграции или публикации.
+
+## Checkpoint G3: привязка Code/Graph и версия источника
+
+**Действующая редакция 2026-10-21: сведения registry и явные отличия проекта/source, без обязательных доработок Code/Graph.** Пользователь заменил прежнее усложнение с active-index manifest/revision stamp. Цель G3 сохранена: правильный выбранный источник, честный контекст и применимость. Приёмка не требует доступа к исходникам Graph, сборки/установки нового Code image или exact generation/hash каждого ответа.
+
+### Решение и границы доверия
+
+Expected техническое подключение и бизнес-происхождение выбранного source получаются из одного applied snapshot с overrides/disabled. Registry configurationName/configurationVersion/status/indexedAt описывают MCP-источник и обновляются существующим index/publisher path. В версиях/применимости проекта нельзя подменять его собственные доработки данными типового MCP. Имеющиеся fingerprints могут сохраняться как дополнительные provenance, без новой обязательной побайтной аттестации каждого чтения.
+
+Обычная on-demand qualification проверяет штатный handshake/безопасное чтение и native scope там, где он поддерживается. Фактическое подключение сравнивается с выбранным source, а не с productId проекта. Одинаковые Code native IDs различаются полным binding. Неверный фактический endpoint/namespace по-прежнему не принимается; явно заданный КОРП для ПРОФ или типовой source для custom проекта допустим с ограничениями. Configuration file/applied marker не доказывает активацию открытого клиента: прежний sync/reload и scoped read сохраняются.
+
+Независимые init/update/branch/restore продолжаются при недоступном вспомогательном MCP. Нет новых probes при startup/status/context, persistent readiness state/cache, tools, services, auto-deploy/reindex или обязательного profile каждой версии. Missing registry info отмечается в выбранной проекции с продолжением прежнего владельца; отсутствие native revision само по себе не является дефектом G3. Для явного diagnostic сохранён общий бюджет 20 s на выбранную пару и отсутствие скрытых повторных probes; дополнительные LLM/embedding запросы и full-catalog prompt не нужны.
+
+### Исторический source-кандидат и оставшаяся работа
+
+[Срез 5e3ab2ff и raw результаты](evidence/g3-source-binding-implementation-2026-10-21.md) сохраняются без переписывания фактов. Он подготовил optional native Code patch и comparator более сильного indexed-version proof, но Code image не развёрнут, Graph не изменён. Отсутствующие Graph producer/исходники, native response-budget/manifest/crash-resume proof этого необязательного Code candidate **сняты с обязательного плана/блокеров G3**. Это не квалификация candidate и не отмена действующего host contract для любого отдельно разрешённого обновления образов.
+
+Source alignment выполнен по отдельному разрешению пользователя; [результат реализации](evidence/g3-registry-source-model-2026-10-21.md) и [exact inputs/raw references](evidence/g3-registry-source-model-2026-10-21.json) заменяют этот implementation gap. Code candidate удалён из source поставки, host publisher сохраняет существующие configuration/index поля и native selectors без нового sourceKey opt-in. Optional observation сравнивает selected endpoint/Graph scope/полезное чтение и отдельную native activation; опубликованная версия проверяется в registry, не в per-response stamp. Обычный context не вызывает MCP, а explicit observation не пишет state и не дублирует metadata из source summary. Custom native Codex read подтверждён; последующий [fresh ПРОФ → КОРП/reload](evidence/g3-prof-native-reload-2026-10-21.md) прошёл на том же f53b9247 runtime. Старые connect failures сохранены, их точная инфраструктурная первопричина не установлена; сейчас они не воспроизводятся. `mcpServerStatus.httpOrigin` показывает настроенный origin и может измениться до reload, поэтому actual readiness подтверждается native tools/областью чтения, не этим полем отдельно. G3/AC-39 целиком открыт по оставшимся installed/client/platform/continuation критериям.
+
+### Реализация и остающаяся квалификация
+
+| Existing task | Достаточный результат |
+|---|---|
+| 1.10–1.11, 2.1 | Явные source origin/назначение, проектные отличия и карта продуктов в существующих записях; registry version/index fields переиспользованы; неизвестные ссылки и необъяснённые пробелы диагностированы |
+| 2.1b, 3.4–3.5 | Existing resolver/preview/context/writer приведены к выбранному источнику; obsolete native-proof dependency и Code candidate исключены из обязательного пути без backend changes; overrides/disabled/restore прежние |
+| 5.3, 5.6 | Тот же фактический native connect/read → wrong endpoint → reload → byte restore; дополнительно custom PM5 КОРП → typical MCP и PM5 ПРОФ → КОРП с исключённой областью. Правильные явные различия не отвергнуты, неправильный endpoint/scope не принят |
+| 5.5–5.7 | Выбранная проекция/расходы и обязательное выпускное наполнение проверены по AC-08-a–h/36–38; full installed/frontend/platform остаток не закрыт документами |
+
+[Действующая детализация AC-08](test-plan.md#план-проверки-привязки-codegraph-и-версии-источника) и [memory consumer](../add-scoped-cognee-memory/design.md#зависимость-checkpoint-codegraph-и-версии-источника) используют один контракт. G1/Q1–Q7/D9/G2 не переоткрываются. Gate 6, G4, рабочая миграция, серверные deploy/reindex и публикация не разрешены этим уточнением.
+
+## Client/installed qualification, 2026-10-21
+
+[Единый результат и открытые findings](evidence/g3-clients-installed-2026-10-21.md) уточняют acceptance, не архитектуру: native Kilo connection/reconnect подтверждены, а functional calls и IDE frontend — нет. Kilo импортирует project-local OpenCode aliases вместе со своими (четыре имени / два endpoints) и добавляет `$schema` в оба config файла. Interoperability разбирается у существующего client adapter/writer owner с сохранением исходного multi-client workload и custom settings; alias или `$schema` не становятся business source/product ID. Local API 404 не требует доработки Code/Graph или нового bridge. Рост model schema cost пока не измерен.
+
+Source DTO содержит project/source differences, но default CLI PowerShell formatting сворачивает nested значения: G3-CONTEXT-CLI-OUTPUT оставляет 3.5 открытой. Достаточное исправление — bounded presentation у прежнего context owner и regression actual child stdout; новый resolver/startup probe не нужен. Явный JSON pipeline того же helper проверен как diagnostic continuation (7725 bytes), не добавлен в always-on context и не заменяет default CLI acceptance.
+
+Legacy installed PM5 **b4338057** подтвердил selection/discovery/owned failure recovery с сохранением common MCP, DB/HEAD/branch. Client metadata edit сохраняется как чужая правка; exact descriptor/lock restore не равен whole-file config/receipt equality. Полные latest installed/init/branch/downgrade/прочие frontend/platform journeys открыты. Fresh SHA+actual mtime guards 20/4 paths не превращают прежний hash-only all-20 guard в timestamp proof; explicit Codex config и отдельные Startup receipt timestamp controls сохраняются. Engineering Startup/token budgets и границы шести областей/ai_rules_1c неизменны. Gate 6, G4, рабочая миграция, deploy и публикация не выполнялись.
+
+### Default CLI context repair
+
+[G3-CONTEXT-CLI-OUTPUT закрыт](evidence/g3-context-cli-output-2026-10-21.md) сериализацией существующей selected projection у UI owner: status/select `CatalogAction context` выводят compact UTF-8 JSON, включая unbound; in-process helper сохраняет DTO. Нового публичного флага, startup/backend probe, resolver/renderer у memory consumer, state или coordinator нет. Доработки custom проекта, ПРОФ → КОРП ограничения и registry metadata видимы в actual stdout; saved observation сохраняет прежние provenance/checkedAt и не становится fresh native read. Прежний diagnostic JSON pipeline для public CLI больше не требуется. Output 2332–3071 bytes выбранного контекста; полезный рост от неисправных 838/842 bytes объяснён, always-on budget не увеличен. Точный guard count — 19 paths/root (38 на двух roots), прежние summary 20 уточнены без переписывания raw proof. Full G3/installed/client/platform/release population остаются открытыми; Gate 6/G4/рабочая миграция/публикация не затронуты.
+
+### Kilo: один активный набор MCP в multi-client проекте
+
+[Owner repair/native proof](evidence/g3-kilo-native-fix-2026-10-21.md) заменяет открытые Kilo findings предыдущего среза. Kilo импортирует root OpenCode config, поэтому existing set writer при обычном Kilo/vibecoding1c apply добавляет в собственный Kilo config disabled `onec-*` import overlays. Основные `1c-*` names/permissions сохранены, OpenCode writer/file не изменяется. Это обычные entries существующего preflight/ownership/baselines/pinned undo; preview использует prepared requests того же writer. Restore возвращает прежние entries без повторного создания overlays. Ручные owned overrides сохраняются; foreign physical alias пропускается с WARN и primary setup продолжается. Native duplicate-free acceptance для такого foreign override остаётся unverified, explicit collision guard прежний.
+
+Никаких cross-client reads, фонового reconcile, нового state, глобальной policy или barrier нет. Дополнительные disabled entries увеличивают только собственный config/receipts и explicit preview; активного второго tool namespace в проверенном runtime нет. Точный token эффект не измерен, always-on/startup/query/card budgets не меняются.
+
+Bundled Kilo 7.8.15 требует `KILO_EXPERIMENTAL_MCP_APPS=1` для диагностического `/experimental/mcp/call-tool`; флаг применяется только к authenticated loopback private `kilo serve --pure` процессу, не к обычной установке/глобальному окружению. Это исправление native qualification procedure, не patch клиента/Code/Graph. CUSTOM и ПРОФ original multi-client roots прошли reads/negative/reconnect/instance reload с 2 connected/2 disabled. CLI/core proof не квалифицирует VS Code frontend или весь installed G3. Native `$schema` normalization не скрывается удалением metadata. Memory получает прежний applied context, без собственной alias policy/probe. Gate 6/G4/рабочая миграция/публикация не затронуты.
+
+### Native desktop qualification: текущая граница
+
+[Единый native desktop result](evidence/g3-desktop-native-2026-10-21.md) проверяет existing 3.4/5.4/5.5/5.6/AC-08/20/25/26 без runtime изменений. На исходном ПРОФ root Kilo VS Code 1.142.0/Kilo 7.8.15 показывает 2 connected/2 disabled, сохраняет их после native config Reload и выполняет настоящие Code stats/Graph project-list reads. Failed Graph status со строкой `generation="null"` сохранён; completed/пересказ модели не заменяют scoped semantic result. Отсутствующий native active_generation не возвращает обязательный index stamp в модель registry metadata.
+
+Cursor 3.25.9 native worker получил 28 Code + 54 Graph tools и восстановил их после полного Reload Window; backing controls исследованы программно, **login overlay остаётся видимым**, signed-in frontend/agent calls не приняты. Первоначальный OpenCode selected-context failure сохранён в desktop report; [picker repair](evidence/g3-opencode-selected-context-2026-10-21.md) закрыл выбор PROF каталога/native connection. [Provider follow-up](evidence/g3-opencode-provider-repair-2026-10-21.md) добавил два actual reads и reload на отдельной official 1.19.3; 1.18.11 failure не переписан в pass. Native app profiles/permissions/provider IDs не становятся registry scope/grants или новым workflow state.
+
+Новые callbacks/probes/bridge/state не добавлены. Kilo private canary измерил 4 provider requests и существенные native token counters; без paired baseline это не расход, приписанный G3. Нормативные Startup/context/20 s diagnostic budgets прежние. Future memory consumer получает один applied context и не повторяет desktop qualification/LLM calls. Full AC-39, latest installed/platform/CUSTOM frontend, release population AC-36–38 и memory AC-43/G5/44 открыты; Gate 6/G4/рабочая миграция/публикация не затронуты.
+
+### OpenCode Desktop: native dialog и граница model acceptance
+
+Electron Page capture описывает renderer и не доказывает отсутствие отдельного Windows folder picker. Source-only native qualification проверяет owned PID/dialog, завершает выбор exact original root обычным UIA/ручным действием, затем отдельно проверяет frontend directory и его native MCP requests. Состояние маршрута, private store и внешний MCP не подставляются вместо этого пути. Исправлена процедура наблюдения, барьеры установленного workflow не меняются.
+
+Первый native user turn с bundled backend 1.18.11 остановлен provider HTTP 403 до tools; raw отказ сохранён. [Owner repair/repeat](evidence/g3-opencode-provider-repair-2026-10-21.md) закрыл G3-OPENCODE-DESKTOP-PROVIDER-403 для отдельной официальной 1.19.3: исправленные vendor version metadata, тот же PROF root/provider/model/prompt, два actual native reads и scoped reload. Основная установленная 1.18.11 сохранена, её installed qualification не заявляется. Connected UI/GET или нулевые counters не заменяют tool payload proof; теперь он есть в двух distinct native tool parts. Business PROF/CORP source differences, registry versions, ownership и ai_rules_1c прежние. Full G3/AC-39 и release population AC-36–38 открыты; Gate 6/G4/рабочая миграция/публикация не затронуты.
+
+### Vendor build repair в source-only квалификации
+
+[Точный report](evidence/g3-opencode-provider-repair-2026-10-21.md) связывает дефект version metadata bundled backend 1.18.11 (local) с исправленным release 1.19.3 и реальными payloads. Поддерживаемое исправление — неизменённая vendor release build в отдельном тестовом профиле. Header spoofing, vendor patch, credentials, permission relaxation, новый bridge/registry/probe или обход MCP не нужны. Версия проверяется у запускаемого qualification client; это не новый барьер installed startup и не workflow-owned updater OpenCode.
+
+Code release.version не становится версией конфигурации; Graph inherited/null generation допустим. Версия конфигурации остаётся из registry/applied context, а PROF/CORP различия явными. Существенные native input/cache counters описывают существующий client toolset, не G3/memory added-context delta. Full G3/installed/model matrix и AC-36–38 остаются открытыми.
+
+### Cursor account auth: граница клиента и проверенный профиль
+
+[Прежний handoff](evidence/g3-cursor-auth-qualification-2026-10-21.md) сохраняет signed-out private 3.25.9. [Native follow-up 22.10](evidence/g3-cursor-native-reads-2026-10-22.md) закрывает G3-CURSOR-NATIVE-AGENT-AUTH в явно разрешённом пользователем другом signed-in профиле/installed 3.26.16 на exact original PROF root. Через обычный UI включены project sources, actual stats({})/list_graph_projects({}) дали completed scoped payloads; native Reload Window сохранил вход/root/28–54 tools и те же tool results. Прежний private profile не объявлен исправленным или принятым. Смена installed build зафиксирована, причина отдельно не устанавливалась; explicit updater не запускался.
+
+Account/profile/Agent switches принадлежат клиенту. Registry/memory не получают credentials, account mapping, private switch mapper или auth probe; direct MCP/overlay bypass не заменяют native Agent proof. Источники/версии по-прежнему registry/applied context, PROF/CORP различие явно; Code release.version не является версией конфигурации, Graph inherited/null generation допустим. Source switches восстановлены через UI, fresh19 unchanged, 30 owned processes штатно завершились. Один qualification user turn/два tools, UI12 s; tokens/provider requests/billing/paired delta не измерены, budgets прежние. Full G3/AC-39/installed/CUSTOM/platform/cost и release population AC-36–38 открыты; Gate 6/G4/рабочая миграция/публикация не затронуты.
+
+Наличие или отсутствие конкретного Cursor аккаунта не меняет business association/PROF–CORP различия/home/grants и не сокращает поддержку остальных клиентов. Credentials не копируются, private auth/enablement API не используются; Code/Graph не патчатся ради account session.
+
+
+### Fresh update child: catalog startup под существующим owner
+
+[Причина и original-path replay](evidence/g3-post-copy-startup-repair-2026-10-22.md) закрепляют порядок: `update-workflow/post-copy` не запускает независимый catalog startup до проверки снимка. Existing lifecycle phase передаётся прежнему classifier, затем прежний Update-WorkflowPackage валидирует receipt и file post-copy явно обрабатывает bound catalog-only проект без legacy selection. Top-level/pre-copy startup, catalog decisions/defer и защита foreign bytes сохраняются. Новых coordinator/state/barriers/probes или always-on контекста нет; существующий catalog refresh выполняется внутри post-copy. Один native first update на том же old-runtime PM5 Kilo+Cursor root завершился без retry/recovery; прежний failed результат сохраняется. Full G3/AC-39 и AC-36–38 открыты; memory/Gate 6/рабочая миграция/публикация не расширяются.
+
+### Completed resume сверяет текущую applied-квитанцию
+
+Completed plan не заменяет фактический applied marker. [Owner repair и original PM5 proof](evidence/g3-completed-resume-repair-2026-10-23.md) используют прежний record reader и сопоставляют operation ID/catalogRevision/contextHash перед возвратом configured. Completed compatibility restore сверяется со своим original baseline, включая законное отсутствие marker. Invalid/missing/mismatched результат даёт read-only refusal с public pinned restore continuation; оно доведено до original command. Это локальный recovery owner, не новый updater/state/lock/source stamp, не startup probe и не изменение Code/Graph/ai_rules_1c. Partial/restored/cancelled пути прежние; full G3/AC-39 и ограничения общей квалификации открыты.
+
+### Qualification boundary: partial cancel/recovery, 2026-10-23 (исторический subset)
+
+[PM5 native subset](evidence/g3-pm5-partial-cancel-2026-10-23.md) подтверждает cancel-only request на faulted partial, pinned resume и direct owned restore существующего writer; новых coordinator/locks/state/runtime checks нет. Active-writer cooperative cancel ещё не доказан, failed timing harness не принят. Restore возвращает owned before-состояние, не задаёт defer/override: следующий normal startup использует актуальный desired catalog; этот original путь повторён до fixture cleanup. Full G3/AC-39 открыт; памяти отдельный recovery/cache/probe не добавляется.
+
+### Qualification update: active writer cancellation, 2026-10-23
+
+[Следующий native-helper proof](evidence/g3-pm5-active-cancel-2026-10-23.md) закрывает прежний active-writer evidence gap на том же PM5 Kilo+Cursor root: cancel-only request при живом writer → настоящий cooperative stop до B/marker → pinned resume/owned restore и original commands. Timing-only command breakpoint и один qualification fixture lease не меняют runtime/lifecycle authority; новых barriers/state/locks/coordinators нет. Прежние failed harness сохранены; full G3/AC-39 и race/terminal/прочие journeys остаются открытыми. Restore по-прежнему не задаёт persisted defer; memory не добавляет свой recovery/cache/probe.
+
+### Qualification update: два сеанса и полная граница Startup, 2026-10-23 (исторический срез)
+
+[Current PM5 batch](evidence/g3-pm5-concurrency-startup-2026-10-23.md) подтверждает existing lifecycle serialization и nonblocking read-only status для двух same-user native helpers; каждый main использует свой pinned context. Новых runtime owners/locks/recovery/probes нет. Полное measured окно включает lazy import и pre-main work; 2.045/2.570 s превышают цель1/2, **G3-PM5-STARTUP-WINDOW-COST открыт**. Initialize-only/preloaded timings не заменяют полный scope, calibration не является feature baseline; требований/барьеров не меняли. Full G3/AC-39 и memory dependency прежние.
+
+### Qualification update: lazy import и observer calibration, 2026-10-23
+
+[Единый owner result](evidence/g3-startup-window-repair-2026-10-23.md). Existing lazy importer проверяет видимые функции через Function provider, сохраняя UI separation/idempotence; PATH/module discovery удалён у прежнего owner. Finding закрыт в проверенном current PM5 subset; full window 0.932/1.238 s. Instrumentation остаётся qualification-only, presumed overhead не вычитается; новых always-on/state/locks/barriers нет. Registry feature baseline/full G3/AC-39 и memory consumer4.2/G4/AC-43/G5/44 открыты. Память не добавляет отдельный updater/cache/probe или второй cost ledger.
+
+### Qualification update: external edit после согласия, 2026-10-23
+
+[Последующий owner repair](evidence/g3-mcp-foreign-byte-repair-2026-10-23.md) закрывает G3-MCP-FOREIGN-BYTE-PRESERVATION в исходной PM5 Kilo+Cursor области. Сортировка semantic projection сохраняется для сравнения; physical JSON правится существующим agent-1c.jsonc editor только в owned properties, без переупорядочивания чужих ключей. Existing text/BOM сохраняются; semantic no-op не вызывает editor/initializer. Один projected text определяет PlanOnly afterFiles, atomic write и receipt; consent/ownership/partial guard/pinned resume/restore прежние. Нового writer/coordinator/cache/lock нет. Старый failed report сохранён. На этом историческом срезе G3-PM5-UPDATE-COPY-STATUS-STALE оставался открыт после normal continuation; [последующий repair/replay](evidence/g3-pm5-update-copy-status-repair-2026-10-23.md) закрывает исходный PM5 subset при прежнем watchdog120 s. Memory использует тот же registry owner; full registry G3/AC-39 и memory4.2/G4/AC-43/G5/44 открыты.
+
+
+## PM5 copy-status owner repair, 2026-10-23
+
+[PM5 update copy-status repair](evidence/g3-pm5-update-copy-status-repair-2026-10-23.md): **G3-PM5-UPDATE-COPY-STATUS-STALE закрыт в исходном PM5 subset**. Existing snapshot/receipt owner использует прежний PID-owned heartbeat; watchdog120 s и assertions неизменны. Source compact перенос449705 ms и original installed update443186 ms завершились без retry/recovery, оба roots clean, snapshots680/359. 84/0/0 complete owner tests; Kilo+Cursor/DB/старые доказательства сохранены. Full G3/AC-39, остальные journeys/cost/population и memory dependencies открыты; Gate6/G4/рабочая миграция/публикация не выполнялись.
+
+Snapshot capture и SHA/receipt prepared/copying/copy-complete выполняются под существующим Invoke-WithRunStatusHeartbeat: один PID-owned worker, прежний nested reuse/cleanup/terminal handoff. Все path/reparse/write-set/SHA/receipt guards сохранены; нового state/lock/cache/recovery owner нет. Бутстрап исправленного executing helper и исходный installed replay различены в evidence; package-version checkpoint меняет только docs, runtime/tests идентичны. Routine Startup/always-on context/tool schemas не менялись; provider/LLM/memory calls0. Прежний whole CLI +1.756 s не атрибутирован этим update-only repair. Registry ownership/product-source differences/canonical home и memory consumer dependency неизменны; Code/Graph/ai_rules fork не дорабатывались.
+
+## Квалификация cache/local-record на текущем PM5, 2026-10-23
+
+[Квалификация cache/schema/applied на текущем PM5](evidence/g3-pm5-cache-integrity-2026-10-23.md): пакет `fac4bc51` установлен штатным update за 376,761 с. **Подтверждены 8 групп сценариев, 11 CLI-вызовов в итоговом наборе.** Проверены сохранение validated applied при offline/неподдерживаемой схеме, безопасный отказ без привязки, отказ для неизвестного проекта и повреждённого applied, доступность status и продолжение после удаления внесённого тестом повреждения. SHA и mtime защищённых путей, база, бизнес-исходники и прежние доказательства сохранены. Полная G3/AC-39, остальные платформы/клиенты/сценарии, стоимость и наполнение реестра остаются открытыми. Gate 6, G4, рабочая миграция и публикация не выполнялись.
+
+Существующий владелец контекста различает ошибки refresh/validation и offline snapshot. Оба пути сохраняют только проверенный applied context с предупреждением, без записи клиента. Без такого контекста операция отказывает; неверный hash applied запрещает основное действие, оставляя status доступным. Возврат внесённых тестом байтов не заменяет проверку штатного recovery. Код пакета, его тесты, архитектура и интерфейс registry–memory не менялись. Данные каталога и нативная готовность MCP проверяются раздельно; требования к exact indexed revision и доработке Code/Graph не возвращаются.
+
+## Завершающий прогон G3: исправления у существующих владельцев, 2026-10-23
+
+[Единый результат квалификации](evidence/g3-completion-2026-10-23.md) сохраняет отдельные source, installed, platform и выпускные границы. Defer без MCP-записей может завершиться с `prepared=false`: его selection уже изменён самой операцией. Поэтому forward resume сохраняет исходные preview guards, а restore и resume начатого restore используют сохранённые setting/client proofs и свежий preflight того же writer. Проверки чужих изменений и перед записью сохраняются.
+
+Для bounded Git тот же открытый Process передаётся существующему `Stop-ItlUiToolProcessTree`, уже используемому lifecycle: остановка ограничена его деревом и проверяет identity. Три секунды зарезервированы внутри исходного абсолютного deadline на cleanup; лимиты startup 10 с/save 60 с не увеличиваются. Новый coordinator, состояние, lock family, callback для независимых операций, elevation или обычный MCP probe не добавлены. UI leaf подгружается только при timeout; normal no-op и always-on surfaces не расширены. Это применение существующего владельца ресурсов в пределах одной Git-операции.
+
+Непроверенные Windows/client/installed клетки остаются обязательными; Gate 6 и G4 не подменяются этими исправлениями. Наполнение реестра до первого выпуска сохраняет отдельный статус.
+
+[Итоговый прогон G3](evidence/g3-completion-2026-10-23.md): доступный current PM5 subset завершён; **полная G3/AC-39 BLOCKED** по G3-B1–B5. Два owner-local repairs прошли 132+12 source tests и installed repeat `dfae2ff3`; 90 config calls + update. Настоящие conflict answers/Ctrl+C, pending stable ID, damaged-applied owned recovery и transport 7,933/7,836 с подтверждены. Warm full median/p95 1,006314/1,353585 с: median goal остаётся недостигнутым, без округления/повтора ради pass. Gate 6, G4, рабочая миграция и публикация не выполнялись.
+
+
+## Owner-local устранение динамической стоимости G3, 2026-10-24
+
+[Report/JSON](evidence/g3-publisher-cost-repair-2026-10-24.md): publisher-only reuse разрешён только после validation нового snapshot, checked inputs equality и immutable catalog/relation blob equality; из registry игнорируется только top-level publishedAt. Defer/explicit decision/любой business или source-version/endpoint/input change возвращает полный путь. Новый revision/context фиксирует существующий zero-client-request journal с прежними CAS/proof/cancel/resume/restore и marker-last; writer errors вне freshness fallback. Offline повторно использует только уже validated snapshot того же SHA и prior applied с WARN, без повторного resolve/декодирования; другой SHA читается обычным owner. Main UI/facade readiness preview сохранён, нового cache/manager/barrier/provider patch нет. Это не изменение schema реестра, canonical knowledge home, ai_rules policy или G4 consumer. Warm median1049.731мс принят пользователем как допустимое отклонение (49.731мс) и не блокирует G3; оптимизация/повтор ради порога не требуются. Прежние1000/2000мс остаются инженерными ориентирами; измерения не переписываются.
+
+## G3: содержательные изменения каталога, 2026-10-24
+
+[Native installed evidence](evidence/g3-project-metadata-functional-2026-10-24.md) подтверждает, что publisher-only reuse не поглощает изменения selected project metadata, links или relations. Переименование сохраняет IDs; custom/typical и explicit home меняют knowledge context/hash; links заменяются целиком и меняют settings hash. MCP endpoints и native client files не менялись. Синтетические homes/links остаются private fixtures, не release population, provisioning или памятью G4; схема/владельцы/ai_rules policy не изменялись.
+
+## G3: lifecycle qualification и downgrade handoff, 2026-10-24
+
+[Native evidence](evidence/g3-pm5-lifecycle-2026-10-24.md) разделяет capability binding и совместимость dependency handoff: успешный restore-compatible возвращает baseline/снимает binding, но не доказывает successful old-helper post-copy. Current producer сохраняет mode=workflow, старый fa0e3c9 понимает fresh/locked и останавливает фактический downgrade. Это blocker общего update-workflow/dependency owner, без нового сервиса/адаптера/режима/receipt edits. Исправление не начато; сохранить exact failed snapshot и повторить исходный сценарий после owner repair. Registry-only acceptance не подменяет G4/G5; новых зависимостей G3 → G4 не вводится, текущий запрет G4 сохраняется.
+
+## G3: исторический partial mode repair до migration handoff
+
+[Implementation/negative native repeat](evidence/g3-managed-downgrade-mode-partial-2026-10-24.md): существующий dependency owner сериализует целевой schema1 как locked с теми же pins/intent, current schema2 остаётся workflow. Snapshot coordinator согласует lock/project/dotenv, inherited environment и explicit child argument до старого child, восстанавливает parent environment в finally; старый helper не патчится. Следующий отказ ai_rules not-newer ещё не диагностирован и не обходится. Это registry compatibility subset, не memory consumer/G4; полная G3/G5 остаётся открытой.
+
+## G3: final mode repair и согласованный G3-LD1
+
+[Exact proof и варианты checkpoint](evidence/g3-managed-downgrade-repair-2026-10-24.md). Existing dependency owner сериализует legacy schema1/locked; snapshot coordinator согласует inherited environment/explicit argument, finally возвращает parent environment и вызывает existing exact-bundle ai_rules migration до старого child. Standalone guards, pins/intent, CAS, result/rollback/SkipAiRules прежние. Main proof положительный; old sibling coordinator не знает plan и сохраняет прежние pins, поэтому whole transition не принят.
+
+**G3-LD1 — APPROVED, 2026-10-25.** Пользователь согласовал сохранить current verified executor внутри existing update/recovery owner для всего legacy master+branch перехода, отделив его identity от old payload; source/cache resolver, receipts, per-root leases/status/resume/restore прежние, новый manager/state machine не добавлять. До copy проверить доступность exact executor и дать existing-source continuation при его отсутствии. Не переставлять branches до master commit без отдельного обоснования. Альтернативы — snapshot restore (не исходный arbitrary-target update) и новый shared manager/support reduction (не согласованы). Реализация разрешена только в этой границе; исходные failed proof и стенд сохраняются. Исходный current→old PM5 single native workload, foreign preservation, прежние fault/resume/restore контракты и no Gate6 — обязательные критерии; recovery/no-op или preformatted branch недостаточны. G4/memory consumer и рабочая миграция не разрешены.
+
+Legacy master-commit-ready/master-committed checkpoints продолжают только commit/rollout: не повторяют dependency/rules writers и не переписываются в post-copy-running. Existing migration handoff ограничен pre-commit фазами; две red regressions исправлены guard существующего owner, итог focused handoff/commit6/0 (58 unselected). Это сохранение прежней recovery границы, не G3-LD1 implementation. Native15b и exact final Targeted proof разделены.
+
+## G3-LD1: разрешённый объём 2026-10-25
+
+[Текущий отчёт LD1](evidence/g3-legacy-executor-2026-10-25.md). Путь и commit текущего исполнителя фиксируются до copy в существующих recoveryExecutorRoot/recoveryExecutorCommit; target source/pins остаются прежними. Main post-copy и branch rollout принадлежат одному текущему owner, порядок master commit → branches прежний. Используются уже имеющиеся source checkout, transaction, per-root lease и continuation, без нового cache manager/service/state machine. Если exact current checkout недоступен, до copy требуется запуск текущего source-side `scripts/update-installed-workflow.ps1 -ProjectRoot <root> -SourceRoot <old-source>`; записанная identity повторно проверяется перед child.
+
+Пользователь ограничил этот прогон: новые проверки и тестовые случаи не добавлять. Повторяются исходный saved-PM5 сценарий и уже имеющиеся owner-проверки; прежние assertions, workload, watchdog и recovery контракты сохраняются. Непокрытые отдельным fault run свойства не отмечаются PASS. Регистрация — один штатный RegisterChange после снятия A/B-паузы; код/нативный результат/регистрация учитываются отдельно. OpenCode SKIPPED; Gate6/G4, рабочая миграция и публикация запрещены. Полная приёмка G3 не следует из закрытия только LD1.
+
+## G3-LD1: результат исходного PM5 повтора
+
+[Native PASS](evidence/g3-legacy-executor-2026-10-25.md), implementation `3645c8e46184284b50573a6164709252533a986c`, single update oldfa0 exit0/331540мс. Current executor довёл master и sibling через прежний owner; новый branch dependency plan и exact pins0.4.15/schema1/locked, clean roots и pending0 подтверждены. Original protected-state rejection, restore-compatible, CF/DB, capsule/history сохранены. Два исправления existing harness (глобальный single-EXE override и чтение optional полей исторических receipts) документированы с failed attempts; mandatory assertions и исходная topology не изменены. Новые проверки/тестовые случаи не добавлялись. Регистрация — штатный RegisterChange после снятой A/B-паузы, authoritative результат этого же head читается из source-delivery Status, без правки tracked приёмки после регистрации. Общая G3 матрица/AC18/39 и memory AC43/G5 не закрываются одним LD1; OpenCode/Gate6/G4/рабочая миграция/публикация остаются в прежних границах.
+
+## G3-LD1: интеграция без потери соседних изменений
+
+[Исходный PM5 повтор на объединённом коде — PASS](evidence/g3-legacy-executor-integrated-2026-10-25.md), `7ba9f0a3ce6ebd08b227b4b35b65e43fe5b2f99c` → oldfa0, exit0/381883мс. Три конфликта lifecycle.ps1 разрешены rebase на принятый candidate8f7aaee4: сохранены foreign legacy master-only recovery, temporary-patch retirement Bind и наши exact executor/branch dependency plan; старый760 остаётся ancestor, ручных merge/queue правок нет. Первый native proof и конфликт регистрации сохранены отдельно. Та же topology, workload и assertions повторены; новые проверки не добавлялись. Full G3 не закрыт. Факт регистрации финального doc-only head читается из source-delivery Status для product-project-registry-g2; это отдельное доказательство доставки.
+## R6: подтверждённые ERP+PM5 / УНФ+PM5 Mantis настройки
+
+[Единый актуальный data result](evidence/release-population-2026-10-25.md) фиксирует решение владельца 2026-10-25: ошибки ERP+PM5 → поддержка PM5 (699), поиск ERP+PM5 → разработка PM5 (609) и поддержка PM5 (699); поиск УНФ+PM5 → разработка PM5 (609) и поддержка УНФ+PM5 (814), ошибки УНФ остаются814. Развитие обоих →609. Это данные одного каталога, не второй routing owner или новая memory policy. Data revision fae719cac93c820add276ff7201d84473b621543; pending scopes/target сняты. Registry reader/intent8/8 подтверждены, native write/client apply/публикации нет. G3 остаётся принят в согласованном контуре; G4, Gate6 и рабочая миграция не разрешены, предшествующий registration blocker не снят.

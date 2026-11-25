@@ -1,4 +1,4 @@
-Describe "1C Designer completion evidence" {
+﻿Describe "1C Designer completion evidence" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -6,11 +6,870 @@ Describe "1C Designer completion evidence" {
         $HelperPath = $context.HelperPath
     }
 
+    It 'transports a large complete ownership inventory through a native probe with Unicode and whitespace paths' {
+        $root = Join-Path $TestDrive 'Большой native probe с пробелом'
+        $library = Join-Path $root 'Библиотека probe с пробелом'
+        $temp = Join-Path $root 'Временные файлы с пробелом'
+        [void][IO.Directory]::CreateDirectory($library)
+        [void][IO.Directory]::CreateDirectory($temp)
+        $fixtureCore = @'
+function Get-DesignerOwnedProcessInventory {
+    param($Inventory, $Identities, $TrackedProcessIds, $LogPath, $InvocationStartedAtUtc, $Scopes)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $digest = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$Scopes[0].marker)))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    return [pscustomobject]@{ identityCount=$Identities.Count; lastName=$Identities[900512].name; ids=($TrackedProcessIds -join ','); log=$LogPath; markerSha256=$digest }
+}
+'@
+        [IO.File]::WriteAllText((Join-Path $library 'agent-1c.core.ps1'), $fixtureCore, [Text.UTF8Encoding]::new($true))
+        foreach ($name in @('agent-1c.runtime-values.ps1','agent-1c.sessions.ps1')) { [IO.File]::WriteAllText((Join-Path $library $name), '', [Text.Encoding]::ASCII) }
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Agent1cTempRoot { return $temp }
+            # The private input has no reader until Start-Process. A failure in
+            # shared atomic publication must not prevent its native transport.
+            function Write-Utf8TextAtomic { throw [IO.IOException]::new('probe-input-atomic-rename-unavailable') }
+            $script:Agent1cCoreRoot = $library
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds 30
+            $state.trackedProcessIds = @(900001..900512)
+            $state.trackedProcessIdentities = @{}
+            foreach ($id in $state.trackedProcessIds) {
+                $state.trackedProcessIdentities[$id] = [pscustomobject]@{name=('Процесс с пробелом '+$id);startTimeUtc='2026-10-13T10:00:00Z'}
+            }
+            $marker = ('Полный контекст владельца с пробелом. ' * 2000)
+            $state.ownedProcessScopes = @([pscustomobject]@{marker=$marker})
+            $log = Join-Path $root 'Точный лог с пробелом.log'
+            try {
+                Start-DesignerProcessEnumeration -ProbeState $state -LogPath $log
+                $state.processScanProcess.WaitForExit(30000) | Should -BeTrue
+                $result = Read-Utf8Text -Path $state.processScanOutputPath | ConvertFrom-Json
+                $result.status | Should -Be 'completed'
+                $row = @($result.processes)[0]
+                $row.identityCount | Should -Be 512
+                $row.lastName | Should -Be 'Процесс с пробелом 900512'
+                $row.ids | Should -Be ($state.trackedProcessIds -join ',')
+                $row.log | Should -Be $log
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try { $expected = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($marker)))).Replace('-','').ToLowerInvariant() }
+                finally { $sha.Dispose() }
+                $row.markerSha256 | Should -Be $expected
+            } finally {
+                $termination = Stop-DesignerProcessEnumeration -ProbeState $state
+                $termination.confirmed | Should -BeTrue
+            }
+            @(Get-ChildItem -LiteralPath $temp -File).Count | Should -Be 0
+        }
+    }
+
+    It 'removes the unpublished probe input when native child startup fails' {
+        $root = Join-Path $TestDrive 'Отказ native probe с пробелом'
+        [void][IO.Directory]::CreateDirectory($root)
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Agent1cTempRoot { return $root }
+            function Start-Process { throw 'forced-probe-start-failure' }
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds 30
+            { Start-DesignerProcessEnumeration -ProbeState $state } | Should -Throw '*forced-probe-start-failure*'
+            $state.processScanProcess | Should -BeNullOrEmpty
+            @(Get-ChildItem -LiteralPath $root -File).Count | Should -Be 0
+        }
+    }
+
+    It 'does not launch a native probe after an incomplete private input write' {
+        $root = Join-Path $TestDrive 'Ошибка записи probe с пробелом'
+        [void][IO.Directory]::CreateDirectory($root)
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Agent1cTempRoot { return $root }
+            function Get-Utf8Encoding { throw 'forced-probe-encoding-failure' }
+            $script:probeChildStarted = $false
+            function Start-Process { $script:probeChildStarted = $true; throw 'must-not-launch' }
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds 30
+            { Start-DesignerProcessEnumeration -ProbeState $state } | Should -Throw '*forced-probe-encoding-failure*'
+            $script:probeChildStarted | Should -BeFalse
+            $state.processScanProcess | Should -BeNullOrEmpty
+            @(Get-ChildItem -LiteralPath $root -File).Count | Should -Be 0
+        }
+    }
+
+    It 'preserves an existing private input collision and does not launch its native child' {
+        $root = Join-Path $TestDrive 'Коллизия probe с пробелом'
+        [void][IO.Directory]::CreateDirectory($root)
+        $output = Join-Path $root 'existing.json'
+        $collisionInputPath = [IO.Path]::ChangeExtension($output, 'input.json')
+        [IO.File]::WriteAllText($collisionInputPath, 'Чужой неизменный файл', [Text.UTF8Encoding]::new($false))
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Agent1cTempRoot { return $root }
+            function Join-Path { param($Path, $ChildPath) return $output }
+            $script:probeChildStarted = $false
+            function Start-Process { $script:probeChildStarted = $true; throw 'must-not-launch' }
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds 30
+            { Start-DesignerProcessEnumeration -ProbeState $state } | Should -Throw
+            $script:probeChildStarted | Should -BeFalse
+            $state.processScanProcess | Should -BeNullOrEmpty
+            [IO.File]::ReadAllText($collisionInputPath, [Text.Encoding]::UTF8) | Should -Be 'Чужой неизменный файл'
+        }
+    }
+
+    It 'keeps captured identities and rejects unusable Out paths through <enumerationMode> with scoped=<scoped>' -TestCases @(
+        @{enumerationMode='fallback';scoped=$false},@{enumerationMode='worker';scoped=$false},
+        @{enumerationMode='fallback';scoped=$true},@{enumerationMode='worker';scoped=$true}
+    ) {
+        param($enumerationMode,$scoped)
+        $result=& {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $base=Join-Path $TestDrive 'База с пробелом'
+            $log=Join-Path $TestDrive 'Точный вывод с пробелом.log'
+            $birth=[DateTime]::UtcNow.AddMinutes(-2)
+            $launcher=[pscustomobject]@{Id=34072;ProcessName='1cv8';StartTime=$birth}
+            function Get-Process {param($Id,$ErrorAction);return $launcher}
+            $prefix='1cv8.exe DESIGNER /F "'+$base+'" /Out '
+            # The quoted branch cannot consume this suffix; it yields an invalid
+            # path token. Such observations must not abort the whole inventory.
+            $bad=$prefix+'"'+$log+'" extra'
+            $script:InvalidOutputInventory=@(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34072;ParentProcessId=10;CreationDate=$birth;CommandLine=$bad},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1);CommandLine=$bad},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine=($prefix+'"'+$log+'" ')},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34075;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine=$bad},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34076;ParentProcessId=20;CreationDate=$birth.AddHours(-1);CommandLine=($prefix+'"'+$log+'"')})
+            $token=Get-OneCCommandLineSwitchPath -CommandLine $bad -SwitchNames Out
+            $token.Contains('"') | Should -BeTrue
+            if($enumerationMode -eq 'fallback'){
+                function Receive-DesignerProcessEnumeration {param($ProbeState,$LogPath);return [pscustomobject]@{status='completed';processes=$script:InvalidOutputInventory}}
+            }else{
+                foreach($entry in $script:InvalidOutputInventory){$entry.CreationDate=$entry.CreationDate.ToString('o')}
+                $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($script:InvalidOutputInventory | ConvertTo-Json -Depth 6)))
+                function Start-Process {
+                    param($FilePath,$ArgumentList,$WorkingDirectory,$WindowStyle,[switch]$PassThru)
+                    $code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($ArgumentList[-1]))
+                    $inject="`$script:Inventory=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$encoded'))|ConvertFrom-Json;function Get-CimInstance{return `$script:Inventory};"
+                    $ArgumentList[-1]=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inject+$code))
+                    Microsoft.PowerShell.Management\Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru
+                }
+            }
+            $state=New-DesignerInvocationProbeState -LauncherProcessId 34072 -SubProbeTimeoutSeconds 10
+            $state.invocationStartedAtUtc=$birth.ToString('o')
+            if($scoped){$state.ownedProcessScopes=@([pscustomobject]@{schemaVersion=1;role='native-invocation';kind='file';path=$base;mode='DESIGNER';logPath=$log;notBeforeUtc=$birth.ToString('o')})}
+            $deadline=[DateTime]::UtcNow.AddSeconds(12)
+            do{$state.nextProcessCheckAtUtc=[DateTime]::MinValue;$active=Get-DesignerInvocationProcessState -ProbeState $state -LogPath $log;if($active.querySucceeded){break};Start-Sleep -Milliseconds 50}while([DateTime]::UtcNow -lt $deadline)
+            [pscustomobject]@{active=$active;tracked=@($state.trackedProcessIds)}
+        }
+        $result.active.querySucceeded | Should -BeTrue
+        @($result.active.processIds) | Should -Be @(34072,34073,34074)
+        @($result.tracked) | Should -Not -Contain 34075
+        @($result.tracked) | Should -Not -Contain 34076
+    }
+
+    It 'rejects an old child of a reused launcher PID through <enumerationMode> while retaining valid descendants' -TestCases @(@{enumerationMode='fallback'},@{enumerationMode='worker'}) {
+        param($enumerationMode)
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $logPath = Join-Path $TestDrive 'Точный лог с пробелом.log'
+            $birth = [DateTime]::UtcNow.AddMinutes(-2)
+            $launcher = [pscustomobject]@{Id=34072;ProcessName='1cv8';StartTime=$birth}
+            function Get-Process { param($Id,$ErrorAction); return $launcher }
+            $script:IdentityInventory = @(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34072;ParentProcessId=10;CreationDate=$birth;CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=33164;ParentProcessId=34072;CreationDate=$birth.AddHours(-6);CommandLine='DESIGNER /IBName foreign'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1);CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine="DESIGNER /Out `"$logPath`" `t"},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=35000;ParentProcessId=20;CreationDate=$birth.AddHours(-3);CommandLine="DESIGNER /Out `"$logPath`""},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=35001;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine='DESIGNER /Out unrelated'},
+                # Real clients can end their quoted /Out argument with whitespace.
+                # Their unrelated output must not break enumeration of this invocation.
+                [pscustomobject]@{Name='1cv8c.exe';ProcessId=35002;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine="1cv8c.exe ENTERPRISE /Out `"$logPath.foreign`" "}
+            )
+            if ($enumerationMode -eq 'fallback') {
+                function Receive-DesignerProcessEnumeration { param($ProbeState,$LogPath); return [pscustomobject]@{status='completed';processes=$script:IdentityInventory} }
+            } else {
+                foreach ($entry in $script:IdentityInventory) { $entry.CreationDate = $entry.CreationDate.ToString('o') }
+                $script:IdentityInventoryJson = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($script:IdentityInventory | ConvertTo-Json -Depth 6)))
+                function Start-Process {
+                    param($FilePath,$ArgumentList,$WorkingDirectory,$WindowStyle,[switch]$PassThru)
+                    $code = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($ArgumentList[-1]))
+                    $prefix = "`$script:TestInventory = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$script:IdentityInventoryJson')) | ConvertFrom-Json; function Get-CimInstance { return `$script:TestInventory }; "
+                    $ArgumentList[-1] = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($prefix+$code))
+                    Microsoft.PowerShell.Management\Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru
+                }
+            }
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 34072 -SubProbeTimeoutSeconds 10
+            $state | Add-Member NoteProperty invocationStartedAtUtc $birth.ToString('o') -Force
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            do {
+                $state.nextProcessCheckAtUtc = [DateTime]::MinValue
+                $active = Get-DesignerInvocationProcessState -ProbeState $state -LogPath $logPath
+                if ($active.querySucceeded) { break }
+                Start-Sleep -Milliseconds 50
+            } while ([DateTime]::UtcNow -lt $deadline)
+            [pscustomobject]@{active=$active;tracked=@($state.trackedProcessIds)}
+        }
+        $result.active.querySucceeded | Should -BeTrue
+        @($result.active.processIds) | Should -Be @(34072,34073,34074)
+        @($result.tracked) | Should -Not -Contain 33164
+        @($result.tracked) | Should -Not -Contain 35000
+        @($result.tracked) | Should -Not -Contain 35001
+        @($result.tracked) | Should -Not -Contain 35002
+    }
+
+    It 'never stops a reused tracked PID and stops the same opened valid process object' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $birth = [DateTime]::UtcNow.AddMinutes(-2)
+            $script:CurrentProcess = [pscustomobject]@{Id=34072;ProcessName='1cv8';StartTime=$birth;Handle=[IntPtr]123;HasExited=$false}
+            $script:StoppedObjects = [Collections.Generic.List[object]]::new()
+            function Get-Process { param($Id,$ErrorAction); return $script:CurrentProcess }
+            function Stop-NativeProcessForSafety {
+                param($Process,[switch]$UseOpenedProcess)
+                $script:StoppedObjects.Add([pscustomobject]@{process=$Process;bound=[bool]$UseOpenedProcess})
+                return [pscustomobject]@{confirmed=$true;error=''}
+            }
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 34072
+            $originalProcess = $script:CurrentProcess
+            $valid = Stop-DesignerInvocationOwnedProcesses -ProbeState $state -UseTrackedOnly
+            $script:CurrentProcess = [pscustomobject]@{Id=34072;ProcessName='1cv8';StartTime=$birth.AddMinutes(1);Handle=[IntPtr]456;HasExited=$false}
+            $reused = Stop-DesignerInvocationOwnedProcesses -ProbeState $state -UseTrackedOnly
+            [pscustomobject]@{valid=$valid;reused=$reused;stops=@($script:StoppedObjects);sameObject=[object]::ReferenceEquals($originalProcess,$script:StoppedObjects[0].process)}
+        }
+        $result.valid.confirmed | Should -BeTrue
+        $result.valid.processIds | Should -Be @(34072)
+        $result.reused.confirmed | Should -BeTrue
+        $result.reused.attempted | Should -BeFalse
+        $result.reused.processIds | Should -BeNullOrEmpty
+        $result.stops.Count | Should -Be 1
+        $result.stops[0].bound | Should -BeTrue
+        $result.sameObject | Should -BeTrue
+    }
+
+    It 'refuses cleanup when the tracked process birth is unknown' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-Process { param($Id,$ErrorAction); return [pscustomobject]@{Id=$Id;ProcessName='1cv8';Handle=[IntPtr]123;HasExited=$false} }
+            function Stop-NativeProcessForSafety { throw 'Foreign process must never be stopped.' }
+            $state=New-DesignerInvocationProbeState -LauncherProcessId 34072
+            $cleanup=Stop-DesignerInvocationOwnedProcesses -ProbeState $state -UseTrackedOnly
+            $state.ownedProcessScopes=@([pscustomobject]@{schemaVersion=1;role='native-invocation';kind='file';path='C:\unknown';mode='DESIGNER';logPath='C:\unknown.log';notBeforeUtc=[DateTime]::UtcNow.ToString('o')})
+            function Receive-DesignerProcessEnumeration {param($ProbeState,$LogPath);return [pscustomobject]@{status='completed';processes=@()}}
+            $cleanup|Add-Member NoteProperty scopedObservation (Get-DesignerInvocationProcessState -ProbeState $state)
+            $cleanup
+        }
+        $result.confirmed | Should -BeFalse
+        $result.attempted | Should -BeFalse
+        $result.error | Should -Match 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE'
+        $result.scopedObservation.querySucceeded | Should -BeFalse
+        $result.scopedObservation.active | Should -BeTrue
+        $result.scopedObservation.detail | Should -Match 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE'
+    }
+
+    It 'matches native CIM birth precision to the held process handle before cleanup' {
+        $fixture = Join-Path $TestDrive 'Процесс с пробелом'
+        New-Item -ItemType Directory -Path $fixture | Out-Null
+        $exe = Join-Path $fixture '1cv8.exe'
+        Add-Type -TypeDefinition 'public static class NativeDesignerIdentityFixture { public static void Main() { System.Threading.Thread.Sleep(30000); } }' -OutputAssembly $exe -OutputType ConsoleApplication
+        $child = Microsoft.PowerShell.Management\Start-Process -FilePath $exe -WindowStyle Hidden -PassThru
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $state = New-DesignerInvocationProbeState -LauncherProcessId $child.Id
+                $native = Get-CimInstance Win32_Process -Filter "ProcessId=$($child.Id)"
+                function Receive-DesignerProcessEnumeration { param($ProbeState,$LogPath); return [pscustomobject]@{status='completed';processes=@($native)} }
+                $observation = Get-DesignerInvocationProcessState -ProbeState $state
+                $cleanup = Stop-DesignerInvocationOwnedProcesses -ProbeState $state -UseTrackedOnly
+                [pscustomobject]@{observation=$observation;cleanup=$cleanup}
+            }
+            $result.observation.querySucceeded | Should -BeTrue
+            $result.observation.processIds | Should -Be @($child.Id)
+            $result.cleanup.confirmed | Should -BeTrue
+            $child.WaitForExit(0) | Should -BeTrue
+        } finally {
+            if (-not $child.HasExited) { $child.Kill(); $child.WaitForExit(5000) | Out-Null }
+            $child.Dispose()
+        }
+    }
+
+
+    It 'retains a child born at captured invocation start with <fraction> residual ticks through <boundaryKind>' -TestCases @(
+        @{fraction=0;boundaryKind='parsed'},@{fraction=1;boundaryKind='parsed'},@{fraction=9;boundaryKind='parsed'},
+        @{fraction=0;boundaryKind='utc'},@{fraction=1;boundaryKind='utc'},@{fraction=9;boundaryKind='utc'}
+    ) {
+        param($fraction,$boundaryKind)
+        $result=& {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $logPath=Join-Path $TestDrive 'Точный вывод с пробелом.log'
+            $birth=[datetime]::new(638955360000000000+$fraction,[DateTimeKind]::Utc)
+            $state=New-DesignerInvocationProbeState -LauncherProcessId 0
+            Set-DesignerInvocationLauncherIdentity -ProbeState $state -ProbeContext ([pscustomobject]@{
+                processId=34072;processName='oscript.exe';processStartTimeUtc=$birth.ToString('o');
+                processExitTimeUtc=$birth.AddSeconds(1).ToString('o');invocationStartedAtUtc=$birth.ToString('o')})
+            $inventory=@(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth;CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=34072;CreationDate=$birth.AddTicks(-10);CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34075;ParentProcessId=999;CreationDate=$birth.AddMinutes(-1);CommandLine=('DESIGNER /Out "'+$logPath+'"')},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34076;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1).AddTicks(10);CommandLine='DESIGNER'})
+            $boundary=if($boundaryKind -eq 'parsed'){[datetime]$state.invocationStartedAtUtc}else{$birth}
+            @(Get-DesignerOwnedProcessInventory -Inventory $inventory -Identities $state.trackedProcessIdentities -TrackedProcessIds @(34072) -LogPath $logPath -InvocationStartedAtUtc $boundary).ProcessId
+        }
+        @($result) | Should -Be @(34073)
+    }
+
+    It 'tracks only 1C children inside an actual OneScript launcher lifetime and rejects its PID recycled by <parentName>' -TestCases @(@{parentName='oscript.exe'},@{parentName='powershell.exe'}) {
+        param($parentName)
+        $result = & {
+            param($ParentName)
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $birth = [DateTime]::UtcNow.AddMinutes(-2)
+            $exit = $birth.AddSeconds(2)
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 0
+            Set-DesignerInvocationLauncherIdentity -ProbeState $state -ProbeContext ([pscustomobject]@{
+                processId=34072;processName='oscript.exe';processStartTimeUtc=$birth.ToString('o');
+                processExitTimeUtc=$exit.ToString('o');invocationStartedAtUtc=$birth.ToString('o')})
+            $inventory = @(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1);CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=34072;CreationDate=$birth.AddHours(-1);CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34075;ParentProcessId=34072;CreationDate=$birth.AddSeconds(30);CommandLine='DESIGNER'})
+            $owned = @(Get-DesignerOwnedProcessInventory -Inventory $inventory -Identities $state.trackedProcessIdentities -TrackedProcessIds @($state.trackedProcessIds) -LogPath '' -InvocationStartedAtUtc $birth)
+            $state.trackedProcessIdentities[34072].PSObject.Properties.Remove('exitTimeUtc')
+            function Get-CimInstance {param($ClassName,$Filter,$OperationTimeoutSec,$ErrorAction); [pscustomobject]@{Name=$ParentName;ProcessId=34072;CreationDate=$birth.AddSeconds(10)}}
+            $foreign = @(Get-DesignerOwnedProcessInventory -Inventory @($inventory[2]) -Identities $state.trackedProcessIdentities -TrackedProcessIds @(34072) -LogPath '' -InvocationStartedAtUtc $birth)
+            $strict = ''
+            try { Get-DesignerProcessIdentity ([pscustomobject]@{Name='oscript.exe';CreationDate=$birth}) | Out-Null } catch { $strict=$_.Exception.Message }
+            [pscustomobject]@{owned=@($owned.ProcessId);foreignCount=$foreign.Count;strict=$strict;parent=$state.trackedProcessIdentities[34072]}
+        } $parentName
+        $result.owned | Should -Be @(34073)
+        $result.foreignCount | Should -Be 0
+        $result.strict | Should -Match 'native 1C process name is required'
+        $result.parent.name | Should -Be 'oscript.exe'
+    }
+
+    It 'rejects next-scan child PID reuse and a fresh foreign child of a non-1C reused parent' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $birth = [DateTime]::UtcNow.AddMinutes(-2)
+            function Get-Process { param($Id,$ErrorAction); return [pscustomobject]@{Id=$Id;ProcessName='1cv8';StartTime=$birth} }
+            $script:ReuseInventory = @(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34072;ParentProcessId=1;CreationDate=$birth;CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1);CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=34072;CreationDate=$birth.AddSeconds(2);CommandLine='DESIGNER'}
+            )
+            function Receive-DesignerProcessEnumeration { param($ProbeState,$LogPath);return [pscustomobject]@{status='completed';processes=$script:ReuseInventory} }
+            function Get-CimInstance { param($ClassName,$Filter,$OperationTimeoutSec,$ErrorAction);return [pscustomobject]@{Name='powershell.exe';ProcessId=34072;CreationDate=$birth.AddSeconds(30)} }
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 34072
+            $first = Get-DesignerInvocationProcessState -ProbeState $state
+            $script:ReuseInventory = @(
+                $script:ReuseInventory[1],
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=10;CreationDate=$birth.AddSeconds(40);CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34075;ParentProcessId=34072;CreationDate=$birth.AddSeconds(40);CommandLine='DESIGNER'}
+            )
+            $state.nextProcessCheckAtUtc=[DateTime]::MinValue
+            $second=Get-DesignerInvocationProcessState -ProbeState $state
+            [pscustomobject]@{first=$first;second=$second}
+        }
+        $result.first.processIds | Should -Be @(34072,34073,34074)
+        $result.second.querySucceeded | Should -BeTrue
+        $result.second.processIds | Should -Be @(34073)
+    }
+
+    It 'retains a no-Out child only inside the captured actual launcher lifetime after CREATEINFOBASE exit' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $birth=[DateTime]::UtcNow.AddMinutes(-2)
+            $script:CreateInventory=@(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1);CommandLine='CREATEINFOBASE'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=33164;ParentProcessId=34072;CreationDate=$birth.AddHours(-6);CommandLine='DESIGNER'}
+            )
+            function Receive-DesignerProcessEnumeration {param($ProbeState,$LogPath);return [pscustomobject]@{status='completed';processes=$script:CreateInventory}}
+            function Get-CimInstance {param($ClassName,$Filter,$OperationTimeoutSec,$ErrorAction);return @()}
+            $state=New-DesignerInvocationProbeState -LauncherProcessId 0
+            $ctx=[pscustomobject]@{processId=34072;processStartTimeUtc=$birth.ToString('o');invocationStartedAtUtc=$birth.ToString('o');processExitTimeUtc=$birth.AddSeconds(2).ToString('o');launcherExited=$true}
+            $active=Test-OneCNativeInvocationReleased -ProbeState $state -ProbeContext $ctx -LogPath ''
+            $owned=@($state.lastProcessState.processIds)
+            $script:CreateInventory=@()
+            $state.nextProcessCheckAtUtc=[DateTime]::MinValue
+            $null=Test-OneCNativeInvocationReleased -ProbeState $state -ProbeContext $ctx -LogPath ''
+            $state.processesReleasedSinceUtc=[DateTime]::UtcNow.AddSeconds(-2)
+            $state.nextProcessCheckAtUtc=[DateTime]::MinValue
+            $released=Test-OneCNativeInvocationReleased -ProbeState $state -ProbeContext $ctx -LogPath ''
+            [pscustomobject]@{active=$active;owned=$owned;released=$released}
+        }
+        $result.active | Should -BeFalse
+        $result.owned | Should -Be @(34073)
+        $result.released | Should -BeTrue
+    }
+
+    It 'retains genuine children inside the captured parent lifetime after native or non-native parent PID reuse through <enumerationMode>' -TestCases @(@{enumerationMode='fallback'},@{enumerationMode='worker'}) {
+        param($enumerationMode)
+        $results=@(foreach($parentKind in @('native','non-native')) {
+            & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $birth=[DateTime]::UtcNow.AddMinutes(-2)
+                $script:LifetimeInventory=@(
+                    [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1).ToString('o');CommandLine='1cv8.exe DESIGNER'},
+                    [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=34072;CreationDate=$birth.AddSeconds(4).ToString('o');CommandLine='1cv8.exe DESIGNER'},
+                    [pscustomobject]@{Name='1cv8.exe';ProcessId=33164;ParentProcessId=34072;CreationDate=$birth.AddHours(-6).ToString('o');CommandLine='1cv8.exe DESIGNER'}
+                )
+                if($parentKind -eq 'native'){$script:LifetimeInventory+=@([pscustomobject]@{Name='1cv8.exe';ProcessId=34072;ParentProcessId=1;CreationDate=$birth.AddSeconds(3).ToString('o');CommandLine='1cv8.exe DESIGNER /IBName foreign'})}
+                if($enumerationMode -eq 'fallback') {
+                    function Receive-DesignerProcessEnumeration {param($ProbeState,$LogPath);return [pscustomobject]@{status='completed';processes=$script:LifetimeInventory}}
+                    function Get-CimInstance {throw 'Captured old parent exit must not be replaced by a fresh numeric PID query.'}
+                } else {
+                    $script:LifetimeInventoryJson=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($script:LifetimeInventory|ConvertTo-Json -Depth 6)))
+                    function Start-Process {
+                        param($FilePath,$ArgumentList,$WorkingDirectory,$WindowStyle,[switch]$PassThru)
+                        $code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($ArgumentList[-1]))
+                        $prefix="`$script:TestInventory=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$script:LifetimeInventoryJson'))|ConvertFrom-Json;function Get-CimInstance{param(`$ClassName,`$Filter,`$OperationTimeoutSec,`$ErrorAction);if(`$Filter -like 'ProcessId=*'){throw 'Captured old parent exit must not be replaced by a fresh numeric PID query.'};return `$script:TestInventory};"
+                        $ArgumentList[-1]=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($prefix+$code))
+                        Microsoft.PowerShell.Management\Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru
+                    }
+                }
+                $state=New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds 10
+                Set-DesignerInvocationLauncherIdentity -ProbeState $state -ProbeContext ([pscustomobject]@{processId=34072;processName='1cv8.exe';processStartTimeUtc=$birth.ToString('o');invocationStartedAtUtc=$birth.ToString('o');processExitTimeUtc=$birth.AddSeconds(2).ToString('o')})
+                $deadline=[DateTime]::UtcNow.AddSeconds(10)
+                do{$state.nextProcessCheckAtUtc=[DateTime]::MinValue;$active=Get-DesignerInvocationProcessState -ProbeState $state;if($active.querySucceeded){break};Start-Sleep -Milliseconds 50}while([DateTime]::UtcNow -lt $deadline)
+                [pscustomobject]@{parentKind=$parentKind;active=$active;exitPreserved=$state.trackedProcessIdentities[34072].exitTimeUtc}
+            }
+        })
+        $results.Count | Should -Be 2
+        foreach($result in $results){
+            $result.active.querySucceeded | Should -BeTrue
+            $result.active.processIds | Should -Be @(34073)
+            $result.exitPreserved | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'uses the native scope captured at launch in the actual generic Designer completion callback' {
+        $fixture=Join-Path $TestDrive 'Команда с пробелом'
+        New-Item -ItemType Directory -Path $fixture|Out-Null
+        $basePath=Join-Path $fixture 'База';New-Item -ItemType Directory -Path $basePath|Out-Null
+        [IO.File]::WriteAllText((Join-Path $basePath '1Cv8.1CD'),'base',[Text.UTF8Encoding]::new($false))
+        $platform=Join-Path $fixture '1cv8.exe';[IO.File]::WriteAllText($platform,'fixture',[Text.UTF8Encoding]::new($false))
+        $result=& {
+            . $HelperPath -ProjectRoot $fixture -Action help *> $null
+            $script:Config=[pscustomobject]@{platformPath=$platform;logsPath='logs';designerMaxWorkingSetMb=0;designerDumpStabilitySeconds=0}
+            $script:CallbackHadScope=$false;$script:CallbackInventory=@()
+            function Receive-DesignerProcessEnumeration {param($ProbeState,$LogPath);$script:CallbackHadScope=@($ProbeState.ownedProcessScopes).Count -eq 1;return [pscustomobject]@{status='completed';processes=$script:CallbackInventory;infoBaseReleaseChecked=[bool]$ProbeState.infoBaseReleaseDatabasePath;infoBaseReleased=$true}}
+            function Invoke-NativeProcessAndWaitResult {
+                param($FilePath,$Arguments,$TimeoutSeconds,$OnTimeout,$CompletionProbe,$CompletionGraceSeconds,$PostExitProbeSeconds,$MaxWorkingSetMb)
+                # Same production launch seam: scope did not exist when the closure was constructed.
+                if($null -eq $script:OneCSessionLaunchContext.nativeOperationRecord){$script:OneCSessionLaunchContext.nativeOperationRecord=Add-OneCNativeOperationRecord -Journal (New-OneCNativeOperationJournal) -Admissions @() -Purpose 'designer-command'}
+                Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
+                $birth=[DateTime]::UtcNow
+                $out=$Arguments[[Array]::IndexOf($Arguments,'/Out')+1]
+                [IO.File]::WriteAllText($out,'aee445049d68634d9eea8cb14508637b00000000',[Text.UTF8Encoding]::new($false))
+                $script:CallbackInventory=@([pscustomobject]@{Name='1cv8.exe';ProcessId=33164;ParentProcessId=34072;CreationDate=$birth.AddHours(-6);CommandLine='1cv8.exe DESIGNER /IBName foreign'})
+                $ctx=[pscustomobject]@{processId=34072;processStartTimeUtc=$birth.ToString('o');invocationStartedAtUtc=$birth.ToString('o');nativeOperationScopes=@($script:OneCSessionLaunchContext.nativeOperationRecord.ownedProcessScopes);processExitTimeUtc=$birth.AddMilliseconds(10).ToString('o');launcherExited=$true;launcherExitCode=0;observedAtUtc=$birth;timeoutRemainingSeconds=10}
+                $null=& $CompletionProbe $ctx
+                Start-Sleep -Milliseconds 1100
+                $null=& $CompletionProbe $ctx
+                return [pscustomobject]@{processId=34072;exitCode=0;timedOut=$false;memoryLimitExceeded=$false;memoryMonitorFailed=$false;memoryMonitorError='';peakWorkingSetMb=0;terminationConfirmed=$true;terminationError='';postExitProbeTimedOut=$false;launcherExited=$true}
+            }
+            $path=Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @('/GetConfigGenerationID') 6>$null
+            [pscustomobject]@{scope=$script:CallbackHadScope;path=$path;owned=@($script:RunOwnedProcessIds)}
+        }
+        $result.scope | Should -BeTrue
+        $result.owned | Should -Not -Contain 33164
+        [IO.File]::ReadAllText($result.path) | Should -Be 'aee445049d68634d9eea8cb14508637b00000000'
+    }
+
+
+    It 'preserves independently matched scope ownership when a worker-observed child PID is reused through <enumerationMode>' -TestCases @(@{enumerationMode='fallback'},@{enumerationMode='worker'}) {
+        param($enumerationMode)
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $birth = [DateTime]::UtcNow.AddMinutes(-2)
+            $basePath = Join-Path $TestDrive 'Точная база с пробелом'
+            $logPath = Join-Path $TestDrive 'Новый лог с пробелом.log'
+            $scope = [pscustomobject]@{schemaVersion=1;role='native-invocation';kind='file';path=$basePath;mode='DESIGNER';logPath=$logPath;notBeforeUtc=$birth.ToString('o')}
+            $script:ScopedInventory = @([pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=10;CreationDate=$birth.AddSeconds(20).ToString('o');CommandLine="1cv8.exe DESIGNER /F `"$basePath`" /Out `"$logPath`" `t"})
+            if ($enumerationMode -eq 'fallback') {
+                function Receive-DesignerProcessEnumeration {param($ProbeState,$LogPath);return [pscustomobject]@{status='completed';processes=$script:ScopedInventory}}
+            } else {
+                $script:ScopedInventoryJson=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($script:ScopedInventory|ConvertTo-Json -Depth 6)))
+                function Start-Process {
+                    param($FilePath,$ArgumentList,$WorkingDirectory,$WindowStyle,[switch]$PassThru)
+                    $code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($ArgumentList[-1]))
+                    $prefix="`$script:TestInventory=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$script:ScopedInventoryJson'))|ConvertFrom-Json;function Get-CimInstance{return `$script:TestInventory};"
+                    $ArgumentList[-1]=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($prefix+$code))
+                    Microsoft.PowerShell.Management\Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru
+                }
+            }
+            $state=New-DesignerInvocationProbeState -LauncherProcessId 0 -OwnedProcessScopes @($scope) -SubProbeTimeoutSeconds 10
+            $state.trackedProcessIds.Add(34073)|Out-Null
+            $state.trackedProcessIdentities[34073]=Get-DesignerProcessIdentity -ProcessInfo ([pscustomobject]@{Name='1cv8.exe';CreationDate=$birth})
+            $state.trackedProcessIdentities[34073]|Add-Member NoteProperty exitTimeUtc $birth.AddSeconds(1).ToString('o')
+            $deadline=[DateTime]::UtcNow.AddSeconds(10)
+            do {
+                $state.nextProcessCheckAtUtc=[DateTime]::MinValue
+                $active=Get-DesignerInvocationProcessState -ProbeState $state
+                if($active.querySucceeded){break}
+                Start-Sleep -Milliseconds 50
+            }while([DateTime]::UtcNow -lt $deadline)
+            [pscustomobject]@{active=$active;identity=$state.trackedProcessIdentities[34073];expectedBirth=(Get-DesignerProcessIdentity -ProcessInfo $script:ScopedInventory[0]).startTimeUtc}
+        }
+        $result.active.querySucceeded | Should -BeTrue
+        $result.active.processIds | Should -Be @(34073)
+        $result.identity.startTimeUtc | Should -Be $result.expectedBirth
+        $result.identity.PSObject.Properties.Name | Should -Not -Contain exitTimeUtc
+    }
+
+    It 'does not adopt a fresh foreign process whose unrelated switch or Out suffix contains the exact log path' {
+        $result=& {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $birth=[DateTime]::UtcNow.AddMinutes(-2)
+            $logPath=Join-Path $TestDrive 'Точный лог с пробелом.log'
+            $inventory=@(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=10;CreationDate=$birth.AddSeconds(1);CommandLine="1cv8.exe DESIGNER /DumpConfigToFiles `"$logPath`""},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=10;CreationDate=$birth.AddSeconds(1);CommandLine="1cv8.exe DESIGNER /Out `"$logPath.other`""},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34075;ParentProcessId=10;CreationDate=$birth.AddSeconds(1);CommandLine="1cv8.exe DESIGNER /Out `"$logPath`" /Out `"$logPath`""}
+            )
+            Get-DesignerOwnedProcessInventory -Inventory $inventory -Identities @{} -TrackedProcessIds @() -LogPath $logPath -InvocationStartedAtUtc $birth
+        }
+        $result | Should -BeNullOrEmpty
+    }
+
+    It 'binds late native-run release to the original held launcher rather than its reused PID' {
+        $result=& {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $birth=[DateTime]::UtcNow.AddMinutes(-2)
+            $basePath=Join-Path $TestDrive 'Исходная база с пробелом'
+            $logPath=Join-Path $TestDrive 'Исходный лог с пробелом.log'
+            $original=[pscustomobject]@{Id=34072;ProcessName='1cv8';StartTime=$birth;ExitTime=$birth.AddSeconds(1)}
+            $record=Add-OneCNativeOperationRecord -Journal (New-OneCNativeOperationJournal) -Admissions @() -Purpose 'designer-command'
+            $record.process=$original;$record.processId=34072;$record.startAttempted=$true;$record.launcherExited=$true
+            $record.ownedProcessScopes=@([pscustomobject]@{schemaVersion=1;role='native-invocation';kind='file';path=$basePath;mode='DESIGNER';logPath=$logPath;notBeforeUtc=$birth.ToString('o')})
+            $foreign=[pscustomobject]@{Name='1cv8.exe';ProcessId=34072;ParentProcessId=10;CreationDate=$birth.AddSeconds(30);CommandLine='1cv8.exe DESIGNER /IBName foreign /Out foreign'}
+            $script:LateInventory=@($foreign)
+            function Receive-DesignerProcessEnumeration {param($ProbeState,$LogPath);$script:LateObservedProbe=$ProbeState;return [pscustomobject]@{status='completed';processes=$script:LateInventory}}
+            function Get-CimInstance {throw 'The captured exited parent lifetime is already authoritative.'}
+            function Get-Process {throw 'A late bare PID lookup would adopt the foreign process.'}
+            function Stop-NativeProcessForSafety {throw 'The foreign process must never be stopped.'}
+            $released=Confirm-OneCNativeRunProcessRelease -Record $record -TimeoutSeconds 3
+            $childRecord=Add-OneCNativeOperationRecord -Journal (New-OneCNativeOperationJournal) -Admissions @() -Purpose 'designer-command'
+            $childRecord.process=$original;$childRecord.processId=34072;$childRecord.startAttempted=$true;$childRecord.launcherExited=$true;$childRecord.ownedProcessScopes=$record.ownedProcessScopes
+            $script:LateInventory=@(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth.AddMilliseconds(500);CommandLine='1cv8.exe DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=34072;CreationDate=$birth.AddSeconds(5);CommandLine='1cv8.exe DESIGNER'}
+            )
+            $childReleased=Confirm-OneCNativeRunProcessRelease -Record $childRecord -TimeoutSeconds 1
+            [pscustomobject]@{released=$released;confirmed=$record.quiescenceConfirmed;heldSameObject=[object]::ReferenceEquals($original,$record.process);childReleased=$childReleased;childOwned=@($script:LateObservedProbe.lastProcessState.processIds)}
+        }
+        $result.released | Should -BeTrue
+        $result.confirmed | Should -BeTrue
+        $result.heldSameObject | Should -BeTrue
+        $result.childReleased | Should -BeFalse
+        $result.childOwned | Should -Be @(34073)
+    }
+
+    It 'captures post-admission native scopes and actual process birth in the real native wait producer' {
+        $fixture=Join-Path $TestDrive 'Нативный запуск с пробелом'
+        New-Item -ItemType Directory -Path $fixture|Out-Null
+        $exe=Join-Path $fixture '1cv8.exe'
+        Add-Type -TypeDefinition 'public static class NativeDesignerScopeFixture { public static void Main() { System.Threading.Thread.Sleep(1000); } }' -OutputAssembly $exe -OutputType ConsoleApplication
+        $result=& {
+            . $HelperPath -ProjectRoot $fixture -Action help *> $null
+            $record=Add-OneCNativeOperationRecord -Journal (New-OneCNativeOperationJournal) -Admissions @() -Purpose 'designer-command'
+            $savedNativeContext=Get-Variable -Name OneCSessionLaunchContext -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+            $script:OneCSessionLaunchContext=[pscustomobject]@{nativeOperationRecord=$record;infoBaseKind='file';infoBasePath=(Join-Path $fixture 'База')}
+            function Invoke-OneCSessionProcessStart {param($StartProcess);$child=& $StartProcess;$record.startAttempted=$true;$record.process=$child;$record.processId=$child.Id;return $child}
+            function Publish-Agent1cLifecycleOperationProcessEvidence { }
+            $capture=[ref]$null
+            $probe={param($ctx);$capture.Value=$ctx;return [bool]$ctx.launcherExited}
+            $outPath=Join-Path $fixture 'Точный лог.log'
+            try {
+                $native=Invoke-NativeProcessAndWaitResult -FilePath $exe -Arguments @('DESIGNER','/F',$script:OneCSessionLaunchContext.infoBasePath,'/Out',$outPath) -CompletionProbe $probe -TimeoutSeconds 5 -PostExitProbeSeconds 2 -CompletionGraceSeconds 0
+                function Receive-DesignerProcessEnumeration {param($ProbeState,$LogPath);return [pscustomobject]@{status='completed';processes=@()}}
+                Confirm-OneCNativeOperationRelease -Record $record -LauncherExited $native.launcherExited -OwnedProcessesReleased $false -Evidence 'native-launcher-exit'
+                $lateReleased=Confirm-OneCNativeRunProcessRelease -Record $record -TimeoutSeconds 3
+                $firstRecord=$record
+                $record=Add-OneCNativeOperationRecord -Journal (New-OneCNativeOperationJournal) -Admissions @() -Purpose 'enterprise-background'
+                $script:OneCSessionLaunchContext.nativeOperationRecord=$record
+                try {
+                    $background=Start-NativeProcessBackground -FilePath $exe -Arguments @('ENTERPRISE','/F',$script:OneCSessionLaunchContext.infoBasePath,'/Out',(Join-Path $fixture 'Фоновый лог.log'))
+                    $background.WaitForExit(5000)|Out-Null
+                    $observedBackgroundExit=[bool]$background.HasExited
+                    Confirm-OneCNativeOperationRelease -Record $record -LauncherExited $observedBackgroundExit -OwnedProcessesReleased $false -Evidence 'native-launcher-exit'
+                    $backgroundReleased=Confirm-OneCNativeRunProcessRelease -Record $record -TimeoutSeconds 3
+                    $backgroundRecord=$record
+                    $record=Add-OneCNativeOperationRecord -Journal (New-OneCNativeOperationJournal) -Admissions @() -Purpose 'visible-designer'
+                    $script:OneCSessionLaunchContext.nativeOperationRecord=$record
+                    try {
+                        # Real native launch/identity, with the console hidden in this fixture.
+                        function Start-Process {param($FilePath,$ArgumentList,$WorkingDirectory,$WindowStyle,[switch]$PassThru);Microsoft.PowerShell.Management\Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru}
+                        $visibleExit=Invoke-VisibleNativeProcessAndWait -FilePath $exe -Arguments @('DESIGNER','/F',$script:OneCSessionLaunchContext.infoBasePath,'/Out',(Join-Path $fixture 'Видимый маршрут.log'))
+                        Confirm-OneCNativeOperationRelease -Record $record -LauncherExited ([bool]$record.process.HasExited) -OwnedProcessesReleased $false -Evidence 'native-launcher-exit'
+                        $visibleReleased=Confirm-OneCNativeRunProcessRelease -Record $record -TimeoutSeconds 3
+                        [pscustomobject]@{native=$native;context=$capture.Value;scopes=@($firstRecord.ownedProcessScopes);birth=$firstRecord.process.StartTime.ToUniversalTime().ToString('o');lateReleased=$lateReleased;backgroundExited=$observedBackgroundExit;backgroundReleased=$backgroundReleased;backgroundIdentity=$backgroundRecord.processIdentity;visibleExit=$visibleExit;visibleReleased=$visibleReleased;visibleIdentity=$record.processIdentity}
+                    }finally{
+                        if($null -ne $record.process){if(-not $record.process.HasExited){$record.process.Kill();$record.process.WaitForExit(5000)|Out-Null};$record.process.Dispose()}
+                        $record=$backgroundRecord
+                    }
+                }finally{
+                    if($null -ne $record.process){if(-not $record.process.HasExited){$record.process.Kill();$record.process.WaitForExit(5000)|Out-Null};$record.process.Dispose()}
+                    $record=$firstRecord
+                }
+            }finally{
+                $script:OneCSessionLaunchContext=$savedNativeContext
+                if($null -ne $record.process){if(-not $record.process.HasExited){$record.process.Kill();$record.process.WaitForExit(5000)|Out-Null};$record.process.Dispose()}
+            }
+        }
+        $result.native.exitCode | Should -Be 0
+        $result.context.nativeOperationScopes.Count | Should -Be 1
+        $result.context.nativeOperationScopes[0].logPath | Should -Be (Join-Path $fixture 'Точный лог.log')
+        $result.context.nativeOperationScopes[0].notBeforeUtc | Should -Be $result.scopes[0].notBeforeUtc
+        $result.context.processStartTimeUtc | Should -Be $result.birth
+        ([datetime]$result.context.invocationStartedAtUtc) | Should -BeLessOrEqual ([datetime]$result.birth)
+        $result.context.launcherExited | Should -BeTrue
+        $result.lateReleased | Should -BeTrue
+        $result.backgroundExited | Should -BeTrue
+        $result.backgroundReleased | Should -BeTrue
+        $result.backgroundIdentity.name | Should -Be '1cv8.exe'
+        $result.visibleExit | Should -Be 0
+        $result.visibleReleased | Should -BeTrue
+        $result.visibleIdentity.name | Should -Be '1cv8.exe'
+    }
+
+    It "publishes a generic native heartbeat while a non-Designer process is still running" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $RunStatusPath = Join-Path $TestDrive "native-heartbeat-status.json"
+            $script:StatusWrites = 0
+            function Write-RunStatus { param([string]$Status); $script:StatusWrites++ }
+            $fakeProcess = [pscustomobject]@{
+                Id = 9123
+                HasExited = $false
+                TotalProcessorTime = [TimeSpan]::FromMilliseconds(25)
+                WorkingSet64 = 2MB
+            }
+            $fakeProcess | Add-Member ScriptMethod Refresh { }
+            $monitor = New-NativeWaitRunStatusMonitor -HeartbeatSeconds 1
+            $monitor.lastPublishedAtUtc = [DateTime]::UtcNow.AddSeconds(-2)
+            Publish-NativeWaitRunStatus -Process $fakeProcess -Monitor $monitor -StartedAtUtc ([DateTime]::UtcNow.AddSeconds(-2)) -DeadlineUtc ([DateTime]::UtcNow.AddMinutes(5))
+            [pscustomobject]@{
+                writes = $script:StatusWrites
+                liveness = $script:RunLiveness
+                owned = @($script:RunOwnedProcessIds)
+                timeoutRemaining = $script:RunTimeoutRemainingSeconds
+            }
+        }
+        $result.writes | Should -Be 1
+        $result.liveness | Should -Be "running-waiting"
+        $result.owned | Should -Be @(9123)
+        $result.timeoutRemaining | Should -BeGreaterThan 0
+    }
+
+    It "releases a failed <family> after delayed owned processes exit without requiring an artifact" -TestCases @(
+        @{family='capture'}, @{family='repository-update'}, @{family='dump-files'}, @{family='dump-cfg'}
+    ) {
+        param($family)
+        $fixtureRoot = Join-Path $TestDrive ('Ошибка захвата ' + $family)
+        $basePath = Join-Path $fixtureRoot 'Целевая база'
+        $platformPath = Join-Path $fixtureRoot '1cv8.exe'
+        New-Item -ItemType Directory -Force -Path $basePath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath, (Join-Path $basePath '1Cv8.1CD') | Out-Null
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{platformPath=$platformPath; logsPath='logs'; designerMaxWorkingSetMb=0; designerOperationTimeoutSeconds=8; designerDumpStabilitySeconds=0}
+            $script:ReleasePolls = 0
+            $script:ReleaseEvidence = $false
+            $fakeProcess = [pscustomobject]@{ Handle = [IntPtr]123; Id=9451;HasExited=$true;ExitCode=1}
+            $fakeProcess | Add-Member ScriptMethod Refresh { }
+            $fakeProcess | Add-Member ScriptMethod WaitForExit { param([int]$Milliseconds); return $true }
+            function Start-Process { return $fakeProcess }
+            function Test-DesignerInvocationReleased {
+                param($ProbeState)
+                $script:ReleasePolls++
+                $ProbeState.processesReleaseConfirmed = $script:ReleasePolls -ge 3
+                return $ProbeState.processesReleaseConfirmed
+            }
+            function Confirm-OneCNativeOperationRelease {
+                param($Record, [bool]$LauncherExited, [bool]$OwnedProcessesReleased, $Evidence)
+                $script:ReleaseEvidence = $LauncherExited -and $OwnedProcessesReleased
+            }
+            function Invoke-BoundedDesignerDumpArtifactState { return [pscustomobject]@{signature='';ready=$false} }
+            function Stop-NativeProcessForSafety { throw 'Unexpected process termination' }
+            $commandArgs = switch($family) {
+                capture { @('/ConfigurationRepositoryCapture','-objects', (Join-Path $fixtureRoot 'objects.xml')) }
+                repository-update { @('/ConfigurationRepositoryUpdateCfg','-force') }
+                dump-files { @('/DumpConfigToFiles', (Join-Path $fixtureRoot 'Исходники')) }
+                dump-cfg { @('/DumpCfg', (Join-Path $fixtureRoot 'Выгрузка.cf')) }
+            }
+            $message = try {
+                Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs $commandArgs 6>$null | Out-Null
+                ''
+            } catch { $_.Exception.Message }
+            [pscustomobject]@{message=$message;polls=$script:ReleasePolls;released=$script:ReleaseEvidence}
+        }
+        $result.message | Should -Match '^1C Designer failed with exit code 1\.'
+        $result.polls | Should -BeGreaterOrEqual 3
+        $result.released | Should -BeTrue
+    }
+
+    It 'reports a repository lock refusal with exit <nativeExit> after owned children exit while foreign source Designer remains open' -TestCases @(
+        @{ nativeExit = 1 }, @{ nativeExit = 0 }
+    ) {
+        param($nativeExit)
+        $root = Join-Path $TestDrive ('Отказ захвата с пробелом ' + $nativeExit)
+        $base = Join-Path $root 'Исходная база с пробелом'
+        [void][IO.Directory]::CreateDirectory($base)
+        $platform = Join-Path $root '1cv8.exe'
+        $database = Join-Path $base '1Cv8.1CD'
+        [IO.File]::WriteAllText($platform, '')
+        [IO.File]::WriteAllText($database, '')
+        $result = & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $script:Config = [pscustomobject]@{ platformPath=$platform; logsPath='logs'; designerMaxWorkingSetMb=0; designerOperationTimeoutSeconds=30; designerDumpStabilitySeconds=0; completionPostExitTimeoutSeconds=12 }
+            $script:LockRefusalPolls = 0
+            $script:PrematureRelease = $false
+            $script:BaseReleaseProbes = 0
+            $script:FixtureBirth = [DateTime]::UtcNow
+            $nativeError = 'Ошибка блокировки информационной базы для конфигурирования.'
+            function Receive-DesignerProcessEnumeration {
+                param($ProbeState, $LogPath)
+                $script:LockRefusalPolls++
+                $processes = @([pscustomobject]@{
+                    Name='1cv8.exe'; ProcessId=96001; ParentProcessId=100; CreationDate=$script:FixtureBirth.AddHours(-1)
+                    CommandLine="DESIGNER /F `"$base`" /Out foreign.log"
+                })
+                if ($script:LockRefusalPolls -le 3) {
+                    $processes += [pscustomobject]@{
+                        Name='1cv8c.exe'; ProcessId=96003; ParentProcessId=96002; CreationDate=$script:FixtureBirth.AddMilliseconds(1)
+                        CommandLine="DESIGNER /F `"$base`" /Out `"$LogPath`""
+                    }
+                }
+                if ($ProbeState.infoBaseReleaseDatabasePath) { $script:BaseReleaseProbes++ }
+                [pscustomobject]@{status='completed'; processes=$processes; infoBaseReleaseChecked=[bool]$ProbeState.infoBaseReleaseDatabasePath; infoBaseReleased=$false}
+            }
+            function Stop-NativeProcessForSafety { throw 'Foreign source Designer must not be stopped' }
+            function Invoke-NativeProcessAndWaitResult {
+                param($FilePath, $Arguments, $CompletionProbe, $FailurePostExitProbeSeconds)
+                $log = $Arguments[[Array]::IndexOf($Arguments, '/Out') + 1]
+                [IO.File]::WriteAllText($log, $nativeError, [Text.UTF8Encoding]::new($false))
+                $context = [pscustomobject]@{
+                    launcherExited=$true; launcherExitCode=$nativeExit; processId=96002
+                    processStartTimeUtc=$script:FixtureBirth.ToString('o'); processName='1cv8.exe'
+                    invocationStartedAtUtc=$script:FixtureBirth.ToString('o'); postExitElapsedSeconds=0
+                }
+                $passed = $false
+                # Preserve the production two-second inventory cadence: three
+                # active observations, then fresh empty observations and quiet time.
+                $releaseWatch = [Diagnostics.Stopwatch]::StartNew()
+                while ($releaseWatch.Elapsed.TotalSeconds -lt $FailurePostExitProbeSeconds) {
+                    $context.postExitElapsedSeconds = [int]$releaseWatch.Elapsed.TotalSeconds
+                    $passed = [bool](& $CompletionProbe $context)
+                    if ($passed -and $script:LockRefusalPolls -le 3) { $script:PrematureRelease = $true }
+                    if ($passed) { break }
+                    Start-Sleep -Milliseconds 100
+                }
+                $script:FailureReleaseLimit = $FailurePostExitProbeSeconds
+                $script:RefusalProcessState = $invocationProbeState.lastProcessState
+                [pscustomobject]@{
+                    processId=96002; exitCode=$nativeExit; launcherExited=$true; launcherExitCode=$nativeExit
+                    timedOut=$false; postExitProbeTimedOut=(-not $passed); completedByProbe=$passed
+                    memoryLimitExceeded=$false; memoryMonitorFailed=$false; memoryMonitorError=''
+                    peakWorkingSetMb=0; workingSetLimitMb=0; terminationConfirmed=$true; terminationError=''
+                }
+            }
+            $holder = [IO.File]::Open($database, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            try {
+                $message = try {
+                    Invoke-Designer -InfoBasePath $base -InfoBaseKind file -DesignerArgs @('/ConfigurationRepositoryLock','-Objects',(Join-Path $root 'Объекты захвата.xml')) 6>$null | Out-Null
+                    ''
+                } catch { $_.Exception.Message }
+                [pscustomobject]@{
+                    message=$message; premature=$script:PrematureRelease; polls=$script:LockRefusalPolls
+                    baseProbes=$script:BaseReleaseProbes; limit=$script:FailureReleaseLimit
+                    observation=$script:RefusalProcessState
+                    stillLocked=(-not (Test-DesignerInfoBaseReleased -InfoBaseKind file -InfoBasePath $base))
+                }
+            } finally { $holder.Dispose() }
+        }
+        $result.message | Should -Match ([regex]::Escape('Ошибка блокировки информационной базы для конфигурирования.'))
+        $result.observation.querySucceeded | Should -BeTrue -Because $result.observation.detail
+        $result.message | Should -Not -Match 'TIMEOUT|stalled' -Because ($result.observation | ConvertTo-Json -Compress)
+        $result.premature | Should -BeFalse
+        $result.polls | Should -BeGreaterThan 3
+        $result.baseProbes | Should -Be 0
+        $result.stillLocked | Should -BeTrue
+        $result.limit | Should -Be 12
+    }
+
+    It 'bounds failed launcher release confirmation without converting it to success' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $process = [pscustomobject]@{Handle=[IntPtr]123; Id=96004; HasExited=$true; ExitCode=1}
+            $process | Add-Member ScriptMethod Refresh {}
+            function Start-Process { $process }
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $native = Invoke-NativeProcessAndWaitResult -FilePath 'fake.exe' -Arguments @() -TimeoutSeconds 10 `
+                -PostExitProbeSeconds 8 -FailurePostExitProbeSeconds 1 -RequirePostExitProbeOnFailure `
+                -CompletionGraceSeconds 0 -CompletionProbe { $false }
+            [pscustomobject]@{native=$native; seconds=$watch.Elapsed.TotalSeconds}
+        }
+        $result.native.exitCode | Should -Be 1
+        $result.native.postExitProbeTimedOut | Should -BeTrue
+        $result.native.completedByProbe | Should -BeFalse
+        $result.native.postExitProbeSeconds | Should -Be 1
+        $result.seconds | Should -BeLessThan 6
+    }
+
+    It "accepts a complete external processor artifact after a nonzero launcher exit" {
+        $fixtureRoot = Join-Path $TestDrive "Восстановленная внешняя обработка"
+        $basePath = Join-Path $fixtureRoot "base"
+        $platformPath = Join-Path $fixtureRoot "1cv8.exe"
+        $targetPath = Join-Path $fixtureRoot "tool.epf"
+        New-Item -ItemType Directory -Force -Path $basePath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath, (Join-Path $basePath "1Cv8.1CD") | Out-Null
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{
+                platformPath = $platformPath
+                logsPath = "logs"
+                designerMaxWorkingSetMb = 0
+                designerOperationTimeoutSeconds = 30
+                designerDumpStabilitySeconds = 0
+            }
+            function Invoke-NativeProcessAndWaitResult {
+                param(
+                    [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
+                    [scriptblock]$OnTimeout = $null, [scriptblock]$CompletionProbe = $null,
+                    [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
+                    [switch]$RequirePostExitProbeOnFailure, [int]$MaxWorkingSetMb = 0
+                )
+                $outIndex = [Array]::IndexOf($Arguments, "/Out")
+                $logPath = [string]$Arguments[$outIndex + 1]
+                $externalIndex = [Array]::IndexOf($Arguments, "/LoadExternalDataProcessorOrReportFromFiles")
+                $target = [string]$Arguments[$externalIndex + 2]
+                [IO.File]::WriteAllText($logPath, "Загрузка завершена.", (Get-Utf8Encoding))
+                [IO.File]::WriteAllBytes($target, [byte[]](1, 2, 3))
+                return [pscustomobject]@{
+                    processId = 9452; exitCode = 1; timedOut = $false
+                    memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
+                    peakWorkingSetMb = 0; workingSetLimitMb = 0
+                    terminationConfirmed = $true; terminationError = ""
+                    completedByProbe = $true; postExitProbeTimedOut = $false
+                    completionProbeFailed = $false
+                    launcherExited = $true; launcherExitCode = 1
+                }
+            }
+
+            $message = try {
+                Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @("/LoadExternalDataProcessorOrReportFromFiles", (Join-Path $fixtureRoot "Tool.xml"), $targetPath) 6>$null | Out-Null
+                ""
+            } catch { $_.Exception.Message }
+            [pscustomobject]@{ message = $message; targetExists = (Test-Path -LiteralPath $targetPath -PathType Leaf) }
+        }
+
+        $result.message | Should -Be ""
+        $result.targetExists | Should -BeTrue
+    }
+
     It "checks completion evidence once and stops after the launcher exits" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:ProbeCalls = 0
             $fakeProcess = [pscustomobject]@{
+                Handle = [IntPtr]123
                 Id = 4242
                 HasExited = $true
                 ExitCode = 0
@@ -44,6 +903,7 @@ Describe "1C Designer completion evidence" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $fakeProcess = [pscustomobject]@{
+                Handle = [IntPtr]123
                 Id = 4243
                 HasExited = $true
                 ExitCode = 0
@@ -72,6 +932,7 @@ Describe "1C Designer completion evidence" {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:ProbeCalls = 0
             $fakeProcess = [pscustomobject]@{
+                Handle = [IntPtr]123
                 Id = 4244
                 HasExited = $true
                 ExitCode = 0
@@ -103,6 +964,7 @@ Describe "1C Designer completion evidence" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $fakeProcess = [pscustomobject]@{
+                Handle = [IntPtr]123
                 Id = 4245
                 HasExited = $true
                 ExitCode = 0
@@ -133,6 +995,7 @@ Describe "1C Designer completion evidence" {
             $script:CleanupCalls = 0
             $script:StopCalls = 0
             $fakeProcess = [pscustomobject]@{
+                Handle = [IntPtr]123
                 Id = 4246
                 HasExited = $true
                 ExitCode = 0
@@ -177,9 +1040,10 @@ Describe "1C Designer completion evidence" {
         New-Item -ItemType File -Force -Path $platformPath | Out-Null
         New-Item -ItemType File -Force -Path (Join-Path $basePath "1Cv8.1CD") | Out-Null
 
-        $message = & {
+        $result = & {
             . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
             $script:Config = [pscustomobject]@{ platformPath = $platformPath; logsPath = "logs" }
+            $script:CapturedDesignerArguments = @()
             function Invoke-NativeProcessAndWaitResult {
                 param(
                     [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
@@ -187,6 +1051,7 @@ Describe "1C Designer completion evidence" {
                     [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $script:CapturedDesignerArguments = @($Arguments)
                 return [pscustomobject]@{
                     processId = 4247; exitCode = 1; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
@@ -199,29 +1064,34 @@ Describe "1C Designer completion evidence" {
                 }
             }
 
-            try {
+            $message = try {
                 Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @("/UpdateDBCfg") 6>$null | Out-Null
                 ""
             } catch {
                 $_.Exception.Message
             }
+            [pscustomobject]@{ message = $message; arguments = @($script:CapturedDesignerArguments) }
         }
 
-        $message | Should -Match '^DESIGNER_COMPLETION_PROBE_FAILED\b'
-        $message | Should -Match "errorType='System.InvalidOperationException'"
-        $message | Should -Match "detail='artifact-enumeration-sentinel'"
-        $message | Should -Match 'terminationConfirmed=True'
+        $result.message | Should -Match '^DESIGNER_COMPLETION_PROBE_FAILED\b'
+        $result.message | Should -Match "errorType='System.InvalidOperationException'"
+        $result.message | Should -Match "detail='artifact-enumeration-sentinel'"
+        $result.message | Should -Match 'terminationConfirmed=True'
+        $result.arguments | Should -Contain '/AllowExecuteScheduledJobs'
+        $result.arguments | Should -Contain '-Off'
     }
 
     It "tracks Designer descendants and the unique out log while ignoring unrelated 1C processes" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $logPath = Join-Path $TestDrive "owned-designer.log"
+            $birth = [DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { param($Id,$ErrorAction); return [pscustomobject]@{Id=$Id;ProcessName='1cv8';StartTime=$birth} }
             $script:DesignerInventory = @(
-                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8100; ParentProcessId = 100; CommandLine = "DESIGNER /Out other.log" },
-                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8101; ParentProcessId = 8100; CommandLine = "DESIGNER" },
-                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8102; ParentProcessId = 100; CommandLine = "DESIGNER /Out `"$logPath`"" },
-                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8199; ParentProcessId = 100; CommandLine = "DESIGNER /Out unrelated.log" }
+                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8100; CreationDate = $birth.AddMilliseconds(0); ParentProcessId = 100; CommandLine = "DESIGNER /Out other.log" },
+                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8101; CreationDate = $birth.AddMilliseconds(1); ParentProcessId = 8100; CommandLine = "DESIGNER" },
+                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8102; CreationDate = $birth.AddMilliseconds(2); ParentProcessId = 100; CommandLine = "DESIGNER /Out `"$logPath`"" },
+                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8199; CreationDate = $birth.AddMilliseconds(2); ParentProcessId = 100; CommandLine = "DESIGNER /Out unrelated.log" }
             )
             function Receive-DesignerProcessEnumeration {
                 param([object]$ProbeState, [string]$LogPath)
@@ -556,6 +1426,10 @@ Describe "1C Designer completion evidence" {
                 -StallWarningSeconds 30 `
                 -StallTimeoutSeconds 60
             function Get-DesignerInvocationProcessState {
+                param($ProbeState)
+                foreach ($id in @(8250,8251)) {
+                    $ProbeState.trackedProcessIdentities[$id] = Get-DesignerProcessIdentity -ProcessInfo ([pscustomobject]@{Name='1cv8.exe';CreationDate=$startedAt})
+                }
                 return [pscustomobject]@{
                     querySucceeded = $true; active = $true; processIds = @(8250, 8251)
                     cpuSampleAvailable = $true; cpuTime100ns = [int64]10000000
@@ -565,7 +1439,7 @@ Describe "1C Designer completion evidence" {
             function Test-DesignerInfoBaseReleased { return $false }
             function Get-Process {
                 param([int]$Id, [object]$ErrorAction)
-                return [pscustomobject]@{ Id = $Id; HasExited = $false }
+                return [pscustomobject]@{ Id = $Id; HasExited = $false; ProcessName='1cv8'; StartTime=$startedAt; Handle=[IntPtr]123 }
             }
             function Stop-NativeProcessForSafety {
                 param([object]$Process)
@@ -608,6 +1482,128 @@ Describe "1C Designer completion evidence" {
         $result.stage | Should -Be "config-load.designer-stalled-timeout"
         $result.cleanup.confirmed | Should -BeTrue
         @($result.stopped) | Should -Be @(8250, 8251)
+    }
+
+    It "retains the first empty Designer observation across a pending scan and requires a fresh empty result" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $probeState = New-DesignerInvocationProbeState -LauncherProcessId 8272
+            $firstEmptyAtUtc = [DateTime]::UtcNow.AddSeconds(-2)
+            $probeState.processesReleasedSinceUtc = $firstEmptyAtUtc
+            $probeState.lastProcessState = [pscustomobject]@{
+                observationStatus = "completed"; querySucceeded = $true; active = $false; processIds = @(); detail = ""
+            }
+            $script:NextDesignerObservation = [pscustomobject]@{
+                observationStatus = "pending"; querySucceeded = $false; active = $true; processIds = @(); detail = "owned process enumeration is pending"
+            }
+            function Get-DesignerInvocationProcessState {
+                param([object]$ProbeState, [string]$LogPath)
+                $ProbeState.lastProcessState = $script:NextDesignerObservation
+                return $script:NextDesignerObservation
+            }
+            $context = [pscustomobject]@{
+                launcherExited = $true; observedAtUtc = [DateTime]::UtcNow
+                timeoutRemainingSeconds = 60; postExitElapsedSeconds = 2; processId = 8272
+            }
+            $pendingResult = Test-DesignerInvocationReleased `
+                -ProbeState $probeState -ProbeContext $context `
+                -LogPath (Join-Path $TestDrive "pending-release.log") `
+                -InfoBaseKind file -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" -RequireInfoBaseRelease:$false 6>$null
+            $retainedFirstEmpty = $probeState.processesReleasedSinceUtc -eq $firstEmptyAtUtc
+            $pendingConfirmed = $probeState.processesReleaseConfirmed
+            $script:NextDesignerObservation = [pscustomobject]@{
+                observationStatus = "completed"; querySucceeded = $true; active = $false; processIds = @(); detail = ""
+            }
+            $freshResult = Test-DesignerInvocationReleased `
+                -ProbeState $probeState -ProbeContext $context `
+                -LogPath (Join-Path $TestDrive "pending-release.log") `
+                -InfoBaseKind file -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" -RequireInfoBaseRelease:$false 6>$null
+            [pscustomobject]@{
+                pendingResult = $pendingResult; retainedFirstEmpty = $retainedFirstEmpty
+                pendingConfirmed = $pendingConfirmed; freshResult = $freshResult
+                freshConfirmed = $probeState.processesReleaseConfirmed
+                liveness = $probeState.lastObservation.liveness
+            }
+        }
+
+        $result.pendingResult | Should -BeFalse
+        $result.retainedFirstEmpty | Should -BeTrue
+        $result.pendingConfirmed | Should -BeFalse
+        $result.freshResult | Should -BeTrue
+        $result.freshConfirmed | Should -BeTrue
+        $result.liveness | Should -Be "running-waiting-release"
+    }
+
+    It "does not confirm Designer release from a cached empty observation after the quiet interval" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $probeState = New-DesignerInvocationProbeState -LauncherProcessId 8273
+            $probeState.processesReleasedSinceUtc = [DateTime]::UtcNow.AddSeconds(-2)
+            $probeState.lastProcessState = [pscustomobject]@{
+                observationStatus = "completed"; querySucceeded = $true; active = $false; processIds = @(); detail = ""
+            }
+            function Get-DesignerInvocationProcessState {
+                param([object]$ProbeState, [string]$LogPath)
+                return $ProbeState.lastProcessState
+            }
+            $released = Test-DesignerInvocationReleased `
+                -ProbeState $probeState `
+                -ProbeContext ([pscustomobject]@{
+                    launcherExited = $true; observedAtUtc = [DateTime]::UtcNow
+                    timeoutRemainingSeconds = 60; postExitElapsedSeconds = 2; processId = 8273
+                }) `
+                -LogPath (Join-Path $TestDrive "cached-release.log") `
+                -InfoBaseKind file -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" -RequireInfoBaseRelease:$false 6>$null
+            [pscustomobject]@{ released = $released; confirmed = $probeState.processesReleaseConfirmed }
+        }
+
+        $result.released | Should -BeFalse
+        $result.confirmed | Should -BeFalse
+    }
+
+    It "resets Designer release confirmation after a fresh <observation> observation" -TestCases @(
+        @{ observation = "active"; querySucceeded = $true; active = $true }
+        @{ observation = "failed"; querySucceeded = $false; active = $true }
+    ) {
+        param([string]$observation, [bool]$querySucceeded, [bool]$active)
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $probeState = New-DesignerInvocationProbeState -LauncherProcessId 8274
+            $probeState.processesReleasedSinceUtc = [DateTime]::UtcNow.AddSeconds(-2)
+            $probeState.processesReleaseConfirmed = $true
+            $probeState.lastProcessState = [pscustomobject]@{
+                observationStatus = "completed"; querySucceeded = $true; active = $false; processIds = @(); detail = ""
+            }
+            $script:NextDesignerObservation = [pscustomobject]@{
+                observationStatus = $observation; querySucceeded = $querySucceeded; active = $active
+                processIds = $(if ($querySucceeded) { @(8274) } else { @() }); detail = $observation
+            }
+            function Get-DesignerInvocationProcessState {
+                param([object]$ProbeState, [string]$LogPath)
+                $ProbeState.lastProcessState = $script:NextDesignerObservation
+                return $script:NextDesignerObservation
+            }
+            $released = Test-DesignerInvocationReleased `
+                -ProbeState $probeState `
+                -ProbeContext ([pscustomobject]@{
+                    launcherExited = $true; observedAtUtc = [DateTime]::UtcNow
+                    timeoutRemainingSeconds = 60; postExitElapsedSeconds = 2; processId = 8274
+                }) `
+                -LogPath (Join-Path $TestDrive "$observation-release.log") `
+                -InfoBaseKind file -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" -RequireInfoBaseRelease:$false 6>$null
+            [pscustomobject]@{
+                released = $released; confirmed = $probeState.processesReleaseConfirmed
+                emptySince = $probeState.processesReleasedSinceUtc
+            }
+        }
+
+        $result.released | Should -BeFalse
+        $result.confirmed | Should -BeFalse
+        $result.emptySince | Should -BeNullOrEmpty
     }
 
     It "requires full infobase release by default and bypasses it only when explicitly allowed" {
@@ -696,8 +1692,13 @@ Describe "1C Designer completion evidence" {
                 designerStallWarningSeconds = 30
                 designerStallTimeoutSeconds = 60
             }
+            $birth = [DateTime]::UtcNow.AddSeconds(-5)
             $script:StoppedDesignerIds = [System.Collections.Generic.List[int]]::new()
             function Get-DesignerInvocationProcessState {
+                param($ProbeState)
+                foreach ($id in @(8260,8261)) {
+                    $ProbeState.trackedProcessIdentities[$id] = Get-DesignerProcessIdentity -ProcessInfo ([pscustomobject]@{Name='1cv8.exe';CreationDate=$birth})
+                }
                 return [pscustomobject]@{
                     querySucceeded = $true; active = $true; processIds = @(8260, 8261)
                     cpuSampleAvailable = $true; cpuTime100ns = [int64]10000000
@@ -707,7 +1708,7 @@ Describe "1C Designer completion evidence" {
             function Test-DesignerInfoBaseReleased { return $false }
             function Get-Process {
                 param([int]$Id, [object]$ErrorAction)
-                return [pscustomobject]@{ Id = $Id; HasExited = $false }
+                return [pscustomobject]@{ Id = $Id; HasExited = $false; ProcessName='1cv8'; StartTime=$birth; Handle=[IntPtr]123 }
             }
             function Stop-NativeProcessForSafety {
                 param([object]$Process)
@@ -754,11 +1755,137 @@ Describe "1C Designer completion evidence" {
         @($result.stopped) | Should -Be @(8260, 8261)
     }
 
+    It "ends a stalled Designer wait promptly and names an unrelated holder of the file base" {
+        $fixtureRoot = Join-Path $TestDrive "designer-stall-held base"
+        $basePath = Join-Path $fixtureRoot "База ветки"
+        $platformPath = Join-Path $fixtureRoot "1cv8.exe"
+        New-Item -ItemType Directory -Force -Path $basePath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath | Out-Null
+        New-Item -ItemType File -Force -Path (Join-Path $basePath "1Cv8.1CD") | Out-Null
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{
+                platformPath = $platformPath
+                logsPath = "logs"
+                designerStallWarningSeconds = 30
+                designerStallTimeoutSeconds = 60
+            }
+            $script:ProbeCalls = 0
+            # The Designer exited at once; a ROCTUP client of this project keeps
+            # the file base open, so exclusive release never comes.
+            function Get-DesignerInvocationProcessState {
+                return [pscustomobject]@{
+                    querySucceeded = $true; active = $false; processIds = @()
+                    cpuSampleAvailable = $false; cpuTime100ns = [int64]0
+                    workingSetSampleAvailable = $false; workingSetMb = 0
+                    infoBaseReleaseChecked = $true; infoBaseReleased = $false; detail = ""
+                }
+            }
+            function Get-OneCInfoBaseSessionProcesses {
+                return @([pscustomobject]@{ pid = 40812; role = "enterprise"; processStartTime = "" })
+            }
+            function Get-ItlOnDemandRuntimeInstances {
+                return @([pscustomobject]@{ family = "roctup"; instanceId = "0123456789abcdef0123456789abcdef"; pid = 40812; infoBasePath = $basePath })
+            }
+            function Invoke-NativeProcessAndWaitResult {
+                param(
+                    [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
+                    [scriptblock]$OnTimeout = $null, [scriptblock]$CompletionProbe = $null,
+                    [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
+                    [int]$MaxWorkingSetMb = 0
+                )
+                $startedAt = [DateTime]::UtcNow
+                $failure = ""
+                foreach ($second in @(0) + @(61..80)) {
+                    try {
+                        $script:ProbeCalls++
+                        & $CompletionProbe ([pscustomobject]@{
+                            launcherExited = $true; launcherExitCode = 0; observedAtUtc = $startedAt.AddSeconds($second)
+                            timeoutRemainingSeconds = ($TimeoutSeconds - $second); processId = 8270; postExitElapsedSeconds = $second
+                        }) | Out-Null
+                    } catch {
+                        $failure = $_.Exception.Message
+                        break
+                    }
+                    Start-Sleep -Milliseconds 200
+                }
+                return [pscustomobject]@{
+                    processId = 8270; exitCode = 0; timedOut = $false
+                    memoryLimitExceeded = $false; memoryMonitorFailed = $false
+                    memoryMonitorError = ""; peakWorkingSetMb = 0
+                    terminationConfirmed = $true; terminationError = ""
+                    postExitProbeTimedOut = $false
+                    completionProbeFailed = [bool]$failure; completionProbeErrorType = "System.Management.Automation.RuntimeException"
+                    completionProbeErrorMessage = $failure
+                }
+            }
+
+            $message = try {
+                Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @("/LoadCfg", (Join-Path $fixtureRoot "fixture.cf")) 6>$null | Out-Null
+                ""
+            } catch {
+                $_.Exception.Message
+            }
+            $script:RunErrorCategory = ""
+            Set-RunFailureContextFromMessage -Message $message
+            [pscustomobject]@{
+                message = $message; probeCalls = $script:ProbeCalls; category = $script:RunErrorCategory
+                action = $script:RunRequiredAction; retry = [bool]$script:RunBlockerRetryOriginal
+            }
+        }
+
+        ($result.message -split ' ')[0] | Should -BeExactly 'DESIGNER_INFOBASE_RELEASE_BLOCKED'
+        $result.message | Should -Match 'ownedProcessesReleased=True'
+        foreach ($marker in @('pid=40812', 'role=enterprise', 'owner=ondemand-roctup', 'instance=0123456789abcdef0123456789abcdef')) {
+            $result.message | Should -Match ([regex]::Escape($marker))
+        }
+        $result.message | Should -Match 'close_1c_session'
+        $result.probeCalls | Should -BeLessThan 21
+        $result.category | Should -Be 'execution-conflict'
+        $result.action | Should -Be 'release-the-named-infobase-holder-then-repeat-original-command'
+        $result.retry | Should -BeTrue
+    }
+
+    It "ends the post-stall confirmation window when owned release stays unconfirmed" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-DesignerInvocationProcessState {
+                return [pscustomobject]@{
+                    observationStatus = "pending"; querySucceeded = $false; active = $true; processIds = @()
+                    cpuSampleAvailable = $false; cpuTime100ns = [int64]0
+                    workingSetSampleAvailable = $false; workingSetMb = 0
+                    infoBaseReleaseChecked = $false; infoBaseReleased = $false; detail = "owned process enumeration is pending"
+                }
+            }
+            $probeState = New-DesignerInvocationProbeState -LauncherProcessId 0 -StallWarningSeconds 30 -StallTimeoutSeconds 60
+            $probeState.stallTimeoutExceeded = $true
+            $probeState.stallTimeoutExceededAtUtc = [DateTime]::UtcNow.AddSeconds(-31)
+            $probeState.stallCleanup = [pscustomobject]@{ attempted = $false; confirmed = $false; processIds = @(); error = "pending" }
+            $context = [pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; observedAtUtc = [DateTime]::UtcNow; processId = 8280; postExitElapsedSeconds = 700 }
+            $message = try {
+                Test-DesignerInvocationReleased -ProbeState $probeState -ProbeContext $context -InfoBaseKind file `
+                    -InfoBasePath (Join-Path $TestDrive "base") -OperationKind "designer-command" 6>$null | Out-Null
+                ""
+            } catch { $_.Exception.Message }
+            [pscustomobject]@{ message = $message; termination = $probeState.stallTermination }
+        }
+
+        $result.message | Should -Be 'DESIGNER_STALL_TERMINATED'
+        $result.termination.reason | Should -Be 'release-unconfirmed'
+        $result.termination.waitingDetail | Should -Match 'pending'
+    }
+
     It "stops only tracked Designer processes during the hard-timeout cleanup" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $birth = [DateTime]::UtcNow.AddSeconds(-5)
             $script:StoppedDesignerIds = [System.Collections.Generic.List[int]]::new()
             function Get-DesignerInvocationProcessState {
+                param($ProbeState)
+                foreach ($id in @(8301,8302)) {
+                    $ProbeState.trackedProcessIdentities[$id] = Get-DesignerProcessIdentity -ProcessInfo ([pscustomobject]@{Name='1cv8.exe';CreationDate=$birth})
+                }
                 return [pscustomobject]@{
                     querySucceeded = $true
                     active = $true
@@ -768,7 +1895,7 @@ Describe "1C Designer completion evidence" {
             }
             function Get-Process {
                 param([int]$Id, [object]$ErrorAction)
-                return [pscustomobject]@{ Id = $Id; HasExited = $false }
+                return [pscustomobject]@{ Id = $Id; HasExited = $false; ProcessName='1cv8'; StartTime=$birth; Handle=[IntPtr]123 }
             }
             function Stop-NativeProcessForSafety {
                 param([object]$Process)
@@ -913,6 +2040,7 @@ Describe "1C Designer completion evidence" {
                     [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $mockLauncherStartedAtUtc = [DateTime]::UtcNow
                 $script:CapturedTimeout = $TimeoutSeconds
                 $script:CapturedPostExitProbeSeconds = $PostExitProbeSeconds
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
@@ -921,12 +2049,19 @@ Describe "1C Designer completion evidence" {
                     launcherExited = $false
                     launcherExitCode = 0
                     processId = 7001
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
                     postExitElapsedSeconds = 0
                 }
                 $exitedContext = [pscustomobject]@{
                     launcherExited = $true
                     launcherExitCode = 0
                     processId = 7001
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o')
                     postExitElapsedSeconds = 0
                 }
                 $script:ProbeBeforeEvidence = [bool](& $CompletionProbe $runningContext)
@@ -953,7 +2088,11 @@ Describe "1C Designer completion evidence" {
                     Start-Sleep -Milliseconds 100
                 }
                 return [pscustomobject]@{
-                    processId = 7001; exitCode = 0; timedOut = $false
+                    processId = 7001
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o'); exitCode = 0; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
                     peakWorkingSetMb = 0; workingSetLimitMb = 0
                     terminationConfirmed = $true; terminationError = ""; completedByProbe = $true
@@ -1032,6 +2171,7 @@ Describe "1C Designer completion evidence" {
                     [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $mockLauncherStartedAtUtc = [DateTime]::UtcNow
                 $script:CapturedPostExitProbeSeconds = $PostExitProbeSeconds
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
                 $logPath = [string]$Arguments[$outIndex + 1]
@@ -1040,6 +2180,10 @@ Describe "1C Designer completion evidence" {
                     launcherExited = $true
                     launcherExitCode = 0
                     processId = 7005
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o')
                     postExitElapsedSeconds = 0
                 }
                 foreach ($attempt in 1..20) {
@@ -1055,7 +2199,11 @@ Describe "1C Designer completion evidence" {
                     Start-Sleep -Milliseconds 100
                 }
                 return [pscustomobject]@{
-                    processId = 7005; exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
+                    processId = 7005
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o'); exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
                     peakWorkingSetMb = 0; workingSetLimitMb = 0
                     terminationConfirmed = $true; terminationError = ""; completedByProbe = $script:ProbePassed
@@ -1120,6 +2268,7 @@ Describe "1C Designer completion evidence" {
                     [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $mockLauncherStartedAtUtc = [DateTime]::UtcNow
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
                 $logPath = [string]$Arguments[$outIndex + 1]
                 [System.IO.File]::WriteAllText($logPath, "", (Get-Utf8Encoding))
@@ -1127,6 +2276,10 @@ Describe "1C Designer completion evidence" {
                     launcherExited = $true
                     launcherExitCode = 0
                     processId = 7007
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o')
                     postExitElapsedSeconds = 0
                 }
                 foreach ($attempt in 1..50) {
@@ -1135,7 +2288,11 @@ Describe "1C Designer completion evidence" {
                     Start-Sleep -Milliseconds 100
                 }
                 return [pscustomobject]@{
-                    processId = 7007; exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
+                    processId = 7007
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o'); exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
                     peakWorkingSetMb = 0; workingSetLimitMb = 0
                     terminationConfirmed = $true; terminationError = ""; completedByProbe = $script:ProbePassed
@@ -1313,6 +2470,7 @@ Describe "1C Designer completion evidence" {
             $script:DumpArtifactReady = $false
             $script:DumpArtifactCalls = 0
             $script:DumpArtifactWrittenAtTicks = 0
+            $script:CompletedDumpProcessEnumerations = 0
             $script:InfoBaseReleaseChecks = 0
             function Test-DesignerInfoBaseReleased {
                 $script:InfoBaseReleaseChecks++
@@ -1351,6 +2509,7 @@ Describe "1C Designer completion evidence" {
             }
             function Receive-DesignerProcessEnumeration {
                 param([object]$ProbeState, [string]$LogPath)
+                $script:CompletedDumpProcessEnumerations++
                 return [pscustomobject]@{ status = "completed"; processes = @() }
             }
             function Invoke-NativeProcessAndWaitResult {
@@ -1364,8 +2523,9 @@ Describe "1C Designer completion evidence" {
                     [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $mockLauncherStartedAtUtc = [DateTime]::UtcNow
                 $script:CapturedDumpPostExitProbeSeconds = $PostExitProbeSeconds
-                $runningContext = [pscustomobject]@{ launcherExited = $false; launcherExitCode = $null; processId = 7004 }
+                $runningContext = [pscustomobject]@{ launcherExited = $false; launcherExitCode = $null; processId = 7004; processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o'); processName = [IO.Path]::GetFileName($FilePath); invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o') }
                 foreach ($index in 1..8) {
                     (& $CompletionProbe $runningContext) | Should -BeFalse
                 }
@@ -1373,7 +2533,7 @@ Describe "1C Designer completion evidence" {
 
                 $script:DumpArtifactReady = $true
                 $script:DumpArtifactWrittenAtTicks = [DateTime]::UtcNow.Ticks
-                $exitedContext = [pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; processId = 7004 }
+                $exitedContext = [pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; processId = 7004; processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o'); processName = [IO.Path]::GetFileName($FilePath); invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o'); processExitTimeUtc = [DateTime]::UtcNow.ToString('o') }
                 $script:FirstExitedResult = [bool](& $CompletionProbe $exitedContext)
                 $script:CallsAfterFirstExitProbe = $script:DumpArtifactCalls
                 foreach ($index in 1..8) {
@@ -1382,9 +2542,20 @@ Describe "1C Designer completion evidence" {
                 $script:CallsAfterImmediateProbes = $script:DumpArtifactCalls
 
                 Start-Sleep -Milliseconds 1100
-                $script:StableExitedResult = [bool](& $CompletionProbe $exitedContext)
+                $script:CachedExitedResult = [bool](& $CompletionProbe $exitedContext)
+                $script:StableExitedResult = $script:CachedExitedResult
+                $releaseWait = [Diagnostics.Stopwatch]::StartNew()
+                while (-not $script:StableExitedResult -and $releaseWait.Elapsed.TotalSeconds -lt 5) {
+                    Start-Sleep -Milliseconds 100
+                    $script:StableExitedResult = [bool](& $CompletionProbe $exitedContext)
+                }
+                $releaseWait.Stop()
                 return [pscustomobject]@{
-                    processId = 7004; exitCode = 0; timedOut = $false
+                    processId = 7004
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o'); exitCode = 0; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
                     peakWorkingSetMb = 0; workingSetLimitMb = 0
                     terminationConfirmed = $true; terminationError = ""; completedByProbe = $script:StableExitedResult
@@ -1401,7 +2572,9 @@ Describe "1C Designer completion evidence" {
                 firstExitedResult = $script:FirstExitedResult
                 callsAfterFirstExitProbe = $script:CallsAfterFirstExitProbe
                 callsAfterImmediateProbes = $script:CallsAfterImmediateProbes
+                cachedExitedResult = $script:CachedExitedResult
                 stableExitedResult = $script:StableExitedResult
+                completedProcessEnumerations = $script:CompletedDumpProcessEnumerations
                 finalArtifactCalls = $script:DumpArtifactCalls
                 postExitProbeSeconds = $script:CapturedDumpPostExitProbeSeconds
                 infoBaseReleaseChecks = $script:InfoBaseReleaseChecks
@@ -1412,7 +2585,9 @@ Describe "1C Designer completion evidence" {
         $result.firstExitedResult | Should -BeFalse
         $result.callsAfterFirstExitProbe | Should -Be 1
         $result.callsAfterImmediateProbes | Should -Be 1
+        $result.cachedExitedResult | Should -BeFalse
         $result.stableExitedResult | Should -BeTrue
+        $result.completedProcessEnumerations | Should -BeGreaterOrEqual 2
         $result.finalArtifactCalls | Should -Be 2
         $result.postExitProbeSeconds | Should -Be 30
         $result.infoBaseReleaseChecks | Should -Be 0
@@ -1423,7 +2598,7 @@ Describe "1C Designer completion evidence" {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $logPath = Join-Path $TestDrive "metadata-identifiers.log"
             $decode = { param($value) [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($value)) }
-            $metadataLines = @((& $decode "0J7QsdGJ0LDRj9Ck0L7RgNC80LAu0J7RiNC40LHQutCw0KHQvtC+0LHRidC10L3QuNGP0JLQodC70YPQttCx0YPQotC10YXQvdC40YfQtdGB0LrQvtC50J/QvtC00LTQtdGA0LbQutC4"), (& $decode "0J7QsdGA0LDQsdC+0YLQutCwLtCg0LDQsdC+0YLQsNCh0KDQtdC30YPQu9GM0YLQsNGC0LDQvNC40J7QsdC80LXQvdCwLtCk0L7RgNC80LAu0J7RiNC40LHQutC40JrQvtC90LLQtdGA0YLQsNGG0LjQuA=="), (& $decode "0J7QsdGA0LDQsdC+0YLQutCwLtCg0LDQsdC+0YLQsNCh0KDQtdC30YPQu9GM0YLQsNGC0LDQvNC40J7QsdC80LXQvdCwLtCc0LDQutC10YIu0KDQtdC60L7QvNC10L3QtNCw0YbQuNC40J7RiNC40LHQutCw0J/RgNC+0LLQtdC00LXQvdC40Y/QndC10J7QsdC90L7QstC70LXQvQ=="), "CommonForm.ErrorMessage", "Report.ErrorsCount")
+            $metadataLines = @((& $decode "0J7QsdGJ0LDRj9Ck0L7RgNC80LAu0J7RiNC40LHQutCw0KHQvtC+0LHRidC10L3QuNGP0JLQodC70YPQttCx0YPQotC10YXQvdC40YfQtdGB0LrQvtC50J/QvtC00LTQtdGA0LbQutC4"), (& $decode "0J7QsdGA0LDQsdC+0YLQutCwLtCg0LDQsdC+0YLQsNCh0KDQtdC30YPQu9GM0YLQsNGC0LDQvNC40J7QsdC80LXQvdCwLtCk0L7RgNC80LAu0J7RiNC40LHQutC40JrQvtC90LLQtdGA0YLQsNGG0LjQuA=="), (& $decode "0J7QsdGA0LDQsdC+0YLQutCwLtCg0LDQsdC+0YLQsNCh0KDQtdC30YPQu9GM0YLQsNGC0LDQvNC40J7QsdC80LXQvdCwLtCc0LDQutC10YIu0KDQtdC60L7QvNC10L3QtNCw0YbQuNC40J7RiNC40LHQutCw0J/RgNC+0LLQtdC00LXQvdC40Y/QndC10J7QsdC90L7QstC70LXQvQ=="), "CommonForm.ErrorMessage", "Report.ErrorsCount", "Корневой файл выгрузки: C:\Рабочая база с пробелами\review-calendar-error\ToolingProbe.xml")
             [System.IO.File]::WriteAllLines($logPath, $metadataLines, (Get-Utf8Encoding)); $metadataState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
             $cases = @([pscustomobject]@{ text = (& $decode "0J7RiNC40LHQutCwOiDQvtC/0LXRgNCw0YbQuNGPINC90LUg0LLRi9C/0L7Qu9C90LXQvdCw"); expected = "failure" }, [pscustomobject]@{ text = "Error: operation aborted"; expected = "failure" }, [pscustomobject]@{ text = "Errors detected"; expected = "failure" }, [pscustomobject]@{ text = "Operation failed"; expected = "failure" }, [pscustomobject]@{ text = "0 errors"; expected = "pending" }, [pscustomobject]@{ text = "no errors"; expected = "pending" })
             $caseResults = foreach ($case in $cases) { [System.IO.File]::WriteAllText($logPath, $case.text, (Get-Utf8Encoding)); $state = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""; [pscustomobject]@{ text = $case.text; expected = $case.expected; state = $state } }
@@ -1517,6 +2692,9 @@ Describe "1C Designer completion evidence" {
                 newExists = Test-Path -LiteralPath (Join-Path $targetPath "New.xml")
                 configuration = Get-Content -LiteralPath (Join-Path $targetPath "Configuration.xml") -Raw
                 transactionRootExists = Test-Path -LiteralPath (Split-Path -Parent $script:DumpTarget)
+                exportEvidence = @(Get-ChildItem -LiteralPath (Join-Path $fixtureRoot '.agent-1c/source-exports') -Filter '*.json' | ForEach-Object {
+                    Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                })
             }
         }
 
@@ -1527,6 +2705,315 @@ Describe "1C Designer completion evidence" {
         $result.newExists | Should -BeTrue
         $result.configuration | Should -Match "new-configuration"
         $result.transactionRootExists | Should -BeFalse
+        $result.exportEvidence.Count | Should -Be 1
+        $result.exportEvidence[0].producer | Should -Be 'itl-designer-export'
+        $result.exportEvidence[0].configurations[0].path | Should -Be 'src/cf'
+        $result.exportEvidence[0].artifacts.Count | Should -Be 3
+    }
+
+    It "updates a copied full export in staging from the seed infobase" {
+        $fixtureRoot = Join-Path $TestDrive "Обновление исходников с пробелом"
+        $targetPath = Join-Path $fixtureRoot "src\cf"
+        New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $targetPath "Configuration.xml") -Encoding UTF8 -Value "old-configuration"
+        Set-Content -LiteralPath (Join-Path $targetPath "ConfigDumpInfo.xml") -Encoding UTF8 -Value "old-cursor"
+        Set-Content -LiteralPath (Join-Path $targetPath "Unchanged.xml") -Encoding UTF8 -Value "unchanged"
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-ExportPath { return "src/cf" }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $stage = [string]$DesignerArgs[1]
+                $script:observed = [pscustomobject]@{
+                    base = $InfoBasePath
+                    update = $DesignerArgs -contains "-update"
+                    cursor = (Get-Content -LiteralPath (Join-Path $stage "ConfigDumpInfo.xml") -Raw).Trim()
+                    unchangedExists = Test-Path -LiteralPath (Join-Path $stage "Unchanged.xml")
+                }
+                Set-Content -LiteralPath (Join-Path $stage "Configuration.xml") -Encoding UTF8 -Value "new-configuration"
+                Set-Content -LiteralPath (Join-Path $stage "ConfigDumpInfo.xml") -Encoding UTF8 -Value "new-cursor"
+            }
+            $dump = Dump-ConfigToFilesFromInfoBase -InfoBasePath (Join-Path $fixtureRoot "копия seed") -InfoBaseKind file -IncrementalFromCurrentExport
+            [pscustomobject]@{
+                observed = $script:observed
+                dump = $dump
+                configuration = (Get-Content -LiteralPath (Join-Path $targetPath "Configuration.xml") -Raw).Trim()
+                unchangedExists = Test-Path -LiteralPath (Join-Path $targetPath "Unchanged.xml")
+            }
+        }
+        $result.observed.base | Should -Be (Join-Path $fixtureRoot "копия seed")
+        $result.observed.update | Should -BeTrue
+        $result.observed.cursor | Should -Be "old-cursor"
+        $result.observed.unchangedExists | Should -BeTrue
+        $result.dump.incremental | Should -BeTrue
+        $result.configuration | Should -Be "new-configuration"
+        $result.unchangedExists | Should -BeTrue
+    }
+
+    It "accepts a successful incremental dump whose files remain unchanged" {
+        $fixtureRoot = Join-Path $TestDrive "unchanged-incremental-dump"
+        $basePath = Join-Path $fixtureRoot "base"
+        $platformPath = Join-Path $fixtureRoot "1cv8.exe"
+        $dumpPath = Join-Path $fixtureRoot "staged"
+        New-Item -ItemType Directory -Force -Path $basePath, $dumpPath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath, (Join-Path $basePath "1Cv8.1CD") | Out-Null
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{
+                platformPath = $platformPath; logsPath = "logs"; designerMaxWorkingSetMb = 0
+                designerOperationTimeoutSeconds = 10; designerDumpStabilitySeconds = 0
+            }
+            function Invoke-BoundedDesignerDumpArtifactState {
+                return [pscustomobject]@{ready=$true; signature="unchanged"; latestWriteTimeUtcTicks=[DateTime]::UtcNow.Ticks}
+            }
+            function Receive-DesignerDumpArtifactScan {
+                return [pscustomobject]@{
+                    status="completed"
+                    value=[pscustomobject]@{ready=$true; signature="unchanged"; latestWriteTimeUtcTicks=[DateTime]::UtcNow.Ticks}
+                }
+            }
+            function Test-DesignerInvocationReleased {
+                param($ProbeState, $ProbeContext)
+                $ProbeState.processesReleaseConfirmed = [bool]$ProbeContext.launcherExited
+                return [bool]$ProbeContext.launcherExited
+            }
+            function Invoke-NativeProcessAndWaitResult {
+                param([string[]]$Arguments, [scriptblock]$CompletionProbe)
+                $outIndex = [Array]::IndexOf($Arguments, "/Out")
+                Write-Utf8Text -Path $Arguments[$outIndex + 1] -Value "completed"
+                $script:whileRunning = [bool](& $CompletionProbe ([pscustomobject]@{launcherExited=$false; launcherExitCode=0; processId=7010}))
+                $script:afterExit = [bool](& $CompletionProbe ([pscustomobject]@{launcherExited=$true; launcherExitCode=0; processId=7010}))
+                return [pscustomobject]@{
+                    processId=7010; exitCode=0; timedOut=$false; memoryLimitExceeded=$false
+                    memoryMonitorFailed=$false; memoryMonitorError=""; terminationError=""
+                    launcherExited=$true; launcherExitCode=0; completedByProbe=$script:afterExit
+                }
+            }
+            Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @(
+                "/DumpConfigToFiles", $dumpPath, "-Format", "Hierarchical", "-update"
+            ) 6>$null | Out-Null
+            [pscustomobject]@{whileRunning=$script:whileRunning; afterExit=$script:afterExit}
+        }
+        $result.whileRunning | Should -BeFalse
+        $result.afterExit | Should -BeTrue
+    }
+
+    It "parses the source generation ID from the guarded Designer log" {
+        $fixtureRoot = Join-Path $TestDrive "Поколение конфигурации"
+        New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-InfoBaseKind { return "file" }
+            function Get-SourceInfoBasePath { return (Join-Path $fixtureRoot "исходная база") }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $script:observed = [pscustomobject]@{base=$InfoBasePath; kind=$InfoBaseKind; command=$DesignerArgs[0]}
+                $log = Join-Path $fixtureRoot "generation.log"
+                Write-Utf8Text -Path $log -Value ("Идентификатор: " + ("A" * 40) + "`n")
+                return $log
+            }
+            [pscustomobject]@{id=(Get-SourceConfigurationGenerationId); observed=$script:observed}
+        }
+        $result.id | Should -Be ("a" * 40)
+        $result.observed.base | Should -Be (Join-Path $fixtureRoot "исходная база")
+        $result.observed.kind | Should -Be "file"
+        $result.observed.command | Should -Be "/GetConfigGenerationID"
+    }
+
+    It "keeps the installed configuration when only transaction cleanup fails" {
+        $fixtureRoot = Join-Path $TestDrive 'Очистка выгрузки после установки'
+        $targetPath = Join-Path $fixtureRoot 'src\cf'
+        New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Value 'old-configuration'
+        Set-Content -LiteralPath (Join-Path $targetPath 'ConfigDumpInfo.xml') -Value 'old-index'
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-ExportPath { return 'src/cf' }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $stage = $DesignerArgs[[Array]::IndexOf($DesignerArgs, '/DumpConfigToFiles') + 1]
+                Set-Content -LiteralPath (Join-Path $stage 'Configuration.xml') -Value 'new-configuration'
+                Set-Content -LiteralPath (Join-Path $stage 'ConfigDumpInfo.xml') -Value 'new-index'
+            }
+            function Complete-Agent1cProjectTransactionSlot { throw 'simulated cleanup failure' }
+            $WarningPreference = 'Stop'
+            $dump = Dump-ConfigToFilesFromInfoBase -InfoBasePath (Join-Path $fixtureRoot 'base') -InfoBaseKind file 3>$null
+            [pscustomobject]@{
+                dump = $dump
+                installed = (Get-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Raw).Trim()
+                backup = (Get-Content -LiteralPath (Join-Path $fixtureRoot '.tx\c\b\Configuration.xml') -Raw).Trim()
+                phase = (Get-Content -LiteralPath (Join-Path $fixtureRoot '.tx\c\j') -Raw | ConvertFrom-Json).phase
+            }
+        }
+
+        $result.dump.transactional | Should -BeTrue
+        $result.dump.cleanupWarning | Should -Match 'simulated cleanup failure'
+        $result.installed | Should -Be 'new-configuration'
+        $result.backup | Should -Be 'old-configuration'
+        $result.phase | Should -Be 'installed'
+    }
+
+    It "retains the installed phase when backup removal fails after deleting some files" {
+        $fixtureRoot = Join-Path $TestDrive 'Частичная очистка резервной копии'
+        $targetPath = Join-Path $fixtureRoot 'src\cf'
+        New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Value 'old-configuration'
+        Set-Content -LiteralPath (Join-Path $targetPath 'ConfigDumpInfo.xml') -Value 'old-index'
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-ExportPath { return 'src/cf' }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $stage = $DesignerArgs[[Array]::IndexOf($DesignerArgs, '/DumpConfigToFiles') + 1]
+                Set-Content -LiteralPath (Join-Path $stage 'Configuration.xml') -Value 'new-configuration'
+                Set-Content -LiteralPath (Join-Path $stage 'ConfigDumpInfo.xml') -Value 'new-index'
+            }
+            $backupRoot = (Get-Agent1cProjectTransactionPaths -Kind c).backup
+            function Remove-Item {
+                param([string]$LiteralPath, [switch]$Force, $ErrorAction)
+                if ($LiteralPath -eq $backupRoot) { throw 'Directory not empty' }
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Force -ErrorAction Stop
+            }
+            $dump = Dump-ConfigToFilesFromInfoBase -InfoBasePath (Join-Path $fixtureRoot 'base') -InfoBaseKind file 3>$null
+            [pscustomobject]@{
+                dump = $dump
+                installed = (Get-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Raw).Trim()
+                backupExists = Test-Path -LiteralPath $backupRoot
+                phase = (Get-Content -LiteralPath (Join-Path $fixtureRoot '.tx\c\j') -Raw | ConvertFrom-Json).phase
+            }
+        }
+
+        $result.dump.cleanupWarning | Should -Match 'PROJECT_TRANSACTION_CLEANUP_FAILED'
+        $result.installed | Should -Be 'new-configuration'
+        $result.backupExists | Should -BeTrue
+        $result.phase | Should -Be 'installed'
+    }
+
+    It "reuses an installed dump after partially completed backup cleanup" {
+        $fixtureRoot = Join-Path $TestDrive 'Повтор очистки выгрузки'
+        $targetPath = Join-Path $fixtureRoot 'src\cf'
+        New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Value 'new-configuration'
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $paths = Get-Agent1cProjectTransactionPaths -Kind c
+            $residual = Join-Path $paths.backup 'nested'
+            New-Item -ItemType Directory -Force -Path $residual | Out-Null
+            Set-Content -LiteralPath (Join-Path $residual 'old.xml') -Value 'partial-backup'
+            Write-Agent1cProjectTransactionState -Paths $paths -Kind c -Phase installed -Target $targetPath
+            $newPaths = Initialize-Agent1cProjectTransactionSlot -Kind c -Target $targetPath
+            [pscustomobject]@{
+                target = (Get-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Raw).Trim()
+                backupExists = Test-Path -LiteralPath $paths.backup
+                stageExists = Test-Path -LiteralPath $newPaths.stage
+                phase = (Get-Content -LiteralPath $newPaths.state -Raw | ConvertFrom-Json).phase
+            }
+        }
+        $result.target | Should -Be 'new-configuration'
+        $result.backupExists | Should -BeFalse
+        $result.stageExists | Should -BeTrue
+        $result.phase | Should -Be 'staging'
+    }
+
+    It "restores the previous dump if interruption follows its move to the backup slot" {
+        $fixtureRoot = Join-Path $TestDrive 'Прерванный перенос исходников'
+        $targetPath = Join-Path $fixtureRoot 'src\cf'
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $paths = Get-Agent1cProjectTransactionPaths -Kind c
+            New-Item -ItemType Directory -Force -Path $paths.backup | Out-Null
+            Set-Content -LiteralPath (Join-Path $paths.backup 'Configuration.xml') -Value 'old-configuration'
+            Write-Agent1cProjectTransactionState -Paths $paths -Kind c -Phase staging -Target $targetPath
+            $newPaths = Initialize-Agent1cProjectTransactionSlot -Kind c -Target $targetPath
+            [pscustomobject]@{
+                restored = (Get-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Raw).Trim()
+                backupExists = Test-Path -LiteralPath $newPaths.backup
+                stageExists = Test-Path -LiteralPath $newPaths.stage
+            }
+        }
+        $result.restored | Should -Be 'old-configuration'
+        $result.backupExists | Should -BeFalse
+        $result.stageExists | Should -BeTrue
+    }
+
+    It "preserves an unjournaled backup instead of guessing which dump is installed" {
+        $fixtureRoot = Join-Path $TestDrive 'Неоднозначная резервная копия'
+        $targetPath = Join-Path $fixtureRoot 'src\cf'
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $paths = Get-Agent1cProjectTransactionPaths -Kind c
+            New-Item -ItemType Directory -Force -Path $targetPath, $paths.backup | Out-Null
+            Set-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Value 'current'
+            Set-Content -LiteralPath (Join-Path $paths.backup 'Configuration.xml') -Value 'backup'
+            $message = try { Initialize-Agent1cProjectTransactionSlot -Kind c -Target $targetPath | Out-Null; '' } catch { $_.Exception.Message }
+            [pscustomobject]@{
+                message = $message
+                target = (Get-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Raw).Trim()
+                backup = (Get-Content -LiteralPath (Join-Path $paths.backup 'Configuration.xml') -Raw).Trim()
+            }
+        }
+        $result.message | Should -Match 'ambiguous backup'
+        $result.target | Should -Be 'current'
+        $result.backup | Should -Be 'backup'
+    }
+
+    It "retries bottom-up transaction cleanup after a directory-not-empty race" {
+        $fixtureRoot = Join-Path $TestDrive 'Повтор удаления каталога'
+        $backupRoot = Join-Path $fixtureRoot '.tx\c\b'
+        $nested = Join-Path $backupRoot 'nested'
+        New-Item -ItemType Directory -Force -Path $nested | Out-Null
+        Set-Content -LiteralPath (Join-Path $nested 'old.xml') -Value 'old'
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:RootDeleteAttempts = 0
+            function Remove-Item {
+                param([string]$LiteralPath, [switch]$Force, $ErrorAction)
+                if ($LiteralPath -eq $backupRoot -and $script:RootDeleteAttempts++ -eq 0) {
+                    throw 'Directory not empty'
+                }
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Force -ErrorAction Stop
+            }
+            Remove-Agent1cProjectTree -Path $backupRoot
+            [pscustomobject]@{
+                attempts = $script:RootDeleteAttempts
+                exists = Test-Path -LiteralPath $backupRoot
+            }
+        }
+        $result.attempts | Should -Be 2
+        $result.exists | Should -BeFalse
+    }
+
+    It "keeps workflow source export evidence outside Git status" {
+        (Get-Content -LiteralPath (Join-Path $RepoRoot ".gitignore") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/source-exports/'))
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/source-exports/'))
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            Test-IgnorableLocalGitStatusLine -Line '?? .agent-1c/source-exports/'
+        }
+        $result | Should -BeTrue
+    }
+
+    It "keeps the successful source installation when optional catalog publication is unavailable" {
+        $fixtureRoot = Join-Path $TestDrive 'Недоступный каталог исходников'
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixtureRoot '.agent-1c') | Out-Null
+        Set-Content -LiteralPath (Join-Path $fixtureRoot '.agent-1c/source-exports') -Value 'occupied file'
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-ExportPath { return 'src/cf' }
+            function Invoke-Designer {
+                param($DesignerArgs)
+                $stage = $DesignerArgs[1]
+                Set-Content -LiteralPath (Join-Path $stage 'Configuration.xml') -Value '<Configuration/>'
+                Set-Content -LiteralPath (Join-Path $stage 'ConfigDumpInfo.xml') -Value '<ConfigDumpInfo/>'
+            }
+            $WarningPreference = 'Stop'
+            Dump-ConfigToFilesFromInfoBase -InfoBaseKind file -InfoBasePath (Join-Path $fixtureRoot 'base') 3>$null
+        }
+        $result.transactional | Should -BeTrue
+        (Join-Path $fixtureRoot 'src/cf/Configuration.xml') | Should -Exist
+        (Join-Path $fixtureRoot 'src/cf/ConfigDumpInfo.xml') | Should -Exist
     }
 
     It "preserves the previous dump and diagnostic staging when the new dump fails" {
@@ -1565,5 +3052,83 @@ Describe "1C Designer completion evidence" {
         $result.oldConfiguration | Should -Match "old-configuration"
         $result.stagingExists | Should -BeTrue
         $result.partialExists | Should -BeTrue
+    }
+}
+
+Describe '1C Designer license refusal' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $LicenseHelperPath = $context.HelperPath
+        $LicenseRefusal = 'Не найдена лицензия. Не обнаружен ключ защиты программы или полученная программная лицензия!'
+
+        # Runs the real Invoke-Designer; only the native launch writes the /Out log
+        # of each attempt and reports its exit code.
+        function Invoke-LicenseDesigner([string]$Case, [string[]]$Logs, [bool]$Released = $true) {
+            $root = Join-Path $TestDrive ('Отказ лицензии с пробелом ' + $Case)
+            $base = Join-Path $root 'База с пробелом'
+            $platform = Join-Path $root '1cv8.exe'
+            New-Item -ItemType Directory -Force -Path $base | Out-Null
+            New-Item -ItemType File -Force -Path $platform, (Join-Path $base '1Cv8.1CD') | Out-Null
+            & {
+                . $LicenseHelperPath -ProjectRoot $root -Action help *> $null
+                $script:Config = [pscustomobject]@{ platformPath=$platform; logsPath='logs'; designerMaxWorkingSetMb=0; designerOperationTimeoutSeconds=30; designerDumpStabilitySeconds=0 }
+                $script:LicenseAttempts = 0
+                $script:LicenseLogPaths = @()
+                function Get-DesignerLicenseRetryPolicy { [pscustomobject]@{ maxRetries = 2; delaySeconds = 0 } }
+                function Confirm-OneCNativeOperationRelease { }
+                function Test-DesignerInvocationReleased { param($ProbeState) $ProbeState.processesReleaseConfirmed = $Released; return $Released }
+                function Invoke-NativeProcessAndWaitResult {
+                    param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0, [scriptblock]$OnTimeout = $null,
+                        [scriptblock]$CompletionProbe = $null, [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
+                        [int]$FailurePostExitProbeSeconds = 0, [switch]$RequirePostExitProbeOnFailure, [int]$MaxWorkingSetMb = 0)
+                    $logPath = [string]$Arguments[[Array]::IndexOf($Arguments, '/Out') + 1]
+                    $text = $Logs[[Math]::Min($script:LicenseAttempts, $Logs.Count - 1)]
+                    $script:LicenseAttempts++
+                    $script:LicenseLogPaths += $logPath
+                    [IO.File]::WriteAllText($logPath, $text, [Text.UTF8Encoding]::new($true))
+                    $exitCode = if ($text -eq 'Проверка завершена.') { 0 } else { 1 }
+                    & $CompletionProbe ([pscustomobject]@{ processId = 9460; launcherExited = $true; launcherExitCode = $exitCode }) | Out-Null
+                    [pscustomobject]@{ processId = 9460; exitCode = $exitCode; timedOut = $false; memoryLimitExceeded = $false; memoryMonitorFailed = $false
+                        memoryMonitorError = ''; peakWorkingSetMb = 0; workingSetLimitMb = 0; terminationConfirmed = $true; terminationError = ''
+                        completedByProbe = $true; postExitProbeTimedOut = $false; completionProbeFailed = $false; launcherExited = $true; launcherExitCode = $exitCode }
+                }
+                $returned = ''
+                $message = try {
+                    $returned = Invoke-Designer -InfoBasePath $base -InfoBaseKind file -DesignerArgs @('/CheckModules', '-ThinClient') 6>$null
+                    ''
+                } catch { $_.Exception.Message }
+                [pscustomobject]@{ message = $message; attempts = $script:LicenseAttempts; returned = [string]$returned; logs = @($script:LicenseLogPaths) }
+            }
+        }
+    }
+
+    It 'repeats the same command after a <language> license refusal' -TestCases @(
+        @{ language = 'Russian'; text = 'Не найдена лицензия. Не обнаружен ключ защиты программы или полученная программная лицензия!' },
+        @{ language = 'English'; text = 'License not found. Software protection key or obtained software license not found!' }
+    ) {
+        param($language, $text)
+        $result = Invoke-LicenseDesigner -Case $language -Logs @($text, 'Проверка завершена.')
+        $result.message | Should -BeNullOrEmpty
+        $result.attempts | Should -Be 2
+        $result.returned | Should -Be $result.logs[1]
+    }
+
+    It 'stops after the retry bound with the original native failure' {
+        $result = Invoke-LicenseDesigner -Case 'bound' -Logs @($LicenseRefusal)
+        $result.attempts | Should -Be 3
+        $result.message | Should -Match '^1C Designer failed with exit code 1\.'
+        $result.message | Should -Match ([regex]::Escape($result.logs[2]))
+    }
+
+    It 'does not repeat <case>' -TestCases @(
+        @{ case = 'another native error'; log = 'Ошибка блокировки информационной базы для конфигурирования.'; released = $true },
+        @{ case = 'a refusal mixed with other output'; log = "Не найдена лицензия.`r`nОшибка блокировки информационной базы для конфигурирования."; released = $true },
+        @{ case = 'an unreleased refused invocation'; log = 'Не найдена лицензия. Не обнаружен ключ защиты программы или полученная программная лицензия!'; released = $false }
+    ) {
+        param($case, $log, $released)
+        $result = Invoke-LicenseDesigner -Case $case -Logs @($log, 'Проверка завершена.') -Released $released
+        $result.attempts | Should -Be 1
+        $result.message | Should -Not -BeNullOrEmpty
     }
 }

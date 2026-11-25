@@ -32,6 +32,7 @@ type fakeBroker struct {
 	stops             int
 	stopFailures      int
 	testClientErr     error
+	markErr           error
 }
 
 func (b *fakeBroker) Ensure(context.Context) (*backendInfo, error) {
@@ -97,6 +98,9 @@ func (b *fakeBroker) MarkRunning(_ context.Context, previous *backendInfo) (*bac
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.marks++
+	if b.markErr != nil {
+		return nil, b.markErr
+	}
 	copy := *previous
 	copy.Status = "running"
 	b.info = &copy
@@ -296,11 +300,15 @@ func newVanessaBackendSequence(t *testing.T, environmentText string, connectText
 }
 
 func newVanessaBackendObserved(t *testing.T, environmentText string, connectTexts []string, postText string, connectCalls *int, calls map[string]int) *httptest.Server {
+	return newVanessaBackendObservedWithTools(t, vanessaIntegrationTools(), environmentText, connectTexts, postText, connectCalls, calls)
+}
+
+func newVanessaBackendObservedWithTools(t *testing.T, definitions []*mcp.Tool, environmentText string, connectTexts []string, postText string, connectCalls *int, calls map[string]int) *httptest.Server {
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: "fake-vanessa", Version: "1"}, nil)
-	for _, definition := range vanessaIntegrationTools() {
+	for _, definition := range definitions {
 		tool := definition
-		server.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		server.AddTool(tool, func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if calls != nil {
 				calls[tool.Name]++
 			}
@@ -308,6 +316,16 @@ func newVanessaBackendObserved(t *testing.T, environmentText string, connectText
 			switch tool.Name {
 			case "get_environment_data":
 				text = environmentText
+			case "manage_test_client":
+				arguments := map[string]any{}
+				if err := json.Unmarshal(req.Params.Arguments, &arguments); err != nil {
+					return nil, err
+				}
+				if arguments["action"] == "disconnect" {
+					text = "TestClient отключен"
+					break
+				}
+				fallthrough
 			case "connect_test_client":
 				*connectCalls++
 				index := *connectCalls - 1
@@ -405,8 +423,19 @@ func TestRuntimeLazyHTTPPaginationCallAndProgress(t *testing.T) {
 	if started["outcome"] != "started" {
 		t.Fatalf("started evidence was not persisted before forwarding: %#v", started)
 	}
-	if evidence["schemaVersion"] != float64(3) || evidence["progressTokenProvided"] != true || evidence["progressNotificationsForwarded"] != float64(1) {
+	if evidence["schemaVersion"] != float64(3) || evidence["progressTokenProvided"] != true || evidence["progressEvidenceId"] == "" {
 		t.Fatalf("progress diagnostics were not persisted: %#v", evidence)
+	}
+	// The SDK dispatches notification handlers asynchronously relative to replies.
+	// Preserve the original successful-forwarding assertion against the event log,
+	// which must include a notification even when its handler finishes late.
+	progressPath := filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", "roctup", rt.instanceID+".progress.jsonl")
+	events := awaitProgressEvidence(t, progressPath, 1)
+	if len(events) != 1 || events[0]["forwardedCount"] != float64(1) || events[0]["progressEvidenceId"] != evidence["progressEvidenceId"] {
+		t.Fatalf("successful notification was lost or duplicated: %#v", events)
+	}
+	if snapshot := evidence["progressNotificationsForwarded"].(float64); snapshot != 0 && snapshot != 1 {
+		t.Fatalf("invalid completion snapshot: %v", snapshot)
 	}
 }
 
@@ -557,6 +586,9 @@ func TestRuntimeRecoversButNeverReplaysNonIdempotentCall(t *testing.T) {
 	if details["backendRecovered"] != true || details["action"] != "review-and-retry-tool-call" || details["instanceId"] == instanceID {
 		t.Fatalf("unexpected structured recovery action: %#v", structured)
 	}
+	if details["callOutcome"] != "unknown" || details["automaticRetryPerformed"] != false {
+		t.Fatalf("unknown modifying call result was misrepresented or replayed: %#v", details)
+	}
 }
 
 func TestRuntimeConcurrentStaleCallsShareOneRecovery(t *testing.T) {
@@ -614,7 +646,7 @@ func TestRuntimeConcurrentStaleCallsShareOneRecovery(t *testing.T) {
 	}
 }
 
-func TestGatewayListsTwoToolsAndResolvesWithoutStartingBackend(t *testing.T) {
+func TestGatewayListsCallToolsAndResolvesWithoutStartingBackend(t *testing.T) {
 	tools := integrationTools()
 	broker := &fakeBroker{info: &backendInfo{}}
 	_, session := newGatewayFacadeSession(t, "roctup", tools, broker, nil)
@@ -644,13 +676,16 @@ func TestGatewayListsTwoToolsAndResolvesWithoutStartingBackend(t *testing.T) {
 }
 
 func TestGatewayDefinitionsStayCompactAndDoNotEmbedInnerCatalog(t *testing.T) {
-	definitions := []*mcp.Tool{gatewayResolveDefinition("roctup"), gatewayCallDefinition("roctup"), gatewayResolveDefinition("vanessa-ui"), gatewayCallDefinition("vanessa-ui")}
+	definitions := []*mcp.Tool{
+		gatewayResolveDefinition("roctup"), gatewayCallDefinition("roctup"),
+		gatewayResolveDefinition("vanessa-ui"), gatewayCallDefinition("vanessa-ui"),
+	}
 	raw, err := json.Marshal(definitions)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(raw) > 6000 {
-		t.Fatalf("four gateway definitions are too large: %d bytes", len(raw))
+		t.Fatalf("gateway definitions are too large: %d bytes", len(raw))
 	}
 	for _, innerName := range []string{"get_metadata", "execute_query", "run_scenario", "get_test_results"} {
 		if strings.Contains(string(raw), innerName) {
@@ -848,6 +883,9 @@ func TestGatewayPreservesQualifiedVanessaPathProtocolErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertToolErrorCode(t, result, "PATH_INVALID")
+	if ensures, stops := broker.counts(); ensures != 1 || stops != 0 || rt.backend == nil {
+		t.Fatalf("pre-action path rejection discarded runtime: ensures=%d stops=%d", ensures, stops)
+	}
 
 	evidencePath := filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", "vanessa-ui", rt.instanceID+".evidence.jsonl")
 	raw, err := os.ReadFile(evidencePath)
@@ -856,6 +894,120 @@ func TestGatewayPreservesQualifiedVanessaPathProtocolErrors(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"resultCode":"PATH_INVALID"`) {
 		t.Fatalf("path protocol code was not preserved in evidence: %s", raw)
+	}
+}
+
+// Qualified pre-action rejections and answered Vanessa handler failures keep
+// the backend; every other protocol error still stops it (PM5 13a).
+func TestGatewayKeepsOnlyQualifiedPreActionRejections(t *testing.T) {
+	for _, tc := range []struct {
+		name, tool, message string
+		properResult, keep  bool
+		outcome             string
+	}{
+		{"non-executable-line", "execute_feature_step", "ITL_VANESSA_COMMAND_REJECTED: строка 266 не исполняется", false, true, "not-started"},
+		{"invalid-syntax", "run_scenario", "ITL_VANESSA_COMMAND_REJECTED: ошибка синтаксиса строка 5", false, true, "not-started"},
+		{"answered-action-failure", "run_scenario", "ACTION_FAILED: ошибка синтаксиса строка 5", false, true, "failed"},
+		{"answered-form-action-failure", "execute_form_actions", "ACTION_FAILED: ## Действие 2: click_button - не выполнено", false, true, "failed"},
+		{"wrong-producer", "get_editor_state", "ITL_VANESSA_COMMAND_REJECTED: отказ", false, false, ""},
+		{"unqualified-path-site", "run_scenario", "PATH_INVALID: отказ", false, false, ""},
+		{"native-path-validation", "open_feature_file", "INVALID_PARAMS: Файл <C:\\Путь с пробелом\\ошибка.feature> не был найден.", false, true, "not-started"},
+		{"answered-invalid-params", "run_scenario", "INVALID_PARAMS: отказ", false, true, "failed"},
+		{"disconnected-testclient", "execute_form_actions", "ACTION_FAILED: Клиент тестирования не подключён.", false, false, ""},
+		{"uncoded", "run_scenario", "native modification may have completed", false, false, ""},
+		{"malformed", "run_scenario", "ITL_VANESSA_COMMAND_REJECTED", false, false, ""},
+		{"proper-tool-error", "run_scenario", "existing ordinary tool error", true, true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tools := append(vanessaIntegrationTools(), &mcp.Tool{Name: "execute_feature_step", InputSchema: map[string]any{"type": "object"}}, &mcp.Tool{Name: "execute_form_actions", InputSchema: map[string]any{"type": "object"}})
+			server := mcp.NewServer(&mcp.Implementation{Name: "rejection-backend", Version: "1"}, nil)
+			calls := 0
+			for _, definition := range tools {
+				tool := definition
+				server.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					if tool.Name == tc.tool {
+						calls++
+						if tc.properResult {
+							return toolError("EXISTING_ERROR", tc.message, nil), nil
+						}
+						return nil, &jsonrpc.Error{Code: -32603, Message: tc.message}
+					}
+					text := tool.Name
+					switch tool.Name {
+					case "get_environment_data":
+						text = "VanessaExt: true"
+					case "connect_test_client":
+						text = "TestClient подключен"
+					case "get_window_list_testclient":
+						text = "Окно: Главное"
+					}
+					return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+				})
+			}
+			backend := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+			t.Cleanup(backend.Close)
+			broker := &fakeBroker{info: &backendInfo{URL: backend.URL, BackendVersion: "test"}}
+			rt, session := newGatewayFacadeSession(t, "vanessa-ui", tools, broker, nil)
+			arguments := map[string]any{}
+			if tc.tool == "open_feature_file" {
+				arguments["filePath"] = `C:\Путь с пробелом\ошибка.feature`
+			}
+			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": tc.tool, "arguments": arguments}})
+			// The disconnected-TestClient code keeps the original text in details.cause.
+			if err != nil || result == nil || !result.IsError || !strings.Contains(resultText(result)+fmt.Sprint(result.StructuredContent), tc.message) {
+				t.Fatalf("original error lost: result=%+v err=%v", result, err)
+			}
+			ensures, stops := broker.counts()
+			wantStops := 1
+			if tc.keep {
+				wantStops = 0
+			}
+			if calls != 1 || ensures != 1 || stops != wantStops || (rt.backend != nil) != tc.keep {
+				t.Fatalf("wrong cleanup/replay: calls=%d ensures=%d stops=%d keep=%v", calls, ensures, stops, tc.keep)
+			}
+			if tc.outcome != "" {
+				details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
+				if details["callOutcome"] != tc.outcome || details["automaticRetryPerformed"] != false {
+					t.Fatalf("missing outcome proof: %+v", details)
+				}
+				if tc.outcome == "failed" && (details["partialEffectsPossible"] != true || details["action"] != "inspect-form-state-before-retry") {
+					t.Fatalf("answered failure lost its continuation: %+v", details)
+				}
+			}
+			result, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": "get_environment_data", "arguments": map[string]any{}}})
+			if err != nil || result.IsError {
+				t.Fatalf("following call failed: %+v %v", result, err)
+			}
+			ensures, _ = broker.counts()
+			want := 2
+			if tc.keep {
+				want = 1
+			}
+			if ensures != want || calls != 1 {
+				t.Fatalf("following call restarted/replayed: ensures=%d calls=%d", ensures, calls)
+			}
+		})
+	}
+}
+
+func TestQualifiedRejectionRequiresVanessaFamily(t *testing.T) {
+	err := &jsonrpc.Error{Code: -32603, Message: "ITL_VANESSA_COMMAND_REJECTED: rejected"}
+	if qualifiedVanessaCommandRejection("roctup", "run_scenario", err) != nil {
+		t.Fatal("foreign family accepted Vanessa producer contract")
+	}
+	for _, code := range []string{"PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED"} {
+		for _, tool := range []string{"open_feature_file", "load_features", "check_syntax"} {
+			err := &jsonrpc.Error{Code: -32603, Message: code + ": C:\\Путь с пробелом\\ошибка.feature"}
+			result := qualifiedVanessaCommandRejection("vanessa-ui", tool, err)
+			if result == nil || !result.IsError {
+				t.Fatalf("qualified path contract lost: %s/%s", tool, code)
+			}
+			recovered := recoveredResult(result, &recoveryResult{PreviousInstanceID: "old", InstanceID: "new"})
+			details := recovered.StructuredContent.(map[string]any)["details"].(map[string]any)
+			if details["automaticRetryPerformed"] != true || toolResultCode(recovered) != code {
+				t.Fatal("existing idempotent recovery history contradicted/lost")
+			}
+		}
 	}
 }
 
@@ -1024,6 +1176,11 @@ func TestVanessaToolClassificationKeepsEditorToolsProcessFree(t *testing.T) {
 		classifyVanessaTool("close_test_client") != vanessaToolDisconnect ||
 		classifyVanessaTool("future_unknown_tool") != vanessaToolUnknown {
 		t.Fatal("connection-control or unknown Vanessa classification is not fail-closed")
+	}
+	for _, name := range []string{"get_vanessa_automation_state"} {
+		if classifyVanessaTool(name) != vanessaToolEditorManager {
+			t.Fatalf("new Vanessa read-only tool %q has class %q", name, classifyVanessaTool(name))
+		}
 	}
 }
 
@@ -1221,6 +1378,70 @@ func TestRuntimeVanessaRejectsUnmanagedProfileBeforeUpstreamCall(t *testing.T) {
 	assertToolErrorCode(t, result, "ITL_VANESSA_MANAGED_PROFILE_REQUIRED")
 	if connectCalls != 0 {
 		t.Fatalf("unmanaged profile reached upstream: %d", connectCalls)
+	}
+}
+
+func TestRuntimeVanessaManageTestClientActionsPreserveManagedOwnership(t *testing.T) {
+	tool := &mcp.Tool{Name: "manage_test_client", InputSchema: map[string]any{
+		"type": "object", "properties": map[string]any{
+			"action":      map[string]any{"type": "string"},
+			"profileName": map[string]any{"type": "string"},
+		}, "required": []string{"action"},
+	}}
+	rt := &runtime{
+		family:  "vanessa-ui",
+		backend: &backendInfo{TestClientProfile: "itl-ondemand", TestClientPort: 48151},
+		catalog: &loadedCatalog{Data: catalogFile{Tools: []*mcp.Tool{tool}}},
+	}
+	connect := rt.managedTestClientConnectParams("itl-ondemand")
+	if connect.Name != "manage_test_client" || classifyVanessaTool(connect.Name, connect.Arguments) != vanessaToolConnect {
+		t.Fatalf("managed connect request %#v is not classified as a connection", connect)
+	}
+	if got := rt.validateManagedVanessaRequest(map[string]any{"action": "connect", "profileName": "custom"}, "manage_test_client"); got == nil || toolResultCode(got) != "ITL_VANESSA_MANAGED_PROFILE_REQUIRED" {
+		t.Fatalf("unmanaged profile was admitted: %#v", got)
+	}
+	if got := rt.validateManagedVanessaRequest(connect.Arguments, connect.Name); got != nil {
+		t.Fatalf("managed profile was rejected: %#v", got)
+	}
+	if classifyVanessaTool("manage_test_client", map[string]any{"action": "disconnect"}) != vanessaToolDisconnect ||
+		classifyVanessaTool("manage_test_client", map[string]any{"action": "unknown"}) != vanessaToolUnknown {
+		t.Fatal("manage_test_client action was not classified fail closed")
+	}
+}
+
+func TestRuntimeVanessa42ManageTestClientConnectDisconnectAndAutomaticReconnect(t *testing.T) {
+	definitions := make([]*mcp.Tool, 0, len(vanessaIntegrationTools()))
+	for _, tool := range vanessaIntegrationTools() {
+		if tool.Name != "connect_test_client" {
+			definitions = append(definitions, tool)
+		}
+	}
+	definitions = append(definitions, &mcp.Tool{Name: "manage_test_client", InputSchema: map[string]any{
+		"type": "object", "properties": map[string]any{
+			"action": map[string]any{"type": "string"}, "profileName": map[string]any{"type": "string"},
+		}, "required": []string{"action"},
+	}})
+	connectCalls := 0
+	calls := map[string]int{}
+	backend := newVanessaBackendObservedWithTools(t, definitions, "VanessaExt: Истина",
+		[]string{"TestClient подключен", "TestClient подключен"},
+		"В клиенте тестирования найдено 1 окон:\n-Начальная страница", &connectCalls, calls)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, TestClientProfile: "itl-ondemand", TestClientPort: 48151}}
+	_, session := newFacadeSessionForFamily(t, "vanessa-ui", definitions, broker, time.Minute, nil)
+
+	connect, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "manage_test_client", Arguments: map[string]any{
+		"action": "connect", "profileName": "itl-ondemand",
+	}})
+	if err != nil || connect == nil || connect.IsError || connectCalls != 1 {
+		t.Fatalf("managed connection failed: result=%#v err=%v calls=%d", connect, err, connectCalls)
+	}
+	disconnect, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "manage_test_client", Arguments: map[string]any{"action": "disconnect"}})
+	if err != nil || disconnect == nil || disconnect.IsError || broker.testClientEnsureCount() != 1 {
+		t.Fatalf("disconnect started TestClient or failed: result=%#v err=%v ensures=%d", disconnect, err, broker.testClientEnsureCount())
+	}
+	run, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "run_scenario", Arguments: map[string]any{}})
+	if err != nil || run == nil || run.IsError || connectCalls != 2 || calls["run_scenario"] != 1 {
+		t.Fatalf("automatic reconnect failed: result=%#v err=%v connectCalls=%d calls=%#v", run, err, connectCalls, calls)
 	}
 }
 
@@ -1585,5 +1806,100 @@ func TestRuntimeForwardsCancellationToBackend(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("facade call did not return after cancellation")
+	}
+}
+
+func readEvidenceEntries(t *testing.T, rt *runtime, instanceID string) []map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", rt.family, instanceID+".evidence.jsonl"))
+	if err != nil {
+		t.Fatalf("evidence was not written: %v", err)
+	}
+	var entries []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("invalid evidence line %q: %v", line, err)
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// A failed mark-running proof must not hide the failed cleanup, must leave
+// lifecycle evidence without a backend, and itl_recover_connection must then
+// make the original call succeed.
+func TestFailedMarkRunningKeepsCleanupErrorEvidenceAndRecoversTheOriginalCall(t *testing.T) {
+	tools := integrationTools()
+	_, backend := newBackend(t, tools, false)
+	instanceID := "0123456789abcdef0123456789abcdef"
+	portEvidence := "Port evidence: decision=unknown expectedPid=24208 status=unknown source=none address=127.0.0.1:6003 rows(state/pid/remote)=[0/24208/0] connection=timeout attempts=12 elapsedMs=3010"
+	broker := &fakeBroker{info: &backendInfo{InstanceID: instanceID, URL: backend.URL, PID: 24208, Port: 6003, Status: "readiness"},
+		markErr:      fmt.Errorf("backend broker mark-running failed: exit status 1: ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: port 6003 is not proven to be owned by backend PID 24208; the instance is marked start-unconfirmed for owned recovery. %s", portEvidence),
+		stopFailures: 3}
+	rt, session := newFacadeSession(t, tools, broker, time.Minute, nil)
+	writeRuntimeMarker(t, rt, instanceID)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"value": "original"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertToolErrorCode(t, result, "ITL_ONDEMAND_START_FAILED")
+	text := resultText(result)
+	for _, wanted := range []string{"phase=mark-running", "ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED", "cleanup after failed backend start", "simulated broker stop failure"} {
+		if !strings.Contains(text, wanted) {
+			t.Fatalf("start failure text lost %q: %s", wanted, text)
+		}
+	}
+	if rt.cleanupUnconfirmed || rt.backend != nil {
+		t.Fatalf("failed cleanup must drop the backend without retaining ownership: cleanupUnconfirmed=%v backend=%v", rt.cleanupUnconfirmed, rt.backend)
+	}
+	entries := readEvidenceEntries(t, rt, instanceID)
+	// The dropped backend's unconfirmed cleanup is recorded after the start.
+	if final := entries[len(entries)-1]; final["outcome"] != "cleanup-failed" {
+		t.Fatalf("unconfirmed cleanup was not recorded: %#v", final)
+	}
+	last := entries[len(entries)-2]
+	if last["lifecycleStep"] != "start" || last["phase"] != "mark-running" || last["resultCode"] != "ITL_ONDEMAND_START_FAILED" || last["outcome"] != "failed" {
+		t.Fatalf("unexpected lifecycle evidence: %#v", last)
+	}
+	message, _ := last["resultMessage"].(string)
+	if !strings.Contains(message, "source=none") || !strings.Contains(message, "simulated broker stop failure") {
+		t.Fatalf("evidence lost port or cleanup diagnostics: %s", message)
+	}
+
+	broker.mu.Lock()
+	broker.markErr = nil
+	broker.mu.Unlock()
+	recovered := rt.recoverConnection(context.Background(), nil, map[string]any{})
+	if recovered.IsError {
+		t.Fatalf("continuation failed: %s", resultText(recovered))
+	}
+	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"value": "original"}})
+	if err != nil || result.IsError {
+		t.Fatalf("original call did not succeed after recovery: %v %s", err, resultText(result))
+	}
+	// Three bounded stop attempts for the failed start; the dropped backend is
+	// not stopped again by recovery.
+	if _, stops := broker.counts(); stops != 3 || broker.markCount() != 2 {
+		t.Fatalf("unexpected lifecycle: stops=%d marks=%d", stops, broker.markCount())
+	}
+}
+
+func TestRecoveryActionTextCarriesABoundedReason(t *testing.T) {
+	reason := fmt.Errorf("backend broker recover failed: elapsedMs=812 budgetMs=600000: exit status 1: ITL_ONDEMAND_RECOVERY_NOT_STALE: status=owned-pid-port-unverified pidAlive=True portOpen=False owned=True. Port evidence: %s", strings.Repeat("x", 4000))
+	result := recoveryAction(ownerRecoveryTool, "a", "a", false, "not-started", reason)
+	text := resultText(result)
+	if !strings.Contains(text, "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED") || !strings.Contains(text, "reason: ITL_ONDEMAND_RECOVERY_NOT_STALE: status=owned-pid-port-unverified") {
+		t.Fatalf("visible text lacks the reason: %s", text)
+	}
+	if len([]rune(text)) > 900 {
+		t.Fatalf("visible reason is not bounded: %d", len([]rune(text)))
+	}
+	details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
+	if details["reason"] != reason.Error() {
+		t.Fatal("structured details must keep the complete reason")
+	}
+	if plain := resultText(recoveryAction("echo", "a", "b", true, "unknown", nil)); strings.Contains(plain, "reason:") {
+		t.Fatalf("no reason must not be invented: %s", plain)
 	}
 }

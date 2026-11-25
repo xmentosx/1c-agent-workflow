@@ -1,11 +1,15 @@
 .dev.env
+/handoffs/
 build/result/
+build/agent-artifacts/
 build/event-log/
 testResults.xml
 *.cf
 *.cfe
 *.dt
 *.mdmp
+__pycache__/
+*.pyc
 !.agents/skills/1c-workflow/assets/vanessa-service/service-infobase.dt
 *.log
 logs/
@@ -17,7 +21,11 @@ logs/
 .agent-1c/event-log-signature-cache/
 .agent-1c/event-log-checks/
 .agent-1c/runs/
+.agent-1c/source-exports/
 .agent-1c/source-infobase-unsafe-action-protection.json
+.agent-1c/execution-guard-generation.json
+.agent-1c/execution-guard-generation.json.*
+.agent-1c/execution-checkpoints/
 .agent-1c/vanessa-authoring/
 .agent-1c/verification-repair/
 .agent-1c/verification-selection/
@@ -26,6 +34,7 @@ logs/
 .agent-1c/runtime/
 .agent-1c/branch-dumps/
 .agent-1c/branch-archives/
+.agent-1c/branch-deletions/
 .agent-1c/fork-history/
 .agent-1c/fork-staging/
 .agent-1c/auxiliary-archives/
@@ -33,6 +42,8 @@ logs/
 .agent-1c/extension-dump/
 .agent-1c/extension-init/
 .agent-1c/snapshots/
+.agent-1c/migrations/
+.agent-1c/restoration-state/
 .agent-1c/release-e2e-roundtrip/
 .agent-1c/release-e2e-extension/
 .agent-1c/tmp/
@@ -48,6 +59,7 @@ logs/
 .agent-1c/tools/vanessa-automation/
 .agent-1c/tools/vanessa-mcp/
 .agent-1c/tools/roctup-mcp-toolkit/
+.agent-1c/tools/openspec-cli/
 .agent-1c/mcp/
 .agent-1c/client-surface.json
 build/data-mcp-tools-loader/
@@ -57,6 +69,8 @@ build/tooling-probe/
 .agents/skills/itl/
 .agents/skills/itl-litemode/
 .agents/skills/itl-status/
+.agents/skills/itl-clean/
+.agents/skills/itl-delete-branch/
 .agents/skills/itl-sync-master/
 .agents/skills/itl-new-config-branch/
 .agents/skills/itl-new-extension-branch/
@@ -78,6 +92,7 @@ build/tooling-probe/
 .kilo/kilo.jsonc
 .kilo/agents/itl-routine.md
 .claude/commands/itl*.md
+.claude/settings.local.json
 .cursor/commands/itl*.md
 .opencode/command/itl*.md
 .opencode/agent/itl-routine.md
@@ -85,4 +100,7 @@ build/tooling-probe/
 .mcp.json
 .cursor/mcp.json
 opencode.json
+opencode.jsonc
+.opencode/opencode.json
+.opencode/opencode.jsonc
 .agent-1c/remote-work/

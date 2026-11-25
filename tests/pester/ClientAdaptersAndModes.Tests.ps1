@@ -18,7 +18,7 @@
             foreach ($relative in @("openspec/README.md", "openspec/config.yaml", "openspec/project.md", "openspec/specs/README.md", "openspec/changes/README.md")) {
                 Set-Content -LiteralPath (Join-Path $Root $relative) -Encoding UTF8 -Value "fixture"
             }
-            Set-Content -LiteralPath (Join-Path $Root "USER-RULES.md") -Encoding UTF8 -Value "<!-- ITL-WORKFLOW-USER-RULES:START -->`nContext Sources; test-plan.md; fresh /itl-check`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            Set-Content -LiteralPath (Join-Path $Root "USER-RULES.md") -Encoding UTF8 -Value "<!-- ITL-WORKFLOW-USER-RULES:START -->`nContext Sources; planningMode=direct|OpenSpec; one-off proof; fresh /itl-check; OPEN_SPEC_EXTERNAL_STORE_DEFERRED`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
             $rulePath = Join-Path $Root ".fixture-rules/sdd-integrations.md"
             Set-Content -LiteralPath $rulePath -Encoding UTF8 -Value "OpenSpec integration fixture"
             $files = [ordered]@{
@@ -36,6 +36,8 @@
                     explore = "openspec-explore"
                     apply = "openspec-apply-change"
                     archive = "openspec-archive-change"
+                    update = "openspec-update-change"
+                    sync = "openspec-sync-specs"
                 }
                 foreach ($stage in $stages.Keys) {
                     $token = $stages[$stage]
@@ -78,17 +80,38 @@
                 function Get-ItlActiveClient { return "kilocode" }
                 $alpha = [pscustomobject]@{ name = "alpha"; transport = "stdio"; command = "tool.exe"; args = @("alpha"); toolTimeoutSeconds = 120 }
                 $zulu = [pscustomobject]@{ name = "zulu"; transport = "stdio"; command = "tool.exe"; args = @("zulu"); toolTimeoutSeconds = 120 }
+                $path = Join-Path $tempRoot ".kilo\kilo.json"
+                $utf8 = [Text.UTF8Encoding]::new($false, $true)
+                $beforeText = $utf8.GetString([IO.File]::ReadAllBytes($path))
                 Write-ItlClientMcpEndpoints -Endpoints @($zulu, $alpha) -Owner "ondemand-facade" -Client "kilocode" | Out-Null
                 $first = (Get-FileHash -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Algorithm SHA256).Hash
+                $firstText = $utf8.GetString([IO.File]::ReadAllBytes($path))
+                $firstTicks = (Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks
                 Write-ItlClientMcpEndpoints -Endpoints @($alpha, $zulu) -Owner "ondemand-facade" -Client "kilocode" | Out-Null
                 [pscustomobject]@{
                     first = $first
                     second = (Get-FileHash -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Algorithm SHA256).Hash
                     config = Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                    beforeText = $beforeText
+                    firstText = $firstText
+                    secondText = $utf8.GetString([IO.File]::ReadAllBytes($path))
+                    firstTicks = $firstTicks
+                    secondTicks = (Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks
                 }
             }
 
-            $hashes.second | Should -Be $hashes.first; @($hashes.config.mcp.PSObject.Properties.Name) | Should -Be @("alpha", "custom", "zulu")
+            # Deterministic owned additions do not authorize moving or
+            # normalizing the existing foreign object and root permissions.
+            $hashes.second | Should -Be $hashes.first
+            $hashes.secondTicks | Should -Be $hashes.firstTicks
+            @($hashes.config.mcp.PSObject.Properties.Name | Sort-Object) | Should -Be @("alpha", "custom", "zulu")
+            @($hashes.config.mcp.PSObject.Properties.Name | Where-Object { $_ -ne 'custom' }) | Should -Be @("alpha", "zulu")
+            $suffixStart = $hashes.beforeText.IndexOf('},"permission"')
+            $suffixStart | Should -BeGreaterThan 0
+            foreach ($text in @($hashes.firstText, $hashes.secondText)) {
+                $text.StartsWith($hashes.beforeText.Substring(0, $suffixStart), [StringComparison]::Ordinal) | Should -BeTrue
+                $text.EndsWith($hashes.beforeText.Substring($suffixStart), [StringComparison]::Ordinal) | Should -BeTrue
+            }
             $hashes.config.mcp.custom.url | Should -Be "http://custom"; $hashes.config.permission.bash | Should -Be "ask"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -98,7 +121,7 @@
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
             $registry = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-ItlClientAdapterRegistry }
-            @($registry.Keys) | Should -Be @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
+            @($registry.Keys) | Should -Be @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "zcode", "mimocode", "pi")
             $registry.codex.skillsPath | Should -Be ".agents/skills"
             $registry.codex.commandsPath | Should -Be ".agents/skills"
             $registry.codex.commandFormat | Should -Be "skill"
@@ -145,6 +168,46 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "finds the fork-installed memory policy under every client rules directory" {
+        # rules.copyTo of adapters/*.yaml in the pinned controlled fork
+        # (itl-main-2f640143-r60). Claude Code deliberately uses rules-1c:
+        # .claude/rules would load every rule into each session. Update this
+        # table only together with the fork adapter that owns the placement.
+        $forkRules = [ordered]@{
+            "codex" = ".codex/rules/project-memory.md"; "kilocode" = ".kilo/rules-1c/project-memory.md"
+            "claude-code" = ".claude/rules-1c/project-memory.md"; "cursor" = ".cursor/rules/project-memory.mdc"
+            "opencode" = ".opencode/rules/project-memory.md"; "kimi" = ".kimi-code/rules-1c/project-memory.md"
+            "qwen" = ".qwen/rules-1c/project-memory.md"; "command-code" = ".commandcode/rules-1c/project-memory.md"
+            "cline" = ".cline/rules-1c/project-memory.md"; "zcode" = ".zcode/rules-1c/project-memory.md"
+            "mimocode" = ".mimocode/rules-1c/project-memory.md"; "pi" = ".pi/rules-1c/project-memory.md"
+        }
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-memory-rules-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $found = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                foreach ($leaf in @("agent-1c.product-catalog.ps1", "agent-1c.memory.ps1", "agent-1c.memory-context.ps1")) {
+                    . (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\$leaf")
+                }
+                @((Get-ItlClientAdapterRegistry).Keys) | Should -Be @($forkRules.Keys)
+                $result = [ordered]@{}
+                foreach ($client in $forkRules.Keys) {
+                    # A foreign-client copy of the same rule must not be selected.
+                    $files = [ordered]@{
+                        $forkRules[$client] = @{ source = "content/rules/project-memory.md" }
+                        ".other-client/rules/project-memory.md" = @{ source = "content/rules/project-memory.md" }
+                        ".agents/skills/x/SKILL.md" = @{ source = "content/skills/x/SKILL.md" }
+                    }
+                    [IO.File]::WriteAllText((Join-Path $tempRoot ".ai-rules.json"), (@{ schemaVersion = 1; tools = @($client); files = $files } | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+                    $result[$client] = Get-ItlMemoryPolicyRelativePath -Client $client
+                }
+                $result
+            }
+            foreach ($client in $forkRules.Keys) { $found[$client] | Should -BeExactly $forkRules[$client] -Because $client }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "configures the OpenCode native workspace user flag idempotently" {
         $name = "OPENCODE_EXPERIMENTAL_WORKSPACES"
         $originalUser = [Environment]::GetEnvironmentVariable($name, "User")
@@ -181,13 +244,15 @@
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-native-" + [guid]::NewGuid().ToString("N"))
         try {
             New-OpenSpecModeFixture -Root $tempRoot -Client codex -Mode native
-            $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-InitAgentExecutionEnvironment { @{} }; function Get-InitAgentExecutionProcessChain { @() }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
             $status.mode | Should -Be "native"
             $status.isAvailable | Should -BeTrue
             $status.invocations.propose | Should -Be '$opsx-propose'
             $status.invocations.explore | Should -Be '$opsx-explore'
             $status.invocations.apply | Should -Be '$opsx-apply'
             $status.invocations.archive | Should -Be '$opsx-archive'
+            $status.invocations.update | Should -Be '$openspec-update-change'
+            $status.invocations.sync | Should -Be '$openspec-sync-specs'
 
             $manifestPath = Join-Path $tempRoot ".ai-rules.json"
             $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -197,13 +262,13 @@
             Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value (($manifest | ConvertTo-Json -Depth 10) + "`n")
             Set-Content -LiteralPath (Join-Path $tempRoot ".fixture-rules/sdd-integrations.md") -Encoding UTF8 -Value "OpenSpec integration fixture`r`nUser clarification`r`n"
             Set-Content -LiteralPath (Join-Path $tempRoot ".agents/skills/opsx-propose/SKILL.md") -Encoding UTF8 -Value "# explicit propose`r`nUser clarification`r`n"
-            $modified = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $modified = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-InitAgentExecutionEnvironment { @{} }; function Get-InitAgentExecutionProcessChain { @() }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
             $modified.mode | Should -Be "native"
             $modified.invocations.propose | Should -Be '$opsx-propose'
 
             Remove-Item -LiteralPath (Join-Path $tempRoot ".agents/skills/openspec-apply-change/SKILL.md") -Force
             Remove-Item -LiteralPath (Join-Path $tempRoot ".agents/skills/opsx-apply/SKILL.md") -Force
-            $broken = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $broken = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-InitAgentExecutionEnvironment { @{} }; function Get-InitAgentExecutionProcessChain { @() }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
             $broken.mode | Should -Be "unavailable"
             $broken.reason | Should -Match "required native OpenSpec phase"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -213,27 +278,29 @@
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-native-legacy-" + [guid]::NewGuid().ToString("N"))
         try {
             New-OpenSpecModeFixture -Root $tempRoot -Client codex -Mode native -IncludeOpsxAliases $false
-            $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-InitAgentExecutionEnvironment { @{} }; function Get-InitAgentExecutionProcessChain { @() }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
             $status.mode | Should -Be "native"
             $status.invocations.propose | Should -Be '$openspec-propose'
             $status.invocations.apply | Should -Be '$openspec-apply-change'
+            $status.invocations.update | Should -Be '$openspec-update-change'
+            $status.invocations.sync | Should -Be '$openspec-sync-specs'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "reports natural mode for every new client even when the external CLI is absent" {
+    It "reports the pinned CLI as unavailable even when the client has a natural OpenSpec route" {
         foreach ($client in @("kimi", "qwen", "command-code", "cline", "pi")) {
             $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-natural-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
             try {
                 New-OpenSpecModeFixture -Root $tempRoot -Client $client -Mode natural
                 $status = & {
-                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget $client *> $null
                     function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $false; path = "" } }
                     Get-AiRules1cOpenSpecStatus
                 }
-                $status.mode | Should -Be "natural" -Because $client
-                $status.isAvailable | Should -BeTrue -Because $client
+                $status.mode | Should -Be "unavailable" -Because $client
+                $status.isAvailable | Should -BeFalse -Because $client
                 $status.cliAvailable | Should -BeFalse -Because $client
-                $status.reason | Should -Match "intentionally skipped" -Because $client
+                $status.reason | Should -Match "OPEN_SPEC_CLI_NOT_PROVISIONED" -Because $client
             } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
@@ -244,13 +311,13 @@
         try {
             New-OpenSpecModeFixture -Root $workspaceRoot -Client qwen -Mode natural
             Remove-Item -LiteralPath (Join-Path $workspaceRoot "openspec/project.md") -Force
-            $workspaceStatus = & { . $HelperPath -ProjectRoot $workspaceRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $workspaceStatus = & { . $HelperPath -ProjectRoot $workspaceRoot -Action help *> $null; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus -Client qwen }
             $workspaceStatus.mode | Should -Be "unavailable"
             $workspaceStatus.reason | Should -Match "workspace is incomplete"
 
             New-OpenSpecModeFixture -Root $rulesRoot -Client qwen -Mode natural
             Set-Content -LiteralPath (Join-Path $rulesRoot "USER-RULES.md") -Encoding UTF8 -Value "user only"
-            $rulesStatus = & { . $HelperPath -ProjectRoot $rulesRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $rulesStatus = & { . $HelperPath -ProjectRoot $rulesRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus -Client qwen }
             $rulesStatus.mode | Should -Be "unavailable"
             $rulesStatus.reason | Should -Match "complete ITL OpenSpec preflight"
         } finally {
@@ -258,15 +325,310 @@
         }
     }
 
+    It 'refuses native OpenSpec target probes without <SourceCase> source provenance and resumes the same manifest' -ForEach @(
+        @{SourceCase='missing'}, @{SourceCase='empty'}
+    ) {
+        $root = Join-Path $TestDrive "OpenSpec provenance Кириллица $SourceCase"
+        New-OpenSpecModeFixture -Root $root -Client codex -Mode native -IncludeOpsxAliases $false
+        $relative = '.agents/skills/openspec-explore/SKILL.md'
+        $nativePath = Join-Path $root $relative
+        $nativeBytes = [IO.File]::ReadAllBytes($nativePath)
+        $rulesRoot = Join-Path $TestDrive "Pinned bundle source Кириллица $SourceCase"
+        $sourcePath = Join-Path $rulesRoot ('content/openspec-bundle/codex/' + $relative)
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sourcePath) | Out-Null
+        [IO.File]::WriteAllText($sourcePath, 'controlled bundle explore fixture', [Text.UTF8Encoding]::new($false))
+        foreach ($skill in @('grill-me','grill-with-docs')) {
+            $skillPath = Join-Path $root ".agents/skills/$skill"
+            New-Item -ItemType Directory -Force -Path (Join-Path $skillPath 'agents') | Out-Null
+            [IO.File]::WriteAllText((Join-Path $skillPath 'SKILL.md'), "# $skill", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $skillPath 'agents/openai.yaml'), "display_name: $skill`n", [Text.UTF8Encoding]::new($false))
+        }
+        $manifestPath = Join-Path $root '.ai-rules.json'
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.integrations.openspec | Add-Member -MemberType NoteProperty -Name artifactsBundleVersion -Value '1.13.1'
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        $validManifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+        if ($SourceCase -eq 'missing') { $manifest.files.PSObject.Properties[$relative].Value.PSObject.Properties.Remove('source') }
+        else { $manifest.files.PSObject.Properties[$relative].Value.source = '' }
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        $invalidManifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+        & {
+            . $HelperPath -ProjectRoot $root -Action help -AgentTarget codex *> $null
+            function Get-ItlOpenSpecCliStatus { [pscustomobject]@{available=$true;path='fixture-cli'} }
+            function Resolve-ItlOpenSpecStore { [pscustomobject]@{rootPath=$script:ProjectRoot;source='nearest';storeId=''} }
+            $targetProbes = [Collections.Generic.List[string]]::new()
+            $blockTargetProbe = $true
+            function Test-Path {
+                [CmdletBinding()]
+                param([string[]]$Path,[string[]]$LiteralPath,[Microsoft.PowerShell.Commands.TestPathType]$PathType,[switch]$IsValid)
+                foreach ($pathValue in @($Path+$LiteralPath)) {
+                    if ($pathValue -and [string]::Equals([IO.Path]::GetFullPath($pathValue),[IO.Path]::GetFullPath($nativePath),[StringComparison]::OrdinalIgnoreCase)) {
+                        $targetProbes.Add([string]$pathValue)
+                        if ($blockTargetProbe) { throw 'OPEN_SPEC_FIXTURE_MISSING_PROVENANCE_TARGET_PROBE' }
+                    }
+                }
+                Microsoft.PowerShell.Management\Test-Path @PSBoundParameters
+            }
+            { Test-Path -LiteralPath $nativePath } | Should -Throw '*OPEN_SPEC_FIXTURE_MISSING_PROVENANCE_TARGET_PROBE*'
+            $targetProbes.Count | Should -Be 1
+            $targetProbes.Clear()
+            $entry = @(Get-AiRules1cManifestFileEntries | Where-Object target -EQ $relative)
+            $entry | Should -HaveCount 1
+            $entry[0].source | Should -Be ''
+            $bundle = Get-AiRules1cOpenSpecBundleValidation -RulesDir $rulesRoot -Tool codex
+            $bundle.hasBundle | Should -BeTrue
+            $bundle.isValid | Should -BeFalse
+            $bundle.missing | Should -Contain $relative
+            { Assert-AiRules1cInstallation -RulesDir $rulesRoot -DesiredTools @('codex') } | Should -Throw '*ai_rules_1c OpenSpec bundle for ''codex'' is incomplete:*openspec-explore*'
+            $native = Get-AiRules1cOpenSpecStatus -Client codex
+            $native.mode | Should -Be 'unavailable'
+            $native.reason | Should -Match 'required native OpenSpec phase\(s\) for codex are missing: explore'
+            $targetProbes.Count | Should -Be 0
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($nativePath)) | Should -Be ([Convert]::ToBase64String($nativeBytes))
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($manifestPath)) | Should -Be ([Convert]::ToBase64String($invalidManifestBytes))
+            [IO.File]::WriteAllBytes($manifestPath,$validManifestBytes)
+            $blockTargetProbe = $false
+            (Get-AiRules1cOpenSpecBundleValidation -RulesDir $rulesRoot -Tool codex).isValid | Should -BeTrue
+            Assert-AiRules1cInstallation -RulesDir $rulesRoot -DesiredTools @('codex') | Out-Null
+            $native = Get-AiRules1cOpenSpecStatus -Client codex
+            $native.mode | Should -Be 'native'
+            $native.invocations.explore | Should -Be '$openspec-explore'
+            $targetProbes.Count | Should -BeGreaterThan 0
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($nativePath)) | Should -Be ([Convert]::ToBase64String($nativeBytes))
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($manifestPath)) | Should -Be ([Convert]::ToBase64String($validManifestBytes))
+        }
+    }
+
+
+    It 'keeps native legacy discovery inside declared project paths for <Case>' -ForEach @(
+        @{ Case = 'rooted target'; RequiresPathContinuation = $true }
+        @{ Case = 'internal escaping target'; RequiresPathContinuation = $true }
+        @{ Case = 'internal escaping non-skill target'; RequiresPathContinuation = $true }
+        @{ Case = 'source traversal'; RequiresPathContinuation = $true }
+        @{ Case = 'foreign client source'; RequiresPathContinuation = $false }
+    ) {
+        param($Case, $RequiresPathContinuation)
+        $root = Join-Path $TestDrive "Проект OpenSpec $Case"
+        $outside = Join-Path $TestDrive "Соседний стенд $Case"
+        New-OpenSpecModeFixture -Root $root -Client codex -Mode native -IncludeOpsxAliases $false
+        $outsideSkill = if ($Case -eq 'internal escaping non-skill target') { Join-Path $outside 'explore.md' } else { Join-Path $outside 'openspec-explore/SKILL.md' }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $outsideSkill) | Out-Null
+        [IO.File]::WriteAllText($outsideSkill, 'foreign user skill must remain private', [Text.UTF8Encoding]::new($false))
+        $outsideBytes = [IO.File]::ReadAllBytes($outsideSkill)
+        $manifestPath = Join-Path $root '.ai-rules.json'
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.integrations.openspec | Add-Member -MemberType NoteProperty -Name artifactsBundleVersion -Value '1.13.1'
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        $validManifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+        $exploreTarget = '.agents/skills/openspec-explore/SKILL.md'
+        $exploreEntry = $manifest.files.PSObject.Properties[$exploreTarget].Value
+        switch ($Case) {
+            'rooted target' {
+                $manifest.files.PSObject.Properties.Remove($exploreTarget)
+                $manifest.files | Add-Member -MemberType NoteProperty -Name $outsideSkill -Value $exploreEntry
+            }
+            'internal escaping target' {
+                $manifest.files.PSObject.Properties.Remove($exploreTarget)
+                $escapingTarget = 'inside/../../' + (Split-Path -Leaf $outside) + '/openspec-explore/SKILL.md'
+                $manifest.files | Add-Member -MemberType NoteProperty -Name $escapingTarget -Value $exploreEntry
+            }
+            'internal escaping non-skill target' {
+                $manifest.files.PSObject.Properties.Remove($exploreTarget)
+                $escapingTarget = 'inside/../../' + (Split-Path -Leaf $outside) + '/explore.md'
+                $manifest.files | Add-Member -MemberType NoteProperty -Name $escapingTarget -Value $exploreEntry
+            }
+            'source traversal' {
+                $exploreEntry.source = 'content/openspec-bundle/codex/../cursor/.agents/skills/openspec-explore/SKILL.md'
+            }
+            'foreign client source' {
+                # Even a foreign entry whose target exists must not be borrowed
+                # to complete a missing current-client phase or probed outside.
+                $manifest.files.PSObject.Properties.Remove($exploreTarget)
+                $exploreEntry.source = 'content/openspec-bundle/cursor/.agents/skills/openspec-explore/SKILL.md'
+                $manifest.files | Add-Member -MemberType NoteProperty -Name $outsideSkill -Value $exploreEntry
+            }
+        }
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        $badManifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }
+            function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }
+            $probeRoot = [IO.Path]::GetFullPath($root).TrimEnd('\', '/')
+            $foreignProbes = [System.Collections.Generic.List[string]]::new()
+            $observedProbes = [System.Collections.Generic.List[string]]::new()
+            function Assert-OpenSpecFixtureProbe {
+                param([string]$Operation, [object[]]$Paths)
+                foreach ($path in $Paths) {
+                    if ([string]::IsNullOrWhiteSpace([string]$path)) { continue }
+                    $full = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables([string]$path))
+                    $observedProbes.Add("${Operation}:$full")
+                    if ($full -ne $probeRoot -and -not $full.StartsWith(($probeRoot + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
+                        $foreignProbes.Add("${Operation}:$full")
+                        throw "OPEN_SPEC_FIXTURE_FOREIGN_PROBE: ${Operation}:$full"
+                    }
+                }
+            }
+            # Scope-local spies forward unmodified parameters to the real
+            # cmdlets; the status path still reads actual fixture files.
+            function Test-Path {
+                [CmdletBinding()]
+                param([string[]]$Path, [string[]]$LiteralPath, [Microsoft.PowerShell.Commands.TestPathType]$PathType, [switch]$IsValid)
+                Assert-OpenSpecFixtureProbe -Operation Test-Path -Paths @($Path + $LiteralPath)
+                Microsoft.PowerShell.Management\Test-Path @PSBoundParameters
+            }
+            function Get-Item {
+                [CmdletBinding()]
+                param([string[]]$Path, [string[]]$LiteralPath, [switch]$Force)
+                Assert-OpenSpecFixtureProbe -Operation Get-Item -Paths @($Path + $LiteralPath)
+                Microsoft.PowerShell.Management\Get-Item @PSBoundParameters
+            }
+            function Get-Content {
+                [CmdletBinding()]
+                param([string[]]$Path, [string[]]$LiteralPath, [switch]$Raw, [string]$Encoding, [int]$TotalCount, [int]$Tail)
+                Assert-OpenSpecFixtureProbe -Operation Get-Content -Paths @($Path + $LiteralPath)
+                Microsoft.PowerShell.Management\Get-Content @PSBoundParameters
+            }
+            # Positive controls prove every spy would catch a foreign probe.
+            { Test-Path -LiteralPath $outsideSkill } | Should -Throw '*OPEN_SPEC_FIXTURE_FOREIGN_PROBE*'
+            { Get-Item -LiteralPath $outsideSkill } | Should -Throw '*OPEN_SPEC_FIXTURE_FOREIGN_PROBE*'
+            { Get-Content -LiteralPath $outsideSkill -Raw -Encoding UTF8 } | Should -Throw '*OPEN_SPEC_FIXTURE_FOREIGN_PROBE*'
+            $foreignProbes.Count | Should -Be 3
+            $foreignProbes.Clear()
+            $observedProbes.Clear()
+            $blocked = Get-AiRules1cOpenSpecStatus -Client codex
+            $blocked.mode | Should -Be 'unavailable'
+            if ($RequiresPathContinuation) {
+                $blocked.reason | Should -Match 'OPEN_SPEC_NATIVE_LAYOUT_DRIFT.*workflow update owner.*repeat the original OpenSpec request'
+            } else {
+                $blocked.reason | Should -Match 'required native OpenSpec phase\(s\) for codex are missing: explore'
+            }
+            $foreignProbes.Count | Should -Be 0
+            $observedProbes.Count | Should -BeGreaterThan 0
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($manifestPath)) | Should -Be ([Convert]::ToBase64String($badManifestBytes))
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($outsideSkill)) | Should -Be ([Convert]::ToBase64String($outsideBytes))
+            # A reviewed metadata correction uses the SAME project and exact
+            # manifest bytes; no foreign file is moved, copied or retired.
+            [IO.File]::WriteAllBytes($manifestPath, $validManifestBytes)
+            $recovered = Get-AiRules1cOpenSpecStatus -Client codex
+            $recovered.mode | Should -Be 'native'
+            foreach ($stage in @('propose', 'explore', 'apply', 'archive', 'update', 'sync')) {
+                $recovered.invocations.$stage | Should -Match '^\$openspec-'
+            }
+            $recovered.invocations.explore | Should -Be '$openspec-explore'
+            $foreignProbes.Count | Should -Be 0
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($outsideSkill)) | Should -Be ([Convert]::ToBase64String($outsideBytes))
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($manifestPath)) | Should -Be ([Convert]::ToBase64String($validManifestBytes))
+        }
+    }
+
+
+    It 'routes each native phase through its selected client and refuses borrowed or duplicate legacy entries' {
+        $root = Join-Path $TestDrive 'Два клиента OpenSpec'
+        New-OpenSpecModeFixture -Root $root -Client codex -Mode native -IncludeOpsxAliases $false
+        $configPath = Join-Path $root '.agent-1c/project.json'
+        [IO.File]::WriteAllText($configPath,'{"aiRules":{"tools":["codex","cursor","claude-code"]}}',[Text.UTF8Encoding]::new($false))
+        $manifestPath = Join-Path $root '.ai-rules.json'
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.tools = @('codex','cursor','claude-code')
+        foreach ($stage in @('propose','explore','apply','archive','update','sync')) {
+            foreach ($client in @('cursor','claude-code')) {
+                $relative = if($client -eq 'cursor'){".cursor/commands/opsx-$stage.md"}else{".claude/commands/opsx/$stage.md"}
+                $path = Join-Path $root $relative
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                [IO.File]::WriteAllText($path,"$client $stage",[Text.UTF8Encoding]::new($false))
+                $manifest.files | Add-Member -MemberType NoteProperty -Name $relative -Value ([pscustomobject]@{source="content/openspec-bundle/$client/$relative";installedHash=(Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant()})
+            }
+        }
+        [IO.File]::WriteAllText($manifestPath,($manifest|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-ItlOpenSpecCliStatus { [pscustomobject]@{available=$true;path='fixture-cli'} }
+            function Resolve-ItlOpenSpecStore { [pscustomobject]@{rootPath=$script:ProjectRoot;source='nearest';storeId=''} }
+            $cursor = Get-AiRules1cOpenSpecStatus -Client cursor
+            $claude = Get-AiRules1cOpenSpecStatus -Client claude-code
+            $codex = Get-AiRules1cOpenSpecStatus -Client codex
+            $cursor.mode | Should -Be 'native'
+            $cursor.invocations.explore | Should -Be '/opsx-explore'
+            $claude.mode | Should -Be 'native'
+            $claude.invocations.explore | Should -Be '/opsx:explore'
+            $codex.invocations.explore | Should -Be '$openspec-explore'
+            Remove-Item -LiteralPath (Join-Path $root '.cursor/commands/opsx-apply.md') -Force
+            $missing = Get-AiRules1cOpenSpecStatus -Client cursor
+            $missing.mode | Should -Be 'unavailable'
+            $missing.reason | Should -Match 'phase.*cursor.*apply'
+            [IO.File]::WriteAllText((Join-Path $root '.cursor/commands/opsx-apply.md'),'cursor apply',[Text.UTF8Encoding]::new($false))
+            $legacy = '.codex/skills/openspec-explore/SKILL.md'
+            $legacyPath = Join-Path $root $legacy
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $legacyPath) | Out-Null
+            [IO.File]::WriteAllText($legacyPath,'legacy user content',[Text.UTF8Encoding]::new($false))
+            $manifest.files | Add-Member -MemberType NoteProperty -Name $legacy -Value ([pscustomobject]@{source='content/openspec-bundle/codex/.agents/skills/openspec-explore/SKILL.md';userModified=$true})
+            [IO.File]::WriteAllText($manifestPath,($manifest|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+            $duplicate = Get-AiRules1cOpenSpecStatus -Client codex
+            $duplicate.mode | Should -Be 'unavailable'
+            $duplicate.reason | Should -Match 'OPEN_SPEC_NATIVE_LAYOUT_DRIFT.*repeat the original OpenSpec'
+            [IO.File]::ReadAllText($legacyPath,[Text.Encoding]::UTF8) | Should -Be 'legacy user content'
+            # Forgetting ownership does not stop native client discovery.
+            $manifest.files.PSObject.Properties.Remove($legacy)
+            [IO.File]::WriteAllText($manifestPath,($manifest|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+            (Get-AiRules1cOpenSpecStatus -Client codex).mode | Should -Be 'unavailable'
+            [IO.File]::ReadAllText($legacyPath,[Text.Encoding]::UTF8) | Should -Be 'legacy user content'
+            # A reviewed retirement preserves the edited copy outside discovery.
+            $retiredPath = Join-Path $root 'retired-codex-explore.md'
+            Move-Item -LiteralPath $legacyPath -Destination $retiredPath
+            [IO.File]::ReadAllText($retiredPath,[Text.Encoding]::UTF8) | Should -Be 'legacy user content'
+            (Get-AiRules1cOpenSpecStatus -Client codex).mode | Should -Be 'native'
+            $manifest.integrations.openspec | Add-Member -MemberType NoteProperty -Name artifactsBundleVersion -Value '1.13.1'
+            [IO.File]::WriteAllText($manifestPath,($manifest|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+            $r33Alias = Join-Path $root '.agents/skills/opsx-explore/SKILL.md'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $r33Alias) | Out-Null
+            [IO.File]::WriteAllText($r33Alias,'user-authored r33 alias',[Text.UTF8Encoding]::new($false))
+            $r33Duplicate = Get-AiRules1cOpenSpecStatus -Client codex
+            $r33Duplicate.mode | Should -Be 'unavailable'
+            $r33Duplicate.reason | Should -Match 'OPEN_SPEC_NATIVE_LAYOUT_DRIFT.*\.agents/skills/opsx-explore/SKILL.md'
+            [IO.File]::ReadAllText($r33Alias,[Text.Encoding]::UTF8) | Should -Be 'user-authored r33 alias'
+            $retiredR33Path = Join-Path $root 'retired-r33-explore.md'
+            Move-Item -LiteralPath $r33Alias -Destination $retiredR33Path
+            [IO.File]::ReadAllText($retiredR33Path,[Text.Encoding]::UTF8) | Should -Be 'user-authored r33 alias'
+            (Get-AiRules1cOpenSpecStatus -Client codex).mode | Should -Be 'native'
+        }
+    }
+
+    It "pauses only OpenSpec when an external USER-RULES override requires obsolete test-plan policy" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl-openspec-user-conflict-' + [guid]::NewGuid().ToString('N'))
+        try {
+            New-OpenSpecModeFixture -Root $tempRoot -Client qwen -Mode natural
+            Add-Content -LiteralPath (Join-Path $tempRoot 'USER-RULES.md') -Encoding UTF8 -Value "`nAlways create test-plan.md before OpenSpec proposal."
+            $status = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }
+                Get-AiRules1cOpenSpecStatus -Client qwen
+            }
+            $status.mode | Should -Be 'unavailable'
+            $status.reason | Should -Match 'OPEN_SPEC_USER_RULE_CONFLICT: USER-RULES.md:5'
+            (Get-Content -LiteralPath (Join-Path $tempRoot 'USER-RULES.md') -Raw -Encoding UTF8) | Should -Match 'Always create test-plan.md'
+            Set-Content -LiteralPath (Join-Path $tempRoot 'USER-RULES.md') -Encoding UTF8 -Value "<!-- ITL-WORKFLOW-USER-RULES:START -->`nContext Sources; planningMode=direct|OpenSpec; one-off proof; fresh /itl-check; OPEN_SPEC_EXTERNAL_STORE_DEFERRED`n<!-- ITL-WORKFLOW-USER-RULES:END -->`nKeep project terminology."
+            $continued = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }
+                function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }
+                Get-AiRules1cOpenSpecStatus -Client qwen
+            }
+            $continued.mode | Should -Be 'natural'
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "preserves the output format contracts across native command adapters" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common"
         $masterTemplateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master"
+        $devTemplateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev"
         $templates = [ordered]@{
             "itl.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl.md.template") -Raw -Encoding UTF8
             "itl-status.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl-status.md.template") -Raw -Encoding UTF8
             "itl-litemode.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl-litemode.md.template") -Raw -Encoding UTF8
             "itl-new-config-branch.md" = Get-Content -LiteralPath (Join-Path $masterTemplateRoot "itl-new-config-branch.md.template") -Raw -Encoding UTF8
             "itl-new-extension-branch.md" = Get-Content -LiteralPath (Join-Path $masterTemplateRoot "itl-new-extension-branch.md.template") -Raw -Encoding UTF8
+            "itl-result.md" = Get-Content -LiteralPath (Join-Path $devTemplateRoot "itl-result.md.template") -Raw -Encoding UTF8
         }
         $previousMode = [Environment]::GetEnvironmentVariable("ITL_ROUTINE_MODE", "Process")
         try {
@@ -309,7 +671,13 @@
                     $adapted[$client][$fileName] | Should -Match 'userReportOmitted=true'
                     $adapted[$client][$fileName] | Should -Match 'full absolute `userReportPath`'
                     $adapted[$client][$fileName] | Should -Match 'userReportSource=status-json'
+                    $adapted[$client][$fileName] | Should -Match 'If `blockerActionOmitted=true`, read the full `blockerAction` from `blockerActionPath`'
                 }
+                $adapted[$client]["itl-result.md"] | Should -Match 'verbatim as one uninterrupted block'
+                $adapted[$client]["itl-result.md"] | Should -Match '## Итог задачи'
+                $adapted[$client]["itl-result.md"] | Should -Match 'reliable context from the preceding task'
+                $adapted[$client]["itl-result.md"] | Should -Match 'Do not make another tool call to build that summary'
+                $adapted[$client]["itl-result.md"] | Should -Match 'stop after the verbatim `userReport`'
             }
             $adapted.codex["itl.md"] | Should -Match '(?m)^name:\s*itl$'
             $adapted["opencode"]["itl-new-config-branch.md"] | Should -Match '(?m)^description:\s*Создать ветку конфигурации ITL'
@@ -328,7 +696,7 @@
             $result
         }
 
-        $instructions.Keys.Count | Should -Be 10
+        $instructions.Keys.Count | Should -Be 12
         foreach ($client in $instructions.Keys) {
             $instructions[$client] | Should -Not -BeNullOrEmpty -Because $client
             $instructions[$client] | Should -Not -Match '^(Start|Run|Restart|Reload|Trust)\b' -Because $client
@@ -345,7 +713,7 @@
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\mcp\client-managed.json") -Encoding UTF8 -Value '{"schemaVersion":1,"owners":{"cursor/ondemand-facade":["itl-roctup-data"],"cursor/vibecoding1c":["1C-docs-mcp","1c-code-metadata-mcp"]}}'
 
             $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget cursor *> $null
                 $observation = Get-ItlClientMcpEnablementObservation
                 $status = (Write-ItlClientMcpEnablementStatusLines 6>&1) -join [Environment]::NewLine
                 $mcpLines = [System.Collections.Generic.List[string]]::new()
@@ -419,6 +787,107 @@
         [string]$result.cline[$expected.cline] | Should -Match '(?m)^name:\s*itl$'
     }
 
+    It "renders identical owned surface bytes from LF CRLF and mixed template checkouts" {
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        $templateDirectory = '.agents/skills/1c-workflow/kilo-command-templates'
+        $templatePaths = @(
+            foreach ($surface in @('common', 'master', 'dev')) {
+                foreach ($file in Get-ChildItem -LiteralPath (Join-Path $RepoRoot "$templateDirectory/$surface") -File -Filter 'itl*.md.template') {
+                    "$templateDirectory/$surface/$($file.Name)"
+                }
+            }
+            '.agents/skills/1c-workflow/opencode-plugin-templates/itl-workspace.js.template'
+        )
+        $roots = [ordered]@{}
+        $fixtureHashes = [ordered]@{}
+        foreach ($style in @('LF', 'CRLF', 'mixed')) {
+            $roots[$style] = Join-Path $TestDrive "Шаблоны клиента $style"
+            foreach ($relative in $templatePaths) {
+                $lf = [IO.File]::ReadAllText((Join-Path $RepoRoot $relative), $utf8).Replace("`r`n", "`n").Replace("`r", "`n")
+                $text = $lf
+                if ($style -eq 'CRLF') { $text = $lf.Replace("`n", "`r`n") }
+                elseif ($style -eq 'mixed') {
+                    $parts = $lf.Split([char]10)
+                    $mixed = [Text.StringBuilder]::new()
+                    for ($index = 0; $index -lt $parts.Length; $index++) {
+                        [void]$mixed.Append($parts[$index])
+                        if ($index -lt $parts.Length - 1) {
+                            [void]$mixed.Append($(if ($index % 2 -eq 0) { "`n" } else { "`r`n" }))
+                        }
+                    }
+                    $text = $mixed.ToString()
+                }
+                $path = Join-Path $roots[$style] $relative
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                [IO.File]::WriteAllText($path, $text, $utf8)
+                $fixtureHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            }
+        }
+
+        $rendered = & {
+            . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+            function Get-ItlRoutineMode { return 'on' }
+            function Get-ItlRoutineModel { param([string]$Client) return "provider/$Client" }
+            $clients = @(Get-SupportedAgentTargets)
+            $clients.Count | Should -Be 12
+            $result = [ordered]@{}
+            foreach ($surface in @('master', 'dev')) {
+                function Get-ItlCommandSurface { return $surface }
+                foreach ($client in $clients) {
+                    $variants = [ordered]@{}
+                    foreach ($style in $roots.Keys) {
+                        $variants[$style] = Get-ItlExpectedSurfaceFiles -Client $client -SourceRoot $roots[$style]
+                    }
+                    $result["$surface/$client"] = $variants
+                }
+            }
+            return $result
+        }
+        $rendered.Count | Should -Be 24
+        foreach ($key in $rendered.Keys) {
+            $baseline = $rendered[$key]['LF']
+            $baseline.Count | Should -BeGreaterThan 0
+            foreach ($style in @('CRLF', 'mixed')) {
+                $actual = $rendered[$key][$style]
+                @($actual.Keys) | Should -Be @($baseline.Keys) -Because "$key/$style retains the complete surface"
+                foreach ($relative in $baseline.Keys) {
+                    [Convert]::ToBase64String($utf8.GetBytes([string]$actual[$relative])) |
+                        Should -Be ([Convert]::ToBase64String($utf8.GetBytes([string]$baseline[$relative]))) -Because "$key/$style/$relative"
+                }
+            }
+            foreach ($relative in $baseline.Keys) {
+                [string]$baseline[$relative] | Should -Not -Match "`r" -Because "$key/$relative is generated with LF"
+            }
+        }
+        @($rendered['master/codex']['LF'].Keys) | Should -Contain '.agents/skills/itl/agents/openai.yaml'
+        @($rendered['master/kilocode']['LF'].Keys) | Should -Contain '.kilo/agents/itl-routine.md'
+        @($rendered['dev/opencode']['LF'].Keys) | Should -Contain '.opencode/agent/itl-routine.md'
+        @($rendered['master/opencode']['LF'].Keys) | Should -Contain '.opencode/plugins/itl-workspace.js'
+        foreach ($path in $fixtureHashes.Keys) {
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash | Should -Be $fixtureHashes[$path]
+        }
+
+        # The raw-byte metric must still see added instructions, not discount them.
+        $addition = "`nДополнительная инструкция для проверки размера.`n"
+        $changedTemplate = Join-Path $roots['LF'] "$templateDirectory/common/itl-status.md.template"
+        [IO.File]::AppendAllText($changedTemplate, $addition, $utf8)
+        $changed = & {
+            . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+            function Get-ItlCommandSurface { return 'master' }
+            Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $roots['LF']
+        }
+        $baseline = $rendered['master/codex']['LF']
+        $changedPath = '.agents/skills/itl-status/SKILL.md'
+        @($changed.Keys) | Should -Be @($baseline.Keys)
+        foreach ($relative in $baseline.Keys) {
+            if ($relative -eq $changedPath) {
+                [string]$changed[$relative] | Should -Be ([string]$baseline[$relative] + $addition)
+                ($utf8.GetByteCount([string]$changed[$relative]) - $utf8.GetByteCount([string]$baseline[$relative])) |
+                    Should -Be $utf8.GetByteCount($addition)
+            } else { [string]$changed[$relative] | Should -Be ([string]$baseline[$relative]) }
+        }
+    }
+
     It "generates only context-valid explicit Codex routine skills" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-codex-surface-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -431,8 +900,12 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($masterFiles.Keys).Count | Should -Be 20
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-refresh-all", "itl-update-workflow", "itl-repository-mode", "itl-switch-client")) {
+            $masterRoutineNames = @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-refresh-all", "itl-update-workflow", "itl-repository-mode", "itl-switch-client")
+            # Artifact retention added clean and master-only delete; assert the
+            # complete context-specific inventory instead of its older count.
+            $masterExpected = @(@($masterRoutineNames + @('itl-clean', 'itl-delete-branch')) | ForEach-Object { ".agents/skills/$_/SKILL.md"; ".agents/skills/$_/agents/openai.yaml" })
+            @($masterFiles.Keys | Sort-Object) | Should -Be @($masterExpected | Sort-Object)
+            foreach ($name in $masterRoutineNames) {
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/agents/openai.yaml"
                 [string]$masterFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
@@ -446,8 +919,10 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($devFiles.Keys).Count | Should -Be 28
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-sync-branches", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")) {
+            $devRoutineNames = @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-sync-branches", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")
+            $devExpected = @(@($devRoutineNames + @('itl-clean')) | ForEach-Object { ".agents/skills/$_/SKILL.md"; ".agents/skills/$_/agents/openai.yaml" })
+            @($devFiles.Keys | Sort-Object) | Should -Be @($devExpected | Sort-Object)
+            foreach ($name in $devRoutineNames) {
                 @($devFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'
@@ -507,6 +982,7 @@
                 foreach ($client in @("codex", "kilocode", "kimi")) {
                     Write-Utf8Text -Path (Join-Path $tempRoot ".agent-1c\project.json") -Value "{`"aiRules`":{`"tools`":[`"$client`"]}}"
                     [void](Read-ProjectConfig)
+                    $AgentTarget = $client
                     $values[$client] = ConvertTo-ItlActiveClientCommandText -Text "Рекомендуемый шаг: /itl-check"
                 }
                 $values
@@ -604,7 +1080,7 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "cleans managed routine surfaces for every ordered client switch pair" {
+    It "keeps both attached surfaces and removes only the detached owner for every client pair" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-client-pairs-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
@@ -619,12 +1095,20 @@
                         Sync-ItlManagedSurfaceFiles -Client $from -ExpectedFiles $fromFiles
                         $toFiles = Get-ItlExpectedSurfaceFiles -Client $to -SourceRoot $RepoRoot
                         Sync-ItlManagedSurfaceFiles -Client $to -ExpectedFiles $toFiles
+                        $attachedState = Read-ItlClientSurfaceState
+                        $attachedClients = ConvertTo-Vibecoding1cMcpHashtable -Object $attachedState.clients
+                        @($attachedClients.Keys | Sort-Object) | Should -Be @(@($from, $to) | Select-Object -Unique | Sort-Object)
+                        foreach ($relative in @($fromFiles.Keys)) {
+                            (Test-Path -LiteralPath (Join-Path $tempRoot $relative) -PathType Leaf) | Should -BeTrue
+                        }
+                        if ($from -ne $to) { Remove-ItlClientSurface -Client $from }
                         foreach ($relative in @($fromFiles.Keys | Where-Object { -not $toFiles.Contains($_) })) {
                             (Test-Path -LiteralPath (Join-Path $tempRoot $relative) -PathType Leaf) | Should -BeFalse -Because "$from -> $to must remove only the old managed surface"
                         }
                         $state = Read-ItlClientSurfaceState
                         $stateClients = ConvertTo-Vibecoding1cMcpHashtable -Object $state.clients
                         @($stateClients.Keys) | Should -Be @($to)
+                        Remove-ItlClientSurface -Client $to
                     }
                 }
             }
@@ -657,12 +1141,68 @@
                 $invalid = Get-ItlVerificationMode -Component vanessa
                 $invalid.valid | Should -BeFalse
                 $invalid.effective | Should -Be "auto"
+                $invalidCommand = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger command
+                $invalidExplicit = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger explicit -ExplicitComponents vanessa
+                $invalidCommand.run | Should -BeFalse
+                $invalidExplicit.run | Should -BeFalse
+                $invalidCommand.reason | Should -Match 'set auto, manual, or off'
             }
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_VANESSA_TESTING", $null, "Process")
             [Environment]::SetEnvironmentVariable("ITL_YAXUNIT_TESTING", $null, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It 'applies the saved Vanessa provider policy without leaking a named override' {
+        $root = Join-Path $TestDrive ('Provider policy Кириллица ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{}', [Text.UTF8Encoding]::new($false))
+        $envPath = Join-Path $root '.dev.env'
+        [IO.File]::WriteAllText($envPath, "ITL_VANESSA_TESTING=auto`nTOOL_BROWSER=off`nUI_TESTING=off`n", [Text.UTF8Encoding]::new($false))
+        $before = (Get-FileHash -LiteralPath $envPath).Hash
+        $result = & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $script:providerPolicy = 'off'
+            function Get-EnvValue {
+                param($Name, $Default)
+                if ($Name -eq 'TOOL_BROWSER') { return $script:providerPolicy }
+                if ($Name -eq 'UI_TESTING') { return 'off' }
+                if ($Name -like 'ITL_*') { return 'auto' }
+                return $Default
+            }
+            $ordinary = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger command
+            $otherNamed = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger explicit -ExplicitComponents yaxunit
+            $named = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger explicit -ExplicitComponents vanessa
+            $after = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger command
+            $unit = Get-ItlVerificationExecutionDecision -Component yaxunit -Trigger command
+            $unrelatedUnit = Get-ItlVerificationExecutionDecision -Component yaxunit -Trigger explicit -ExplicitComponents vanessa
+            $unrelatedEventLog = Get-ItlVerificationExecutionDecision -Component event-log -Trigger explicit -ExplicitComponents vanessa
+            $all = Get-ItlVerificationExecutionDecision -Component yaxunit -Trigger explicit -ExplicitComponents all
+            $script:providerPolicy = 'broken'
+            $invalid = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger explicit -ExplicitComponents vanessa
+            $script:providerPolicy = 'required'
+            $required = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger command
+            $script:providerPolicy = ''
+            $default = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger command
+            [pscustomobject]@{ordinary=$ordinary;otherNamed=$otherNamed;named=$named;after=$after;unit=$unit;unrelatedUnit=$unrelatedUnit;unrelatedEventLog=$unrelatedEventLog;all=$all;invalid=$invalid;required=$required;default=$default}
+        }
+        $result.ordinary.run | Should -BeFalse
+        $result.ordinary.reason | Should -Match 'TOOL_BROWSER=off'
+        $result.otherNamed.run | Should -BeFalse
+        $result.named.run | Should -BeTrue
+        $result.named.providerOverride | Should -BeTrue
+        $result.after.run | Should -BeFalse
+        $result.unit.run | Should -BeTrue
+        $result.unrelatedUnit.run | Should -BeFalse
+        $result.unrelatedEventLog.run | Should -BeFalse
+        $result.all.run | Should -BeTrue
+        $result.invalid.run | Should -BeFalse
+        $result.invalid.reason | Should -Match 'TOOL_BROWSER.*auto, off, or required'
+        $result.required.providerPolicy | Should -Be 'required'
+        $result.required.run | Should -BeTrue
+        $result.default.run | Should -BeTrue
+        (Get-FileHash -LiteralPath $envPath).Hash | Should -Be $before
     }
 
     It "changes only the three ITL verification keys through itl-litemode" {
@@ -700,7 +1240,7 @@
                 [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $case.model, "Process")
                 & git -C $tempRoot init *> $null
                 & git -C $tempRoot branch -M master
-                & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+                & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget $client *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
                 $adapter = if ($client -eq "kilocode") { ".kilo" } else { ".opencode" }
                 $agentPath = if ($client -eq "kilocode") { Join-Path $tempRoot "$adapter\agents\itl-routine.md" } else { Join-Path $tempRoot "$adapter\agent\itl-routine.md" }
                 (Test-Path -LiteralPath $agentPath -PathType Leaf) | Should -Be $case.routine
@@ -736,6 +1276,15 @@
                 if ($client -eq "kilocode") {
                     (Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Raw | ConvertFrom-Json).snapshot | Should -BeFalse
                 }
+
+                & git -C $tempRoot branch -M "itldev/routine-result"
+                & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget $client *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+                $resultText = Get-Content -LiteralPath (Join-Path $commandRoot "itl-result.md") -Raw -Encoding UTF8
+                $checkText = Get-Content -LiteralPath (Join-Path $commandRoot "itl-check.md") -Raw -Encoding UTF8
+                $resultText | Should -Match $primaryAgent
+                $resultText | Should -Not -Match '(?m)^agent:\s*itl-routine\s*$'
+                $resultText | Should -Match '## Итог задачи'
+                $checkText | Should -Match $(if ($case.longRoutine) { 'agent: itl-routine' } else { $primaryAgent })
             } finally {
                 [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $null, "Process")
                 [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
@@ -754,7 +1303,7 @@
             [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
             & git -C $missingModelRoot init *> $null
             & git -C $missingModelRoot branch -M master
-            $errorText = & { . $HelperPath -ProjectRoot $missingModelRoot -Action help *> $null; try { Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null } catch { $_.Exception.Message } }
+            $errorText = & { . $HelperPath -ProjectRoot $missingModelRoot -Action help -AgentTarget kilocode *> $null; try { Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null } catch { $_.Exception.Message } }
             $errorText | Should -Match 'requires an explicit SUBAGENT_MODEL_LIGHT'
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $null, "Process")
@@ -792,7 +1341,7 @@
             [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
             & git -C $tempRoot init *> $null
             & git -C $tempRoot branch -M "itldev/opencode-routing"
-            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget opencode *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
 
             $commands = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".opencode\command") -File -Filter "itl*.md")
             $commands.Count | Should -BeGreaterThan 0
@@ -840,20 +1389,20 @@
             [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", "provider/light", "Process")
             & git -C $tempRoot init *> $null
             & git -C $tempRoot branch -M master
-            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget kilocode *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
             $agentPath = Join-Path $tempRoot ".kilo\agents\itl-routine.md"
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_ROUTINE_MODE=off`nSUBAGENT_MODEL_LIGHT=provider/light`n"
             [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", "off", "Process")
-            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget kilocode *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
             (Test-Path -LiteralPath $agentPath -PathType Leaf) | Should -BeFalse
 
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_ROUTINE_MODE=on`nSUBAGENT_MODEL_LIGHT=provider/light`n"
             [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", "on", "Process")
-            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget kilocode *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
             Add-Content -LiteralPath $agentPath -Encoding UTF8 -Value "user edit"
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_ROUTINE_MODE=off`nSUBAGENT_MODEL_LIGHT=provider/light`n"
             [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", "off", "Process")
-            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget kilocode *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
             (Get-Content -LiteralPath $agentPath -Raw) | Should -Match 'user edit'
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $null, "Process")
@@ -894,21 +1443,21 @@
             Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"protocol":"1.1","tools":["kilocode"],"files":{}}'
             & git -C $tempRoot init *> $null
             & git -C $tempRoot branch -M master
-            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget kilocode *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
             $managedPath = Join-Path $tempRoot ".kilo\commands\itl.md"
             Add-Content -LiteralPath $managedPath -Encoding UTF8 -Value "user edit"
-            $drift = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; try { Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null } catch { $_.Exception.Message } }
+            $drift = & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget kilocode *> $null; try { Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null } catch { $_.Exception.Message } }
             $drift | Should -Match 'ITL_SURFACE_USER_MODIFIED'
 
             & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget kilocode *> $null
                 $expectedItl = (Get-ItlExpectedSurfaceFiles -Client kilocode -SourceRoot $RepoRoot)['.kilo/commands/itl.md']
                 Write-Utf8Text -Path $managedPath -Value $expectedItl
                 Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null
             }
             $customPath = Join-Path $tempRoot ".kilo\commands\itl-custom.md"
             Set-Content -LiteralPath $customPath -Encoding UTF8 -Value "user owned"
-            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlManagedSurfaceFiles -Client opencode -ExpectedFiles ([ordered]@{}) }
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Remove-ItlClientSurface -Client kilocode }
             (Get-Content -LiteralPath $customPath -Raw -Encoding UTF8).Trim() | Should -Be "user owned"
             (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\itl-status.md") -PathType Leaf) | Should -BeFalse
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -923,7 +1472,7 @@
             foreach ($relative in @("openspec/README.md", "openspec/config.yaml", "openspec/project.md", "openspec/specs/README.md", "openspec/changes/README.md")) {
                 Set-Content -LiteralPath (Join-Path $tempRoot $relative) -Encoding UTF8 -Value "fixture"
             }
-            Set-Content -LiteralPath (Join-Path $tempRoot "USER-RULES.md") -Encoding UTF8 -Value "<!-- ITL-WORKFLOW-USER-RULES:START -->`nContext Sources; test-plan.md; fresh /itl-check`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            Set-Content -LiteralPath (Join-Path $tempRoot "USER-RULES.md") -Encoding UTF8 -Value "<!-- ITL-WORKFLOW-USER-RULES:START -->`nContext Sources; planningMode=direct|OpenSpec; one-off proof; fresh /itl-check; OPEN_SPEC_EXTERNAL_STORE_DEFERRED`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
             $rulePath = Join-Path $tempRoot ".kilo/rules-1c/sdd-integrations.md"
             Set-Content -LiteralPath $rulePath -Encoding UTF8 -Value "OpenSpec integration fixture"
             $files = [ordered]@{
@@ -935,7 +1484,7 @@
                 $skillText = if ($skill -eq "1c-workflow-fast") { "# $skill`n<!-- ITL_KILO_SKILL_CONTRACT: fixture -->" } else { "# $skill" }
                 Set-Content -LiteralPath $path -Encoding UTF8 -Value $skillText
             }
-            foreach ($stage in @("propose", "explore", "apply", "archive")) {
+            foreach ($stage in @("propose", "explore", "apply", "archive", "update", "sync")) {
                 $target = ".kilo/commands/opsx-$stage.md"
                 $path = Join-Path $tempRoot $target
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
@@ -950,11 +1499,18 @@
             & git -C $tempRoot init *> $null
             & git -C $tempRoot branch -M master
             $before = (Get-ChildItem -LiteralPath $tempRoot -Recurse -File | ForEach-Object { "$($_.FullName.Substring($tempRoot.Length))=$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }) -join "`n"
-            $output = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-ItlRtkStatus { [pscustomobject]@{ status = "SKIP"; detail = "fixture" } }; Show-ItlDoctor } 6>&1 | Out-String
+            # The executing client (codex) is deliberately not the attached one.
+            $output = & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget codex *> $null; function Get-ItlRtkStatus { [pscustomobject]@{ status = "SKIP"; detail = "fixture" } }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli'; version = '1.13.1' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; try { Show-ItlDoctor } catch { Write-Output "doctor-error: $($_.Exception.Message)" } } 6>&1 | ForEach-Object { $_.ToString() } | Out-String
             $after = (Get-ChildItem -LiteralPath $tempRoot -Recurse -File | ForEach-Object { "$($_.FullName.Substring($tempRoot.Length))=$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }) -join "`n"
-            $output | Should -Match '\[OK\] active-client'
+            $output | Should -Match '\[WARN\] active-client: ITL_CLIENT_NOT_ATTACHED'
+            $output | Should -Match '\[OK\] diagnostic-client: inspecting configured ''kilocode'' read-only'
+            $output | Should -Not -Match 'doctor-error' -Because $output
             $output | Should -Not -Match 'managed-integrity'
             $output | Should -Match '\[OK\] openspec'
+            $output | Should -Match 'client-capability:kilocode:.*OpenSpec=native; cliPin=1\.13\.1; store=nearest:'
+            $output | Should -Match 'providerCallability=unverified'
+            $output | Should -Match 'plugin-project-version: projectRulesCommit=.*pluginHostVersion=unobserved'
+            $output | Should -Match 'openspec: mode=native; cliVersion=1\.13\.1;.*invocation=unverified'
             $output | Should -Match '\[SKIP\] branch-infobase'
             $after | Should -Be $before
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -979,15 +1535,20 @@
             $output = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 function Get-ItlRtkStatus { [pscustomobject]@{ status = "SKIP"; detail = "fixture" } }
-                Show-ItlDoctor
+                function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }
+                function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }
+                try { Show-ItlDoctor } catch { Write-Output "doctor-error: $($_.Exception.Message)" }
             } 6>&1 | Out-String
             $output | Should -Match '\[OK\] openspec: mode=natural'
+            $output | Should -Not -Match 'doctor-error' -Because $output
             ($output -replace '\s+', '') | Should -Match 'intentionallyskipped'
 
             Remove-Item -LiteralPath (Join-Path $tempRoot "openspec/project.md") -Force
             $degraded = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 function Get-ItlRtkStatus { [pscustomobject]@{ status = "SKIP"; detail = "fixture" } }
+                function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }
+                function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }
                 Show-ItlDoctor
                 "doctor-completed"
             } 6>&1 | Out-String
@@ -1013,5 +1574,150 @@
             $tracked = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; try { Assert-ItlClientConfigWritable -Client opencode } catch { $_.Exception.Message } }
             $tracked | Should -Match 'TRACKED_CLIENT_CONFIG'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "syncs a secondary client MCP config without changing the active client or surfaces" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-sync-client-mcp-adapter-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".cursor") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination (Join-Path $tempRoot ".agent-1c\dependency-lock.json")
+            Set-Content -LiteralPath (Join-Path $tempRoot ".cursor\mcp.json") -Encoding UTF8 -Value '{"mcpServers":{"external-keep":{"command":"keep-me"}}}'
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                # Isolate active-client detection from the agent hosting this run.
+                function Get-InitAgentExecutionEnvironment { @{} }
+                function Get-InitAgentExecutionProcessChain { @() }
+                $script:aiRulesClient = $null
+                $script:surfaceSynced = $false
+                $script:vibeClient = $null
+                $script:includedClientSurfaces = $false
+                $script:ondemandClient = $null
+                $script:uiClient = $null
+                function Set-ProjectAiRulesClient { param([string]$Client) $script:aiRulesClient = $Client }
+                function Sync-ItlClientSurface { $script:surfaceSynced = $true }
+                function Refresh-Vibecoding1cMcpRegistry {}
+                function Write-Vibecoding1cMcpClientConfig { param([string]$Client,[switch]$IncludeClientSurfaces) $script:vibeClient = $Client; $script:includedClientSurfaces = $IncludeClientSurfaces.IsPresent }
+                function Write-ItlOnDemandMcpClientConfig { param([string]$Client) $script:ondemandClient = $Client; return "x" }
+                function Sync-ItlUiToolsMcp { param([string]$Client) $script:uiClient = $Client }
+
+                $missing = try { Sync-ItlClientMcpConfig -Client ""; "unexpected-success" } catch { $_.Exception.Message }
+                $output = @(Sync-ItlClientMcpConfig -Client cursor 6>&1) -join [Environment]::NewLine
+                [pscustomobject]@{
+                    missing = $missing
+                    output = $output
+                    active = Get-ItlActiveClient
+                    aiRulesClient = $script:aiRulesClient
+                    surfaceSynced = $script:surfaceSynced
+                    vibeClient = $script:vibeClient
+                    includedClientSurfaces = $script:includedClientSurfaces
+                    ondemandClient = $script:ondemandClient
+                    uiClient = $script:uiClient
+                    project = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Raw -Encoding UTF8
+                }
+            }
+
+            $result.missing | Should -Match "requires exactly one explicit -Client"
+            $result.active | Should -Be "codex"
+            $result.aiRulesClient | Should -BeNullOrEmpty
+            $result.surfaceSynced | Should -BeFalse
+            $result.vibeClient | Should -Be "cursor"
+            # All three families now pass through one atomic final-set owner;
+            # the dedicated MCP ownership regressions verify its real writes.
+            $result.includedClientSurfaces | Should -BeTrue
+            $result.ondemandClient | Should -BeNullOrEmpty
+            $result.uiClient | Should -BeNullOrEmpty
+            $result.project | Should -Match '"codex"'
+            $result.project | Should -Not -Match '"cursor"'
+            $result.output | Should -Match "Active client is unchanged: codex"
+            $result.output | Should -Match "Перезагрузите окно Cursor"
+            $result.output | Should -Match ([regex]::Escape("+ → MCP Servers"))
+            $result.output | Should -Match "новый Agent-чат"
+            $result.output | Should -Match "does not attach servers to an already open chat"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "preserves disabled servers and access policy with semantic-only reload for TOML and JSON" {
+        foreach ($caseClient in @('codex','kilocode','cursor')) {
+            $root = Join-Path $TestDrive ("MCP проект " + $caseClient)
+            New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+            Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value ('{"aiRules":{"tools":["' + $caseClient + '"]}}')
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $remote = [pscustomobject]@{ name='remote-test'; url='http://127.0.0.1:1/unavailable'; transport='remote' }
+                $local = [pscustomobject]@{ name='local-test'; command='C:\MCP проект\facade.exe'; args=@('--path','C:\Ветка проекта'); env=@{ MODE='branch' }; transport='stdio' }
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                $path = Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($remote,$local)
+                $first = @(Get-ItlClientMcpSemanticChanges).Count
+                if ($caseClient -eq 'codex') {
+                    $text = Read-Utf8Text -Path $path
+                    $text = $text.Replace('enabled = true','enabled = false # intentional').Replace('[mcp_servers."remote-test"]', '[mcp_servers."remote-test"] # connection policy')
+                    $text = $text.Replace('url = "http://127.0.0.1:1/unavailable"', 'url = "http://127.0.0.1:1/unavailable"' + "`n" + 'bearer_token_env_var = "MY_TOKEN"' + "`n" + '"disabled_tools" = ["write"]')
+                    $text = $text.Replace('args = ["--path", "C:\\Ветка проекта"]', "args = [`n'--path',`n'C:\Ветка проекта',`n]")
+                    $text += "`n[mcp_servers.'user.custom']`nurl = 'https://custom.invalid'`n[mcp_servers.'user.custom'.http_headers]`nAccept = 'application/json'`n"
+                    Write-Utf8Text -Path $path -Value $text
+                } else {
+                    $adapter = Get-ItlClientAdapter -Client $caseClient
+                    $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json)
+                    $entries = ConvertTo-Vibecoding1cMcpHashtable -Object $config[$adapter.mcpContainer]
+                    $entries['remote-test'] = ConvertTo-Vibecoding1cMcpHashtable -Object $entries['remote-test']
+                    $config[$adapter.mcpContainer] = $entries
+                    $entries['remote-test']['enabled'] = $false
+                    $entries['remote-test']['headers'] = @{ Authorization='fixture-only' }
+                    $entries['remote-test']['alwaysAllow'] = @('read')
+                    $entries['user.custom'] = @{ url='https://custom.invalid' }
+                    Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
+                }
+                $keysBefore = @(Get-ItlClientMcpEndpointKeys -Client $caseClient)
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($remote,$local) | Out-Null
+                $second = @(Get-ItlClientMcpSemanticChanges).Count
+                $observation = Get-ItlClientMcpEnablementObservation -Client $caseClient
+                $entries = Read-ItlClientMcpEntries -Client $caseClient
+                $sentinel = [DateTime]::UtcNow.AddHours(-1)
+                [IO.File]::SetLastWriteTimeUtc($path, $sentinel)
+                Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($remote,$local) | Out-Null
+                $sameBytes = [IO.File]::GetLastWriteTimeUtc($path) -eq $sentinel
+                $remote.url = 'http://127.0.0.1:2/changed'
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($remote,$local) | Out-Null
+                $urlChange = @(Get-ItlClientMcpSemanticChanges).Count
+                $local.args = @('--path','C:\Другая ветка')
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($remote,$local) | Out-Null
+                $commandChange = @(Get-ItlClientMcpSemanticChanges).Count
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($local) -PreserveOwnedKeys @('remote-test') | Out-Null
+                $preserved = Read-ItlClientMcpEntries -Client $caseClient
+                $preserveChange = @(Get-ItlClientMcpSemanticChanges).Count
+                [pscustomobject]@{ first=$first; second=$second; sameBytes=$sameBytes; urlChange=$urlChange; commandChange=$commandChange
+                    keys=$keysBefore; observation=$observation; entries=$entries; preserved=$preserved; preserveChange=$preserveChange }
+            }
+            $result.first | Should -Be 1
+            $result.second | Should -Be 0 -Because "$caseClient must preserve equivalent arrays, disablement and access policy"
+            @($result.keys | Sort-Object) | Should -Be @('local-test','remote-test','user.custom')
+            $result.observation.disabledServerIds | Should -Contain 'remote-test'
+            $result.observation.connectionState | Should -Be 'not-observed'
+            $result.observation.taskToolsState | Should -Be 'not-observable'
+            $result.entries['remote-test'].enabled | Should -BeFalse
+            if ($caseClient -eq 'codex') {
+                $result.entries['remote-test'].bearer_token_env_var | Should -Be 'MY_TOKEN'
+                $result.entries['remote-test'].disabled_tools | Should -Contain 'write'
+                $result.entries['user.custom'].http_headers.Accept | Should -Be 'application/json'
+            } else {
+                $result.entries['remote-test'].headers.Authorization | Should -Be 'fixture-only'
+                $result.entries['remote-test'].alwaysAllow | Should -Contain 'read'
+            }
+            $result.sameBytes | Should -BeTrue
+            $result.urlChange | Should -Be 1
+            $result.commandChange | Should -Be 1
+            $result.preserveChange | Should -Be 0
+            $result.preserved['remote-test'].url | Should -Be 'http://127.0.0.1:2/changed'
+            $result.preserved['local-test'].command | Should -Not -BeNullOrEmpty
+            $result.preserved['user.custom'].url | Should -Be 'https://custom.invalid'
+        }
     }
 }

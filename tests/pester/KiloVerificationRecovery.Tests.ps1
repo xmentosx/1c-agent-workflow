@@ -1,4 +1,4 @@
-Describe "Kilo verification recovery command" {
+﻿Describe "Kilo verification recovery command" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -76,15 +76,17 @@ Describe "Kilo verification recovery command" {
             "current agent-made configuration/extension change",
             "reuse it unchanged",
             "do not add or edit a test merely because this command was invoked",
+            "distinguish runner or environment, test fixture, and product failure",
+            "choose YAxUnit for local algorithmic decisions, Vanessa for object interaction or UI, or both",
             ".agents/skills/1c-workflow/references/vanessa-tests.md",
             "-Action check-dev-branch",
             "event-log baseline check",
             "Fix a defective scenario",
             "fix the implementation",
-            "rerun the full",
-            "configured maximum",
-            "ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS",
-            "blocker diagnostics",
+            "rerun at a decision milestone",
+            "fifth accounted attempt",
+            "three unsuccessful fixes",
+            "continue available work within the original plan",
             "fresh pass"
         )) {
             $recoveryText | Should -Match ([regex]::Escape($marker))
@@ -97,8 +99,10 @@ Describe "Kilo verification recovery command" {
         $fastSkill | Should -Match 'post-change check: `check-dev-branch`'
         $fastSkill | Should -Match 'exact compatibility alias for the normal check: `verify-dev-branch`'
         $fastSkill | Should -Match 'requiredAction=/itl-verify-fix'
-        $fastSkill | Should -Match 'expected skill contract/SHA'
-        $fastSkill | Should -Match 'run `status`'
+        $fastSkill | Should -Match 'client-cache diagnostic in `references/workflow-incidents.md`'
+        $incidentText = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/references/workflow-incidents.md') -Raw -Encoding UTF8
+        $incidentText | Should -Match 'expected skill contract/SHA'
+        $incidentText | Should -Match 'run `status`'
         $fastSkill | Should -Match 'executable milestone or completion check'
         $fastSkill | Should -Match 'Do not add `VanessaFeaturePath` or `VanessaFilterTags` to a final run'
         foreach ($marker in @(
@@ -130,7 +134,7 @@ Describe "Kilo verification recovery command" {
             & git -C $tempRoot init *> $null
 
             $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget kilocode *> $null
                 [pscustomobject]@{
                     provenance = Get-KiloFastSkillProvenance
                     output = ((Write-KiloClientSkillProvenanceStatusLines 6>&1) -join "`n")

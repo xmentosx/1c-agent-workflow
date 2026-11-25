@@ -1,0 +1,946 @@
+{
+  "date": "2026-10-23",
+  "status": "named-foreign-byte-finding-closed-original-native-pm5-subset",
+  "sourceBase": "5da27380c52c3580b03b17503939e4dd0b7481d7",
+  "installedImplementation": "6642b1f9777d4cb7caff89d12ef28e6c08f49a1e",
+  "implementation": {
+    "runtimeSha": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+    "runtimePath": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+    "sourceRoot": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow",
+    "commit": "6642b1f9777d4cb7caff89d12ef28e6c08f49a1e",
+    "beforeRuntimeSha": "06ae086e0054262643b0a3513cb2069f9075304bebb858935408fe9824f08efd"
+  },
+  "identity": {
+    "normalCatalog": {
+      "cache": "C:\\itlj\\g3-pm5-current-20261022\\mcp-home\\registry",
+      "previousOrigin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\origin.git",
+      "originHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "previousHead": "f00ff92bb69afee1b80d02b51440c023f86ae29a",
+      "unchanged": true,
+      "cacheHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "origin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\owned-mcp-defer-repair-20261022\\origin.git"
+    },
+    "ownedProcessesGone": true,
+    "rootIdentityUnchanged": true,
+    "roots": [
+      {
+        "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+        "workflow": "6642b1f9777d4cb7caff89d12ef28e6c08f49a1e",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "4bf5a78686bf427ac454c0f3af5e9a0d84b813f269b78f99fba02d856b64ba73",
+        "bindingPresent": true,
+        "head": "565355552961ac62d90e52770881234fcf87142c"
+      },
+      {
+        "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "workflow": "6642b1f9777d4cb7caff89d12ef28e6c08f49a1e",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "5a515ddf2e47b4afcdec046722f1e54b249bb5b6d281c63e937ae6ffd566e5bd",
+        "bindingPresent": false,
+        "head": "f4ae416dd6c60775b9eafa1d58adecdef3bbee31"
+      }
+    ],
+    "installedImplementation": "6642b1f9777d4cb7caff89d12ef28e6c08f49a1e",
+    "observedUtc": "2026-10-23T12:59:23.4390042Z",
+    "runtime": [
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+        "sha256": "c204c13a55f2bd504c6ae3c2e70087e46305179fab1c6f015bf3b84daea93da4"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        "sha256": "5413a3442d5fc92e60460eda5550737574f609d429b20a15f26bbfaa49db9a67"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+        "sha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+        "sha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.jsonc.ps1",
+        "sha256": "b6ed7f442796458d7e3c8312e95d850585da6a226c3379513e80d7dd99563b03"
+      }
+    ],
+    "sourceBase": "5da27380c52c3580b03b17503939e4dd0b7481d7",
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "unchanged": true,
+      "bytes": 3295928320
+    }
+  },
+  "analysis": {
+    "status": "original-native-races-and-unchanged-strict-foreign-byte-assertions-passed",
+    "early": {
+      "noNewDecisionRefused": true,
+      "earlyObserver": {
+        "mainEntered": false,
+        "main": null,
+        "label": "early-owned",
+        "instrumentationErrors": [],
+        "finishedUtc": "2026-10-23T12:53:05.2237133Z",
+        "decision": "registry",
+        "pid": 5664,
+        "window": "early",
+        "paused": true
+      },
+      "passed": true,
+      "noMain": true,
+      "revision": "68243682e112fc7da1e82ceb72d48dd44aacd4ed",
+      "decision": "registry",
+      "staleDecisionRefusedBeforeAnyWrites": true,
+      "actualConflict": true,
+      "freshKeepLocalAndNextOriginalPassed": true
+    },
+    "late": [
+      {
+        "laterTip": "535e6448337c0e3eeba51f82029457ccd17dcdc4",
+        "originalMain": {
+          "productId": "pm5-corp",
+          "cursorGraph": "http://127.0.0.1:9/g3-race-resume",
+          "nativeClientOverrides": {
+            "cursor/vibecoding1c": []
+          },
+          "kiloGraph": "http://127.0.0.1:9/g3-race-resume",
+          "projectId": "pm5-core-development",
+          "revision": "535e6448337c0e3eeba51f82029457ccd17dcdc4",
+          "utc": "2026-10-23T12:54:57.4539859Z"
+        },
+        "editorPid": 51588,
+        "recovery": "resume",
+        "passed": true,
+        "operationId": "8d049e674ef74a7aa089c4fab48ab606",
+        "completed": "completed",
+        "writerPid": 32244,
+        "foreignEntry": "g3-race-foreign-resume",
+        "foreignPreservedAndNotAdopted": true,
+        "pinned": "082b4b4dc77e0cfdffa19e1985b39987125f71f9"
+      },
+      {
+        "laterTip": "388aff34d8ab891c5b6af33f8974317a8d9dbc97",
+        "originalMain": {
+          "productId": "pm5-corp",
+          "cursorGraph": "http://dev-ermakov.itland.local:22101/mcp/",
+          "nativeClientOverrides": {
+            "cursor/vibecoding1c": []
+          },
+          "kiloGraph": "http://dev-ermakov.itland.local:22101/mcp/",
+          "projectId": "pm5-core-development",
+          "revision": "304e24615b721455c322b6b9b2b37291eff1370a",
+          "utc": "2026-10-23T12:56:05.2324489Z"
+        },
+        "editorPid": 52564,
+        "recovery": "restore",
+        "passed": true,
+        "operationId": "9016d8f8fd5b448496469bc2a44c63bb",
+        "completed": "restored",
+        "writerPid": 69232,
+        "foreignEntry": "g3-race-foreign-restore",
+        "foreignPreservedAndNotAdopted": true,
+        "pinned": "03bcded2a814bfc37b594c7dd409d8740471dda9"
+      }
+    ],
+    "nativePublicCalls": 20,
+    "expectedFailures": 4,
+    "successfulPublicCalls": 16,
+    "independentExternalEditors": 7,
+    "foreign": {
+      "passed": true,
+      "comparisons": [
+        {
+          "case": "resume",
+          "phase": "refused",
+          "foreignBytesEqual": true,
+          "foreignEntryEqual": true,
+          "entireFileByteEqual": true,
+          "maskedSha256": "aa73ee3b7d5cfb3efab213116c7b027a1d9da3c527b7c2494de2dd2bffd1df5f"
+        },
+        {
+          "case": "resume",
+          "phase": "recovered",
+          "foreignBytesEqual": true,
+          "foreignEntryEqual": true,
+          "entireFileByteEqual": true,
+          "maskedSha256": "aa73ee3b7d5cfb3efab213116c7b027a1d9da3c527b7c2494de2dd2bffd1df5f"
+        },
+        {
+          "case": "resume",
+          "phase": "original-passed",
+          "foreignBytesEqual": true,
+          "foreignEntryEqual": true,
+          "entireFileByteEqual": true,
+          "maskedSha256": "aa73ee3b7d5cfb3efab213116c7b027a1d9da3c527b7c2494de2dd2bffd1df5f"
+        },
+        {
+          "case": "restore",
+          "phase": "refused",
+          "foreignBytesEqual": true,
+          "foreignEntryEqual": true,
+          "entireFileByteEqual": true,
+          "maskedSha256": "2d317c3366c290fab5bb7efc98a78b3f1530a61d8ca38f483e5e39d3253a9860"
+        },
+        {
+          "case": "restore",
+          "phase": "recovered",
+          "foreignBytesEqual": true,
+          "foreignEntryEqual": true,
+          "entireFileByteEqual": false,
+          "maskedSha256": "2d317c3366c290fab5bb7efc98a78b3f1530a61d8ca38f483e5e39d3253a9860"
+        },
+        {
+          "case": "restore",
+          "phase": "original-passed",
+          "foreignBytesEqual": true,
+          "foreignEntryEqual": true,
+          "entireFileByteEqual": false,
+          "maskedSha256": "2d317c3366c290fab5bb7efc98a78b3f1530a61d8ca38f483e5e39d3253a9860"
+        }
+      ],
+      "mask": "Established masker; only four owned Code/Graph value spans excluded, all foreign values/order/spacing checked."
+    },
+    "finalClients": {
+      "passed": true,
+      "historicalStrictByteAssertion": "Historical byte-order observation retained in the prior report; this run measures semantic, foreign-byte and full-file equality independently.",
+      "contract": "AC-16 owned sections restored; foreign bytes preserved.",
+      "clients": [
+        {
+          "path": ".kilo/kilo.json",
+          "semanticEqual": true,
+          "entireFileByteEqual": true,
+          "allBytesOutsideOwnedValuesEqual": true,
+          "ownedValueCount": 4,
+          "otherEntryCount": 4,
+          "maskedSha256": "c4abfbb33ef287677555891cc023b47fc49899ee7634db7f93484e9388e66498"
+        },
+        {
+          "path": ".cursor/mcp.json",
+          "semanticEqual": true,
+          "entireFileByteEqual": false,
+          "allBytesOutsideOwnedValuesEqual": true,
+          "ownedValueCount": 2,
+          "otherEntryCount": 5,
+          "maskedSha256": "c3acd6b1ea447be03799633f2890edbebd5059aed2e613e16fa944eeb2b9a233"
+        }
+      ]
+    },
+    "originalReproducerAndAssertionsUnchanged": true,
+    "finding": {
+      "id": "G3-MCP-FOREIGN-BYTE-PRESERVATION",
+      "status": "closed-in-qualified-pm5-subset",
+      "owner": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1: Write-ItlClientMcpEndpoints",
+      "repair": "Use existing JSONC editor for owned properties only; retain existing text on semantic no-op. Same projected bytes drive PlanOnly, atomic write and receipt. No new writer/coordinator or altered recovery guards.",
+      "fullG3Accepted": false
+    },
+    "scope": {
+      "consent": "Supported explicit CLI -CatalogDecision registry; actual Read-Host/GUI answer timing not repeated",
+      "execution": "Real installed helpers/physical Kilo+Cursor files, same PM5 root, timing-only breakpoints and independent external editor",
+      "performance": "Functional race qualification, not Startup benchmark",
+      "contextUtf8Bytes": 2157,
+      "contextBytesDiv4Proxy": 540,
+      "actualTokensAndBilling": "unknown",
+      "newAlwaysOnBytes": 0
+    }
+  },
+  "finding": {
+    "id": "G3-MCP-FOREIGN-BYTE-PRESERVATION",
+    "status": "closed-in-qualified-pm5-subset",
+    "owner": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1: Write-ItlClientMcpEndpoints",
+    "repair": "Use existing JSONC editor for owned properties only; retain existing text on semantic no-op. Same projected bytes drive PlanOnly, atomic write and receipt. No new writer/coordinator or altered recovery guards.",
+    "fullG3Accepted": false
+  },
+  "sourceTests": {
+    "red": {
+      "stage": "red",
+      "durationMs": 11212,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 0,
+      "notRun": 57,
+      "failed": 5
+    },
+    "green": {
+      "stage": "green",
+      "durationMs": 10246,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 5,
+      "notRun": 57,
+      "failed": 0
+    },
+    "unfilteredOwned": {
+      "stage": "owned",
+      "durationMs": 310688,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1",
+        "tests/pester/ProductProjectContext.Tests.ps1",
+        "tests/pester/ProductProjectSetup.Tests.ps1",
+        "tests/pester/MultiClientMcpOwnership.Tests.ps1",
+        "tests/pester/ClientJsonc.Tests.ps1",
+        "tests/pester/ClientMembership.Tests.ps1"
+      ],
+      "allOwners": true,
+      "skipped": 0,
+      "passed": 228,
+      "notRun": 0,
+      "failed": 0
+    },
+    "assertionsRelaxed": false
+  },
+  "packagePreparation": {
+    "firstPassAccepted": false,
+    "compactFailures": 2,
+    "failureCode": "LIFECYCLE_OPERATION_STATUS_STALE",
+    "failureStage": "workflow-update.copy",
+    "watchdogSeconds": 120,
+    "phases": [
+      "copying",
+      "copy-complete"
+    ],
+    "continuation": "Same public compact updater, exact clean candidate and retained transaction; first retry restored interrupted copy, next resumed copy-complete and completed both roots.",
+    "final": {
+      "exitCode": 0,
+      "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\candidate-update-continuation-logs\\update-workflow-c285d9e6b17b44feacd8344349d2090d.stdout.log",
+      "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\candidate-update-continuation-logs\\update-workflow-c285d9e6b17b44feacd8344349d2090d.stderr.log",
+      "durationMs": 457983
+    },
+    "watchdogChanged": false,
+    "manualRuntimeOrReceiptPatches": false,
+    "remainingFinding": "G3-PM5-UPDATE-COPY-STATUS-STALE; compact copy-stage status does not stay fresh during this workload; normal recovery succeeded but uninterrupted upgrade remains unqualified."
+  },
+  "publicExecution": {
+    "originalReplayCalls": 20,
+    "successes": 16,
+    "expectedSafetyRefusals": 4,
+    "independentEditors": 7,
+    "preparationUpdates": 3,
+    "representativeNoopCalls": 8,
+    "separateNoopObserverCalls": 1,
+    "directMcpTools": 0,
+    "llmTurns": 0,
+    "oneCLaunches": 0
+  },
+  "preservation": {
+    "protectedFiles": 21,
+    "oldRoots": 4,
+    "gate6Artifacts": 7,
+    "capsuleArtifacts": 11,
+    "priorRawFiles": 1916,
+    "strictBeforeAfter": "passed",
+    "foreignRecoveryComparisons": 6,
+    "finalClients": 2,
+    "wholeClientFileEqual": [
+      true,
+      false
+    ],
+    "originalRawSeedMissing": false,
+    "historicalFailures": "retained without reclassification"
+  },
+  "representativeCost": {
+    "before": {
+      "implementation": "44ce6ebad18b635c582ca26e96d6e9d4ce96c081",
+      "warmupMs": 11453,
+      "samplesMs": [
+        7120,
+        6852,
+        6890
+      ],
+      "medianMs": 6890,
+      "maxMs": 7120
+    },
+    "after": {
+      "implementation": "6642b1f9777d4cb7caff89d12ef28e6c08f49a1e",
+      "warmupMs": 13451,
+      "samplesMs": [
+        8999,
+        8646,
+        8515
+      ],
+      "medianMs": 8646,
+      "maxMs": 8999
+    },
+    "scope": "Three unprofiled whole CLI samples after one warmup per implementation on same fixture/command; shared-host before/after observation, not a 20-sample Startup or exact feature-increment benchmark.",
+    "wholeCliMedianIncreaseMs": 1756,
+    "wholeCliMedianIncreasePercent": 25.486211901306245,
+    "wholeCliIncreaseAttributed": false,
+    "functionalNoopObserver": {
+      "exitCode": 0,
+      "probe": {
+        "genericEditorCalls": 0,
+        "allEditorCalls": 0,
+        "genericInitializerCalls": 0
+      },
+      "method": "separate functional observation, excluded from unprofiled latency samples"
+    },
+    "readOnlyOwnerDiagnostic": {
+      "passed": true,
+      "afterSha": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+      "beforeSha": "06ae086e0054262643b0a3513cb2069f9075304bebb858935408fe9824f08efd",
+      "method": "Separate read-only process; exact archived/installed function definitions only, same loaded current dependencies and real PM5 Kilo file; semantic no-op RestoreEntries/PlanOnly. One warmup per version and20 alternating pairs. Function parse/import excluded. No file/runtime/state patches, no network/1C/MCP tools. Diagnostic attribution only, not native acceptance or whole-CLI/Startup baseline.",
+      "samples": [
+        {
+          "pair": 0,
+          "warmup": true,
+          "version": "before",
+          "durationMs": 162.5226
+        },
+        {
+          "pair": 0,
+          "warmup": true,
+          "version": "after",
+          "durationMs": 188.5671
+        },
+        {
+          "pair": 1,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 67.8335
+        },
+        {
+          "pair": 1,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 39.9012
+        },
+        {
+          "pair": 2,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 42.6374
+        },
+        {
+          "pair": 2,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 38.5082
+        },
+        {
+          "pair": 3,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 45.6464
+        },
+        {
+          "pair": 3,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 35.8637
+        },
+        {
+          "pair": 4,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 43.0497
+        },
+        {
+          "pair": 4,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 48.9347
+        },
+        {
+          "pair": 5,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 38.0223
+        },
+        {
+          "pair": 5,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 35.023900000000005
+        },
+        {
+          "pair": 6,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 34.8571
+        },
+        {
+          "pair": 6,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 38.4318
+        },
+        {
+          "pair": 7,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 37.2288
+        },
+        {
+          "pair": 7,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 36.3757
+        },
+        {
+          "pair": 8,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 36.603100000000005
+        },
+        {
+          "pair": 8,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 39.478300000000004
+        },
+        {
+          "pair": 9,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 34.976
+        },
+        {
+          "pair": 9,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 36.1285
+        },
+        {
+          "pair": 10,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 31.6007
+        },
+        {
+          "pair": 10,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 33.5434
+        },
+        {
+          "pair": 11,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 32.8021
+        },
+        {
+          "pair": 11,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 30.832800000000002
+        },
+        {
+          "pair": 12,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 29.0045
+        },
+        {
+          "pair": 12,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 37.2924
+        },
+        {
+          "pair": 13,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 32.9512
+        },
+        {
+          "pair": 13,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 31.3826
+        },
+        {
+          "pair": 14,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 34.528
+        },
+        {
+          "pair": 14,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 37.2262
+        },
+        {
+          "pair": 15,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 35.2894
+        },
+        {
+          "pair": 15,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 31.686300000000003
+        },
+        {
+          "pair": 16,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 39.2008
+        },
+        {
+          "pair": 16,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 37.4284
+        },
+        {
+          "pair": 17,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 37.801
+        },
+        {
+          "pair": 17,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 27.7649
+        },
+        {
+          "pair": 18,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 30.104100000000003
+        },
+        {
+          "pair": 18,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 32.7755
+        },
+        {
+          "pair": 19,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 32.719100000000005
+        },
+        {
+          "pair": 19,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 28.9739
+        },
+        {
+          "pair": 20,
+          "warmup": false,
+          "version": "before",
+          "durationMs": 31.2437
+        },
+        {
+          "pair": 20,
+          "warmup": false,
+          "version": "after",
+          "durationMs": 34.1141
+        }
+      ],
+      "stats": {
+        "before": {
+          "p95Ms": 42.6374,
+          "maxMs": 43.0497,
+          "medianMs": 34.69255,
+          "count": 20
+        },
+        "after": {
+          "p95Ms": 48.9347,
+          "maxMs": 67.8335,
+          "medianMs": 37.2606,
+          "count": 20
+        }
+      },
+      "protectedInputsUnchanged": true
+    },
+    "ownerMedianIncreaseMs": 2.5680499999999995,
+    "attribution": "Owner-only no-op median increases by about2.57ms, which does not explain whole-CLI1.756s difference. Registry/import/host cost not attributed in this task; retain full cost criterion open. No claim of equal whole-CLI latency.",
+    "addedAlwaysOnBytes": 0,
+    "newTokenBearingSurfaceBytes": 0,
+    "actualTokenBilling": "unknown"
+  },
+  "architecture": {
+    "existingOwner": "Write-ItlClientMcpEndpoints",
+    "existingEditor": "agent-1c.jsonc.ps1",
+    "unchangedContracts": [
+      "ownership/collisions/three-way consent",
+      "pinned plan and receipts",
+      "atomic write",
+      "registry product/project/source distinctions",
+      "ai_rules_1c release",
+      "six memory areas/canonical home/grants/optional OpenViking"
+    ],
+    "newStateCacheLockCoordinator": false,
+    "memoryImplementation": false
+  },
+  "remaining": [
+    "G3-PM5-UPDATE-COPY-STATUS-STALE / uninterrupted compact upgrade",
+    "full registry task4.2/5.2/AC-16/24/26/39 and other installed/client/PM4/platform/terminal criteria",
+    "actual Read-Host/GUI answer timing and independent terminal users",
+    "exact legacy feature baseline and actual tokens/billing",
+    "registry release population AC-36-38",
+    "memory consumer4.2/G4/AC-43/G5/44"
+  ],
+  "notPerformed": [
+    "Gate6 repair/run",
+    "G4/Cognee/OpenViking development",
+    "working-project migration",
+    "publication/push/PR",
+    "server/client upgrades",
+    "manual operation/ownership/applied/transaction edits",
+    "new recovery coordinator or watchdog changes",
+    "weakened byte assertions or test thresholds"
+  ],
+  "validation": {
+    "openSpecCli": "1.13.1",
+    "registryStrict": "passed",
+    "memoryStrict": "passed",
+    "sourceRegistration": "Final atomic source-delivery ledger separately owns mandatory Targeted; registration is not full G3 or publication.",
+    "latestStrictLogs": "registration-contract manifest; both CLI1.13.1 strict validations repeated after contract clarification"
+  },
+  "rawManifest": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\raw-manifest.json",
+    "bytes": 134206,
+    "sha256": "03252b7e5d385a26b58c09de6720a123897e8f05ac5b20085a2d4f6010774468"
+  },
+  "rawManifestFileCount": 416,
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\candidate-input.json",
+      "bytes": 444,
+      "sha256": "49de80ef5712f3ce4e6bb3998d7cd781ad6426134c050e046312d50eb026306e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\red.json",
+      "bytes": 255,
+      "sha256": "29b3524756d17f3502b63d2ffe6881fb628a03a7607ec0173b33f8cdaecbc785"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\green.json",
+      "bytes": 257,
+      "sha256": "998b5b42b5f452110c294627d6aae1521a7779816257368e6ef50761bfbf0d91"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\owned.json",
+      "bytes": 578,
+      "sha256": "19ed14e0161b5ecd2381b1cf73b60ec00ab49adf78d476ad839a1a7c4972eb10"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\before-noop-samples.json",
+      "bytes": 3001,
+      "sha256": "c208b966c15bb45ee3fd466bab766adcda9cb85ce6b8341d8fbdf6a132b38167"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\after-noop-samples.json",
+      "bytes": 2997,
+      "sha256": "6a0bfbd9f93255dd21e93e878eb77a5eb97f5ef9f485e77238dd804c468f0e82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\noop-editor-probe.json",
+      "bytes": 287,
+      "sha256": "342a00166e98e0ec352dd17fc1f01410263609c107abdc5468cba56c3fadaf84"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\noop-owner-comparison.json",
+      "bytes": 10666,
+      "sha256": "4a3883e56850f45d7e5869a993c82b902ae3e54619adefe9ed6959a5cff4d52b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-20261023\\candidate-native-update-continuation.json",
+      "bytes": 562,
+      "sha256": "36fac81d9600ada92aee326ce8aaa178a2e82098a3af0edfaca5441e034ad839"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\analysis.json",
+      "bytes": 6505,
+      "sha256": "85abbbcc36daacee20229bdcd751533c17fcd3411889ad2a59aa86be9c415eec"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\batch-result.json",
+      "bytes": 550,
+      "sha256": "2c392587c8dee388396f052c074532312a1c56bb81729ea1cf791689575ee9c6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\batch-steps.json",
+      "bytes": 6262,
+      "sha256": "1ee2a29f7b91c7716c97de6052e659d4bae48f84d1db4c498540907e67dadaf9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\unchanged-reproducer.json",
+      "bytes": 318,
+      "sha256": "653405c6e04a496d751f4a9a4578a732f2c2ed66210c50df1e4b133797c193af"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\foreign-byte-analysis.json",
+      "bytes": 1765,
+      "sha256": "61ecd1d940ac1417ad1bf309fd4d7ce4550fe8700add9551661ce7b91d88d765"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\client-byte-analysis.json",
+      "bytes": 925,
+      "sha256": "ea6acec51973db1a23772cfbbb5b9d9836b8a8a7f9e235478d98df0aae5036d4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\identity-final.json",
+      "bytes": 4883,
+      "sha256": "ccd43e7246f6d8795f02025eac0b98bc41b12063f933294f4baa2017c94c3a84"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\preserved-after.json",
+      "bytes": 9482,
+      "sha256": "d938a1186b9d3806a4a4c46a14173bc9df16935a9e57d3aa2557fd3ee9ed04bd"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\previous-evidence-preservation.json",
+      "bytes": 757524,
+      "sha256": "6a3f8c9a201a460a18c099350565c0f7cbbff3cc118541df8be1fbdfa2237677"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\capsule-final-validation.json",
+      "bytes": 3486,
+      "sha256": "c4dbe8cb00e5a171a51a06c3d47c05e854b4e2f866731b3dc5c3cc6564090517"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\registry-validation.log",
+      "bytes": 46,
+      "sha256": "81697be7a162c13d66404e69bfe3484b6dadf506643c134b416f1c4f71df1e8d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\memory-validation.log",
+      "bytes": 42,
+      "sha256": "441a28799277af283f5f22f548dfeaa13fdb527997bf64f3ee3adfbd5a710e8c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\collect-evidence.py",
+      "bytes": 8626,
+      "sha256": "527e76aefce75891d04c1c796993a1bcb64a9e6e5e297e7a0c9d2f39b38d70d9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-repair-native-20261023\\raw-manifest.json",
+      "bytes": 134206,
+      "sha256": "03252b7e5d385a26b58c09de6720a123897e8f05ac5b20085a2d4f6010774468"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\check-legacy-contract.ps1",
+      "bytes": 1204,
+      "sha256": "c76559681ee2c218dd91142ef6a8b98ef23578a494010888592faaaf708887fd"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\ClientAdaptersAndModes.Tests.ps1.tested",
+      "bytes": 127986,
+      "sha256": "6005cf897bc44f131b6b80ad6a1c30086a1c3fb8bf23a813276285297321a2a6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\failure-1\\check-summary.json",
+      "bytes": 6184,
+      "sha256": "b20ae42f56cfe227322f7de932a1d4f47b290f3593eca045d4692fb03d0adfbc"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\failure-1\\gate.stderr.log",
+      "bytes": 352,
+      "sha256": "f7a38bb58582adaab1fdb8b2727a964f232e802ab40d4d81abe9e057487c7836"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\failure-1\\gate.stdout.log",
+      "bytes": 1196,
+      "sha256": "7f3d5e71932d8392a43421f9c65641ba9877daec27387ab75819e8b4559c85ae"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\failure-1\\shards.json",
+      "bytes": 57032,
+      "sha256": "06475ebbbe39256a77409033b792fa0e2647bb47103ae9210a4742e18375d0fe"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\failure-1\\worker-1.stderr.log",
+      "bytes": 55,
+      "sha256": "500564c315c6937430d6c32aef2f89218f07dde33698be174afb97ac4f16f12b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\failure-1\\worker-1.stdout.log",
+      "bytes": 8486,
+      "sha256": "d9c4b357e06a3e176ab25802fa5280a116b1013e6a306bcc4a78a44cc17b267c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\failure-1\\worker-1.xml",
+      "bytes": 18962,
+      "sha256": "67100326750fc903e316e34190699e11899263d434f954d912209aff2fd3128f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\finalize-evidence.py",
+      "bytes": 3417,
+      "sha256": "90a253c4a2388e8f3f7985d7f5ed879d945dff5a324649f372f51ef0413fae4d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\first-amend-tested-blobs.json",
+      "bytes": 545,
+      "sha256": "ab076194e208fd4a053f7115820d92cce3035273142cf6276f089214b8a783f1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\legacy-contract.json",
+      "bytes": 319,
+      "sha256": "bbe3c64200041bbd8bb7c7ecba1affcc19c9a58662e146d7b2e24ce7cf181c70"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\legacy-contract.xml",
+      "bytes": 2863,
+      "sha256": "e73a26399046c5ed86a4c5f66c582ae1d7347473c12846c28674a4d281529453"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\memory-validation.log",
+      "bytes": 42,
+      "sha256": "441a28799277af283f5f22f548dfeaa13fdb527997bf64f3ee3adfbd5a710e8c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\registry-validation.log",
+      "bytes": 46,
+      "sha256": "81697be7a162c13d66404e69bfe3484b6dadf506643c134b416f1c4f71df1e8d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\registration-contract-manifest.json",
+      "bytes": 4998,
+      "sha256": "db07e61ef743c6d06e1ee12695df9ee7e7b60053b6458236740b3bacd35c4576"
+    }
+  ],
+  "registrationContract": {
+    "firstCandidate": "f887fb5f47441e6e0044b66265228c19dce5f60c",
+    "firstTargetedStatus": "failed-not-registered",
+    "firstPartialCounts": {
+      "passed": 349,
+      "failed": 1,
+      "completeSelection": false
+    },
+    "failedCandidateRoot": "C:\\Users\\xment\\AppData\\Local\\Temp\\itl-source-register-80aeb87739144ee5a1ef18f48cfa4a31",
+    "case": "writes deterministic MCP entries and registers every client layout",
+    "invalidLegacyExpectation": "Whole physical MCP object globally ordered alpha/custom/zulu, moving existing foreign custom text.",
+    "correctedContract": "Same original fixture and two calls; exact key set, deterministic owned-key order, repeat SHA, all URL/permission/client layouts retained; exact foreign prefix/suffix and actual no-op mtime added.",
+    "reason": "Global normalization contradicts independently reproduced strict foreign-byte failures and agreed AC-16; determinism does not authorize moving existing foreign text.",
+    "thresholdsOrNativeAssertionsRelaxed": false,
+    "runtimeUnchanged": true,
+    "focused": {
+      "scope": "One changed case only; same fixture and two calls. Deterministic output, exact key membership/owned order, foreign prefix/suffix, SHA/actual mtime and all client-layout checks. Not a replacement for unfiltered Targeted.",
+      "notRun": 40,
+      "skipped": 0,
+      "failed": 0,
+      "passed": 1
+    },
+    "completeTargeted": "Mandatory final source-delivery ledger; focused pass does not register or replace failed unfiltered gate.",
+    "rawManifest": {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\foreign-byte-registration-20261023\\registration-contract-manifest.json",
+      "bytes": 4998,
+      "sha256": "db07e61ef743c6d06e1ee12695df9ee7e7b60053b6458236740b3bacd35c4576"
+    }
+  }
+}

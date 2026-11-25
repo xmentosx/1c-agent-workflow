@@ -1,150 +1,115 @@
-# Процесс разработки внутри ветки разработки
+# Development inside a development branch
 
-Этот документ — router для работы внутри уже созданной `itldev/*` ветки. Он объясняет lifecycle-поверхность и помогает выбрать один конечный reference. После выбора режима откройте только соответствующий файл:
+This reference routes work inside an existing `itldev/*` branch. It explains the lifecycle surface and selects exactly one leaf reference. After choosing the mode open only the matching file:
 
 - `dev-branch-quick-fix.md`: `executionPath=quick-fix`, `planningMode=direct`;
 - `dev-branch-direct.md`: `executionPath=full-cycle`, `planningMode=direct`;
-- `dev-branch-openspec.md`: `planningMode=OpenSpec`, а `executionPath=quick-fix|full-cycle` выбирается независимо.
+- `dev-branch-openspec.md`: `planningMode=OpenSpec`, with `executionPath=quick-fix|full-cycle` chosen independently.
 
-Допустимы все четыре сочетания двух осей. `direct` — planning mode по умолчанию. Promotion trigger меняет только `executionPath` на `full-cycle` и сам по себе не выбирает OpenSpec.
+All four combinations of the two axes are valid. `direct` is the default planning mode. A promotion trigger changes only `executionPath` to `full-cycle`; by itself it does not require OpenSpec.
 
-Роли `ai_rules_1c` разработчик вручную не выбирает. Агент сам выбирает внутреннюю специализацию по задаче.
+The developer does not pick `ai_rules_1c` roles; the agent chooses its internal specialization from the task.
 
-## Как запускать действия
+Each leaf repeats the readiness rule (fresh passed `/itl-check`, `exportPath`/`extensionsPath`, `testsPath`, branch-safety on `master`), so it is self-contained.
 
-Жизненный цикл ветки запускается через ITL-поверхность активного клиента; точные команды, skills или prompts показывает `/itl`:
+## Running actions
 
-```text
-vibecoding1c-mcp helper action            Настроить, запустить, обновить или проверить vibecoding1c MCP текущего scope.
-/itl-status                       Показать текущую ветку, базу и статус проверки.
-/itl-check                        Обновить базу ветки и запустить Vanessa Automation.
-update-base helper action                  Обновить базу ветки без тестов.
-verify helper action                       Совместимый alias для /itl-check.
-/itl-refresh                      Обновить ветку разработки свежим master.
-/itl-sync-master                  Обновить master и принудительно пересоздать latest-only seed.
-/itl-refresh-lite                 Обновить ветку из текущего master без обращения к source и seed.
-/itl-result                       Выгрузить CF/CFE по текущей ветке.
-```
-
-Например, в Kilo Code upstream-native OpenSpec-процесс запускается отдельными slash-командами:
+The active client's ITL surface runs the branch lifecycle; `/itl` shows the exact commands, skills or prompts of the current client (Codex, for example, uses `$itl-check`). Commands below use the slash form. `update-dev-branch-base` and `verify-dev-branch` run through the compact runner `run-itl-command.ps1`; `vibecoding1c-mcp-*` actions run directly through `agent-1c.ps1 -Action` (`references/mcp.md`):
 
 ```text
-/opsx-propose                     Обычный первый шаг: подготовить proposal, design/tasks/test-plan/spec deltas; код не менять.
-/opsx-apply                       Реализовать согласованный OpenSpec change по tasks.md.
-/opsx-archive                     После приемки заархивировать OpenSpec change.
-/opsx-explore                     Опционально (optional): исследовать задачу или код до proposal, если контекста недостаточно.
+/itl-status                     Show the branch, infobase and verification status.
+/itl-check                      Load the branch changes into its infobase and run the selected checks.
+/itl-refresh                    Update the branch with fresh master.
+/itl-sync-master                Update master and force-recreate the latest-only seed.
+/itl-refresh-lite               Update the branch from the current master without source or seed access.
+/itl-result                     Export CF/CFE of the current branch.
+update-dev-branch-base          Helper action: load the branch changes without tests.
+verify-dev-branch               Helper action: compatible alias of check-dev-branch (/itl-check).
+vibecoding1c-mcp-status         Helper action: show vibecoding1c MCP of the current scope; also -setup, -start, -select, -refresh-registry.
 ```
 
-Это только пример `native`-режима. `/itl` определяет режим по managed manifest и показывает синтаксис активного клиента. В `natural`-режиме используйте обычные запросы:
+In the `native` mode upstream OpenSpec runs through separate commands, for example in Kilo Code:
+
+```text
+/opsx-propose                   Usual first step: proposal, design/tasks/spec deltas and verifiable scenarios; a separate test-plan only when needed; no code changes.
+/opsx-apply                     Implement the agreed OpenSpec change by tasks.md.
+/opsx-archive                   Archive the OpenSpec change after acceptance.
+/opsx-explore                   Optional: research the task or code before a proposal when context is insufficient.
+```
+
+`/itl` detects the mode from the managed manifest and shows the active client's syntax. In the `natural` mode the user writes ordinary requests (user-facing examples, keep in Russian):
 
 ```text
 Исследуй задачу в режиме OpenSpec, не создавая proposal и не меняя код
-Подготовь OpenSpec proposal для <изменение>; создай proposal, design, tasks, test-plan и spec deltas; код не меняй
-Реализуй согласованный OpenSpec change <change-id> по tasks.md и test-plan.md
+Подготовь OpenSpec proposal для <изменение>; создай proposal, design, tasks и spec deltas; отдельный test-plan только если нужен; код не меняй
+Реализуй согласованный OpenSpec change <change-id> по tasks.md и утверждённым проверкам
 Заархивируй принятый OpenSpec change <change-id> и синхронизируй specs
 ```
 
-Оба режима используют один `openspec/` workspace, общий preflight и fresh `/itl-check`. Отсутствие внешнего `openspec` executable не блокирует natural flow. Не устанавливайте пакет автоматически и не запускайте `openspec update`.
+Both modes use one `openspec/` workspace, a shared preflight and a fresh `/itl-check`. A missing external `openspec` executable does not block the natural flow. Do not install the package automatically and do not run `openspec update`.
 
-В Codex рутинные действия доступны как явные skills:
+`/itl` in a development branch is a process panel, not only a command list: branch state, recommended next step, development path, the real native OpenSpec entrypoints or exact natural requests, and additional helper actions. In a fresh clean branch with `verification missing`, choose the upstream execution path `quick-fix|full-cycle` and the planning mode `direct|OpenSpec` independently; `direct` stays the default. Run `/itl-check` once verifiable changes exist or when the previous check is stale/failed/unknown.
+
+In the worktree of the current `itldev/*` branch `vibecoding1c-mcp-setup` connects the selected vibecoding1c MCP endpoints. When a local branch scope is selected for `code` or `graph`, the helper starts a separate vibecoding1c MCP for the current branch. MCP servers of sibling branches are not added to the client config. Vanessa UI MCP is available separately as the pre-registered stdio server `itl-vanessa-ui`; it starts its private backend on the first call without a helper action or raw HTTP.
+
+## Pending extension branch
+
+Usually the agent collects the parameters on master and the helper runs a separate transactional initialization within extension-branch creation. When the parameters were unknown at creation, the branch stays `pending`: on first access ask whether to create an empty extension or load a CFE, get the name and, when needed, the CFE path, then call the internal action yourself:
 
 ```text
-$itl-check
-$itl-refresh
-$itl-result
+init-dev-branch-extension -ExtensionInitMode Empty -ExtensionName <extension-name>
+init-dev-branch-extension -ExtensionInitMode Cfe -ExtensionName <extension-name> -ExtensionSourcePath <file.cfe>
 ```
 
-`$itl` показывает только действия текущего контекста. Обычный текст остается для разработки, объяснений, инициализации и нестандартного восстановления.
+These lines are an internal helper contract, not developer commands. The helper snapshots the infobase, loads the extension through Designer with `-Extension`, dumps normalized sources strictly into `src/cfe/<extension-name>` and rolls the infobase back on error. The CFE is not unpacked; Designer Agent and `AgentMode` are not used. `set-dev-branch-extension` only records the recovery context of a manually created extension; `dump-dev-branch-extension` remains a recovery dump. Until the status is `ready` every development action is blocked. After that `/update1cbase` is the ordinary development cycle, `/itl-check` the required check and `/itl-result` the `CFE` export.
 
-Команды жизненного цикла ветки выполняются через `/itl-*` или естественные текстовые команды. Роли остаются внутренней логикой агента.
+A configuration branch may hold several features. An extension branch may also hold several features/OpenSpec changes, but all of them belong to one extension. For a second CFE create a separate branch, worktree and infobase copy: the workflow deliberately keeps no `extensions[]`. A changed second root `src/cfe/<OtherName>` blocks update/check/dump/result/close with `EXTENSION_BRANCH_SINGLE_ARTIFACT`; unchanged baseline directories do not interfere.
 
-`/itl` в ветке разработки показывает не просто список команд, а процессную панель: состояние ветки, рекомендуемый следующий шаг, путь разработки, реальные native OpenSpec entrypoints либо точные natural-запросы и дополнительные helper-действия. В свежей чистой ветке с `verification missing` независимо выбирают upstream execution path `quick-fix|full-cycle` и planning mode `direct|OpenSpec`; `direct` остаётся default. `/itl-check` выполняется после появления проверяемых изменений или когда предыдущая проверка stale/failed/unknown.
+## Bridges and Enterprise update
 
-`vibecoding1c-mcp helper action` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa UI MCP доступен отдельно как предзарегистрированный stdio-сервер `itl-vanessa-ui` и запускает приватный backend по первому вызову без helper action или raw HTTP.
+Lifecycle commands activate the branch infobase context for `ai_rules_1c` automatically.
 
-Обычно агент собирает параметры в master и helper выполняет отдельную транзакционную инициализацию внутри общего сценария создания extension-ветки. Если параметры при создании были неизвестны, состояние ветки остаётся `pending`: при первом обращении агент должен спросить, создать пустое расширение или загрузить CFE, получить имя и при необходимости путь к CFE, затем сам вызвать внутреннее действие:
+`/deploy-and-test` remains a bridge to the same `check-dev-branch`; it has no load path of its own. The ordinary ITL cycle name is `/itl-check`. To load the base without tests use `update-dev-branch-base`.
 
-```text
-init-dev-branch-extension -ExtensionInitMode Empty -ExtensionName <имя-расширения>
-```
+After a real file load, `/itl-check`, `update-dev-branch-base`, `verify-dev-branch`, `/itl-refresh`, `/itl-result` and advanced `close-dev-branch` automatically launch the branch infobase in Enterprise user mode through the bundled `ДляАвтоматическогоОбновленияИБ.epf`. This applies update handlers and answers the legal-copy prompt non-interactively. No-op updates do not launch Enterprise.
 
-Для готового CFE:
+## Large OpenSpec changes
 
-```text
-init-dev-branch-extension -ExtensionInitMode Cfe -ExtensionName <имя-расширения> -ExtensionSourcePath <файл.cfe>
-```
+Large OpenSpec changes use the hybrid cadence: each slice with observable behavior gets sufficient current proof and the applicable targeted/static checks; a retained regression is added separately when useful for future runs. An intermediate `/itl-check` is needed at a milestone whose runtime result decides further implementation. Preparatory tasks are recorded as pending verification. After the last verification-relevant edit an ordinary unfiltered `/itl-check` assesses the whole applicable obligation set and reuses fresh proof.
 
-Эти строки описывают внутренний helper-контракт, а не команды для разработчика. Helper создаёт snapshot базы, загружает расширение через Designer с `-Extension`, выгружает нормализованные исходники строго в `src/cfe/<имя-расширения>` и откатывает базу при ошибке. CFE не распаковывается; Designer Agent и `AgentMode` не используются. `set-dev-branch-extension` только записывает recovery-контекст для расширения, созданного вручную, а `dump-dev-branch-extension` остаётся recovery-выгрузкой. До статуса `ready` все действия разработки блокируются. Дальше `/update1cbase` — обычный цикл разработки, `/itl-check` — обязательная проверка, `/itl-result` — выгрузка `CFE`.
+## Choosing the mode
 
-В configuration-ветке допустимы несколько фич. В extension-ветке тоже допустимы несколько фич/OpenSpec changes, но все они должны относиться к одному расширению. Для второго CFE создавайте отдельные ветку, worktree и копию базы: workflow намеренно не хранит `extensions[]`. Изменённый второй корень `src/cfe/<ДругоеИмя>` блокирует update/check/dump/result/close кодом `EXTENSION_BRANCH_SINGLE_ARTIFACT`; неизменённые baseline-каталоги не мешают.
+First apply upstream `AGENTS.md` and `verification-policy.md` without downstream overrides. Use **quick-fix** when all of these hold:
 
-Команды жизненного цикла автоматически активируют контекст базы ветки разработки для `ai_rules_1c`.
+- the problem is understood;
+- the change is local;
+- one module is touched, or a new completely unwired metadata addition explicitly allowed by the upstream policy;
+- the business process does not change;
+- the public interface of modules does not change;
+- there is no upstream promotion trigger;
+- no agreement on architecture or approach is needed.
 
-`/deploy-and-test` сохранён как bridge к тому же `check-dev-branch`; собственного пути загрузки у него нет. Обычное имя ITL-цикла — `/itl-check`. Если нужно только обновить базу без тестов, используйте `update-base helper action`.
+Quick-fix examples: fix a syntax error, a condition or a variable name; remove a crash in a specific procedure; add a simple `Неопределено` check; fix a message text; adjust a query without changing its business meaning.
 
-After a real file load, `/itl-check`, `update-base helper action`, `verify helper action`, `/itl-refresh`, `/itl-result`, and advanced `close-dev-branch` automatically launch the branch infobase in Enterprise user mode through bundled `ДляАвтоматическогоОбновленияИБ.epf`. This applies update handlers and answers the legal-copy prompt non-interactively. No-op updates do not launch Enterprise.
+Use **direct full-cycle** when quick-fix does not apply but the boundaries, the solution and the acceptance criteria are clear, for example:
 
-## Общее правило готовности
+- a change of an existing form or wired metadata;
+- a transactional, write/posting or RLS path with an already defined expected result;
+- several related places with an unambiguous implementation;
+- a public contract whose requirements are already agreed.
 
-Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке любая доработка агентом под настроенными `exportPath`/`extensionsPath` считается готовой только после релевантных сценариев под `testsPath` и fresh passed `/itl-check`; quick-fix, direct full-cycle и OpenSpec исключений не дают. Явно выбранный ITL lite допускает только partial evidence с формулировкой `implemented; executable verification skipped`. На `master` правка исходников остаётся branch-safety blocker.
+Use **OpenSpec** when the user explicitly asks for it or requirements, architecture, acceptance criteria or implementation stages need formal research and agreement. A promotion trigger changes only the execution path and a regression risk strengthens the checks; neither by itself requires OpenSpec. When unsure between direct and OpenSpec, weigh the need for agreement, not the number of files.
 
-Перед тестами локального алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Слой с режимом `off` автоматически не создаётся и в новый план не добавляется. Пропуск никогда не называется `готово/verified/done`; при `verificationPolicy=block` он блокирует result/close, при `warn` требует явного подтверждения partial result.
+After choosing, open exactly one matching reference from the list at the top of this file. Do not read the other paths "just in case".
 
-Для больших OpenSpec changes действует hybrid cadence: каждый срез с наблюдаемым поведением получает минимум один focused Vanessa scenario и дешёвые targeted/static checks, но промежуточный `/itl-check` нужен только на milestone, где runtime-результат решает, можно ли продолжать реализацию. Подготовительные tasks фиксируются как pending verification. После последней verification-relevant правки обязателен fresh unfiltered `/itl-check` по всему разрешённому набору сценариев.
-
-## Как выбрать режим
-
-Сначала примените upstream `AGENTS.md` и `verification-policy.md` без downstream-переопределений. Используйте **quick-fix**, если выполняются все условия:
-
-- проблема понятна;
-- изменение локальное;
-- затрагивается один модуль либо новая полностью неподключенная добавка метаданных, прямо разрешенная upstream policy;
-- не меняется бизнес-процесс;
-- не меняется публичный интерфейс модулей;
-- нет upstream promotion trigger;
-- не требуется согласование архитектуры или подхода.
-
-Примеры quick-fix:
-
-- исправить синтаксическую ошибку;
-- поправить условие;
-- исправить имя переменной;
-- убрать падение в конкретной процедуре;
-- добавить простую проверку на `Неопределено`;
-- исправить текст сообщения;
-- поправить запрос без изменения бизнес-смысла.
-
-Используйте **direct full-cycle**, если quick-fix неприменим, но границы, решение и критерии приемки ясны. Например:
-
-- изменение существующей формы или wired metadata;
-- транзакционный, write/posting или RLS-путь с уже определенным ожидаемым результатом;
-- несколько связанных мест с однозначным способом реализации;
-- публичный контракт, требования к которому уже согласованы.
-
-Используйте **OpenSpec**, когда пользователь явно его запросил либо нужно формально исследовать и согласовать требования, архитектуру, критерии приемки или этапы реализации. Promotion trigger меняет только execution path, а риск регрессии усиливает проверки; ни то ни другое само по себе не требует OpenSpec. При сомнении между direct и OpenSpec оцените необходимость согласования, а не количество файлов.
-
-После выбора откройте ровно один matching reference из списка в начале этого файла. Не читайте остальные пути «на всякий случай».
-
-## Короткая памятка
+## Short reminder
 
 ```text
-Маленькая локальная ошибка без promotion triggers и без OpenSpec -> direct quick-fix -> dev-branch-quick-fix.md.
-
-Понятная правка существующей формы, связанных метаданных, нескольких модулей или risk-bearing пути -> direct full-cycle -> dev-branch-direct.md.
-
-Нужно формально исследовать или согласовать требования, архитектуру либо критерии приемки -> planningMode OpenSpec; execution path выбирается независимо -> dev-branch-openspec.md.
-
-Роли вручную не выбираем. Агент сам выбирает внутреннюю специализацию по задаче.
-
-После изменений запускайте единый цикл проверки: /itl-check.
-
-Если предыдущая доработка могла пропустить релевантный сценарий или полный цикл проверки, используйте `/itl-verify-fix`. Команда сначала ищет подходящее существующее покрытие и не создаёт новый тест без необходимости; затем исправляет тест или реализацию и повторяет полную проверку до pass либо лимита трёх попыток.
-
-Если нужно только обновить базу без тестов: update-base helper action.
-
-Стандартная проверка идет через `/itl-check`; `verify helper action` остается совместимым alias.
-
-Если Vanessa нашла ошибку, агент сам исправляет ее и повторяет /itl-check. Лимит - 3 попытки.
-
-CF/CFE текущей ветки: /itl-result.
+Small local fault, no promotion triggers, no OpenSpec -> direct quick-fix -> dev-branch-quick-fix.md.
+Clear change of an existing form, related metadata, several modules or a risk-bearing path -> direct full-cycle -> dev-branch-direct.md.
+Requirements, architecture or acceptance criteria need formal research or agreement -> planningMode OpenSpec; execution path chosen independently -> dev-branch-openspec.md.
+After changes run the single check cycle: /itl-check. To load the base without tests: update-dev-branch-base.
+If a previous change may have missed a relevant scenario or the full check cycle, use /itl-verify-fix: it first looks for suitable existing coverage, does not create a new test without need, then fixes the test or the implementation and repeats the full check within one helper-owned repair session.
+After three failed repairs without progress on the same obstacle, perform systemic diagnosis before another full run (verification-result.md).
+CF/CFE of the current branch: /itl-result.
 ```

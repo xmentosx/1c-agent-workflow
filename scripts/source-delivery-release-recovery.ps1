@@ -1,0 +1,479 @@
+# Mutating publication composition; lifecycle and fixture owners retain their locks and receipts.
+function Get-DeliveryWorkflowPackageBase {
+    # A compatibility promotion is one commit over the queued candidate that only
+    # records ai_rules compatibility in templates/dependency-lock.json. It installs
+    # the same workflow package, so a stand on either commit is current for both;
+    # Plan (unpromoted) and every retry's new promotion then agree with it.
+    param([string]$CandidateRoot, [string]$Commit)
+    if ($Commit -notmatch '^[0-9a-f]{40}$') { return $Commit }
+    $parents = @(((Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('rev-list', '--parents', '-n', '1', $Commit) -AllowFailure).stdout.Trim()) -split ' ')
+    if ($parents.Count -ne 2) { return $Commit }
+    $parent = [string]$parents[1]
+    $other = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('diff', '--quiet', $parent, $Commit, '--', '.', ':(exclude)templates/dependency-lock.json') -AllowFailure
+    if ($other.exitCode -ne 0) { return $Commit }
+    try {
+        $locks = foreach ($revision in @($parent, $Commit)) {
+            $lock = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('show', "${revision}:templates/dependency-lock.json")).stdout | ConvertFrom-Json
+            foreach ($field in @('compatibilityStatus', 'compatibilityCheckedAt')) { $lock.dependencies.aiRules1c.PSObject.Properties.Remove($field) }
+            $lock | ConvertTo-Json -Depth 32 -Compress
+        }
+        if ($locks[0] -cne $locks[1]) { return $Commit }
+    } catch { return $Commit }
+    return $parent
+}
+
+function Get-DeliveryStandPreparation {
+    param([string]$CandidateRoot, [string]$BaseCommit, [switch]$RequireRelease)
+    if ($script:DeliveryCustomGateBoundary) { return $null }
+    # Candidate policy is evaluated in a local function scope, as in the plan
+    # calculator. No stand fingerprints or expensive fixture SHA walks yet.
+    $journeys = @(& {
+        . (Join-Path $CandidateRoot 'scripts/develop-e2e-qualification.ps1')
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $CandidateRoot
+        [void](Test-QualityContractCatalog -RepositoryRoot $CandidateRoot -Catalog $catalog)
+        $selection = Resolve-DevelopE2EJourneyPlanCore -RepositoryRoot $CandidateRoot -BaseRef $BaseCommit -Catalog $catalog
+        if (@($selection.unknownPaths).Count) { throw 'QUALITY_OWNER_MISSING: cannot prepare an unowned selection.' }
+        $selection.journeys
+    })
+    # check.ps1 admits both shared-master capsules before either phase binds
+    # stand identity. Keep that existing closure; other registered branches and
+    # read-only context/receipt references are outside the update write set.
+    $phases = @(if ($journeys.Count -or $RequireRelease) { 'Release'; 'Develop' })
+    if (-not $phases.Count) { return $null }
+    if (-not $E2EProjectRoot) { throw 'DELIVERY_STAND_PREPARATION_ROOT_REQUIRED: configure the registered E2E stand before publication.' }
+    $root = [IO.Path]::GetFullPath($E2EProjectRoot).TrimEnd('\','/')
+    $config = Get-Content -LiteralPath (Join-Path $root '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $capsules = @(foreach ($phase in $phases) {
+        if (-not $config.PSObject.Properties['qualificationFixtures'] -or -not $config.qualificationFixtures.PSObject.Properties[$phase]) {
+            throw "FIXTURE_EXISTING_CAPSULE_REQUIRED: prepare the published $phase baseline through source-e2e-fixture Capture before publication; automatic preparation never creates or replaces a baseline."
+        }
+        $descriptor = $config.qualificationFixtures.$phase
+        if ((Get-FileHash -LiteralPath ([string]$descriptor.path) -Algorithm SHA256).Hash -ine [string]$descriptor.sha256) { throw 'FIXTURE_CAPSULE_SHA_MISMATCH' }
+        $manifest = Get-Content -LiteralPath ([string]$descriptor.path) -Raw -Encoding UTF8 | ConvertFrom-Json
+        $branch = [IO.Path]::GetFullPath([string]$manifest.sourceBranchRoot).TrimEnd('\','/')
+        $configuredBranch = if ($phase -eq 'Develop') { [string]$config.developWorktreePath } else { [string]$config.worktreePath }
+        if ($branch -ine [IO.Path]::GetFullPath($configuredBranch).TrimEnd('\','/') -or
+            (Get-RepositoryCommonGitDirectory -RepositoryRoot $root) -ine (Get-RepositoryCommonGitDirectory -RepositoryRoot $branch)) {
+            throw 'FIXTURE_SEED_NOT_REGISTERED: selected capsule and configured branch must share the registered stand.'
+        }
+        $masterHead = (Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('rev-parse','HEAD')).stdout.Trim()
+        $branchHead = (Invoke-RepositoryGit -RepositoryRoot $branch -Arguments @('rev-parse','HEAD')).stdout.Trim()
+        $admission = $descriptor.PSObject.Properties['workflowUpdateAdmission']
+        $admittedMaster = if ($admission) { [string]$admission.Value.master.head } else { [string]$manifest.masterCommit }
+        $admittedBranch = if ($admission) { [string]$admission.Value.branch.head } else { [string]$manifest.branchCommit }
+        [pscustomobject]@{phase=$phase;path=[string]$descriptor.path;sha256=[string]$descriptor.sha256;root=$branch;needsAdmission=($masterHead -cne $admittedMaster -or $branchHead -cne $admittedBranch)}
+    })
+    $candidate = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+    $candidatePackage = Get-DeliveryWorkflowPackageBase -CandidateRoot $CandidateRoot -Commit $candidate
+    $roots = @($capsules.root | Sort-Object -Unique)
+    $updates = @(foreach ($target in @($root) + $roots) {
+        $lock = Get-Content -LiteralPath (Join-Path $target '.agent-1c/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ((Get-DeliveryWorkflowPackageBase -CandidateRoot $CandidateRoot -Commit ([string]$lock.dependencies.workflowPackage.commit)) -cne $candidatePackage -or
+            @(Get-ChildItem -LiteralPath (Join-Path $target '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue).Count) { $target }
+    })
+    return [pscustomobject]@{schemaVersion=1;projectRoot=$root;sourceCommit=$candidate;roots=$roots;capsules=$capsules;updateRoots=$updates;
+        steps=@('recover-interrupted-release','update-selected-workflow-roots','validate-and-admit-existing-capsules','release-readiness','freeze-execution-plan');
+        estimatedSeconds=$null;basis='preparation-not-yet-measured';requiresWorkflowUpdate=[bool]$updates.Count;
+        requiresStateChange=([bool]$updates.Count -or @($capsules | Where-Object needsAdmission).Count -gt 0)}
+}
+
+function Get-DeliveryStaleBranchUpdates {
+    # The update owner resumes a failed branch post-copy with its recorded
+    # package. For another package that candidate can be the defect, so the
+    # lifecycle abandon owner returns it before this candidate installs.
+    param([string]$CandidateRoot, [object]$Preparation)
+    $package = Get-DeliveryWorkflowPackageBase -CandidateRoot $CandidateRoot -Commit ([string]$Preparation.sourceCommit)
+    foreach ($root in @($Preparation.roots | Where-Object { $_ -ine $Preparation.projectRoot })) {
+        $pending = @(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue)
+        # Ambiguous or receipt-less snapshots stay with the update owner's guards.
+        if ($pending.Count -ne 1) { continue }
+        $receiptPath = Join-Path $pending[0].FullName 'transaction.json'
+        if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) { continue }
+        $receipt = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$receipt.phase -notin @('post-copy-running', 'post-copy-failed') -or
+            (Get-DeliveryWorkflowPackageBase -CandidateRoot $CandidateRoot -Commit ([string]$receipt.sourceCommit)) -ceq $package) { continue }
+        [pscustomobject]@{root=$root;snapshotId=$pending[0].Name.Substring('itl-workflow-update-rollback-'.Length);sourceCommit=[string]$receipt.sourceCommit}
+    }
+}
+
+function Get-DeliveryPinnedMasterUpdate {
+    # A master update stopped after its file copy stays pinned to its recorded
+    # candidate, which can itself be the defect. The update owner continues it
+    # through this candidate's exact helper only with the recorded scope; this
+    # candidate's scope is rejected until the pinned package completes.
+    param([object]$Preparation)
+    $pending = @(Get-ChildItem -LiteralPath (Join-Path $Preparation.projectRoot '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue)
+    # Ambiguous or receipt-less snapshots stay with the update owner's guards.
+    if ($pending.Count -ne 1) { return }
+    $receiptPath = Join-Path $pending[0].FullName 'transaction.json'
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) { return }
+    $receipt = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    # Copy/prepared/rollback phases restart or restore through their own owner.
+    $scope = if ($receipt.PSObject.Properties['rolloutScope']) { $receipt.rolloutScope } else { $null }
+    if ([string]$receipt.phase -notin @('copy-complete', 'post-copy-running', 'post-copy-failed', 'master-commit-ready', 'master-committed') -or
+        $null -eq $scope -or [string]$receipt.sourceCommit -ceq [string]$Preparation.sourceCommit) { return }
+    [pscustomobject]@{snapshotId=$pending[0].Name.Substring('itl-workflow-update-rollback-'.Length);snapshotRoot=$pending[0].FullName;sourceCommit=[string]$receipt.sourceCommit;rolloutScope=$scope}
+}
+
+function Get-DeliveryStandArtifactEnvironment {
+    # The gate's own read-only discovery (candidate lock, SHA-addressed shared
+    # cache, installed caches) selects the bytes; the installer re-verifies them
+    # against the stand's new pin. No download, build or recursive scan here.
+    param([string]$CandidateRoot)
+    $environment = @{}
+    $discovery = Join-Path $CandidateRoot 'scripts/source-e2e-artifact-discovery.ps1'
+    if (-not (Test-Path -LiteralPath $discovery -PathType Leaf)) { return $environment }
+    $search = @(Get-Variable Root -Scope Script -ValueOnly -ErrorAction SilentlyContinue | Where-Object { $_ })
+    $missing = [ref]''
+    $binding = & { param($module, $root, $searchRoot, $missingInput)
+        . $module
+        Find-SourceE2EArtifactBinding -RepositoryRoot $root -SearchRoot $searchRoot -MissingInput $missingInput
+    } $discovery $CandidateRoot $search $missing
+    if ($null -eq $binding) {
+        if ($missing.Value) { Write-Warning "DELIVERY_STAND_ARTIFACT_BINDING_INCOMPLETE: no exact local '$($missing.Value)'; the stand update resolves the pinned release assets itself." }
+        return $environment
+    }
+    foreach ($property in @($binding.paths.PSObject.Properties)) { $environment[$property.Name] = [string]$property.Value }
+    return $environment
+}
+
+function Invoke-DeliveryStandOwner {
+    param([string]$CandidateRoot, [string]$Name, [string[]]$Arguments, [int]$BudgetSeconds, [Collections.IDictionary]$EnvironmentOverrides = $null,
+        # Decides from owner state and logs whether a non-zero exit is a documented
+        # continuation the caller completes; anything else stays a failure.
+        [scriptblock]$AcceptExit = $null)
+    $logs = Join-Path $CandidateRoot 'build/test-results/delivery'
+    [void][IO.Directory]::CreateDirectory($logs)
+    $stdout = Join-Path $logs ($Name + '.stdout.log'); $stderr = Join-Path $logs ($Name + '.stderr.log')
+    $quoted = @(@('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass') + $Arguments | ForEach-Object { ConvertTo-DeliveryNativeArgument -Value ([string]$_) })
+    $process = $null; $job = [IntPtr]::Zero; $priorError = ''
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        $started = Start-DeliveryProcess -ArgumentList ($quoted -join ' ') -WorkingDirectory $CandidateRoot -StandardOutputPath $stdout -StandardErrorPath $stderr -EnvironmentOverrides $EnvironmentOverrides
+        $process = $started.process; $job = [IntPtr]$started.jobHandle
+        while (-not $process.WaitForExit(5000)) {
+            if ($watch.Elapsed.TotalSeconds -ge $BudgetSeconds) { throw "DELIVERY_STAND_PREPARATION_TIMEOUT: $Name; resume the same PublishDevelop after inspecting owner logs $stdout and $stderr; receipts and capsules were preserved." }
+        }
+        $process.WaitForExit(); $process.Refresh()
+        $continued = ''
+        if ([int]$process.ExitCode -ne 0) {
+            if ($null -ne $AcceptExit) { $continued = [string](& $AcceptExit $stdout $stderr) }
+            if (-not $continued) { throw "DELIVERY_STAND_PREPARATION_FAILED: $Name exited $($process.ExitCode); follow its owner continuation in $stdout and $stderr, then repeat the same PublishDevelop." }
+        }
+        $step = [pscustomobject]@{name=$Name;durationMs=[int64]$watch.ElapsedMilliseconds;stdout=$stdout;stderr=$stderr}
+        if ($continued) { $step | Add-Member -NotePropertyName ownerContinuation -NotePropertyValue $continued }
+        return $step
+    } catch { $priorError=$_.Exception.Message; throw } finally {
+        try { Close-DeliveryProcessJob -JobHandle $job -Process $process -PriorErrorMessage $priorError }
+        finally { Stop-DeliveryProcessTree -Process $process }
+    }
+}
+
+function Start-DeliveryStandPrewarm {
+    # Pester needs no stand. While the stand owners run, the gate's own shard
+    # runner warms the shared shard cache with the same candidate and fork.
+    # Develop reuses only exact passed shards through its normal digest checks;
+    # this warmup never decides a gate. Worker count does not enter the digest.
+    param([string]$CandidateRoot)
+    $runner = Join-Path $CandidateRoot 'scripts/invoke-pester-shards.ps1'
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { return $null }
+    try {
+        $output = Join-Path $CandidateRoot 'build/test-results/delivery/stand-prewarm'
+        [void][IO.Directory]::CreateDirectory($output)
+        $workers = 3
+        $catalogPath = Join-Path $CandidateRoot 'tests/quality-contracts.json'
+        if (Test-Path -LiteralPath $catalogPath -PathType Leaf) {
+            $catalog = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($catalog.PSObject.Properties['pesterWorkers'] -and $catalog.pesterWorkers.PSObject.Properties['qualificationImplicitDefault']) { $workers = [int]$catalog.pesterWorkers.qualificationImplicitDefault }
+        }
+        $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$runner,'-RepositoryRoot',$CandidateRoot,'-OutputRoot',$output,'-JunitPath',(Join-Path $output 'pester.xml'),'-WorkerCount',[string]$workers,'-RequestedWorkerCount','3','-WorkerCountDefaulted')
+        $rules = Get-Variable AiRulesSource -ValueOnly -ErrorAction SilentlyContinue
+        if ($rules) { $arguments += @('-AiRulesSource',[IO.Path]::GetFullPath([string]$rules)) }
+        $stdout = Join-Path $output 'stand-prewarm.stdout.log'; $stderr = Join-Path $output 'stand-prewarm.stderr.log'
+        $started = Start-DeliveryProcess -ArgumentList (@($arguments | ForEach-Object { ConvertTo-DeliveryNativeArgument -Value ([string]$_) }) -join ' ') -WorkingDirectory $CandidateRoot -StandardOutputPath $stdout -StandardErrorPath $stderr
+        return [pscustomobject]@{process=$started.process;jobHandle=[IntPtr]$started.jobHandle;watch=[Diagnostics.Stopwatch]::StartNew();stdout=$stdout;stderr=$stderr}
+    } catch {
+        Write-Warning "Stand preparation continues without Pester prewarm: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Stop-DeliveryStandPrewarm {
+    # Preparation ends the warmup so Develop scenarios start on time; shards it
+    # finished are already in the cache, unfinished ones run in the gate.
+    param([object]$Prewarm)
+    if ($null -eq $Prewarm) { return $null }
+    $process = $Prewarm.process
+    $completed = $process.HasExited
+    $stopError = ''
+    try {
+        try {
+            if (-not $completed) {
+                if ($Prewarm.jobHandle -ne [IntPtr]::Zero -and $env:OS -eq 'Windows_NT') { [void](Stop-DeliveryProcessJobAndWait -JobHandle $Prewarm.jobHandle -Process $process -TimeoutMilliseconds 30000) }
+                else { Stop-DeliveryProcessTree -Process $process }
+            }
+        } finally {
+            try { Close-DeliveryProcessJob -JobHandle $Prewarm.jobHandle -Process $process }
+            finally { Stop-DeliveryProcessTree -Process $process }
+        }
+    } catch {
+        # A warmup never decides preparation; its tree was stopped best-effort.
+        $stopError = $_.Exception.Message
+        Write-Warning "Stand prewarm stop: $stopError"
+    }
+    return [pscustomobject]@{name='stand-prewarm';durationMs=[int64]$Prewarm.watch.ElapsedMilliseconds;completed=[bool]$completed;stopError=$stopError;stdout=$Prewarm.stdout;stderr=$Prewarm.stderr}
+}
+
+function Invoke-DeliveryStandPreparation {
+    param([string]$CandidateRoot, [object]$Preparation, [object]$Attempt, [switch]$RequireRelease)
+    if ($null -eq $Preparation) { return }
+    $prewarm = Start-DeliveryStandPrewarm -CandidateRoot $CandidateRoot
+    try { Invoke-DeliveryStandPreparationOwners -CandidateRoot $CandidateRoot -Preparation $Preparation -Attempt $Attempt -RequireRelease:$RequireRelease }
+    finally {
+        $warm = Stop-DeliveryStandPrewarm -Prewarm $prewarm
+        if ($warm -and $Attempt.PSObject.Properties['standPreparation']) {
+            $Attempt.standPreparation | Add-Member -NotePropertyName prewarm -NotePropertyValue $warm -Force
+            Write-DevelopPublicationAttempt -Attempt $Attempt
+        }
+    }
+}
+
+function Invoke-DeliveryStandPreparationOwners {
+    param([string]$CandidateRoot, [object]$Preparation, [object]$Attempt, [switch]$RequireRelease)
+    $prior = if ($Attempt.PSObject.Properties['standPreparation']) { $Attempt.standPreparation } else { $null }
+    # The original capsule identities and scope survive partial preparation.
+    $identity = [ordered]@{projectRoot=$Preparation.projectRoot;sourceCommit=$Preparation.sourceCommit;roots=@($Preparation.roots);capsules=@($Preparation.capsules | Select-Object phase,path,sha256,root)}
+    if ($prior -and (Get-DeliveryCanonicalJsonSha256 -Value $prior.identity) -cne (Get-DeliveryCanonicalJsonSha256 -Value $identity)) {
+        throw 'DELIVERY_STAND_PREPARATION_CHANGED: restore the original selected roots and capsule SHA before resuming the unplanned checkpoint.'
+    }
+    $record = [pscustomobject]@{identity=$identity;status='running';steps=@();startedAt=[DateTime]::UtcNow.ToString('o')}
+    $Attempt | Add-Member -NotePropertyName standPreparation -NotePropertyValue $record -Force
+    Write-DevelopPublicationAttempt -Attempt $Attempt
+    if ($RequireRelease) { Invoke-DeliveryReleaseStandRecovery -CandidateRoot $CandidateRoot }
+    foreach ($stale in @(Get-DeliveryStaleBranchUpdates -CandidateRoot $CandidateRoot -Preparation $Preparation)) {
+        $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name ('stand-workflow-abandon-'+$stale.snapshotId) -BudgetSeconds 900 -Arguments @('-File',(Join-Path $CandidateRoot 'scripts/update-installed-workflow.ps1'),'-ProjectRoot',$stale.root,'-SourceRoot',$CandidateRoot,'-Recovery','abandon','-SnapshotId',$stale.snapshotId)
+        Write-DevelopPublicationAttempt -Attempt $Attempt
+    }
+    if ($Preparation.requiresWorkflowUpdate) {
+        $pinned = Get-DeliveryPinnedMasterUpdate -Preparation $Preparation
+        if ($null -ne $pinned) {
+            # The owner finishes the recorded package with this candidate's exact
+            # helper, so a defect in the recorded helper is not executed again,
+            # then requests the new candidate. The recorded candidate checkout
+            # stays retained by cleanup while the receipt names it; it uses its
+            # own pinned dependencies, not this candidate's unpublished bytes.
+            $continueScope = Join-Path $CandidateRoot 'build/test-results/delivery/stand-continue-roots.json'
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $continueScope))
+            [IO.File]::WriteAllText($continueScope, ($pinned.rolloutScope | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+            $snapshotRoot = $pinned.snapshotRoot
+            $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name ('stand-workflow-continue-'+$pinned.snapshotId) -BudgetSeconds 3600 `
+                -Arguments @('-File',(Join-Path $CandidateRoot 'scripts/update-installed-workflow.ps1'),'-ProjectRoot',$Preparation.projectRoot,'-SourceRoot',$CandidateRoot,'-WorkflowUpdateBranchRootsFile',$continueScope) `
+                -AcceptExit {
+                    param($Stdout, $Stderr)
+                    $text = @($Stdout, $Stderr | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | ForEach-Object { [IO.File]::ReadAllText($_, [Text.Encoding]::UTF8) }) -join "`n"
+                    if (-not (Test-Path -LiteralPath $snapshotRoot) -and $text -match 'WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING') { 'WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING' }
+                }.GetNewClosure()
+            Write-DevelopPublicationAttempt -Attempt $Attempt
+        }
+        # Capture rejects an out-of-transaction write to a managed path only after
+        # the update, when the new receipt has already recorded it as before-state.
+        # The same read-only proof runs first, while the write can still be returned.
+        # A pending transaction stays with the update owner's own state checks.
+        $pending = @(@($Preparation.projectRoot) + @($Preparation.roots) | Where-Object {
+            @(Get-ChildItem -LiteralPath (Join-Path $_ '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue).Count })
+        if (-not $pending.Count) {
+            foreach ($capsule in $Preparation.capsules) {
+                $chainReport = Join-Path $CandidateRoot ('build/test-results/delivery/stand-chain-preflight-'+$capsule.phase+'.json')
+                $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name ('stand-chain-preflight-'+$capsule.phase) -BudgetSeconds 900 -Arguments @('-File',(Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1'),'-Action','Verify','-ProjectRoot',$Preparation.projectRoot,'-Phase',$capsule.phase,'-OutputPath',$chainReport)
+                Write-DevelopPublicationAttempt -Attempt $Attempt
+            }
+        }
+        $scopePath = Join-Path $CandidateRoot 'build/test-results/delivery/stand-update-roots.json'
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $scopePath))
+        [IO.File]::WriteAllText($scopePath, ([ordered]@{schemaVersion=1;projectRoot=$Preparation.projectRoot;sourceCommit=$Preparation.sourceCommit;roots=@($Preparation.roots)} | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        # The candidate may pin a fork release that is published only after
+        # Develop; the stand installs it from the exact checkout the plan resolved.
+        # Owned assets (Vanessa ZIP, client MCP CFE, on-demand exe) are likewise
+        # published only after Develop; the stand takes the exact locked bytes
+        # the gate binds, not a release URL that does not exist yet.
+        $environment = Get-DeliveryStandArtifactEnvironment -CandidateRoot $CandidateRoot
+        $rules = Get-Variable AiRulesSource -ValueOnly -ErrorAction SilentlyContinue
+        if ($rules) { $environment['ITL_AI_RULES_SOURCE_PATH'] = [IO.Path]::GetFullPath([string]$rules) }
+        if (-not $environment.Count) { $environment = $null }
+        $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name 'stand-workflow-update' -BudgetSeconds 3600 -EnvironmentOverrides $environment -Arguments @('-File',(Join-Path $CandidateRoot 'scripts/update-installed-workflow.ps1'),'-ProjectRoot',$Preparation.projectRoot,'-SourceRoot',$CandidateRoot,'-WorkflowUpdateBranchRootsFile',$scopePath)
+        Write-DevelopPublicationAttempt -Attempt $Attempt
+    }
+    foreach ($capsule in $Preparation.capsules) {
+        # Capture owns full chain/backup, environment, business bytes and original
+        # DB SHA validation. Admission cannot bless an arbitrary stand change.
+        $captureReport = Join-Path $CandidateRoot ('build/test-results/delivery/stand-capture-'+$capsule.phase+'.json')
+        $arguments = @('-File',(Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1'),'-Action','Capture','-ProjectRoot',$Preparation.projectRoot,'-Phase',$capsule.phase,'-OutputPath',$captureReport)
+        if ($Preparation.requiresWorkflowUpdate -or $capsule.needsAdmission) { $arguments += '-AcknowledgeWorkflowUpdate' }
+        $client = Get-Variable AgentTarget -ValueOnly -ErrorAction SilentlyContinue
+        if ($client) { $arguments += @('-AgentTarget',[string]$client) }
+        $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name ('stand-capture-'+$capsule.phase) -BudgetSeconds 900 -Arguments $arguments
+        if ((Get-FileHash -LiteralPath $capsule.path -Algorithm SHA256).Hash -ine $capsule.sha256) { throw 'FIXTURE_CAPSULE_SHA_MISMATCH: preparation must preserve the original baseline.' }
+        Write-DevelopPublicationAttempt -Attempt $Attempt
+    }
+    $record.status='passed'
+    $record | Add-Member -NotePropertyName durationMs -NotePropertyValue ([int64]([DateTime]::UtcNow - [DateTime]::Parse($record.startedAt).ToUniversalTime()).TotalMilliseconds)
+    Write-DevelopPublicationAttempt -Attempt $Attempt
+}
+
+function Invoke-DeliveryReleaseStandRecovery {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot)
+
+    if ($script:DeliveryCustomGateBoundary) { return }
+    $runner = Join-Path $CandidateRoot 'scripts\invoke-release-e2e.ps1'
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { return }
+    $tokens = $null; $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($runner, [ref]$tokens, [ref]$parseErrors)
+    if (@($parseErrors).Count -gt 0) { throw "Release recovery runner has parse errors: $runner" }
+    # A published master supervisor can qualify an older candidate. Preserve its
+    # ordinary readiness path when that candidate predates this internal mode.
+    if (-not $ast.ParamBlock -or @($ast.ParamBlock.Parameters | Where-Object {
+        $_.Name.VariablePath.UserPath -ceq 'RecoverInterruptedExtensionOnly'
+    }).Count -eq 0) { return }
+    if (-not $E2EProjectRoot -or -not $AiRulesSource) {
+        throw 'Release recovery requires the configured E2E project and exact controlled-fork checkout.'
+    }
+
+    $logRoot = Join-Path $CandidateRoot 'build\test-results\delivery'
+    [void][IO.Directory]::CreateDirectory($logRoot)
+    $stdout = Join-Path $logRoot 'release-stand-recovery.stdout.log'
+    $stderr = Join-Path $logRoot 'release-stand-recovery.stderr.log'
+    $arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner,
+        '-ProjectRoot', ([IO.Path]::GetFullPath($E2EProjectRoot)),
+        '-AiRulesSource', ([IO.Path]::GetFullPath($AiRulesSource)),
+        '-ResumeMode', $ReleaseResumeMode, '-RecoverInterruptedExtensionOnly')
+    $clientParameter = Get-Variable -Name AgentTarget -ErrorAction SilentlyContinue
+    if ($clientParameter -and -not [string]::IsNullOrWhiteSpace([string]$clientParameter.Value)) {
+        $arguments += @('-AgentTarget', [string]$clientParameter.Value)
+    }
+    $quoted = @($arguments | ForEach-Object { ConvertTo-DeliveryNativeArgument -Value ([string]$_) })
+    $process = $null; $job = [IntPtr]::Zero; $priorError = ''
+    try {
+        $started = Start-DeliveryProcess -ArgumentList ($quoted -join ' ') -WorkingDirectory $CandidateRoot -StandardOutputPath $stdout -StandardErrorPath $stderr
+        $process = $started.process; $job = [IntPtr]$started.jobHandle
+        # The existing guarded restore owns 7200 seconds; allow its cleanup and
+        # process finalization without inheriting an expired capability deadline.
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        while (-not $process.WaitForExit(5000)) {
+            if ($watch.Elapsed.TotalSeconds -ge 7800) {
+                if ($job -ne [IntPtr]::Zero -and $env:OS -eq 'Windows_NT') {
+                    [void](Stop-DeliveryProcessJobAndWait -JobHandle $job -Process $process)
+                } else { Stop-DeliveryProcessTree -Process $process }
+                throw "Release stand recovery exceeded its bounded restore allowance. See $stdout and $stderr"
+            }
+        }
+        $process.WaitForExit(); $process.Refresh()
+        if ([int]$process.ExitCode -ne 0) {
+            throw "Release stand recovery failed with exit code $($process.ExitCode). See $stdout and $stderr"
+        }
+        # Exit zero completes only this recovery subphase, never a passed gate.
+    } catch { $priorError = $_.Exception.Message; throw } finally {
+        $closeError = $null
+        try { Close-DeliveryProcessJob -JobHandle $job -Process $process -PriorErrorMessage $priorError } catch { $closeError = $_ }
+        Stop-DeliveryProcessTree -Process $process
+        if ($closeError) { throw $closeError }
+    }
+}
+
+# One gate stand per clone and fixture (openspec/changes/minimal-gate-stand).
+# Its path is derived, not stored; the builder's marker proves completion.
+function Get-DeliveryGateStandRoot {
+    param([Parameter(Mandatory = $true)][string]$CommonGitDirectory, [Parameter(Mandatory = $true)][string]$FixtureId)
+    $common = [IO.Path]::GetFullPath($CommonGitDirectory).TrimEnd('\', '/')
+    $hash = [Security.Cryptography.SHA256]::Create()
+    # A different preparation recipe needs a fresh published baseline. Keep
+    # old stands/capsules intact instead of reusing incompatible environments.
+    $recipe = @('new-gate-stand.ps1','source-e2e-workflow-update.ps1' | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $_) -Algorithm SHA256).Hash }) -join ':'
+    try { $clone = ([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($common.ToLowerInvariant()+':'+$recipe)))).Replace('-', '').Substring(0, 8).ToLowerInvariant() }
+    finally { $hash.Dispose() }
+    $parent = if ($env:ITL_GATE_STANDS_ROOT) { [IO.Path]::GetFullPath($env:ITL_GATE_STANDS_ROOT) } else { Join-Path ([IO.Path]::GetPathRoot($common)) 'g' }
+    # Keep the positive root (including '-positive') within bootstrap's 35
+    # characters, retaining whitespace/Cyrillic and per-clone/fixture identity.
+    $word = [string][char]0x0441
+    return Join-Path $parent ("$clone $word " + $FixtureId.Substring(0, 8))
+}
+
+# The derived root encodes this clone, but a stand cannot name its clone back.
+# The owner record lets cleanup remove only this clone's superseded stands.
+function Get-DeliveryGateStandOwner {
+    param([Parameter(Mandatory = $true)][string]$StandRoot)
+    $path = Join-Path $StandRoot '.git/itl/gate-stand-owner.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return '' }
+    try { $owner = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) | ConvertFrom-Json } catch { return '' }
+    if ([int]$owner.schemaVersion -ne 1 -or [string]$owner.kind -cne 'itl-gate-stand-owner' -or -not [string]$owner.commonGit) { return '' }
+    return [IO.Path]::GetFullPath([string]$owner.commonGit).TrimEnd('\', '/')
+}
+
+function Set-DeliveryGateStandOwner {
+    param([Parameter(Mandatory = $true)][string]$StandRoot, [Parameter(Mandatory = $true)][string]$CommonGitDirectory)
+    $common = [IO.Path]::GetFullPath($CommonGitDirectory).TrimEnd('\', '/')
+    if ((Get-DeliveryGateStandOwner -StandRoot $StandRoot) -ieq $common) { return }
+    $path = Join-Path $StandRoot '.git/itl/gate-stand-owner.json'
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
+    $record = [ordered]@{ schemaVersion = 1; kind = 'itl-gate-stand-owner'; commonGit = $common }
+    [IO.File]::WriteAllText($path, (($record | ConvertTo-Json) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+}
+
+function Read-DeliveryGateStandMarker {
+    param([string]$StandRoot, [string]$BuilderPath)
+    # The builder's own parameters shadow same-named caller variables.
+    return (& { param($candidateRoot, $builder) . $builder; Read-GateStandMarker -StandRoot $candidateRoot } $StandRoot $BuilderPath)
+}
+
+function Resolve-DeliveryGateStand {
+    param([string]$Requested, [string]$AiRulesSource, [string]$AgentTarget, [int]$BuildTimeoutSeconds = 21600)
+    $builder = Join-Path $PSScriptRoot 'new-gate-stand.ps1'
+    $fixtureId = & { . $builder; Get-GateStandFixtureId -Repository (Split-Path -Parent $PSScriptRoot) }
+    if ($Requested) {
+        $requestedRoot = [IO.Path]::GetFullPath($Requested).TrimEnd('\', '/')
+        $marker = Read-DeliveryGateStandMarker -StandRoot $requestedRoot -BuilderPath $builder
+        if ($null -ne $marker -and [string]$marker.fixtureId -ceq $fixtureId) { return $requestedRoot }
+        Write-Warning "DELIVERY_GATE_STAND_REPLACED: '$requestedRoot' is not a gate stand of the current fixture; this clone's gate stand is used instead. Omit -E2EProjectRoot."
+    }
+    $common = Get-DeliveryCommonGitDirectory
+    $root = Get-DeliveryGateStandRoot -CommonGitDirectory $common -FixtureId $fixtureId
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $root))
+    $lockPath = $root + '.lock'
+    $deadline = [DateTime]::UtcNow.AddSeconds($BuildTimeoutSeconds)
+    $lock = $null
+    while ($null -eq $lock) {
+        try { $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch [IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) { throw "DELIVERY_GATE_STAND_BUSY: '$root' is still being built by another operation; repeat the same command after it finishes." }
+            Start-Sleep -Seconds 5
+        }
+    }
+    try {
+        $marker = Read-DeliveryGateStandMarker -StandRoot $root -BuilderPath $builder
+        if ($null -ne $marker -and [string]$marker.fixtureId -ceq $fixtureId) { Set-DeliveryGateStandOwner -StandRoot $root -CommonGitDirectory $common; return $root }
+        # The builder starts with the positive twin, so either directory
+        # without a completion marker is a failed build.
+        if ((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath ($root + '-positive'))) {
+            throw "DELIVERY_GATE_STAND_INCOMPLETE: '$root' has no completed build; keep it for diagnosis, then remove it with its '-positive' and worktree siblings and repeat the same command."
+        }
+        $logs = Join-Path (Get-DeliveryCommonGitDirectory) ('itl/gate-stand-logs/' + $fixtureId.Substring(0, 8))
+        [void][IO.Directory]::CreateDirectory($logs)
+        $stdout = Join-Path $logs 'build.stdout.log'; $stderr = Join-Path $logs 'build.stderr.log'
+        $arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $builder, '-StandRoot', $root)
+        if ($AiRulesSource) { $arguments += @('-AiRulesSource', $AiRulesSource) }
+        if ($AgentTarget) { $arguments += @('-AgentTarget', $AgentTarget) }
+        Write-Host "Building this clone's gate stand: $root"
+        $job = Start-DeliveryProcess -ArgumentList (@($arguments | ForEach-Object { ConvertTo-DeliveryNativeArgument -Value ([string]$_) }) -join ' ') `
+            -WorkingDirectory (Split-Path -Parent $PSScriptRoot) -StandardOutputPath $stdout -StandardErrorPath $stderr
+        $errorText = ''
+        try {
+            if (-not $job.process.WaitForExit($BuildTimeoutSeconds * 1000)) { throw "DELIVERY_GATE_STAND_BUILD_TIMEOUT: see $stdout" }
+            $job.process.WaitForExit()
+            if ($job.process.ExitCode -ne 0) { throw "DELIVERY_GATE_STAND_BUILD_FAILED: exit=$($job.process.ExitCode); see $stdout and $stderr, keep '$root' for diagnosis, then remove it with its siblings and repeat the same command." }
+        } catch { $errorText = $_.Exception.Message; throw }
+        finally { Close-DeliveryProcessJob -JobHandle $job.jobHandle -Process $job.process -PriorErrorMessage $errorText; $job.process.Dispose() }
+        $marker = Read-DeliveryGateStandMarker -StandRoot $root -BuilderPath $builder
+        if ($null -eq $marker -or [string]$marker.fixtureId -cne $fixtureId) { throw "DELIVERY_GATE_STAND_BUILD_FAILED: '$root' has no completion marker; see $stdout." }
+        Set-DeliveryGateStandOwner -StandRoot $root -CommonGitDirectory $common
+        return $root
+    } finally { $lock.Dispose() }
+}

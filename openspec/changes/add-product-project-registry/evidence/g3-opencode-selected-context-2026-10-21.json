@@ -1,0 +1,557 @@
+{
+  "schemaVersion": 1,
+  "observedUtc": "2026-10-21T15:29:34.002078+00:00",
+  "sourceBase": "ddd8ec0c8b9c1f4fcdba379e43d40000ea5bbaad",
+  "status": "selected-context-and-native-connection-reload-passed-agent-tools-provider-blocked",
+  "native": {
+    "client": "OpenCode Desktop",
+    "version": "1.18.11",
+    "exe": "C:\\Users\\xment\\AppData\\Local\\Programs\\@opencode-aidesktop\\OpenCode.exe",
+    "exeSha256": "1ada75de8559702b55a1f9d6536fb6b9a5ab7edde6caedefcb98221936f7fe0f",
+    "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+    "privateProfile": "C:\\Users\\xment\\AppData\\Local\\Temp\\g3-ui-20261021\\opencode профиль",
+    "samePreviousProfile": true,
+    "backend": "native bundled sidecar",
+    "backendUrl": "http://127.0.0.1:65254",
+    "sessionId": "ses_ea0f36f6affeOe9NFtxAiQShdo",
+    "nativeSessionDirectory": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/registry-source-model-20261021/Контекст клиента PROF",
+    "nativeProjectId": "global",
+    "nativeIdIsNotBusinessAssociation": true,
+    "businessProjectId": "qual-prof",
+    "productId": "qual-pm5prof",
+    "source": "typical PM5 CORP via previous registry/applied context"
+  },
+  "findings": [
+    {
+      "id": "G3-OPENCODE-DESKTOP-SELECTED-CONTEXT",
+      "status": "closed-bounded",
+      "cause": "Add project opens a separate Windows picker in the same main PID. Electron Page capture omits it; completing Select for the exact original root resolves the reproduced stuck qualification.",
+      "ownerFix": "source-only native qualification procedure; no workflow/vendor/server patch",
+      "acceptance": [
+        "exact original root selected in native Home and new session",
+        "same-root opencode.json loaded by backend",
+        "two expected connected native MCP UI entries",
+        "frontend-originated scoped GET /path and /mcp 200 after renderer reload",
+        "fresh 19-path preservation and owned cleanup"
+      ],
+      "notClaimed": [
+        "first long-profile startup cause",
+        "positional/deep-link entry success",
+        "actual Code/Graph agent payloads and tool schema count",
+        "full G3/platform/installed qualification"
+      ]
+    },
+    {
+      "id": "G3-OPENCODE-DESKTOP-PROVIDER-403",
+      "status": "open",
+      "owner": "native model/provider qualification dependency",
+      "provider": "opencode/big-pickle",
+      "statusCode": 403,
+      "retryable": false,
+      "message": "OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building.",
+      "toolCalls": 0,
+      "continuation": "When an authorized provider is available, repeat actual stats({}) and list_graph_projects({}) in the same native Desktop/root. Retain original 403; no credential copying, shell MCP substitution or vendor/server patch."
+    }
+  ],
+  "nativeReload": {
+    "selectedPath": {
+      "method": "GET",
+      "url": "http://127.0.0.1:65254/path",
+      "directory": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/registry-source-model-20261021/Контекст клиента PROF",
+      "requestId": "20548.395",
+      "status": 200,
+      "body": {
+        "home": "C:\\Users\\xment\\AppData\\Local\\Temp\\g3-ui-20261021\\opencode профиль\\home",
+        "state": "C:\\Users\\xment\\AppData\\Local\\Temp\\g3-ui-20261021\\opencode профиль\\state\\opencode",
+        "config": "C:\\Users\\xment\\AppData\\Local\\Temp\\g3-ui-20261021\\opencode профиль\\config\\opencode",
+        "worktree": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+        "directory": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF"
+      }
+    },
+    "selectedMcp": {
+      "method": "GET",
+      "url": "http://127.0.0.1:65254/mcp",
+      "directory": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/registry-source-model-20261021/Контекст клиента PROF",
+      "requestId": "20548.398",
+      "status": 200,
+      "body": {
+        "onec-code-metadata-mcp": {
+          "status": "connected"
+        },
+        "onec-graph-metadata-mcp": {
+          "status": "connected"
+        }
+      }
+    },
+    "observedFrontendRequestsOnly": true,
+    "externalDirectMcpSubstitution": false,
+    "firstObserverFailure": "undefined.endsWith on a no-url empty-body warning; observer corrected and original renderer reload repeated",
+    "emptyOptionsBodyWarningsRetained": 3
+  },
+  "agentCanary": {
+    "userTurns": 1,
+    "providerStreamAttempts": 2,
+    "streams": [
+      "timestamp=2026-10-21T15:20:21.591Z level=INFO run=d70437a7 message=stream providerID=opencode modelID=big-pickle session.id=ses_ea0f36f6affeOe9NFtxAiQShdo small=true agent=title mode=primary",
+      "timestamp=2026-10-21T15:20:23.333Z level=INFO run=d70437a7 message=stream providerID=opencode modelID=big-pickle session.id=ses_ea0f36f6affeOe9NFtxAiQShdo small=false agent=build mode=primary"
+    ],
+    "automaticTitleAttempts": 1,
+    "primaryBuildAttempts": 1,
+    "toolCalls": 0,
+    "sessionProjection": {
+      "session": {
+        "id": "ses_ea0f36f6affeOe9NFtxAiQShdo",
+        "project_id": "global",
+        "directory": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/registry-source-model-20261021/Контекст клиента PROF",
+        "title": "New session - 2026-10-21T15:20:21.397Z",
+        "version": "local",
+        "cost": 0.0,
+        "tokens_input": 0,
+        "tokens_output": 0,
+        "tokens_reasoning": 0,
+        "tokens_cache_read": 0,
+        "tokens_cache_write": 0
+      },
+      "messages": [
+        {
+          "id": "msg_15f0c910b001gqf5P631xzIYuO",
+          "role": "user",
+          "error": null
+        },
+        {
+          "id": "msg_15f0c9153001JsmLMrkrY3g7gL",
+          "role": "assistant",
+          "modelID": "big-pickle",
+          "providerID": "opencode",
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "error": {
+            "name": "APIError",
+            "message": "OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building.",
+            "statusCode": 403,
+            "isRetryable": false
+          }
+        }
+      ],
+      "partTypes": [
+        "text"
+      ],
+      "toolCalls": []
+    },
+    "toolSchemaCount": "not qualified",
+    "successfulPayloadReads": 0,
+    "providerOrCredentialChanges": false
+  },
+  "preservation": {
+    "freshBeforeUtc": "2026-10-21T15:14:32.385612+00:00",
+    "freshAfterUtc": "2026-10-21T15:24:06.989786+00:00",
+    "uniquePathCount": 19,
+    "allClientConfigCount": 12,
+    "changed": [],
+    "comparison": "exists+SHA256+bytes+actual mtimeNs",
+    "exeShaUnchanged": true,
+    "previousRawJsonSha256": "656f08591d400e56c10177a60697ad84b9fc94801a72700ed089e2c5172efe6a",
+    "previousFailuresAndProfilesPreserved": true,
+    "ownedProcesses": 7,
+    "remainingProcesses": []
+  },
+  "costs": {
+    "newUserTurns": 1,
+    "newProviderStreamAttempts": 2,
+    "toolCalls": 0,
+    "nativeUsageCounters": {
+      "cost": 0.0,
+      "tokens_input": 0,
+      "tokens_output": 0,
+      "tokens_reasoning": 0,
+      "tokens_cache_read": 0,
+      "tokens_cache_write": 0
+    },
+    "counterLimit": "Zero counters after rejection do not prove zero submitted context, billing or G3 delta. No paired context/initial activation latency measurement.",
+    "newWorkflowAlwaysOnRules": 0,
+    "newWorkflowToolSchemas": 0,
+    "newStartupProbes": 0,
+    "memoryCalls": 0,
+    "clientUpgradeInstalled": false,
+    "updater": "previous pending cache reused, not installed"
+  },
+  "unchangedBoundaries": [
+    "Gate 6 not run or repaired",
+    "G4 not begun",
+    "working project migration not begun",
+    "workflow publication not begun",
+    "Code/Graph registry model unchanged",
+    "no server patch/deployment/reindex",
+    "six memory scopes/canonical home/ai_rules_1c unchanged",
+    "Cursor auth/full G3/AC-39/AC-36-38 and memory AC-43/G5/44 remain open"
+  ],
+  "rawRefs": [
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/add-project-click.png",
+      "sha256": "b6c61628348e0e5c07704dae375eb028e2c6f047407f9ff84405c1735f48ec69",
+      "bytes": 55423
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/after-picker-dom.json",
+      "sha256": "a52cee90635489626506129d481e8f1d9f62e45e08c613a330edc0d3f0edb78c",
+      "bytes": 2611
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/browser-close.json",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/build-report.py",
+      "sha256": "106249315e7ac19bdf2a32bbf944139ddaf6cd19a0e034b67533b80af37a8817",
+      "bytes": 6665
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/button-click-request.json",
+      "sha256": "51d650bcf256e024b206aa17058ca8ff23f72e7ce66f3d41c785af6ab723e868",
+      "bytes": 142
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/button-click.json",
+      "sha256": "1df79ca24cea2da90d06bbea9237391e0a4e1da5df4ec4b28de164573d7182e9",
+      "bytes": 408
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/button-inspect-request.json",
+      "sha256": "90fd246be7b8bdd0c16662a21f93358d8215548bbac055e0bfed58bccccbdca1",
+      "bytes": 361
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/button-inspect.json",
+      "sha256": "9d8067e31cd7da3aa63a0a82ca8d0a51c214105f8471f12b841a75d1da457fa2",
+      "bytes": 947
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/canary-before-send.json",
+      "sha256": "e238b84ee8ebf8958ed6e70e36ddd6194734e35e350b6dd3b36ebf914a6c52db",
+      "bytes": 2558
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/canary-fill-request.json",
+      "sha256": "e7f7ab17e0943c88e40d5cb9a95581a5c2afe83af05908d1c8e1d4d6e473aca1",
+      "bytes": 1287
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/canary-fill.json",
+      "sha256": "23d266741e0104ec63ae4d186bee1e890a7d2c5401014e3c1a5f9811f2407141",
+      "bytes": 179
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/canary-first-state.json",
+      "sha256": "82cf4c7ca4cb2878f213f633ed85ae9160383398e9d82636b6c016b3852e9906",
+      "bytes": 2852
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/canary-prompt.txt",
+      "sha256": "3d65fe4a5554a6f6207ece7ce34820fbe9bf15ca0e02f0f35c15dec8c3295f50",
+      "bytes": 529
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/canary-send-request.json",
+      "sha256": "dc28427b49471ac1d810a68d48ff25e7174411e5b8849d416c1621fdacca6837",
+      "bytes": 155
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/canary-send.json",
+      "sha256": "f407dfb95bc01030bf0eafffa698ef8156e7ed42d68de54b331e467905a3a388",
+      "bytes": 415
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/cdp.cjs",
+      "sha256": "7e2340c40445cf40a6b1e140efad132992c2e4e0364c0750c2c7c5bf6342d7e6",
+      "bytes": 3129
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/detail-request.json",
+      "sha256": "6e94da2185bbf52dfcd536e312ff23204f0543ab4a85f92f9182a7e7c265d483",
+      "bytes": 459
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/initial-dom.json",
+      "sha256": "49c7c2dc99e4306f86cb527c61cde9a41c88d7ae9b9f09fc191d565ce6a8557e",
+      "bytes": 2121
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/mcp-detail-request.json",
+      "sha256": "7f6c3fa45d022bf09f24ac7e75aa1fca017b619e0c7b635789172499714991a3",
+      "bytes": 470
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/mcp-palette-dom.json",
+      "sha256": "093108b712a05fc3f561e8e3bd8abee958229964541c8846ec04f38aedb35d6c",
+      "bytes": 2933
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/mcp-palette-request.json",
+      "sha256": "9385a75eae05406d7a6d279281af40508828c5ffa11b39f9f6b964672efa2a6e",
+      "bytes": 375
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/mcp-palette.json",
+      "sha256": "fd364720978ff9ae59fd8506a8bc209f3ab2d42888b30be16bb8256ecb731c30",
+      "bytes": 153
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/mcp-shortcut-request.json",
+      "sha256": "2c8b9468936d9e551583772ea35a7a9c710f494fdd52d294c54ffe1d58bcf9bb",
+      "bytes": 622
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/mcp-shortcut.json",
+      "sha256": "91dfe3aa42f0974690d835cf2c3ae9f5ed8fe19525e3d7ae46e4dbfde463b7fc",
+      "bytes": 156
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/mcp-status-dom.json",
+      "sha256": "ea353dc4cf80e7388ab6c146f39cc46f6a5d5fddd192a88d3a4437852c6f1407",
+      "bytes": 1944
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/native-backend-run.log",
+      "sha256": "7268c1671fddd9b582444a94c50e869be18ea77415164e57307f526bdf8191d1",
+      "bytes": 11548
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/native-main.log",
+      "sha256": "9b5a2ae8137effd97146c087cba56e3c1f11798c6e719485a114a53419f8d24c",
+      "bytes": 2155
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/native-mcp-status.json",
+      "sha256": "cc4f70cc5d06fa3bfe11c993feaf54084a9d7b8aa015f2e4edf536bc10617442",
+      "bytes": 1886
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/native-picker-controls.json",
+      "sha256": "bc0626f53bb922914df284ccc35d51beaa8589f634cf20063f61fd42d1cd2cff",
+      "bytes": 9148
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/native-picker-selection.json",
+      "sha256": "1d1a083debf15612d50306586ef83b714c7840d7cfa3601bec31fe81f56312ba",
+      "bytes": 331
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/native-picker-window.json",
+      "sha256": "c8ca31eea0697191073b0123d4d864caadee230c7255f3f5344717bdd5b94451",
+      "bytes": 717
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/native-session-projection.json",
+      "sha256": "8f039110b72e2db4d4774358a48729da407eaf1fba860abf56351f002855d050",
+      "bytes": 1302
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/new-session-request.json",
+      "sha256": "676fc55054feae50ce26d7b0730ca3229811871b16131430c74bacd0243b69ea",
+      "bytes": 136
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/new-session.json",
+      "sha256": "92b00a2f391ecb2675da16c7c0afd26c03fbe159711d13ad9541fcf148e6bf40",
+      "bytes": 224
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/observer-first-error.txt",
+      "sha256": "3409d59d58f058b0c4c9cb7485575df24c86f570eaa649c11a47cba09c2733e3",
+      "bytes": 400
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/opencode-launch.json",
+      "sha256": "0c560c542b4a747b6623b59004e2383b39e9151bc34b323db3e943061ad5eba1",
+      "bytes": 1087
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/owned-after-close.json",
+      "sha256": "4574d1dad45ee376ecfada21c4041cd8711f08795027307f0caf9d2e677a1e34",
+      "bytes": 95
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/owned-before-close.json",
+      "sha256": "9d6c754d5000bb99bdcc28c38b75402cfdfd58748bf8119a806714c0f8cf7470",
+      "bytes": 670
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/post-reload-mcp-and-provider.png",
+      "sha256": "932062fc9a3023f416087e8cfd8719200ca409f68a1867a5b7f11f42b9e9eab6",
+      "bytes": 157961
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/post-reload-screenshot-request.json",
+      "sha256": "06812c9248cbf5a81569c9db2ab550954ed55cf3b35d8cbc1e6d6c2aa610c424",
+      "bytes": 369
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/post-reload-status-click.json",
+      "sha256": "b5f7d2d186a7489c4dbdc9ea66d53971d74ed6311a905cb6a2e2b42fca78ba3f",
+      "bytes": 175
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/post-reload-status-request.json",
+      "sha256": "ef4f1be73201d42d1084ea7dfccb073309a1b7ace529a504a666946285469b85",
+      "bytes": 183
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/post-reload-status.json",
+      "sha256": "4e64758e238e1259443ca35e05e313fbb981ad970e3a33a754198cc908f7cd52",
+      "bytes": 1420
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/preservation-after.json",
+      "sha256": "1b8e6559d54b1d22bae0f7755b86b51ff05e84a2c0caa71bb645b89e411546bb",
+      "bytes": 7073
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/preservation-before.json",
+      "sha256": "c36ad20e281aed00006fcc6afbea9d64f46fbf7117bbbc66978b351aed11424b",
+      "bytes": 7039
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/reload-observation.json",
+      "sha256": "593b796946c8ab47154d0e85f0d88336e1ee9302af4579b7fe02114717a184d9",
+      "bytes": 4323
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/reload-observe.cjs",
+      "sha256": "ad0cee3df5f69ade74d083425893b1e5f706ff58148baf598921c26065f3b46a",
+      "bytes": 2873
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/reload-summary.json",
+      "sha256": "7ace6b0c8c95a293631a6dbfeed7f3d94a414552b6323825e72a95556e7a1e49",
+      "bytes": 2014
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/select-native-project.ps1",
+      "sha256": "e4701ca868bd9271c82ee12e033236a0e8213a162e49d158bcdba4941fcea934",
+      "bytes": 1881
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/selected-detail.json",
+      "sha256": "774e816fd3603dfa37b5980c0490595306b8ed09add1b4791a274cc508319778",
+      "bytes": 1867
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/selected-mcp-detail.json",
+      "sha256": "d973818b16e0bfeaa15aec6173823231cb123af866ef16c2b0df7b731df7123c",
+      "bytes": 6849
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/selected-mcp-status.png",
+      "sha256": "78e5a1082b4c54c9543184a0a2d40c06599b1e0b84dd97824a96440b968ce151",
+      "bytes": 75426
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/selected-prof.png",
+      "sha256": "d39a6b2d4ac850db6500fadab0c0eb21a44ed637ce2057b4640efc956795fb57",
+      "bytes": 58916
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/selected-screenshot-request.json",
+      "sha256": "09d178af81f25ade8f6e34a4fc2dd7a6b762e017bb17e0721cb4bacadd09830a",
+      "bytes": 46
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/selected-session-dom.json",
+      "sha256": "a52cee90635489626506129d481e8f1d9f62e45e08c613a330edc0d3f0edb78c",
+      "bytes": 2611
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/settings-dom.json",
+      "sha256": "648f12f26b0dbd4936542fbd448e5b94568422d902eeff4bd686f17229012cb1",
+      "bytes": 8789
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/settings-open.json",
+      "sha256": "47c84af92748c5a407597cb72fd3b1ada53bb907183df6f2440c157dc2d38d3f",
+      "bytes": 150
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/settings-request.json",
+      "sha256": "fafdae1ac560a3131ca9b469723c4e57dcfe55c89d140cffb4343067f42f30fd",
+      "bytes": 318
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/show-status-inspect-request.json",
+      "sha256": "e74010c5ddc458b73530316ec2d5ac898c4c0e573a2bc8498ee4c35f119da9f9",
+      "bytes": 248
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/show-status-request.json",
+      "sha256": "9858e2c4ce90be7c6214471ed2aff9fe1c546129b63d517fccae3980ceca8bc2",
+      "bytes": 432
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/show-status.json",
+      "sha256": "bde856abb4d43a0168961dbe419393ee3c2a57a3576c97b2067c428e93067f68",
+      "bytes": 182
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/snapshot-request.json",
+      "sha256": "d1ed511b5b3b28d52bbc1bb792d2722788e0cb6f2346ede334f353aec49855bf",
+      "bytes": 446
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/status-click-request.json",
+      "sha256": "c91316e5e98463666b3a0cd43b95428e1405d4e03e4a1fc67570e32295c9f68e",
+      "bytes": 128
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/status-click.json",
+      "sha256": "7bad6bc15794ff50263f12e5845a806bd6fda305b7f5b28a29d5adc7e659ff5d",
+      "bytes": 214
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/status-dom-click-request.json",
+      "sha256": "ef4f1be73201d42d1084ea7dfccb073309a1b7ace529a504a666946285469b85",
+      "bytes": 183
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/status-dom-click.json",
+      "sha256": "f407dfb95bc01030bf0eafffa698ef8156e7ed42d68de54b331e467905a3a388",
+      "bytes": 415
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/status-enabled-dom.json",
+      "sha256": "942a3cc7727130566084755b47e413cbe04e2cb6526716342ce680b1cad954ab",
+      "bytes": 2033
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/status-inspect-request.json",
+      "sha256": "dd9098c6121e53a826be642e9c2b48fd84ba10782bd668d220ce5d155cd9667d",
+      "bytes": 213
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/status-popover-dom.json",
+      "sha256": "e6239a22f0d46c57fa3ec5f28c1dd8f9bca4c4a4f80de65934f57b5406ab2b8e",
+      "bytes": 2761
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/stderr.log",
+      "sha256": "03777757c378c551984001eaccd15d15f5f49af98420386bae4326edccac5dcd",
+      "bytes": 301
+    },
+    {
+      "path": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/opencode-selected-context-repair-20261021/stdout.log",
+      "sha256": "d3ce6fe8f17e6f19e12cf6ceac51896a595d6ae3d8908c52811597285cd35c33",
+      "bytes": 2543
+    }
+  ],
+  "delivery": {
+    "required": "one local commit then RegisterChange -QueueId product-project-registry-g2 -CoverageContract documentation",
+    "outcomeOwner": "common Git source-delivery ledger; no publication"
+  }
+}

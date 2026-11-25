@@ -3,8 +3,10 @@ param(
     [ValidateSet("Full", "Develop", "Release")]
     [string]$Mode = "Full",
     [string]$RepositoryRoot = "",
+    [string]$BaseRef = "",
     [string]$AiRulesSource = "",
     [string]$E2EProjectRoot = "",
+    [string]$AgentTarget = "",
     [string]$OutputPath = "",
     [ValidateSet("Auto", "Restart")]
     [string]$ResumeMode = "Auto",
@@ -14,12 +16,22 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+# Callers capture redirected stdout/stderr and decode it as UTF-8; localized
+# exception text (for example a download 404) must not leave in the OEM code page.
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
 
 if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
 $RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
+. (Join-Path $PSScriptRoot 'stand-env-identity.ps1')
+. (Join-Path $PSScriptRoot 'release-e2e/workflow-transition.ps1')
+. (Join-Path $PSScriptRoot 'release-e2e/admission.ps1')
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
+. (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.package-content.ps1")
+. (Join-Path $PSScriptRoot "vanessa-source-build-archive.ps1")
 if (-not $OutputPath) { $OutputPath = Join-Path $RepositoryRoot "build\test-results\local\release-context.json" }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 $startedAt = [DateTime]::UtcNow
@@ -141,6 +153,7 @@ function Get-ManagedPackageInventory {
         if (-not (Test-Path -LiteralPath $fullRoot -PathType Container)) { continue }
         foreach ($file in @(Get-ChildItem -LiteralPath $fullRoot -Recurse -File | Sort-Object FullName)) {
             $relative = $file.FullName.Substring($Root.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
+            if (-not (Test-WorkflowPackageContentPath -RelativePath $relative)) { continue }
             $entries.Add([ordered]@{ path = $relative; sha256 = Get-ManagedTextOrBinarySha256 -Path $file.FullName }) | Out-Null
         }
     }
@@ -183,50 +196,34 @@ function Resolve-VanessaArchive {
     param([object]$Lock)
     if ($null -eq $Lock) { return $null }
     $expectedSha = [string]$Lock.sha256
-    $folderName = ([string]$Lock.compatibilityVersion) + "-" + ([string]$Lock.downstreamRevision)
-    $canonicalPath = Join-Path $RepositoryRoot ("build\third-party\vanessa-automation\" + $folderName + "\" + [string]$Lock.assetName)
-    $configuredPath = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
-    $candidates = @()
-    if (-not [string]::IsNullOrWhiteSpace($configuredPath)) {
-        try { $candidates += [System.IO.Path]::GetFullPath($configuredPath) } catch {}
-    }
-    $candidates += $canonicalPath
-    $invalidCandidates = New-Object System.Collections.Generic.List[string]
-    foreach ($candidate in @($candidates | Select-Object -Unique)) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            $actualSha = Get-FileSha256 -Path $candidate
-            if ($actualSha -ceq $expectedSha.ToLowerInvariant()) {
-                return [ordered]@{ path = $candidate; sha256 = $actualSha; source = $(if ($candidate -eq $configuredPath) { "environment" } else { "candidate-cache" }) }
-            }
-            $invalidCandidates.Add("$candidate (actual=$actualSha)") | Out-Null
-        }
-    }
-    if ($Offline) {
-        if ($invalidCandidates.Count -gt 0) {
-            Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_HASH_MISMATCH" -Category "DEPENDENCY_DRIFT" `
-                -Message "No Vanessa Automation candidate matched SHA256 '$expectedSha'. Invalid candidate(s): $($invalidCandidates -join '; ')." `
-                -Recovery "Remove invalid candidates and provide the exact immutable asset."
-        }
-        Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_MISSING" -Category "CANDIDATE_INCOMPLETE" `
-            -Message "Qualified Vanessa Automation archive is missing in offline mode: $canonicalPath" `
-            -Recovery "Place the immutable locked asset at the canonical path or set ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE."
-        return $null
-    }
     try {
-        $download = Invoke-ItlImmutableFileDownload -Uri ([string]$Lock.url) -DestinationPath $canonicalPath -ExpectedSha256 $expectedSha -Label "Release Vanessa Automation archive"
-        $downloadedSha = [string]$download.sha256
-        return [ordered]@{ path = $canonicalPath; sha256 = $downloadedSha; source = "locked-url" }
+        # One owner resolves the locked archive; an unpublished revision is
+        # satisfied by an exact build in any worktree or the shared cache.
+        $resolution = Resolve-VanessaSourceBuildArchive -RepositoryRoot $RepositoryRoot -Lock $Lock -AllowDownload:(-not $Offline)
     } catch {
-        if ($invalidCandidates.Count -gt 0) {
-            Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_HASH_MISMATCH" -Category "DEPENDENCY_DRIFT" `
-                -Message "No Vanessa Automation candidate matched SHA256 '$expectedSha'. Invalid candidate(s): $($invalidCandidates -join '; ')." `
-                -Recovery "Remove invalid candidates and acquire the immutable asset from the locked URL."
+        $message = $_.Exception.Message
+        if ($message -match '^VANESSA_ARCHIVE_(OVERRIDE_INVALID|SHARED_CACHE_CORRUPT|LOCK_INVALID):') {
+            Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_HASH_MISMATCH" -Category "DEPENDENCY_DRIFT" -Message $message `
+                -Recovery "Correct or unset ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE, or remove the corrupt shared cache entry; an explicit or SHA-addressed source never falls back to another file."
+        } else {
+            Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_ACQUIRE_FAILED" -Category "ENVIRONMENT" `
+                -Message "Unable to acquire the immutable Vanessa Automation archive: $message" `
+                -Recovery "Build the exact locked revision in a worktree of this repository, verify network access to the locked URL, or provide the exact archive through ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE."
         }
-        Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_ACQUIRE_FAILED" -Category "ENVIRONMENT" `
-            -Message "Unable to acquire the immutable Vanessa Automation archive: $($_.Exception.Message)" `
-            -Recovery "Verify network access to the locked URL or provide the exact archive through ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE."
         return $null
     }
+    if ($resolution.status -eq 'resolved') {
+        return [ordered]@{ path = [string]$resolution.path; sha256 = [string]$resolution.sha256; source = [string]$resolution.source }
+    }
+    if (@($resolution.invalidCandidates).Count -gt 0) {
+        Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_HASH_MISMATCH" -Category "DEPENDENCY_DRIFT" `
+            -Message "No Vanessa Automation candidate matched SHA256 '$expectedSha'. Invalid candidate(s): $(@($resolution.invalidCandidates) -join '; ')." `
+            -Recovery "Remove invalid candidates and provide the exact immutable asset."
+    }
+    Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_MISSING" -Category "CANDIDATE_INCOMPLETE" `
+        -Message "Qualified Vanessa Automation archive is missing in offline mode: $($resolution.canonicalPath)" `
+        -Recovery "Build the exact locked revision in a worktree of this repository, seed the shared SHA-addressed cache, or set ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE."
+    return $null
 }
 
 function Get-ZipEntrySha256 {
@@ -251,7 +248,7 @@ function Get-ZipEntrySha256 {
 }
 
 function Test-VanessaArchiveContract {
-    param([object]$ArchiveRecord, [object]$Lock)
+    param([object]$ArchiveRecord, [object]$Lock, [object]$PairedExtensionLock)
     if ($null -eq $ArchiveRecord -or $null -eq $Lock) { return }
     try {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -259,10 +256,11 @@ function Test-VanessaArchiveContract {
         try {
             $epf = Get-ZipEntrySha256 -Archive $zip -EntryName "vanessa-automation-single.epf"
             $manifest = Get-ZipEntrySha256 -Archive $zip -EntryName "ITL-PROVENANCE.json"
+            $pairedExtension = if ($null -eq $PairedExtensionLock) { $null } else { Get-ZipEntrySha256 -Archive $zip -EntryName ([string]$PairedExtensionLock.assetName) }
             $notice = $zip.Entries | Where-Object { $_.FullName -ceq "ITL-NOTICE.txt" } | Select-Object -First 1
-            if ($null -eq $epf -or $null -eq $manifest -or $null -eq $notice) {
+            if ($null -eq $epf -or $null -eq $manifest -or $null -eq $notice -or $null -eq $pairedExtension) {
                 Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_STRUCTURE_INVALID" -Category "CANDIDATE_INCOMPLETE" `
-                    -Message "Vanessa Automation archive must contain vanessa-automation-single.epf, ITL-PROVENANCE.json, and ITL-NOTICE.txt." `
+                    -Message "Vanessa Automation archive must contain the EPF, paired VAExtension, ITL-PROVENANCE.json, and ITL-NOTICE.txt." `
                     -Recovery "Acquire the exact immutable workflow-pinned asset."
                 return
             }
@@ -276,6 +274,11 @@ function Test-VanessaArchiveContract {
                     -Message "Vanessa Automation provenance manifest SHA256 differs from the lock. expected=$($Lock.manifestSha256); actual=$($manifest.sha256)." `
                     -Recovery "Regenerate the lock from the exact immutable artifact manifest."
             }
+            if ([string]$pairedExtension.sha256 -cne ([string]$PairedExtensionLock.sha256).ToLowerInvariant()) {
+                Add-ReadinessIssue -Code "RELEASE_VANESSA_PAIRED_EXTENSION_HASH_MISMATCH" -Category "DEPENDENCY_DRIFT" `
+                    -Message "Vanessa paired VAExtension SHA256 differs from the lock. expected=$($PairedExtensionLock.sha256); actual=$($pairedExtension.sha256)." `
+                    -Recovery "Use the paired extension built from the same exact downstream Vanessa revision."
+            }
             $reader = [System.IO.StreamReader]::new($manifest.entry.Open(), [System.Text.Encoding]::UTF8, $true)
             try { $provenance = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
             foreach ($pair in @(
@@ -284,7 +287,9 @@ function Test-VanessaArchiveContract {
                 @("upstreamCommit", [string]$provenance.upstream.commit, [string]$Lock.upstreamCommit),
                 @("patchSha256", [string]$provenance.patch.sha256, [string]$Lock.patchSha256),
                 @("artifactFileName", [string]$provenance.artifact.fileName, [string]$Lock.assetName),
-                @("artifactEntryPoint", [string]$provenance.artifact.entryPoint, "vanessa-automation-single.epf")
+                @("artifactEntryPoint", [string]$provenance.artifact.entryPoint, "vanessa-automation-single.epf"),
+                @("pairedExtensionFileName", [string]$provenance.pairedExtension.fileName, [string]$PairedExtensionLock.assetName),
+                @("pairedExtensionProtocol", [string]$provenance.pairedExtension.protocol, [string]$PairedExtensionLock.protocol)
             )) {
                 if ([string]$pair[1] -cne [string]$pair[2]) {
                     Add-ReadinessIssue -Code "RELEASE_VANESSA_PROVENANCE_DRIFT" -Category "DEPENDENCY_DRIFT" `
@@ -305,7 +310,7 @@ function Test-VanessaArchiveContract {
 function Test-PowerShellEncoding {
     $reportPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-powershell-encoding-" + [guid]::NewGuid().ToString("N") + ".json")
     try {
-        & (Join-Path $PSScriptRoot "test-powershell-encoding.ps1") -RepositoryRoot $RepositoryRoot -OutputPath $reportPath -ReportOnly | Out-Null
+        & (Join-Path $PSScriptRoot "test-powershell-encoding.ps1") -RepositoryRoot $RepositoryRoot -BaseRef $BaseRef -OutputPath $reportPath -ReportOnly | Out-Null
         $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
         foreach ($issue in @($report.issues)) {
             Add-ReadinessIssue -Code ([string]$issue.code) -Category "SOURCE_DEFECT" `
@@ -323,6 +328,15 @@ function Test-PowerShellEncoding {
     }
 }
 
+function Test-ReleaseStandDirtRolledBack {
+    # Only tracked changes are admitted: the runner's reset to the checkpoint's
+    # initial HEAD restores them, while an untracked file would survive it.
+    param([string]$StandWorktree, [AllowEmptyString()][string]$Rollback)
+    if (-not $Rollback) { return $false }
+    $entries = @(Get-RepositoryGitPathList -RepositoryRoot $StandWorktree -Arguments @('status', '--porcelain', '--untracked-files=all', '-z'))
+    return @($entries | Where-Object { ([string]$_).StartsWith('?? ') }).Count -eq 0
+}
+
 function Test-ReleaseCheckpointPreflight {
     param(
         [string]$StandProjectRoot,
@@ -330,7 +344,8 @@ function Test-ReleaseCheckpointPreflight {
         [string]$DevBranchName,
         [string]$CandidateCommit,
         [string]$CandidateTree,
-        [string]$AiRulesCommit
+        [string]$AiRulesCommit,
+        [string]$AiRulesTree = ""
     )
 
     $safeRunName = ($DevBranchName -replace '[^A-Za-z0-9_.-]', '_')
@@ -357,10 +372,28 @@ function Test-ReleaseCheckpointPreflight {
     $checkpointSchema = 0
     $schemaProperty = $checkpoint.PSObject.Properties["schemaVersion"]
     $schemaSupported = $null -ne $schemaProperty -and [int]::TryParse([string]$schemaProperty.Value, [ref]$checkpointSchema) -and $checkpointSchema -in @(1, 2, 3)
-    $scopeMatches = $schemaSupported -and $null -ne $identity -and
-        [string]$identity.projectRoot -eq $StandProjectRoot -and
-        [string]$identity.worktreePath -eq $StandWorktree -and
-        [string]$identity.branch -eq "itldev/$DevBranchName"
+    $projectPath = Join-Path $StandWorktree '.agent-1c/project.json'
+    $project = Get-Content -LiteralPath $projectPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $standConfig = Get-Content -LiteralPath (Join-Path $StandProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $serverConfiguration = [ordered]@{}
+    foreach ($name in @('serverProjectRoot', 'serverWorktreePath', 'serverDevBranchName')) { $serverConfiguration[$name] = [string](Get-E2EAdmissionValue $standConfig $name '') }
+    $admissionContext = [ordered]@{
+        workflowRoot = $RepositoryRoot; workflowCommit = $CandidateCommit; workflowTree = $CandidateTree
+        projectRoot = $StandProjectRoot; worktreePath = $StandWorktree; branch = "itldev/$DevBranchName"
+        currentHead = $record.currentHead; masterHead = Get-GitValue -Root $StandProjectRoot -Arguments @('rev-parse', 'HEAD')
+        worktreeClean = @(Get-RepositoryGitPathList -RepositoryRoot $StandWorktree -Arguments @('status', '--porcelain', '--untracked-files=all', '-z')).Count -eq 0
+        exportPath = [string](Get-E2EAdmissionValue $project 'exportPath' ''); resumeMode = $ResumeMode
+        runnerSha256 = Get-E2EAdmissionCanonicalTextSha256 -Path (Join-Path $RepositoryRoot 'scripts/invoke-release-e2e.ps1')
+        helperSha256 = Get-E2EAdmissionCanonicalTextSha256 -Path (Join-Path $RepositoryRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1')
+        projectConfigSha256 = Get-FileSha256 -Path $projectPath
+        aiRulesCommit = $AiRulesCommit; aiRulesTree = $AiRulesTree
+        clientSelection = Get-SourceE2EClientIdentity -ProjectRoot $StandProjectRoot -AgentTarget $AgentTarget
+        stageModuleRoot = Join-Path $RepositoryRoot 'scripts/release-e2e'
+        stageDefinitions = $null
+        serverConfiguration = $serverConfiguration
+    }
+    $admission = Get-E2EReleaseCheckpointAdmission -Context $admissionContext -Checkpoint $checkpoint
+    $scopeMatches = $admission.scopeMatches
     if (-not $scopeMatches) {
         Add-ReadinessIssue -Code "RELEASE_CHECKPOINT_SCOPE_MISMATCH" -Category "STAND_STALE" `
             -Message "Release checkpoint has unsupported schema or belongs to another project, worktree, or branch: schema=$checkpointSchema path=$checkpointPath" `
@@ -372,25 +405,39 @@ function Test-ReleaseCheckpointPreflight {
             -Recovery "Run Release once with ResumeMode Restart."
     }
 
-    $runnerPath = Join-Path $RepositoryRoot "scripts\invoke-release-e2e.ps1"
-    $helperPath = Join-Path $RepositoryRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
-    $projectConfigPath = Join-Path $StandWorktree ".agent-1c\project.json"
-    $runnerSha256 = Get-ManagedTextOrBinarySha256 -Path $runnerPath
-    $helperSha256 = Get-ManagedTextOrBinarySha256 -Path $helperPath
-    $projectConfigSha256 = Get-FileSha256 -Path $projectConfigPath
-    $exactIdentity = $scopeMatches -and
-        [string]$identity.workflowCommit -eq $CandidateCommit -and
-        [string]$identity.workflowTree -eq $CandidateTree -and
-        [string]$identity.runnerSha256 -eq $runnerSha256 -and
-        [string]$identity.aiRulesCommit -eq $AiRulesCommit -and
-        [string]$identity.helperSha256 -eq $helperSha256 -and
-        [string]$identity.projectConfigSha256 -eq $projectConfigSha256
+    $exactIdentity = $admission.exactIdentity
     $record.exactIdentity = $exactIdentity
+    # Serialize the safe decision only, never the transient context or raw env.
+    $record['transition'] = [ordered]@{ allowed = $admission.allowed; code = $admission.code; reason = $admission.reason; crossReleaseReuse = $admission.crossReleaseReuse; sourceContinuationRequired = $admission.sourceContinuationRequired; sourceContinuationProven = [bool]$admission.continuationProof }
 
-    if ($ResumeMode -eq "Auto" -and $exactIdentity -and $record.currentHead -cne $record.expectedHead) {
-        Add-ReadinessIssue -Code "RELEASE_CHECKPOINT_HEAD_MISMATCH" -Category "STAND_STALE" `
-            -Message "Release checkpoint expected HEAD '$($record.expectedHead)', but the same-identity worktree is at '$($record.currentHead)'." `
-            -Recovery "Inspect the unexpected stand change, then use the script-owned Release Restart when rollback is intended."
+    if ($ResumeMode -eq 'Auto' -and $scopeMatches -and $checkpointSchema -ge 3 -and -not $admission.allowed) {
+        $code = if ($exactIdentity) { 'RELEASE_CHECKPOINT_HEAD_MISMATCH' } else { 'RELEASE_CHECKPOINT_TRANSITION_UNPROVEN' }
+        Add-ReadinessIssue -Code $code -Category 'STAND_STALE' `
+            -Message "Release checkpoint expected HEAD '$($record.expectedHead)', current='$($record.currentHead)': $($admission.reason)." `
+            -Recovery 'Inspect the unsupported transition before Develop. Keep the checkpoint and use the existing script-owned Restart when rollback is intended; an extra refresh after workflow-update is not an admitted chain.'
+    }
+
+    if ($admission.allowed) {
+        try {
+            Assert-E2EAdmissionCheckpointSupport -Context $admissionContext -Checkpoint $checkpoint
+            if ($ResumeMode -eq 'Auto') {
+                $admissionContext['stageDefinitions'] = Get-E2EAdmissionStageDefinitions -WorkflowRoot $RepositoryRoot
+                $record['stageDecisions'] = @(Get-E2EAdmissionCheckpointStageDecisions -Context $admissionContext -Checkpoint $checkpoint -Admission $admission)
+            }
+        } catch {
+            Add-ReadinessIssue -Code 'RELEASE_CHECKPOINT_SUPPORT_INVALID' -Category 'STAND_STALE' -Message $_.Exception.Message -Recovery 'Preserve the checkpoint and its original receipts; repair the exact owned snapshot/state/evidence before continuation.'
+        }
+    }
+
+    # Names the runner step that resets the worktree to the checkpoint's initial
+    # HEAD before any stage uses it: Restart and a cross-release promotion always
+    # do, an exact Auto resume does when config-cadence has not passed. Observed
+    # 2026-11-21: a killed config-cadence left ConfigDumpInfo.xml modified and each
+    # resume of that candidate stopped at RELEASE_STAND_DIRTY before the rollback.
+    $record['worktreeRollback'] = ''
+    if ($admission.allowed) {
+        $cadence = Get-E2EAdmissionValue (Get-E2EAdmissionValue $checkpoint 'stages') 'config-cadence'
+        $record['worktreeRollback'] = if ($ResumeMode -eq 'Restart') { 'restart' } elseif ($admission.crossReleaseReuse) { 'cross-release' } elseif ($cadence -and [string](Get-E2EAdmissionValue $cadence 'status' '') -ne 'passed') { 'config-cadence' } else { '' }
     }
 
     $checkpointFixturePath = ""
@@ -408,7 +455,35 @@ function Test-ReleaseCheckpointPreflight {
         }
     }
 
+    $snapshotsProperty = $checkpoint.PSObject.Properties['snapshots']
+    if ($null -ne $snapshotsProperty -and $snapshotsProperty.Value -is [pscustomobject]) {
+        foreach ($snapshotProperty in @($snapshotsProperty.Value.PSObject.Properties)) {
+            $snapshot = $snapshotProperty.Value
+            $snapshotPath = if ($snapshot -and $snapshot.PSObject.Properties['path']) { [string]$snapshot.path } else { '' }
+            $snapshotSha = if ($snapshot -and $snapshot.PSObject.Properties['sha256']) { ([string]$snapshot.sha256).ToLowerInvariant() } else { '' }
+            if (-not $snapshotPath -or -not (Test-PathInsideRoot -Path $snapshotPath -Root $StandWorktree) -or
+                -not (Test-Path -LiteralPath $snapshotPath -PathType Leaf) -or
+                $snapshotSha -notmatch '^[a-f0-9]{64}$' -or (Get-FileSha256 -Path $snapshotPath) -cne $snapshotSha) {
+                Add-ReadinessIssue -Code 'RELEASE_CHECKPOINT_SNAPSHOT_INVALID' -Category 'STAND_STALE' `
+                    -Message "Release checkpoint $($snapshotProperty.Name) snapshot is missing, outside its stand, or differs from its recorded SHA256: $snapshotPath" `
+                    -Recovery 'Preserve the damaged checkpoint for diagnosis and rebuild the owned disposable Release stand from its fixture.'
+            }
+        }
+    } elseif ($null -ne $snapshotsProperty) {
+        Add-ReadinessIssue -Code 'RELEASE_CHECKPOINT_SNAPSHOT_INVALID' -Category 'STAND_STALE' `
+            -Message "Release checkpoint snapshots inventory is malformed: $checkpointPath" `
+            -Recovery 'Preserve the damaged checkpoint for diagnosis and rebuild the owned disposable Release stand from its fixture.'
+    }
+
     $stagesProperty = $checkpoint.PSObject.Properties["stages"]
+    if ($null -ne $stagesProperty -and $stagesProperty.Value -is [pscustomobject] -and
+        @($stagesProperty.Value.PSObject.Properties).Count -gt 0 -and
+        ($null -eq $snapshotsProperty -or $snapshotsProperty.Value -isnot [pscustomobject] -or
+            $null -eq $snapshotsProperty.Value.PSObject.Properties['baseline'])) {
+        Add-ReadinessIssue -Code 'RELEASE_CHECKPOINT_SNAPSHOT_INVALID' -Category 'STAND_STALE' `
+            -Message "Release checkpoint has executed stages but no baseline snapshot record: $checkpointPath" `
+            -Recovery 'Preserve the damaged checkpoint for diagnosis and rebuild the owned disposable Release stand from its fixture.'
+    }
     $refreshStage = if ($null -eq $stagesProperty -or $null -eq $stagesProperty.Value) { $null } else { $stagesProperty.Value.PSObject.Properties["verification-refresh"] }
     if ($ResumeMode -eq "Auto" -and $exactIdentity -and $null -ne $refreshStage -and [string]$refreshStage.Value.status -eq "passed") {
         $fresh = $false
@@ -452,6 +527,7 @@ if ($Mode -eq "Release" -and -not $worktreeClean) {
 $templateLockPath = Join-Path $RepositoryRoot "templates\dependency-lock.json"
 $templateLock = Get-JsonFile -Path $templateLockPath -Code "RELEASE_TEMPLATE_LOCK_INVALID" -Label "Workflow dependency lock template"
 $vanessaLock = if ($null -eq $templateLock) { $null } else { $templateLock.dependencies.vanessaAutomation }
+$vanessaPairedExtensionLock = if ($null -eq $templateLock) { $null } else { $templateLock.dependencies.vanessaMcp.vaExtension }
 $compatibilityPath = Join-Path $RepositoryRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"
 $compatibility = Get-JsonFile -Path $compatibilityPath -Code "RELEASE_COMPATIBILITY_INVALID" -Label "On-demand compatibility manifest"
 if ($null -ne $vanessaLock -and $null -ne $compatibility) {
@@ -475,10 +551,27 @@ if ($null -ne $vanessaLock -and $null -ne $compatibility) {
                 -Recovery "Regenerate compatibility metadata and lock expectations from one immutable artifact manifest."
         }
     }
+    if ($null -ne $vanessaPairedExtensionLock) {
+        foreach ($pair in @(
+            @("version", [string]$family.backendVersions.vaExtension),
+            @("assetName", [string]$family.pairedExtensionArtifact.assetName),
+            @("sha256", [string]$family.pairedExtensionArtifact.sha256),
+            @("protocol", [string]$family.pairedExtensionArtifact.protocol)
+        )) {
+            $field = [string]$pair[0]
+            $expected = [string]$vanessaPairedExtensionLock.PSObject.Properties[$field].Value
+            $actual = [string]$pair[1]
+            if ($actual -cne $expected) {
+                Add-ReadinessIssue -Code "RELEASE_COMPATIBILITY_PAIRED_EXTENSION_DRIFT" -Category "DEPENDENCY_DRIFT" `
+                    -Message "Compatibility manifest paired VAExtension $field differs from templates/dependency-lock.json. expected='$expected'; actual='$actual'." `
+                    -Recovery "Regenerate compatibility metadata and both Vanessa locks from one immutable paired artifact."
+            }
+        }
+    }
 }
 
 $archive = Resolve-VanessaArchive -Lock $vanessaLock
-Test-VanessaArchiveContract -ArchiveRecord $archive -Lock $vanessaLock
+Test-VanessaArchiveContract -ArchiveRecord $archive -Lock $vanessaLock -PairedExtensionLock $vanessaPairedExtensionLock
 $changedPowerShell = @(Test-PowerShellEncoding)
 $managedInventory = @(Get-ManagedPackageInventory -Root $RepositoryRoot)
 $managedInventoryText = @($managedInventory | ForEach-Object { "$($_.path)`t$($_.sha256)" }) -join "`n"
@@ -569,18 +662,43 @@ if ($Mode -in @("Develop", "Release")) {
             $devBranchName = [string]$standConfig.devBranchName
             $standWorktree = [System.IO.Path]::GetFullPath([string]$standConfig.worktreePath)
             $standRecord = [ordered]@{ projectRoot = $E2EProjectRoot; devBranchName = $devBranchName; worktreePath = $standWorktree; commit = ""; managedPackageSha256 = ""; unsafeActionProtectionConfirmed = $false; checkpoint = $null }
+            $standBranch = Get-GitValue -Root $standWorktree -Arguments @('branch', '--show-current')
+            $safeRunName = ($devBranchName -replace '[^A-Za-z0-9_.-]', '_')
+            $checkpointExists = (Test-Path -LiteralPath (Join-Path $standWorktree ".agent-1c\runs\release-e2e\$safeRunName\checkpoint.json") -PathType Leaf) -or
+                (Test-Path -LiteralPath (Join-Path $standWorktree ".agent-1c\release-e2e-runs\$safeRunName\checkpoint.json") -PathType Leaf)
+            $masterBranch = 'master'
+            $projectConfig = Get-JsonFile -Path (Join-Path $standWorktree '.agent-1c\project.json') -Code 'RELEASE_STAND_PROJECT_INVALID' -Label 'Release stand project config'
+            if ($projectConfig -and $projectConfig.PSObject.Properties['masterBranch'] -and [string]$projectConfig.masterBranch) {
+                $masterBranch = [string]$projectConfig.masterBranch
+            }
+            $masterIsAncestor = $false
+            $previousErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                & git -C $standWorktree merge-base --is-ancestor $masterBranch HEAD 2>$null
+                if ($LASTEXITCODE -eq 0) { $masterIsAncestor = $true }
+            } finally { $ErrorActionPreference = $previousErrorActionPreference }
+            $standClean = @(& git -C $standWorktree status --porcelain --untracked-files=all).Count -eq 0
+            $ownedWorktree = $false
+            try {
+                $ownedWorktree = [string]::Equals((Get-RepositoryCommonGitDirectory -RepositoryRoot $E2EProjectRoot),
+                    (Get-RepositoryCommonGitDirectory -RepositoryRoot $standWorktree), [StringComparison]::OrdinalIgnoreCase)
+            } catch {}
+            $canRefreshStand = -not $checkpointExists -and -not $masterIsAncestor -and $standClean -and $ownedWorktree -and
+                $standBranch -ceq "itldev/$devBranchName" -and $ResumeMode -eq 'Auto'
             Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $E2EProjectRoot -Label "E2E master"
-            if ($ResumeMode -eq "Auto") {
+            if ($ResumeMode -eq "Auto" -and -not $canRefreshStand) {
                 Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $standWorktree -Label "E2E branch"
             }
             $standRecord.managedPackageSha256 = $managedInventorySha
             $standRecord.commit = Get-GitValue -Root $standWorktree -Arguments @("rev-parse", "HEAD")
-            $standBranch = Get-GitValue -Root $standWorktree -Arguments @("branch", "--show-current")
             if ($standBranch -cne "itldev/$devBranchName") {
                 Add-ReadinessIssue -Code "RELEASE_STAND_BRANCH_MISMATCH" -Category "STAND_STALE" -Message "Configured E2E worktree branch is '$standBranch'; expected='itldev/$devBranchName'." -Recovery "Point release-e2e.json at the exact disposable Release branch."
             }
-            if (@(& git -C $standWorktree status --porcelain --untracked-files=no).Count -gt 0) {
-                Add-ReadinessIssue -Code "RELEASE_STAND_DIRTY" -Category "STAND_STALE" -Message "Configured E2E worktree has tracked changes." -Recovery "Use a clean disposable Release branch."
+            if (-not $ownedWorktree) {
+                Add-ReadinessIssue -Code "RELEASE_STAND_WORKTREE_FOREIGN" -Category "STAND_STALE" `
+                    -Message "Configured E2E worktree is not registered in the configured E2E project's Git repository: $standWorktree" `
+                    -Recovery "Point release-e2e.json at an owned disposable Release worktree."
             }
             foreach ($lockRoot in @($E2EProjectRoot, $standWorktree)) {
                 $lockPath = Join-Path $lockRoot ".agent-1c\dependency-lock.json"
@@ -589,7 +707,7 @@ if ($Mode -in @("Develop", "Release")) {
                     [System.IO.Path]::GetFullPath($lockRoot).TrimEnd('\', '/'),
                     $standWorktree.TrimEnd('\', '/'),
                     [StringComparison]::OrdinalIgnoreCase)
-                if ($null -ne $installedLock -and -not $restartWillRefreshBranch) {
+                if ($null -ne $installedLock -and -not $restartWillRefreshBranch -and -not ($canRefreshStand -and $lockRoot -eq $standWorktree)) {
                     Test-LockAgreement -Expected $vanessaLock -Actual $installedLock.dependencies.vanessaAutomation -Label $lockRoot
                     $installedWorkflowCommit = [string]$installedLock.dependencies.workflowPackage.commit
                     if ($installedWorkflowCommit -cne $commit) {
@@ -615,7 +733,24 @@ if ($Mode -in @("Develop", "Release")) {
                 }
             }
             $actualAiRulesCommit = if ($AiRulesSource -and (Test-Path -LiteralPath $AiRulesSource -PathType Container)) { Get-GitValue -Root $AiRulesSource -Arguments @("rev-parse", "HEAD") } else { "" }
-            $standRecord.checkpoint = Test-ReleaseCheckpointPreflight -StandProjectRoot $E2EProjectRoot -StandWorktree $standWorktree -DevBranchName $devBranchName -CandidateCommit $commit -CandidateTree $tree -AiRulesCommit $actualAiRulesCommit
+            $actualAiRulesTree = if ($actualAiRulesCommit) { Get-GitValue -Root $AiRulesSource -Arguments @('rev-parse', 'HEAD^{tree}') } else { '' }
+            $standRecord.checkpoint = Test-ReleaseCheckpointPreflight -StandProjectRoot $E2EProjectRoot -StandWorktree $standWorktree -DevBranchName $devBranchName -CandidateCommit $commit -CandidateTree $tree -AiRulesCommit $actualAiRulesCommit -AiRulesTree $actualAiRulesTree
+            if (-not $standClean) {
+                $rollback = [string]$standRecord.checkpoint['worktreeRollback']
+                if (Test-ReleaseStandDirtRolledBack -StandWorktree $standWorktree -Rollback $rollback) {
+                    $standRecord['dirtyRollback'] = $rollback
+                } else {
+                    Add-ReadinessIssue -Code "RELEASE_STAND_DIRTY" -Category "STAND_STALE" -Message "Configured E2E worktree has tracked or untracked changes." -Recovery "Use a clean disposable Release branch."
+                }
+            }
+            $markerPath = Join-Path $standWorktree 'tests\features\workflow-release-e2e.feature'
+            $masterMarkerPath = Join-Path $E2EProjectRoot 'tests\features\workflow-release-e2e.feature'
+            if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf) -and
+                -not ($canRefreshStand -and (Test-Path -LiteralPath $masterMarkerPath -PathType Leaf))) {
+                Add-ReadinessIssue -Code 'RELEASE_STAND_MARKER_MISSING' -Category 'STAND_STALE' `
+                    -Message "Release fixture marker is missing from the branch and cannot be supplied by a safe refresh: $markerPath" `
+                    -Recovery 'Rebuild the owned disposable Release branch from a fixture containing workflow-release-e2e.feature.'
+            }
             }
         }
     }

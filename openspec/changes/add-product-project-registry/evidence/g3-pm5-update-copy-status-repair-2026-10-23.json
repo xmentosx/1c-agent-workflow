@@ -1,0 +1,630 @@
+{
+  "schemaVersion": 1,
+  "blocker": "G3-PM5-UPDATE-COPY-STATUS-STALE",
+  "status": "closed-original-PM5-subset",
+  "sourceBase": "efee2a883e81126f16e9f2ceed6a5ea5f60083dc",
+  "implementationCandidate": "8db9edba29fbe83d783e4766af0aa4fa0bcb1b2c",
+  "installedCandidate": "53cd745d1e3e50db2936101df963866d97396672",
+  "runtimeAndTestBlobs": {
+    "sourceCandidate": "8db9edba29fbe83d783e4766af0aa4fa0bcb1b2c",
+    "blobs": [
+      {
+        "sourceCandidateEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        "blob": "c74e89e43c028c86c1cd956a66ae2788907d3d8b"
+      },
+      {
+        "sourceCandidateEqual": true,
+        "path": "tests/pester/WorkflowUpdateRollback.Tests.ps1",
+        "blob": "7a0c1c888da8178669d0c2d80cb12e73d8a7cd62"
+      }
+    ],
+    "commit": "53cd745d1e3e50db2936101df963866d97396672"
+  },
+  "cause": "Real rollback capture and prepared/copying/copy-complete SHA/receipt work did not publish liveness.",
+  "repair": "Existing PID-owned Invoke-WithRunStatusHeartbeat wraps complete capture and receipt owners; guards/statements unchanged.",
+  "thresholds": {
+    "staleSeconds": 120,
+    "warningSeconds": 45,
+    "actionSeconds": 3600,
+    "overridden": false
+  },
+  "tests": {
+    "red": {
+      "stage": "red",
+      "durationMs": 4376,
+      "files": [
+        "tests/pester/WorkflowUpdateRollback.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 0,
+      "notRun": 56,
+      "failed": 2
+    },
+    "firstGreenFixtureFailure": {
+      "stage": "green",
+      "durationMs": 6013,
+      "files": [
+        "tests/pester/WorkflowUpdateRollback.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 0,
+      "notRun": 56,
+      "failed": 2
+    },
+    "green": {
+      "stage": "green2",
+      "durationMs": 5979,
+      "files": [
+        "tests/pester/WorkflowUpdateRollback.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 2,
+      "notRun": 56,
+      "failed": 0
+    },
+    "completeOwners": {
+      "stage": "owned",
+      "durationMs": 478729,
+      "files": [
+        "tests/pester/WorkflowUpdateRollback.Tests.ps1",
+        "tests/pester/PreOnDemandReliability.Tests.ps1",
+        "tests/pester/CompactRunnerWatchdog.Tests.ps1"
+      ],
+      "allOwners": true,
+      "skipped": 0,
+      "passed": 84,
+      "notRun": 0,
+      "failed": 0
+    },
+    "fileCosts": [
+      {
+        "file": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\WorkflowUpdateRollback.Tests.ps1",
+        "timeSeconds": 316.5756,
+        "result": "Success"
+      },
+      {
+        "file": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\CompactRunnerWatchdog.Tests.ps1",
+        "timeSeconds": 155.011,
+        "result": "Success"
+      },
+      {
+        "file": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\PreOnDemandReliability.Tests.ps1",
+        "timeSeconds": 5.8432,
+        "result": "Success"
+      }
+    ],
+    "finalPlacement": {
+      "reason": "Both queues appended independent Describe groups at EOF; only new block placement changes.",
+      "failedRegistrationCandidate": "C:/Users/xment/AppData/Local/Temp/itl-source-register-64c35dbccb2944cfa139fa1d94b03a7d",
+      "acceptedCombinedCandidate": "cd8686bdb6f40deb93b5b238743d5b5c1e9e25c5",
+      "failedSourceCandidate": "d0a45c8432384298e71020233feed3808e4850ef",
+      "originalTestBlob": "7a0c1c888da8178669d0c2d80cb12e73d8a7cd62",
+      "relocatedTestBlob": "8bcaa52fd36c878b3e106e142048e3b8ca2cf04e",
+      "blockContentSha256": "3148abd8760bc77a31056f6ece369cd6fa5e5163f4afbce1fe39f97c75de2f94",
+      "blockUnchanged": true,
+      "assertionsUnchanged": true,
+      "runtimeUnchanged": true,
+      "watchdogUnchanged": true,
+      "targetedRanBeforeConflict": false,
+      "finalTestOrderAcceptance": "Required RegisterChange Targeted, not the earlier focused run.",
+      "intermediatePlacement": "Before Dependency preflight drift still shares the foreign insertion boundary; read-only merge-tree refused; no second registration/gate run.",
+      "finalPlacement": "Before Workflow update receipt detail recovery, an unchanged interior boundary."
+    }
+  },
+  "native": {
+    "source": {
+      "input": {
+        "runnerSha": "45d172555b358c55b386cee0e8c89d2bfb68c6e13e59270bba64330c4b9dbb10",
+        "expectedBefore": "6642b1f9777d4cb7caff89d12ef28e6c08f49a1e",
+        "timeoutPolicySha": "567b71eb6c82e4e3aa7cc273f025cb0532b3d5257cb27d99d76405b2e1021654",
+        "defaultStaleSeconds": 120,
+        "runtimeSha": "6b7ab0d60528e0fdc39948365db23e2b2681bbe497adaa603d864aac1ccf8aa2",
+        "defaultWarningSeconds": 45,
+        "watchdogOverrides": [],
+        "commit": "8db9edba29fbe83d783e4766af0aa4fa0bcb1b2c",
+        "runtimePath": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        "operationSeconds": 3600,
+        "roots": [
+          {
+            "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+            "workflow": "6642b1f9777d4cb7caff89d12ef28e6c08f49a1e",
+            "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+            "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+            "untracked": [],
+            "dirty": [],
+            "lockSha": "4bf5a78686bf427ac454c0f3af5e9a0d84b813f269b78f99fba02d856b64ba73",
+            "bindingPresent": true,
+            "head": "565355552961ac62d90e52770881234fcf87142c"
+          },
+          {
+            "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+            "workflow": "6642b1f9777d4cb7caff89d12ef28e6c08f49a1e",
+            "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+            "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+            "untracked": [],
+            "dirty": [],
+            "lockSha": "5a515ddf2e47b4afcdec046722f1e54b249bb5b6d281c63e937ae6ffd566e5bd",
+            "bindingPresent": false,
+            "head": "f4ae416dd6c60775b9eafa1d58adecdef3bbee31"
+          }
+        ]
+      },
+      "result": {
+        "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\source.stdout.log",
+        "exitCode": 0,
+        "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\source.stderr.log",
+        "durationMs": 449705
+      },
+      "status": {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\source-run\\status.json",
+        "bytes": 3653,
+        "sha256": "dc2594d7ff18fa865af1d4a0a3a3de073de5ea5fc940964cb68ec4c88c090a98"
+      },
+      "snapshots": [
+        {
+          "phase": "post-copy-complete",
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+          "sourceCommit": "8db9edba29fbe83d783e4766af0aa4fa0bcb1b2c",
+          "receiptSha": "5cbe3f80702e3d5c3cf3f11913a993b0e93c4c7af524d18e7dec89606eed6ded",
+          "snapshot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-completed-c1dce6201ecc49a190328e4f4c2bf47b",
+          "records": 680
+        },
+        {
+          "phase": "post-copy-complete",
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+          "sourceCommit": "8db9edba29fbe83d783e4766af0aa4fa0bcb1b2c",
+          "receiptSha": "d8d4e9d506ab5a10affb861038957034f4b9f520cbd06a910a4292e68a3c1ce7",
+          "snapshot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-completed-88185c87b2e94b23b590e1724e766adf",
+          "records": 359
+        }
+      ],
+      "copyHeartbeatLines": [
+        "ITL progress: stage=workflow-update.copy; elapsed=33s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files.",
+        "ITL progress: stage=workflow-update.copy; elapsed=72s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files.",
+        "ITL progress: stage=workflow-update.copy; elapsed=90s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files.",
+        "ITL progress: stage=workflow-update.copy; elapsed=95s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files.",
+        "ITL progress: stage=workflow-update.copy; elapsed=96s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files.",
+        "ITL progress: stage=workflow-update.copy; elapsed=97s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files.",
+        "ITL progress: stage=workflow-update.copy; elapsed=98s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files.",
+        "ITL progress: stage=workflow-update.copy; elapsed=102s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files."
+      ],
+      "noRetry": true,
+      "cleanBothRoots": true,
+      "exactlyOneNewCompletedSnapshotPerRoot": true
+    },
+    "installed": {
+      "input": {
+        "runnerSha": "45d172555b358c55b386cee0e8c89d2bfb68c6e13e59270bba64330c4b9dbb10",
+        "expectedBefore": "8db9edba29fbe83d783e4766af0aa4fa0bcb1b2c",
+        "timeoutPolicySha": "567b71eb6c82e4e3aa7cc273f025cb0532b3d5257cb27d99d76405b2e1021654",
+        "defaultStaleSeconds": 120,
+        "runtimeSha": "6b7ab0d60528e0fdc39948365db23e2b2681bbe497adaa603d864aac1ccf8aa2",
+        "defaultWarningSeconds": 45,
+        "watchdogOverrides": [],
+        "commit": "53cd745d1e3e50db2936101df963866d97396672",
+        "runtimePath": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        "operationSeconds": 3600,
+        "roots": [
+          {
+            "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+            "workflow": "8db9edba29fbe83d783e4766af0aa4fa0bcb1b2c",
+            "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+            "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+            "untracked": [],
+            "dirty": [],
+            "lockSha": "97aabf7a0b643b9ce6488bbec4a2f5cb72ae11203dc6be4c7562303f1e392896",
+            "bindingPresent": true,
+            "head": "dac6c3c148a7987dd11cc4ae96e4f6e0d0ceab15"
+          },
+          {
+            "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+            "workflow": "8db9edba29fbe83d783e4766af0aa4fa0bcb1b2c",
+            "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+            "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+            "untracked": [],
+            "dirty": [],
+            "lockSha": "6b7a2e80d56b932785341ca2da05f8c6069509ad6fdcae2706572e099e8ef2d7",
+            "bindingPresent": false,
+            "head": "895bae7efa18dcd9efac9d390a055d765ed880d6"
+          }
+        ]
+      },
+      "result": {
+        "exitCode": 0,
+        "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-logs\\update-workflow-0c13b823410c48a9826629099600c369.stdout.log",
+        "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-logs\\update-workflow-0c13b823410c48a9826629099600c369.stderr.log",
+        "durationMs": 443186
+      },
+      "status": {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-run\\status.json",
+        "bytes": 3656,
+        "sha256": "6e55b09f34772819cfe8d6bf223b93c4a74c8284986df95939c1cb71e9ada615"
+      },
+      "snapshots": [
+        {
+          "phase": "post-copy-complete",
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+          "sourceCommit": "53cd745d1e3e50db2936101df963866d97396672",
+          "receiptSha": "def10431797dc6bd55aacc12d6de85c7f5ca4ed98b878c4a6cb50f498117517a",
+          "snapshot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-completed-899d41ff33e34070b0f1fe74c9279dae",
+          "records": 680
+        },
+        {
+          "phase": "post-copy-complete",
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+          "sourceCommit": "53cd745d1e3e50db2936101df963866d97396672",
+          "receiptSha": "e24c75e9f92867e6303cfeb60b9cb1a517201390870411b6d0ef13b19392292e",
+          "snapshot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-completed-d287cf38c45940d6948007d97ae4c920",
+          "records": 359
+        }
+      ],
+      "copyHeartbeatLines": [
+        "ITL progress: stage=workflow-update.copy; elapsed=23s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files.",
+        "ITL progress: stage=workflow-update.copy; elapsed=58s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files.",
+        "ITL progress: stage=workflow-update.copy; elapsed=70s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files.",
+        "ITL progress: stage=workflow-update.copy; elapsed=82s; liveness=helper-heartbeat; noProgress=0s; stallTimeoutRemaining=0s; timeoutRemaining=0s; detail=Copying the managed workflow package files."
+      ],
+      "noRetry": true,
+      "cleanBothRoots": true,
+      "exactlyOneNewCompletedSnapshotPerRoot": true
+    }
+  },
+  "beforeMeasurement": {
+    "method": "One unprofiled current/before-state fingerprint each on retained original PM5 snapshot; installed implementation6642b1f9, no runtime modifications/status/receipt edits.",
+    "readOnly": true,
+    "timings": {
+      "before": {
+        "durationMs": 9517,
+        "entries": 680
+      },
+      "current": {
+        "durationMs": 10319,
+        "entries": 680
+      }
+    },
+    "sourceBase": "efee2a883e81126f16e9f2ceed6a5ea5f60083dc",
+    "receiptSha": "5748612fe6d137560ebf31ff35d844f24bed5e4a2e0a54be9248cba8dbf30d4b",
+    "snapshot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-completed-5114059072f54e6198096ce5b79eff8e",
+    "protectedInputsUnchanged": true
+  },
+  "identity": {
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "unchanged": true,
+      "bytes": 3295928320
+    },
+    "normalCatalog": {
+      "unchanged": true,
+      "cacheHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "originHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "previousPrivateHead": "f00ff92bb69afee1b80d02b51440c023f86ae29a"
+    },
+    "installedImplementation": "53cd745d1e3e50db2936101df963866d97396672",
+    "sourceBase": "efee2a883e81126f16e9f2ceed6a5ea5f60083dc",
+    "observedUtc": "2026-10-23T14:45:15.2791444Z",
+    "runtime": [
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        "sha256": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        "sha256": "6b7ab0d60528e0fdc39948365db23e2b2681bbe497adaa603d864aac1ccf8aa2"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+        "sha256": "c204c13a55f2bd504c6ae3c2e70087e46305179fab1c6f015bf3b84daea93da4"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        "sha256": "5413a3442d5fc92e60460eda5550737574f609d429b20a15f26bbfaa49db9a67"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+        "sha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+        "sha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.jsonc.ps1",
+        "sha256": "b6ed7f442796458d7e3c8312e95d850585da6a226c3379513e80d7dd99563b03"
+      }
+    ],
+    "roots": [
+      {
+        "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+        "workflow": "53cd745d1e3e50db2936101df963866d97396672",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "2b7eae31b75e3603bd0e4b47a964e4d55dba271540ab7586cfb00eedc5a0b58e",
+        "bindingPresent": true,
+        "head": "536ae3a32be1123bf0f106a92a32923fdbcdd380"
+      },
+      {
+        "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "workflow": "53cd745d1e3e50db2936101df963866d97396672",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "a89c5d3fc77547024d10787dc4ee17ceca7282d6f247d149c802df27e36e9881",
+        "bindingPresent": false,
+        "head": "fd7a9d60a4818da08355c316358f910e930587ff"
+      }
+    ]
+  },
+  "clients": {
+    "passed": true,
+    "historicalStrictByteAssertion": "Historical byte-order observation retained in the prior report; this run measures semantic, foreign-byte and full-file equality independently.",
+    "contract": "AC-16 owned sections restored; foreign bytes preserved.",
+    "clients": [
+      {
+        "path": ".kilo/kilo.json",
+        "semanticEqual": true,
+        "entireFileByteEqual": true,
+        "allBytesOutsideOwnedValuesEqual": true,
+        "ownedValueCount": 4,
+        "otherEntryCount": 4,
+        "maskedSha256": "c4abfbb33ef287677555891cc023b47fc49899ee7634db7f93484e9388e66498"
+      },
+      {
+        "path": ".cursor/mcp.json",
+        "semanticEqual": true,
+        "entireFileByteEqual": true,
+        "allBytesOutsideOwnedValuesEqual": true,
+        "ownedValueCount": 2,
+        "otherEntryCount": 5,
+        "maskedSha256": "c3acd6b1ea447be03799633f2890edbebd5059aed2e613e16fa944eeb2b9a233"
+      }
+    ]
+  },
+  "preserved": {
+    "protectedFiles": 21,
+    "oldRoots": 4,
+    "gate6Artifacts": 7,
+    "capsuleArtifacts": 11,
+    "retainedSnapshotFiles": 12864,
+    "previousRawFiles": 2349,
+    "allUnchanged": true
+  },
+  "selection": {
+    "existingOwner": "lifecycle / update rollback",
+    "newSuite": false,
+    "serialRestrictionAdded": false,
+    "selectionOrReusePolicyChanged": false,
+    "directTests": "Rollback + reliability + watchdog, 84 unfiltered cases",
+    "finalTargeted": "Owned exclusively by RegisterChange; see delivery ledger for exact combined tree/selection/executed/reused/cost."
+  },
+  "costs": {
+    "alwaysOnContextBytesDelta": 0,
+    "toolSchemaBytesDelta": 0,
+    "newMemoryProviderLlmCalls": 0,
+    "hotStartupChanged": false,
+    "nativeComparableUninterruptedBeforeBaseline": false,
+    "previous457983ms": "Recovery workload, not a comparable uninterrupted baseline; no speedup claim.",
+    "priorWholeCliDeltaSeconds": 1.756,
+    "priorWholeCliCause": "unresolved; update-only repair does not attribute it",
+    "focusedObservation": "Focused file times: rollback316.576 s и watchdog155.011 s против existing scheduling hints207/80 s — over-target observation; reliability5.843 s против10 s. Это не доказательство причинного замедления: comparable same-input baseline отсутствует, selection/order/reuse policy не менялись, повторов ради времени нет. Стоимость итогового Targeted оценивается отдельно по его ledger."
+  },
+  "remaining": [
+    "Full G3/AC-39 and other original installed/client/platform/PM4/terminal/interactive/source journeys",
+    "Full feature cost/strict offline cleanup and release population AC-36-38/AC-44",
+    "Memory consumer4.2/G4/AC-43/G5/44 not implemented/accepted",
+    "Unavailable original raw seed currentness remains unavailable; sealed capsule admission unchanged"
+  ],
+  "forbiddenNotPerformed": [
+    "Gate6 execution/repair",
+    "G4",
+    "working-project migration",
+    "publication/push/PR",
+    "server changes"
+  ],
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\red.json",
+      "bytes": 257,
+      "sha256": "eb8a5e247c52f021bbd98ed1f6ad072daceb81f068e87149ea5cdf4d8c4e28d6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\red.xml",
+      "bytes": 4166,
+      "sha256": "ba9e7355d9bcac7cf69be2406451b40d4eeb8c74c7e68c3499756fa5620dd951"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\green.json",
+      "bytes": 259,
+      "sha256": "e93066d5d734bdec8b2753aa56b33c8726c02fa4f4b52c731a0505b0ded41266"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\green.xml",
+      "bytes": 4165,
+      "sha256": "8080a8af12641f31ef55ca48061ab58afa25950f7d6ea00eefac3a2822abf40a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\green2.json",
+      "bytes": 260,
+      "sha256": "4bfaf3284ec82c9f00294c269a66797d90bd375c75943a7c0c5399ed7e1d9d2c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\green2.xml",
+      "bytes": 2769,
+      "sha256": "1f7c4b6fab6c6064a861a460c5d40328354b79244b9157f82507007943e95f94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\owned.json",
+      "bytes": 395,
+      "sha256": "5e445e124dd78bfe3d95c9b7c2a558ef6988395a53117a43275ac7ac278ddc91"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\owned.xml",
+      "bytes": 42261,
+      "sha256": "2337728323352809a4a0131be9f2b588f05e7d661f02684c8d45e93ccd39b5f6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\owned-console.log",
+      "bytes": 27996,
+      "sha256": "544cb6a1fee47516dfdbd4cfae7cbaad5cf2d9c79fb6f9621edc0d5c12236f37"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\owner-costs.json",
+      "bytes": 646,
+      "sha256": "b95eaa916583be2d0e46228a79925950e0fbd9e3a9f4efc599555a2a27270e50"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\source-input.json",
+      "bytes": 2340,
+      "sha256": "e183d1e8b155717df1ad0b8ec5a04a10496e082543a3cd5ba0425e96b56a64d4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\source-result.json",
+      "bytes": 418,
+      "sha256": "0d6a7a931a4db2444f780eef697d777a58a0fa7632aced9ce818d4645d945125"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\source-snapshots.json",
+      "bytes": 1197,
+      "sha256": "58bd0a5c66aa4e86503199f3066d8d1602d60df5c641f41ff6a892f8150c32ef"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\source-roots-after.json",
+      "bytes": 1297,
+      "sha256": "b8e083fc446e765056d32942e6748ccf5fa7a5dd00ee13a9f0371850a891f577"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\source.stderr.log",
+      "bytes": 6674,
+      "sha256": "4d36d7629ff8581ca726d05e0cf3f701967e505a5d1b39647b1c20c9606a30f0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\source-run\\status.json",
+      "bytes": 3653,
+      "sha256": "dc2594d7ff18fa865af1d4a0a3a3de073de5ea5fc940964cb68ec4c88c090a98"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\source-run\\console.log",
+      "bytes": 20014,
+      "sha256": "d7bda3141627287194c7fbffef7e117a868249926c3d119d388c1684b9e31a9e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-input.json",
+      "bytes": 2340,
+      "sha256": "b7b958436e1022528ae8fbde275b190690f844538a139bc9c597a9856cd34c81"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-result.json",
+      "bytes": 534,
+      "sha256": "60fa43ef9bb6c11156c2f5b8b061e70cbb984cd187682009dd72fe069d4e699e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-snapshots.json",
+      "bytes": 1197,
+      "sha256": "c18ffd8dd899b32d306938515d9c861b385e105c9fdadfbfee30177f4a73743f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-roots-after.json",
+      "bytes": 1297,
+      "sha256": "41d1e67a81c1649815f743de780ee5109174b7427652b6e12d194de9276fd637"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-run\\status.json",
+      "bytes": 3656,
+      "sha256": "6e55b09f34772819cfe8d6bf223b93c4a74c8284986df95939c1cb71e9ada615"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-run\\console.log",
+      "bytes": 20014,
+      "sha256": "a2adeaa8b6c1f4d47e3497ff848fe9bb48e4dd37228ec1a4e911a5a0ef80a58e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-candidate-blobs.json",
+      "bytes": 509,
+      "sha256": "f5ca0d7baba870c5d7b9686666e4eb2d9bc39da757e00fc9bd4f0f3dfb2ac089"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\before-measurement.json",
+      "bytes": 1033,
+      "sha256": "05970ab5691a7ec3d49a9cccfb5ebda9c079483ce0bb1eb56ca659a02209f221"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\identity-final.json",
+      "bytes": 4947,
+      "sha256": "56b33937e3c0b44bdc6efdd8814db3db145241e334e011ad2fba050dd5313e3f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\client-byte-analysis.json",
+      "bytes": 924,
+      "sha256": "9f0d82bbb56efc79cc21514c7cbf4e7ab2a58ea70a4faa5765d875097ec6472f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\preserved-before.json",
+      "bytes": 9482,
+      "sha256": "79254f71c47a9165acaf8a95707a479ff2b1e8696857a0aefd0943b5698a3f0d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\preserved-after.json",
+      "bytes": 9482,
+      "sha256": "e4cafbee977eba7844b38c20121344988fd905dcf472c9db83ee917b76574a2b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\capsule-final-validation.json",
+      "bytes": 3486,
+      "sha256": "3f0d58c9705af5d1dac7bc3b96b98ede3e6ae8cf22f84c92fe9d8930f3fae058"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\retained-snapshots-before.json",
+      "bytes": 4728116,
+      "sha256": "bd0f60f6441bb1ac65ccc797117bb26f8032b49b31fb6eb7fb48257f8642e038"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\previous-preservation.json",
+      "bytes": 745451,
+      "sha256": "2706f92b051fddf359becda1dd40881d9313c891ebcda25632ca91d09ac27f29"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\installed-logs\\update-workflow-0c13b823410c48a9826629099600c369.stderr.log",
+      "bytes": 5400,
+      "sha256": "1ce7c717130505362b84081e2bd94b36e88e70e00084c36900b39f443d117987"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\final-runtime-blobs.json",
+      "bytes": 475,
+      "sha256": "1de6e01e146a4b3730920245d747ada15a1404577f88d008787c6c76defedee7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\openspec-validation.json",
+      "bytes": 395,
+      "sha256": "d535f0e5d53411cb0a3ff0939ded13f9d141f44e5ac56b09b13b6e7715b73108"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\registration-followup\\test-placement.json",
+      "bytes": 866,
+      "sha256": "47c81bc33415743464886b72b68bc73520065164e84241610fa98c2affc962fb"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\registration-followup\\test-placement-final.json",
+      "bytes": 1143,
+      "sha256": "ebc3f3563b7a047e4407c6b0ca226076848ca98908c0cd54c753322fd5ca3a75"
+    }
+  ],
+  "rawManifest": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\update-copy-status-repair-20261023\\raw-evidence-manifest.json",
+    "bytes": 39356,
+    "sha256": "8018573f434888fe9804adf1c2d32ece2a179906efbd0a25c0a8ca7ccd78a87f"
+  }
+}

@@ -128,11 +128,11 @@
     },
     "bookstack": {
       "toolCount": 5,
-      "structuralSha256": "04423bf430f36110f616841103a8f576010de416c87e71d53b388b4a64d88eea"
+      "structuralSha256": "79b9535d2998a923dbda74107c7ced3ef403cb6efa356ef5b36dd0bdc37c3a28"
     },
     "mantis": {
-      "toolCount": 3,
-      "structuralSha256": "23f418064100f745af84d79896f8840c1ebff0df63a7c458285b25810ef591f1"
+      "toolCount": 10,
+      "structuralSha256": "f2eb860491ed5b2330823963cf30f3899ba5c12e0cd1c2acbc3ca48b626cdf6f"
     },
     "code": {
       "toolCount": 15,

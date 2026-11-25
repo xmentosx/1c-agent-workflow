@@ -1,0 +1,134 @@
+{
+  "sourceCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+  "mode": "read-only-source-review",
+  "resolutions": [
+    {
+      "family": "go",
+      "file": "tools/itl-ondemand-mcp/catalog_test.go",
+      "line": 69,
+      "count": 2,
+      "parameters": [
+        "roctup",
+        "vanessa-ui"
+      ],
+      "risk": "Pinned real catalog schemas resolve every tool and validator for both backend families",
+      "decision": "retain both families; frozen tool counts describe public catalog identity, not number of tests",
+      "definitionLine": 59,
+      "definitionName": "TestReleaseCatalogSchemasResolveAndIndex",
+      "sourceSha256": "03063f2f59682315de13165501ca1160832f7649bf0fe2f45f9e5e659997e3dc",
+      "productionOwner": "catalog.go: loadCatalog",
+      "history": "Per-case failure history and fresh elapsed cost not inspected; no stability or speed claim"
+    },
+    {
+      "family": "go",
+      "file": "tools/itl-ondemand-mcp/cmd/itl-ondemand-probe/main_test.go",
+      "line": 368,
+      "count": 2,
+      "parameters": [
+        "cancelBeforeCall=false",
+        "cancelBeforeCall=true"
+      ],
+      "risk": "Cancellation and cleanup failure must remain failures and retain actual observations",
+      "decision": "retain both temporal outcomes",
+      "definitionLine": 366,
+      "definitionName": "TestProbeSequenceCancellationAndCleanupFailureRemainFailures",
+      "sourceSha256": "8999a3ebfd0870a2819f8d47ba22a9d658b5a066fab438b9614f4c3c80800ac6",
+      "productionOwner": "cmd/itl-ondemand-probe/main.go: executeProbeSequence",
+      "history": "Per-case failure history and fresh elapsed cost not inspected; no stability or speed claim"
+    },
+    {
+      "family": "go",
+      "file": "tools/itl-ondemand-mcp/cmd/itl-ondemand-probe/main_test.go",
+      "line": 404,
+      "count": 6,
+      "parameters": [
+        "unknown tool",
+        "array arguments",
+        "unknown field",
+        "trailing JSON",
+        "empty",
+        "invalid UTF8"
+      ],
+      "risk": "Invalid probe inputs must fail before native facade launch",
+      "decision": "retain distinct invalid-input cases",
+      "definitionLine": 395,
+      "definitionName": "TestProbeSequenceRejectsInvalidInputBeforeFacadeLaunch",
+      "sourceSha256": "8999a3ebfd0870a2819f8d47ba22a9d658b5a066fab438b9614f4c3c80800ac6",
+      "productionOwner": "cmd/itl-ondemand-probe/main.go: readProbeSequence",
+      "history": "Per-case failure history and fresh elapsed cost not inspected; no stability or speed claim"
+    },
+    {
+      "family": "go",
+      "file": "tools/itl-ondemand-mcp/profile_owner_windows_test.go",
+      "line": 18,
+      "count": 2,
+      "parameters": [
+        "response-persisted-true",
+        "response-persisted-false"
+      ],
+      "risk": "Final response read after owner exit must distinguish confirmed cleanup from uncertainty",
+      "decision": "retain both race outcomes; Windows-only build tag",
+      "definitionLine": 16,
+      "definitionName": "TestProfileOwnerFinalResponseSurvivesExitDuringInspection",
+      "sourceSha256": "964e68b07b9a9075d26a42d4c5d07d0c7585ffe00b05aba705b96255f0212441",
+      "productionOwner": "profile_owner_client.go: awaitProfileOwnerResponseWithLiveness",
+      "history": "Per-case failure history and fresh elapsed cost not inspected; no stability or speed claim"
+    },
+    {
+      "family": "go",
+      "file": "tools/itl-ondemand-mcp/runtime_integration_test.go",
+      "line": 772,
+      "count": 4,
+      "parameters": [
+        "both forms",
+        "invalid json",
+        "array root",
+        "null root"
+      ],
+      "risk": "Ambiguous or invalid gateway arguments must not start a backend",
+      "decision": "retain four subtests and separate oversized-input assertion",
+      "definitionLine": 760,
+      "definitionName": "TestGatewayRejectsAmbiguousOrInvalidArgumentsJSONBeforeStartup",
+      "sourceSha256": "11ab5681d8b0b37dc13e4998f02413ed0fe4f792d81a32280d96f90c94cf9732",
+      "productionOwner": "gateway.go: decodeGatewayCallInnerArguments",
+      "history": "Per-case failure history and fresh elapsed cost not inspected; no stability or speed claim"
+    },
+    {
+      "family": "pester",
+      "file": "tests/pester/DevBranchLifecycle.Tests.ps1",
+      "line": 8593,
+      "count": 10,
+      "parameters": [
+        "5 literal Change inputs x 2 InvalidCommands flags"
+      ],
+      "risk": "Reset form validation must not infer safety from equal parent blobs",
+      "decision": "retain original input matrix",
+      "definitionLine": 8593,
+      "definitionName": "keeps reset form validation for <Change> despite equal parent blobs (invalid commands: <InvalidCommands>)",
+      "sourceSha256": "71b0dd38e0a82f4924e0ddc05b840e4974633f1db1aa3c136be0364fd9674baa",
+      "productionOwner": "agent-1c.lifecycle.ps1: Assert-OneCConfigurationSourceIntegrity/Get-OneCSourceIntegrityCandidatePaths",
+      "history": "Per-case failure history and fresh elapsed cost not inspected; no stability or speed claim"
+    },
+    {
+      "family": "pester",
+      "file": "tests/pester/VanessaAuthoring.Tests.ps1",
+      "line": 176,
+      "count": 3,
+      "parameters": [
+        "NUL",
+        "C0",
+        "C1"
+      ],
+      "risk": "Canonical feature UTF8 transport must reject disallowed controls",
+      "decision": "retain three byte-input cases",
+      "definitionLine": 176,
+      "definitionName": "rejects NUL and disallowed C0/C1 controls: <name>",
+      "sourceSha256": "2e720f0719ee973a4dd192070ee99a7dc52474b203e1be22c9e24fc1243ae360",
+      "productionOwner": "agent-1c.vanessa.ps1: Assert-VanessaFeatureByteSafety",
+      "history": "Per-case failure history and fresh elapsed cost not inspected; no stability or speed claim"
+    }
+  ],
+  "freshExecution": "none",
+  "reviewDate": "2026-10-11",
+  "scope": "Seven original definitions, 29 reviewed parameter outcomes; not 29 extra baseline definitions"
+}

@@ -43,14 +43,16 @@ var designerYAxUnitUnsafeModeCommands = []string{
 }
 
 type designerAgentRequest struct {
-	Host                  string   `json:"host"`
-	Port                  int      `json:"port"`
-	Username              string   `json:"username"`
-	Password              string   `json:"password"`
-	HostPublicKey         string   `json:"hostPublicKey"`
-	Commands              []string `json:"commands"`
-	ConnectTimeoutSeconds int      `json:"connectTimeoutSeconds,omitempty"`
-	CommandTimeoutSeconds int      `json:"commandTimeoutSeconds,omitempty"`
+	Host                   string                  `json:"host"`
+	Port                   int                     `json:"port"`
+	Username               string                  `json:"username"`
+	Password               string                  `json:"password"`
+	HostPublicKey          string                  `json:"hostPublicKey"`
+	Commands               []string                `json:"commands"`
+	ConnectTimeoutSeconds  int                     `json:"connectTimeoutSeconds,omitempty"`
+	CommandTimeoutSeconds  int                     `json:"commandTimeoutSeconds,omitempty"`
+	ProjectTestsCapability *projectTestsCapability `json:"projectTestsCapability,omitempty"`
+	authorizedProjectTests *projectTestsClaims
 }
 
 type designerAgentMessage struct {
@@ -98,8 +100,30 @@ func validateDesignerAgentRequest(request *designerAgentRequest) error {
 	if strings.TrimSpace(request.HostPublicKey) == "" {
 		return fmt.Errorf("ITL_DESIGNER_AGENT_HOST_KEY_MISSING")
 	}
+	wasAuthorized := request.authorizedProjectTests != nil
+	request.authorizedProjectTests = nil
+	if request.ProjectTestsCapability != nil {
+		// Only the facade generates this sequence. A caller cannot attach a
+		// capability to its own command text or add another operation to it.
+		if len(request.Commands) != 0 && !wasAuthorized {
+			return fmt.Errorf("ITL_PROJECT_TESTS_COMMANDS_FORBIDDEN")
+		}
+		claims, err := verifyProjectTestsCapability(request)
+		if err != nil {
+			return err
+		}
+		commands := projectTestsCommands(claims.ExtensionName)
+		if len(request.Commands) != 0 && !equalDesignerCommands(request.Commands, commands) {
+			return fmt.Errorf("ITL_PROJECT_TESTS_COMMANDS_FORBIDDEN")
+		}
+		request.Commands, request.authorizedProjectTests = commands, claims
+	}
 	validCommands := false
-	for _, allowedCommands := range [][]string{designerSafeModeCommands, designerVAExtensionSafeModeCommands, designerYAxUnitUnsafeModeCommands} {
+	allowedSequences := [][]string{designerSafeModeCommands, designerVAExtensionSafeModeCommands, designerYAxUnitUnsafeModeCommands}
+	if request.authorizedProjectTests != nil {
+		allowedSequences = [][]string{projectTestsCommands(request.authorizedProjectTests.ExtensionName)}
+	}
+	for _, allowedCommands := range allowedSequences {
 		if len(request.Commands) != len(allowedCommands) {
 			continue
 		}
@@ -131,6 +155,13 @@ func validateDesignerAgentRequest(request *designerAgentRequest) error {
 }
 
 func executeDesignerAgentRequest(ctx context.Context, request *designerAgentRequest) (*designerAgentResponse, error) {
+	if request.ProjectTestsCapability != nil || request.authorizedProjectTests != nil {
+		guard, err := acquireProjectTestsDesignerGuard(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		defer guard.Close()
+	}
 	expectedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(request.HostPublicKey))
 	if err != nil {
 		return nil, fmt.Errorf("ITL_DESIGNER_AGENT_HOST_KEY_INVALID: %w", err)
@@ -225,13 +256,32 @@ func executeDesignerAgentRequest(ctx context.Context, request *designerAgentRequ
 				return nil, fmt.Errorf("ITL_DESIGNER_AGENT_COMMAND_REJECTED: command %d returned %s: %s", index+1, message.Type, message.Message)
 			}
 		}
-		if !designerCommandAcceptsTerminalType(command, messages[len(messages)-1].Type) {
+		if !designerRequestAcceptsTerminalType(request, command, messages[len(messages)-1].Type) {
 			return nil, fmt.Errorf("ITL_DESIGNER_AGENT_COMMAND_FAILED: command %d: unsupported terminal message type %q", index+1, messages[len(messages)-1].Type)
 		}
 		response.Commands = append(response.Commands, designerAgentCommandResult{Command: command, Messages: messages})
 	}
 	_ = connection.SetDeadline(time.Time{})
 	return response, nil
+}
+
+func equalDesignerCommands(actual, expected []string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	for index := range expected {
+		if actual[index] != expected[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func designerRequestAcceptsTerminalType(request *designerAgentRequest, command, messageType string) bool {
+	if request.authorizedProjectTests != nil && command == "config extensions properties get --extension "+request.authorizedProjectTests.ExtensionName {
+		return strings.EqualFold(messageType, "extension-properties")
+	}
+	return designerCommandAcceptsTerminalType(command, messageType)
 }
 
 func designerOutputHasNoJSON(output []byte) bool {

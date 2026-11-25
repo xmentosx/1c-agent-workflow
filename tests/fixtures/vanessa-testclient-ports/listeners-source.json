@@ -1,0 +1,17 @@
+{
+  "commit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1",
+  "ports": {
+    "path": "VanessaAutomation/Forms/КлиентТестирования/Ext/Form/Module.bsl",
+    "name": "ПроверитьПортНаЗанятость",
+    "first": 1377,
+    "last": 1434,
+    "sha256": "d661e8d9c8d095eef0297e4dbe77bb841cce96aeb23d9d53c97727412fe4000b"
+  },
+  "occupied": {
+    "path": "VanessaAutomation/Forms/ОбщегоНазначенияVA/Ext/Form/Module.bsl",
+    "name": "ПолучитьМассивЗанятыхПортов",
+    "first": 4365,
+    "last": 4468,
+    "sha256": "a58c6314866f33947e169facf24506acb7cb94458264530f42e8843cf1de262b"
+  }
+}

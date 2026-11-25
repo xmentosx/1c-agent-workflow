@@ -1,0 +1,1073 @@
+﻿Describe "compact ITL command runner" {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $RepoRoot = $context.RepoRoot
+        $RunnerSource = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1"
+        $TimeoutPolicySource = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\itl-runner-timeout.ps1"
+        function Copy-RunnerFixture {
+            param([string]$Destination)
+            $scriptRoot = Split-Path -Parent $Destination
+            $libRoot = Join-Path $scriptRoot "lib"
+            New-Item -ItemType Directory -Force -Path $libRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination $Destination
+            Copy-Item -LiteralPath $TimeoutPolicySource -Destination (Join-Path $libRoot "itl-runner-timeout.ps1")
+            Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $TimeoutPolicySource) 'itl-powershell-environment.ps1') -Destination $libRoot
+        }
+    }
+
+    It "fails a synchronously stale Designer status within the runner watchdog" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-stale-status-" + [guid]::NewGuid().ToString("N"))
+        $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "Process")
+        $fixturePid = 0
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='designer-wait'; stageDetail='completion probe entered'; liveness='running-waiting-release'; noProgressSeconds=4; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=3596; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+Start-Sleep -Seconds 30
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "1", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "2", "Process")
+            $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
+            $stopwatch.Stop()
+
+            $processResult.exitCode | Should -Not -Be 0
+            $stopwatch.Elapsed.TotalSeconds | Should -BeLessThan 15
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.status-stale"
+            $summary.liveness | Should -Be "failed-stale-status"
+            $summary.error | Should -Match '^RUNNER_STATUS_STALE\b'
+            $summary.noProgressSeconds | Should -BeGreaterThan 4
+            $summary.timeoutRemainingSeconds | Should -Be 0
+            $progress = $processResult.stderr -join "`n"
+            $progress | Should -Match 'liveness=stale-status'
+            $progress | Should -Match 'statusAge=[1-9][0-9]*s'
+            ([regex]::Matches($progress, 'liveness=running-waiting-release')).Count | Should -BeLessOrEqual 1
+
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fixturePid = [int]$status.pid
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_STATUS_STALE"
+            $status.stallTimeoutRemainingSeconds | Should -Be 0
+            @(Get-Process -Id $fixturePid -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            if ($fixturePid -gt 0) { Stop-Process -Id $fixturePid -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "fails a synchronously stale helper status when liveness is empty" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-stale-empty-liveness-" + [guid]::NewGuid().ToString("N"))
+        $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "Process")
+        $fixturePid = 0
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='start'; stageDetail='Starting helper action refresh-dev-branch-lite'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+Start-Sleep -Seconds 30
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "1", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "2", "Process")
+            $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch-lite")
+            $stopwatch.Stop()
+
+            $processResult.exitCode | Should -Not -Be 0
+            $stopwatch.Elapsed.TotalSeconds | Should -BeLessThan 15
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.status-stale"
+            $summary.error | Should -Match '^RUNNER_STATUS_STALE\b'
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fixturePid = [int]$status.pid
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_STATUS_STALE"
+            @(Get-Process -Id $fixturePid -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            if ($fixturePid -gt 0) { Stop-Process -Id $fixturePid -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "fails a live helper that exceeds the compact operation limit" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-operation-timeout-" + [guid]::NewGuid().ToString("N"))
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "Process")
+        $fixturePid = 0
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+while ($true) {
+    $now = Get-Date
+    $payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='start'; stageDetail='Starting helper action refresh-dev-branch-lite'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=$null; errorMessage='' }
+    [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+    Start-Sleep -Milliseconds 400
+}
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "3", "Process")
+            $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch-lite")
+            $stopwatch.Stop()
+
+            $processResult.exitCode | Should -Not -Be 0
+            $stopwatch.Elapsed.TotalSeconds | Should -BeLessThan 15
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.operation-timeout"
+            $summary.error | Should -Match '^RUNNER_OPERATION_TIMEOUT\b'
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fixturePid = [int]$status.pid
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_TIMEOUT"
+            $status.liveness | Should -Be "failed-operation-timeout"
+            @(Get-Process -Id $fixturePid -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            if ($fixturePid -gt 0) { Stop-Process -Id $fixturePid -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'rechecks the owned handoff after reading stale status and preserves the actual terminal failure' {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl runner передача с пробелом ' + [guid]::NewGuid().ToString('N'))
+        $oldWarning = $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS
+        $oldStale = $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            $runnerPath = Join-Path $scriptRoot 'run-itl-command.ps1'
+            Copy-RunnerFixture -Destination $runnerPath
+            # Control the file-read interleaving, leaving watchdog decisions and
+            # the helper's terminal result in the actual runner implementation.
+            $readHook = @'
+$script:HandoffInjected = $false
+function Read-JsonFile {
+    param([string]$Path)
+    $observed = Read-JsonFileActual -Path $Path
+    if ($null -ne $observed -and [string](Get-ObjectValue -Object $observed -Name 'stage' -Default '') -eq 'controlled-handoff' -and -not $script:HandoffInjected) {
+        $script:HandoffInjected = $true
+        $published = Read-JsonFileActual -Path $Path
+        $published.updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
+        Write-JsonFileAtomic -Path $Path -Value $published
+        [IO.File]::Delete($Path + '.heartbeat')
+        [IO.File]::WriteAllText($Path + '.handoff', 'published')
+    }
+    return $observed
+}
+'@
+            $runnerText = [IO.File]::ReadAllText($runnerPath).Replace('function Read-JsonFile {', 'function Read-JsonFileActual {')
+            $runnerText = $runnerText.Replace('function Write-JsonFileAtomic {', ($readHook + "`nfunction Write-JsonFileAtomic {"))
+            [IO.File]::WriteAllText($runnerPath, $runnerText, [Text.UTF8Encoding]::new($true))
+            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt='2000-01-01T00:00:00Z'; stage='controlled-handoff'; stageDetail='journal scan complete'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=$null; errorMessage='' }
+$initialHeartbeat=$RunStatusPath + '.heartbeat.initial'
+[IO.File]::WriteAllText($initialHeartbeat, [string]$PID)
+[IO.File]::SetLastWriteTimeUtc($initialHeartbeat, [datetime]'2000-01-01')
+[IO.File]::Move($initialHeartbeat, ($RunStatusPath + '.heartbeat'))
+# Publish the controlled stale state only after its sidecar is complete. A
+# concurrent reader must not make the fixture's SetLastWriteTimeUtc fail.
+[IO.File]::WriteAllText($RunStatusPath, ($payload | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+$deadline = [DateTime]::UtcNow.AddSeconds(8)
+while (-not (Test-Path -LiteralPath ($RunStatusPath + '.handoff'))) {
+    if ([DateTime]::UtcNow -ge $deadline) { throw 'CONTROLLED_HANDOFF_NOT_REACHED' }
+    Start-Sleep -Milliseconds 50
+}
+Start-Sleep -Milliseconds 700
+$payload.status='failed'; $payload.stage='fixture.actual-terminal'; $payload.updatedAt=(Get-Date).ToString('o'); $payload.exitCode=7; $payload.errorMessage='Настоящий отказ после журнала'
+[IO.File]::WriteAllText($RunStatusPath, ($payload | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+exit 7
+'@
+            $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS = '1'
+            $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS = '2'
+            $result = Invoke-TestPowerShellFile -FilePath $runnerPath -Arguments @('--', '-Action', 'check-dev-branch')
+            $result.exitCode | Should -Be 7 -Because $result.combinedText
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            Test-Path -LiteralPath ($summary.statusPath + '.handoff') | Should -BeTrue
+            $summary.stage | Should -Be 'fixture.actual-terminal'
+            $summary.error | Should -Be 'Настоящий отказ после журнала'
+            $summary.status | Should -Be 'failed'
+            $result.combinedText | Should -Not -Match 'RUNNER_STATUS_STALE'
+        } finally {
+            $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS = $oldWarning
+            $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS = $oldStale
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "accepts an owned heartbeat during a long silent helper phase" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl runner heartbeat путь " + [guid]::NewGuid().ToString("N"))
+        $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
+        $previousStale = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "Process")
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "Process")
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='long-copy'; stageDetail='copying'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+$heartbeatPath = $RunStatusPath + '.heartbeat'
+[IO.File]::WriteAllText($heartbeatPath,[string]$PID,[Text.Encoding]::ASCII)
+for($i=0;$i -lt 5;$i++){ Start-Sleep -Milliseconds 650; [IO.File]::SetLastWriteTimeUtc($heartbeatPath,[DateTime]::UtcNow) }
+$payload.status='succeeded'; $payload.stage='complete'; $payload.updatedAt=(Get-Date).ToString('o'); $payload.exitCode=0
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "1", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "2", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "8", "Process")
+            $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch")
+            $result.exitCode | Should -Be 0
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be 'succeeded'
+            ($result.stderr -join "`n") | Should -Match 'liveness=helper-heartbeat'
+            (Test-Path -LiteralPath ($summary.statusPath + '.heartbeat')) | Should -BeFalse
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousStale, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'monitors the real branch rollout during <mode> without relaxing its watchdog' -ForEach @(
+        @{mode='silent-live';seconds=125;operationLimit=180;staleLimit=120;expectedStage='complete'},
+        @{mode='operation-timeout';seconds=45;operationLimit=15;staleLimit=120;expectedStage='runner.operation-timeout'},
+        @{mode='lost-heartbeat';seconds=30;operationLimit=60;staleLimit=2;expectedStage='runner.status-stale'},
+        @{mode='helper-exit';seconds=30;operationLimit=60;staleLimit=120;expectedStage='runner.helper-exited'},
+        @{mode='branch-failure';seconds=0;operationLimit=60;staleLimit=120;expectedStage='branch-failed'}
+    ) {
+        $tempRoot = Join-Path $TestDrive ('rollout heartbeat путь ' + $mode)
+        $savedEnvironment = @{}
+        foreach ($name in @('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS','ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS','ITL_RUNNER_OPERATION_TIMEOUT_SECONDS')) {
+            $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        }
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            [void][IO.Directory]::CreateDirectory($scriptRoot)
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            $helperPath = Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+            $body = @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$fixtureStatusPath=$RunStatusPath
+. '__HELPER__' -ProjectRoot $ProjectRoot -Action help *> $null
+$script:RunStatusPath=$fixtureStatusPath
+$script:fixtureBranch=Join-Path $ProjectRoot 'ветка один'
+[void][IO.Directory]::CreateDirectory((Join-Path $ProjectRoot '.agent-1c'))
+[void][IO.Directory]::CreateDirectory((Join-Path $script:fixtureBranch '.agent-1c'))
+foreach($root in @($ProjectRoot,$script:fixtureBranch)) {
+    [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"aiRules":{"tools":["codex"]}}')
+}
+Read-ProjectConfig
+# Keep the real rollout, project-context switch, report and completion check.
+# Only the branch's file/install workload and unrelated admission fixtures vary.
+function Resolve-WorkflowUpdateRolloutScope { return $null }
+function Get-WorkflowUpdateWorktreeInventory {
+    [pscustomobject]@{kind='development';root=$script:fixtureBranch;branch='itldev/branch1';eligibility='eligible';reason='';conflictPaths=@();continuation='';head=('0'*40);installedWorkflowCommit=''}
+}
+function Ensure-Agent1cLifecycleLocksIgnored {}
+function Wait-Agent1cLockSet { [pscustomobject]@{handles=@()} }
+function Get-WorkflowUpdateRootRuntimeBusyReason { return '' }
+function Invoke-WorkflowLocalPatchStep {}
+function Get-WorkflowRolloutClients { return @('codex') }
+function Test-WorkflowRolloutClients { return $true }
+function Invoke-WorkflowDevelopmentBranchUpdate {
+    [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'nested-entered.txt'), '__MODE__')
+    if('__MODE__' -eq 'helper-exit') { [Environment]::Exit(9) }
+    if('__MODE__' -eq 'branch-failure') { throw 'fixture branch post-copy failed' }
+    if('__MODE__' -eq 'lost-heartbeat') {
+        Get-Job | Stop-Job
+        Remove-Item -LiteralPath ($script:RunStatusPath + '.heartbeat') -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds __SECONDS__
+    $status=Read-Utf8Text -Path $script:RunStatusPath | ConvertFrom-Json
+    $heartbeat=$script:RunStatusPath + '.heartbeat'
+    $observation=[ordered]@{statusAgeSeconds=([DateTimeOffset]::Now-[DateTimeOffset]::Parse($status.updatedAt)).TotalSeconds
+        heartbeatAgeSeconds=([DateTime]::UtcNow-[IO.File]::GetLastWriteTimeUtc($heartbeat)).TotalSeconds
+        heartbeatOwner=[IO.File]::ReadAllText($heartbeat);helperPid=$PID;stage=$status.stage;branchContext=$script:ProjectRoot}
+    Write-Utf8TextAtomic -Path (Join-Path $ProjectRoot 'observation.json') -Value ($observation|ConvertTo-Json)
+    [pscustomobject]@{status='completed';commit=('1'*40)}
+}
+$now=[DateTimeOffset]::Now.ToString('o')
+$payload=[ordered]@{schemaVersion=1;projectRoot=$ProjectRoot;pid=$PID;action='update-workflow';status='running';stage='workflow-update.resume-branches';stageDetail='fixture nested branch post-copy';startedAt=$now;updatedAt=$now;exitCode=$null;errorMessage=''}
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+try {
+    $source=[pscustomobject]@{root=$ProjectRoot;commit=('1'*40)}
+    $report=Invoke-WorkflowDevelopmentBranchRollout -Source $source
+    Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit $source.commit | Out-Null
+    $payload.status='succeeded';$payload.stage='complete';$payload.exitCode=0
+} catch {
+    $payload.status='failed';$payload.stage='branch-failed';$payload.exitCode=1;$payload.errorMessage=$_.Exception.Message
+}
+$payload.updatedAt=[DateTimeOffset]::Now.ToString('o')
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+exit $payload.exitCode
+'@
+            $body = $body.Replace('__HELPER__', $helperPath.Replace("'", "''")).Replace('__MODE__', $mode).Replace('__SECONDS__', [string]$seconds)
+            # The runner executes Windows PowerShell 5.1, which requires the BOM
+            # to decode Cyrillic script literals as UTF-8 on every host edition.
+            [IO.File]::WriteAllText((Join-Path $scriptRoot 'agent-1c.ps1'), $body, [Text.UTF8Encoding]::new($true))
+            $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS = '1'
+            $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS = [string]$staleLimit
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = [string]$operationLimit
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            Push-Location $tempRoot
+            try {
+                $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--','-Action','update-workflow')
+            } finally { Pop-Location }
+            $watch.Stop()
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            if ($summary.stage -ne $expectedStage) {
+                Write-Host ($result.stderr -join "`n")
+                $fixtureLog = Join-Path (Split-Path -Parent $summary.statusPath) 'console.log'
+                if (Test-Path -LiteralPath $fixtureLog) { Write-Host (Get-Content -LiteralPath $fixtureLog -Raw -Encoding UTF8) }
+            }
+            $summary.stage | Should -BeExactly $expectedStage
+            [IO.File]::ReadAllText((Join-Path $tempRoot 'ветка один/nested-entered.txt')) | Should -BeExactly $mode
+            if ($mode -eq 'silent-live') {
+                $result.exitCode | Should -Be 0
+                $summary.status | Should -Be 'succeeded'
+                $watch.Elapsed.TotalSeconds | Should -BeGreaterThan 120
+                $observation = Get-Content -LiteralPath (Join-Path $tempRoot 'ветка один/observation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $observation.statusAgeSeconds | Should -BeGreaterThan 120
+                $observation.heartbeatAgeSeconds | Should -BeLessThan 30
+                $observation.heartbeatOwner | Should -Be ([string]$observation.helperPid)
+                $observation.stage | Should -Be 'workflow-update.resume-branches'
+                $observation.branchContext | Should -BeExactly (Join-Path $tempRoot 'ветка один')
+                ($result.stderr -join "`n") | Should -Match 'liveness=helper-heartbeat'
+                $report = Get-Content -LiteralPath (Join-Path $tempRoot '.agent-1c/snapshots/workflow-update-rollout.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $report.roots[0].status | Should -Be 'completed'
+            } else {
+                $result.exitCode | Should -Not -Be 0
+                $summary.status | Should -Be 'failed'
+                $watch.Elapsed.TotalSeconds | Should -BeLessThan 35
+                if ($mode -eq 'branch-failure') { $summary.error | Should -Match 'fixture branch post-copy failed' }
+                if ($mode -eq 'lost-heartbeat') { $summary.error | Should -Match '^RUNNER_STATUS_STALE\b' }
+                if ($mode -eq 'operation-timeout') { $summary.error | Should -Match '^RUNNER_OPERATION_TIMEOUT\b' }
+            }
+            Test-Path -LiteralPath ($summary.statusPath + '.heartbeat') | Should -BeFalse
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @(Get-Process -Id ([int]$status.pid) -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } finally {
+            foreach ($name in @($savedEnvironment.Keys)) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+        }
+    }
+
+    It 'keeps a real check-dev-branch live while its post-run assessment and report outlast the watchdog' {
+        # PM5 2026-11-16/17 (itldev/branch2): YAxUnit and the event log passed,
+        # then the assessment (39 s) and the user report (71 s) ran without a
+        # stage update or heartbeat and the runner killed the finished check as
+        # RUNNER_STATUS_STALE. Runners are already done here; only the slow
+        # assessment remains, and each silent window exceeds the 20 s watchdog.
+        $tempRoot = Join-Path $TestDrive 'check tail путь'
+        $savedEnvironment = @{}
+        foreach ($name in @('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS','ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS','ITL_RUNNER_OPERATION_TIMEOUT_SECONDS')) {
+            $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        }
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            [void][IO.Directory]::CreateDirectory($scriptRoot)
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            $helperPath = Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+            $body = @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$fixtureStatusPath=$RunStatusPath
+. '__HELPER__' -ProjectRoot $ProjectRoot -Action help *> $null
+$script:RunStatusPath=$fixtureStatusPath
+$script:fixtureState=[pscustomobject]@{lastVerificationEvidenceKind=''}
+$script:assessments=0
+# Keep the real check, verification cycle tail, stages and heartbeat. Only the
+# load, the already finished runners and persistence owners are fixtures.
+function Get-VerificationModel { 'cumulative' }
+function Assert-ItlVerificationRepairScope {}
+function Get-YAxUnitModuleFilter {}
+function Read-DevBranchState { $script:fixtureState }
+function Get-DevBranchKind { 'configuration' }
+function Get-ExportPath { 'src/cf' }
+function Assert-ExportPathInsideProject { param($ExportPath) $ExportPath }
+function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+function Restore-ConfigDumpInfoLoadSnapshot {}
+function Remove-ConfigDumpInfoLoadSnapshot {}
+function Get-ItlVerificationExecutionDecision { param($Component) [pscustomobject]@{component=$Component;run=$false;reason='fixture runners finished'} }
+function Invoke-DevBranchVanessaRuntimeRelease {}
+function Assert-VanessaVerificationPreflight {}
+function Test-ItlFullVerificationProofEligible { $true }
+function Test-ItlDiagnosticVerificationScope { $false }
+function Ensure-DevBranchEventLogBaseline { $script:fixtureState }
+function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{path='cursor';capturedAt=[datetime]::UtcNow} }
+function Update-DevBranchBase { [pscustomobject]@{} }
+function Set-ItlPartialVerificationEvidence {}
+function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
+function Get-VerificationState {
+    $script:assessments++
+    Start-Sleep -Seconds 25
+    [pscustomobject]@{status='partial';isFreshPassed=$false;changeFreshPassed=$false}
+}
+function Write-DevBranchVerificationRunUserReport { param($State,$PlatformPreparation,$Failure) [IO.File]::WriteAllText((Join-Path $ProjectRoot 'report-written.txt'),'report') }
+function Write-DevBranchMemoryUsageNote {}
+function Add-ItlCheckHistoryRecord { param($State,$Status,$Trigger) [IO.File]::WriteAllText((Join-Path $ProjectRoot 'history.txt'),"$Status/$($script:assessments)") }
+$now=[DateTimeOffset]::Now.ToString('o')
+$payload=[ordered]@{schemaVersion=1;projectRoot=$ProjectRoot;pid=$PID;action='check-dev-branch';status='running';stage='yaxunit.postprocess';stageDetail='fixture finished runners';startedAt=$now;updatedAt=$now;exitCode=$null;errorMessage=''}
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+try {
+    Invoke-DevBranchCheck
+    $payload.status='succeeded';$payload.stage='complete';$payload.exitCode=0
+} catch {
+    $payload.status='failed';$payload.stage='check-failed';$payload.exitCode=1;$payload.errorMessage=$_.Exception.Message
+}
+$payload.updatedAt=[DateTimeOffset]::Now.ToString('o')
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+exit $payload.exitCode
+'@
+            $body = $body.Replace('__HELPER__', $helperPath.Replace("'", "''"))
+            [IO.File]::WriteAllText((Join-Path $scriptRoot 'agent-1c.ps1'), $body, [Text.UTF8Encoding]::new($true))
+            $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS = '1'
+            $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS = '20'
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = '180'
+            Push-Location $tempRoot
+            try {
+                $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--','-Action','check-dev-branch')
+            } finally { Pop-Location }
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            if ($summary.stage -ne 'complete') {
+                Write-Host ($result.stderr -join "`n")
+                $fixtureLog = Join-Path (Split-Path -Parent $summary.statusPath) 'console.log'
+                if (Test-Path -LiteralPath $fixtureLog) { Write-Host (Get-Content -LiteralPath $fixtureLog -Raw -Encoding UTF8) }
+            }
+            $summary.error | Should -Not -Match 'RUNNER_STATUS_STALE'
+            $summary.stage | Should -BeExactly 'complete'
+            $summary.status | Should -Be 'succeeded'
+            $result.exitCode | Should -Be 0
+            [IO.File]::ReadAllText((Join-Path $tempRoot 'report-written.txt')) | Should -BeExactly 'report'
+            [IO.File]::ReadAllText((Join-Path $tempRoot 'history.txt')) | Should -BeExactly 'partial/2'
+            # Each silent window is 25 s against a 20 s watchdog, so the success
+            # above proves the heartbeat; the progress text only names the stages
+            # (its liveness label depends on when the runner samples under load).
+            $stderr = $result.stderr -join "`n"
+            $stderr | Should -Match 'stage=verification\.assess;'
+            $stderr | Should -Match 'stage=verification\.report;'
+            Test-Path -LiteralPath ($summary.statusPath + '.heartbeat') | Should -BeFalse
+        } finally {
+            foreach ($name in @($savedEnvironment.Keys)) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+        }
+    }
+
+    It 'keeps a real update-workflow-branch child live through a contended heartbeat tick beyond the watchdog' {
+        # PM5 2026-11-15: the branch child's rules/MCP phase never republished
+        # status.json; a concurrent sidecar read made one heartbeat touch fail,
+        # the heartbeat stopped for good, and the live child was killed as stale.
+        $tempRoot = Join-Path $TestDrive 'ветка heartbeat путь'
+        $savedEnvironment = @{}
+        foreach ($name in @('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS','ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS','ITL_RUNNER_OPERATION_TIMEOUT_SECONDS')) {
+            $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        }
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            [void][IO.Directory]::CreateDirectory($scriptRoot)
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            $outputRoot = Join-Path $tempRoot 'вывод раскатки'
+            [void][IO.Directory]::CreateDirectory($outputRoot)
+            $runInputs = Join-Path $outputRoot 'run-inputs.json'
+            $resultPath = Join-Path $outputRoot 'результат ветки.json'
+            [IO.File]::WriteAllText($runInputs, ('{"schemaVersion":1,"sourceCommit":"' + ('1' * 40) + '","entries":[]}'), [Text.UTF8Encoding]::new($false))
+            $requestPath = Join-Path $outputRoot 'запрос ветки.json'
+            [IO.File]::WriteAllText($requestPath, ((@{ schemaVersion = 1; mainRoot = $tempRoot; branchRoot = $tempRoot; branch = 'itldev/ветка-1'
+                source = @{ root = $tempRoot; repo = 'fixture'; ref = 'pin'; commit = ('1' * 40); source = 'path'; rolloutScope = $null }
+                masterClients = @('codex'); runInputsPath = $runInputs; resultPath = $resultPath }) | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+            $helperPath = Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+            $body = @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action,[string]$WorkflowBranchRequestPath)
+$fixtureStatusPath=$RunStatusPath
+. '__HELPER__' -ProjectRoot $ProjectRoot -Action help -WorkflowBranchRequestPath $WorkflowBranchRequestPath *> $null
+$script:RunStatusPath=$fixtureStatusPath
+# Only the branch workload varies: it stays silent toward status.json beyond
+# the watchdog while a sidecar reader holds the file across a heartbeat tick.
+function Invoke-WorkflowDevelopmentBranchItemUpdate {
+    $sidecar = $script:RunStatusPath + '.heartbeat'
+    $reader = [IO.FileStream]::new($sidecar, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try { Start-Sleep -Seconds 20 } finally { $reader.Dispose() }
+    Start-Sleep -Seconds 25
+    [pscustomobject]@{ status='completed'; reason=''; commit=('1'*40); clients=@('codex') }
+}
+$now=[DateTimeOffset]::Now.ToString('o')
+$payload=[ordered]@{schemaVersion=1;projectRoot=$ProjectRoot;pid=$PID;action='update-workflow-branch';status='running';stage='startup';stageDetail='';startedAt=$now;updatedAt=$now;exitCode=$null;errorMessage=''}
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+try {
+    Invoke-WorkflowDevelopmentBranchChild
+    $payload.status='succeeded';$payload.stage='complete';$payload.exitCode=0
+} catch {
+    $payload.status='failed';$payload.stage='branch-failed';$payload.exitCode=1;$payload.errorMessage=$_.Exception.Message
+}
+$payload.updatedAt=[DateTimeOffset]::Now.ToString('o')
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+exit $payload.exitCode
+'@
+            $body = $body.Replace('__HELPER__', $helperPath.Replace("'", "''"))
+            [IO.File]::WriteAllText((Join-Path $scriptRoot 'agent-1c.ps1'), $body, [Text.UTF8Encoding]::new($true))
+            $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS = '1'
+            $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS = '30'
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = '120'
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            Push-Location $tempRoot
+            try {
+                $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--','-Action','update-workflow-branch','-WorkflowBranchRequestPath',$requestPath)
+            } finally { Pop-Location }
+            $watch.Stop()
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.stage | Should -BeExactly 'complete' -Because ("$($summary.error)`n" + ($result.stderr -join "`n"))
+            $result.exitCode | Should -Be 0
+            $watch.Elapsed.TotalSeconds | Should -BeGreaterThan 45
+            ($result.stderr -join "`n") | Should -Match 'liveness=helper-heartbeat'
+            (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be 'completed'
+            Test-Path -LiteralPath ($summary.statusPath + '.heartbeat') | Should -BeFalse
+        } finally {
+            foreach ($name in @($savedEnvironment.Keys)) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+        }
+    }
+
+    It "does not slide the action deadline when a phase repeats its remaining budget" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl deadline путь " + [guid]::NewGuid().ToString("N"))
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "Process")
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+for($i=0;$i -lt 20;$i++){
+    $now=Get-Date
+    $payload=[ordered]@{schemaVersion=1;status='running';action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now.ToString('o');updatedAt=$now.ToString('o');stage='designer-wait';stageDetail='waiting';liveness='running';noProgressSeconds=0;stallTimeoutRemainingSeconds=0;timeoutRemainingSeconds=3;exitCode=$null;errorMessage=''}
+    [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+    Start-Sleep -Milliseconds 400
+}
+$payload.status='succeeded';$payload.exitCode=0
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "2", "Process")
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch")
+            $watch.Stop()
+            $result.exitCode | Should -Not -Be 0
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.stage | Should -Be 'runner.operation-timeout'
+            # Process startup and tree cleanup are outside the reserved phase deadline.
+            # Observe that deadline itself, keeping the original repeated-budget fixture.
+            $extensions = [regex]::Matches(($result.stderr -join "`n"), '(?m)^ITL timeout extension: source=phase-budget:designer-wait\|running\|; deadlineUtc=(?<deadline>[^;]+);')
+            $extensions.Count | Should -Be 1 -Because ("the same phase must reserve its deadline once; outer invocation took {0:N3}s" -f $watch.Elapsed.TotalSeconds)
+            $terminal = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $terminal.operationTimeoutSource | Should -BeExactly 'phase-budget:designer-wait|running|'
+            $terminal.operationDeadlineUtc | Should -BeExactly $extensions[0].Groups['deadline'].Value
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Wall time here includes PowerShell startup and tree cleanup under parallel
+        # load (9.19 s on 2026-11-10, then green on the identical tree). The defect is
+        # observed on the runner's own clock instead: one reservation, the terminal
+        # receipt carries that deadline, and the 8 s fixture never reaches success.
+        ($result.stderr -join "`n") | Should -Match 'ITL timeout extension: source=phase-budget:designer-wait\|running\|;'
+    }
+
+    It 'does not add a delayed status read to the published phase budget' {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl deadline задержка чтения ' + [guid]::NewGuid().ToString('N'))
+        $previousTimeout = $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            $runnerPath = Join-Path $scriptRoot 'run-itl-command.ps1'
+            Copy-RunnerFixture -Destination $runnerPath
+            # Preserve the first real status snapshot while reproducing a slow
+            # read/scheduled runner. Its remaining budget belongs to publication,
+            # not to the later instant at which the reader resumes.
+            $readHook = @'
+function Read-JsonFile {
+    param([string]$Path)
+    $observed = Read-JsonFileActual -Path $Path
+    # Read-JsonFile also reads lifecycle records, which deliberately have a
+    # phase rather than a stage. Delay only the original helper status.
+    if ($observed -and (Get-ObjectValue -Object $observed -Name 'stage' -Default '') -eq 'designer-wait' -and -not (Test-Path -LiteralPath ($Path + '.delayed-read'))) {
+        [IO.File]::WriteAllText($Path + '.delayed-read', [string]$observed.updatedAt)
+        Start-Sleep -Seconds 3
+    }
+    return $observed
+}
+'@
+            $runnerText = [IO.File]::ReadAllText($runnerPath).Replace('function Read-JsonFile {', 'function Read-JsonFileActual {')
+            $runnerText = $runnerText.Replace('function Write-JsonFileAtomic {', ($readHook + "`nfunction Write-JsonFileAtomic {"))
+            [IO.File]::WriteAllText($runnerPath, $runnerText, [Text.UTF8Encoding]::new($true))
+            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+for($i=0;$i -lt 20;$i++){
+    $now=Get-Date
+    $payload=[ordered]@{schemaVersion=1;status='running';action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now.ToString('o');updatedAt=$now.ToString('o');stage='designer-wait';stageDetail='waiting';liveness='running';noProgressSeconds=0;stallTimeoutRemainingSeconds=0;timeoutRemainingSeconds=3;exitCode=$null;errorMessage=''}
+    [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+    Start-Sleep -Milliseconds 400
+}
+$payload.status='succeeded';$payload.exitCode=0
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = '2'
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $result = Invoke-TestPowerShellFile -FilePath $runnerPath -Arguments @('--', '-Action', 'check-dev-branch')
+            $watch.Stop()
+            $result.exitCode | Should -Not -Be 0
+            # The delayed-read defect is asserted below on the runner's clock
+            # (deadline minus publication), not by wall time that includes startup.
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.stage | Should -Be 'runner.operation-timeout'
+            Test-Path -LiteralPath ($summary.statusPath + '.delayed-read') | Should -BeTrue
+            $phaseReport = @($result.stderr | Where-Object { $_ -match '^ITL timeout extension: source=phase-budget:' })
+            $phaseReport.Count | Should -Be 1
+            $deadlineMatch = [regex]::Match([string]$phaseReport[0], 'deadlineUtc=([^;]+);')
+            $deadlineMatch.Success | Should -BeTrue
+            $phaseDeadline = [DateTimeOffset]::Parse($deadlineMatch.Groups[1].Value)
+            $publishedAt = [DateTimeOffset]::Parse([IO.File]::ReadAllText($summary.statusPath + '.delayed-read'))
+            ($phaseDeadline - $publishedAt).TotalSeconds | Should -BeLessThan 3.2
+        } finally {
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = $previousTimeout
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "does not replace terminal success while the helper is finishing cleanup" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl terminal status путь " + [guid]::NewGuid().ToString("N"))
+        $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
+        $previousStale = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "Process")
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "Process")
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now=Get-Date
+$payload=[ordered]@{schemaVersion=1;status='succeeded';action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now.ToString('o');updatedAt=$now.ToString('o');stage='complete';stageDetail='cleanup';liveness='';noProgressSeconds=0;stallTimeoutRemainingSeconds=0;timeoutRemainingSeconds=0;exitCode=0;errorMessage=''}
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+Start-Sleep -Seconds 3
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "1", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "2", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "8", "Process")
+            $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch")
+            $result.exitCode | Should -Be 0
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be 'succeeded'
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousStale, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'honors terminal cleanup grace across the action deadline and bounds a stuck terminal helper: <Case>' -ForEach @(
+        @{Case='exits';CleanupSeconds=10;ExpectedExit=0},
+        @{Case='stuck';CleanupSeconds=90;ExpectedExit=1}
+    ) {
+        $caseCleanupSeconds = $CleanupSeconds
+        $caseExpectedExit = $ExpectedExit
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl terminal deadline путь ' + [guid]::NewGuid().ToString('N'))
+        $previousTimeout = $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            $fixture = @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now=Get-Date
+$payload=[ordered]@{schemaVersion=1;status='succeeded';action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now.ToString('o');updatedAt=$now.ToString('o');stage='complete';stageDetail='cleanup beyond action deadline';liveness='';exitCode=0;errorMessage=''}
+[IO.File]::WriteAllText($RunStatusPath,($payload|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+Start-Sleep -Seconds __CLEANUP_SECONDS__
+exit 0
+'@
+            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value $fixture.Replace('__CLEANUP_SECONDS__',[string]$caseCleanupSeconds)
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS='8'
+            $watch=[Diagnostics.Stopwatch]::StartNew()
+            $result=Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--','-Action','check-dev-branch')
+            $watch.Stop()
+            $result.exitCode | Should -Be $caseExpectedExit -Because $result.combinedText
+            $summary=($result.stdout -join "`n")|ConvertFrom-Json
+            if($caseExpectedExit -eq 0){
+                $summary.status|Should -Be succeeded
+                $summary.stage|Should -Be complete
+                $watch.Elapsed.TotalSeconds|Should -BeGreaterThan 8
+            }else{
+                $summary.status|Should -Be failed
+                $summary.stage|Should -Be 'runner.operation-timeout'
+                $summary.error|Should -Match 'terminal status.*bounded grace period'
+                $watch.Elapsed.TotalSeconds|Should -BeLessThan 80
+                $status=Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8|ConvertFrom-Json
+                @(Get-Process -Id ([int]$status.pid) -ErrorAction SilentlyContinue).Count|Should -Be 0
+            }
+        } finally {
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS=$previousTimeout
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "lets the helper own its published Designer stall budget before the runner watchdog fails" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-stall-owner-" + [guid]::NewGuid().ToString("N"))
+        $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "Process")
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='designer-wait'; stageDetail='bounded completion probe'; liveness='probe-running'; noProgressSeconds=0; stallTimeoutRemainingSeconds=4; timeoutRemainingSeconds=60; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+Start-Sleep -Seconds 30
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "1", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "2", "Process")
+            $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
+            $stopwatch.Stop()
+
+            $processResult.exitCode | Should -Not -Be 0
+            $stopwatch.Elapsed.TotalSeconds | Should -BeGreaterOrEqual 4
+            $stopwatch.Elapsed.TotalSeconds | Should -BeLessThan 15
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.error | Should -Match 'effective watchdog 5s'
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "ignores a transient epoch timestamp while an atomic status replacement is unreadable" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-status-epoch-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$running = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; stage='designer-wait'; stageDetail='atomic replacement window'; liveness='probe-running'; noProgressSeconds=0; stallTimeoutRemainingSeconds=10; timeoutRemainingSeconds=60; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($running | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+[IO.File]::SetLastWriteTimeUtc($RunStatusPath,[DateTime]::FromFileTimeUtc(0))
+Start-Sleep -Seconds 2
+$now = Get-Date
+$done = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); finishedAt=$now.ToString('o'); stage='complete'; stageDetail='done'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=0; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($done | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
+
+            $processResult.exitCode | Should -Be 0
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "succeeded"
+            ($processResult.stderr -join "`n") | Should -Not -Match 'MethodArgumentConversionInvalidCastArgument'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "finalizes a running status when the helper process exits with an error" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-running-exit-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); finishedAt=$null; stage='reexec'; stageDetail='Starting child helper.'; errorMessage=''; exitCode=$null; lastLogPath='C:\logs\designer.log' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+Write-Output 'child parameter binding failed'
+exit 7
+'@
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch"); $processResult.exitCode | Should -Be 7; $output = $processResult.stdout
+            $text = ($output -join "`n")
+            $text.Length | Should -BeLessOrEqual 4000
+            $summary = $text | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.helper-exited"
+            $summary.errorCategory | Should -Be "runner"
+            $summary.error | Should -Match "exited with code 7 before writing a terminal status"
+            $summary.nextAction | Should -Match "runner failure"
+
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            [int]$status.exitCode | Should -Be 7
+            $status.finishedAt | Should -Not -BeNullOrEmpty
+            $status.stageDetail | Should -Match "Last recorded stage: reexec"
+            $status.lastLogPath | Should -Be "C:\logs\designer.log"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "reports a caller-split helper argument as an argument error instead of a helper exit" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl разбитый аргумент " + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            # The real entrypoint: binding fails before it loads any library.
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1") -Destination $scriptRoot
+            # A shell split the grant value; its second word must not bind positionally.
+            Push-Location -LiteralPath $tempRoot
+            try { $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "extend-verification-repair", "-RepairSessionId", "native-session", "-VerificationRepairMaxAttempts", "10", "-VerificationRepairGrantSource", "fixture:", "продлить") }
+            finally { Pop-Location }
+            $processResult.exitCode | Should -Not -Be 0
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.arguments-invalid"
+            $summary.error | Should -Match "ITL_ARGUMENTS_INVALID"
+            $summary.error | Should -Match "rejected its arguments before starting: .*продлить"
+            $summary.error | Should -Not -Match "CatalogAction"
+            $summary.nextAction | Should -Match "one named argument"
+
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_ARGUMENTS_INVALID"
+            $status.stage | Should -Be "runner.arguments-invalid"
+            $status.requiredAction | Should -Match "one named argument"
+            $status.errorMessage | Should -Match "продлить"
+            $summary.statusPath | Should -BeLike ($tempRoot + "*")
+            Test-Path -LiteralPath ($summary.statusPath + ".arguments-error") | Should -BeTrue
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "keeps a nested command binding failure inside the helper classified as a helper exit" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl вложенная привязка " + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+[CmdletBinding(PositionalBinding = $false)]
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+function Invoke-NestedFixture([string]$Name) { $Name }
+Invoke-NestedFixture -Unknown 'значение'
+'@
+            Push-Location -LiteralPath $tempRoot
+            try { $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch") }
+            finally { Pop-Location }
+            $processResult.exitCode | Should -Not -Be 0
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.stage | Should -Be "runner.helper-exited"
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_HELPER_EXITED"
+            $summary.statusPath | Should -BeLike ($tempRoot + "*")
+            Test-Path -LiteralPath ($summary.statusPath + ".arguments-error") | Should -BeFalse
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "cleans an exact lifecycle-owned Vanessa run after helper exit" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-vanessa-recovery-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param(
+    [string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action,
+    [string]$InterruptedVanessaInfoBasePath,[string]$InterruptedVanessaTestClientInfoBasePath,
+    [string]$InterruptedVanessaRunParamsPath,[string]$InterruptedVanessaTestPorts
+)
+$utf8 = New-Object Text.UTF8Encoding $false
+if ($Action -eq 'cleanup-interrupted-vanessa-run') {
+    $marker = [ordered]@{ infoBasePath=$InterruptedVanessaInfoBasePath; testClientInfoBasePath=$InterruptedVanessaTestClientInfoBasePath; runParamsPath=$InterruptedVanessaRunParamsPath; testPorts=$InterruptedVanessaTestPorts }
+    [IO.File]::WriteAllText((Join-Path $ProjectRoot 'cleanup-marker.json'),(($marker | ConvertTo-Json)+[Environment]::NewLine),$utf8)
+    exit 0
+}
+$operationId = [guid]::NewGuid().ToString('N')
+$paramsPath = Join-Path $ProjectRoot 'build\test-results\vanessa\fixture\VAParams.json'
+$lifecyclePath = Join-Path $ProjectRoot '.agent-1c\locks\lifecycle-operation.json'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $paramsPath),(Split-Path -Parent $lifecyclePath) | Out-Null
+[IO.File]::WriteAllText($paramsPath,'{}',$utf8)
+$evidence = [ordered]@{ schemaVersion=2; operationId=$operationId; ownerPid=$PID; processId=$PID; projectRoot=$ProjectRoot; infoBasePath=(Join-Path $ProjectRoot '.agent-1c\infobases\vanessa-service'); testClientInfoBasePath=(Join-Path $ProjectRoot '.agent-1c\infobases\branch1'); runParamsPath=$paramsPath; testPorts=@(48054,48055) }
+$lifecycle = [ordered]@{ schemaVersion=1; status='running'; operationId=$operationId; action=$Action; projectRoot=$ProjectRoot; worktreePath=$ProjectRoot; pid=$PID; continuationPid=0; phase='vanessa.run'; activeVanessaRun=$evidence }
+$status = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; stage='vanessa.run'; activeVanessaRun=$evidence }
+[IO.File]::WriteAllText($lifecyclePath,(($lifecycle | ConvertTo-Json -Depth 8)+[Environment]::NewLine),$utf8)
+[IO.File]::WriteAllText($RunStatusPath,(($status | ConvertTo-Json -Depth 8)+[Environment]::NewLine),$utf8)
+exit 0
+'@
+
+            Push-Location $tempRoot
+            try {
+                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch")
+            } finally {
+                Pop-Location
+            }
+            $processResult.exitCode | Should -Be 1
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.helper-exited"
+            $summary.error | Should -Match "Exact interrupted Vanessa process cleanup succeeded"
+
+            $marker = Get-Content -LiteralPath (Join-Path $tempRoot "cleanup-marker.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $marker.infoBasePath | Should -Be (Join-Path $tempRoot ".agent-1c\infobases\vanessa-service")
+            $marker.testClientInfoBasePath | Should -Be (Join-Path $tempRoot ".agent-1c\infobases\branch1")
+            $marker.runParamsPath | Should -Be (Join-Path $tempRoot "build\test-results\vanessa\fixture\VAParams.json")
+            $marker.testPorts | Should -Be "48054,48055"
+            $lifecycle = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\locks\lifecycle-operation.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lifecycle.status | Should -Be "failed"
+            $lifecycle.phase | Should -Be "runner.helper-exited"
+            $lifecycle.errorCode | Should -Be "LIFECYCLE_OPERATION_HELPER_EXITED"
+            $lifecycle.finishedAt | Should -Not -BeNullOrEmpty
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "recovers exact terminal lifecycle success when a reexec helper leaves status running" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-terminal-lifecycle-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$utf8 = New-Object Text.UTF8Encoding $false
+$operationId = [guid]::NewGuid().ToString('N')
+$lifecyclePath = Join-Path $ProjectRoot '.agent-1c\locks\lifecycle-operation.json'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lifecyclePath) | Out-Null
+$status = [ordered]@{schemaVersion=1;status='running';action=$Action;projectRoot=$ProjectRoot;pid=$PID;stage='reexec';stageDetail='fresh helper started';userReport='preserve-me'}
+[IO.File]::WriteAllText($RunStatusPath,(($status|ConvertTo-Json -Depth 8)+[Environment]::NewLine),$utf8)
+$now = Get-Date
+$lifecycle = [ordered]@{schemaVersion=1;status='succeeded';operationId=$operationId;action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now.ToString('o');phase='complete';detail='Lifecycle operation completed.';exitCode=0;errorCode='';errorMessage='';finishedAt=$now.ToString('o')}
+[IO.File]::WriteAllText($lifecyclePath,(($lifecycle|ConvertTo-Json -Depth 8)+[Environment]::NewLine),$utf8)
+exit 0
+'@
+            Push-Location $tempRoot
+            try {
+                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--","-Action","refresh-dev-branch")
+            } finally { Pop-Location }
+            $processResult.exitCode | Should -Be 0
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "succeeded"
+            $summary.stage | Should -Be "complete"
+            $summary.userReport | Should -BeExactly "preserve-me"
+            $terminalStatus = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $terminalStatus.status | Should -Be "succeeded"
+            [int]$terminalStatus.exitCode | Should -Be 0
+            $terminalStatus.stage | Should -Be "complete"
+            $terminalLifecycle = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\locks\lifecycle-operation.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $terminalLifecycle.status | Should -Be "succeeded"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "fails closed when the helper exits successfully without any terminal status" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-no-status-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$utf8 = New-Object Text.UTF8Encoding $false
+$lifecyclePath = Join-Path $ProjectRoot '.agent-1c\locks\lifecycle-operation.json'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lifecyclePath) | Out-Null
+$old = (Get-Date).AddHours(-1)
+$stale = [ordered]@{schemaVersion=1;status='succeeded';operationId=([guid]::NewGuid().ToString('N'));action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$old.ToString('o');phase='complete';detail='stale terminal lifecycle';exitCode=0;finishedAt=$old.AddMinutes(1).ToString('o')}
+[IO.File]::WriteAllText($lifecyclePath,(($stale|ConvertTo-Json -Depth 8)+[Environment]::NewLine),$utf8)
+Write-Output 'helper exited without status'
+exit 0
+'@
+            Push-Location $tempRoot
+            try {
+                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
+            } finally { Pop-Location }
+            $processResult.exitCode | Should -Be 1; $output = $processResult.stdout
+            $summary = ($output -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.helper-exited"
+            $summary.error | Should -Match "exited with code 0 before writing a terminal status"
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            [int]$status.exitCode | Should -Be 1
+            $status.finishedAt | Should -Not -BeNullOrEmpty
+            # No status was published: the runner still owns the actual helper identity.
+            $lifecycle = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/locks/lifecycle-operation.json") -Raw | ConvertFrom-Json
+            [int]$status.pid | Should -BeGreaterThan 0
+            [int]$status.pid | Should -Be ([int]$lifecycle.pid)
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+Describe 'compact runner heartbeat handoff snapshot' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/run-itl-command.ps1'), [ref]$tokens, [ref]$errors)
+        foreach ($name in @('Get-ObjectValue', 'Read-JsonFile', 'Get-RunnerHeartbeatAgeSeconds', 'Get-RunStatusFreshness', 'Get-RunnerLivenessSnapshot')) {
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+            if ($null -eq $definition) { throw "Missing runner function: $name" }
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+    }
+
+    It 'reads the new main status when publication and sidecar removal finish before heartbeat sampling' {
+        $path = Join-Path $TestDrive 'передача статуса с пробелом.json'
+        [IO.File]::WriteAllText($path, ('{"pid":' + $PID + ',"status":"running","stage":"check.event-log","updatedAt":"2000-01-01T00:00:00Z"}'))
+        Mock Get-RunnerHeartbeatAgeSeconds {
+            $record = [IO.File]::ReadAllText($StatusPath) | ConvertFrom-Json
+            $record.updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
+            [IO.File]::WriteAllText($StatusPath, ($record | ConvertTo-Json))
+            return [double]::PositiveInfinity
+        }
+        $snapshot = Get-RunnerLivenessSnapshot -StatusPath $path -HelperProcessId $PID -NotBeforeUtc ([DateTime]::UtcNow.AddMinutes(-1))
+        $snapshot.ownedStatus | Should -BeTrue
+        $snapshot.livenessAgeSeconds | Should -BeLessThan 2
+        $snapshot.freshness.source | Should -Be 'updatedAt'
+    }
+
+    It 'keeps the previously sampled heartbeat when the main read precedes publication' {
+        $script:snapshotReads = [Collections.Generic.List[string]]::new()
+        Mock Get-RunnerHeartbeatAgeSeconds { $script:snapshotReads.Add('heartbeat'); return 0 }
+        Mock Read-JsonFile { $script:snapshotReads.Add('status'); return [pscustomobject]@{ pid = $PID; updatedAt = '2000-01-01T00:00:00Z'; status = 'running' } }
+        $snapshot = Get-RunnerLivenessSnapshot -StatusPath 'unused.json' -HelperProcessId $PID -NotBeforeUtc ([DateTime]::UtcNow)
+        ($script:snapshotReads -join ',') | Should -Be 'heartbeat,status'
+        $snapshot.statusAgeSeconds | Should -BeGreaterThan 120
+        $snapshot.livenessAgeSeconds | Should -Be 0
+    }
+
+    It 'samples the owned sidecar while the helper heartbeat holds it for a touch' {
+        $path = Join-Path $TestDrive 'занятый heartbeat.json'
+        [IO.File]::WriteAllText($path, ('{"pid":' + $PID + ',"updatedAt":"2000-01-01T00:00:00Z"}'))
+        [IO.File]::WriteAllText(($path + '.heartbeat'), [string]$PID)
+        # A timestamp touch holds a write handle; the runner's poll must neither
+        # fail on it nor keep the writer from its next touch.
+        $writer = [IO.FileStream]::new(($path + '.heartbeat'), [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+        try {
+            $snapshot = Get-RunnerLivenessSnapshot -StatusPath $path -HelperProcessId $PID -NotBeforeUtc ([DateTime]::UtcNow.AddMinutes(-1))
+        } finally { $writer.Dispose() }
+        $snapshot.livenessAgeSeconds | Should -BeLessThan 5
+    }
+
+    It 'rejects a fresh foreign sidecar as proof that a stale helper is live' {
+        $path = Join-Path $TestDrive 'чужой heartbeat.json'
+        [IO.File]::WriteAllText($path, ('{"pid":' + $PID + ',"updatedAt":"2000-01-01T00:00:00Z"}'))
+        [IO.File]::WriteAllText(($path + '.heartbeat'), '99999999')
+        $snapshot = Get-RunnerLivenessSnapshot -StatusPath $path -HelperProcessId $PID -NotBeforeUtc ([DateTime]::UtcNow.AddMinutes(-1))
+        $snapshot.livenessAgeSeconds | Should -BeGreaterThan 120
+        [double]::IsPositiveInfinity($snapshot.heartbeatAgeSeconds) | Should -BeTrue
+    }
+}
