@@ -1,0 +1,816 @@
+{
+  "date": "2026-10-23",
+  "status": "passed-current-PM5-active-writer-cancel-native-helper-subset-full-G3-open",
+  "closedEvidenceGap": "active-writer-cancellation-proof in the named PM5 native-helper subset",
+  "identity": {
+    "normalCatalog": {
+      "cache": "C:\\itlj\\g3-pm5-current-20261022\\mcp-home\\registry",
+      "priorFixtureHead": "0d493bf0bb8817b7079f94632d36e2155218a19e",
+      "originHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "unchanged": true,
+      "priorFixtureOrigin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\origin.git",
+      "cacheHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "origin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\owned-mcp-defer-repair-20261022\\origin.git"
+    },
+    "bothInstalledRuntimeEqual": true,
+    "acceptedTimingPausesHadNoErrors": true,
+    "rootIdentityUnchanged": true,
+    "roots": {
+      "value": [
+        {
+          "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+          "workflow": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+          "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+          "untracked": [],
+          "dirty": [],
+          "lockSha": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619",
+          "bindingPresent": true,
+          "head": "5713df721980130a4dc26bcb978fa53f3dd5d58f"
+        },
+        {
+          "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+          "workflow": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+          "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+          "untracked": [],
+          "dirty": [],
+          "lockSha": "469ab61ebe6c3517ef53a6a78a85bc2753d566e61fd5deb7ce741518f8dc4012",
+          "bindingPresent": false,
+          "head": "9f633264b46277e3d28bc7ae06816a32f9b90424"
+        }
+      ],
+      "Count": 2
+    },
+    "implementationCommit": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+    "runtimeSha": "c204c13a55f2bd504c6ae3c2e70087e46305179fab1c6f015bf3b84daea93da4",
+    "runtimePath": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+    "sourceHead": "a6439c46577360b9b3721ba52f0dc215a0687b3f",
+    "timingWorkersGone": true,
+    "observedUtc": "2026-10-23T09:53:23.2055344Z",
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "matchesPriorQualifiedSha": true,
+      "bytes": 3295928320
+    }
+  },
+  "cases": [
+    {
+      "case": "accepted-resume",
+      "passed": true,
+      "operationId": "731230a884f8408d8a6af290c17fa84f",
+      "pinnedRevision": "246192b3f2607f6377e738879728ffb5358c1b4d",
+      "laterTip": "857c5a086c40248092983f63253324fbd618bbe3",
+      "writerPid": 12140,
+      "pausedUtc": "2026-10-23T09:49:43.4282813Z",
+      "cancelCompletedUtc": "2026-10-23T09:49:50.5328592Z",
+      "writerAliveBeforeAndAfterCancel": true,
+      "onlyCancelRecordChanged": true,
+      "receiptCountAtStop": 1,
+      "activeWriteAtStop": null,
+      "firstClientActuallyWritten": true,
+      "secondClientUnwritten": true,
+      "markerStayedPrior": true,
+      "nativeApplyExitCode": 1,
+      "nativeError": "CATALOG_CANCEL_REQUESTED",
+      "recovery": "resume",
+      "originalCommandPassed": true,
+      "cancelConsumedByRecovery": true,
+      "sameOperationRestoredBeforeApplied": true,
+      "steps": [
+        {
+          "name": "accepted-resume-apply",
+          "exitCode": 1,
+          "durationMs": 12939,
+          "includesTimingPause": true
+        },
+        {
+          "name": "accepted-resume-cancel",
+          "exitCode": 0,
+          "durationMs": 2481
+        },
+        {
+          "name": "accepted-resume-status-after-cancel",
+          "exitCode": 0,
+          "durationMs": 2341
+        },
+        {
+          "name": "accepted-resume-original-blocked",
+          "exitCode": 1,
+          "durationMs": 2548
+        },
+        {
+          "name": "accepted-resume-recovery",
+          "exitCode": 0,
+          "durationMs": 3690
+        },
+        {
+          "name": "accepted-resume-owned-restore",
+          "exitCode": 0,
+          "durationMs": 3648
+        },
+        {
+          "name": "accepted-resume-original-after-restore",
+          "exitCode": 0,
+          "durationMs": 9109
+        },
+        {
+          "name": "accepted-resume-cleanup-sync",
+          "exitCode": 0,
+          "durationMs": 6501
+        }
+      ]
+    },
+    {
+      "case": "accepted-restore",
+      "passed": true,
+      "operationId": "cfa5f8f4300d493db0dc925240f026e5",
+      "pinnedRevision": "6b9d4a8d5237b96cce428f7ab3b0dafbacd0adf5",
+      "laterTip": null,
+      "writerPid": 35876,
+      "pausedUtc": "2026-10-23T09:50:53.0495443Z",
+      "cancelCompletedUtc": "2026-10-23T09:51:00.4672467Z",
+      "writerAliveBeforeAndAfterCancel": true,
+      "onlyCancelRecordChanged": true,
+      "receiptCountAtStop": 1,
+      "activeWriteAtStop": null,
+      "firstClientActuallyWritten": true,
+      "secondClientUnwritten": true,
+      "markerStayedPrior": true,
+      "nativeApplyExitCode": 1,
+      "nativeError": "CATALOG_CANCEL_REQUESTED",
+      "recovery": "restore",
+      "originalCommandPassed": true,
+      "cancelConsumedByRecovery": true,
+      "sameOperationRestoredBeforeApplied": true,
+      "steps": [
+        {
+          "name": "accepted-restore-apply",
+          "exitCode": 1,
+          "durationMs": 12890,
+          "includesTimingPause": true
+        },
+        {
+          "name": "accepted-restore-cancel",
+          "exitCode": 0,
+          "durationMs": 2388
+        },
+        {
+          "name": "accepted-restore-status-after-cancel",
+          "exitCode": 0,
+          "durationMs": 2470
+        },
+        {
+          "name": "accepted-restore-original-blocked",
+          "exitCode": 1,
+          "durationMs": 2534
+        },
+        {
+          "name": "accepted-restore-recovery",
+          "exitCode": 0,
+          "durationMs": 3636
+        },
+        {
+          "name": "accepted-restore-original-after-restore",
+          "exitCode": 0,
+          "durationMs": 8559
+        },
+        {
+          "name": "accepted-restore-cleanup-sync",
+          "exitCode": 0,
+          "durationMs": 7070
+        }
+      ]
+    }
+  ],
+  "instrumentation": {
+    "kind": "timing-only PowerShell command breakpoint before the existing Assert-ItlProductProjectNotCancelled",
+    "boundary": "actual first-client receipt; before cancellation check for second write; call stack runtime223 / writer1499",
+    "runtimePatched": false,
+    "writerMocked": false,
+    "nativeCancelCheckReplaced": false,
+    "ioFaultInAcceptedCases": false,
+    "pauseLimitSeconds": 55,
+    "acceptedPauseErrors": 0,
+    "fixtureLease": "one lease held by capture owner; controller uses the same protected copy and public cancel",
+    "capture": "shared native capture in a direct process; public script LASTEXITCODE explicitly propagated"
+  },
+  "restoreSemantics": "Owned before state restored; no persistent defer. Both original commands tested on unchanged desired catalog/home before cleanup; normal startup reapplies desired catalog.",
+  "harnessFailuresRetained": [
+    {
+      "case": "active-resume",
+      "outcome": "Start-Job path did not reach pause; shared native deadline 100s; exact cause unproved; not accepted"
+    },
+    {
+      "case": "direct-resume",
+      "outcome": "second exclusive fixture lease rejected; pause expired before valid cancel; not accepted"
+    },
+    {
+      "case": "direct2-resume",
+      "outcome": "status through mutating select action queued behind writer for 50979ms; pause expired; input assertion failed; not accepted"
+    },
+    {
+      "case": "direct3-resume",
+      "outcome": "actual native cancellation with one receipt, but wrapper lost LASTEXITCODE and returned0; assertion remained failed; existing public restore used for cleanup; not accepted as final exit proof"
+    },
+    {
+      "artifact": "paused-command-apply.initial-reconstructed.ps1",
+      "limitation": "initial missing-exit-code wrapper reconstructed from exact diff; not a pre-run hashed artifact"
+    }
+  ],
+  "clientBytes": {
+    "passed": true,
+    "historicalStrictByteAssertion": "Historical byte-order observation retained in the prior report; this run measures semantic, foreign-byte and full-file equality independently.",
+    "contract": "AC-16 owned sections restored; foreign bytes preserved.",
+    "clients": [
+      {
+        "path": ".kilo/kilo.json",
+        "semanticEqual": true,
+        "entireFileByteEqual": true,
+        "allBytesOutsideOwnedValuesEqual": true,
+        "ownedValueCount": 4,
+        "otherEntryCount": 4,
+        "maskedSha256": "bf761569ee7fac5203fc1315a37c53675476b06f74d5c0be55d5601d6bbeee5a"
+      },
+      {
+        "path": ".cursor/mcp.json",
+        "semanticEqual": true,
+        "entireFileByteEqual": true,
+        "allBytesOutsideOwnedValuesEqual": true,
+        "ownedValueCount": 2,
+        "otherEntryCount": 5,
+        "maskedSha256": "e5e32f5bdb24706771b178d46172d600bf8b516fdd8cb8fff2d89354e05087b1"
+      }
+    ]
+  },
+  "preservation": {
+    "protectedFiles": 21,
+    "oldRoots": 4,
+    "strictCurrentBeforeAfter": "passed",
+    "gate6Artifacts": 7,
+    "capsuleArtifactsVerified": 11,
+    "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "previousRawFilesVerified": 358,
+    "originalRawSeedMissing": false,
+    "historicalSeedMovementFailure": "retained unchanged in prior reports; current before/after is separate"
+  },
+  "cost": {
+    "runtimeChanged": false,
+    "alwaysOnAddedBytes": 0,
+    "clientLlmTurns": 0,
+    "directCodeGraphTools": 0,
+    "cogneeCalls": 0,
+    "acceptedPublicCalls": 15,
+    "acceptedCallsTotalMsIncludingPauses": 82804,
+    "benchmark": "Individual CLI samples; apply includes artificial pause; no paired startup/context/token/billing acceptance. Failed harness overhead separate."
+  },
+  "remaining": [
+    "full registry tasks4.2/5.2/5.6 and AC-16/24/26/39",
+    "race/terminal multi-user and other installed/client/PM4/Windows10/Server/paired-cost criteria",
+    "active-status availability not exercised by accepted subset",
+    "release population AC-36-38",
+    "memory consumer4.2/G4/AC-43/G5/44"
+  ],
+  "notPerformed": [
+    "runtime/tests/package updates",
+    "Gate6",
+    "G4/Cognee/OpenViking development",
+    "working-project migration",
+    "server/client upgrades",
+    "workflow/shared-catalog publication",
+    "manual marker/operation repair",
+    "raw PID termination",
+    "new state/locks/coordinator/recovery cache"
+  ],
+  "validation": {
+    "openSpecCli": "1.13.1",
+    "registryStrict": "passed",
+    "memoryStrict": "passed",
+    "pesterOwnerTests": "not rerun for documentation-only qualification",
+    "sourceRegistration": "separate source-delivery ledger owns Targeted; not G3 acceptance"
+  },
+  "rawManifest": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\raw-manifest.json",
+    "bytes": 128736,
+    "sha256": "c97356d620c77f8bfa513eaf4424129f3f6bf3829dcb98ba8ff79198c7ee73b6"
+  },
+  "rawManifestFileCount": 401,
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-apply-result.json",
+      "bytes": 206,
+      "sha256": "6edb7b225e896f0e6c2a526eb93e05be982f9740d99427b1ecb1f2027d8e01c0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-apply.stderr.log",
+      "bytes": 180,
+      "sha256": "5c5d6abb7a7fd1f6389790afe68797660aa2515f352822b65d9e3dd1266ef03b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-apply.stdout.log",
+      "bytes": 433,
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-before-files.json",
+      "bytes": 1913,
+      "sha256": "293277731dfba144fca0b3ed19829b1dfffd7161ced81154a0f37783e3bd6a4d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-cancel-result.json",
+      "bytes": 420,
+      "sha256": "7ead698ff04df15891574cb5feee5c90b6039386d88253fb6a82ad71f89b90d1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-cancel-signalled-files.json",
+      "bytes": 1988,
+      "sha256": "af57d67a871e2223dfa58b7352400a557cf8293dd31d62c8eebd6072c667463d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-cancel.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-cancel.stdout.log",
+      "bytes": 369,
+      "sha256": "3604d3cae341301e81c5fb446f70ef055fb58c3e089b3c286706206838c7b353"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-cleanup-sync-result.json",
+      "bytes": 502,
+      "sha256": "7c5ad147d795b2a6614b2ed97d09a1d2485c4bd410fc171487e59219fb25bf0e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-cleanup-sync.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-cleanup-sync.stdout.log",
+      "bytes": 557,
+      "sha256": "2495a8c7cd7c8052f304476f23d864e8a96d8e8e11beb5b132aa4e58517e3832"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-final-files.json",
+      "bytes": 1913,
+      "sha256": "9c7117190204f699d49d401e9f8bd72d0fcd3bfa4209494847c30444fdfaf66c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-original-after-restore-result.json",
+      "bytes": 424,
+      "sha256": "ae64690d33b9db8151244ee419154d93f7e1fb6e18051360050cd9af91697776"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-original-after-restore.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-original-after-restore.stdout.log",
+      "bytes": 1630,
+      "sha256": "b5eea88b2c6fd003bb578777ae45eb79744fa1194eea256a24787d3a4933eba0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-original-blocked-result.json",
+      "bytes": 417,
+      "sha256": "16863cf79a26f7072f28bfb314b6c39768485a2f8197e28fbe34c0a1fc1bd39e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-original-blocked.stderr.log",
+      "bytes": 297,
+      "sha256": "bfe420260fdc942537cbf594350462e402cc248c9f37a5cc8a5eeeb7515c6cb1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-original-blocked.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-original-completed-files.json",
+      "bytes": 1913,
+      "sha256": "b45b8b00fcb8e830be4837272e2f6965327ec176e116d29cdddb8faf42e42886"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-paused-files.json",
+      "bytes": 1913,
+      "sha256": "e73b32559b5a9d6bf7a482454eb04566bb10a9671d0b54f771bd10793b7a846c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-paused.json",
+      "bytes": 4377,
+      "sha256": "c530219dab962e7b3d2e64e644d5e20118e40d0bad3cac6845362edb2561f5c2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-preparation.json",
+      "bytes": 272,
+      "sha256": "46c5d7743611b079ebd053d319b95b01c1eb5fcfbd1a656c949df0f16a50af73"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-prepare-steps.json",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-recover-steps.json",
+      "bytes": 2485,
+      "sha256": "87197021e56beab10da0d47a02d167a74b72d89e598664165c171f5b3d146ff1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-recovery-result.json",
+      "bytes": 423,
+      "sha256": "403cc7898368ef0fb06f23d9cb3376a3f6025215862d90bf1a5ac6bf2e26e82f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-recovery.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-recovery.stdout.log",
+      "bytes": 318,
+      "sha256": "6fd889d38be184cbca962db0444f13d43d0a477410e481c5a0e88812e7c1b03f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-release",
+      "bytes": 43,
+      "sha256": "c3cc4e4b7695d0593266cb9ac8f117e18d8a17c96e767e5dcb6f225659604e38"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-restored-files.json",
+      "bytes": 1913,
+      "sha256": "14651c681c2b499b4f47c6f83def68ef302905fb69a726761d5ce6b3acb9dda6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-result.json",
+      "bytes": 9656,
+      "sha256": "9862584304cf86966fc282e100dc6477c2d8cbbf1ec1c0ea07b2e568b81a5144"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-roots-after.json",
+      "bytes": 1297,
+      "sha256": "7e05a78c4fc8a507bbd07e6cd787f4a8bc8a80e79a9031a970608d735664403c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-signal-result.json",
+      "bytes": 992,
+      "sha256": "f92d3e63b614ba5988efb9bcb1110152a52a8af262730ce16448b64334943426"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-signal-steps.json",
+      "bytes": 420,
+      "sha256": "7ead698ff04df15891574cb5feee5c90b6039386d88253fb6a82ad71f89b90d1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-status-after-cancel-result.json",
+      "bytes": 433,
+      "sha256": "570eed15ce45f8517b87da04897dafbf4ae83f6d1856999926b8b77aea225519"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-status-after-cancel.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-status-after-cancel.stdout.log",
+      "bytes": 416,
+      "sha256": "5ef43a11209988c7cf2f22d05fa79c2b7ab87976a4681f1d225cc0c49cfcedac"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-stopped-files.json",
+      "bytes": 1988,
+      "sha256": "81a67dcb1aa84790a8194c42b10e2a0d3f9376fdabd6afca3c89779fa05c4650"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-restore-trace.log",
+      "bytes": 102,
+      "sha256": "2b370032b8550f863aec092ae17405764554853a4058b25cbbca32f65b689dd4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-apply-result.json",
+      "bytes": 206,
+      "sha256": "160e111d479fbeed38983e56374a57f77496c422a57cc03fd6b5ed4bcdfb62a3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-apply.stderr.log",
+      "bytes": 180,
+      "sha256": "5c5d6abb7a7fd1f6389790afe68797660aa2515f352822b65d9e3dd1266ef03b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-apply.stdout.log",
+      "bytes": 433,
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-before-files.json",
+      "bytes": 1913,
+      "sha256": "6b37bd6c763ab7d41eaae853429aa8212f1c43ca3af7c37d61d2753d1a5abca7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-cancel-result.json",
+      "bytes": 419,
+      "sha256": "b5183b2629f867605e4d22f16a7994a4402062794a2fbf499a9398d9ba2789ff"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-cancel-signalled-files.json",
+      "bytes": 1988,
+      "sha256": "4d4b718cfb55badd7b877636ffa1ee7bd9d956726ba445447c5efb189f34cfa4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-cancel.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-cancel.stdout.log",
+      "bytes": 369,
+      "sha256": "f56c09ddbb47831ea06a03ab0847ea1c3bd411a7332411c380edaec85a8aca72"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-cleanup-sync-result.json",
+      "bytes": 501,
+      "sha256": "2f1a3290959da3e957b7ef282d996ad0de3f6d81ca69d6a66a6b899d248ca4a0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-cleanup-sync.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-cleanup-sync.stdout.log",
+      "bytes": 557,
+      "sha256": "2495a8c7cd7c8052f304476f23d864e8a96d8e8e11beb5b132aa4e58517e3832"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-final-files.json",
+      "bytes": 1913,
+      "sha256": "293277731dfba144fca0b3ed19829b1dfffd7161ced81154a0f37783e3bd6a4d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-original-after-restore-result.json",
+      "bytes": 423,
+      "sha256": "fe2ea531ccc0e58947a7180ee5057959a85e022e9d84ae4a43a2779eba028bb3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-original-after-restore.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-original-after-restore.stdout.log",
+      "bytes": 1630,
+      "sha256": "b5eea88b2c6fd003bb578777ae45eb79744fa1194eea256a24787d3a4933eba0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-original-blocked-result.json",
+      "bytes": 416,
+      "sha256": "a579e4200adcb8e064a842abe85f9684debacee390cb7cccf8a47dbd499b8faa"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-original-blocked.stderr.log",
+      "bytes": 297,
+      "sha256": "bfe420260fdc942537cbf594350462e402cc248c9f37a5cc8a5eeeb7515c6cb1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-original-blocked.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-original-completed-files.json",
+      "bytes": 1913,
+      "sha256": "50aeeb2a17e1afde8531996572340fc47d6d2828527185484416d35bf3bdf294"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-owned-restore-result.json",
+      "bytes": 427,
+      "sha256": "c7bbb3e9d89804380758a61c37158cf6026124b0341065868f85cf76a6076eba"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-owned-restore.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-owned-restore.stdout.log",
+      "bytes": 318,
+      "sha256": "55ed2ee524788ef478f85f0f2732e988a78b3f251d86697c6bca8d9b5eb6ad76"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-paused-files.json",
+      "bytes": 1913,
+      "sha256": "79b5e442276d21fa8828383ab8787bf8be5ab0cdf1adac3eeb9d623d44ae8749"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-paused.json",
+      "bytes": 4377,
+      "sha256": "f16a7c8e0ed121766902d97609ab09e19aab6142f771b24badadd2d233df28aa"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-preparation.json",
+      "bytes": 272,
+      "sha256": "ca83a788e8867636679997814ed35dd558405a9330c8b19919e0e65e38413eb6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-prepare-steps.json",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-recover-steps.json",
+      "bytes": 2961,
+      "sha256": "04c0be58dbe5baac3e54d428c04e24e0788783b7203d42ae216b39b79758ce30"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-recovery-result.json",
+      "bytes": 421,
+      "sha256": "00e44c218bc9a460379548577e1a673df53005515b5d5fd84087f34725d356bf"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-recovery.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-recovery.stdout.log",
+      "bytes": 324,
+      "sha256": "427a60473b74fc0cb5fc077b7021480069595643864a491633bf683a21e26865"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-release",
+      "bytes": 43,
+      "sha256": "c3cc4e4b7695d0593266cb9ac8f117e18d8a17c96e767e5dcb6f225659604e38"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-restored-files.json",
+      "bytes": 1913,
+      "sha256": "635748dfd9e02555c3609cb732709332ad7b773112a68966f313f888f6e198df"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-result.json",
+      "bytes": 10351,
+      "sha256": "3120acdc65af3b1127250d735af78a598a1e7fa5f3b9fd0ddde565b5526455b9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-resumed-files.json",
+      "bytes": 1913,
+      "sha256": "1c39555b4abd87478d20423f76b1aece32f258538427a9f94aa868d1c7962ee4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-roots-after.json",
+      "bytes": 1297,
+      "sha256": "7e05a78c4fc8a507bbd07e6cd787f4a8bc8a80e79a9031a970608d735664403c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-signal-result.json",
+      "bytes": 991,
+      "sha256": "8ce27ae5b4ec71f2ac0209bc38352961d56811f3601550c4d0535c10aad9c73d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-signal-steps.json",
+      "bytes": 419,
+      "sha256": "b5183b2629f867605e4d22f16a7994a4402062794a2fbf499a9398d9ba2789ff"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-status-after-cancel-result.json",
+      "bytes": 432,
+      "sha256": "b7e40cd004afcb0fe5f461060d180edf796c8e7df0c43db704cc1b78e6afe053"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-status-after-cancel.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-status-after-cancel.stdout.log",
+      "bytes": 416,
+      "sha256": "683ab5d897209e2c13a185c913f8ffed940a0f47472e440866d8f99d107f90ed"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-stopped-files.json",
+      "bytes": 1988,
+      "sha256": "dfecb4290d8b8c0903112b9d3fa12d8d1ad93766ad3c058a9d3efc00baf6bb81"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\accepted-resume-trace.log",
+      "bytes": 102,
+      "sha256": "2b370032b8550f863aec092ae17405764554853a4058b25cbbca32f65b689dd4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\active-resume-capture-failure.json",
+      "bytes": 259,
+      "sha256": "12f2ad99e62d6fa082a756442fda0052b983a004c45844227227f0398bf166d0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\capsule-final-validation.json",
+      "bytes": 3486,
+      "sha256": "69d834b3e4f2c1d3841ef8d96c86779642874e28455d2f637386b719a2beabd3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\capture-one.ps1",
+      "bytes": 1147,
+      "sha256": "5d15b9bb13bbdf3b20734acbdd0352a0b0d274d487d3d5aaa32a0b3249c4dbb3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\client-byte-analysis.json",
+      "bytes": 924,
+      "sha256": "13f0d796f57f38603a70e95bd994b2e2d91387896d1cb4a032d440525ce4ecb1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\collect-evidence.py",
+      "bytes": 9122,
+      "sha256": "8f78594089c10ee1ca8fe2ea99d279c424a3cbaec4bbd9f7a8caa7968f40f344"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\common.ps1",
+      "bytes": 1839,
+      "sha256": "f11bf0db3b1ff569f929fdb18dad7e48bb7cf32e7be0a85169674f8bc1fea7dd"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\control.ps1",
+      "bytes": 9027,
+      "sha256": "8854598cf5c374c02b056fab2f05e4903ea4c058bed2c05ae6aaf38747df60f3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\direct-resume-capture-failure.json",
+      "bytes": 112,
+      "sha256": "f421835857101eb56dd2b7deccf55630c895f5283cdfe49aeb9daf184667a815"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\direct2-resume-capture-failure.json",
+      "bytes": 112,
+      "sha256": "f421835857101eb56dd2b7deccf55630c895f5283cdfe49aeb9daf184667a815"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\direct3-resume-capture-failure.json",
+      "bytes": 112,
+      "sha256": "f421835857101eb56dd2b7deccf55630c895f5283cdfe49aeb9daf184667a815"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\driver-functions.ps1",
+      "bytes": 2959,
+      "sha256": "680b2b1999204b2bb88ffb7905e7db2ac852488bfb2556d6bf8d1aa25492d8aa"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\identity-final.json",
+      "bytes": 3994,
+      "sha256": "c41a612c3110b6fe48d8fa3e4866de4d4c28465a0404a118617c2be976ea3283"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\memory-validation.log",
+      "bytes": 44,
+      "sha256": "ac0368ff6c9e7efaac0feca8670d0e264cf03114681e7abeaac7cc326b7c8891"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\original-before-files.json",
+      "bytes": 1913,
+      "sha256": "9217c46c770a510250efb202ccbb373614760de057d0bfc9b08f25756d23f162"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\paused-command-apply.initial-reconstructed.ps1",
+      "bytes": 2292,
+      "sha256": "705bf469ba52158b6a4a6ff2c04794936fc9b7f5f21924b46d04090538a098b7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\paused-command-apply.ps1",
+      "bytes": 2335,
+      "sha256": "fb037a677bb08a24f9db95ce5cb45391f9885b53bc7bc14932f27bde4e937a1e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\preserved-after.json",
+      "bytes": 9482,
+      "sha256": "3f651f15ac5be8c1faa42d69a503036bbf1e52e4969ffbfe592913f8795d7196"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\preserved-before.json",
+      "bytes": 9482,
+      "sha256": "2982b3a8d2f3b466816c531c676e6014785ff9c705ba7af6d6c43aa58adbdb44"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\previous-evidence-preservation.json",
+      "bytes": 168457,
+      "sha256": "27c75f3bbeaf9c6a5c8fae87388e4eefee33fafc1c456216ec9c6cf8a7e601fc"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\registry-validation.log",
+      "bytes": 48,
+      "sha256": "55c0a9360e6774d5f191edc2a2f835964bc440456bca0dd3359480a590bc1515"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\roots-before.json",
+      "bytes": 1297,
+      "sha256": "7e05a78c4fc8a507bbd07e6cd787f4a8bc8a80e79a9031a970608d735664403c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\support.ps1",
+      "bytes": 1258,
+      "sha256": "7bd0cfdfe74599e812b3c63ab47ee33bbc10faad7957b233a16eda9a9d2683e7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\raw-manifest.json",
+      "bytes": 128736,
+      "sha256": "c97356d620c77f8bfa513eaf4424129f3f6bf3829dcb98ba8ff79198c7ee73b6"
+    }
+  ]
+}

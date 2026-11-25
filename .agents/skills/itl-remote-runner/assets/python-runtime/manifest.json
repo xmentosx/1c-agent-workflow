@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "version": "3.13.15",
+  "platform": "windows-amd64",
+  "package": "python.3.13.15.nupkg",
+  "url": "https://api.nuget.org/v3-flatcontainer/python/3.13.15/python.3.13.15.nupkg",
+  "sha256": "05357887df50d3153efc681bdf432c321d3e2f9ce5788f99f4515b27e8fda0ac",
+  "payload": "payload.json",
+  "payloadSha256": "ec998367c7ec82cff5b3677b11ed5c5eb918ade843a472ab5b8cea8562a8d206",
+  "archivePrefix": "tools/",
+  "executable": "python.exe",
+  "license": "LICENSE.txt",
+  "releaseUrl": "https://www.python.org/downloads/release/python-31315/",
+  "packageUrl": "https://www.nuget.org/packages/python/3.13.15",
+  "distributionContract": "https://docs.python.org/3.13/using/windows.html#the-nuget-org-packages"
+}

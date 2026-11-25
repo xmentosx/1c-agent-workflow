@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "012a122588fa78e674138760536101465b06db76",
+  "sourceTree": "4a30d30d5c8ca04cdcd23266c94e9443227f3999",
+  "sourceRawRun": "itl/runs/20261011-003147-933-targeted-cc873328578e4d38af0032cd06d81177.json",
+  "sourceJunitSha256": "5080ff3ac8dc503f276e6462b8022fae4c6d0c43801223f7c01350e2c9c6880b",
+  "retainedLocalArtifact": "build/redesign-source-delivery/local-split/original-worker-1.xml",
+  "expandedCases": 56,
+  "caseSeconds": 613.391,
+  "originalWorkerDurationMs": 616654,
+  "orderingEstimate": "Ceiling(case sum + 5 seconds setup per new file); not new runtime acceptance or Full speed",
+  "groups": [
+    {
+      "file": "tests/pester/E2EArtifactCleanup.Tests.ps1",
+      "expandedCases": 7.0,
+      "caseSeconds": 11.567,
+      "orderingWeightSeconds": 17.0
+    },
+    {
+      "file": "tests/pester/ForkQualificationInventory.Tests.ps1",
+      "expandedCases": 8.0,
+      "caseSeconds": 0.45399999999999996,
+      "orderingWeightSeconds": 6.0
+    },
+    {
+      "file": "tests/pester/LocalQualityGate.Tests.ps1",
+      "expandedCases": 24.0,
+      "caseSeconds": 269.912,
+      "orderingWeightSeconds": 275.0
+    },
+    {
+      "file": "tests/pester/PesterCacheCompatibility.Tests.ps1",
+      "expandedCases": 2.0,
+      "caseSeconds": 61.525,
+      "orderingWeightSeconds": 67.0
+    },
+    {
+      "file": "tests/pester/PesterShardIdentity.Tests.ps1",
+      "expandedCases": 10.0,
+      "caseSeconds": 153.011,
+      "orderingWeightSeconds": 159.0
+    },
+    {
+      "file": "tests/pester/ReleaseProgressObservation.Tests.ps1",
+      "expandedCases": 5.0,
+      "caseSeconds": 116.922,
+      "orderingWeightSeconds": 122.0
+    }
+  ]
+}

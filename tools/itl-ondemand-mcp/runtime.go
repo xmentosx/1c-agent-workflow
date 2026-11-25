@@ -22,21 +22,30 @@ import (
 )
 
 type runtime struct {
-	mu                 sync.Mutex
-	catalog            *loadedCatalog
-	broker             backendBroker
-	projectRoot        string
-	family             string
-	instanceID         string
-	idle               time.Duration
-	catalogWait        time.Duration
-	vanessaConnectWait time.Duration
-	logger             *slog.Logger
-	progressMu         sync.Mutex
-	progress           map[string]*progressRoute
+	mu                     sync.Mutex
+	catalog                *loadedCatalog
+	broker                 backendBroker
+	projectRoot            string
+	family                 string
+	instanceID             string
+	idle                   time.Duration
+	catalogWait            time.Duration
+	vanessaConnectWait     time.Duration
+	logger                 *slog.Logger
+	progressMu             sync.Mutex
+	progress               map[string]*progressRoute
+	progressSerial         atomic.Uint64
+	progressWriteMu        sync.Mutex
+	databaseGateOnce       sync.Once
+	databaseGate           chan struct{}
+	executionOwner         *executionGuardOwner
+	executionPlan          *facadeExecutionPlan
+	cleanupUnconfirmed     bool
+	idleActivityUnresolved bool
 
 	backend           *backendInfo
 	session           *mcp.ClientSession
+	sessionTransport  *backendHTTPTransport
 	timer             *time.Timer
 	active            int
 	generation        uint64
@@ -51,11 +60,28 @@ type runtime struct {
 	testClientPID     int
 	testClientPort    int
 	suppressEvidence  bool
+	// The agent closed its TestClient itself; a new one is then expected.
+	testClientClosedByAgent bool
+	// PID of a TestClient this facade used that was replaced unexpectedly; the
+	// next UI call reports it once.
+	testClientReplacedPID int
+	// Installed compatibility manifest of this project; empty when unknown.
+	compatibilityPath string
 }
 
 type progressRoute struct {
 	session   *mcp.ServerSession
 	forwarded atomic.Uint64
+	token     any
+	id        string
+	path      string
+	tool      string
+	backend   *mcp.ClientSession
+	// The latest notification received from the backend for this call, kept
+	// in memory only so an unknown-outcome error can name the last step.
+	lastMu   sync.Mutex
+	last     *progressSnapshot
+	received uint64
 }
 
 const (
@@ -78,7 +104,16 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 	return r.callNamed(ctx, req, req.Params.Name, arguments)
 }
 
-func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolName string, arguments any) (*mcp.CallToolResult, error) {
+func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolName string, arguments any) (callResult *mcp.CallToolResult, callError error) {
+	defer func() { r.appendFacadeNotes(toolName, callResult) }()
+	ctx, cancel, budgetErr := phaseRequestContext(ctx, req.Params.Meta)
+	if budgetErr != nil {
+		return toolError("ITL_ONDEMAND_PHASE_BUDGET_INVALID", budgetErr.Error(), nil), nil
+	}
+	defer cancel()
+	if toolName == ownerRecoveryTool {
+		return r.recoverConnection(ctx, req.Params.Meta, arguments), nil
+	}
 	progressTokenProvided := req.Params.GetProgressToken() != nil
 	tool := r.catalog.tool(toolName)
 	if tool == nil {
@@ -91,14 +126,55 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		}), nil
 	}
 
-	// Calls, including lazy ensure/start, hold a shared lease. Lifecycle writers
-	// acquire lifecycle -> runtime exclusively and therefore wait for the whole
-	// operation without requiring a client reload.
-	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
+	ctx, finishDatabaseCall, err := r.beginDatabaseCall(ctx, req.Params.Meta)
 	if err != nil {
-		return toolError("ITL_ONDEMAND_RUNTIME_LOCK", err.Error(), nil), nil
+		code := "EXECUTION_GUARD_ADMISSION_FAILED"
+		return toolError(code, err.Error(), map[string]any{"callOutcome": "not-started", "automaticRetryPerformed": false, "recoveryTool": ownerRecoveryTool, "repairAction": branchHolderRepairAction}), nil
 	}
-	defer lock.Close()
+	defer func() {
+		terminal, message := "succeeded", ""
+		if callError != nil {
+			terminal, message = "failed", callError.Error()
+		} else if callResult != nil && callResult.IsError {
+			terminal, message = "failed", resultText(callResult)
+		}
+		r.mu.Lock()
+		finalBackend, finalInstance, finalExecution := r.backend, r.instanceID, ""
+		if r.executionOwner != nil {
+			finalExecution = r.executionOwner.Proof.ID
+		}
+		r.mu.Unlock()
+		if err := finishDatabaseCall(terminal, message); err != nil {
+			r.mu.Lock()
+			r.writeEvidenceLocked(toolName, arguments, "cleanup-failed", "EXECUTION_GUARD_CLEANUP_UNCONFIRMED", resultEvidenceMessage(nil, err), finalInstance, finalBackend, progressTokenProvided, 0, "", finalExecution)
+			r.mu.Unlock()
+			if callResult != nil && callResult.IsError {
+				// Keep the original failure and dispatch outcome. Cleanup failure
+				// adds its owner continuation, never erases the primary evidence.
+				if structured, ok := callResult.StructuredContent.(map[string]any); ok {
+					details, _ := structured["details"].(map[string]any)
+					if details == nil {
+						details = map[string]any{}
+						structured["details"] = details
+					}
+					details["cleanupUnconfirmed"], details["automaticRetryPerformed"] = true, false
+					details["action"], details["cleanupError"] = ownerRecoveryTool, err.Error()
+					details["continuation"] = connectionRecoveryContinuation
+				}
+				callResult.Content = append(callResult.Content, &mcp.TextContent{Text: err.Error()})
+				return
+			}
+			details := map[string]any{"action": ownerRecoveryTool, "automaticRetryPerformed": false, "callOutcome": "unknown", "continuation": connectionRecoveryContinuation, "repairAction": branchHolderRepairAction}
+			failure := toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", err.Error(), details)
+			if callResult != nil {
+				details["callOutcome"], details["upstreamOutcome"] = "completed", "succeeded"
+				failure.Content = append(callResult.Content, failure.Content...)
+				failure.Meta = callResult.Meta
+				failure.StructuredContent.(map[string]any)["upstreamResult"] = callResult.StructuredContent
+			}
+			callResult, callError = failure, nil
+		}
+	}()
 
 	r.mu.Lock()
 	if r.timer != nil {
@@ -114,27 +190,52 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	if r.session != nil && r.backend != nil && r.backend.PID > 0 {
 		statePath := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family, r.instanceID+".json")
 		if _, statErr := os.Stat(statePath); os.IsNotExist(statErr) {
-			_ = r.session.Close()
-			r.session = nil
-			r.backend = nil
+			if r.executionOwner != nil {
+				// Only a confirmed stop removes a registration, so its absence
+				// between calls means the backend was retired (normally by a
+				// lifecycle drain). Stop whatever this facade itself launched and
+				// start a replacement; if that stop stays unconfirmed, drop the
+				// backend and start fresh anyway. Nothing was dispatched yet.
+				previous := r.instanceID
+				if _, err := r.recoverLocked(ctx, r.session, previous, r.backend); err != nil {
+					r.writeLifecycleEvidenceLocked(toolName, "recovery", "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", err)
+					r.logger.Warn("missing-state recovery did not confirm the old backend stop; starting a new backend", "instanceId", previous, "error", err)
+					r.resetBackendLocked()
+				}
+			} else {
+				_ = r.session.Close()
+				r.clearProgress(r.session)
+				r.session = nil
+				r.backend = nil
+			}
 		}
+	}
+	if isFacadeSessionLifecycleTool(r.family, toolName) {
+		result := r.callSessionLifecycleLocked(ctx, toolName, arguments, progressTokenProvided)
+		r.mu.Unlock()
+		return result, nil
 	}
 	if err := r.ensureLocked(ctx); err != nil {
 		diff := r.mismatch
-		r.mu.Unlock()
+		code := "ITL_ONDEMAND_START_FAILED"
 		if diff != nil {
-			return toolError("ITL_ONDEMAND_CATALOG_MISMATCH", "backend tool catalog changed", diff), nil
+			code = "ITL_ONDEMAND_CATALOG_MISMATCH"
 		}
-		for _, code := range []string{
+		for _, candidate := range []string{
 			"ITL_ONDEMAND_BACKEND_VERSION_MISMATCH",
 			"ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED",
 			"ITL_VANESSA_EXT_NOT_READY",
 		} {
-			if strings.Contains(err.Error(), code) {
-				return toolError(code, err.Error(), nil), nil
+			if diff == nil && strings.Contains(err.Error(), candidate) {
+				code = candidate
 			}
 		}
-		return toolError("ITL_ONDEMAND_START_FAILED", err.Error(), nil), nil
+		r.writeLifecycleEvidenceLocked(toolName, "start", code, err)
+		r.mu.Unlock()
+		if diff != nil {
+			return toolError(code, "backend tool catalog changed", diff), nil
+		}
+		return toolError(code, err.Error(), nil), nil
 	}
 	if r.mismatch != nil {
 		diff := r.mismatch
@@ -146,7 +247,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		r.mu.Unlock()
 		return guarded, nil
 	}
-	if preflight := r.preflightVanessaTestClientLocked(ctx, toolName); preflight != nil {
+	if preflight := r.preflightVanessaTestClientLocked(ctx, toolName, arguments); preflight != nil {
 		r.attachVanessaTestClientMetaLocked(preflight)
 		r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend, progressTokenProvided, 0)
 		r.completeCallLocked()
@@ -156,49 +257,49 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	session := r.session
 	callInstanceID := r.instanceID
 	callBackend := r.backend
-	r.active++
-	r.writeEvidenceLocked(toolName, arguments, "started", "ITL_ONDEMAND_CALL_STARTED", "upstream tool call started", callInstanceID, callBackend, progressTokenProvided, 0)
-	r.mu.Unlock()
-
-	params := &mcp.CallToolParams{Name: toolName, Arguments: arguments, Meta: req.Params.Meta}
-	progressKey := progressTokenKey(req.Params.GetProgressToken())
+	params := &mcp.CallToolParams{Name: toolName, Arguments: arguments, Meta: publicBackendMeta(req.Params.Meta)}
 	var route *progressRoute
-	if progressKey != "" {
-		route = &progressRoute{session: req.Session}
+	if progressTokenProvided {
+		progressID := fmt.Sprintf("%s-%d", callInstanceID, r.progressSerial.Add(1))
+		route = &progressRoute{session: req.Session, token: req.Params.GetProgressToken(),
+			id: progressID, tool: toolName, backend: session,
+			path: filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family, callInstanceID+".progress.jsonl")}
+		params.Meta["progressToken"] = progressID
 		r.progressMu.Lock()
-		r.progress[progressKey] = route
+		r.progress[progressTokenKey(progressID)] = route
 		r.progressMu.Unlock()
-		defer func() {
-			r.progressMu.Lock()
-			delete(r.progress, progressKey)
-			r.progressMu.Unlock()
-		}()
 	}
+	r.active++
+	r.noteIdleActivityLocked(toolName, arguments)
+	r.writeEvidenceLocked(toolName, arguments, "started", "ITL_ONDEMAND_CALL_STARTED", "upstream tool call started", callInstanceID, callBackend, progressTokenProvided, 0, progressEvidenceID(route))
+	r.mu.Unlock()
 	result, err := r.callUpstream(ctx, session, params)
 	forwardedProtocolError, forwardedProtocolCode := backendProtocolToolError(err)
 	r.mu.Lock()
 	r.active--
-	r.applyVanessaTestClientResultLocked(toolName, result)
+	r.applyVanessaTestClientResultLocked(toolName, arguments, result)
 	r.attachVanessaTestClientMetaLocked(result)
+	r.attachTestClientReplacementNoticeLocked(result)
 	outcome, resultCode := callOutcome(result, err)
 	if forwardedProtocolCode != "" {
 		resultCode = forwardedProtocolCode
 	}
-	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode, resultEvidenceMessageForOutcome(outcome, result, err), callInstanceID, callBackend, progressTokenProvided, progressForwardedCount(route))
+	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode, resultEvidenceMessageForOutcome(outcome, result, err), callInstanceID, callBackend, progressTokenProvided, progressForwardedCount(route), progressEvidenceID(route))
 	if err != nil && isConnectionRefused(err) {
 		recovery, recoveryErr := r.recoverLocked(ctx, session, callInstanceID, callBackend)
 		if recoveryErr != nil {
 			currentInstanceID := r.instanceID
+			r.writeLifecycleEvidenceLocked(toolName, "recovery", "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", recoveryErr)
 			r.completeCallLocked()
 			r.mu.Unlock()
-			return recoveryAction(toolName, callInstanceID, currentInstanceID, false, recoveryErr), nil
+			return recoveryAction(toolName, callInstanceID, currentInstanceID, false, "unknown", recoveryErr), nil
 		}
 		if !isIdempotentTool(r.family, tool) {
 			r.completeCallLocked()
 			r.mu.Unlock()
-			return recoveryAction(toolName, recovery.PreviousInstanceID, recovery.InstanceID, true, nil), nil
+			return recoveryAction(toolName, recovery.PreviousInstanceID, recovery.InstanceID, true, "unknown", nil), nil
 		}
-		if preflight := r.preflightVanessaTestClientLocked(ctx, toolName); preflight != nil {
+		if preflight := r.preflightVanessaTestClientLocked(ctx, toolName, arguments); preflight != nil {
 			r.attachVanessaTestClientMetaLocked(preflight)
 			r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend, progressTokenProvided, progressForwardedCount(route))
 			r.completeCallLocked()
@@ -214,13 +315,19 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		retryResult, retryErr := r.callUpstream(ctx, retrySession, params)
 		r.mu.Lock()
 		r.active--
-		r.applyVanessaTestClientResultLocked(toolName, retryResult)
+		r.applyVanessaTestClientResultLocked(toolName, arguments, retryResult)
 		r.attachVanessaTestClientMetaLocked(retryResult)
 		retryOutcome, retryCode := callOutcome(retryResult, retryErr)
 		r.writeEvidenceLocked(toolName, arguments, retryOutcome, retryCode, resultEvidenceMessageForOutcome(retryOutcome, retryResult, retryErr), retryInstanceID, retryBackend, progressTokenProvided, progressForwardedCount(route))
+		if retryErr != nil {
+			retryErr = r.cleanupFailedDatabaseCallLocked(ctx, retryErr)
+		}
 		r.completeCallLocked()
 		r.mu.Unlock()
 		if retryErr != nil {
+			if strings.Contains(retryErr.Error(), "EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED") {
+				return toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", retryErr.Error(), nil), nil
+			}
 			return toolError("ITL_ONDEMAND_BACKEND_RECOVERY_RETRY_FAILED", retryErr.Error(), map[string]any{
 				"action": "retry-tool-call", "automaticRetryPerformed": true, "automaticRetryLimit": 1,
 				"tool": toolName, "previousInstanceId": recovery.PreviousInstanceID, "instanceId": recovery.InstanceID,
@@ -231,13 +338,25 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		}
 		return recoveredResult(retryResult, recovery), nil
 	}
+	if err != nil {
+		err = r.cleanupFailedDatabaseCallLocked(ctx, err)
+	}
 	r.completeCallLocked()
 	r.mu.Unlock()
 	if err != nil {
+		if strings.Contains(err.Error(), "EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED") {
+			return toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", err.Error(), nil), nil
+		}
 		if forwardedProtocolError != nil {
 			return forwardedProtocolError, nil
 		}
-		return toolError("ITL_ONDEMAND_BACKEND_CALL_FAILED", err.Error(), nil), nil
+		if r.family == "vanessa-ui" && protocolErrorReportsTestClientDisconnected(err) {
+			return testClientDisconnectedFailure(toolName, err), nil
+		}
+		if phaseDeadlineExceeded(ctx, err) {
+			return phaseDeadlineFailure(toolName, err, route, !isIdempotentTool(r.family, tool)), nil
+		}
+		return backendCallFailure(toolName, err, !isIdempotentTool(r.family, tool)), nil
 	}
 	if result == nil {
 		return toolError("ITL_ONDEMAND_EMPTY_RESULT", "backend returned no tool result", nil), nil
@@ -310,6 +429,7 @@ func isIdempotentTool(family string, tool *mcp.Tool) bool {
 		"get_table_data",
 		"get_test_results",
 		"get_VanessaAutomation_state",
+		"get_vanessa_automation_state",
 		"get_window_list_os",
 		"get_window_list_testclient",
 		"get_window_screenshot_os",
@@ -337,12 +457,21 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	if err != nil {
 		return nil, fmt.Errorf("generate replacement instance ID: %w", err)
 	}
-	info, err := r.broker.Recover(ctx, previousBackend, replacementInstanceID)
-	if err != nil {
+	if err := r.enterDatabasePreparationMode(ctx); err != nil {
 		return nil, err
 	}
+	r.publishHolderState(ctx, r.executionOwner, holderStateRecovering)
+	info, err := r.broker.Recover(ctx, previousBackend, replacementInstanceID)
+	if err != nil {
+		// No confirmed cleanup receipt was returned. The end of this execution
+		// drops the backend and releases the guard; nothing is retained.
+		r.cleanupUnconfirmed = true
+		return nil, err
+	}
+	r.publishHolderState(ctx, r.executionOwner, holderStateActiveNativeCall)
 	if r.session != nil {
 		_ = r.session.Close()
+		r.clearProgress(r.session)
 	}
 	r.session = nil
 	r.backend = nil
@@ -351,14 +480,18 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	if err := r.connectLocked(ctx, info); err != nil {
 		return nil, fmt.Errorf("connect recovered backend: %w", err)
 	}
+	if err := r.restoreDatabaseRuntimeMode(ctx); err != nil {
+		return nil, err
+	}
 	return &recoveryResult{PreviousInstanceID: previousInstanceID, InstanceID: replacementInstanceID}, nil
 }
 
-func recoveryAction(toolName, previousInstanceID, instanceID string, backendRecovered bool, reason error) *mcp.CallToolResult {
+func recoveryAction(toolName, previousInstanceID, instanceID string, backendRecovered bool, callOutcome string, reason error) *mcp.CallToolResult {
 	details := map[string]any{
 		"action": "review-and-retry-tool-call", "automaticRetryPerformed": false,
 		"tool": toolName, "previousInstanceId": previousInstanceID, "instanceId": instanceID,
-		"backendRecovered": backendRecovered, "callOutcome": "unknown",
+		"backendRecovered": backendRecovered, "callOutcome": callOutcome,
+		"continuation": connectionRecoveryContinuation,
 	}
 	message := "backend connection was lost; automatic replay is not allowed for this tool"
 	if reason != nil {
@@ -366,10 +499,43 @@ func recoveryAction(toolName, previousInstanceID, instanceID string, backendReco
 		details["action"] = "retry-after-backend-recovery"
 		message = "backend connection was lost and automatic recovery could not be completed"
 	}
+	if callOutcome == "not-started" {
+		message = "runtime registration disappeared; owned recovery could not be completed before tool dispatch; the original call was not sent"
+	}
+	if toolName == ownerRecoveryTool {
+		message = "owned connection recovery could not be completed; no previous tool operation was replayed"
+		details["action"] = ownerRecoveryTool
+	}
+	if reason != nil {
+		message += "; reason: " + recoveryReasonSummary(reason)
+	}
 	return toolError("ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", message, details)
 }
 
+const recoveryReasonLimit = 600
+
+// The full reason stays in details.reason; the visible text starts at the
+// first workflow code (for example RECOVERY_NOT_STALE status=...) and is bounded.
+func recoveryReasonSummary(reason error) string {
+	text := evidenceWhitespace.ReplaceAllString(strings.TrimSpace(reason.Error()), " ")
+	if index := strings.Index(text, "ITL_"); index > 0 {
+		text = text[index:]
+	}
+	runes := []rune(text)
+	if len(runes) > recoveryReasonLimit {
+		text = string(runes[:recoveryReasonLimit-3]) + "..."
+	}
+	return text
+}
+
 func recoveredResult(result *mcp.CallToolResult, recovery *recoveryResult) *mcp.CallToolResult {
+	// A qualified rejection may be the final reply to an existing idempotent
+	// recovery retry. Report that earlier retry consistently with the metadata.
+	if structured, ok := result.StructuredContent.(map[string]any); ok {
+		if details, ok := structured["details"].(map[string]any); ok && details["callOutcome"] == "not-started" {
+			details["automaticRetryPerformed"] = true
+		}
+	}
 	if result.Meta == nil {
 		result.Meta = mcp.Meta{}
 	}
@@ -400,24 +566,94 @@ func backendProtocolToolError(err error) (*mcp.CallToolResult, string) {
 		return nil, ""
 	}
 	switch code {
-	case "PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED":
+	case "PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED", "ITL_VANESSA_COMMAND_REJECTED", "INVALID_PARAMS":
 		return toolError(code, message, map[string]any{"backendJSONRPCCode": rpcError.Code}), code
 	default:
 		return nil, ""
 	}
 }
 
+// Only these producer sites establish that no client action was dispatched.
+// An unqualified ACTION_FAILED (including older backends) remains ambiguous.
+func qualifiedVanessaCommandRejection(family, tool string, err error) *mcp.CallToolResult {
+	if family != "vanessa-ui" {
+		return nil
+	}
+	result, code := backendProtocolToolError(err)
+	qualified := false
+	switch code {
+	case "ITL_VANESSA_COMMAND_REJECTED":
+		qualified = tool == "execute_feature_step" || tool == "run_scenario"
+	case "PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED":
+		qualified = tool == "open_feature_file" || tool == "load_features" || tool == "check_syntax"
+	case "INVALID_PARAMS":
+		// OpenFeatureFile's missing path/file checks precede request setup and
+		// MCPOpenFeatureFile dispatch. Other tools do not establish this proof.
+		qualified = tool == "open_feature_file"
+	}
+	if !qualified {
+		return nil
+	}
+	details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
+	details["callOutcome"] = "not-started"
+	details["automaticRetryPerformed"] = false
+	details["action"] = "correct-command-and-retry"
+	return result
+}
+
+// A Vanessa tool handler raises ACTION_FAILED or INVALID_PARAMS only after it
+// has stopped: MCPVA handlers return synchronously, and the asynchronous error
+// completions return or unwind right after answering. The answer therefore
+// leaves nothing running, exactly like a successful call, and stopping the
+// backend would only discard the forms the agent must inspect (PM5 13a). The
+// outcome may include partial effects and is never replayed. A disconnected
+// TestClient, an uncoded error, a transport failure and a deadline still stop
+// the owned backend.
+func answeredVanessaHandlerFailure(family, tool string, err error) *mcp.CallToolResult {
+	if family != "vanessa-ui" || protocolErrorReportsTestClientDisconnected(err) {
+		return nil
+	}
+	var rpcError *jsonrpc.Error
+	if !errors.As(err, &rpcError) {
+		return nil
+	}
+	message := strings.TrimSpace(rpcError.Message)
+	code, _, found := strings.Cut(message, ":")
+	if !found || (code != "ACTION_FAILED" && code != "INVALID_PARAMS") {
+		return nil
+	}
+	return toolError(code, message, map[string]any{
+		"backendJSONRPCCode": rpcError.Code, "tool": tool, "callOutcome": "failed",
+		"partialEffectsPossible": true, "automaticRetryPerformed": false, "backendKept": true,
+		"action": "inspect-form-state-before-retry",
+	})
+}
+
 func (r *runtime) callUpstream(ctx context.Context, session *mcp.ClientSession, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
 	deadline := time.Now().Add(r.vanessaConnectWait)
 	for {
 		result, err := session.CallTool(ctx, params)
+		if rejected := qualifiedVanessaCommandRejection(r.family, params.Name, err); rejected != nil {
+			return rejected, nil
+		}
+		if failed := answeredVanessaHandlerFailure(r.family, params.Name, err); failed != nil {
+			return failed, nil
+		}
 		if err != nil || result == nil || result.IsError {
 			return result, err
 		}
-		result = r.validateVanessaResult(ctx, params.Name, result, session)
+		result = r.validateVanessaResult(ctx, params.Name, params.Arguments, result, session)
+		result = roctupDangerousKeywordRejection(r.family, params.Name, result)
+		if params.Name == "close_test_client" && result != nil && !result.IsError {
+			if owner, ok := r.broker.(testClientCloseBroker); ok {
+				if err := owner.CompleteTestClientClose(ctx, r.backend); err != nil {
+					return nil, fmt.Errorf("complete owned TestClient close: %w", err)
+				}
+			}
+		}
 		code := toolResultCode(result)
 		retryConnect := code == "ITL_VANESSA_TESTCLIENT_CONNECT_FAILED" || code == "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED"
-		if r.family != "vanessa-ui" || params.Name != "connect_test_client" || r.vanessaConnectWait <= 0 || !retryConnect || !time.Now().Before(deadline) {
+		if r.family != "vanessa-ui" || classifyVanessaTool(params.Name, params.Arguments) != vanessaToolConnect || r.vanessaConnectWait <= 0 || !retryConnect || !time.Now().Before(deadline) {
 			return result, nil
 		}
 		wait := 500 * time.Millisecond
@@ -456,6 +692,15 @@ var (
 )
 
 func resultEvidenceMessage(result *mcp.CallToolResult, err error) string {
+	return redactedEvidenceMessage(result, err, 240)
+}
+
+// Lifecycle diagnostics carry port-owner evidence and joined cleanup errors.
+func resultEvidenceMessageLimited(err error, limit int) string {
+	return redactedEvidenceMessage(nil, err, limit)
+}
+
+func redactedEvidenceMessage(result *mcp.CallToolResult, err error, limit int) string {
 	message := ""
 	if err != nil {
 		message = err.Error()
@@ -474,8 +719,8 @@ func resultEvidenceMessage(result *mcp.CallToolResult, err error) string {
 	message = evidenceURLSecretQuery.ReplaceAllString(message, "$1[redacted]")
 	message = evidenceConfiguration.ReplaceAllString(message, "[configuration redacted]")
 	runes := []rune(message)
-	if len(runes) > 240 {
-		message = string(runes[:237]) + "..."
+	if len(runes) > limit {
+		message = string(runes[:limit-3]) + "..."
 	}
 	return message
 }
@@ -492,26 +737,38 @@ func (r *runtime) ensureLocked(ctx context.Context) error {
 		return fmt.Errorf("gateway is closed")
 	}
 	if r.session != nil {
-		return nil
+		return r.restoreDatabaseRuntimeMode(ctx)
 	}
-	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "broker-start")
+	if err := r.enterDatabasePreparationMode(ctx); err != nil {
+		return err
+	}
+	completePhase := r.backendPhase(ctx, "broker-start")
 	info, err := r.broker.Ensure(ctx)
+	err = completePhase(err)
 	if err != nil {
 		return err
 	}
 	if info.URL == "" {
 		return fmt.Errorf("backend broker returned an empty URL")
 	}
-	return r.connectLocked(ctx, info)
+	if err := r.connectLocked(ctx, info); err != nil {
+		return err
+	}
+	return r.restoreDatabaseRuntimeMode(ctx)
 }
 
 func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
-	if err := validateBackendVersion(r.family, r.catalog.Data.BackendVersions, info.BackendVersion); err != nil {
-		_ = r.broker.Stop(context.Background())
-		return err
-	}
 	r.backend = info
+	r.idleActivityUnresolved = false
+	if err := validateBackendVersion(r.family, r.catalog.Data.BackendVersions, info.BackendVersion); err != nil {
+		return errors.Join(err, r.stopBrokerAfterFailure(ctx))
+	}
 	if r.family == "vanessa-ui" {
+		// A replacement backend brings its own TestClient; the forms of the one
+		// this facade used are gone unless the agent closed it.
+		if r.testClientPID > 0 && info.TestClientPID != r.testClientPID && !r.testClientClosedByAgent {
+			r.testClientReplacedPID = r.testClientPID
+		}
 		r.testClientState = testClientNotStarted
 		r.testClientPID = info.TestClientPID
 		r.testClientPort = info.TestClientPort
@@ -519,7 +776,7 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 			r.testClientState = info.TestClientState
 		}
 	}
-	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "mcp-connect", "url", info.URL)
+	completePhase := r.backendPhase(ctx, "mcp-connect")
 	client := mcp.NewClient(&mcp.Implementation{Name: "itl-ondemand-mcp", Version: version}, &mcp.ClientOptions{
 		Capabilities: &mcp.ClientCapabilities{},
 		ProgressNotificationHandler: func(ctx context.Context, req *mcp.ProgressNotificationClientRequest) {
@@ -536,46 +793,50 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 			}()
 		},
 	})
+	r.sessionTransport = &backendHTTPTransport{}
 	transport := &mcp.StreamableClientTransport{
-		Endpoint:   info.URL,
-		HTTPClient: &http.Client{Timeout: 10 * time.Minute},
+		Endpoint: info.URL,
+		// RPC contexts own phase deadlines; a fixed transport timeout would
+		// truncate explicitly budgeted long 1C calculations.
+		HTTPClient: &http.Client{Transport: r.sessionTransport},
 		MaxRetries: 2,
 	}
 	session, err := client.Connect(ctx, transport, nil)
+	err = completePhase(err)
 	if err != nil {
-		_ = r.broker.Stop(context.Background())
-		return fmt.Errorf("connect backend MCP: %w", err)
+		return errors.Join(fmt.Errorf("connect backend MCP: %w", err), r.stopBrokerAfterFailure(ctx))
 	}
-	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "catalog-verify")
+	completePhase = r.backendPhase(ctx, "catalog-verify")
 	_, diff, err := r.waitForCatalog(ctx, session)
+	err = completePhase(err)
 	if err != nil {
 		_ = session.Close()
-		_ = r.broker.Stop(context.Background())
-		return fmt.Errorf("list backend tools: %w", err)
+		return errors.Join(fmt.Errorf("list backend tools: %w", err), r.stopBrokerAfterFailure(ctx))
 	}
 	if !diff.empty() {
 		r.mismatch = diff
 		_ = session.Close()
-		_ = r.broker.Stop(context.Background())
-		return fmt.Errorf("ITL_ONDEMAND_CATALOG_MISMATCH: added=%v removed=%v changed=%v", diff.Added, diff.Removed, diff.Changed)
+		return errors.Join(fmt.Errorf("ITL_ONDEMAND_CATALOG_MISMATCH: added=%v removed=%v changed=%v", diff.Added, diff.Removed, diff.Changed), r.stopBrokerAfterFailure(ctx))
 	}
 	r.session = session
 	r.mismatch = nil
-	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "preflight")
-	if err := r.preflightVanessa(ctx, session); err != nil {
+	completePhase = r.backendPhase(ctx, "preflight")
+	if err := completePhase(r.preflightVanessa(ctx, session)); err != nil {
 		r.session = nil
 		_ = session.Close()
-		_ = r.broker.Stop(context.Background())
+		stopErr := r.stopBrokerAfterFailure(ctx)
 		r.backend = nil
-		return err
+		return errors.Join(err, stopErr)
 	}
+	completePhase = r.backendPhase(ctx, "mark-running")
 	confirmed, err := r.broker.MarkRunning(ctx, info)
+	err = completePhase(err)
 	if err != nil {
 		r.session = nil
 		_ = session.Close()
-		_ = r.broker.Stop(context.Background())
+		stopErr := r.stopBrokerAfterFailure(ctx)
 		r.backend = nil
-		return fmt.Errorf("confirm backend protocol readiness: %w", err)
+		return errors.Join(fmt.Errorf("confirm backend protocol readiness: %w", err), stopErr)
 	}
 	info = confirmed
 	r.backend = confirmed
@@ -708,8 +969,14 @@ func (r *runtime) forwardProgress(ctx context.Context, params *mcp.ProgressNotif
 	r.progressMu.Lock()
 	route := r.progress[key]
 	r.progressMu.Unlock()
-	if route != nil && route.session.NotifyProgress(ctx, params) == nil {
-		route.forwarded.Add(1)
+	if route != nil {
+		route.recordProgress(params)
+		forwarded := *params
+		forwarded.ProgressToken = route.token
+		if route.session.NotifyProgress(ctx, &forwarded) == nil {
+			count := route.forwarded.Add(1)
+			r.writeProgressEvidence(route, count)
+		}
 	}
 }
 
@@ -729,62 +996,121 @@ func (r *runtime) armIdleLocked() {
 }
 
 func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
-	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
+	// Terminal close and newer calls supersede an armed idle callback. Check
+	// that before admission: recovery may have held the mutex past this
+	// callback's deadline, and it has no work to admit in the new generation.
+	r.mu.Lock()
+	superseded := r.closed || r.generation != generation
+	r.mu.Unlock()
+	if superseded {
+		return nil
+	}
+	unlock, err := r.lockDatabaseCalls(ctx)
 	if err != nil {
+		r.mu.Lock()
+		obsolete := r.closed || r.generation != generation
+		r.mu.Unlock()
+		if obsolete {
+			return nil
+		}
 		return err
 	}
-	defer lock.Close()
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed || r.backend == nil || r.active > 0 || r.generation != generation {
+		r.mu.Unlock()
+		unlock()
 		return nil
 	}
 	if time.Now().Before(r.idleDeadline) {
 		r.armIdleLocked()
+		r.mu.Unlock()
+		unlock()
 		return nil
 	}
+	if handled, err := r.tryOwnedIdleStopLocked(ctx); handled {
+		if err != nil {
+			r.writeEvidenceLocked("idle-cleanup", map[string]any{}, "cleanup-failed", "EXECUTION_GUARD_CLEANUP_UNCONFIRMED", resultEvidenceMessage(nil, err), r.instanceID, r.backend, false, 0)
+		}
+		r.mu.Unlock()
+		unlock()
+		return err
+	}
+	r.mu.Unlock()
+	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, nil, unlock)
+	if err != nil {
+		// Another holder kept the base for this callback's admission budget.
+		// The idle backend still holds its file infobase: retry after the next
+		// idle interval rather than leave it running until the facade exits.
+		r.mu.Lock()
+		if !r.closed && r.backend != nil && r.active == 0 && r.generation == generation {
+			r.armIdleLocked()
+			r.logger.Warn("idle backend cleanup deferred", "reason", "database admission", "error", err, "retryAfter", r.idle)
+		}
+		r.mu.Unlock()
+		return err
+	}
+	r.mu.Lock()
+	if r.closed || r.backend == nil || r.active > 0 || r.generation != generation {
+		r.mu.Unlock()
+		return finish("succeeded", "")
+	}
 	r.stopping = true
-	err = r.broker.Stop(ctx)
+	err = r.stopDatabaseBackendLocked(ctx, false)
 	r.stopping = false
 	if err != nil {
 		r.armIdleLocked()
+		r.writeEvidenceLocked("idle-cleanup", map[string]any{}, "cleanup-failed", "EXECUTION_GUARD_CLEANUP_UNCONFIRMED", resultEvidenceMessage(nil, err), r.instanceID, r.backend, false, 0)
+		r.mu.Unlock()
+		_ = finish("failed", err.Error())
 		return err
 	}
 	if r.session != nil {
 		_ = r.session.Close()
+		r.clearProgress(r.session)
 		r.session = nil
 	}
 	r.backend = nil
 	r.timer = nil
 	r.logger.Info("idle backend cleanup completed", "lastCallCompletedAt", r.lastCallCompleted, "reason", "idle")
-	return nil
+	r.mu.Unlock()
+	return finish("succeeded", "")
 }
 
 func (r *runtime) stop(ctx context.Context) error {
-	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
+	return r.stopWithMeta(ctx, nil)
+}
+
+func (r *runtime) stopWithMeta(ctx context.Context, meta mcp.Meta) error {
+	unlock, err := r.lockDatabaseCalls(ctx)
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	return r.stopWithLocalGate(ctx, meta, unlock)
+}
+
+func (r *runtime) stopWithLocalGate(ctx context.Context, meta mcp.Meta, unlock func()) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	if handled, err := r.tryOwnedIdleStopLocked(ctx); handled {
+		r.mu.Unlock()
+		unlock()
+		return err
+	}
+	r.mu.Unlock()
+	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, meta, unlock)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
 	if r.timer != nil {
 		r.timer.Stop()
 		r.timer = nil
 	}
-	if r.backend == nil {
-		return nil
+	if err := r.stopDatabaseBackendLocked(ctx, true); err != nil {
+		r.mu.Unlock()
+		return errors.Join(err, finish("failed", err.Error()))
 	}
-	err = r.broker.Stop(ctx)
-	if err != nil {
-		return err
-	}
-	if r.session != nil {
-		_ = r.session.Close()
-		r.session = nil
-	}
-	r.backend = nil
-	return nil
+	r.mu.Unlock()
+	return finish("succeeded", "")
 }
 
 func (r *runtime) validateManagedVanessaRequest(arguments any, toolName string) *mcp.CallToolResult {
@@ -792,10 +1118,10 @@ func (r *runtime) validateManagedVanessaRequest(arguments any, toolName string) 
 		return nil
 	}
 	args, _ := arguments.(map[string]any)
-	if toolName == "connect_test_client" {
+	if classifyVanessaTool(toolName, arguments) == vanessaToolConnect {
 		profile, _ := args["profileName"].(string)
 		if profile != r.backend.TestClientProfile {
-			return toolError("ITL_VANESSA_MANAGED_PROFILE_REQUIRED", "connect_test_client must use profileName=\""+r.backend.TestClientProfile+"\"", map[string]any{"profileName": r.backend.TestClientProfile, "testClientPort": r.backend.TestClientPort})
+			return toolError("ITL_VANESSA_MANAGED_PROFILE_REQUIRED", toolName+" must use profileName=\""+r.backend.TestClientProfile+"\"", map[string]any{"profileName": r.backend.TestClientProfile, "testClientPort": r.backend.TestClientPort})
 		}
 	}
 	if toolName == "manage_test_client_profiles" {
@@ -816,7 +1142,22 @@ const (
 	vanessaToolDisconnect    = "testclient-disconnect"
 )
 
-func classifyVanessaTool(name string) string {
+func classifyVanessaTool(name string, arguments ...any) string {
+	if name == "manage_test_client" {
+		if len(arguments) == 0 {
+			return vanessaToolUnknown
+		}
+		args, _ := arguments[0].(map[string]any)
+		action, _ := args["action"].(string)
+		switch action {
+		case "connect":
+			return vanessaToolConnect
+		case "disconnect":
+			return vanessaToolDisconnect
+		default:
+			return vanessaToolUnknown
+		}
+	}
 	switch name {
 	case "execute_feature_step",
 		"execute_form_actions",
@@ -846,6 +1187,7 @@ func classifyVanessaTool(name string) string {
 		"get_table_data",
 		"get_test_results",
 		"get_VanessaAutomation_state",
+		"get_vanessa_automation_state",
 		"get_window_list_os",
 		"get_window_screenshot_os",
 		"infobase_info",
@@ -869,11 +1211,20 @@ func vanessaToolRequiresTestClient(name string) bool {
 	return classifyVanessaTool(name) == vanessaToolRuntime
 }
 
-func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName string) *mcp.CallToolResult {
+func (r *runtime) managedTestClientConnectParams(profile string) *mcp.CallToolParams {
+	arguments := map[string]any{"profileName": profile}
+	if r.catalog.tool("manage_test_client") != nil {
+		arguments["action"] = "connect"
+		return &mcp.CallToolParams{Name: "manage_test_client", Arguments: arguments}
+	}
+	return &mcp.CallToolParams{Name: "connect_test_client", Arguments: arguments}
+}
+
+func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName string, arguments any) *mcp.CallToolResult {
 	if r.family != "vanessa-ui" || r.backend == nil {
 		return nil
 	}
-	class := classifyVanessaTool(toolName)
+	class := classifyVanessaTool(toolName, arguments)
 	if class == vanessaToolUnknown {
 		return toolError("ITL_VANESSA_TOOL_CLASSIFICATION_MISSING", "Vanessa tool has no reviewed TestClient lifecycle classification", map[string]any{
 			"tool": toolName, "action": "classify-tool-before-forwarding",
@@ -902,6 +1253,16 @@ func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName
 		})
 	}
 	r.applyTestClientBackendInfoLocked(info, toolName)
+	if r.testClientReplacedPID > 0 && vanessaToolNeedsLiveUIState(toolName, arguments) {
+		previous := r.testClientReplacedPID
+		r.testClientReplacedPID = 0
+		return toolError("ITL_VANESSA_TESTCLIENT_REPLACED",
+			fmt.Sprintf("The TestClient was replaced since the previous call (PID %d exited; the new TestClient is PID %d): its open forms and unsaved UI state are gone, so this call was not sent. Recreate the needed state with one self-contained run_scenario (mode all or reloadAndRun) that opens, enters and asserts, then continue.", previous, r.testClientPID),
+			map[string]any{
+				"tool": toolName, "previousTestClientPid": previous, "testClientPid": r.testClientPID,
+				"callOutcome": "not-started", "automaticRetryPerformed": false, "action": "rerun-self-contained-scenario",
+			})
+	}
 	if class == vanessaToolConnect {
 		return nil
 	}
@@ -917,10 +1278,7 @@ func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName
 		}
 	}
 
-	connectResult, connectErr := r.callUpstream(ctx, r.session, &mcp.CallToolParams{
-		Name:      "connect_test_client",
-		Arguments: map[string]any{"profileName": r.backend.TestClientProfile},
-	})
+	connectResult, connectErr := r.callUpstream(ctx, r.session, r.managedTestClientConnectParams(r.backend.TestClientProfile))
 	if connectErr != nil {
 		r.setTestClientStateLocked(testClientConnectionFailed, toolName, "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", connectErr.Error())
 		return toolError("ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", "automatic TestClient connection failed", map[string]any{
@@ -942,10 +1300,21 @@ func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName
 }
 
 func (r *runtime) applyTestClientBackendInfoLocked(info *backendInfo, toolName string) {
+	if r.backend != nil && info != nil && len(info.NativeLaunchProof) > 0 {
+		r.backend.NativeLaunchProof = append(json.RawMessage(nil), info.NativeLaunchProof...)
+	}
 	if info == nil {
 		return
 	}
 	previousPID := r.testClientPID
+	// A client this facade already used is gone and the agent did not close it:
+	// its forms and unsaved UI state are lost (PM5 2026-11-16/17).
+	if previousPID > 0 && info.TestClientPID > 0 && info.TestClientPID != previousPID && !r.testClientClosedByAgent {
+		r.testClientReplacedPID = previousPID
+	}
+	if info.TestClientPID != previousPID {
+		r.testClientClosedByAgent = false
+	}
 	if info.PreviousTestClientState == testClientExited && info.PreviousTestClientPID > 0 {
 		r.testClientPID = info.PreviousTestClientPID
 		r.setTestClientStateLocked(testClientExited, toolName, "ITL_VANESSA_TESTCLIENT_EXITED", "previous owned TestClient process exited")
@@ -963,20 +1332,22 @@ func (r *runtime) applyTestClientBackendInfoLocked(info *backendInfo, toolName s
 	}
 }
 
-func (r *runtime) applyVanessaTestClientResultLocked(toolName string, result *mcp.CallToolResult) {
+func (r *runtime) applyVanessaTestClientResultLocked(toolName string, arguments any, result *mcp.CallToolResult) {
 	if r.family != "vanessa-ui" || result == nil {
 		return
 	}
 	code := toolResultCode(result)
-	switch toolName {
-	case "connect_test_client":
+	switch classifyVanessaTool(toolName, arguments) {
+	case vanessaToolConnect:
 		if code == "" {
+			r.testClientClosedByAgent = false
 			r.setTestClientStateLocked(testClientManagerConnected, toolName, "ITL_OK", "connection postcondition proved")
 		} else {
 			r.setTestClientStateLocked(testClientConnectionFailed, toolName, code, resultText(result))
 		}
-	case "close_test_client":
+	case vanessaToolDisconnect:
 		if code == "" {
+			r.testClientClosedByAgent = true
 			r.setTestClientStateLocked(testClientDisconnected, toolName, "ITL_OK", "manager disconnected from TestClient")
 		}
 	default:
@@ -1054,7 +1425,7 @@ func confirmsVanessaExt(text string) bool {
 	return false
 }
 
-func (r *runtime) validateVanessaResult(ctx context.Context, name string, result *mcp.CallToolResult, session *mcp.ClientSession) *mcp.CallToolResult {
+func (r *runtime) validateVanessaResult(ctx context.Context, name string, arguments any, result *mcp.CallToolResult, session *mcp.ClientSession) *mcp.CallToolResult {
 	if r.family != "vanessa-ui" {
 		return result
 	}
@@ -1064,7 +1435,10 @@ func (r *runtime) validateVanessaResult(ctx context.Context, name string, result
 	if marker := vanessaSemanticFailureMarker(name, resultText(result)); marker != "" {
 		return toolError("ITL_VANESSA_TOOL_RESULT_FAILED", "Vanessa returned a runtime/editor failure", map[string]any{"tool": name, "marker": marker})
 	}
-	if name != "connect_test_client" {
+	if failed := vanessaStepOutcomeFailure(name, resultText(result)); failed != nil {
+		return failed
+	}
+	if classifyVanessaTool(name, arguments) != vanessaToolConnect {
 		return result
 	}
 	text := strings.ToLower(resultText(result))
@@ -1149,6 +1523,13 @@ func vanessaSemanticFailureMarker(name, text string) string {
 	if !isVanessaAuthoringTool(name) {
 		return ""
 	}
+	// A run that reached Vanessa's own scenario report returns that report: its
+	// failed step quotes any platform or product error, including the markers
+	// below (PM5 2026-11-17: a product error in a cell check became a tool
+	// failure and the failed step was lost).
+	if (name == "run_scenario" || name == "get_test_results") && reportsVanessaScenarioResult(text) {
+		return ""
+	}
 	normalized := strings.ToLower(text)
 	markers := []string{
 		"ошибка при вызове конструктора (файл)",
@@ -1163,6 +1544,26 @@ func vanessaSemanticFailureMarker(name, text string) string {
 		}
 	}
 	return ""
+}
+
+// Vanessa itl-r17 answers a failed or unproven execute_feature_step through a
+// successful MCP completion that starts with one of these codes: a JSON-RPC
+// error would make this facade stop the backend and its TestClient after an
+// ordinary failed step. The step ran, so the error is not a pre-action rejection.
+func vanessaStepOutcomeFailure(name, text string) *mcp.CallToolResult {
+	if name != "execute_feature_step" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(text)
+	for _, code := range []string{"ITL_VANESSA_STEP_FAILED", "ITL_VANESSA_STEP_NOT_PROVEN"} {
+		if rest, ok := strings.CutPrefix(trimmed, code+":"); ok {
+			return toolError(code, strings.TrimSpace(rest), map[string]any{
+				"tool": name, "stepExecuted": true, "automaticRetryPerformed": false,
+				"action": "fix-the-step-or-product-and-repeat",
+			})
+		}
+	}
+	return nil
 }
 
 func isVanessaAuthoringTool(name string) bool {
@@ -1188,42 +1589,60 @@ func resultText(result *mcp.CallToolResult) string {
 }
 
 func (r *runtime) close(ctx context.Context) error {
+	defer func() {
+		// EOF is terminal even if native cleanup cannot be proven. Close our
+		// HTTP session and private pipe without reporting database release.
+		// Retain backend/native evidence for recovery, and do not hold r.mu
+		// while the MCP transport waits for its reader to finish.
+		r.mu.Lock()
+		session, owner := r.session, r.executionOwner
+		if session != nil {
+			r.clearProgress(session)
+			r.session = nil
+		}
+		if r.timer != nil {
+			r.timer.Stop()
+			r.timer = nil
+		}
+		r.mu.Unlock()
+		if session != nil {
+			_ = session.Close()
+		}
+		if owner != nil {
+			_ = owner.Close()
+		}
+	}()
+	return r.stopOwnedRuntime(ctx)
+}
+
+// Terminal stop. The owned stop already retries transient failures; an
+// unconfirmed stop leaves the registration for the lifecycle drain or repair.
+func (r *runtime) stopOwnedRuntime(ctx context.Context) error {
 	r.mu.Lock()
 	r.closed = true
 	r.mu.Unlock()
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if err := r.stop(ctx); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("cleanup owned backend after stdio EOF: %w", lastErr)
-		case <-time.After(250 * time.Millisecond):
-		}
+	if err := r.stop(ctx); err != nil {
+		return fmt.Errorf("cleanup owned backend: %w", err)
 	}
-	return fmt.Errorf("cleanup owned backend after stdio EOF after 3 attempts: %w", lastErr)
+	return nil
 }
 
-func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo, progressTokenProvided bool, progressNotificationsForwarded uint64) {
+func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo, progressTokenProvided bool, progressNotificationsForwarded uint64, progressID ...string) {
 	if r.suppressEvidence {
 		return
 	}
-	if backend == nil {
+	if r.catalog == nil {
 		return
 	}
-	directory := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		r.logger.Error("create evidence directory", "error", err)
-		return
+	if backend == nil {
+		// Lifecycle failures happen before or after a backend exists.
+		backend = &backendInfo{}
 	}
 	argumentsRaw, _ := json.Marshal(arguments)
 	argumentsHash := sha256.Sum256(argumentsRaw)
 	featurePath, featureSHA, scenarioLine := r.authoringEvidenceContextLocked(toolName, arguments, outcome)
 	logPath := ""
-	if outcome == "failed" {
+	if outcome == "failed" || outcome == "cleanup-failed" {
 		logPath = backend.LogPath
 	}
 	entry := map[string]any{
@@ -1236,6 +1655,26 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 		"progressTokenProvided": progressTokenProvided, "progressNotificationsForwarded": progressNotificationsForwarded,
 		"recordedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	if len(progressID) > 0 && progressID[0] != "" {
+		entry["progressEvidenceId"] = progressID[0]
+		entry["progressCountScope"] = "snapshot-at-outcome; complete events in instance.progress.jsonl"
+	}
+	// Finalization may already have released the local gate. Its captured
+	// execution must not be replaced by a newer call's owner in the evidence.
+	if len(progressID) > 1 {
+		entry["executionId"] = progressID[1]
+	} else if r.executionOwner != nil {
+		entry["executionId"] = r.executionOwner.Proof.ID
+	}
+	r.appendEvidenceLocked(instanceID, entry)
+}
+
+func (r *runtime) appendEvidenceLocked(instanceID string, entry map[string]any) {
+	directory := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		r.logger.Error("create evidence directory", "error", err)
+		return
+	}
 	raw, _ := json.Marshal(entry)
 	path := filepath.Join(directory, instanceID+".evidence.jsonl")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -1243,6 +1682,37 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 		_, _ = file.Write(append(raw, '\n'))
 		_ = file.Close()
 	}
+}
+
+var lifecyclePhasePattern = regexp.MustCompile(`phase=([a-z-]+)`)
+
+const lifecycleEvidenceMessageLimit = 2000
+
+// Start, mark-running, stop and recovery failures are recorded for the
+// instance even when no backend was established. phase is the failed backend
+// phase when known, otherwise the lifecycle step.
+func (r *runtime) writeLifecycleEvidenceLocked(toolName, step, code string, failure error) {
+	if r.suppressEvidence || r.catalog == nil || failure == nil {
+		return
+	}
+	phase := step
+	if match := lifecyclePhasePattern.FindStringSubmatch(failure.Error()); match != nil {
+		phase = match[1]
+	}
+	message := resultEvidenceMessageLimited(failure, lifecycleEvidenceMessageLimit)
+	entry := map[string]any{
+		"schemaVersion": 3, "family": r.family, "instanceId": r.instanceID,
+		"catalogSha256": r.catalog.SHA256, "tool": toolName, "outcome": "failed",
+		"lifecycleStep": step, "phase": phase, "resultCode": code, "resultMessage": message,
+		"recordedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if r.backend != nil {
+		entry["backendVersion"], entry["logPath"] = r.backend.BackendVersion, r.backend.LogPath
+	}
+	if r.executionOwner != nil {
+		entry["executionId"] = r.executionOwner.Proof.ID
+	}
+	r.appendEvidenceLocked(r.instanceID, entry)
 }
 
 func (r *runtime) authoringEvidenceContextLocked(toolName string, arguments any, outcome string) (string, string, int) {

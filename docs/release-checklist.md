@@ -1,33 +1,89 @@
 # Manual release gate
 
-## One-time dedicated stand setup
+## Dedicated stand setup
 
-1. Create `D:\Git\itl-workflow-e2e-pm5` and copy a safe non-production file
-   infobase into the ignored local directory
-   `D:\Git\itl-workflow-e2e-pm5\.agent-1c\infobases\source-snapshot`.
-2. Initialize the project with the normal ITL wizard, but point
-   `SOURCE_INFOBASE_PATH` only at that in-stand snapshot. Never point the
-   dedicated stand at an external source or production infobase: even a
-   read-only Designer dump can update the file container and its event log.
-3. Verify that the original source repository remains clean after init.
-4. Create a dedicated `itldev/workflow-release-e2e` worktree and database copy.
-5. Add and commit a deterministic fixture change plus its Vanessa scenario.
-6. Copy `templates/release-e2e.example.json` to the ignored local file
-   `.agent-1c/release-e2e.json` and record separate `developWorktreePath` and
-   Release `worktreePath` values. They MUST name different disposable
-   `itldev/*` worktrees: Develop refreshes only its own branch, so it cannot
-   replace the generated fixture HEAD recorded by the Release checkpoint.
-7. Run `/itl-check` once manually to prove the stand itself is healthy.
+Develop and Release qualify on a stand built from the minimal repository
+fixture `tests/fixtures/gate-stand` (no product configuration). Publication
+actions select it themselves: each clone has one stand per fixture at
+`<drive>:\g\<clone-recipe-hash8> с <fixture8>` (`ITL_GATE_STANDS_ROOT`
+overrides the parent; keep both the root and its `-positive` sibling within
+bootstrap's 35-character limit). The clone hash uses its full common Git path,
+and preparation script bytes, so equally named clones stay separate and a
+changed preparation recipe retains the previous stand and its immutable
+capsules for diagnosis until cleanup expires it; selection records the owning
+clone in the stand's `.git/itl/gate-stand-owner.json`. The technical catalog is prepared before bootstrap and
+the initial capsules; update only passes its explicit project selection and
+preserves the original environment until the transaction snapshot. A missing stand is built once by
+`scripts/new-gate-stand.ps1` inside the operation, from published
+`origin/develop`, including its baseline capsules; its `.git/itl/gate-stand.json`
+marker is written last. Omit `-E2EProjectRoot`; a passed stand without the
+current fixture marker, such as the PM5 stand, is replaced with a
+`DELIVERY_GATE_STAND_REPLACED` warning. A stand or `-positive` twin left by a
+failed build is refused until it is removed with its siblings. The builder can
+also be run directly with `-StandRoot`; it refuses non-empty targets and, before
+any native work, a stand or twin longer than bootstrap's 35 characters. The PM5 stand `D:\Git\itl-workflow-e2e-pm5` stays available for
+product pilots outside gates.
+
+A stand never points at an external source or production infobase: even a
+read-only Designer dump can update the file container and its event log.
+Its disposable source snapshot stays at `.agent-1c/infobases/source-snapshot`
+inside the stand.
 
 The Release seed probe creates its own disposable configuration repository inside
 the temporary branch run root when the dedicated stand does not use a repository.
 It binds only the disposable branch infobase, performs the mandatory exact-object
 lock/unlock roundtrip, and restores the helper process environment afterward.
 
+Capture seals the stand's disposable in-stand source snapshot
+(`.agent-1c/infobases/source-snapshot`) into the capsule and Prepare places it
+in each copy, so a copy's master synchronization dumps its own source.
+
 The fixture branch remains dedicated to workflow releases. Reset its disposable
 database from the in-stand source snapshot whenever state may have leaked
 between runs. Replace that snapshot explicitly when a new baseline is intended;
 do not repoint the stand at the original external infobase.
+
+Keep one clean, registered fixture worktree with the committed
+`tests/features/workflow-release-e2e.feature` and no Release checkpoint. If a
+configured disposable Release worktree loses a checkpoint snapshot, preserve
+that worktree and run the source-owned recovery wrapper with an explicit new
+branch name:
+
+```powershell
+.\scripts\rebuild-release-e2e-stand.ps1 `
+  -E2EProjectRoot <dedicated-stand-root> `
+  -FixtureWorktree <clean-fixture-worktree> `
+  -NewDevBranchName <unused-release-branch-name>
+```
+
+For unattended recovery, add `-AgentTarget <attached-client>` when the executing
+host client differs from the stand's configured client. For example,
+`-AgentTarget kilocode` selects an already attached Kilo surface. The installed
+helper still validates configured and installed membership; this option does
+not attach clients or change project configuration. Omitting it preserves
+ordinary executing-client detection. Retain the same explicit selection when
+repeating an interrupted recovery.
+
+The wrapper delegates database and branch creation to the installed
+`fork-dev-branch` helper. It verifies the new branch, fixture marker, clean
+worktree and unsafe-action protection, then atomically switches only the ignored
+`release-e2e.json` Release pointer. The old worktree, checkpoint and a backup
+of the old config remain for diagnosis; the old worktree is recorded in
+`retiredWorktrees`, and the stand worktree cleanup of a publication removes it
+with its branch seven days later (an explicit `-Action Cleanup` with the stand
+removes it at once). If the fork is interrupted, repeat the
+same command and branch name; the config remains on the old branch until the
+fork finishes and validates. A worktree that already ran Release is not a safe
+fixture merely because its Git tree is clean.
+
+For unattended Develop/Release E2E, the source runners explicitly select the sole
+configured client of each actual target root (including a separate server stand).
+With multiple configured clients, repeat the same `source-delivery.ps1`,
+`check.ps1`, or `invoke-*-e2e.ps1` command with `-AgentTarget kilocode` (or the
+intended configured client). Explicit input is forwarded to the installed helper;
+its membership and attachment guard remains authoritative. Fresh bootstrap and
+its subsequent journey consistently use `kilocode`. A changed selection invalidates
+client-bound plan/qualification/cache reuse; no project/client config is rewritten.
 
 ## Each fork/workflow release
 
@@ -35,8 +91,7 @@ First publish and qualify the exact accumulated development candidate:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic
 ```
 
 This is the only broad check for a batch of ordinary source tasks. It runs one
@@ -56,8 +111,7 @@ release train instead of `PublishDevelop -RequireRelease` followed by
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PromoteRelease `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic
 ```
 
 It runs `Develop`, then `Release`, on one temporary candidate, publishes that
@@ -86,6 +140,20 @@ does not move stable `master`; only `PromoteRelease` or the explicit command bel
 
 Every publication first retries accumulated cleanup debt and then performs a
 best-effort post-success cleanup of exact ITL-generated candidate worktrees,
+failed-registration candidates (`itl-source-register-*`; the newest two within
+seven days stay for diagnosis, none after an explicit `-Action Cleanup`; a
+leftover directory only when no repository owns it), stable supervisors left by
+an interrupted operation (`itl-source-supervisor-*`; never one whose gitdir
+`itl-supervisor-owner.json` lease names a live process, such as a publication
+waiting for the delivery lock), unregistered remnants of
+publication, plan and attribution candidates whose `.git` link no repository
+owns, and test artifacts a killed Pester shard left in temp (all once idle for
+an hour), attribution and gate-stand build logs (`itl-source-attribution-*`,
+`itl-gate-stand-logs-*`; after seven days, a day after an explicit
+`-Action Cleanup`), this clone's superseded
+gate stands with their sibling worktrees (the newest one within seven days
+stays, none after an explicit `-Action Cleanup`; only a stand whose
+`.git/itl/gate-stand-owner.json` names this clone),
 stale source-delivery test fixtures, disposable fresh/release-seed projects and
 closed seed archives, stale 1C launcher registrations, and managed launcher
 backups in both current and legacy timestamp formats. Configured reusable stands,
@@ -93,15 +161,30 @@ active paths, incomplete-branch state, and manually named backups are preserved;
 cleanup warnings do not rewrite a verified publication as failed. They produce
 `completed-with-cleanup-warnings`, remain in `.git/itl/resources/v1/ledger.json`,
 and are retried by the next publication/release or explicit `-Action Cleanup`.
+A retained candidate worktree is released as soon as its plan is closed: one of
+the plan's candidates is reachable from the published `develop` or `master`
+tracking branch, or `-Replan` archived the plan's checkpoint; without that
+evidence it stays for diagnosis and retry.
 Only the newest two failed plans are retained, never beyond seven days; configured
-reusable stands and active plan resources are never removed.
+reusable stands and active plan resources are never removed, except that a Release
+copy whose capsule's stand is no longer this clone's gate stand (or whose capsule
+is gone, as its own claim shows), or whose candidate is none of the published
+`develop` or `master` heads or the unpublished queue candidate chain, can never
+resume: its reusable-stand record
+closes, its snapshot and capability resources go to their removal adapters, and the copy owner archives
+the whole copy, producer checkpoints included, once it has been idle for an hour,
+ahead of the keep count and under the same per-sweep archive limit (by
+default ten new archives started within five minutes). The
+archived copy's missing paths then close those resources. The open attempt's
+candidate keeps its copies. A
+successful `PublishDevelop` also applies the recovery-archive retention of
+`docs/source-recovery-retention.md`.
 
 When that remote development commit is ready for the stable channel, run:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic
 ```
 
 For a GitHub remote, `ReleaseMaster` completes the protected `master` update
@@ -205,15 +288,18 @@ presence of its remote immutable tag alone is not publication success.
 
 The finalizer covers every owned release surface: the controlled `ai_rules_1c`
 branch plus annotated tag, the patched Vanessa Automation asset, and the
-`itl-ondemand-mcp` asset. Missing high-risk assets automatically make
-`PublishDevelop` run Release even when `-RequireRelease` was not supplied. The
+`itl-ondemand-mcp` asset. Missing high-risk assets add their exact qualification
+capabilities to `PublishDevelop`: `extension-smoke` plus its `config-cadence`
+dependency for Vanessa, and only `ondemand-mcp` for the facade. The immutable
+plan records the dependency-closed capability set; explicit `-RequireRelease`
+still selects the complete Release catalog. The
 rules release still requires an explicit clean `-AiRulesSource` with exact Full
 qualification and local immutable refs. External dependency locks are verified
 only and never republished. Component evidence is stored separately per exact
 workflow candidate so a safe retry continues idempotently after a partial
 cross-repository finalization.
 
-The public facade `tools/list` must contain exactly `resolve_tool` and
+The public facade `tools/list` must contain exactly `resolve_tool`,
 `call_tool` for each family while the release probe still qualifies every tool
 in the complete internal catalog. Prove that `resolve_tool` does not start the
 backend and that a resolved exact name plus arguments reaches the intended
@@ -226,7 +312,13 @@ tool, and call an OS-window/screenshot tool. Two simultaneous facade clients
 must have distinct manager and TestClient ports; closing one must leave the
 other usable. EOF and a shortened idle-timeout probe must both remove the owned
 manager/TestClient processes and release both leases. Do not qualify a release
-from `connect_test_client` text alone.
+from `manage_test_client(action=connect)` text alone.
+
+The execution-ownership acceptance must also prove exact canonical base keys,
+all-or-none ordered acquisition, visible wait/cancel, call-scoped on-demand
+ownership, signed nested contexts, and bounded owned Job Object cleanup. An idle
+backend owns no database resource; legacy database-access tickets and public
+finish handoffs are not authority and must not be present in the candidate.
 
 Keep `build/test-results/local/check-summary.json` and the nested E2E summary as
 release evidence. A failed cleanup, stale Vanessa result, unverified override,
@@ -237,10 +329,14 @@ scenario, non-idempotent form/template registration, failed extension TestClient
 form opening, failed extension database restore or unpinned template is a
 release failure.
 
-For the patched Vanessa Automation artifact, pre-publication qualification must
-set `ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` to the exact local candidate.
+For the patched Vanessa Automation artifact, pre-publication qualification uses
+the exact local candidate resolved by `Resolve-VanessaSourceBuildArchive`:
+`ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` when set (fails closed on any
+mismatch), otherwise the canonical build in the candidate or any worktree of the
+common Git directory, then the shared SHA-addressed cache, then the locked URL.
+Each source must match the locked SHA-256; see `docs/local-quality-gate.md`.
 The release smoke must record the canonical archive and EPF SHA-256, compatibility
-version `1.2.043.28`, downstream revision `itl-r8`, a matching live `tools/list`
+version `1.2.043.42`, downstream revision `itl-r1`, a matching live `tools/list`
 catalog, successful ordinary file and directory calls on a Windows path containing
 spaces and Cyrillic text, and `client_mcp` plus `VAExtension` with safe mode
 explicitly proven disabled. The live catalog must additionally expose
@@ -254,15 +350,14 @@ then make the first call for a second feature with
 result calls with passed evidence bound to the expected feature path and SHA-256.
 `runner-fallback-required` is not release evidence.
 The 1C compiler output is qualified as exact bytes rather than assumed
-reproducible: after live qualification, publish that same EPF/distribution
-without rebuilding it. Deterministic ZIP packaging may be repeated only against
-the unchanged qualified distribution and must retain the recorded EPF SHA-256.
-Before `itl-r8` publication, the installed lock and compatibility manifest remain
-on released `itl-r7`. The pre-publication candidate may use its exact local archive
-override only on the dedicated release stand. After the same qualified bytes are
-published, commit their lock, live catalog, and exact hashes together before
-publishing `develop`; never expose an installed `published` pin whose asset URL is
-not yet live.
+reproducible: after live qualification, publish that same EPF/distribution and
+the paired `VAExtension.1.32-itl-r1.cfe` extracted from that distribution without
+rebuilding either file. Deterministic ZIP packaging may be repeated only against
+the unchanged qualified distribution and must retain the recorded EPF and paired
+extension SHA-256 values. The pre-publication candidate may use its exact local
+archive override only on the dedicated release stand. `PublishDevelop
+-RequireRelease` publishes both immutable assets from the Release-qualified
+candidate and verifies both URLs before `develop` can expose the new pin.
 
 The real file-infobase release gate must rebuild the single latest seed, restore
 two disposable branches from that same seed under overlapping read leases,
@@ -310,7 +405,11 @@ baseline hashes, restores the baseline database and state, and resets only the
 dedicated E2E worktree to the recorded initial commit before beginning a new
 run. A corrupt checkpoint, changed HEAD, damaged evidence/snapshot or different
 project/worktree/branch is refused even for `Restart`; do not edit checkpoint or
-state by hand.
+state by hand. Readiness admits tracked-only worktree changes of an admitted
+checkpoint when the runner resets the worktree to the initial commit before any
+stage uses it: `Restart`, a cross-release promotion, or an exact `Auto` resume
+whose `config-cadence` has not passed (an interrupted dump). Untracked files
+and every other case still stop at `RELEASE_STAND_DIRTY`.
 
 ## Reset and rollback
 

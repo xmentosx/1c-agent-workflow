@@ -1,0 +1,934 @@
+{
+  "schemaVersion": 1,
+  "id": "G3-PROF-NATIVE-RELOAD-20261021",
+  "observedUtc": "2026-10-21T09:19:46.189165+00:00",
+  "status": "PROF_NATIVE_AND_RELOAD_PASSED_CODEX_CORE_API_FULL_G3_OPEN",
+  "sourceCommit": "f53b9247ae9ebefb42e6f0b39d34d6e9b8800a63",
+  "previousResult": {
+    "path": "openspec/changes/add-product-project-registry/evidence/g3-registry-source-model-2026-10-21.json",
+    "sha256": "42e9c093b3ccd12fc6de0aadadac8f72101a952eee00ff3deeff31d9700131f7",
+    "bytes": 24758
+  },
+  "unchangedRuntimeInputs": [
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+      "sha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+      "bytes": 32626
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+      "sha256": "0f5a2e78610a57511888bf057fb3140ef05f390384f76c89b66f62a1aca26731",
+      "bytes": 46683
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1",
+      "sha256": "41715ce25935946ca898892da7d5ad241cdd061659b0ea0448e88ba7f903a3ff",
+      "bytes": 18330
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-source-evidence.ps1",
+      "sha256": "6650f571091d276c6832ff130bd8b657f7245c3e347b67c88e8cdf7dcd040184",
+      "bytes": 9747
+    },
+    {
+      "path": "templates/product-project-registry/schemas/catalog.schema.json",
+      "sha256": "f1e12ce10b8ad9eb067e1e05180efd2828f31684afd692d29da3d12a7981cba2",
+      "bytes": 10900
+    },
+    {
+      "path": "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1",
+      "sha256": "167b24cb41a2be70b1eaa46c065f695635b567ed56d5d1303c7d160aabc7d50b",
+      "bytes": 301055
+    },
+    {
+      "path": "tests/pester/ProductProjectContext.Tests.ps1",
+      "sha256": "2574972f6a22be7636d9463721d203240eba4d283ed438ab62dd41a0720dc1fb",
+      "bytes": 31915
+    },
+    {
+      "path": "tests/pester/ProductProjectSetup.Tests.ps1",
+      "sha256": "88296513279e92009f99173097e40b7b8bf0b3d196d9e9cd8e42103423043b1a",
+      "bytes": 31583
+    },
+    {
+      "path": "tests/pester/HostTooling.Tests.ps1",
+      "sha256": "8be57adaaeb2556169362c43980a1cb2fdc8449b456d0a420905057fd5b31674",
+      "bytes": 375322
+    },
+    {
+      "path": "tests/pester/HostNativeTransport.Tests.ps1",
+      "sha256": "dd2773382fb7b6e41e642c921fbfb8f5aae24ce450ad36413a787e0bc6d93a42",
+      "bytes": 3487
+    },
+    {
+      "path": "tests/quality-contracts.json",
+      "sha256": "bbf973c35f399e8d2dbd74d71effd061b9e49eb42df0adeef7822a8141877dc5",
+      "bytes": 93528
+    }
+  ],
+  "platform": "Windows-11-10.0.26300-SP0",
+  "nativeIdentity": {
+    "exe": "C:\\Users\\xment\\AppData\\Local\\OpenAI\\Codex\\bin\\6257d9e8f63c0f2b\\codex.exe",
+    "sha256": "00c0f1e4099246fddcd67ec620ca8ed50827c7d70e113b7224f7a2933cf2d67c",
+    "version": "codex-cli 0.163.0-alpha.11"
+  },
+  "diagnosis": {
+    "historical": [
+      {
+        "file": "source-native-repeat-PROF-stderr.txt",
+        "events": [
+          {
+            "utc": "2026-10-21T07:31:55.919798Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:31:55.919852Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:31:55.920063Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:31:55.920093Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:31:58.379391Z",
+            "event": "http/request send failed",
+            "connect": false,
+            "timeout": true
+          },
+          {
+            "utc": "2026-10-21T07:31:58.379560Z",
+            "event": "http/request send failed",
+            "connect": false,
+            "timeout": true
+          },
+          {
+            "utc": "2026-10-21T07:31:58.732372Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:31:58.732456Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:32:00.930440Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:32:00.930440Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:32:00.930495Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:32:00.930515Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:32:02.294825Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:32:02.294908Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:32:02.295088Z",
+            "event": "MCP server startup failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:32:03.729444Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:32:03.729493Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:32:03.730689Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:32:03.730725Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:32:07.279047Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:32:07.279119Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:32:07.279234Z",
+            "event": "MCP server startup failed",
+            "connect": null,
+            "timeout": null
+          }
+        ]
+      },
+      {
+        "file": "source-native-retry2-PROF-stderr.txt",
+        "events": [
+          {
+            "utc": "2026-10-21T07:33:02.307306Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:02.307367Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:33:02.307595Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:02.307698Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:33:02.319498Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:02.319639Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:04.863500Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:04.863557Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:33:04.863792Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:04.863830Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:33:05.117120Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:05.117132Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:05.117178Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:33:05.117187Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:33:07.673249Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:07.673311Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:33:08.677565Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:08.677566Z",
+            "event": "http/request send failed",
+            "connect": true,
+            "timeout": false
+          },
+          {
+            "utc": "2026-10-21T07:33:08.677628Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:33:08.677643Z",
+            "event": "streamable HTTP post_message failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:33:08.677741Z",
+            "event": "MCP server startup failed",
+            "connect": null,
+            "timeout": null
+          },
+          {
+            "utc": "2026-10-21T07:33:08.677749Z",
+            "event": "MCP server startup failed",
+            "connect": null,
+            "timeout": null
+          }
+        ]
+      }
+    ],
+    "current": [
+      {
+        "file": "prof-native-PROF-stderr.txt",
+        "events": []
+      },
+      {
+        "file": "prof-reload-stderr.txt",
+        "events": []
+      },
+      {
+        "file": "prof-reload2-stderr.txt",
+        "events": []
+      }
+    ],
+    "network": {
+      "utc": "2026-10-21T09:05:43.031576+00:00",
+      "host": "dev-ermakov.itland.local",
+      "resolved": [
+        "10.0.12.53"
+      ],
+      "rows": [
+        {
+          "phase": "tcp",
+          "port": 22100,
+          "peer": [
+            "10.0.12.53",
+            22100
+          ],
+          "connected": true,
+          "seconds": 0.11369829999966896
+        },
+        {
+          "phase": "http-head",
+          "url": "http://dev-ermakov.itland.local:22100/mcp",
+          "status": 405,
+          "location": null,
+          "seconds": 0.22930789999918488
+        },
+        {
+          "phase": "tcp",
+          "port": 22101,
+          "peer": [
+            "10.0.12.53",
+            22101
+          ],
+          "connected": true,
+          "seconds": 0.136153600000398
+        },
+        {
+          "phase": "http-head",
+          "url": "http://dev-ermakov.itland.local:22101/mcp/",
+          "status": 405,
+          "location": null,
+          "seconds": 0.22620140000071842
+        },
+        {
+          "phase": "tcp",
+          "port": 22200,
+          "peer": [
+            "10.0.12.53",
+            22200
+          ],
+          "connected": true,
+          "seconds": 0.11165600000094855
+        },
+        {
+          "phase": "http-head",
+          "url": "http://dev-ermakov.itland.local:22200/mcp",
+          "status": 405,
+          "location": null,
+          "seconds": 0.24582220000047528
+        },
+        {
+          "phase": "tcp",
+          "port": 22201,
+          "peer": [
+            "10.0.12.53",
+            22201
+          ],
+          "connected": true,
+          "seconds": 0.11251369999990857
+        },
+        {
+          "phase": "http-head",
+          "url": "http://dev-ermakov.itland.local:22201/mcp/",
+          "status": 405,
+          "location": null,
+          "seconds": 0.227434299999004
+        }
+      ],
+      "environment": {
+        "proxyVariableNames": [],
+        "proxyBypass": false
+      },
+      "boundary": "DNS/TCP/HEAD only; not MCP protocol or native client acceptance; no redirects followed, no config/server writes"
+    },
+    "classification": "historical connect-level send failure before HTTP/MCP response; currently not reproduced",
+    "exactRootCause": "unknown: old logs do not separate DNS/TCP/host/proxy causes; no server or network-side incident logs available in this run",
+    "changesToServersOrRuntime": false,
+    "redirectOrProductOrNamespaceErrorNotEstablished": true,
+    "harnessFailure": "first reload harness asserted httpOrigin was the active connection; status reflected changed config before explicit reload",
+    "correction": "retain failed raw proof; actual original read occurs before status; preserve exact endpoints/cwd/workload/Graph scope/read and restore assertions"
+  },
+  "prof": {
+    "projectId": "qual-prof",
+    "productId": "qual-pm5prof",
+    "sourceProductId": "qual-pm5corp",
+    "sourceConfigId": "pm5corp",
+    "usage": "reference-product",
+    "nativeScope": {
+      "project_id": "pm5corp",
+      "mcp_namespace": "default"
+    },
+    "limitationsExplicit": true,
+    "elapsedSeconds": 9.526433500001076,
+    "toolCalls": 4
+  },
+  "reload": {
+    "status": "passed",
+    "phases": [
+      {
+        "name": "initial",
+        "threadId": "01a15dbb-b7e1-7c20-acd6-ca24b31be53c",
+        "observation": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\prof-native-reload-20261021\\reload2-initial.json",
+        "elapsedSeconds": 10.210734199999933,
+        "toolCalls": 4,
+        "codeReadSha256": "3c9961ff5b65c2e9334a69e0f20982434a220968b76de76fdbcb908a97aea7ff",
+        "configuredOrigins": [
+          {
+            "name": "1c-code-metadata-mcp",
+            "httpOrigin": "http://dev-ermakov.itland.local:22100"
+          },
+          {
+            "name": "1c-graph-metadata-mcp",
+            "httpOrigin": "http://dev-ermakov.itland.local:22101"
+          }
+        ],
+        "clientConfigSha256": "31cab0477a797c21801a3b3d41471e5984f000bde12fffbe37a7be6c29b83c11"
+      },
+      {
+        "name": "before-reload",
+        "threadId": "01a15dbb-b7e1-7c20-acd6-ca24b31be53c",
+        "observation": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\prof-native-reload-20261021\\reload2-before-reload.json",
+        "elapsedSeconds": 10.411797599999773,
+        "toolCalls": 4,
+        "codeReadSha256": "3c9961ff5b65c2e9334a69e0f20982434a220968b76de76fdbcb908a97aea7ff",
+        "configuredOrigins": [
+          {
+            "name": "1c-code-metadata-mcp",
+            "httpOrigin": "http://dev-ermakov.itland.local:22200"
+          },
+          {
+            "name": "1c-graph-metadata-mcp",
+            "httpOrigin": "http://dev-ermakov.itland.local:22201"
+          }
+        ],
+        "clientConfigSha256": "4c2ac211310918d4af35601cde72594b054463c0761ba3c90a7bc4436a86af50"
+      },
+      {
+        "name": "after-reload",
+        "threadId": "01a15dbb-b7e1-7c20-acd6-ca24b31be53c",
+        "observation": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\prof-native-reload-20261021\\reload2-after-reload.json",
+        "elapsedSeconds": 8.867830600000161,
+        "toolCalls": 4,
+        "codeReadSha256": "e3cefeb94b1b48028647aff943db488e52f885cb06c3e620b1d37cd9c3618e97",
+        "configuredOrigins": [
+          {
+            "name": "1c-code-metadata-mcp",
+            "httpOrigin": "http://dev-ermakov.itland.local:22200"
+          },
+          {
+            "name": "1c-graph-metadata-mcp",
+            "httpOrigin": "http://dev-ermakov.itland.local:22201"
+          }
+        ],
+        "clientConfigSha256": "4c2ac211310918d4af35601cde72594b054463c0761ba3c90a7bc4436a86af50"
+      },
+      {
+        "name": "new-thread-foreign",
+        "threadId": "01a15dbc-2bba-7d33-a7b3-1ed96dd79de5",
+        "observation": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\prof-native-reload-20261021\\reload2-new-thread-foreign.json",
+        "elapsedSeconds": 8.666324800000439,
+        "toolCalls": 4,
+        "codeReadSha256": "e3cefeb94b1b48028647aff943db488e52f885cb06c3e620b1d37cd9c3618e97",
+        "configuredOrigins": [
+          {
+            "name": "1c-code-metadata-mcp",
+            "httpOrigin": "http://dev-ermakov.itland.local:22200"
+          },
+          {
+            "name": "1c-graph-metadata-mcp",
+            "httpOrigin": "http://dev-ermakov.itland.local:22201"
+          }
+        ],
+        "clientConfigSha256": "4c2ac211310918d4af35601cde72594b054463c0761ba3c90a7bc4436a86af50"
+      },
+      {
+        "name": "restored",
+        "threadId": "01a15dbc-4dbd-7521-9c6e-268cc750d967",
+        "observation": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\prof-native-reload-20261021\\reload2-restored.json",
+        "elapsedSeconds": 9.989640100000543,
+        "toolCalls": 4,
+        "codeReadSha256": "3c9961ff5b65c2e9334a69e0f20982434a220968b76de76fdbcb908a97aea7ff",
+        "configuredOrigins": [
+          {
+            "name": "1c-code-metadata-mcp",
+            "httpOrigin": "http://dev-ermakov.itland.local:22100"
+          },
+          {
+            "name": "1c-graph-metadata-mcp",
+            "httpOrigin": "http://dev-ermakov.itland.local:22101"
+          }
+        ],
+        "clientConfigSha256": "31cab0477a797c21801a3b3d41471e5984f000bde12fffbe37a7be6c29b83c11"
+      }
+    ],
+    "codeReadSignaturePattern": "A,A,B,B,A; supporting observation only, not a new identity/index-version contract",
+    "graphForeignRejection": "project_not_accessible",
+    "actualForeignSourceExcluded": true,
+    "newThreadObservedForeignSource": true,
+    "restoredNativeReadPassed": true,
+    "configuredOriginIsNotActiveConnection": true,
+    "acceptedToolCalls": 21,
+    "failedHarnessToolCalls": 4
+  },
+  "publicOwnerComparison": {
+    "status": "passed",
+    "results": [
+      {
+        "phase": "observations-PROF",
+        "expectedBinding": "matched",
+        "binding": {
+          "code": "matched",
+          "graph": "matched"
+        },
+        "summaryBytes": 682
+      },
+      {
+        "phase": "reload2-initial",
+        "expectedBinding": "matched",
+        "binding": {
+          "code": "matched",
+          "graph": "matched"
+        },
+        "summaryBytes": 682
+      },
+      {
+        "phase": "reload2-before-reload",
+        "expectedBinding": "matched",
+        "binding": {
+          "code": "matched",
+          "graph": "matched"
+        },
+        "summaryBytes": 682
+      },
+      {
+        "phase": "reload2-after-reload",
+        "expectedBinding": "mismatch",
+        "binding": {
+          "code": "mismatch",
+          "graph": "mismatch"
+        },
+        "summaryBytes": 668
+      },
+      {
+        "phase": "reload2-new-thread-foreign",
+        "expectedBinding": "mismatch",
+        "binding": {
+          "code": "mismatch",
+          "graph": "mismatch"
+        },
+        "summaryBytes": 668
+      },
+      {
+        "phase": "reload2-restored",
+        "expectedBinding": "matched",
+        "binding": {
+          "code": "matched",
+          "graph": "matched"
+        },
+        "summaryBytes": 682
+      }
+    ],
+    "changedTargetBeforeReload": {
+      "code": "mismatch",
+      "graph": "mismatch"
+    }
+  },
+  "preservation": {
+    "localProtectedPathCount": 20,
+    "bytesAndMtimeUnchanged": true,
+    "globalConfigBytesUnchanged": true,
+    "productProjectSourceIdsPreserved": true,
+    "oldStandsAndFailedArtifactsPreserved": true,
+    "workingProjectsUntouched": true
+  },
+  "costs": {
+    "rawRpc": [
+      {
+        "log": "prof-native-PROF-rpc.jsonl",
+        "toolCalls": 4,
+        "llmTurns": 0
+      },
+      {
+        "log": "prof-reload-rpc.jsonl",
+        "toolCalls": 4,
+        "llmTurns": 0
+      },
+      {
+        "log": "prof-reload2-rpc.jsonl",
+        "toolCalls": 21,
+        "llmTurns": 0
+      }
+    ],
+    "acceptedNativeToolCalls": 25,
+    "failedHarnessNativeToolCalls": 4,
+    "llmTurns": 0,
+    "diagnosticPairDeadlineSeconds": 20,
+    "largestPairSeconds": 10.411797599999773,
+    "summaryBytesRange": [
+      668,
+      682
+    ],
+    "newAlwaysOnRules": 0,
+    "newToolSchemas": 0,
+    "newStartupProbes": 0,
+    "backendInternalUsage": "unknown",
+    "tokenCount": "not measured",
+    "pesterAndStartup": "unchanged runtime inputs; no repeat, previous exact-source owner proof retained"
+  },
+  "remaining": [
+    "full AC-08/39 and installed 1C journeys",
+    "Codex desktop/IDE frontend and other 11 native adapters",
+    "PM4 installed stand/Windows 10/Server terminal matrix",
+    "real release population AC-36-38",
+    "memory consumer G4/G5/AC-43/44; no automatic G4 approval"
+  ],
+  "excluded": [
+    "Gate 6 fix/run",
+    "G4/Cognee implementation",
+    "working migration",
+    "server deploy/reindex",
+    "publication/push"
+  ],
+  "delivery": "One documentation/evidence commit and normal RegisterChange -CoverageContract documentation; final Targeted/queue head only in existing source-delivery ledger.",
+  "rawReferences": [
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/network.py",
+      "sha256": "3b023fdb728f7f08af1c60e5c7e07d41f5b0a9f0beac6e75e12c525843352114",
+      "bytes": 2138
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/network.json",
+      "sha256": "3a5276544a0d9521e9213133ccb6157a54cba6afdecd231413135f32db32bb84",
+      "bytes": 1868
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/network.log",
+      "sha256": "3a5276544a0d9521e9213133ccb6157a54cba6afdecd231413135f32db32bb84",
+      "bytes": 1868
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/fixtures.json",
+      "sha256": "d7af11960664bb5cde9ea1963e9218c11fe58fd652b35f7e3333ba98964a1f36",
+      "bytes": 39979
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/capture-prof.py",
+      "sha256": "70382cf6a4e9db86091e15abb688d37cf7e13d2062c9184979b77a8c15adf8df",
+      "bytes": 4011
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/native-capture.json",
+      "sha256": "8e7df2e3a500a7ec3e3d2a8dc94175711597067192844e858421900168594d0d",
+      "bytes": 321601
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/native-capture.log",
+      "sha256": "f6af594787149e93030ebc918bcb06a69443f1dafeb104fd47caeb90ab2b70fd",
+      "bytes": 401
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/observations-PROF.json",
+      "sha256": "cf7c3a66c02843a82ba03ab93bfba4ef58d07d503293ebbbcb8abc9c0337bbbb",
+      "bytes": 53585
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/capture-reload.py",
+      "sha256": "dc90c28dc2330e69f2bf1957875b203b12a24167f6122e305a8ef4ae56adcbba",
+      "bytes": 5863
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload-capture.json",
+      "sha256": "c212a565cba012bb37d9c741739d45159ea0a34825f97ebb885a34dbe31d0b5d",
+      "bytes": 2266
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload-capture.log",
+      "sha256": "d48a85d5a2b30ee93aaeba18664ae3e380f5ef82210d56c87f74c3bdab131484",
+      "bytes": 2025
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload-initial.json",
+      "sha256": "d61b35ffd23726d2af839837c9d96280b730e13502f45f57d64d194a592b1c73",
+      "bytes": 53585
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/capture-reload2.py",
+      "sha256": "4ab36d7703a26bb37dca1562b50c4c7aa7e6ecead7005b9458b4a9dccad9d923",
+      "bytes": 6682
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload2-capture.json",
+      "sha256": "1035f6f3a38f64a3757bfc713bd244e447f37906fc352b233ea75b3c733603e3",
+      "bytes": 4949
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload2-capture.log",
+      "sha256": "70b5a5ba24340cf5ffff62234387ac9fb0dd7314c28ed7df938178548571a8b7",
+      "bytes": 4083
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload2-foreign-rejection.json",
+      "sha256": "cf6a83c2ecfb0f30aa40b90905e8280bfe968e833ecc65ac81e3e38b787ff600",
+      "bytes": 987
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/evaluate.ps1",
+      "sha256": "c4f053bf86940ebde05081896b36aafb648a8bcd01ff48bbedbe1531c719f53b",
+      "bytes": 3965
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/protected-before.json",
+      "sha256": "9fd4c8727b850c96d865463f471dc51f6d190905877eeac86a9bfbb7de73e79f",
+      "bytes": 5251
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/preservation-before.log",
+      "sha256": "dab2697a73f903bc81aeb6947929cd472d3950eb9404da1cc74db6cf3608ad34",
+      "bytes": 30
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/native-comparison.json",
+      "sha256": "c48bdf8d1cdbf20f22278e0f5cc4395c9e6d3ef942eb9f8ee7c2a4b24d84ffa8",
+      "bytes": 78594
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/native-comparison.log",
+      "sha256": "265a74fa6dff184ba315ec8c2c7f80c48305ccc0d754f2a84d5ae5da819e3a13",
+      "bytes": 168
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/summarize.py",
+      "sha256": "8b291462c1e54e5a3e514f3d77b8819750ae317a9cd236eaaf84df33532d955c",
+      "bytes": 7694
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/openspec-list.json",
+      "sha256": "fed69c41edc4ce2fd383aac883f06decd0e8d33a5a4612432440b4587ddb0860",
+      "bytes": 2324
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/registry-status.json",
+      "sha256": "1fbacce1604ce145c5e3a4e3a2e342d2f12dd7b295931cfe6e09c9e4452b9af7",
+      "bytes": 4450
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/registry-apply.json",
+      "sha256": "e91b794a952ab54f95dd87fcfc5bffb319f917f42d96826a197dd9afbadc6f14",
+      "bytes": 36287
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/memory-status.json",
+      "sha256": "003d5fde98dec547369ad9c282d99b859804c6969b1dac98ff41cc058693d43c",
+      "bytes": 4370
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/codex-protocol/v2/McpServerToolCallParams.json",
+      "sha256": "7039a7583a1cbf38e9e0f5fe6398ff3711acd4d654b81b0be562514087fce6ba",
+      "bytes": 380
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/codex-protocol/v2/ListMcpServerStatusParams.json",
+      "sha256": "30b978c6502b37c9f0002aeba241f41c91d4c6adf0f92d89242b62ffde415a2d",
+      "bytes": 1223
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/codex-protocol/v2/ThreadStartParams.json",
+      "sha256": "80a40a7fac15b4bf70efb7f893fb353acc0a0d30c68f54aee4f01923deca85de",
+      "bytes": 13453
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/codex-protocol/ClientRequest.json",
+      "sha256": "c91a6070597b2c322d8ab45313a461487df204b2321cb4800576c90b04c1778b",
+      "bytes": 306407
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/prof-native-PROF-rpc.jsonl",
+      "sha256": "e451e1cb531cec769d6f654367d6a977ec4cbf63106b44a156918c260f422c10",
+      "bytes": 236661
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/prof-reload-rpc.jsonl",
+      "sha256": "7f3a72e2d904f2fcc2c4cda08c301a96c75ef75fdad4b6a0b85b4ecfcb354597",
+      "bytes": 429511
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/prof-reload2-rpc.jsonl",
+      "sha256": "6b2a845283c64102f1794d0ddcebde3b61c0b7f864b472549ec3d0dbc4aca59c",
+      "bytes": 1170076
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/prof-native-PROF-stderr.txt",
+      "sha256": "fd58c7a15992a2f2150ebe50f4fec523a671663194e5c2f1fe038144e228b540",
+      "bytes": 6300
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/prof-reload-stderr.txt",
+      "sha256": "4019aa2eca74a5fb3124837c33728e56c9b8cc196c77de30a9f697f803dea556",
+      "bytes": 9731
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/prof-reload2-stderr.txt",
+      "sha256": "9f9e8417b513e850bb0b96d55e3d7dc4cb05ef68e9033964ff3fa6fd44790ccc",
+      "bytes": 27334
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload2-after-reload.json",
+      "sha256": "87f88721807921c0e96880a8ec2216a3895efefb49569c96acde7a8061e59366",
+      "bytes": 50938
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload2-before-reload.json",
+      "sha256": "f71ed9bec93c02394152dbcb348300799a2a85b798c1a1e04b31af0c8acc1b22",
+      "bytes": 53591
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload2-initial.json",
+      "sha256": "9d095f294cf2870faf95e281ba3f2ddb7deeb1901c8610a72f92888117e4f957",
+      "bytes": 53585
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload2-new-thread-foreign.json",
+      "sha256": "e357f0ed521f7683cb7cbbf8d18d67afffc13dac4aebf9c86df5ad559721ff05",
+      "bytes": 50938
+    },
+    {
+      "path": "build/test-results/g3/prof-native-reload-20261021/reload2-restored.json",
+      "sha256": "9c6aee175782421267a66ec5a7887095a1bb0bc26e589c5d8fb967198cfdec5b",
+      "bytes": 53597
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-capture-prof.json",
+      "sha256": "5c6a27fe3b98668b0cba0ebd505f11004da7f007da88e04c2e7f18f55e7017b5",
+      "bytes": 3995
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-capture-prof-retry2.json",
+      "sha256": "c37f90dd2f56254ce574166ee3efbf549e3a97ab6f5626b3290220f6bbbd8791",
+      "bytes": 4012
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/source-native-repeat-PROF-stderr.txt",
+      "sha256": "0ec42c8ca149455cbd242f5a01e9653020a97417cd2d6bdf4e24cd200a3ef4db",
+      "bytes": 28164
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/source-native-retry2-PROF-stderr.txt",
+      "sha256": "37c4025a1fe375dd80df226fe4464436300260440d4c8c6b3a9c960c2660040a",
+      "bytes": 28747
+    },
+    {
+      "path": "build/test-results/g3/source-client-qualification-20261020/codex-native.py",
+      "sha256": "f78764280e354ea4fe4b1f6499017890b9f4d135bde34f11fae9d60eb859ead4",
+      "bytes": 6246
+    },
+    {
+      "path": "build/test-results/g3/qualify-native.py",
+      "sha256": "dff2c21fe87c66d4c7172ee8aa50374a8c84806c0c6ef891d0676e8327a5b64e",
+      "bytes": 7728
+    }
+  ]
+}

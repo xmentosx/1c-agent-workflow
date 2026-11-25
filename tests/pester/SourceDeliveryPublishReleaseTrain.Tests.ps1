@@ -80,7 +80,7 @@ Describe "Source develop queue and delivery" {
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = 'true'
             $failed = Invoke-DeliveryTestPowerShell -Arguments $arguments -AllowFailure
             $failed.exitCode | Should -Not -Be 0
-            $failed.stderr | Should -Match 'Release source gate failed with exit code 14'
+            @(Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8) | Should -Be @('Develop', 'Release')
             $saved = @(Get-ChildItem -LiteralPath (Join-Path $fixture.root '.git/itl/plans/v1') -Filter '*.json')
             $saved.Count | Should -Be 1
             $plan = Get-Content -LiteralPath $saved[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -109,8 +109,9 @@ Describe "Source develop queue and delivery" {
     }
 
     It "never uses force push for develop or master" {
-            $text = $DeliverySourceText; $text | Should -Not -Match 'push[^\r\n]*(--force|-f\b|--force-with-lease)'
-            foreach ($marker in @('HEAD:refs/heads/develop', 'push", "--atomic"', 'HEAD:refs/heads/master')) { $text | Should -Match ([regex]::Escape($marker)) }
+            Get-DeliverySourceText -All | Should -Not -Match 'push[^\r\n]*(--force|-f\b|--force-with-lease)'
+            $text = Get-DeliverySourceText -Name 'source-delivery-candidate.ps1'
+            foreach ($marker in @('${candidate}:refs/heads/develop', 'push", "--atomic"', 'HEAD:refs/heads/master')) { $text | Should -Match ([regex]::Escape($marker)) }
         }
 
     It "uses a GitHub pull request for protected master and reconciles develop without force" {

@@ -1,0 +1,229 @@
+{
+  "observedUtc": "2026-10-24T12:10:50.113747+00:00",
+  "sourceCommit": "acc7e771fe0666179692f3af5dc91a749d098fd4",
+  "status": "qualified-current-PM5-subset",
+  "registryOnly": true,
+  "fullG3Accepted": false,
+  "installedRoots": [
+    {
+      "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "workflow": "78f11bd861543dfea89eab722d4f5b869dd64c25",
+      "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "untracked": [],
+      "dirty": [],
+      "lockSha": "43b33a8cab6f630564c54075ab29ba8131bfe40d01d1538c2fcbe4bccd7dd0c3",
+      "bindingPresent": true,
+      "head": "160616d6a310b8401f23da0cc44361943970f7fd"
+    },
+    {
+      "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+      "workflow": "78f11bd861543dfea89eab722d4f5b869dd64c25",
+      "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "untracked": [],
+      "dirty": [],
+      "lockSha": "4cb7c84ce6aaeb0bc1f15b3b48db6f7fe81d96088b39d898dfa91245c9a1e236",
+      "bindingPresent": false,
+      "head": "48062b1e0672515586ba829000ca2c3b5116c8cd"
+    }
+  ],
+  "finalCases": [
+    {
+      "scope": "unchanged context; current exact installed runtime",
+      "revision": "c943f8e6ca1f536b2c3692e4bf4115d8daf84351",
+      "name": "00-prime",
+      "passed": true
+    },
+    {
+      "scope": "stable IDs; new projectName; unchanged settings/knowledge hashes and client bytes/mtime",
+      "revision": "d79833450d39afc2b6225d2e6f46cad4a7fbdc82",
+      "name": "01-rename",
+      "passed": true
+    },
+    {
+      "scope": "custom project over unchanged typical MCP; knowledge hash invalidated only",
+      "revision": "6effc7fc67ce30da0a23a2666ec7a601100f52bc",
+      "name": "02-custom",
+      "passed": true
+    },
+    {
+      "scope": "SPPR/Mantis selected links/search/create routes updated without endpoint changes; no remote calls",
+      "revision": "a6dd448fe96ede5df19e02e0da1505c732aaacaa",
+      "name": "03-links",
+      "passed": true
+    },
+    {
+      "scope": "synthetic availableIn/home materialized into registry context only; no memory services",
+      "revision": "0df2e9e00ebfad279cdf0e1f2352728b3a66ff56",
+      "name": "04-area-home",
+      "passed": true
+    },
+    {
+      "scope": "home change updates context/hash/candidates; no client writes or data migration",
+      "revision": "5835fc910bc4e50cddeaf96561a0d019ee011af8",
+      "name": "05-home-change",
+      "passed": true
+    },
+    {
+      "scope": "missing optional home accepted; no guessed home and no implicit migration",
+      "revision": "0644fe0dd710db527ed9a4a3584aa866c9488062",
+      "name": "06-home-remove",
+      "passed": true
+    },
+    {
+      "scope": "Mantis list replaced as a whole; removed SPPR absent; no stale IDs",
+      "revision": "a887391cddffb854b61bcde14e6f7c514c3c73d1",
+      "name": "07-links-replace",
+      "passed": true
+    },
+    {
+      "scope": "custom to typical clears stale customization text; endpoint/clients retained",
+      "revision": "448cd017fe1156d1e28784b2ec041534650cb024",
+      "name": "08-typical",
+      "passed": true
+    },
+    {
+      "scope": "public machine-readable context JSON; correct selected project",
+      "revision": "448cd017fe1156d1e28784b2ec041534650cb024",
+      "name": "09-context-cli",
+      "passed": true
+    }
+  ],
+  "finalCommandCount": 10,
+  "initialCommandCount": 8,
+  "protectedPaths": 46,
+  "protectedPathsUnchanged": true,
+  "teardownExact": true,
+  "database": {
+    "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+    "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+    "bytes": 3295928320
+  },
+  "runtime": [
+    {
+      "beforeSha256": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+      "sha256": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+      "sha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "e3cf8bfc951a75d966ca4fab8e8bd7819e756b65b6dffd3e41c4983d12cb8428",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1",
+      "sha256": "e3cf8bfc951a75d966ca4fab8e8bd7819e756b65b6dffd3e41c4983d12cb8428",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": null,
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-jsonc.ps1",
+      "sha256": null,
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+      "sha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "dc8c5776be672b638ecba0159db7f011724ab11495f24f8c4bf73f1e0546c0e8",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
+      "sha256": "dc8c5776be672b638ecba0159db7f011724ab11495f24f8c4bf73f1e0546c0e8",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+      "sha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "7959c8fb846516305a2a43d39bcd46f98d5ed265e5c1ef50c75cb16ed34d66fc",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+      "sha256": "7959c8fb846516305a2a43d39bcd46f98d5ed265e5c1ef50c75cb16ed34d66fc",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "5413a3442d5fc92e60460eda5550737574f609d429b20a15f26bbfaa49db9a67",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+      "sha256": "d101f84193286312fcb0576b21d9e037abf8f822b76d0affe5883d9ad1170d3d",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "5cf5a7a2d337fa40cf36e0220c326e29a100b838325bc7b3bf85f6434e59f818",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1",
+      "sha256": "5cf5a7a2d337fa40cf36e0220c326e29a100b838325bc7b3bf85f6434e59f818",
+      "sourceEqualsInstalled": true
+    }
+  ],
+  "historicalFilesVerified": 21,
+  "historicalRootsVerified": 4,
+  "capsule": {
+    "path": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+    "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "artifactsVerified": 11
+  },
+  "manifests": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\project-metadata-functional-20261024\\raw-evidence-manifest.json",
+      "sha256": "e85588aa87832a74287622597d3afe8ce90e04fee78b681c75420a444104ed1b",
+      "files": 637
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\project-metadata-functional-replay-20261024\\raw-evidence-manifest.json",
+      "sha256": "aee7d912de430926b9f8ffe53b4f52f66198fac77f6532e742a11d44e28d9e95",
+      "files": 655
+    }
+  ],
+  "harnessFailures": [
+    "Initial script missing UTF-8 BOM rejected by Windows PowerShell parser before execution; retained log.",
+    "Initial harness used read-only HOME variable; renamed before any public command; retained log.",
+    "First batch reached 8 successful CLI calls then StrictMode rejected direct read of the correctly absent sppr property. Presence assertion corrected without changing workload/expected absence; entire batch replayed in separate raw root."
+  ],
+  "remaining": [
+    {
+      "id": "G3-B1",
+      "status": "UNVERIFIED",
+      "scope": "Win10/Server2019+/terminal/independent users",
+      "reason": "No prepared stands; current host is Windows11 local same-user."
+    },
+    {
+      "id": "G3-B2",
+      "status": "UNVERIFIED",
+      "scope": "Real isolated PM4 installed journeys",
+      "reason": "No prepared PM4 installation/database."
+    },
+    {
+      "id": "G3-B3",
+      "status": "PARTIAL",
+      "scope": "Full fresh init/new branch/refresh/managed downgrade and remaining first legacy caller choices",
+      "reason": "Not exercised by catalog-only native commands. Full guarded lifecycle/Gate6 not run; missing original live seed not replaced with capsule currentness."
+    },
+    {
+      "id": "G3-B4",
+      "status": "PARTIAL",
+      "scope": "Codex Desktop/model UI and 8 other native clients, full platform/lifecycle matrix",
+      "reason": "Existing Kilo/Cursor/Codex core evidence retained; native desktop automation unavailable in current tool session; other clients lack prepared profiles."
+    },
+    {
+      "id": "G3-PM5-WARM-STARTUP-MEDIAN",
+      "status": "ACCEPTED DEVIATION",
+      "scope": "49.731ms median excess",
+      "reason": "Accepted by user; no repeat or optimization for threshold."
+    }
+  ],
+  "exclusions": [
+    "OpenCode SKIPPED by user",
+    "Gate6",
+    "G4",
+    "working-project migration",
+    "workflow/shared-registry publication"
+  ],
+  "qualificationLimit": "Synthetic SPPR/Mantis IDs and canonical homes are local test fixtures only. No real service grant/routing/write, memory consumer, native client reload or lifecycle/platform acceptance is claimed."
+}

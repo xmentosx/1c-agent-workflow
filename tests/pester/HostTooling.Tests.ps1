@@ -21,6 +21,1166 @@
         @($errors).Count | Should -Be 0
     }
 
+    It 'publishes declared source metadata without claiming an observed generation' {
+        $root=Join-Path $TestDrive 'host метаданные с пробелом'
+        New-Item -ItemType Directory -Path $root -Force|Out-Null
+        $configPath=Join-Path $root 'host.json'
+        @{schemaVersion=1;stateRoot=$root}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $state=@{servers=@(@{id='code';scope='project';configId='pm5corp';sourceFingerprint='current-mount';configurationVersion='5.0.2';indexedAt='2026-10-21T00:00:00Z'},@{id='graph';scope='project';configId='pm5corp'})}
+            $published=@(ConvertTo-RegistryServers $state fixture-host '2026-10-21T01:00:00Z')
+            $published[0].sourceIdentity.observedGeneration|Should -BeNullOrEmpty
+            $published[0].sourceIdentity.observedAt|Should -BeNullOrEmpty
+            $published[0].sourceIdentity.declaredSourceFingerprint|Should -Be current-mount
+            $published[1].sourceIdentity.nativeProjectId|Should -Be pm5corp
+        }
+    }
+
+
+
+    It "protects Templates proxy credentials before writing and preserves them on ACL denial: existing=<Existing>, deny=<Deny>" -Tag SecretFileAcl -TestCases @(
+        @{ Existing = $false; Deny = $false }, @{ Existing = $true; Deny = $false },
+        @{ Existing = $false; Deny = $true }, @{ Existing = $true; Deny = $true }
+    ) {
+        param($Existing, $Deny)
+        $tempRoot = Join-Path $TestDrive ("proxy ключ с пробелом " + $Existing + $Deny)
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $configPath = Join-Path $tempRoot "host.config.json"
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # This fixture controls Docker externally; supply its matching protocol proof.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
+            $config = [pscustomobject]@{ stateRoot = $tempRoot; baseUrl = 'http://localhost' }
+            $tokenPath = Join-Path $tempRoot 'beta-proxy-secrets\templates.operator-token'
+            $contractPath = Join-Path $tempRoot 'contract.json'
+            Write-Text -Path $contractPath -Value '{}'
+            if ($Existing) { Write-Text -Path $tokenPath -Value 'old-fixture-token' }
+            $script:TokenWrites = 0
+            $script:TokenDockerCalls = @()
+            $script:TokenRealWrite = (Get-Command Write-Text).ScriptBlock
+            $script:TokenRealAcl = (Get-Command Set-HostFileAccessControl).ScriptBlock
+            function Set-Acl { throw 'Provider Set-Acl must not request SACL privilege' }
+            function Set-HostFileAccessControl {
+                param($LiteralPath, $AclObject)
+                $LiteralPath | Should -BeExactly $tokenPath
+                if ($Deny) { throw 'fixture ACL denied' }
+                & $script:TokenRealAcl -LiteralPath $LiteralPath -AclObject $AclObject
+            }
+            function Write-Text {
+                param($Path, $Value)
+                if ($Value -eq 'new-fixture-token') {
+                    $acl = Get-Acl -LiteralPath $Path
+                    $acl.AreAccessRulesProtected | Should -BeTrue
+                    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+                    $rules.Count | Should -Be 2
+                    @($rules.IdentityReference.Value) | Should -Contain 'S-1-5-18'
+                    @($rules.IdentityReference.Value) | Should -Contain ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+                    $script:TokenWrites++
+                }
+                & $script:TokenRealWrite -Path $Path -Value $Value
+            }
+            function Test-ToolsListProxyTarget { return $true }
+            function Get-ToolsListProxySettings { return @{ portOffset = 4000; contractPath = $contractPath; image = 'fixture-proxy' } }
+            function Get-TemplatesBetaOperatorToken { return 'new-fixture-token' }
+            function Ensure-ToolsListProxyImage { }
+            function Get-HostContainerPublishState { return 'missing' }
+            function Wait-ToolsListProxyReady { return $true }
+            function Invoke-DockerCommandChecked {
+                param($Arguments)
+                $script:TokenDockerCalls += ,$Arguments
+                ($Arguments -join '|') | Should -Not -Match 'new-fixture-token'
+                $Arguments | Should -Contain "$tokenPath`:/app/operator-token:ro"
+            }
+            $runtime = [pscustomobject]@{ id = 'templates'; channel = 'beta'; containerName = 'fixture-templates'; hostPort = 18001; url = 'http://localhost:18001/mcp' }
+            if ($Deny) {
+                { Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime } | Should -Throw '*fixture ACL denied*'
+                $script:TokenWrites | Should -Be 0
+                $script:TokenDockerCalls.Count | Should -Be 0
+                if ($Existing) { (Read-Text -Path $tokenPath) | Should -BeExactly 'old-fixture-token' }
+                else { (Read-Text -Path $tokenPath) | Should -BeNullOrEmpty }
+                # The same operation continues after the ACL owner grants access.
+                $Deny = $false
+            }
+            foreach ($attempt in 1..2) {
+                $runtime.url = 'http://localhost:18001/mcp'
+                Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
+                $runtime.toolsContractStatus | Should -Be 'qualified'
+            }
+            $script:TokenWrites | Should -Be 2
+            $script:TokenDockerCalls.Count | Should -Be 2
+            (Read-Text -Path $tokenPath) | Should -BeExactly 'new-fixture-token'
+            Remove-Variable -Scope Script -Name TokenWrites, TokenDockerCalls, TokenRealWrite, TokenRealAcl
+        }
+    }
+
+    It "scopes the BookStack credential profile without changing any other MCP" -Tag BookStackQwen {
+        $tempRoot = Join-Path $TestDrive "BookStack ключ с пробелом"
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $credentialPath = Join-Path $tempRoot "credential.json"
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        @{ apiBase = "https://openrouter.ai/api/v1"; apiKey = "fixture-bookstack-key"; model = "qwen/qwen3-embedding-8b" } | ConvertTo-Json | Set-Content -LiteralPath $credentialPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{ stateRoot = $tempRoot; embedding = @{ model = "intfloat/multilingual-e5-base" }; secrets = @{ BOOKSTACK_TOKEN_ID = "fixture-id"; BOOKSTACK_TOKEN_SECRET = "fixture-secret" }; bookStackProductDocsServer = @{ baseUrl = "https://bookstack.test"; embedding = @{ credentialFile = $credentialPath }; embeddingProviderOrder = @("first", "second"); embeddingQueryCacheTtlSeconds = 3600 } }
+            foreach ($id in @("bookstack", "docs", "syntax", "templates", "ssl", "mantis", "code", "graph")) {
+                $server = [pscustomobject]@{ id = $id; embedding = $true; env = @(); volumes = @() }
+                $settings = Get-HostEmbeddingSettings -Config $config -Server $server
+                if ($id -eq "bookstack") {
+                    $settings.apiKey | Should -Be "fixture-bookstack-key"
+                    $settings.model | Should -Be "qwen/qwen3-embedding-8b"
+                    $settings.mode | Should -Be "openai"
+                } else {
+                    $settings.apiKey | Should -BeNullOrEmpty
+                    $settings.model | Should -Be "intfloat/multilingual-e5-base"
+                    $settings.mode | Should -Be "cpu"
+                }
+            }
+            $bookstackEnv = Resolve-ServerEnv -Config $config -Server (Get-BookStackProductDocsServerDefinition)
+            $bookstackEnv.BOOKSTACK_EMBEDDING_MODEL | Should -Be "qwen/qwen3-embedding-8b"
+            $bookstackEnv.BOOKSTACK_EMBEDDING_API_KEY | Should -Be "fixture-bookstack-key"
+            $bookstackEnv.BOOKSTACK_EMBEDDING_PROVIDER_ORDER | Should -Be "first,second"
+            $bookstackEnv.BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS | Should -Be "3600"
+            $bookstackEnv.Contains("BOOKSTACK_SEMANTIC_MIN_SCORE") | Should -BeFalse
+            $script:BookStackProbedModel = ""
+            function Test-HostEmbeddingEndpointReady {
+                param($ApiBase, $Model, $ApiKey)
+                $script:BookStackProbedModel = $Model
+                return $true
+            }
+            Ensure-HostEmbeddingModel -Config $config -Manifest $null -GlobalServerIds @("bookstack") -ProjectServerIds @()
+            $script:BookStackProbedModel | Should -Be "qwen/qwen3-embedding-8b"
+            $config.bookStackProductDocsServer.embedding = @{ apiBase = "https://openrouter.ai/api/v1"; model = "qwen/qwen3-embedding-8b" }
+            { Get-HostEmbeddingSettings -Config $config -Server ([pscustomobject]@{ id = "bookstack" }) } | Should -Throw "*no CPU fallback*"
+        }
+    }
+
+    It "scopes OpenRouter credentials to Docs, Templates and SSL without changing other MCPs" -Tag GlobalQwen {
+        $tempRoot = Join-Path $TestDrive "global keys кириллица"
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $credentialPath = Join-Path $tempRoot "credential.json"
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        @{ apiBase = "https://openrouter.ai/api/v1"; apiKey = "fixture-global-key"; model = "qwen/qwen3-embedding-8b" } | ConvertTo-Json | Set-Content -LiteralPath $credentialPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{
+                stateRoot = $tempRoot
+                embedding = @{ model = "intfloat/multilingual-e5-base" }
+                helpSearchServer = @{ indexGeneration = "qwen3-20260929"; embedding = @{ credentialFile = $credentialPath } }
+                templatesSearchServer = @{ indexGeneration = "qwen3-20260929"; embedding = @{ credentialFile = $credentialPath } }
+                sslSearchServer = @{ indexGeneration = "qwen3-20260929"; embedding = @{ credentialFile = $credentialPath } }
+            }
+            foreach ($id in @("docs", "templates", "ssl", "bookstack", "syntax", "code", "graph")) {
+                $server = [pscustomobject]@{ id = $id; embedding = $true; indexGeneration = $(if ($id -in @("docs", "templates", "ssl")) { "qwen3-20260929" } else { "" }); env = @(); volumes = @() }
+                $settings = Get-HostEmbeddingSettings -Config $config -Server $server
+                if ($id -in @("docs", "templates", "ssl")) {
+                    $settings.mode | Should -Be "openai"
+                    $settings.model | Should -Be "qwen/qwen3-embedding-8b"
+                    $settings.apiKey | Should -Be "fixture-global-key"
+                } else {
+                    $settings.mode | Should -Be "cpu"
+                    $settings.model | Should -Be "intfloat/multilingual-e5-base"
+                }
+            }
+            $config.sslSearchServer.embedding = @{ apiBase = "https://openrouter.ai/api/v1"; model = "qwen/qwen3-embedding-8b" }
+            { Get-HostEmbeddingSettings -Config $config -Server ([pscustomobject]@{ id = "ssl"; indexGeneration = "qwen3-20260929" }) } | Should -Throw "*no CPU fallback*"
+            $config.sslSearchServer.embedding = @{ credentialFile = $credentialPath }
+            $config.sslSearchServer.indexGeneration = $null
+            { Get-HostEmbeddingSettings -Config $config -Server ([pscustomobject]@{ id = "ssl" }) } | Should -Throw "*indexGeneration*"
+            $old = [pscustomobject]@{
+                id = "templates"; channel = "stable"; embedding = $true
+                containerNameTemplate = "itl-templates-stable"
+                volumes = @(@{ from = "PATH_BASES"; to = "/app/chroma_db"; subdir = "mcp_templates_beta" })
+            }
+            (Get-HostEmbeddingSettings -Config $config -Server $old).mode | Should -Be "cpu"
+            $candidate = Add-GlobalEmbeddingIndexProfile -Config $config -Server $old
+            $candidate.containerNameTemplate | Should -Be "itl-templates-stable-qwen3-20260929"
+            $candidate.volumes[0].subdir | Should -Be "mcp_templates_beta-qwen3-20260929"
+            $old.volumes[0].subdir | Should -Be "mcp_templates_beta"
+            (Get-HostEmbeddingSettings -Config $config -Server $candidate).model | Should -Be "qwen/qwen3-embedding-8b"
+        }
+    }
+
+    It "plans a fresh global generation without touching the accepted index" -Tag GlobalQwen {
+        $root = Join-Path $TestDrive "global migration кириллица"
+        $bases = Join-Path $root "bases"
+        $oldPath = Join-Path $bases "mcp_templates_beta"
+        New-Item -ItemType Directory -Path $oldPath -Force | Out-Null
+        $configPath = Join-Path $root "host.config.json"
+        @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $release = "releases/fixture/vibecoding1c-mcp.manifest.json"
+            $config = @{ stateRoot = $root; embedding = @{ model = "intfloat/multilingual-e5-base" }; templatesSearchServer = @{ indexGeneration = "qwen3-20260929"; embedding = @{ apiBase = "https://example.test/v1"; apiKey = "fixture"; model = "qwen/qwen3-embedding-8b" } } }
+            $legacy = @{ id = "templates"; scope = "global"; mcpNameTemplate = "itl-templates" }
+            $candidate = @{ id = "templates"; scope = "global"; channel = "stable"; manifestPath = $release; mcpNameTemplate = "itl-templates"; containerNameTemplate = "itl-templates-stable"; embedding = $true; volumes = @(@{ from = "PATH_BASES"; to = "/app/chroma_db"; subdir = "mcp_templates_beta" }) }
+            function Read-DistributionManifest { param($ManifestPath) if ($ManifestPath) { return @{ servers = @($candidate) } }; return @{ servers = @($legacy) } }
+            $old = @{ channel = "stable"; manifestPath = $release; containerName = "old-templates"; name = "itl-templates"; hostPort = 18001; directUrl = "http://host:18001/mcp"; embeddingModel = "intfloat/multilingual-e5-base" }
+            function Get-TrackedHostServerForIdentity { return $old }
+            function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq "old-templates") { return "running" }; return "missing" }
+            function Get-HostLocalValues { return @{ PATH_BASES = $bases } }
+            function Get-BetaContainerMountSource { return $oldPath }
+            function Resolve-ServerEnv { return @{ RESET_DATABASE = "false"; RESET_CACHE = "false" } }
+            function New-ServerRuntime { param($Config, $Server) $model = (Get-HostEmbeddingSettings -Config $Config -Server $Server); return [pscustomobject]@{ name = "itl-templates"; containerName = $Server.containerNameTemplate; image = ("image@sha256:" + ("a" * 64)); hostPort = 18001; url = "http://host:18001/mcp"; proxyContainerName = ""; embeddingMode = $model.mode; embeddingModel = $model.model; indexGeneration = $Server.indexGeneration } }
+            $context = Get-BetaCutoverContext -Config $config -ServerId "templates" -ReleaseManifest $release
+            $context.freshGlobalIndex | Should -BeTrue
+            $context.runtime.embeddingModel | Should -Be "qwen/qwen3-embedding-8b"
+            (Test-Path -LiteralPath (Join-Path $bases "mcp_templates_beta-qwen3-20260929")) | Should -BeFalse
+            (Test-Path -LiteralPath $oldPath) | Should -BeTrue
+        }
+    }
+
+    It "copies Templates rows but not E5 vectors into the new generation" -Tag GlobalQwen {
+        $root = Join-Path $TestDrive "template rows кириллица"
+        $bases = Join-Path $root "bases"
+        $oldPath = Join-Path $bases "mcp_templates_beta"
+        New-Item -ItemType Directory -Path (Join-Path $oldPath "zvec_db") -Force | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $oldPath "templates.db"), [byte[]]@(1, 2, 3, 4))
+        [IO.File]::WriteAllBytes((Join-Path $oldPath "zvec_db\old.vector"), [byte[]]@(5))
+        $configPath = Join-Path $root "host.config.json"
+        @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Get-HostLocalValues { return @{ PATH_BASES = $bases } }
+            function Get-BetaContainerMountSource { return $oldPath }
+            $server = @{ id = "templates"; volumes = @(@{ from = "PATH_BASES"; to = "/app/chroma_db"; subdir = "mcp_templates_beta-qwen3-20260929" }) }
+            $context = @{ serverId = "templates"; scope = "global"; configId = ""; configState = $null; freshGlobalIndex = $true; betaServer = $server; old = @{ containerName = "old-templates" } }
+            Copy-BetaDataSnapshot -Config @{ stateRoot = $root } -Context $context
+            $target = Join-Path $bases "mcp_templates_beta-qwen3-20260929"
+            [IO.File]::ReadAllBytes((Join-Path $target "templates.db")) | Should -Be ([byte[]]@(1, 2, 3, 4))
+            (Test-Path -LiteralPath (Join-Path $target "zvec_db")) | Should -BeFalse
+            (Test-Path -LiteralPath (Join-Path $oldPath "zvec_db\old.vector")) | Should -BeTrue
+        }
+    }
+
+    It "builds BookStack before cache-preserving replacement and refuses database reset" -Tag BookStackQwen {
+        $configPath = Join-Path $TestDrive "bookstack-recreate.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:BookStackCalls = @()
+            $script:BookStackReset = "false"
+            function Resolve-ServerEnv { return [ordered]@{ RESET_DATABASE = $script:BookStackReset } }
+            function Resolve-ServerVolumes { return @() }
+            function Ensure-ServerDockerImageAvailable { $script:BookStackCalls += "build" }
+            function Assert-BetaProjectVolumesReady { }
+            function Assert-BetaProjectContainerMounts { }
+            function Invoke-DockerCommandCapture { return @("itl-bookstack-product-docs") }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:BookStackCalls += ($Arguments -join ' ') }
+            $server = [pscustomobject]@{ id = "bookstack" }
+            $runtime = [pscustomobject]@{ containerName = "itl-bookstack-product-docs"; image = "itl/bookstack:prepared"; hostPort = 18005; internalPort = 8000; url = "http://localhost:18005/mcp" }
+            Start-DockerServer -Config $config -Server $server -Runtime $runtime -Recreate
+            $script:BookStackCalls[0] | Should -Be "build"
+            $script:BookStackCalls[1] | Should -Be "rm -f itl-bookstack-product-docs"
+            ($script:BookStackCalls -join '|') | Should -Match 'RESET_DATABASE=false'
+            @($script:BookStackCalls | Where-Object { $_ -eq "build" }).Count | Should -Be 1
+            $script:BookStackCalls = @()
+            $script:BookStackReset = "true"
+            { Start-DockerServer -Config $config -Server $server -Runtime $runtime -Recreate } | Should -Throw "*resetDatabase=false*"
+            $script:BookStackCalls.Count | Should -Be 0
+            # The original action succeeds after correcting the setting.
+            $script:BookStackReset = "false"
+            { Start-DockerServer -Config $config -Server $server -Runtime $runtime -Recreate } | Should -Not -Throw
+        }
+    }
+
+
+
+    It "continues the BookStack replacement after existing maintenance completes" -Tag BookStackQwen {
+        $configPath = Join-Path $TestDrive "bookstack-maintenance.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:BookStackLeaseAvailable = $false
+            $script:BookStackStarted = $false
+            $script:BookStackReleased = $false
+            function Enter-McpHostMaintenanceLock { return @{ acquired = $script:BookStackLeaseAvailable } }
+            function Exit-McpHostMaintenanceLock { $script:BookStackReleased = $true }
+            function Start-HostServers {
+                param($Config, $TargetServerId, [switch]$RecreateBookStack)
+                $TargetServerId | Should -Be "bookstack"
+                $RecreateBookStack | Should -BeTrue
+                $script:BookStackStarted = $true
+            }
+            { Invoke-BookStackReplacement -Config $config } | Should -Throw "*repeat start*"
+            $script:BookStackStarted | Should -BeFalse
+            $script:BookStackLeaseAvailable = $true
+            Invoke-BookStackReplacement -Config $config
+            $script:BookStackStarted | Should -BeTrue
+            $script:BookStackReleased | Should -BeTrue
+        }
+    }
+
+    It "uses direct BookStack and SPPR for fresh and previously proxied runtimes without creating a proxy" -Tag BookStackDirect,Sppr {
+        $configPath = Join-Path $TestDrive 'bookstack direct кириллица.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # This fixture controls Docker externally; supply its matching protocol proof.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
+            $state = @{ servers = @() }
+            function Read-HostState { return $state }
+            function Get-HostPort { return $directPort }
+            function Get-HostLocalValues { return @{} }
+            function Test-HostServerNeedsEmbedding { return $false }
+            function Invoke-DockerCommandChecked { throw 'unexpected Docker mutation' }
+            function Ensure-ToolsListProxyImage { throw 'unexpected proxy build' }
+            $config = @{ stateRoot = $TestDrive; baseUrl = 'http://host'; toolsListProxy = @{ enabled = $true; serverIds = @('bookstack', 'sppr', 'mantis') } }
+            foreach ($nativeId in @('bookstack','sppr')) {
+                $directPort = if ($nativeId -eq 'sppr') { 18007 } else { 18005 }
+                $definition = @{ id = $nativeId; scope = 'global'; image = 'pinned'; containerNameTemplate = "itl-$nativeId" }
+                $state.servers = @()
+                foreach ($legacy in @($false, $true)) {
+                    if ($legacy) { $state.servers = @(@{ id = $nativeId; scope = 'global'; configId = ''; url = "http://host:$($directPort+4000)/mcp"; proxyContainerName = 'old-proxy'; proxyContractPath = 'old-contract' }) }
+                    $runtime = New-ServerRuntime -Config $config -Server $definition -Index 0
+                    Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
+                    $runtime.endpointMode | Should -Be 'direct'
+                    $runtime.url | Should -Be "http://host:$directPort/mcp"
+                    $runtime.directUrl | Should -Be $runtime.url
+                    $runtime.proxyPort | Should -Be 0
+                    $runtime.proxyContainerName | Should -BeNullOrEmpty
+                    $runtime.proxyContractPath | Should -BeNullOrEmpty
+                }
+                $state.servers = @($runtime)
+                '{}' | Set-Content (Get-HostStatePath -Config $config)
+                Enable-TrackedToolsListProxiesAndPublish -Config $config -TargetServerId $nativeId
+            }
+            $definition.id = 'mantis'
+            (New-ServerRuntime -Config $config -Server $definition -Index 0).endpointMode | Should -Be 'proxy'
+        }
+    }
+
+    It "publishes direct BookStack before proxy removal and retains other runtimes and index metadata" -Tag BookStackDirect {
+        $configPath = Join-Path $TestDrive 'bookstack-migrate.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive; baseUrl = 'http://host' } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $old = @{ id = 'bookstack'; scope = 'global'; configId = ''; containerName = 'bookstack'; hostPort = 18005; url = 'http://host:22005/mcp'; directUrl = 'http://host:18005/mcp'; proxyContainerName = 'custom-bookstack-proxy'; indexedAt = 'retained'; image = 'unchanged' }
+            $other = @{ id = 'mantis'; scope = 'global'; containerName = 'mantis'; url = 'http://host:22006/mcp' }
+            Write-HostState -Config $config -State @{ servers = @($old, $other) }
+            $script:DirectTest = @{ events = @(); proxy = 'running' }
+            function Get-HostServerPublishStatus { param($Server) $Server.url | Should -Be 'http://host:18005/mcp'; $script:DirectTest.events += 'tools'; return 'running' }
+            function Get-HostServerFunctionalHealth { $script:DirectTest.events += 'health'; return @{ status = 'qualified' } }
+            function Publish-Registry {
+                param($Config)
+                $current = Get-TrackedHostServerForIdentity -Config $Config -ServerId bookstack -Scope global
+                $current.endpointMode | Should -Be 'direct'
+                $current.url | Should -Be 'http://host:18005/mcp'
+                $script:DirectTest.events += 'publish'
+            }
+            function Get-HostContainerPublishState { param($ContainerName) $script:DirectTest.events += "inspect:$ContainerName"; return $script:DirectTest.proxy }
+            function Invoke-DockerCommandChecked { param($Arguments) ($Arguments -join ' ') | Should -Be 'rm -f custom-bookstack-proxy'; $script:DirectTest.events += 'remove'; $script:DirectTest.proxy = 'missing' }
+            Enable-BookStackDirectEndpoint -Config $config
+            ($script:DirectTest.events -join ',') | Should -Be 'tools,health,publish,inspect:custom-bookstack-proxy,remove'
+            $saved = Get-TrackedHostServerForIdentity -Config $config -ServerId bookstack -Scope global
+            $saved.indexedAt | Should -Be 'retained'
+            $saved.image | Should -Be 'unchanged'
+            $saved.containerName | Should -Be 'bookstack'
+            $saved.proxyContainerName | Should -BeNullOrEmpty
+            (Get-TrackedHostServerForIdentity -Config $config -ServerId mantis -Scope global).url | Should -Be $other.url
+            # A repeated action is harmless after the proxy is already gone.
+            Enable-BookStackDirectEndpoint -Config $config
+            @($script:DirectTest.events | Where-Object { $_ -eq 'remove' }).Count | Should -Be 1
+            $lease = Enter-McpHostMaintenanceLock -Config $config -Operation fixture
+            $lease.acquired | Should -BeTrue
+            { Enable-BookStackDirectEndpoint -Config $config } | Should -Throw '*repeat bookstack-direct*'
+            Exit-McpHostMaintenanceLock -Lease $lease
+            Remove-Variable -Scope Script -Name DirectTest
+        }
+    }
+
+    It "retains a working route on <Failure> failure and resumes BookStack proxy removal" -Tag BookStackDirect -TestCases @(
+        @{ Failure = 'tools' }, @{ Failure = 'health' }, @{ Failure = 'publish' }, @{ Failure = 'remove' }
+    ) {
+        param($Failure)
+        $configPath = Join-Path $TestDrive "bookstack-failure-$Failure.json"
+        @{ schemaVersion = 1; stateRoot = (Join-Path $TestDrive $Failure) } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $old = @{ id = 'bookstack'; scope = 'global'; configId = ''; containerName = 'bookstack'; hostPort = 18005; url = 'http://host:22005/mcp'; directUrl = 'http://host:18005/mcp'; proxyContainerName = 'custom-proxy' }
+            Write-HostState -Config $config -State @{ servers = @($old) }
+            $script:DirectTest = @{ failure = $Failure; removed = $false }
+            function Get-HostServerPublishStatus { if ($script:DirectTest.failure -eq 'tools') { return 'unreachable' }; return 'running' }
+            function Get-HostServerFunctionalHealth { return @{ status = $(if ($script:DirectTest.failure -eq 'health') { 'degraded' } else { 'qualified' }); message = 'fixture' } }
+            function Publish-Registry { if ($script:DirectTest.failure -eq 'publish') { throw 'fixture publish failure' } }
+            function Get-HostContainerPublishState { return 'running' }
+            function Invoke-DockerCommandChecked {
+                param($Arguments)
+                ($Arguments -join ' ') | Should -Be 'rm -f custom-proxy'
+                if ($script:DirectTest.failure -eq 'remove') { throw 'fixture Docker failure' }
+                $script:DirectTest.removed = $true
+            }
+            { Enable-BookStackDirectEndpoint -Config $config } | Should -Throw '*repeat bookstack-direct*'
+            $script:DirectTest.removed | Should -BeFalse
+            $saved = Get-TrackedHostServerForIdentity -Config $config -ServerId bookstack -Scope global
+            $saved.url | Should -Be $(if ($Failure -eq 'remove') { $old.directUrl } else { $old.url })
+            $saved.proxyContainerName | Should -Be 'custom-proxy'
+            $script:DirectTest.failure = ''
+            Enable-BookStackDirectEndpoint -Config $config
+            $script:DirectTest.removed | Should -BeTrue
+            (Get-TrackedHostServerForIdentity -Config $config -ServerId bookstack -Scope global).proxyContainerName | Should -BeNullOrEmpty
+            Remove-Variable -Scope Script -Name DirectTest
+        }
+    }
+
+    It "keeps OpenRouter credentials and Linux volumes exclusive to beta Code and Graph" -Tag BetaCutover {
+        $tempRoot = Join-Path $TestDrive "beta ключ с пробелом"
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $credentialPath = Join-Path $tempRoot "credential.json"
+        @{ model = "qwen/qwen3-embedding-8b"; apiBase = "https://openrouter.ai/api/v1"; apiKey = "fixture-private-key" } | ConvertTo-Json | Set-Content -LiteralPath $credentialPath -Encoding UTF8
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{
+                stateRoot = $tempRoot
+                embedding = @{ model = "intfloat/multilingual-e5-base" }
+                betaProjectIndex = @{ generation = "qwen3-v1"; embedding = @{ credentialFile = $credentialPath } }
+            }
+            function Get-HostSecretValues { return @{} }
+            function Get-HostLocalValues { return @{ PATH_BASES = $tempRoot } }
+            $state = [pscustomobject]@{ configId = "pm4corp" }
+            foreach ($id in @("code", "graph", "docs", "templates", "ssl")) {
+                foreach ($channel in @("stable", "beta")) {
+                    $server = [pscustomobject]@{ id = $id; channel = $channel; embedding = $true; containerNameTemplate = 'itl-{projectSlug}-{serverId}-beta'; env = @(); volumes = @() }
+                    $settings = Get-HostEmbeddingSettings -Config $config -Server $server
+                    $env = Resolve-ServerEnv -Config $config -Server $server -ConfigState $state
+                    if ($channel -eq "beta" -and $id -in @("code", "graph")) {
+                        $settings.model | Should -Be "qwen/qwen3-embedding-8b"
+                        $env.EMBEDDING_API_KEY | Should -Be "fixture-private-key"
+                        $env.EMBEDDING_ALLOW_OFFLINE_FALLBACK | Should -Be "false"
+                        @((Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state)).Count | Should -BeGreaterThan 0
+                        if ($id -eq "graph") {
+                            $env.Contains("OPENAI_API_KEY") | Should -BeFalse
+                            $env.ENABLE_ROUTINE_EMBEDDINGS | Should -Be "true"
+                        } else {
+                            $env.MCP_STRUCTURED_CONTENT | Should -Be "true"
+                            $server.volumes = @(@{ from = "PATH_BASES"; to = "/app/chroma_db"; required = $true })
+                            (Resolve-ServerVolumes -Config $config -Server $server -ConfigState $state)[0].host | Should -Be "itl-pm4corp-code-beta-qwen3-v1-index"
+                        }
+                    } else {
+                        $settings.mode | Should -Be "cpu"
+                        $settings.apiKey | Should -BeNullOrEmpty
+                        $env.Contains("EMBEDDING_API_KEY") | Should -BeFalse
+                        $env.Contains("MCP_STRUCTURED_CONTENT") | Should -BeFalse
+                        @(Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state).Count | Should -Be 0
+                    }
+                }
+            }
+            $config.betaProjectIndex = $null
+            $compatibilityServer = [pscustomobject]@{ id = "code"; channel = "beta"; embedding = $true; env = @(); volumes = @() }
+            (Resolve-ServerEnv -Config $config -Server $compatibilityServer -ConfigState $state).MCP_STRUCTURED_CONTENT | Should -Be "true"
+            $config.betaProjectIndex = @{ generation = "qwen3-v1"; embedding = @{ credentialFile = $credentialPath } }
+            $server = [pscustomobject]@{ id = "code"; channel = "beta" }
+            $config.betaProjectIndex.generation = "../unsafe"
+            { Get-HostEmbeddingSettings -Config $config -Server $server } | Should -Throw "*generation*"
+            $server.channel = "stable"
+            { Get-HostEmbeddingSettings -Config $config -Server $server } | Should -Not -Throw
+        }
+    }
+
+    It "isolates modern Graph runtime and protects credentials (stable: <StableRelease>, ACL denied: <DenyAcl>)" -Tag BetaCutover, StableCutover -TestCases @(@{ DenyAcl = $false; StableRelease = $false }, @{ DenyAcl = $true; StableRelease = $false }, @{ DenyAcl = $false; StableRelease = $true }, @{ DenyAcl = $true; StableRelease = $true }) {
+        param($DenyAcl, $StableRelease)
+        $tempRoot = Join-Path $TestDrive ("Graph путь с пробелом " + $DenyAcl + $StableRelease)
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $configPath = Join-Path $tempRoot "host.config.json"
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{ stateRoot = $tempRoot; betaProjectIndex = @{ generation = "fixture" } }
+            $configState = [pscustomobject]@{ configId = "fixture" }
+            $stableDir = Join-Path (Get-ConfigWorkRoot -Config $config -ConfigId fixture) "runtime\itl-fixture-graph"
+            New-Item -ItemType Directory -Path $stableDir -Force | Out-Null
+            $stableEnv = Join-Path $stableDir ".env"
+            $stableCompose = Join-Path $stableDir "docker-compose.yml"
+            Write-Text -Path $stableEnv -Value "STABLE_MODEL=retained"
+            Write-Text -Path $stableCompose -Value "stable compose retained"
+            $stableAcl = (Get-Acl -LiteralPath $stableEnv).Sddl
+            Write-Text -Path (Join-Path $tempRoot "graph.yml") -Value @'
+services:
+  mcp-app:
+    volumes:
+      - "${GRAPH_STATE_PATH:-./data/mcp_state}:/app/data"
+    environment:
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
+  neo4j:
+    volumes:
+      - "${NEO4J_DATA_PATH:-./data/neo4j_data}:/data"
+'@
+            function Get-DistributionRoot { return $tempRoot }
+            function Assert-BetaProjectVolumesReady {}
+            function Assert-BetaProjectContainerMounts {}
+            function Get-HostEmbeddingSettings { return @{ mode = "openai" } }
+            function Resolve-ServerEnv {
+                return [ordered]@{ OPENAI_EMBEDDING_MODEL = "fixture-model"; OPENAI_EMBEDDING_API_BASE = "https://example.test/v1"; OPENAI_EMBEDDING_API_KEY = "fixture-private-key" }
+            }
+            $script:GraphCredentialAclSeen = $false
+            $script:GraphIsolationDockerCalls = @()
+            $script:GraphRealSetAccessControl = (Get-Command Set-HostFileAccessControl).ScriptBlock
+            function Set-Acl { throw "The provider requires SeSecurityPrivilege on a repeated protected write" }
+            function Set-HostFileAccessControl {
+                param($LiteralPath, $AclObject)
+                $LiteralPath | Should -Not -Be $stableEnv
+                if (-not $script:GraphCredentialAclSeen) { (Read-Text -Path $LiteralPath) | Should -BeNullOrEmpty }
+                else { (Read-DotEnv -Path $LiteralPath).EMBEDDING_API_KEY | Should -BeExactly "fixture-private-key" }
+                $script:GraphCredentialAclSeen = $true
+                if ($DenyAcl) { throw "fixture access denied" }
+                & $script:GraphRealSetAccessControl -LiteralPath $LiteralPath -AclObject $AclObject
+            }
+            function Invoke-DockerCommandChecked {
+                param($Arguments)
+                $script:GraphIsolationDockerCalls += ,$Arguments
+            }
+            $server = [pscustomobject]@{ id = "graph"; channel = "beta"; composePath = "graph.yml"; containerNameTemplate = 'itl-{projectSlug}-graph-beta'; neo4jImage = "neo4j@sha256:fixture" }
+            if ($StableRelease) {
+                $server.channel = "stable"
+                $server | Add-Member -NotePropertyName manifestPath -NotePropertyValue "releases/fixture/vibecoding1c-mcp.manifest.json"
+                $server | Add-Member -NotePropertyName indexProfile -NotePropertyValue "retained"
+                $config | Add-Member -NotePropertyName projectIndexProfiles -NotePropertyValue @{ retained = @{ generation = "fixture"; volumes = @{ fixture = @{ graph = @{ neo4j = "accepted-fixture-neo4j"; state = "accepted-fixture-state" } } } } }
+            }
+            $runtime = [pscustomobject]@{ name = "itl-fixture-graph"; containerName = "itl-fixture-graph-beta"; composeProject = "itl-fixture-graph-beta"; image = "graph@sha256:fixture"; hostPort = 18201; url = "http://localhost:18201/mcp" }
+            if ($DenyAcl) {
+                { Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState $configState } | Should -Throw "*fixture access denied*"
+            } else {
+                Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState $configState
+                Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState $configState
+            }
+            $script:GraphCredentialAclSeen | Should -BeTrue
+            (Read-Text -Path $stableEnv) | Should -BeExactly "STABLE_MODEL=retained"
+            (Read-Text -Path $stableCompose) | Should -BeExactly "stable compose retained"
+            (Get-Acl -LiteralPath $stableEnv).Sddl | Should -BeExactly $stableAcl
+            $runtime.runtimePath | Should -Be (Join-Path (Split-Path $stableDir -Parent) "itl-fixture-graph-beta")
+            $betaEnv = Join-Path $runtime.runtimePath ".env"
+            if ($DenyAcl) {
+                (Read-Text -Path $betaEnv) | Should -BeNullOrEmpty
+                $script:GraphIsolationDockerCalls.Count | Should -Be 0
+            } else {
+                (Read-DotEnv -Path $betaEnv).EMBEDDING_API_KEY | Should -BeExactly "fixture-private-key"
+                $acl = Get-Acl -LiteralPath $betaEnv
+                $acl.AreAccessRulesProtected | Should -BeTrue
+                $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+                $rules.Count | Should -Be 2
+                @($rules.IdentityReference.Value) | Should -Contain ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+                @($rules.IdentityReference.Value) | Should -Contain "S-1-5-18"
+                $script:GraphIsolationDockerCalls.Count | Should -Be 4
+            }
+            Remove-Variable -Scope Script -Name GraphCredentialAclSeen, GraphIsolationDockerCalls, GraphRealSetAccessControl
+        }
+    }
+    It "probes the authenticated embedding catalog without treating OpenRouter chat models as embeddings" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "catalog-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            (Get-HostEmbeddingModelsUri -ApiBase "https://openrouter.ai/api/v1/") | Should -Be "https://openrouter.ai/api/v1/embeddings/models"
+            (Get-HostEmbeddingModelsUri -ApiBase "http://host.docker.internal:1234/v1") | Should -Be "http://127.0.0.1:1234/v1/models"
+            function Invoke-RestMethod {
+                param($Uri, $Headers, $TimeoutSec)
+                $Uri | Should -Be "https://openrouter.ai/api/v1/embeddings/models"
+                $Headers.Authorization | Should -Be "Bearer fixture-private-key"
+                return @{ data = @(@{ id = "qwen/qwen3-embedding-8b" }) }
+            }
+            Test-HostEmbeddingEndpointReady -ApiBase "https://openrouter.ai/api/v1" -Model "qwen/qwen3-embedding-8b" -ApiKey "fixture-private-key" | Should -BeTrue
+            Test-HostEmbeddingEndpointReady -ApiBase "https://openrouter.ai/api/v1" -Model "missing" -ApiKey "fixture-private-key" | Should -BeFalse
+        }
+    }
+
+    It "retains owned beta volumes and rejects foreign or missing storage without clearing data" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "volume-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{ hostId = "fixture-host"; betaProjectIndex = @{ generation = "qwen3-v1"; embedding = @{ model = "fixture-model"; apiBase = "https://example.test/v1"; apiKey = "fixture-key" } } }
+            $server = [pscustomobject]@{ id = "code"; channel = "beta"; containerNameTemplate = 'itl-{projectSlug}-code-beta' }
+            $state = [pscustomobject]@{ configId = "pm4corp" }
+            $context = [pscustomobject]@{ serverId = "code"; configId = "pm4corp"; configState = $state; betaServer = $server }
+            $script:VolumeExists = $false
+            $script:VolumeCommands = @()
+            $script:VolumeInfo = @{ Driver = "local"; Options = $null; Labels = @{ 'itl.beta.host' = 'fixture-host'; 'itl.beta.config' = 'pm4corp'; 'itl.beta.server' = 'code'; 'itl.beta.generation' = 'qwen3-v1'; 'itl.beta.model' = 'fixture-model' } }
+            function Invoke-DockerCommandCapture {
+                param([string[]]$Arguments)
+                if ($Arguments[1] -eq "ls") { if ($script:VolumeExists) { return 'itl-pm4corp-code-beta-qwen3-v1-index' }; return @() }
+                return (ConvertTo-Json -InputObject @($script:VolumeInfo) -Depth 5 -Compress)
+            }
+            function Invoke-DockerCommandChecked {
+                param([string[]]$Arguments)
+                $Arguments[0] | Should -Be "volume"
+                $Arguments[1] | Should -Be "create"
+                $script:VolumeCommands += ,$Arguments
+                $script:VolumeExists = $true
+            }
+            Initialize-BetaProjectVolumes -Config $config -Context $context -InspectOnly
+            $script:VolumeCommands.Count | Should -Be 0
+            { Assert-BetaProjectVolumesReady -Config $config -Server $server -ConfigState $state } | Should -Throw "*refusing an implicit empty index*"
+            Initialize-BetaProjectVolumes -Config $config -Context $context
+            Initialize-BetaProjectVolumes -Config $config -Context $context
+            $script:VolumeCommands.Count | Should -Be 1
+            $script:VolumeInfo.Labels['itl.beta.model'] = "different-model"
+            { Initialize-BetaProjectVolumes -Config $config -Context $context } | Should -Throw "*ownership/model differs*"
+            $script:VolumeInfo.Labels['itl.beta.model'] = "fixture-model"
+            $script:VolumeInfo.Options = @{ device = "E:\foreign"; type = "none"; o = "bind" }
+            { Initialize-BetaProjectVolumes -Config $config -Context $context } | Should -Throw "*ordinary local Linux Docker volume*"
+        }
+    }
+
+    It "uses external Linux volumes for beta Graph and keeps embedding failures visible" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "compose-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $compose = 'services:' + "`n" + '      - "${NEO4J_DATA_PATH:-./data/neo4j_data}:/data"' + "`n" + '      - "${GRAPH_STATE_PATH:-./data/mcp_state}:/app/data"' + "`n" + '      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}'
+            $result = Set-BetaGraphVolumeComposeText -ComposeText $compose -Neo4jVolume "itl-pm4-graph-beta-g1-neo4j" -StateVolume "itl-pm4-graph-beta-g1-state"
+            $result | Should -Match '"itl_beta_neo4j:/data"'
+            $result | Should -Match '"itl_beta_state:/app/data"'
+            $result | Should -Match 'external: true'
+            $result | Should -Match 'EMBEDDING_ALLOW_OFFLINE_FALLBACK: "false"'
+            $result | Should -Not -Match 'NEO4J_DATA_PATH|GRAPH_STATE_PATH'
+            { Set-BetaGraphVolumeComposeText -ComposeText $result -Neo4jVolume "x" -StateVolume "y" } | Should -Throw "*storage contract changed*"
+        }
+    }
+
+    It "checks source completeness when a fresh beta model changes vector chunk counts" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "coverage-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $old = [pscustomobject]@{ collections = @{ code = 100; metadata = 20 }; coverage = @{ modules = 10; objects = 20; forms = 5 } }
+            $new = [pscustomobject]@{ collections = @{ code = 40; metadata = 20 }; coverage = @{ modules = 10; objects = 20; forms = 5 } }
+            $old | Add-Member -NotePropertyName metadataInventory -NotePropertyValue @{ keys = @('Справочники.Контрагенты'); rejected = @(); total = 20 }
+            $new | Add-Member -NotePropertyName metadataInventory -NotePropertyValue @{ keys = @('Справочники.Контрагенты'); rejected = @(); total = 20 }
+            $old | Add-Member -NotePropertyName formInventory -NotePropertyValue @{ rows = @() }
+            $new | Add-Member -NotePropertyName formInventory -NotePropertyValue @{ rows = @() }
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Not -Throw
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new } | Should -Throw "*lost indexed records*"
+            $new.coverage.modules = 9
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Throw "*source coverage 'modules'*"
+            $new.coverage.modules = 10
+            $new.collections.code = 0
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Throw "*lost indexed records*"
+        }
+    }
+
+    It "compares actual metadata identities without requiring legacy report parser artifacts" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "metadata-identity-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:MetadataRows = @('Справочники.Контрагенты', '0', 'IsFolder', 'в отчете "Права доступа"."')
+            $script:InventoryArguments = @()
+            function Invoke-DockerCommandCapture {
+                param($Arguments)
+                $script:InventoryArguments = $Arguments
+                return (ConvertTo-Json -InputObject $script:MetadataRows -Compress)
+            }
+            $old = [pscustomobject]@{ collections = @{ metadata = 1 }; coverage = @{ modules = 1; objects = 4; forms = 1 } }
+            $old | Add-Member -NotePropertyName metadataInventory -NotePropertyValue (Get-BetaCodeMetadataInventory -ContainerName "old-code" -Activity $old)
+            $old.metadataInventory.keys.Count | Should -Be 1
+            $old.metadataInventory.rejected.Count | Should -Be 3
+            $script:InventoryArguments[-1] | Should -Be '/app/chroma_db/metadata_details.db'
+            $script:MetadataRows = @('Справочники.Контрагенты', 'ПланыВидовРасчета.Начисления')
+            $new = [pscustomobject]@{ collections = @{ metadata = 2 }; coverage = @{ modules = 1; objects = 2; forms = 1 }; metadataProjectId = 'code-abc'; metadataGenerationId = 'generation-1' }
+            $new | Add-Member -NotePropertyName metadataInventory -NotePropertyValue (Get-BetaCodeMetadataInventory -ContainerName "beta-code" -Activity $new)
+            $old | Add-Member -NotePropertyName formInventory -NotePropertyValue @{ rows = @() }
+            $new | Add-Member -NotePropertyName formInventory -NotePropertyValue @{ rows = @() }
+            $script:InventoryArguments[-1] | Should -Be '/app/chroma_db/projects/code-abc/generations/generation-1/metadata_details.db'
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Not -Throw
+            # Equal/increased counts must not conceal replacement of a real object.
+            $new.metadataInventory.keys = @('Справочники.Другой', 'ПланыВидовРасчета.Начисления')
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Throw '*lost 1 metadata object identities*'
+            $new.metadataInventory.keys = @('Справочники.Контрагенты')
+            $new.metadataInventory.rejected = @('IsFolder')
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Throw '*malformed object identities*'
+            $new.coverage.objects = 3
+            { Get-BetaCodeMetadataInventory -ContainerName "beta-code" -Activity $new } | Should -Throw '*inventory disagrees with stats*'
+            $new.metadataGenerationId = '../other'
+            { Get-BetaCodeMetadataInventory -ContainerName "beta-code" -Activity $new } | Should -Throw '*generation identity is invalid*'
+        }
+    }
+
+    It "accepts only source-proven stale identities while retaining existing metadata and forms" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "source-coverage-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $root = Join-Path $TestDrive 'исходники с пробелом'
+            New-Item -ItemType Directory -Path (Join-Path $root 'Catalogs') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $root 'Configuration.xml') -Encoding UTF8 -Value '<MetaDataObject xmlns="urn:1c"><Configuration><ChildObjects><Catalog>Клиенты</Catalog></ChildObjects></Configuration></MetaDataObject>'
+            Set-Content -LiteralPath (Join-Path $root 'Catalogs/Клиенты.xml') -Encoding UTF8 -Value '<MetaDataObject xmlns="urn:1c"><Catalog><Properties><Name>Клиенты</Name></Properties><ChildObjects><Attribute><Properties><Name>КодКлиента</Name></Properties></Attribute><Form>Основная</Form></ChildObjects></Catalog></MetaDataObject>'
+            Set-Content -LiteralPath (Join-Path $root 'НоваяФорма.xml') -Encoding UTF8 -Value '<Form />'
+            function New-FixtureSource { return @{ root = $root; types = @(@{ name = 'Справочники'; folders = @('Catalogs'); tags = @('Catalog') }); files = @{}; xml = @{} } }
+            $old = [pscustomobject]@{
+                collections = @{ metadata = 100; forms = 2 }; coverage = @{ modules = 10; objects = 5; forms = 2 }
+                metadataInventory = @{ keys = @('Справочники.Удаленный', 'Справочники.Удаленный.Реквизиты.Название', 'Справочники.Клиенты.Реквизиты.Устаревший', 'Справочники.клиенты', 'Справочники.Клиенты.Реквизиты.КодКлиента'); rejected = @() }
+                formInventory = @{ rows = @(@{ object = 'Справочники.Удаленный'; name = 'Старая'; path = '/app/code/Старая.xml' }, @{ object = 'Справочники.Клиенты'; name = 'Удаленная'; path = '/app/code/Удаленная.xml' }) }
+            }
+            $new = [pscustomobject]@{
+                collections = @{ metadata = 40; forms = 1 }; coverage = @{ modules = 10; objects = 3; forms = 1 }
+                metadataInventory = @{ keys = @('Справочники.Клиенты', 'Справочники.Клиенты.Реквизиты.КодКлиента', 'Справочники.Другой'); rejected = @() }
+                formInventory = @{ rows = @(@{ object = 'Справочники.Клиенты'; name = 'Новая'; path = '/app/code/НоваяФорма.xml' }) }
+            }
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh -Source (New-FixtureSource) } | Should -Not -Throw
+            # A current member omitted by the beta parser still blocks with larger totals.
+            $new.metadataInventory.keys = @('Справочники.Клиенты', 'Справочники.Другой', 'Справочники.ЕщеОдин', 'Справочники.Новый', 'Справочники.Адреса', 'Справочники.Телефоны', 'Справочники.Контакты')
+            $new.coverage.objects = $new.metadataInventory.keys.Count
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh -Source (New-FixtureSource) } | Should -Throw '*present in current XML*'
+            $new.metadataInventory.keys += 'Справочники.Клиенты.Реквизиты.КодКлиента'
+            # A case alias is not a deletion: canonical XML identity must be in beta.
+            $new.metadataInventory.keys = @($new.metadataInventory.keys | Where-Object { $_ -cne 'Справочники.Клиенты' })
+            $new.coverage.objects = $new.metadataInventory.keys.Count
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh -Source (New-FixtureSource) } | Should -Throw '*present in current XML*'
+            $new.metadataInventory.keys += 'Справочники.Клиенты'
+            $new.coverage.objects = $new.metadataInventory.keys.Count
+            # Name prefixes confer no exemption: a real file for the old form blocks.
+            Set-Content -LiteralPath (Join-Path $root 'Удаленная.xml') -Value '<Form />'
+            foreach ($name in @('Выбор', 'Список')) {
+                Set-Content -LiteralPath (Join-Path $root "$name.xml") -Value '<Form />'
+                $new.formInventory.rows += @{ object = 'Справочники.Клиенты'; name = $name; path = "/app/code/$name.xml" }
+            }
+            $new.coverage.forms = $new.formInventory.rows.Count
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh -Source (New-FixtureSource) } | Should -Throw '*form identity*current source coverage*'
+        }
+    }
+
+    It "fails closed on incomplete ambiguous unreadable or changing XML source evidence" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "source-errors-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $root = Join-Path $TestDrive 'проверка XML с пробелом'
+            New-Item -ItemType Directory -Path (Join-Path $root 'Catalogs') -Force | Out-Null
+            $configXml = Join-Path $root 'Configuration.xml'
+            Set-Content -LiteralPath $configXml -Encoding UTF8 -Value '<MetaDataObject><Configuration><ChildObjects><Catalog>Клиенты</Catalog></ChildObjects></Configuration></MetaDataObject>'
+            function New-FixtureSource { return @{ root = $root; types = @(@{ name = 'Справочники'; folders = @('Catalogs'); tags = @('Catalog') }); files = @{}; xml = @{} } }
+            { Resolve-BetaCodeSourceIdentity -Source (New-FixtureSource) -Identity 'Справочники.Клиенты' } | Should -Throw '*has no XML file*'
+            { Resolve-BetaCodeSourceIdentity -Source (New-FixtureSource) -Identity 'Неизвестные.Клиенты' } | Should -Throw '*Unsupported*'
+            { Get-BetaCodeSourcePath -Source (New-FixtureSource) -RelativePath '../foreign.xml' } | Should -Throw '*Unsafe*'
+            # A directory at the file path produces an access error, never absence.
+            New-Item -ItemType Directory -Path (Join-Path $root 'Catalogs/Ошибка.xml') | Out-Null
+            { Resolve-BetaCodeSourceIdentity -Source (New-FixtureSource) -Identity 'Справочники.Ошибка' } | Should -Throw
+            Set-Content -LiteralPath (Join-Path $root 'Catalogs/Сломанный.xml') -Value '<broken>'
+            { Resolve-BetaCodeSourceIdentity -Source (New-FixtureSource) -Identity 'Справочники.Сломанный' } | Should -Throw
+            Set-Content -LiteralPath (Join-Path $root 'Catalogs/Дубликат.xml') -Encoding UTF8 -Value '<MetaDataObject><Catalog><Properties><Name>Дубликат</Name></Properties><ChildObjects><Attribute><Properties><Name>Код</Name></Properties></Attribute><Attribute><Properties><Name>Код</Name></Properties></Attribute></ChildObjects></Catalog></MetaDataObject>'
+            { Resolve-BetaCodeSourceIdentity -Source (New-FixtureSource) -Identity 'Справочники.Дубликат.Реквизиты.Код' } | Should -Throw '*Ambiguous*'
+            $source = New-FixtureSource
+            (Resolve-BetaCodeSourceIdentity -Source $source -Identity 'Справочники.Отсутствующий').status | Should -Be 'absent'
+            Set-Content -LiteralPath $configXml -Encoding UTF8 -Value '<MetaDataObject><Configuration><ChildObjects><Catalog>Отсутствующий</Catalog></ChildObjects></Configuration></MetaDataObject>'
+            { Assert-BetaCodeSourceUnchanged -Source $source } | Should -Throw '*source changed*'
+        }
+    }
+
+    It "reads published form inventory in readonly mode and validates its stats count" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive 'form-inventory-config.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Invoke-DockerCommandCapture {
+                param($Arguments)
+                $Arguments[4] | Should -Match 'mode=ro'
+                $Arguments[-1] | Should -Be '/app/chroma_db/projects/code-abc/generations/generation-1/form_index.db'
+                return '[{"object":"Справочники.Клиенты","name":"Форма","path":"/app/code/Catalogs/Клиенты/Forms/Форма/Ext/Form.xml"}]'
+            }
+            $activity = @{ coverage = @{ forms = 1 }; metadataProjectId = 'code-abc'; metadataGenerationId = 'generation-1' }
+            $inventory = Get-BetaCodeFormInventory -ContainerName 'beta-code' -Activity $activity
+            $inventory.total | Should -Be 1
+            $inventory.rows[0].name | Should -Be 'Форма'
+            $activity.coverage.forms = 2
+            { Get-BetaCodeFormInventory -ContainerName 'beta-code' -Activity $activity } | Should -Throw '*inventory disagrees with stats*'
+        }
+    }
+
+    It "checks actual beta mounts among multiple Docker mount entries" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "actual-mount-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{ betaProjectIndex = @{ generation = "qwen3-v1" } }
+            $server = [pscustomobject]@{ id = "code"; channel = "beta"; containerNameTemplate = 'itl-{projectSlug}-code-beta' }
+            $state = [pscustomobject]@{ configId = "pm4corp" }
+            $runtime = [pscustomobject]@{ containerName = "itl-pm4corp-code-beta" }
+            $script:ActualBetaMountType = "volume"
+            function Invoke-DockerCommandCapture {
+                return '[{"Destination":"/app/code","Type":"bind","Source":"E:\\source"},{"Destination":"/app/chroma_db","Type":"' + $script:ActualBetaMountType + '","Name":"itl-pm4corp-code-beta-qwen3-v1-index"}]'
+            }
+            { Assert-BetaProjectContainerMounts -Config $config -Server $server -ConfigState $state -Runtime $runtime } | Should -Not -Throw
+            $script:ActualBetaMountType = "bind"
+            { Assert-BetaProjectContainerMounts -Config $config -Server $server -ConfigState $state -Runtime $runtime } | Should -Throw "*must mount owned Linux volume*"
+        }
+    }
+
+    It "rolls back a failed fresh beta cutover after stopping old main and retains the new generation" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "fresh-rollback-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # Container/transport is a controlled dependency of this rollback fixture.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
+            $script:FreshSequence = @()
+            $context = [pscustomobject]@{ serverId = "code"; configId = "pm4corp"; configState = @{ configId = "pm4corp" }; freshProjectIndex = $true; old = @{ directUrl = "http://old/mcp"; containerName = "old-code" }; betaServer = @{ id = "code" }; runtime = @{ image = "fixture@sha256:abc" } }
+            function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
+            function Exit-McpHostMaintenanceLock { $script:FreshSequence += "unlock" }
+            function Invoke-BetaPreflight { return @{ context = $context; oldIndexActivity = @{ running = $false } } }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-ToolsListProxyImage {}
+            function Get-BetaConfigurationIndexActivity { return @{ running = $false } }
+            function Get-BetaCodeMetadataInventory { return @{ keys = @('Справочники.Контрагенты'); rejected = @(); total = 1 } }
+            function Get-BetaCodeFormInventory { return @{ rows = @(); total = 0 } }
+            function Stop-StableForBetaCutover { $script:FreshSequence += "stop-stable" }
+            function Initialize-BetaProjectVolumes { $script:FreshSequence += "prepare-fresh-volumes" }
+            function Copy-BetaHostDirectory { throw "must not copy layout 2 into a fresh index" }
+            function Start-DockerServer { $script:FreshSequence += "start-beta" }
+            function Wait-BetaCandidateReady { throw "fixture-index-failure" }
+            function Restore-StableAfterBetaFailure { $script:FreshSequence += "restore-stable" }
+            { Invoke-BetaCutover -Config @{} -TargetServerId code -TargetConfigId pm4corp } | Should -Throw "*fixture-index-failure*"
+            ($script:FreshSequence -join ",") | Should -Be "stop-stable,prepare-fresh-volumes,start-beta,restore-stable,unlock"
+        }
+    }
+
+    It "parses the beta cutover coordinator" -Tag BetaCutover {
+        $tokens = $null
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot "vibecoding1c-mcp-host\beta-cutover.ps1"), [ref]$tokens, [ref]$errors) | Out-Null
+        @($errors).Count | Should -Be 0
+    }
+    It "selects the Code index mount from Docker inspect JSON" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-mount-кириллица " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Invoke-DockerCommandCapture {
+                    param([string[]]$Arguments)
+                    $Arguments[0] | Should -Be "inspect"
+                    return '[{"Destination":"/app/model_cache","Source":"E:\\cache"},{"Destination":"/app/chroma_db","Source":"E:\\MCP data\\индекс"},{"Destination":"/app/code","Source":"E:\\code"}]'
+                }
+                Get-BetaContainerMountSource -ContainerName "itl-pm4corp-code" -Destination "/app/chroma_db" | Should -Be 'E:\MCP data\индекс'
+                { Get-BetaContainerMountSource -ContainerName "itl-pm4corp-code" -Destination "/app/missing" } | Should -Throw "*found 0*"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    It "requires a usable legacy Docs result before finalizing beta cutover" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl beta docs справка " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Open-HostMcpConnection { param([string]$Url); return [pscustomobject]@{ url = $Url } }
+                function Invoke-HostMcpTool {
+                    param([object]$Connection, [string]$Name, [object]$Arguments)
+                    $Name | Should -Be "docsearch"
+                    $Arguments.query | Should -Be "String"
+                    return [pscustomobject]@{ structuredContent = [pscustomobject]@{ result = $script:DocsFixtureResult } }
+                }
+                $script:DocsFixtureResult = "Documentation found"
+                { Assert-BetaDocsFunctionalCall -Url "http://localhost:22000/mcp" } | Should -Not -Throw
+                $script:DocsFixtureResult = ""
+                { Assert-BetaDocsFunctionalCall -Url "http://localhost:22000/mcp" } | Should -Throw "*nonempty structuredContent.result string*"
+                $script:DocsFixtureResult = [pscustomobject]@{ answer = "typed only" }
+                { Assert-BetaDocsFunctionalCall -Url "http://localhost:22000/mcp" } | Should -Throw "*nonempty structuredContent.result string*"
+                Remove-Variable -Scope Script -Name DocsFixtureResult -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    It "qualifies stable Docs compact native results while rejecting typed errors and incomplete evidence" -Tag DocsNativeHealth {
+        $configPath = Join-Path $TestDrive 'native Docs справка.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Open-HostMcpConnection { return @{} }
+            function Invoke-HostMcpTool {
+                param($Connection, $Name, $Arguments)
+                $Name | Should -Be 'docsearch'
+                $Arguments.query | Should -Be 'HTTP'
+                $Arguments.top_k | Should -Be 1
+                $Arguments.max_items | Should -Be 1
+                $Arguments.max_chars | Should -Be 4000
+                return $script:NativeDocsResponse
+            }
+            $good = '{"schema_version":"4.1","tool":"docsearch","outcome":"ok","generation":"published","total":1,"returned":1,"results":[{"doc_id":"HTTPConnection.html#0","citation":{"name":"HTTPСоединение"},"snippets":["HTTPСоединение (HTTPConnection)"]}]}'
+            $script:NativeDocsResponse = @{ isError = $false; content = @(@{ type = 'text'; text = $good }) }
+            { Assert-BetaDocsFunctionalCall -Url 'http://direct/mcp' -NativeResponse -ExpectedGeneration published } | Should -Not -Throw
+            { Assert-BetaDocsFunctionalCall -Url 'http://direct/mcp' -NativeResponse -ExpectedGeneration stale } | Should -Throw '*generation*'
+            foreach ($invalid in @(
+                $good.Replace('"outcome":"ok"', '"outcome":"not_found"'),
+                $good.Replace('"outcome":"ok"', '"outcome":"ok","error":{"code":"timeout"}'),
+                $good.Replace('"returned":1', '"returned":0'),
+                $good.Replace('"schema_version":"4.1"', '"schema_version":"unknown"'),
+                $good.Replace('"doc_id":"HTTPConnection.html#0"', '"doc_id":""'),
+                $good.Replace('"citation":{"name":"HTTPСоединение"}', '"citation":{}'),
+                $good.Replace('"snippets":["HTTPСоединение (HTTPConnection)"]', '"snippets":[]'),
+                'not JSON'
+            )) {
+                $script:NativeDocsResponse.content[0].text = $invalid
+                { Assert-BetaDocsFunctionalCall -Url 'http://direct/mcp' -NativeResponse } | Should -Throw '*Native Docs*'
+            }
+            $script:NativeDocsResponse.content[0].text = $good
+            $script:NativeDocsResponse.isError = $true
+            { Assert-BetaDocsFunctionalCall -Url 'http://direct/mcp' -NativeResponse } | Should -Throw '*MCP error*'
+            Remove-Variable -Scope Script -Name NativeDocsResponse
+        }
+    }
+    It "gives Docs MCP and fresh index one three-hour readiness budget" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-docs-budget-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:BetaReadyClockCalls = 0
+                $script:BetaReadyEpoch = [datetime]"2026-09-27T12:00:00Z"
+                $script:BetaReadyWaits = @()
+                function Get-Date {
+                    $script:BetaReadyClockCalls++
+                    if ($script:BetaReadyClockCalls -eq 1) { return $script:BetaReadyEpoch }
+                    return $script:BetaReadyEpoch.AddSeconds(120)
+                }
+                function Wait-HostMcpReadyConnection {
+                    param([string]$Url, [string]$ServerId, [string]$ConfigId, [int]$TimeoutSeconds, [int]$RetrySeconds)
+                    $script:BetaReadyWaits += [pscustomobject]@{ stage = "mcp"; seconds = $TimeoutSeconds }
+                }
+                function Wait-BetaFreshIndexReady {
+                    param([object]$Context, [int]$TimeoutSeconds)
+                    $script:BetaReadyWaits += [pscustomobject]@{ stage = "index"; seconds = $TimeoutSeconds }
+                }
+                $context = [pscustomobject]@{ serverId = "docs"; configId = ""; runtime = [pscustomobject]@{ url = "http://localhost:18000/mcp" } }
+                Wait-BetaCandidateReady -Context $context
+                @($script:BetaReadyWaits).Count | Should -Be 2
+                $script:BetaReadyWaits[0].seconds | Should -Be 10800
+                $script:BetaReadyWaits[1].seconds | Should -Be 10680
+                $script:BetaReadyWaits[0].stage | Should -Be "mcp"
+                $script:BetaReadyWaits[1].stage | Should -Be "index"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    It "enables beta Templates mutations only with a local token and keeps it out of Docker arguments" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl templates токен " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $fixtureToken = "TemplatesOperatorToken0123456789ABCDEF"
+                function Get-HostSecretValues { param([object]$Config); return @{ MCP_OPERATOR_TOKEN = $fixtureToken } }
+                function Test-HostServerNeedsEmbedding { param([object]$Server); return $false }
+                function Get-HostLocalValues { param([object]$Config, [object]$ConfigState, [switch]$ForceResetDatabase); return @{} }
+                function Set-GraphOpenAiFallbackEnv { param([object]$Config, [object]$Server, [object]$Values) }
+                $server = [pscustomobject]@{ id = "templates"; channel = "beta"; env = @() }
+                $off = [pscustomobject]@{ templatesSearchServer = [pscustomobject]@{ enableWriteTools = $false } }
+                (Resolve-ServerEnv -Config $off -Server $server).Contains("MCP_OPERATOR_TOKEN") | Should -BeFalse
+                $on = [pscustomobject]@{ templatesSearchServer = [pscustomobject]@{ enableWriteTools = $true } }
+                $resolved = Resolve-ServerEnv -Config $on -Server $server
+                $resolved["MCP_ENABLE_WRITE_TOOLS"] | Should -Be "true"
+                $resolved["MCP_OPERATOR_TOKEN"] | Should -Be $fixtureToken
+                $fixtureToken = "weak"
+                { Resolve-ServerEnv -Config $on -Server $server } | Should -Throw "*at least 32 characters*"
+                $fixtureToken = "TemplatesOperatorToken0123456789ABCDEF"
+                function Resolve-ServerVolumes { param([object]$Config, [object]$Server, [object]$ConfigState); return @() }
+                function Invoke-DockerCommandCapture { param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description); return @() }
+                function Test-DockerImageAvailable { param([string]$Image); return $true }
+                function Invoke-DockerCommandChecked {
+                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                    $script:CapturedTemplateDockerArgs = @($Arguments)
+                    $script:CapturedTemplateProcessToken = [Environment]::GetEnvironmentVariable("MCP_OPERATOR_TOKEN", "Process")
+                }
+                $runtime = [pscustomobject]@{ containerName = "itl-templates-beta"; hostPort = 18001; internalPort = 8004; image = "fixture-image"; url = "http://localhost:18001/mcp" }
+                $previousToken = [Environment]::GetEnvironmentVariable("MCP_OPERATOR_TOKEN", "Process")
+                Start-DockerServer -Config $on -Server $server -Runtime $runtime -PreparedBetaImage
+                ($script:CapturedTemplateDockerArgs -join " ") | Should -Not -Match ([regex]::Escape($fixtureToken))
+                ($script:CapturedTemplateDockerArgs -join " ") | Should -Match "-e MCP_OPERATOR_TOKEN"
+                $script:CapturedTemplateProcessToken | Should -Be $fixtureToken
+                [Environment]::GetEnvironmentVariable("MCP_OPERATOR_TOKEN", "Process") | Should -Be $previousToken
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "keeps the logical MCP identity while beta uses a different container and rejects breaking tool changes" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-contract-кириллица " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $old = [pscustomobject]@{ scope = "project"; configId = "pm5corp"; id = "code"; containerName = "itl-pm5corp-code" }
+                $beta = [pscustomobject]@{ scope = "project"; configId = "pm5corp"; id = "code"; containerName = "itl-pm5corp-code-beta" }
+                (Get-HostServerStateKey -ServerState $old) | Should -Be (Get-HostServerStateKey -ServerState $beta)
+                $oldTools = @([pscustomobject]@{ name = "search"; inputSchema = [pscustomobject]@{ required = @("query"); properties = [pscustomobject]@{ query = [pscustomobject]@{ type = "string" } } } })
+                $compatible = @([pscustomobject]@{ name = "search"; inputSchema = [pscustomobject]@{ required = @("query"); properties = [pscustomobject]@{ query = [pscustomobject]@{ type = "string" }; limit = [pscustomobject]@{ type = "integer" } } } })
+                { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $compatible } | Should -Not -Throw
+                $breaking = @([pscustomobject]@{ name = "search"; inputSchema = [pscustomobject]@{ required = @("query", "limit"); properties = [pscustomobject]@{ query = [pscustomobject]@{ type = "string" }; limit = [pscustomobject]@{ type = "integer" } } } })
+                { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $breaking } | Should -Throw
+                $oldTools[0] | Add-Member -NotePropertyName outputSchema -NotePropertyValue ([pscustomobject]@{ required = @("result"); properties = [pscustomobject]@{ result = [pscustomobject]@{ type = "string" } } })
+                $compatible[0] | Add-Member -NotePropertyName outputSchema -NotePropertyValue ([pscustomobject]@{ required = @("result"); properties = [pscustomobject]@{ result = [pscustomobject]@{ type = "string" }; answer = [pscustomobject]@{ type = "string" } } })
+                { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $compatible -CheckOutputs } | Should -Not -Throw
+                $compatible[0].outputSchema.required = @("answer")
+                { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $compatible -CheckOutputs } | Should -Throw
+                { Assert-BetaPathUnderStateRoot -Config ([pscustomobject]@{ stateRoot = (Join-Path $tempRoot "state") }) -Path (Join-Path $tempRoot "other") } | Should -Throw
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "detects active Code and Graph indexing before a beta cutover" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-index-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Open-HostMcpConnection { param([string]$Url) return [pscustomobject]@{ url = $Url } }
+                function Invoke-HostMcpTool {
+                    param([object]$Connection, [string]$Name)
+                    if ($Name -eq "stats") {
+                        return [pscustomobject]@{ structuredContent = [pscustomobject]@{ data = [pscustomobject]@{ indexing = [pscustomobject]@{ running = $true; phase = "code" }; collections = [pscustomobject]@{ code = 10 } } } }
+                    }
+                    return [pscustomobject]@{ structuredContent = [pscustomobject]@{ result = '{"background_tasks":{"vector_indexing":{"status":"running"}},"any_running":true}' } }
+                }
+                $code = Get-BetaConfigurationIndexActivity -ServerId code -Url "http://localhost:1/mcp"
+                $graph = Get-BetaConfigurationIndexActivity -ServerId graph -Url "http://localhost:2/mcp"
+                $code.running | Should -BeTrue
+                $code.phase | Should -Be "code"
+                $code.collections.code | Should -Be 10
+                $graph.running | Should -BeTrue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "decodes Graph legacy and v2 status consistently for cutover and health" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-статус " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Open-HostMcpConnection { param($Url, $TimeoutSec); return @{ url = $Url } }
+                function Invoke-HostMcpTool { param($Connection, $Name, $Arguments, $TimeoutSec); return $script:GraphStatusFixture }
+                $server = @{ id = "graph"; url = "http://fixture/mcp" }
+                $data = @{ background_tasks = @{ vector_indexing = @{ status = "completed" }; business = @{ status = "skipped"; error = "disabled" } }; any_running = $false }
+                $legacy = $data | ConvertTo-Json -Depth 10 -Compress
+                $v2 = @{ contract_version = "2.0"; context = @{ tool = "get_indexing_status" }; data = $data }
+                foreach ($fixture in @(
+                    @{ structuredContent = @{ result = $legacy } },
+                    @{ structuredContent = $data },
+                    @{ content = @(@{ type = "text"; text = $legacy }) },
+                    @{ content = @(@{ type = "text"; text = ($v2 | ConvertTo-Json -Depth 10 -Compress) }) },
+                    @{ structuredContent = $v2 }
+                )) {
+                    $script:GraphStatusFixture = $fixture
+                    (Get-BetaConfigurationIndexActivity -ServerId graph -Url $server.url).running | Should -BeFalse
+                    (Get-HostServerFunctionalHealth -Server $server).status | Should -Be "qualified"
+                }
+                $data.background_tasks.vector_indexing.status = "pending"
+                $script:GraphStatusFixture = @{ content = @(@{ type = "text"; text = ($v2 | ConvertTo-Json -Depth 10 -Compress) }) }
+                (Get-BetaConfigurationIndexActivity -ServerId graph -Url $server.url).running | Should -BeTrue
+                (Get-HostServerFunctionalHealth -Server $server).status | Should -Be "qualified"
+                $data.background_tasks.vector_indexing.status = "failed"
+                $failed = $v2 | ConvertTo-Json -Depth 10 -Compress
+                $data.background_tasks.vector_indexing.status = "completed"
+                $data.background_tasks.vector_indexing.error = "Ошибка чтения C:\исходники проекта\Модуль.bsl"
+                $errorOnComplete = $v2 | ConvertTo-Json -Depth 10 -Compress
+                foreach ($bad in @(
+                    $failed, $errorOnComplete, '{', '{}',
+                    '{"contract_version":"2.0","context":{"tool":"get_indexing_status"},"error":{"code":"timeout","details":{"seconds":25}}}',
+                    '{"contract_version":"2.0","context":{"tool":"another_tool"},"data":{"background_tasks":{"lane":{"status":"completed"}}}}',
+                    '{"contract_version":"3.0","context":{"tool":"get_indexing_status"}}',
+                    '{"background_tasks":{"lane":{"status":"unknown"}}}',
+                    '{"background_tasks":{"lane":{"status":"completed"}},"any_running":"false"}',
+                    '{"background_tasks":{}}'
+                )) {
+                    $script:GraphStatusFixture = @{ isError = $false; content = @(@{ type = "text"; text = $bad }) }
+                    { Get-BetaConfigurationIndexActivity -ServerId graph -Url $server.url } | Should -Throw
+                    (Get-HostServerFunctionalHealth -Server $server).status | Should -Be "degraded"
+                }
+                $script:GraphStatusFixture = @{ isError = $true; structuredContent = ($legacy | ConvertFrom-Json) }
+                { Get-BetaConfigurationIndexActivity -ServerId graph -Url $server.url } | Should -Throw
+                (Get-HostServerFunctionalHealth -Server $server).status | Should -Be "degraded"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "permits exactly the approved Graph v2 tool migration while retaining other compatibility checks" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-contract " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $search = @{ name = "search_code"; inputSchema = @{ required = @("query"); properties = @{ query = @{ type = "string" } } } }
+                $template = @{ name = "run_graph_cypher_template"; inputSchema = @{ required = @("template_id"); properties = @{ template_id = @{ type = "string" } } } }
+                $old = @($search, @{ name = "execute_metadata_cypher" }, @{ name = "business_search" })
+                $beta = @($search, $template)
+                { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools $beta -CheckOutputs } | Should -Not -Throw
+                $legacySearch = @{
+                    name = $search.name; inputSchema = $search.inputSchema
+                    outputSchema = @{ type = "object"; properties = @{ result = @{ type = "string" } }; required = @("result"); "x-fastmcp-wrap-result" = $true }
+                }
+                { Assert-BetaToolsContract -ServerId graph -OldTools @($legacySearch) -BetaTools $beta -CheckOutputs } | Should -Not -Throw
+                $legacySearch.outputSchema | Should -Not -BeNullOrEmpty
+                { Assert-BetaToolsContract -ServerId code -OldTools @($legacySearch) -BetaTools $beta -CheckOutputs } | Should -Throw "*removed its output schema*"
+                $legacySearch.outputSchema.properties.result.type = "object"
+                { Assert-BetaToolsContract -ServerId graph -OldTools @($legacySearch) -BetaTools $beta -CheckOutputs } | Should -Throw "*removed its output schema*"
+                $legacySearch.outputSchema.properties.result.type = "string"
+                $legacySearch.outputSchema.properties.Add("business_field", @{ type = "string" })
+                { Assert-BetaToolsContract -ServerId graph -OldTools @($legacySearch) -BetaTools $beta -CheckOutputs } | Should -Throw "*removed its output schema*"
+                { Assert-BetaToolsContract -ServerId code -OldTools $old -BetaTools $beta } | Should -Throw
+                { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools @($template) } | Should -Throw
+                { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools @($search) } | Should -Throw
+                $badSearch = @{ name = "search_code"; inputSchema = @{ required = @("query", "new_required"); properties = @{ query = @{ type = "string" }; new_required = @{ type = "integer" } } } }
+                { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools @($badSearch, $template) } | Should -Throw
+                $template.inputSchema.required = @()
+                { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools $beta } | Should -Throw
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "preserves MCP request and response Unicode through raw UTF8 despite an absent charset" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-mcp-транспорт " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:UnicodeSourcePath = Join-Path $tempRoot "Общий модуль.bsl"
+                function Invoke-WebRequest {
+                    param($Uri, $Method, $ContentType, $Headers, $Body, $TimeoutSec, [switch]$UseBasicParsing)
+                    $request = [Text.UTF8Encoding]::new($false, $true).GetString($Body) | ConvertFrom-Json
+                    $request.params.arguments.path | Should -BeExactly $script:UnicodeSourcePath
+                    $ContentType | Should -Be "application/json; charset=utf-8"
+                    $json = @{ jsonrpc = "2.0"; id = 2; result = @{ structuredContent = @{ path = $script:UnicodeSourcePath } } } | ConvertTo-Json -Depth 10 -Compress
+                    $bytes = [Text.Encoding]::UTF8.GetBytes("data: $json`n`n")
+                    return @{ Content = "incorrect automatic decoding"; RawContentStream = [IO.MemoryStream]::new($bytes) }
+                }
+                $connection = [pscustomobject]@{ url = "http://fixture/mcp"; nextId = 2; headers = @{} }
+                $result = Invoke-HostMcpTool -Connection $connection -Name "probe" -Arguments @{ path = $script:UnicodeSourcePath }
+                $result.structuredContent.path | Should -BeExactly $script:UnicodeSourcePath
+                { Get-HostMcpResponseUtf8Text -Response @{ RawContentStream = [IO.MemoryStream]::new([byte[]]@(0xC3, 0x28)) } } | Should -Throw
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+
+
     It "parses the standalone MCP host config dump helper" {
         $tokens = $null
         $errors = $null
@@ -62,71 +1222,95 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "preserves MCP tool contracts while compacting only descriptions" {
-        $testPath = Join-Path $RepoRoot "tests\node\tools-list-proxy.test.js"
-        $output = & node $testPath 2>&1
-        $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "unit contract passed"
-        $contract = Get-Content -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\tools-contract.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $maximumLength = [int]$contract.descriptionPolicy.maximumApprovedDescriptionCharacters
-        $remember = [string]$contract.servers.templates.toolDescriptions.remember.compact
-        $recall = [string]$contract.servers.templates.toolDescriptions.recall.compact
 
-        $remember | Should -Match 'shared cross-project memory'
-        $remember | Should -Match 'Never use it for project-specific facts'
-        $recall | Should -Match 'shared cross-project memory'
-        $recall | Should -Match 'verify results against the current project'
-        $remember.Length | Should -BeLessOrEqual $maximumLength
-        $recall.Length | Should -BeLessOrEqual $maximumLength
 
-        $codechecker = $contract.servers.codechecker
-        $codechecker.toolCount | Should -Be 12
-        $codechecker.structuralSha256 | Should -Be "ddad947b18a4f4b535faeeb80301daa0fd11c1d0f04a0d162b3029ed49e1f5fa"
-        $codechecker.toolDescriptions.check_1c_logic.sourceSha256 | Should -Be "0bcab7643d1d868bfe15c52eb232110c2740b9bc01ff252408d01e318a958ffd"
-        $codechecker.toolDescriptions.check_1c_logic.compact | Should -Match 'without checking syntax or style'
-    }
 
-    It "bounds BookStack MCP responses and keeps explicit continuation" {
-        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\test_server.py"
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            $output = & python $testPath 2>&1
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $previousErrorActionPreference
+
+
+
+
+
+
+
+    It "isolates SPPR runtime volumes and rejects credentials inside reader mounts" -Tag Sppr {
+        $root = Join-Path $TestDrive 'СППР хост с пробелом'
+        $public = Join-Path $root 'public'
+        $state = Join-Path $root 'state'
+        New-Item -ItemType Directory -Path $public,$state -Force | Out-Null
+        $componentPath = Join-Path $root 'collector.json'
+        @{ state = $state; policy = (Join-Path $public 'policy.json') } | ConvertTo-Json | Set-Content -LiteralPath $componentPath -Encoding UTF8
+        $hostPath = Join-Path $root 'host.json'
+        @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $hostPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $hostPath *> $null
+            $config = [pscustomobject]@{ stateRoot = $root; spprServer = @{ configPath = $componentPath; credentialPath = (Join-Path $root 'secrets\collector.json') }; secrets = @{ SPPR_EMBEDDING_KEY = 'fixture-embedding-key'; ONEC_PASSWORD = 'must-not-enter-reader' } }
+            $server = Get-SpprServerDefinition
+            (Test-HostServerNeedsEmbedding -Server $server) | Should -BeFalse
+            $envValues = Resolve-ServerEnv -Config $config -Server $server
+            @($envValues.Keys).Count | Should -Be 2
+            $envValues.SPPR_EMBEDDING_KEY | Should -Be 'fixture-embedding-key'
+            $mounts = @(Resolve-ServerVolumes -Config $config -Server $server)
+            $mounts.Count | Should -Be 2
+            @($mounts | Where-Object { -not $_.readOnly }).Count | Should -Be 0
+            @($mounts.host) | Should -Not -Contain $config.spprServer.credentialPath
+            $config.spprServer.credentialPath = Join-Path $state 'password.json'
+            { Get-SpprHostSettings -Config $config } | Should -Throw '*outside*reader mounts*'
+            $config.spprServer.credentialPath = Join-Path $root 'secrets\collector.json'
+            @{ state = $state; policy = (Join-Path $public 'policy.json'); password = 'trap' } | ConvertTo-Json | Set-Content -LiteralPath $componentPath -Encoding UTF8
+            { Get-SpprHostSettings -Config $config } | Should -Throw '*unknown fields*'
         }
-        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 15 tests"
     }
 
-    It "applies the shared codechecker transport retry contract" {
-        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\test_retry_policy.py"
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            $output = & python $testPath 2>&1
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $previousErrorActionPreference
+    It "uses Limited InteractiveToken for both SPPR tasks and never enables missed-run catch-up" -Tag Sppr {
+        $root = Join-Path $TestDrive 'СППР задача с пробелом'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $hostPath = Join-Path $root 'host.json'
+        $credentialPath = Join-Path $root 'credential.json'
+        '{}' | Set-Content -LiteralPath $credentialPath -Encoding UTF8
+        @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $hostPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $hostPath *> $null
+            function Get-SpprHostSettings { return [pscustomobject]@{ configPath = 'C:\СППР пример\collector.json'; credentialPath = $credentialPath; taskName = 'fixture-sppr'; embeddingTaskName = 'fixture-sppr-embeddings'; taskPath = '\ITL\'; description = 'owned fixture'; embeddingDescription = 'owned embeddings fixture'; pythonPath = 'C:\СППР runtime\python.exe'; settings = @{ embedding_interval_minutes = 5; embedding_run_seconds = 240; timeout = 30 } } }
+            function Get-ScheduledTask { return $null }
+            function Initialize-SpprRuntime { }
+            function Invoke-ProcessWithTimeout { return @{ exitCode = 0; lines = @('01:00') } }
+            function New-ScheduledTaskAction {
+                param($Execute,$Argument,$WorkingDirectory)
+                $Execute | Should -Be 'C:\СППР runtime\python.exe'
+                $Argument | Should -Match ([regex]::Escape('"C:\СППР пример\collector.json"'))
+                $Argument | Should -Not -Match 'outside-window'
+                return @{ owned = $true; argument = $Argument }
+            }
+            function New-ScheduledTaskTrigger { param([switch]$Daily,[switch]$Once,[switch]$AtLogOn,$At,$User,$RepetitionInterval); return @{ at = $At; daily = $Daily.IsPresent; once = $Once.IsPresent; logon = $AtLogOn.IsPresent; interval = $RepetitionInterval } }
+            function New-ScheduledTaskPrincipal { param($UserId,$LogonType,$RunLevel); $LogonType | Should -Be 'Interactive'; $RunLevel | Should -Be 'Limited'; return @{ user = $UserId } }
+            function New-ScheduledTaskSettingsSet {
+                param($MultipleInstances,$ExecutionTimeLimit,[switch]$Hidden,[switch]$StartWhenAvailable)
+                $MultipleInstances | Should -Be 'IgnoreNew'
+                $StartWhenAvailable | Should -BeFalse
+                return @{ bounded = $true; executionLimit = $ExecutionTimeLimit }
+            }
+            function Register-ScheduledTask {
+                param($TaskName,$TaskPath,$Action,$Trigger,$Settings,$Principal,$Description,[switch]$Force)
+                $TaskName | Should -BeIn @('fixture-sppr','fixture-sppr-embeddings')
+                if ($TaskName -eq 'fixture-sppr-embeddings') {
+                    $Action.argument | Should -Match '--continuous'
+                    $Settings.executionLimit.TotalHours | Should -Be 12
+                    @($Trigger).Count | Should -Be 2
+                    @($Trigger | Where-Object logon).Count | Should -Be 1
+                    @($Trigger | Where-Object once).Count | Should -Be 1
+                    $Description | Should -Be 'owned embeddings fixture'
+                } else {
+                    $Action.argument | Should -Not -Match '--continuous'
+                    $Description | Should -Be 'owned fixture'
+                    $Trigger.daily | Should -BeTrue
+                }
+            }
+            Install-SpprCollector -Config @{} *> $null
+            { Assert-SpprTaskOwned -Task @{ Description = 'another owner' } -Settings @{ description = 'owned fixture' } } | Should -Throw '*another owner*'
         }
-        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "OK"
     }
 
-    It "keeps the Mantis MCP transport stateless" {
-        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\test_server.py"
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            $output = & python $testPath 2>&1
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $previousErrorActionPreference
-        }
-        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 8 tests"
-    }
+
 
     It "falls back to the direct endpoint when the qualified proxy is unavailable" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-state-" + [guid]::NewGuid().ToString("N"))
@@ -377,6 +1561,80 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "refreshes and restarts the AI Gateway before nightly indexing and reports without blocking" {
+        $root = Join-Path $TestDrive "шлюз ИИ с пробелом"
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $helper = Join-Path $RepoRoot "vibecoding1c-mcp-host/ai-gateway-maintenance.ps1"
+        $ctl = Join-Path $root "fake gateway ctl.ps1"
+        $statePath = Join-Path $root "состояние шлюза.json"
+        Set-Content -LiteralPath $ctl -Encoding UTF8 -Value @'
+param([string]$Command)
+$s = Get-Content -LiteralPath $env:ITL_FAKE_GATEWAY_STATE -Raw -Encoding UTF8 | ConvertFrom-Json
+$s.calls = @($s.calls) + $Command
+switch ($Command) {
+    'stop' { $s.running = $false }
+    'start' { if ($s.failedStarts -gt 0) { $s.failedStarts-- } else { $s.running = $true; $s.polls = 0 } }
+    'status' {
+        if ($s.running) { $s.polls++ }
+        $egress = if ($s.running -and $s.polls -gt $s.directPolls) { 'vpn-auto' } else { 'direct' }
+        "Service: $(if ($s.running) { 'RUNNING' } else { 'STOPPED' })"
+        "AI egress: $egress"
+        'VPN: HEALTHY (120 ms) [Netherlands]'
+        'Policy revision: 42'
+    }
+}
+$s | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:ITL_FAKE_GATEWAY_STATE -Encoding UTF8
+'@
+        function Invoke-FakeGatewayMaintenance {
+            param([int]$DirectPolls, [int]$FailedStarts, [string]$CtlPath = $ctl)
+            @{ running = $true; polls = 0; directPolls = $DirectPolls; failedStarts = $FailedStarts; calls = @() } | ConvertTo-Json -Compress | Set-Content -LiteralPath $statePath -Encoding UTF8
+            $env:ITL_FAKE_GATEWAY_STATE = $statePath
+            try {
+                $output = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $helper -CtlPath $CtlPath -TimeoutSeconds 10 -PollSeconds 1 -PolicySettleSeconds 0 -RestartAfterSeconds 1 2>&1 | ForEach-Object { [string]$_ })
+                return [pscustomobject]@{ exitCode = $LASTEXITCODE; result = ($output[-1] | ConvertFrom-Json); calls = @((Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json).calls); output = $output }
+            } finally { Remove-Item Env:\ITL_FAKE_GATEWAY_STATE -ErrorAction SilentlyContinue }
+        }
+
+        $restarted = Invoke-FakeGatewayMaintenance -DirectPolls 1 -FailedStarts 0
+        $restarted.exitCode | Should -Be 0 -Because ($restarted.output -join [Environment]::NewLine)
+        $restarted.result.status | Should -Be "restarted"
+        $restarted.result.egress | Should -Be "vpn-auto"
+        $restarted.result.revisionAfter | Should -Be "42"
+        @($restarted.calls)[0..3] | Should -Be @("status", "refresh", "stop", "start")
+
+        $retried = Invoke-FakeGatewayMaintenance -DirectPolls 0 -FailedStarts 1
+        $retried.result.status | Should -Be "restarted"
+        $retried.result.startAttempts | Should -Be 2
+
+        $degraded = Invoke-FakeGatewayMaintenance -DirectPolls 1000 -FailedStarts 0
+        $degraded.exitCode | Should -Be 1
+        $degraded.result.status | Should -Be "degraded"
+        $degraded.result.egress | Should -Be "direct"
+
+        $missing = Invoke-FakeGatewayMaintenance -DirectPolls 0 -FailedStarts 0 -CtlPath (Join-Path $root "нет клиента.exe")
+        $missing.exitCode | Should -Be 0
+        $missing.result.status | Should -Be "skipped"
+
+        $configPath = Join-Path $root "host.config.json"
+        Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"nightlyIndex":{"enabled":true,"aiGatewayRestart":true}}'
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            (Get-McpHostNightlyIndexSettings -Config (Read-JsonFile -Path $configPath)).aiGatewayRestart | Should -BeTrue
+            (Get-McpHostNightlyIndexSettings -Config ([pscustomobject]@{ nightlyIndex = [pscustomobject]@{ enabled = $true } })).aiGatewayRestart | Should -BeFalse
+            @{ running = $true; polls = 0; directPolls = 0; failedStarts = 0; calls = @() } | ConvertTo-Json -Compress | Set-Content -LiteralPath $statePath -Encoding UTF8
+            $env:ITL_FAKE_GATEWAY_STATE = $statePath
+            try {
+                $wrapped = Invoke-McpHostAiGatewayMaintenance -HelperPath $helper -HelperArguments @("-CtlPath", $ctl, "-TimeoutSeconds", "10", "-PollSeconds", "1", "-PolicySettleSeconds", "0") 3>$null 6>$null
+                $wrapped.status | Should -Be "restarted"
+                $broken = Join-Path $root "сломанный помощник.ps1"
+                Set-Content -LiteralPath $broken -Encoding UTF8 -Value 'Write-Output "no result"; exit 7'
+                $failed = Invoke-McpHostAiGatewayMaintenance -HelperPath $broken 3>$null 6>$null
+                $failed.status | Should -Be "failed"
+                $failed.message | Should -Match "exit code 7"
+            } finally { Remove-Item Env:\ITL_FAKE_GATEWAY_STATE -ErrorAction SilentlyContinue }
+        }
+    }
+
     It "classifies code and graph index status without treating an idle server as busy" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-nightly-index-status-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
@@ -498,7 +1756,7 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "does not restart a reported-running Docker Desktop after a probe timeout" {
+    It "keeps Docker Desktop running when Engine recovers during the timeout grace period" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-docker-probe-timeout-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
         try {
@@ -514,6 +1772,11 @@
                     return [pscustomobject]@{ available = $false; failureKind = "probe-timeout"; message = "fixture plugin timeout" }
                 }
                 function Get-DockerDesktopRuntimeStatus { return "running" }
+                function Wait-DockerDaemonAvailable {
+                    param([int]$TimeoutSec, [int]$PollSeconds)
+                    $TimeoutSec | Should -Be 30
+                    return $true
+                }
                 function Invoke-DockerCommandChecked {
                     param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
                     $script:ProbeTimeoutDockerCalls++
@@ -525,12 +1788,150 @@
                     dockerDesktopPollSeconds = 3
                 }
 
-                { Repair-DockerDesktopAvailability -Settings $settings } | Should -Throw "*refusing to restart*"
-                $script:ProbeTimeoutCalls | Should -Be 2
+                (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be 'probe-recovered'
+                $script:ProbeTimeoutCalls | Should -Be 1
                 $script:ProbeTimeoutDockerCalls | Should -Be 0
                 Remove-Variable -Scope Script -Name ProbeTimeoutCalls,ProbeTimeoutDockerCalls -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "restarts a reported-running Desktop after sustained Engine timeout and verifies recovery" {
+        $root = Join-Path $TestDrive 'watchdog устойчивый отказ'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $configPath = Join-Path $root 'host.json'
+        @{ schemaVersion=1; stateRoot=$root; watchdog=@{ enabled=$true } } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $settings = Get-McpHostWatchdogSettings -Config (Read-JsonFile $configPath)
+            $script:RecoveryWaits = 0
+            $script:RecoveryCommands = 0
+            function Get-DockerDaemonProbe { return [pscustomobject]@{ available=$false; failureKind='probe-timeout'; message='Engine does not answer /_ping' } }
+            function Get-DockerDesktopRuntimeStatus { return 'running' }
+            function Wait-DockerDaemonAvailable {
+                param([int]$TimeoutSec, [int]$PollSeconds)
+                $script:RecoveryWaits++
+                if ($script:RecoveryWaits -eq 1) { $TimeoutSec | Should -Be 30; return $false }
+                $TimeoutSec | Should -Be $settings.dockerDesktopRecoveryTimeoutSeconds
+                return $true
+            }
+            function Invoke-DockerCommandChecked {
+                param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                ($Arguments -join ' ') | Should -Be 'desktop restart --timeout 90'
+                # The receipt must exist before Docker is touched.
+                (Read-McpHostDockerRecoveryState $settings.dockerDesktopRecoveryStatePath).action | Should -Be 'restart'
+                $script:RecoveryCommands++
+            }
+            (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be 'restart'
+            $script:RecoveryWaits | Should -Be 2
+            $script:RecoveryCommands | Should -Be 1
+            Remove-Variable -Scope Script -Name RecoveryWaits,RecoveryCommands
+        }
+    }
+
+    It "retains recovery cooldown across watchdog results and permits the next bounded attempt after expiry" {
+        $root = Join-Path $TestDrive 'watchdog пауза восстановления'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $configPath = Join-Path $root 'host.json'
+        @{ schemaVersion=1; stateRoot=$root; watchdog=@{ enabled=$true } } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = Read-JsonFile $configPath
+            $settings = Get-McpHostWatchdogSettings -Config $config
+            $script:CooldownCommands = 0
+            function Get-DockerDaemonProbe { return [pscustomobject]@{ available=$false; failureKind='probe-timeout'; message='Engine remains unreachable' } }
+            function Get-DockerDesktopRuntimeStatus { return 'running' }
+            function Wait-DockerDaemonAvailable { return $false }
+            function Invoke-DockerCommandChecked { $script:CooldownCommands++; throw 'fixture restart failed' }
+            function Invoke-DockerCommandCapture { return 'fixture Desktop log' }
+            function Repair-DockerDesktopWslBackend { return $false }
+            { Repair-DockerDesktopAvailability -Settings $settings } | Should -Throw '*did not restore Docker Engine availability*'
+            $script:CooldownCommands | Should -Be 1
+            $receipt = Read-McpHostDockerRecoveryState $settings.dockerDesktopRecoveryStatePath
+            foreach ($status in @('failed','skipped','disabled','succeeded')) {
+                Write-McpHostWatchdogRunState -Config $config -StartedAt (Get-Date).ToString('o') -Status $status
+                (Read-McpHostDockerRecoveryState $settings.dockerDesktopRecoveryStatePath).lastAttemptAt | Should -Be $receipt.lastAttemptAt
+            }
+            # A new scheduled run observes the persisted receipt, even after failure.
+            $settings = Get-McpHostWatchdogSettings -Config $config
+            { Repair-DockerDesktopAvailability -Settings $settings } | Should -Throw '*cooldown*next scheduled watchdog run*'
+            $script:CooldownCommands | Should -Be 1
+            function Get-DockerDaemonProbe { return [pscustomobject]@{ available=$true; failureKind='none'; message='Engine answered' } }
+            (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be 'already-available'
+            $state = Read-JsonFile $settings.dockerDesktopRecoveryStatePath
+            $state.dockerDesktopRecovery.lastAttemptAt = [DateTimeOffset]::UtcNow.AddSeconds(-301).ToString('o')
+            Write-JsonFile -Path $settings.dockerDesktopRecoveryStatePath -Value $state
+            function Get-DockerDaemonProbe { return [pscustomobject]@{ available=$false; failureKind='probe-timeout'; message='Engine still unreachable' } }
+            $script:CooldownWaits = 0
+            function Wait-DockerDaemonAvailable { $script:CooldownWaits++; return ($script:CooldownWaits -eq 2) }
+            function Invoke-DockerCommandChecked { $script:CooldownCommands++ }
+            (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be 'restart'
+            $script:CooldownCommands | Should -Be 2
+            (Read-McpHostDockerRecoveryState $settings.dockerDesktopRecoveryStatePath).lastAttemptAt | Should -Not -Be $receipt.lastAttemptAt
+            Remove-Variable -Scope Script -Name CooldownCommands,CooldownWaits
+        }
+    }
+
+    It "recovers the original Engine timeout when Desktop restart also leaves its WSL backend unavailable" {
+        $configPath = Join-Path $TestDrive 'wsl-recovery.json'
+        @{ schemaVersion=1; stateRoot=(Join-Path $TestDrive 'WSL восстановление') } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $settings=Get-McpHostWatchdogSettings -Config (Read-JsonFile $configPath)
+            $script:WslRecoveryCalls=New-Object 'Collections.Generic.List[string]'
+            $script:WslRecoveryWaits=0
+            function Get-DockerDaemonProbe { return [pscustomobject]@{available=$false;failureKind='probe-timeout';message='no route to Engine'} }
+            function Get-DockerDesktopRuntimeStatus { return 'running' }
+            function Wait-DockerDaemonAvailable { $script:WslRecoveryWaits++; return ($script:WslRecoveryWaits -eq 3) }
+            function Invoke-DockerCommandChecked { param([string[]]$Arguments); $script:WslRecoveryCalls.Add(($Arguments -join ' ')) }
+            function Invoke-ProcessWithTimeout {
+                param($FilePath,$Arguments,$NativeOutputEncoding,$TimeoutSec,$Description)
+                $FilePath | Should -Be 'wsl.exe'
+                $NativeOutputEncoding.WebName | Should -Be 'utf-16'
+                $script:WslRecoveryCalls.Add(($Arguments -join ' '))
+                if($Arguments[0] -eq '--list'){return [pscustomobject]@{exitCode=0;lines=@('docker-desktop')}}
+                ($Arguments -join ' ') | Should -Be '--shutdown'
+                return [pscustomobject]@{exitCode=0;lines=@('Операция успешно завершена.')}
+            }
+            (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be 'restart-wsl'
+            @($script:WslRecoveryCalls) | Should -Be @('desktop restart --timeout 90','--list --running --quiet','desktop stop --force --timeout 90','--list --running --quiet','--shutdown','desktop start --timeout 90')
+            $script:WslRecoveryWaits | Should -Be 3
+            Remove-Variable -Scope Script -Name WslRecoveryCalls,WslRecoveryWaits
+        }
+    }
+
+    It "does not reset other WSL distributions when Docker has no running WSL backend" {
+        $configPath=Join-Path $TestDrive 'other-wsl.json'
+        @{schemaVersion=1;stateRoot=$TestDrive}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Invoke-ProcessWithTimeout {
+                param($FilePath,$Arguments,$NativeOutputEncoding,$TimeoutSec,$Description)
+                ($Arguments -join ' ') | Should -Be '--list --running --quiet'
+                return [pscustomobject]@{exitCode=0;lines=@('Ubuntu','docker-desktop')}
+            }
+            function Invoke-DockerCommandChecked { throw 'Desktop must not be touched' }
+            (Repair-DockerDesktopWslBackend -Settings (Get-McpHostWatchdogSettings -Config (Read-JsonFile $configPath))) | Should -BeFalse
+        }
+    }
+
+    It "vetoes WSL VM shutdown when an independent distribution appears during Desktop stop" {
+        $configPath=Join-Path $TestDrive 'wsl-race.json'
+        @{schemaVersion=1;stateRoot=$TestDrive}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:WslInventoryCalls=0
+            function Invoke-ProcessWithTimeout {
+                param($FilePath,$Arguments,$NativeOutputEncoding,$TimeoutSec,$Description)
+                ($Arguments -join ' ')|Should -Be '--list --running --quiet'
+                $script:WslInventoryCalls++
+                return [pscustomobject]@{exitCode=0;lines=$(if($script:WslInventoryCalls -eq 1){@('docker-desktop')}else{@('Ubuntu')})}
+            }
+            function Invoke-DockerCommandChecked {param($Arguments); ($Arguments -join ' ')|Should -Be 'desktop stop --force --timeout 90'}
+            {Repair-DockerDesktopWslBackend -Settings (Get-McpHostWatchdogSettings -Config (Read-JsonFile $configPath))}|Should -Throw '*Another WSL distribution*shutdown was cancelled*'
+            $script:WslInventoryCalls|Should -Be 2
+            Remove-Variable -Scope Script -Name WslInventoryCalls
+        }
     }
 
     It "terminates the complete child process tree after a native command timeout" {
@@ -543,7 +1944,7 @@
             Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
             Set-Content -LiteralPath $fixturePath -Encoding UTF8 -Value @'
 param([string]$ChildPidPath)
-$child = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 120") -PassThru
+$child = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 120") -WindowStyle Hidden -PassThru
 [IO.File]::WriteAllText($ChildPidPath, [string]$child.Id)
 Start-Sleep -Seconds 120
 '@
@@ -558,6 +1959,28 @@ Start-Sleep -Seconds 120
             }
             (Get-Process -Id $childPid -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "keeps the native exit code and UTF-8 output from a Cyrillic path with spaces" -Tag BetaCutover {
+        $tempRoot = Join-Path $TestDrive "вывод с пробелом и кириллицей"
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $fixturePath = Join-Path $tempRoot "native-output.ps1"
+        New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+        Set-Content -LiteralPath $fixturePath -Encoding UTF8 -Value @'
+param([string]$Value)
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::WriteLine("stdout:$Value")
+[Console]::Error.WriteLine("stderr:$Value")
+exit 17
+'@
+        $result = & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            Invoke-ProcessWithTimeout -FilePath "powershell.exe" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $fixturePath, $tempRoot) -TimeoutSec 15 -Description "Unicode native fixture"
+        }
+        $result.exitCode | Should -Be 17
+        $result.lines | Should -Contain "stdout:$tempRoot"
+        $result.lines | Should -Contain "stderr:$tempRoot"
     }
 
     It "normalizes malformed Graph compose memory keys and validates before down" {
@@ -669,7 +2092,14 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "repairs tracked graph healthchecks without restart or indexing" {
+    It "repairs tracked graph healthchecks without restart or indexing: <Scenario>" -Tag GraphHealthRepair -TestCases @(
+        @{ Scenario = 'wrapped missing curl'; ProbeExitCode = 0; ValidationExitCode = 0; ValidationMarker = $true; AlreadyInstalled = $false; ExpectedFailure = $false },
+        @{ Scenario = 'missing curl exit 127'; ProbeExitCode = 127; ValidationExitCode = 0; ValidationMarker = $true; AlreadyInstalled = $false; ExpectedFailure = $false },
+        @{ Scenario = 'existing valid shim'; ProbeExitCode = 0; ValidationExitCode = 0; ValidationMarker = $true; AlreadyInstalled = $true; ExpectedFailure = $false },
+        @{ Scenario = 'failed validation'; ProbeExitCode = 127; ValidationExitCode = 22; ValidationMarker = $true; AlreadyInstalled = $false; ExpectedFailure = $true },
+        @{ Scenario = 'validation without marker'; ProbeExitCode = 127; ValidationExitCode = 0; ValidationMarker = $false; AlreadyInstalled = $false; ExpectedFailure = $true }
+    ) {
+        param($Scenario, $ProbeExitCode, $ValidationExitCode, $ValidationMarker, $AlreadyInstalled, $ExpectedFailure)
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-graph-health-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
         $stateRoot = Join-Path $tempRoot "state"
@@ -699,42 +2129,319 @@ services:
                 . $McpHostPath -Action status -ConfigPath $configPath *> $null
                 $hostConfig = Read-JsonFile -Path $configPath
                 $script:GraphHealthDockerCalls = New-Object System.Collections.Generic.List[string]
-                $script:GraphHealthShimInstalled = $false
+                $script:GraphHealthShimInstalled = $AlreadyInstalled
                 function Get-HostContainerPublishState { param([string]$ContainerName); return "running" }
-                function Invoke-DockerCommandCapture {
-                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
-                    $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
-                    if ($script:GraphHealthShimInstalled) {
-                        return @("ITL_GRAPH_HEALTH_OK")
-                    }
-                    return @('OCI runtime exec failed: exec: "curl": executable file not found in $PATH')
-                }
-                function Invoke-DockerCommand {
-                    param([string[]]$Arguments, [switch]$Quiet, [int]$TimeoutSec)
-                    $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
-                    return 1
-                }
-                function Invoke-DockerCommandChecked {
-                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                function Invoke-ProcessWithTimeout {
+                    param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                    $FilePath | Should -Be 'docker'
                     $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
                     if ($Arguments[0] -eq "cp") {
                         $script:GraphHealthShimInstalled = $true
+                        return @{ exitCode = 0; lines = @() }
                     }
+                    if ($Arguments[2] -eq 'chmod') { return @{ exitCode = 0; lines = @() } }
+                    if ($script:GraphHealthShimInstalled) {
+                        $lines = if ($ValidationMarker) { @('ITL_GRAPH_HEALTH_OK') } else { @('OCI runtime exec failed') }
+                        return @{ exitCode = $ValidationExitCode; lines = $lines }
+                    }
+                    return @{ exitCode = $ProbeExitCode; lines = @('OCI runtime exec failed: exec: "curl": executable file not found in $PATH') }
                 }
 
-                (Repair-TrackedGraphHealthchecks -Config $hostConfig) | Should -Be 2
+                if ($ExpectedFailure) {
+                    { Repair-TrackedGraphHealthchecks -Config $hostConfig } | Should -Throw '*validat*'
+                } else {
+                    $expectedRepairs = if ($AlreadyInstalled) { 1 } else { 2 }
+                    (Repair-TrackedGraphHealthchecks -Config $hostConfig) | Should -Be $expectedRepairs
+                    (Repair-TrackedGraphHealthchecks -Config $hostConfig) | Should -Be 0
+                }
                 $composeText = Get-Content -LiteralPath (Join-Path $runtimePath "docker-compose.yml") -Raw
                 $composeText | Should -Match "python -c"
                 $composeText | Should -Not -Match '\["CMD", "curl"'
                 $callText = @($script:GraphHealthDockerCalls) -join "|"
-                $callText | Should -Match "cp .*itl-graph:/usr/local/bin/curl"
-                $callText | Should -Match "exec itl-graph chmod 0755 /usr/local/bin/curl"
+                if ($AlreadyInstalled) {
+                    $callText | Should -Not -Match 'cp |chmod'
+                } else {
+                    $callText | Should -Match "cp .*itl-graph:/usr/local/bin/curl"
+                    $callText | Should -Match "exec itl-graph chmod 0755 /usr/local/bin/curl"
+                }
                 $callText | Should -Match "exec itl-graph curl -f http://localhost:8006/search"
                 $callText | Should -Not -Match "restart|reindex|setup"
                 Remove-Variable -Scope Script -Name GraphHealthDockerCalls -ErrorAction SilentlyContinue
                 Remove-Variable -Scope Script -Name GraphHealthShimInstalled -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "qualifies native CodeChecker once per watchdog attempt without upstream tool calls" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'watchdog проверка с пробелом.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{ stateRoot = $TestDrive; watchdog = @{ enabled = $true } }
+            $server = @{ id = 'codechecker'; name = 'checker'; scope = 'global'; containerName = 'checker-native'; url = 'http://host:22003/mcp'; hostPort = 22003; endpointMode = 'direct' }
+            $script:HealthBudgetState = @{ servers = @($server) }
+            $script:HealthBudgetRuns = 0; $script:HealthBudgetArguments = @(); $script:HealthBudgetLimit = 0
+            function Ensure-PythonRuntime { return 'fixture-python' }
+            function Invoke-ProcessWithTimeout {
+                param($FilePath, $Arguments, $TimeoutSec)
+                $script:HealthBudgetRuns++; $script:HealthBudgetArguments = $Arguments; $script:HealthBudgetLimit = $TimeoutSec
+                return @{ exitCode = 0; lines = @('{"status":"matched","container_id":"fixture-id","health_passed":false,"elapsedSeconds":0.3}') }
+            }
+            function Invoke-DockerCommandCapture { return 'fixture-id running' }
+            function Get-HostContainerPublishState { return 'running' }
+            function Test-HostTcpPortOpen { return $true }
+            function Read-HostState { return $script:HealthBudgetState }
+            function Write-HostState { param($Config, $State) $script:HealthBudgetState = $State }
+            function Open-HostMcpConnection { throw 'CodeChecker health must not issue upstream calls, including legacy/proxy functional probes' }
+            function Repair-DockerDesktopAvailability { return 'already-available' }
+            function Repair-TrackedGraphHealthchecks { return 0 }
+            function Repair-TrackedMcpHostAndPublish {
+                Get-HostDirectEndpointProof -Config $config -Server $server | Out-Null
+                Update-HostStateForPublish -Config $config
+                Update-HostStateForPublish -Config $config
+            }
+            Invoke-McpHostWatchdogRunCore -Config $config *> $null
+            $script:HealthBudgetRuns | Should -Be 1
+            $script:HealthBudgetLimit | Should -Be 180
+            $script:HealthBudgetArguments | Should -Not -Contain '--health-tool'
+            $script:HealthBudgetArguments | Should -Not -Contain '--health-arguments-base64'
+            Get-HostServerSafeHealthTool -ServerId codechecker | Should -BeNullOrEmpty
+            (Get-HostServerFunctionalHealth -Server @{id='codechecker';url='http://host:22003/mcp'}).status | Should -Be 'not-probed'
+            $script:HealthBudgetState.servers[0].status | Should -Be 'running'
+            $script:HealthBudgetState.servers[0].functionalStatus | Should -Be 'not-probed'
+            $record = @(ConvertTo-RegistryServers -State $script:HealthBudgetState -HostId fixture -PublishedAt fixture)[0]
+            $record.health | Should -Be 'running'
+            $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)
+            $state.status | Should -Be 'succeeded'
+            @($state.endpointProofs).Count | Should -Be 1
+            $state.endpointProofs[0].proof.elapsedSeconds | Should -Be 0.3
+            Get-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+            Get-HostDirectEndpointProof -Config $config -Server $server | Out-Null
+            $script:HealthBudgetRuns | Should -Be 2
+        }
+    }
+
+    It "retains explicit CodeChecker capability qualification and its failure" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'required-codechecker-tool.json'
+        @{schemaVersion=1;stateRoot=$TestDrive} | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:RequiredCheckerFailure=$false; $script:RequiredCheckerCalls=0; $script:RequiredCheckerCloses=0
+            function Open-HostMcpConnection { @{} }
+            function Invoke-HostMcpTool {
+                param($Connection,$Name,$Arguments)
+                $Name | Should -Be 'fetch_its'
+                $Arguments.id | Should -Be 'root'
+                $script:RequiredCheckerCalls++
+                if ($script:RequiredCheckerFailure) { throw 'fixture upstream timeout' }
+                return @{result='fixture completed answer'}
+            }
+            function Close-HostMcpConnection { $script:RequiredCheckerCloses++ }
+            $server=@{id='codechecker';url='http://host:22003/mcp'}
+            (Get-HostServerFunctionalHealth -Server $server -IncludeUpstream).status | Should -Be qualified
+            $script:RequiredCheckerFailure=$true
+            $health=Get-HostServerFunctionalHealth -Server $server -IncludeUpstream
+            $health.status | Should -Be degraded
+            $health.message | Should -Match 'fixture upstream timeout'
+            $script:RequiredCheckerCalls | Should -Be 2
+            $script:RequiredCheckerCloses | Should -Be 2
+        }
+    }
+
+    It "invalidates cycle proof after an owned restart or a changed container identity" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'proof-cache.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:DirectEndpointProofCache = @{}
+            $script:CachedProofRuns = 0; $script:CachedContainerId = 'first-id'
+            $server = @{ id = 'codechecker'; containerName = 'checker'; url = 'http://host:22003/mcp'; hostPort = 22003 }
+            function Ensure-PythonRuntime { return 'fixture-python' }
+            function Invoke-ProcessWithTimeout {
+                $script:CachedProofRuns++
+                return @{ exitCode = 0; lines = @((@{ status = 'matched'; container_id = $script:CachedContainerId; health_passed = $true } | ConvertTo-Json -Compress)) }
+            }
+            function Invoke-DockerCommandCapture { return "$script:CachedContainerId running" }
+            try {
+                Get-HostDirectEndpointProof -Config @{} -Server $server | Out-Null
+                Get-HostDirectEndpointProof -Config @{} -Server $server | Out-Null
+                $script:CachedProofRuns | Should -Be 1
+                Get-HostDirectEndpointProof -Config @{} -Server $server -Refresh | Out-Null
+                $script:CachedProofRuns | Should -Be 2
+                $script:CachedContainerId = 'replacement-id'
+                (Get-HostDirectEndpointProof -Config @{} -Server $server).container_id | Should -Be 'replacement-id'
+                $script:CachedProofRuns | Should -Be 3
+            } finally { Remove-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "publishes and reconciles an available <ServerId> despite an optional tool timeout" -Tag DirectHealthBudget -TestCases @(
+        @{ServerId='codechecker'}, @{ServerId='graph'}, @{ServerId='syntax'}
+    ) {
+        param($ServerId)
+        $configPath = Join-Path $TestDrive 'matched-health-error.json'
+        @{schemaVersion=1;stateRoot=$TestDrive} | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{stateRoot=$TestDrive;watchdog=@{enabled=$true}}
+            $script:HealthErrorState = @{servers=@(@{id=$ServerId;scope='global';name='checker';containerName='checker';url='http://host:22003/mcp';hostPort=22003;endpointMode='direct'})}
+            function Get-HostContainerPublishState { 'running' }
+            function Test-HostTcpPortOpen { $true }
+            function Get-HostDirectEndpointProof { @{status='matched';qualified_url='http://host:22003/mcp/';health_passed=$false;health_error=@{method='tools/call';reason='TimeoutError';timeoutSeconds=30}} }
+            function Read-HostState { $script:HealthErrorState }
+            function Write-HostState { param($Config,$State) $script:HealthErrorState=$State }
+            function Get-HostServerFunctionalHealth { throw 'Do not repeat an already failed safe call.' }
+            function Repair-DockerDesktopAvailability { 'already-available' }
+            function Repair-TrackedGraphHealthchecks { 0 }
+            function Repair-TrackedMcpHostAndPublish { Update-HostStateForPublish -Config $config }
+            function Publish-Registry { }
+            function Invoke-DockerCommand { throw 'An optional timeout never authorizes container mutation' }
+            Invoke-McpHostWatchdogRunCore -Config $config *> $null
+            $record = @(ConvertTo-RegistryServers -State $script:HealthErrorState -HostId fixture -PublishedAt fixture)[0]
+            $record.status | Should -Be running
+            $record.health | Should -Be running
+            $record.url | Should -Be 'http://host:22003/mcp/'
+            $record.functionalStatus | Should -Be degraded
+            $record.functionalMessage | Should -Match 'identity matched.*method=tools/call.*TimeoutError'
+            (Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)).status | Should -Be succeeded
+            # Qualification must allow the very same timed-out proof, for both
+            # native and proxy setup, without claiming that the tool passed.
+            Resolve-HostRuntimeMcpUrl -Config $config -Runtime $script:HealthErrorState.servers[0] | Should -Be 'http://host:22003/mcp/'
+        }
+    }
+
+    It "rejects incomplete endpoint identity despite a successful tool: <ProofStatus> / <QualifiedUrl>" -Tag DirectHealthBudget -TestCases @(
+        @{ProofStatus='unverified';QualifiedUrl='http://host:22003/mcp/'},
+        @{ProofStatus='mismatch';QualifiedUrl='http://host:22003/mcp/'},
+        @{ProofStatus='matched';QualifiedUrl=''}
+    ) {
+        param($ProofStatus,$QualifiedUrl)
+        $configPath = Join-Path $TestDrive 'identity-required.json'
+        @{schemaVersion=1;stateRoot=$TestDrive} | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Get-HostDirectEndpointProof { @{status=$ProofStatus;qualified_url=$QualifiedUrl;health_passed=$true} }
+            $runtime = @{id='codechecker';containerName='checker';url='http://host:22003/mcp';hostPort=22003;endpointMode='direct'}
+            { Enable-ToolsListProxyForRuntime -Config @{} -Runtime $runtime } | Should -Throw '*ITL_HOST_MCP_ENDPOINT_UNVERIFIED*'
+            $runtime.url | Should -Be 'http://host:22003/mcp'
+        }
+    }
+
+    It "keeps unverified identity unavailable even when its diagnostic mentions a tool timeout" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'proof-timeout.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{ stateRoot = $TestDrive; watchdog = @{ enabled = $true } }
+            $script:TimeoutProofState = @{ servers = @(@{ id = 'codechecker'; scope = 'global'; name = 'checker'; containerName = 'checker'; url = 'http://host:22003/mcp'; hostPort = 22003; endpointMode = 'direct' }) }
+            function Get-HostContainerPublishState { return 'running' }
+            function Test-HostTcpPortOpen { return $true }
+            function Get-HostDirectEndpointProof { return @{ status = 'unverified'; stage = 'public safe health'; method = 'tools/call'; reason = 'TimeoutError'; timeoutSeconds = 30 } }
+            function Read-HostState { return $script:TimeoutProofState }
+            function Write-HostState { param($Config, $State) $script:TimeoutProofState = $State }
+            function Repair-DockerDesktopAvailability { return 'already-available' }
+            function Repair-TrackedGraphHealthchecks { return 0 }
+            function Repair-TrackedMcpHostAndPublish { Update-HostStateForPublish -Config $config }
+            function Publish-Registry { }
+            { Invoke-McpHostWatchdogRunCore -Config $config *> $null } | Should -Throw '*TimeoutError*'
+            $record = @(ConvertTo-RegistryServers -State $script:TimeoutProofState -HostId fixture -PublishedAt fixture)[0]
+            $record.status | Should -Be 'unknown'
+            $record.health | Should -Be 'unknown'
+            $record.functionalMessage | Should -Match 'stage=public safe health; method=tools/call; reason=TimeoutError; timeoutSeconds=30'
+            (Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)).status | Should -Be 'failed'
+        }
+    }
+
+    It "does not report watchdog success while a tracked endpoint is <Status>" -Tag DirectHealthBudget -TestCases @(
+        @{ Status = 'unreachable' }, @{ Status = 'missing' }, @{ Status = 'unknown' }
+    ) {
+        param($Status)
+        $configPath = Join-Path $TestDrive ('watchdog-' + $Status + '.json')
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{ stateRoot = $TestDrive; watchdog = @{ enabled = $true } }
+            function Repair-DockerDesktopAvailability { return 'already-available' }
+            function Repair-TrackedGraphHealthchecks { return 0 }
+            function Repair-TrackedMcpHostAndPublish { }
+            function Update-HostStateForPublish { }
+            function Publish-Registry { }
+            function Read-HostState { return @{ servers = @(@{ name = 'checker'; status = $Status; health = $Status; functionalMessage = 'fixture unavailable' }) } }
+            { Invoke-McpHostWatchdogRunCore -Config $config *> $null } | Should -Throw '*checker*'
+            (Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)).status | Should -Be 'failed'
+        }
+    }
+
+    It "retries pending registry delivery without changing an unchanged payload: dryRun=<IsDryRun>" -Tag RegistryPendingPublication -TestCases @(
+        @{ IsDryRun = $false }, @{ IsDryRun = $true }
+    ) {
+        param($IsDryRun)
+        $stateRoot = Join-Path $TestDrive ('реестр с пробелом-' + $IsDryRun)
+        New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+        $configPath = Join-Path $stateRoot 'host.config.json'
+        @{ schemaVersion = 1; stateRoot = $stateRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $registryRoot = Join-Path $stateRoot 'registry'
+            $remote = Join-Path $stateRoot 'remote.git'
+            Invoke-Git -Root $stateRoot -Arguments @('init', '--bare', $remote) *> $null
+            Invoke-Git -Root $stateRoot -Arguments @('init', $registryRoot) *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('config', 'user.name', 'Registry fixture') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('config', 'user.email', 'registry@example.invalid') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('remote', 'add', 'origin', $remote) *> $null
+            Set-Content -LiteralPath (Join-Path $registryRoot 'registry.json') -Value '{"status":"unreachable"}' -Encoding UTF8
+            Invoke-Git -Root $registryRoot -Arguments @('add', 'registry.json') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('commit', '-m', 'previous published health') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('push', '-u', 'origin', 'HEAD') *> $null
+            $publishedHead = (Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join ''
+            Set-Content -LiteralPath (Join-Path $registryRoot 'registry.json') -Value '{"status":"running"}' -Encoding UTF8
+            Invoke-Git -Root $registryRoot -Arguments @('add', 'registry.json') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('commit', '-m', 'qualified health awaiting delivery') *> $null
+            $pendingHead = (Get-GitOutput -Root $registryRoot -Arguments @('rev-parse', 'HEAD')) -join ''
+            $config = @{ stateRoot = $stateRoot; registryRepo = $remote }
+            function Test-RegistryCurrentHostMatchesState { return $true }
+            function Write-MergedRegistryPayload { throw 'Unchanged payload must not be rewritten' }
+            $realInvokeGit = ${function:Invoke-Git}
+            $delivery = @{ rejectPush = $true; pushCalls = 0 }
+            function Invoke-Git {
+                param($Root, $Arguments)
+                if ($Arguments[0] -eq 'push') {
+                    $delivery.pushCalls++
+                    if ($delivery.rejectPush) { throw 'fixture credentials unavailable' }
+                }
+                & $realInvokeGit -Root $Root -Arguments $Arguments
+            }
+            $DryRun = $IsDryRun
+            if ($IsDryRun) {
+                Publish-Registry -Config $config -SkipUnchangedHost *> $null
+                $delivery.pushCalls | Should -Be 0
+                ((Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $publishedHead
+            } else {
+                { Publish-Registry -Config $config -SkipUnchangedHost *> $null } | Should -Throw '*fixture credentials unavailable*'
+                $delivery.pushCalls | Should -Be 2
+                ((Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $publishedHead
+                $delivery.rejectPush = $false
+                Publish-Registry -Config $config -SkipUnchangedHost *> $null
+                ((Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $pendingHead
+                $delivery.pushCalls | Should -Be 3
+                Publish-Registry -Config $config -SkipUnchangedHost *> $null
+                $delivery.pushCalls | Should -Be 3
+            }
+            ((Get-GitOutput -Root $registryRoot -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $pendingHead
+        }
+    }
+
+    It "does not claim unchanged registry delivery when upstream evidence is unavailable" -Tag RegistryPendingPublication {
+        $configPath = Join-Path $TestDrive 'registry-unverified.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Ensure-GitCheckout { }
+            function Test-RegistryCurrentHostMatchesState { return $true }
+            function Invoke-ProcessWithTimeout { return @{ exitCode = 128; lines = @('upstream unavailable') } }
+            function Invoke-Git { throw 'Publication must not be claimed' }
+            { Publish-Registry -Config @{ stateRoot = $TestDrive } -SkipUnchangedHost *> $null } | Should -Throw '*publication is unverified*'
+        }
     }
 
     It "records watchdog success, failure, and disabled runs" {
@@ -899,6 +2606,11 @@ services:
 
             & {
                 . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # Container/transport is a controlled dependency of this rollback fixture.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
                 $script:DryRun = $false
                 $script:ProxyRollbackDockerCalls = New-Object System.Collections.Generic.List[string]
                 $script:ProxyRollbackPublished = $false
@@ -994,11 +2706,12 @@ services:
         $bookStackServerText | Should -Match "next_cursor"
         $bookStackServerText | Should -Match "semantic_min_score"
         $mantisRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt")
-        $mantisRequirementsText | Should -Match "fastmcp>=2\.10,<3\.0"
+        $mantisRequirementsText | Should -Match "fastmcp==2\.14\.7"
+        $mantisRequirementsText | Should -Match "zvec==0\.7\.0"
         $mantisRequirementsText | Should -Match "pytesseract"
         $mantisRequirementsText | Should -Match "Pillow"
         $mantisServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\server.py")
-        $mantisServerText | Should -Match 'FastMCP\("mantis-ticket", stateless_http=True\)'
+        $mantisServerText | Should -Match 'FastMCP\("mantis-ticket", stateless_http=True, lifespan=lifespan\)'
         foreach ($toolName in @("read_ticket", "get_attachment", "health")) {
             $mantisServerText | Should -Match "def $toolName"
         }
@@ -1025,7 +2738,7 @@ services:
         $hostConfig.graphMetadataSearchServer.resetDatabase | Should -Be $false
         $hostConfig.graphMetadataSearchServer.PSObject.Properties["reindexIntervalHours"] | Should -Not -BeNullOrEmpty
         $hostConfig.toolsListProxy.enabled | Should -BeTrue
-        @($hostConfig.toolsListProxy.serverIds) | Should -Be @("docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "code", "graph")
+        @($hostConfig.toolsListProxy.serverIds) | Should -Be @("docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "sppr", "code", "graph")
         $hostConfig.toolsListProxy.portOffset | Should -Be 4000
         $hostConfig.watchdog.enabled | Should -BeTrue
         $hostConfig.watchdog.intervalMinutes | Should -Be 5
@@ -1050,7 +2763,8 @@ services:
         $hostConfig.secrets.MANTIS_API_TOKEN | Should -Match "^<"
         $hostConfig.bookStackProductDocsServer.baseUrl | Should -Match "^http"
         $hostConfig.bookStackProductDocsServer.reindexIntervalHours | Should -Be 24
-        $hostConfig.bookStackProductDocsServer.semanticMinScore | Should -Be 0.82
+        $hostConfig.bookStackProductDocsServer.semanticMinScore | Should -BeNullOrEmpty
+        $hostConfig.bookStackProductDocsServer.chunkTokens | Should -Be 1024
         $hostConfig.mantisTicketServer.baseUrl | Should -Match "^http"
         $hostConfig.mantisTicketServer.attachmentCachePath | Should -Match "mantis-ticket"
         $hostConfig.mantisTicketServer.maxAttachmentBytes | Should -Be 26214400
@@ -1287,7 +3001,7 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item Function:\global:git -ErrorAction SilentlyContinue }
     }
 
-    It "marks Graph functionally degraded when vector tasks are blocked by an embedding mismatch" {
+    It "marks Graph functionally degraded when vector tasks are blocked by an embedding mismatch" -Tag BetaCutover {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-functional-health-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
         try {
@@ -1537,12 +3251,35 @@ services:
                 $mantisEnv["MANTIS_BASE_URL"] | Should -Be "http://mantis.test"
                 $mantisEnv["MANTIS_API_TOKEN"] | Should -Be "fixture-mantis-token"
                 $mantisEnv["MANTIS_TIMEOUT_SECONDS"] | Should -Be "25"
+                $mantisEnv["MANTIS_EMBEDDING_TIMEOUT_SECONDS"] | Should -Be "120"
+                $mantisEnv["MANTIS_EMBEDDING_WORKERS"] | Should -Be "4"
+                $mantisEnv["MANTIS_EMBEDDING_BATCH_SIZE"] | Should -Be "32"
                 $mantisEnv["MANTIS_MAX_ATTACHMENT_BYTES"] | Should -Be "12345"
                 $mantisEnv["MANTIS_MAX_INLINE_TEXT_CHARS"] | Should -Be "2345"
                 $mantisEnv["MANTIS_OCR_ENABLED"] | Should -Be $true
                 $mantisEnv["MANTIS_OCR_LANGUAGES"] | Should -Be "rus,eng"
                 $mantisVolumes = @(Resolve-ServerVolumes -Config $hostConfig -Server $mantisServer)
                 @($mantisVolumes | Where-Object { $_.container -eq "/data/attachments" }).Count | Should -Be 1
+                @($mantisVolumes | Where-Object { $_.container -eq "/data/mantis" }).Count | Should -Be 1
+                $mantisEnv["MANTIS_INDEX_ENABLED"] | Should -Be "false"
+                $mantisEnv["MANTIS_MONTHLY_BUDGET_USD"] | Should -Be "5"
+                $mantisEnv["MANTIS_WRITE_ENABLED"] | Should -Be "false"
+                $mantisEnv["MANTIS_ATTACHMENT_EXTRACT_ENABLED"] | Should -Be "false"
+                $mantisEnv.Contains("MANTIS_WRITE_ACTIONS") | Should -Be $false
+                $mantisEnv.Contains("MANTIS_WRITE_PROJECT_IDS") | Should -Be $false
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName syncProjectIds -NotePropertyValue @(17)
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName writeEnabled -NotePropertyValue $true
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName attachmentExtractEnabled -NotePropertyValue $true
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName embeddingWorkers -NotePropertyValue 2
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName embeddingBatchSize -NotePropertyValue 48
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName embeddingTimeoutSeconds -NotePropertyValue 60
+                $selectedMantisEnv = Resolve-ServerEnv -Config $hostConfig -Server $mantisServer
+                $selectedMantisEnv['MANTIS_SYNC_PROJECT_IDS'] | Should -Be '17'
+                $selectedMantisEnv['MANTIS_WRITE_ENABLED'] | Should -Be 'true'
+                $selectedMantisEnv['MANTIS_ATTACHMENT_EXTRACT_ENABLED'] | Should -Be 'true'
+                $selectedMantisEnv['MANTIS_EMBEDDING_WORKERS'] | Should -Be '2'
+                $selectedMantisEnv['MANTIS_EMBEDDING_BATCH_SIZE'] | Should -Be '48'
+                $selectedMantisEnv['MANTIS_EMBEDDING_TIMEOUT_SECONDS'] | Should -Be '60'
                 (Test-Path -LiteralPath (Join-Path $tempRoot "mantis-attachments") -PathType Container) | Should -Be $true
             }
         } finally {
@@ -2845,6 +4582,1290 @@ services:
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "retains explicit stable storage and Qwen while legacy stable keeps its local model" -Tag StableCutover {
+        $tempRoot = Join-Path $TestDrive 'stable профиль с пробелом'
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $configPath = Join-Path $tempRoot 'host.config.json'
+        $credentialPath = Join-Path $tempRoot 'credential.json'
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        @{ model = 'qwen/qwen3-embedding-8b'; apiBase = 'https://example.test/v1'; apiKey = 'fixture-only' } | ConvertTo-Json | Set-Content $credentialPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Get-HostSecretValues { return @{} }
+            function Get-HostLocalValues { return @{ PATH_BASES = $tempRoot } }
+            $profile = @{ generation = 'qwen3-v1'; embedding = @{ credentialFile = $credentialPath }; volumes = @{ pm4 = @{ code = @{ index = 'accepted-beta-index' }; graph = @{ neo4j = 'accepted-beta-neo4j'; state = 'accepted-beta-state' } } } }
+            $config = @{ stateRoot = $tempRoot; embedding = @{ model = 'intfloat/multilingual-e5-base' }; projectIndexProfiles = @{ retained = $profile } }
+            $server = [pscustomobject]@{ id = 'code'; scope = 'project'; channel = 'stable'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json'; indexProfile = 'retained'; embedding = $true; containerNameTemplate = 'itl-{projectSlug}-code-stable'; env = @(); volumes = @(@{ from = 'PATH_BASES'; to = '/app/chroma_db'; required = $true }) }
+            $state = @{ configId = 'pm4' }
+            (Get-HostEmbeddingSettings -Config $config -Server $server).model | Should -Be 'qwen/qwen3-embedding-8b'
+            (Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state)[0].name | Should -Be 'accepted-beta-index'
+            (Resolve-ServerVolumes -Config $config -Server $server -ConfigState $state)[0].host | Should -Be 'accepted-beta-index'
+            (Resolve-ServerEnv -Config $config -Server $server -ConfigState $state).MCP_STRUCTURED_CONTENT | Should -Be 'true'
+            $server.id = 'graph'
+            @((Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state).name) | Should -Contain 'accepted-beta-neo4j'
+            $profile.volumes.pm4.graph.state = 'accepted-beta-neo4j'
+            { Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state } | Should -Throw '*distinct volumes*'
+            $server.indexProfile = 'missing'
+            { Get-HostEmbeddingSettings -Config $config -Server $server } | Should -Throw '*profile*missing*'
+            $server.indexProfile = ''
+            (Get-HostEmbeddingSettings -Config $config -Server $server).model | Should -Be 'intfloat/multilingual-e5-base'
+            $profile.volumes.pm4.code.index = ''
+            $server.id = 'code'; $server.indexProfile = 'retained'
+            { Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state } | Should -Throw '*implicit empty index*'
+        }
+    }
+
+    It "selects versioned stable definitions on restart and refuses traversal or channel drift" -Tag StableCutover {
+        $tempRoot = Join-Path $TestDrive 'stable manifest кириллица'
+        $release = 'releases/fixture/vibecoding1c-mcp.manifest.json'
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'releases/fixture') -Force | Out-Null
+        $configPath = Join-Path $tempRoot 'host.config.json'
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Get-DistributionRoot { return $tempRoot }
+            function Add-HostVirtualServersToManifest { param($Manifest) return $Manifest }
+            $selected = @{ id = 'code'; scope = 'project'; channel = 'stable'; mcpNameTemplate = 'itl-{projectSlug}-code'; image = 'new@sha256:fixture' }
+            @{ servers = @($selected) } | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $tempRoot $release) -Encoding UTF8
+            $tracked = @{ id = 'code'; scope = 'project'; channel = 'stable'; manifestPath = $release }
+            function Get-TrackedHostServerForIdentity { return $tracked }
+            $legacy = @{ id = 'code'; scope = 'project'; mcpNameTemplate = 'itl-{projectSlug}-code'; image = 'old' }
+            (Get-SelectedHostServerDefinition -Config @{} -StableServer $legacy -ConfigId pm4).image | Should -Be 'new@sha256:fixture'
+            (Read-DistributionManifest -Config @{} -ManifestPath $release).servers[0].manifestPath | Should -Be $release
+            { Read-DistributionManifest -Config @{} -ManifestPath 'releases/../vibecoding1c-mcp.manifest.json' } | Should -Throw '*versioned manifest*'
+            $selected.channel = 'beta'
+            @{ servers = @($selected) } | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $tempRoot $release) -Encoding UTF8
+            { Read-DistributionManifest -Config @{} -ManifestPath $release } | Should -Throw '*non-stable*'
+        }
+    }
+
+    It "requires exact retained mounts and a cold snapshot before restore" -Tag StableCutover {
+        $configPath = Join-Path $TestDrive 'retained-mount.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $context = @{ serverId = 'code'; configState = @{}; betaServer = @{}; old = @{ containerName = 'old' }; runtime = @{ containerName = 'new' }; candidateStarted = $true; snapshotReady = $true; snapshots = @() }
+            function Get-BetaProjectVolumes { return @(@{ name = 'accepted'; container = '/app/chroma_db'; role = 'index' }) }
+            function Initialize-BetaProjectVolumes { param([switch]$RequireExisting) $RequireExisting | Should -BeTrue }
+            $script:RetainedMountName = 'accepted'
+            function Invoke-DockerCommandCapture { return '[{"Destination":"/app/code","Type":"bind","RW":true},{"Destination":"/app/chroma_db","Type":"volume","Name":"' + $script:RetainedMountName + '","RW":true}]' }
+            (Get-RetainedIndexMounts -Config @{} -Context $context)[0].source | Should -Be 'accepted'
+            $script:RetainedMountName = 'empty-new-volume'
+            { Get-RetainedIndexMounts -Config @{} -Context $context } | Should -Throw '*differs from the running accepted index*'
+            function Get-HostContainerPublishState { return 'running' }
+            { Assert-RetainedIndexStopped -Context $context } | Should -Throw '*stopped containers*'
+            $context.snapshotReady = $false
+            { Restore-RetainedIndexSnapshot -Config @{} -Context $context } | Should -Throw '*without a complete snapshot*'
+        }
+    }
+
+    It "keeps forward upgrades on the new tracked runtime and resumes through reconcile after <FailureStage>" -Tag ForwardCutover -TestCases @(@{ FailureStage = 'start' }, @{ FailureStage = 'contract' }, @{ FailureStage = 'public' }, @{ FailureStage = 'none' }) {
+        param($FailureStage)
+        $configPath = Join-Path $TestDrive ('forward переход ' + $FailureStage + '.json')
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # Container/transport is a controlled dependency of this rollback fixture.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
+            $script:ForwardCommands = @()
+            $script:ForwardTracked = $null
+            $context = [pscustomobject]@{ serverId = 'ssl'; configId = ''; configState = $null; freshProjectIndex = $false; retainedIndex = $true; old = @{ directUrl = 'http://direct/mcp'; url = 'http://public/mcp'; containerName = 'old'; proxyUrl = 'http://public/mcp'; proxyPort = 1234; proxyContractPath = 'old-contract' }; betaServer = @{ id = 'ssl' }; runtime = @{ id = 'ssl'; name = 'public'; scope = 'global'; channel = 'stable'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json'; image = 'new@sha256:fixture'; containerName = 'new'; hostPort = 234; url = 'http://direct/mcp'; proxyContainerName = 'proxy'; proxyPort = 1234 } }
+            function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
+            function Exit-McpHostMaintenanceLock { $script:ForwardCommands += 'unlock' }
+            function Invoke-BetaPreflight { return @{ context = $context; oldIndexActivity = $null; oldTools = @() } }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-ToolsListProxyImage {}
+            function Get-BetaConfigurationIndexActivity { return $null }
+            function Stop-StableForBetaCutover { $script:ForwardCommands += 'stop-old' }
+            function Save-RetainedIndexSnapshot { throw 'must not copy retained store' }
+            function Restore-StableAfterBetaFailure { throw 'must not roll back a forward upgrade' }
+            function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq 'proxy') { return 'running' }; return 'exited' }
+            function Update-HostStateServers { param($ServerStates) $script:ForwardTracked = $ServerStates[0]; $script:ForwardCommands += ('track-' + $ServerStates[0].containerName) }
+            function Start-DockerServer {
+                $script:ForwardTracked.containerName | Should -Be 'new'
+                $script:ForwardTracked.image | Should -Be 'new@sha256:fixture'
+                $script:ForwardTracked.url | Should -Be 'http://public/mcp'
+                $script:ForwardTracked.directUrl | Should -Be 'http://direct/mcp'
+                $script:ForwardCommands += 'start-new'
+                if ($FailureStage -eq 'start') { throw 'fixture-start' }
+            }
+            function Wait-BetaCandidateReady {}
+            function Get-HostMcpToolsList { return @(@{ name = 'search' }) }
+            function Assert-BetaToolsContract { param([switch]$CheckOutputs) if ($FailureStage -eq 'contract' -or ($CheckOutputs -and $FailureStage -eq 'public')) { throw ('fixture-' + $FailureStage) } }
+            function Get-HostServerFunctionalHealth { return @{ status = 'qualified' } }
+            function New-BetaProxyContract { return 'new-contract' }
+            function Enable-ToolsListProxyForRuntime { $context.runtime.proxyBackupName = 'old-proxy'; $context.runtime.url = 'http://public/mcp' }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:ForwardCommands += ($Arguments -join ' ') }
+            function Publish-Registry { $script:ForwardCommands += 'publish' }
+            if ($FailureStage -eq 'none') {
+                { Invoke-BetaCutover -Config @{} -TargetServerId ssl -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json' -ForwardOnly } | Should -Not -Throw
+            } else {
+                { Invoke-BetaCutover -Config @{} -TargetServerId ssl -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json' -ForwardOnly } | Should -Throw ('*fixture-' + $FailureStage + '*')
+                $script:ForwardTracked.health | Should -Be 'degraded'
+            }
+            ($script:ForwardCommands -join ',') | Should -Match '^stop-old,track-new,start-new'
+            $script:ForwardTracked.containerName | Should -Be 'new'
+            $script:ForwardTracked.manifestPath | Should -Be 'releases/fixture/vibecoding1c-mcp.manifest.json'
+            # Exercise the existing continuation owner, not a duplicate recovery loop.
+            function Get-ToolsListProxySettings { return @{ enabled = $true; serverIds = @('ssl'); portOffset = 1000 } }
+            function Get-HostStatePath { return $configPath }
+            function Read-HostState { return @{ servers = @($script:ForwardTracked) } }
+            function Invoke-DockerCommand { return 0 }
+            function Wait-HostTcpPortOpen { return $true }
+            function Test-ToolsListProxyReady { return $true }
+            Repair-TrackedMcpHostAndPublish -Config @{} -TargetServerId ssl
+            $script:ForwardCommands | Should -Contain 'start new'
+            $script:ForwardCommands | Should -Not -Contain 'start old'
+            $script:ForwardCommands | Should -Not -Contain 'rm -f new'
+        }
+    }
+
+    It "waits through a retained <ServerId> version migration while rejecting errors and an unfinished index" -Tag StableMigration -TestCases @(@{ServerId='graph'},@{ServerId='code'}) {
+        param($ServerId)
+        $targetId=$ServerId
+        $configPath=Join-Path $TestDrive 'миграция с пробелом.json'
+        @{schemaVersion=1;stateRoot=$TestDrive}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $context=@{serverId=$targetId;configId='pm4';retainedVersionChange=$true;runtime=@{hostPort=18000;url='http://native/mcp'}}
+            $script:MigrationPolls=0
+            function Invoke-WebRequest { return @{StatusCode=200;Content='{}'} }
+            function Start-Sleep {}
+            function Get-BetaConfigurationIndexActivity {
+                $script:MigrationPolls++
+                return @{running=($script:MigrationPolls -eq 1);phase='background_tasks'}
+            }
+            Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 20
+            $script:MigrationPolls|Should -Be 2
+            function Get-BetaConfigurationIndexActivity { return @{running=$true;phase='background_tasks'} }
+            {Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 0}|Should -Throw '*not ready within 0 seconds*'
+            function Get-BetaConfigurationIndexActivity { throw 'Graph background task form_xml failed' }
+            {Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 20}|Should -Throw '*form_xml failed*'
+            function Get-BetaConfigurationIndexActivity { throw 'Code indexing failed: native failure' }
+            {Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 20}|Should -Throw '*native failure*'
+        }
+    }
+
+    It "retains cold rollback and all post-index checks during a stable Graph migration: <Fails>" -Tag StableMigration -TestCases @(@{Fails=$false},@{Fails=$true}) {
+        param($Fails)
+        $configPath=Join-Path $TestDrive 'stable migration rollback.json'
+        @{schemaVersion=1;stateRoot=$TestDrive}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:MigrationEvents=@();$script:MigrationStarted=$false;$script:MigrationPolls=0
+            $context=[pscustomobject]@{serverId='graph';configId='pm4';retainedIndex=$true;retainedVersionChange=$true;freshProjectIndex=$false;configState=@{};old=@{containerName='old';directUrl='http://old/mcp'};betaServer=@{id='graph';neo4jImage='same'};runtime=@{id='graph';name='itl-pm4-graph';containerName='new';image='new@sha256:fixture';hostPort=18000;url='http://native/mcp';endpointMode='direct'}}
+            function Get-HostDirectEndpointProof { param($Config,$Server,[switch]$Refresh);return @{status='matched';qualified_url=[string]$Server.url} }
+            function Enter-McpHostMaintenanceLock { return @{acquired=$true} }
+            function Exit-McpHostMaintenanceLock { $script:MigrationEvents+='unlock' }
+            function Invoke-BetaPreflight { return @{context=$context;oldTools=@();oldIndexActivity=@{running=$false}} }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-DockerImageAvailable {}
+            function Stop-StableForBetaCutover { $script:MigrationEvents+='stop' }
+            function Save-RetainedIndexSnapshot { $script:MigrationEvents+='snapshot';$context|Add-Member -NotePropertyName snapshotReady -NotePropertyValue $true }
+            function Start-ComposeServer { $context.snapshotReady|Should -BeTrue;$script:MigrationEvents+='start';$script:MigrationStarted=$true }
+            function Set-ForwardCutoverTarget { throw 'Snapshot migration must not become forward-only' }
+            function Restore-StableAfterBetaFailure { $context.snapshotReady|Should -BeTrue;$script:MigrationEvents+='restore' }
+            function Wait-HostMcpReadyConnection { return @{} }
+            function Close-HostMcpConnection {}
+            function Invoke-WebRequest { return @{StatusCode=200;Content='{}'} }
+            function Start-Sleep {}
+            function Get-BetaConfigurationIndexActivity {
+                if(-not $script:MigrationStarted){return @{running=$false}}
+                $script:MigrationPolls++
+                if($Fails -and $script:MigrationPolls -eq 2){throw 'Graph background task form_xml failed'}
+                return @{running=($script:MigrationPolls -eq 1);phase='background_tasks'}
+            }
+            function Get-HostMcpToolsList { return @() }
+            function Assert-BetaToolsContract { param([switch]$CheckOutputs);$script:MigrationEvents+=('tools-'+$CheckOutputs.IsPresent) }
+            function Get-HostServerFunctionalHealth { $script:MigrationEvents+='health';return @{status='qualified'} }
+            function Enable-ToolsListProxyForRuntime {}
+            function Update-HostStateServers { $script:MigrationEvents+='state' }
+            function Publish-Registry { $script:MigrationEvents+='publish' }
+            if($Fails){
+                {Invoke-BetaCutover -Config @{} -TargetServerId graph -TargetConfigId pm4 -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json'}|Should -Throw '*form_xml failed*'
+                $script:MigrationEvents|Should -Contain 'restore'
+                $script:MigrationEvents|Should -Not -Contain 'publish'
+            }else{
+                Invoke-BetaCutover -Config @{} -TargetServerId graph -TargetConfigId pm4 -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json'
+                $script:MigrationEvents|Should -Contain 'tools-False'
+                $script:MigrationEvents|Should -Contain 'tools-True'
+                $script:MigrationEvents|Should -Contain 'health'
+                $script:MigrationEvents|Should -Contain 'publish'
+                $script:MigrationEvents|Should -Not -Contain 'restore'
+            }
+            ($script:MigrationEvents -join ',')|Should -Match '^stop,snapshot,start,'
+            $context.forwardOnly|Should -BeFalse
+            $script:MigrationPolls|Should -BeGreaterOrEqual 2
+        }
+    }
+
+    It "waits through Docs HTTP 200 indexing and qualifies only the completed native corpus" -Tag ForwardCutover {
+        $configPath = Join-Path $TestDrive 'docs readiness.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:DocsReadyCalls = 0
+            function Invoke-WebRequest {
+                $script:DocsReadyCalls++
+                $status = if ($script:DocsReadyCalls -eq 1) { 'indexing' } else { 'ready' }
+                return @{ StatusCode = 200; Content = ('{"status":"' + $status + '","generation":"kept-or-rebuilt","documents":25536}') }
+            }
+            function Start-Sleep {}
+            Wait-BetaFreshIndexReady -Context @{ serverId = 'docs'; configId = ''; runtime = @{ hostPort = 18000 } } -TimeoutSeconds 20
+            $script:DocsReadyCalls | Should -Be 2
+            { ConvertFrom-DocsReadyState -Value @{ status = 'ready'; documents = 0; generation = 'empty' } } | Should -Throw '*no published corpus*'
+            { ConvertFrom-DocsReadyState -Value @{ status = 'failed' } } | Should -Throw '*failed*'
+            { ConvertFrom-DocsReadyState -Value @{} } | Should -Throw '*invalid*'
+            $script:DocsFunctionalLookups = 0
+            $script:DocsHealthStatus = 'indexing'
+            function Invoke-RestMethod { return @{ status = $script:DocsHealthStatus; documents = 25536; generation = 'new' } }
+            function Assert-BetaDocsFunctionalCall {
+                param($Url, [switch]$NativeResponse, $ExpectedGeneration)
+                $script:DocsFunctionalLookups++
+                $Url | Should -Be 'http://direct/mcp'
+                $ExpectedGeneration | Should -Be 'new'
+                $NativeResponse.IsPresent | Should -Be $script:ExpectNativeDocs
+            }
+            $script:ExpectNativeDocs = $true
+            $server = @{ id = 'docs'; channel = 'stable'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json'; directUrl = 'http://direct/mcp'; url = 'http://proxy/mcp' }
+            (Get-HostServerFunctionalHealth -Server $server).status | Should -Be 'indexing'
+            $script:DocsFunctionalLookups | Should -Be 0
+            $script:DocsHealthStatus = 'ready'
+            (Get-HostServerFunctionalHealth -Server $server).status | Should -Be 'qualified'
+            $script:DocsFunctionalLookups | Should -Be 1
+            $server.channel = 'beta'
+            $script:ExpectNativeDocs = $false
+            (Get-HostServerFunctionalHealth -Server $server).status | Should -Be 'qualified'
+            $script:DocsFunctionalLookups | Should -Be 2
+        }
+    }
+
+    It "allows a rebuilt Code generation only in forward mode and retains project and source identity checks" -Tag ForwardCutover {
+        $configPath = Join-Path $TestDrive 'code forward.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $old = @{ metadataProjectId = 'same-project'; metadataGenerationId = 'old'; coverage = @{ modules = 1; forms = 1; objects = 1 }; metadataInventory = @{ keys = @('Справочники.Клиенты') }; formInventory = @{ rows = @('Форма') } }
+            $new = Convert-ToHash -Object $old
+            $new.metadataGenerationId = 'new'
+            { Assert-RetainedCodeIdentity -OldActivity $old -NewActivity $new } | Should -Throw '*generation changed*'
+            { Assert-RetainedCodeIdentity -OldActivity $old -NewActivity $new -AllowNewGeneration } | Should -Not -Throw
+            $new.metadataProjectId = 'other'
+            { Assert-RetainedCodeIdentity -OldActivity $old -NewActivity $new -AllowNewGeneration } | Should -Throw '*generation changed*'
+            $new.metadataProjectId = 'same-project'; $new.formInventory = @{ rows = @('ПотерянаФорма') }
+            { Assert-RetainedCodeIdentity -OldActivity $old -NewActivity $new -AllowNewGeneration } | Should -Throw '*source identities changed*'
+        }
+    }
+
+    It "restores retained data before restarting the accepted service on <FailureStage> failure" -Tag StableCutover -TestCases @(@{ FailureStage = 'start' }, @{ FailureStage = 'contract' }, @{ FailureStage = 'public' }) {
+        param($FailureStage)
+        $configPath = Join-Path $TestDrive ('retained-rollback-' + $FailureStage + '.json')
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # Container/transport is a controlled dependency of this rollback fixture.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
+            $script:RetainedSequence = @()
+            $context = [pscustomobject]@{ serverId = 'ssl'; configId = ''; configState = $null; freshProjectIndex = $false; retainedIndex = $true; old = @{ directUrl = 'http://old/mcp'; containerName = 'old' }; betaServer = @{ id = 'ssl' }; runtime = @{ id = 'ssl'; image = 'image@sha256:fixture'; containerName = 'new'; url = 'http://new/mcp'; proxyContainerName = 'proxy'; proxyPort = 1234 } }
+            function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
+            function Exit-McpHostMaintenanceLock { $script:RetainedSequence += 'unlock' }
+            function Invoke-BetaPreflight { return @{ context = $context; oldIndexActivity = $null; oldTools = @() } }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-ToolsListProxyImage {}
+            function Get-BetaConfigurationIndexActivity { return $null }
+            function Stop-StableForBetaCutover { $script:RetainedSequence += 'stop-old' }
+            function Save-RetainedIndexSnapshot { $script:RetainedSequence += 'snapshot'; $context | Add-Member -NotePropertyName snapshotReady -NotePropertyValue $true }
+            function Start-DockerServer { $context.snapshotReady | Should -BeTrue; $script:RetainedSequence += 'start-new'; if ($FailureStage -eq 'start') { throw 'fixture-start' } }
+            function Wait-BetaCandidateReady {}
+            function Get-HostMcpToolsList { return @(@{ name = 'search' }) }
+            function Assert-BetaToolsContract { param([switch]$CheckOutputs) if ($FailureStage -eq 'contract' -or ($CheckOutputs -and $FailureStage -eq 'public')) { throw ('fixture-' + $FailureStage) } }
+            function Get-HostServerFunctionalHealth { return @{ status = 'ready' } }
+            function New-BetaProxyContract { return 'fixture-contract' }
+            function Enable-ToolsListProxyForRuntime { $context.runtime.proxyBackupName = 'old-proxy' }
+            function Get-HostContainerPublishState { return 'exited' }
+            function Invoke-DockerCommand { param($Arguments) $script:RetainedSequence += ($Arguments -join ' ') }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:RetainedSequence += ($Arguments -join ' ') }
+            function Restore-RetainedIndexSnapshot { $context.candidateStarted | Should -BeTrue; $script:RetainedSequence += 'restore-data' }
+            function Wait-HostMcpReadyConnection { $script:RetainedSequence += 'old-ready' }
+            { Invoke-BetaCutover -Config @{} -TargetServerId ssl -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json' } | Should -Throw ('*fixture-' + $FailureStage + '*')
+            $sequence = $script:RetainedSequence -join ','
+            $sequence | Should -Match 'stop-old,snapshot,start-new'
+            $sequence | Should -Match 'rm -f new,restore-data,update --restart unless-stopped old,start old,old-ready'
+            $sequence | Should -Match 'unlock$'
+            if ($FailureStage -eq 'public') { $sequence | Should -Match 'rename old-proxy proxy,start proxy' }
+        }
+    }
+
+
+
+    It "stops the owned snapshot container if its Docker client times out" -Tag StableCutover {
+        $configPath = Join-Path $TestDrive 'snapshot-timeout.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Assert-RetainedIndexStopped {}
+            $script:SnapshotCleanup = @()
+            $script:SnapshotHelperName = ''
+            function Invoke-DockerCommandCapture {
+                param($Arguments)
+                $script:SnapshotHelperName = $Arguments[([array]::IndexOf($Arguments, '--name') + 1)]
+                $script:SnapshotHelperName | Should -Match '^itl-index-snapshot-[a-f0-9]{32}$'
+                ($Arguments -join ' ') | Should -Match 'target=/index,readonly'
+                throw 'fixture Docker client timeout'
+            }
+            function Get-HostContainerPublishState { return 'running' }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:SnapshotCleanup = $Arguments }
+            $record = @{ type = 'volume'; source = 'fixture-owned'; folder = (Join-Path $TestDrive 'snapshot') }
+            { Invoke-RetainedIndexSnapshot -Config @{ stateRoot = $TestDrive } -Context @{ runtime = @{ image = 'pinned@sha256:fixture' } } -Record $record -Operation save } | Should -Throw '*fixture Docker client timeout*'
+            ($script:SnapshotCleanup -join ' ') | Should -Be ('rm -f ' + $script:SnapshotHelperName)
+        }
+    }
+
+    It "converts only the accepted stable <ServerId> image to the same public native address" -Tag NativeEndpoint -TestCases @(@{ ServerId = 'ssl' }, @{ ServerId = 'templates' }) {
+        param($ServerId)
+        $nativeServerId = $ServerId
+        $configPath = Join-Path $TestDrive 'native контекст с пробелом.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $release = 'releases/fixture/vibecoding1c-mcp.manifest.json'
+            $definition = @{ id = $nativeServerId; scope = 'global'; channel = 'stable'; manifestPath = $release; mcpNameTemplate = 'public-ssl' }
+            function Read-DistributionManifest { return @{ servers = @($definition) } }
+            $old = @{ channel = 'stable'; manifestPath = $release; containerName = 'accepted-ssl'; name = 'public-ssl'; url = 'http://host:22004/mcp'; directUrl = 'http://host:18004/mcp'; hostPort = 18004; proxyPort = 22004; proxyContainerName = 'proxy'; image = ('image@sha256:' + ('a' * 64)) }
+            function Get-TrackedHostServerForIdentity { return $old }
+            function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq 'accepted-ssl') { return 'running' }; return 'missing' }
+            function New-ServerRuntime { return [pscustomobject]@{ name = 'public-ssl'; containerName = 'candidate'; hostPort = 18004; url = ''; proxyContainerName = ''; image = ('image@sha256:' + ('a' * 64)) } }
+            function Resolve-ServerEnv { return @{ RESET_DATABASE = 'false' } }
+            function Test-HostServerNeedsEmbedding { return $false }
+            $context = Get-BetaCutoverContext -Config @{} -ServerId $nativeServerId -ReleaseManifest $release -NativeEndpoint
+            $context.runtime.hostPort | Should -Be 22004
+            $context.runtime.url | Should -Be $old.url
+            $context.runtime.directUrl | Should -Be $old.url
+            $context.runtime.endpointMode | Should -Be 'direct'
+            $context.runtime.containerName | Should -Be 'accepted-ssl-native'
+            $context.runtime.proxyContainerName | Should -BeNullOrEmpty
+            $context.runtime.proxyPort | Should -Be 0
+            $old.image = 'other@sha256:fixture'
+            { Get-BetaCutoverContext -Config @{} -ServerId $nativeServerId -ReleaseManifest $release -NativeEndpoint } | Should -Throw '*exact accepted stable image*'
+            $old.image = 'image@sha256:' + ('a' * 64)
+            $old.channel = 'beta'
+            { Get-BetaCutoverContext -Config @{} -ServerId $nativeServerId -ReleaseManifest $release -NativeEndpoint } | Should -Throw '*accepted versioned stable*'
+        }
+    }
+
+    It "keeps native Templates write authorization on the server without creating a token-injecting proxy" -Tag NativeEndpoint {
+        $configPath = Join-Path $TestDrive 'templates native авторизация.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # This fixture controls Docker externally; supply its matching protocol proof.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
+            $fixtureToken = 'TemplatesNativeOperator0123456789ABCDEF'
+            function Get-HostSecretValues { return @{ MCP_OPERATOR_TOKEN = $fixtureToken } }
+            function Get-HostLocalValues { return @{} }
+            function Test-HostServerNeedsEmbedding { return $false }
+            function Set-GraphOpenAiFallbackEnv {}
+            function Invoke-DockerCommandChecked { throw 'native Templates attempted proxy mutation' }
+            $config = @{ stateRoot = $TestDrive; templatesSearchServer = @{ enableWriteTools = $true }; toolsListProxy = @{ enabled = $true; serverIds = @('templates') } }
+            $server = @{ id = 'templates'; channel = 'stable'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json'; env = @() }
+            $runtime = [pscustomobject]@{ id = 'templates'; name = 'public-templates'; containerName = 'templates-native'; hostPort = 22001 }
+            Set-NativeRuntimeEndpoint -Runtime $runtime -Url 'http://host:22001/mcp'
+            $resolved = Resolve-ServerEnv -Config $config -Server $server
+            $resolved['MCP_ENABLE_WRITE_TOOLS'] | Should -Be 'true'
+            $resolved['MCP_OPERATOR_TOKEN'] | Should -Be $fixtureToken
+            function Get-TemplatesBetaOperatorToken { throw 'native Templates attempted proxy token export' }
+            Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
+            $runtime.endpointMode | Should -Be 'direct'
+            $runtime.proxyContainerName | Should -BeNullOrEmpty
+            $runtime.proxyPort | Should -Be 0
+        }
+    }
+
+    It "retains endpoint mode per deployment through ordinary runtime creation and proxy activation" -Tag NativeEndpoint {
+        $tempRoot = Join-Path $TestDrive 'native restart кириллица'
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $configPath = Join-Path $tempRoot 'host.config.json'
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # This fixture controls Docker externally; supply its matching protocol proof.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
+            $state = @{ servers = @(
+                @{ id = 'code'; scope = 'project'; configId = 'pm4'; endpointMode = 'direct'; hostPort = 22101; url = 'http://original-host:22101/mcp'; containerName = 'code-pm4-native'; composeProject = 'code-pm4-native'; image = 'pinned' },
+                @{ id = 'code'; scope = 'project'; configId = 'pm5'; hostPort = 18100; url = 'http://host:22100/mcp'; containerName = 'code-pm5'; image = 'pinned'; proxyContainerName = 'proxy-pm5' }
+            ) }
+            function Read-HostState { return $state }
+            function Get-HostPort { return 18100 }
+            function Get-HostLocalValues { return @{} }
+            function Test-HostServerNeedsEmbedding { return $false }
+            function Invoke-DockerCommandChecked { throw 'native restart attempted Docker proxy mutation' }
+            $definition = @{ id = 'code'; scope = 'project'; image = 'pinned'; mcpNameTemplate = 'itl-{projectSlug}-code'; containerNameTemplate = 'default-{projectSlug}' }
+            $config = @{ stateRoot = $tempRoot; baseUrl = 'http://changed-host'; toolsListProxy = @{ enabled = $true; serverIds = @('code') } }
+            $configState = @{ configId = 'pm4'; sourceCommit = ''; sourceFingerprint = ''; reportHash = ''; indexedAt = '' }
+            $pm4 = New-ServerRuntime -Config $config -Server $definition -Index 0 -ConfigState $configState
+            Enable-ToolsListProxyForRuntime -Config $config -Runtime $pm4
+            $pm4.containerName | Should -Be 'code-pm4-native'
+            $pm4.composeProject | Should -Be 'code-pm4-native'
+            $pm4.hostPort | Should -Be 22101
+            $pm4.url | Should -Be 'http://original-host:22101/mcp'
+            $pm4.directUrl | Should -Be $pm4.url
+            $pm4.proxyPort | Should -Be 0
+            $configState.configId = 'pm5'
+            $pm5 = New-ServerRuntime -Config $config -Server $definition -Index 0 -ConfigState $configState
+            $pm5.endpointMode | Should -Be 'proxy'
+            $pm5.hostPort | Should -Be 18100
+            $pm5.proxyContainerName | Should -Be 'proxy-pm5'
+            # A targeted legacy proxy command is a no-op once all its deployments are native.
+            $state.servers = @($state.servers[0])
+            '{}' | Set-Content (Get-HostStatePath -Config $config)
+            function Ensure-ToolsListProxyImage { throw 'unexpected proxy build' }
+            Enable-TrackedToolsListProxiesAndPublish -Config $config -TargetServerId code
+        }
+    }
+
+    It "keeps native deployment outside proxy repair retries for another configuration" -Tag NativeEndpoint {
+        $configPath = Join-Path $TestDrive 'native-repair.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $state = @{ servers = @(
+                @{ id = 'code'; configId = 'pm4'; endpointMode = 'direct'; hostPort = 22101; containerName = 'native-pm4' },
+                @{ id = 'code'; configId = 'pm5'; hostPort = 18100; containerName = 'proxied-pm5'; proxyContainerName = 'proxy-pm5'; proxyPort = 22100 }
+            ) }
+            function Read-HostState { return $state }
+            function Get-HostStatePath { return $configPath }
+            function Invoke-DockerCommand { return 0 }
+            $script:NativeRepairCalls = @(); $script:NativeRepairAttempts = 0
+            function Invoke-DockerCommandChecked { param($Arguments) $script:NativeRepairCalls += ($Arguments -join ' ') }
+            function Get-HostContainerPublishState { return 'running' }
+            function Wait-HostTcpPortOpen { return $true }
+            function Test-ToolsListProxyReady { return $false }
+            function Get-HostDirectEndpointProof { return @{ status = 'matched' } }
+            function Enable-TrackedToolsListProxiesAndPublish { $script:NativeRepairAttempts++; if ($script:NativeRepairAttempts -eq 1) { throw 'fixture proxy failure' } }
+            Repair-TrackedMcpHostAndPublish -Config @{ toolsListProxy = @{ enabled = $true; serverIds = @('code') } } -TargetServerId code
+            $script:NativeRepairAttempts | Should -Be 2
+            $script:NativeRepairCalls | Should -Contain 'restart proxied-pm5'
+            $script:NativeRepairCalls | Should -Not -Contain 'restart native-pm4'
+            ($script:NativeRepairCalls -join '|') | Should -Not -Match 'native-pm4-tools-list-proxy'
+        }
+    }
+
+    It "publishes native endpoints only after MCP tools respond despite an open TCP port" -Tag NativeEndpoint {
+        $configPath = Join-Path $TestDrive 'native-publish.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Get-HostContainerPublishState { return 'running' }
+            function Test-HostTcpPortOpen { return $true }
+            $server = @{ endpointMode = 'direct'; containerName = 'native'; hostPort = 22004; url = 'http://host:22004/mcp'; proxyUrl = 'stale'; proxyContainerName = 'old-proxy' }
+            function Test-ToolsListProxyReady { throw 'native endpoint used stale proxy state' }
+            $published = Update-ToolsListProxyPublishEndpoint -Server $server
+            $published.url | Should -Be $server.url
+            $published.proxyUrl | Should -BeNullOrEmpty
+            $published.toolsContractStatus | Should -Be 'native'
+            function Get-HostDirectEndpointProof { return @{ status = 'unverified' } }
+            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unknown'
+            function Get-HostDirectEndpointProof { throw 'invalid MCP' }
+            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unknown'
+            function Get-HostDirectEndpointProof { return @{ status = 'matched' } }
+            (Get-HostServerPublishStatus -Server $server) | Should -Be 'running'
+        }
+    }
+
+    It "stops the old main and proxy before native binding and never copies or restores an index" -Tag NativeEndpoint -TestCases @(@{FixtureSlash=''},@{FixtureSlash='/'}) {
+        param($FixtureSlash)
+        $configPath = Join-Path $TestDrive 'native-cutover.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # This fixture controls Docker externally; supply its matching protocol proof.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=([string]$Server.url).TrimEnd('/')+$FixtureSlash; health_passed=$true; health_error=$null }
+            }
+            $runtime = [pscustomobject]@{ id = 'ssl'; scope = 'global'; name = 'public'; image = 'pinned'; containerName = 'new-native'; hostPort = 22004; channel = 'stable'; health = 'unknown'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json' }
+            Set-NativeRuntimeEndpoint -Runtime $runtime -Url 'http://host:22004/mcp'
+            $context = [pscustomobject]@{ serverId = 'ssl'; configId = ''; nativeEndpoint = $true; configState = $null; freshProjectIndex = $false; retainedIndex = $true; runtime = $runtime; betaServer = @{}; old = @{ containerName = 'old'; directUrl = 'http://host:18004/mcp'; url = 'http://host:22004/mcp'; proxyUrl = 'http://host:22004/mcp'; proxyPort = 22004; proxyContainerName = 'proxy' } }
+            $nativeTools = @(@{ name = 'state'; inputSchema = @{ type = 'object' } })
+            $preflight = @{ context = $context; oldTools = $nativeTools; oldPublicTools = @(@{ name = 'state'; inputSchema = @{ type = 'object' }; outputSchema = @{ type = 'object'; required = @('result') } }) }
+            $script:NativeSequence = @(); $script:NativeSaved = $null
+            function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
+            function Exit-McpHostMaintenanceLock { $script:NativeSequence += 'release' }
+            function Invoke-BetaPreflight { return $preflight }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-ToolsListProxyImage { throw 'unexpected native proxy build' }
+            function Get-BetaConfigurationIndexActivity { return $null }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:NativeSequence += ($Arguments -join ' ') }
+            function Get-HostContainerPublishState { return 'exited' }
+            function Update-HostStateServers { param($ServerStates) $script:NativeSaved = @($ServerStates)[0] }
+            function Copy-BetaDataSnapshot { throw 'unexpected index copy' }
+            function Restore-StableAfterBetaFailure { throw 'unexpected rollback' }
+            function Start-DockerServer { $script:NativeSequence += 'start-native'; $script:NativeSaved.endpointMode | Should -Be 'direct'; $script:NativeSaved.proxyPort | Should -Be 0 }
+            function Wait-BetaCandidateReady {}
+            function Get-HostMcpToolsList { return $nativeTools }
+            function Get-HostServerFunctionalHealth { return @{ status = 'qualified' } }
+            function New-BetaProxyContract { throw 'unexpected proxy contract' }
+            function Publish-Registry { $script:NativeSequence += 'publish' }
+            Invoke-BetaCutover -Config @{} -TargetServerId ssl -ReleaseManifest $runtime.manifestPath -ForwardOnly -NativeEndpoint
+            ($script:NativeSequence -join ',') | Should -Be 'update --restart no old,stop old,update --restart no proxy,stop proxy,start-native,publish,release'
+            $script:NativeSaved.url | Should -Be ('http://host:22004/mcp'+$FixtureSlash)
+            $script:NativeSaved.toolsContractStatus | Should -Be 'native'
+            $script:NativeSaved.proxyContainerName | Should -BeNullOrEmpty
+        }
+    }
+
+    It "preserves the qualified Graph path through setup and repeated publish: <FixtureMode>" -Tag CanonicalEndpoint -TestCases @(
+        @{ FixtureMode='direct' }, @{ FixtureMode='proxy' }
+    ) {
+        param($FixtureMode)
+        $configPath = Join-Path $TestDrive "canonical $FixtureMode конфигурация.json"
+        $contractPath = Join-Path $TestDrive 'canonical contract.json'
+        '{}' | Set-Content -LiteralPath $contractPath -Encoding UTF8
+        @{ schemaVersion=1; stateRoot=$TestDrive; baseUrl='http://public-host' } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $runtime = [pscustomobject]@{ id='graph'; containerName='graph-own'; hostPort=18006; url='http://public-host:18006/mcp'; endpointMode=$FixtureMode; channel='stable' }
+            $script:CanonicalProxyRunning = $false
+            $script:CanonicalDockerCalls = @()
+            $script:CanonicalProofReady = $false
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                $Server.containerName | Should -Be 'graph-own'
+                $Server.hostPort | Should -Be 18006
+                return @{ status='matched'; qualified_url='http://public-host:18006/mcp/'; health_passed=$script:CanonicalProofReady; health_error=$null }
+            }
+            function Test-ToolsListProxyTarget { return $true }
+            function Get-ToolsListProxySettings { return @{ portOffset=4000; contractPath=$contractPath; image='fixture-proxy' } }
+            function Ensure-ToolsListProxyImage {}
+            function Get-TemplatesBetaOperatorToken { return '' }
+            function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq 'graph-own' -or $script:CanonicalProxyRunning) { return 'running' }; return 'missing' }
+            function Invoke-DockerCommand { return 0 }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:CanonicalDockerCalls += ,$Arguments; $script:CanonicalProxyRunning=$true }
+            function Wait-ToolsListProxyReady { param($Port, $ExpectedServerId, $ExpectedUpstreamUrl) $ExpectedUpstreamUrl | Should -Be 'http://host.docker.internal:18006/mcp/'; return $true }
+            function Test-ToolsListProxyReady { param($Port, $ExpectedServerId, $ExpectedUpstreamUrl) $ExpectedUpstreamUrl | Should -Be 'http://host.docker.internal:18006/mcp/'; return $script:CanonicalProxyRunning }
+            # Identity and URL are already proven. The original setup must
+            # continue even though no safe tool has passed yet.
+            Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
+            $runtime.directUrl | Should -Be 'http://public-host:18006/mcp/'
+            $script:CanonicalProofReady = $true
+            if ($FixtureMode -eq 'proxy') {
+                $runtime.url | Should -Be 'http://public-host:22006/mcp'
+                $script:CanonicalDockerCalls.Count | Should -Be 1
+                $upstreamOption = [array]::IndexOf($script:CanonicalDockerCalls[0], '--upstream-url')
+                $upstreamOption | Should -BeGreaterOrEqual 0
+                $script:CanonicalDockerCalls[0][$upstreamOption+1] | Should -Be 'http://host.docker.internal:18006/mcp/'
+                (Update-ToolsListProxyPublishEndpoint -Server $runtime).url | Should -Be $runtime.url
+            } else {
+                $runtime.url | Should -Be $runtime.directUrl
+                $script:CanonicalDockerCalls.Count | Should -Be 0
+                # Repair old tracked URL only through the publish owner, then keep it stable.
+                $runtime.url = 'http://public-host:18006/mcp'
+                $runtime.directUrl = $runtime.url
+            }
+            $script:CanonicalState = @{ servers=@($runtime); unrelated='preserve' }
+            $script:CanonicalWrites = 0
+            function Read-HostState { return $script:CanonicalState }
+            function Write-HostState { param($Config, $State) $script:CanonicalState=$State; $script:CanonicalWrites++ }
+            function Test-HostTcpPortOpen { return $true }
+            function Get-HostServerFunctionalHealth { param($Server) $Server.url | Should -Be $(if ($FixtureMode -eq 'proxy') { 'http://public-host:22006/mcp' } else { 'http://public-host:18006/mcp/' }); return @{status='qualified';message='fixture safe call'} }
+            Update-HostStateForPublish -Config $config
+            Update-HostStateForPublish -Config $config
+            $script:CanonicalWrites | Should -Be 1
+            $script:CanonicalState.unrelated | Should -Be 'preserve'
+            $script:CanonicalState.servers[0].directUrl | Should -Be 'http://public-host:18006/mcp/'
+        }
+    }
+
+    It "binds qualified Code repairs and XSD=<Xsd> to the exact image and original native proof" -Tag HostOwnerRepair -TestCases @(@{Xsd=$false},@{Xsd=$true}) {
+        param($Xsd)
+        $configPath=Join-Path $TestDrive 'repair config.json'
+        $repairState=Join-Path $TestDrive 'ремонт Code с пробелом'
+        @{schemaVersion=1;hostId='fixture';stateRoot=$repairState}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config=Read-HostConfig
+            $image='comol/1c_code_metadata_mcp@sha256:'+('a'*64)
+            $root=Join-Path $repairState ('repairs\owner\code\'+('a'*64))
+            $legacyRoot=$root
+            if($Xsd){$root=Join-Path $root 'xsd-v2'}
+            $null=New-Item -ItemType Directory -Path $root -Force
+            if($Xsd){[IO.File]::WriteAllText((Join-Path $legacyRoot 'qualification.json'),'preserved schema-1 proof');$legacySha=(Get-FileHash -LiteralPath (Join-Path $legacyRoot 'qualification.json')).Hash}
+            $hashes=[ordered]@{}
+            foreach($n in @('driver','main') + $(if($Xsd){@('xsd_schema_generator')}else{@()})){[IO.File]::WriteAllText((Join-Path $root ($n+'.py')),('# '+$n),[Text.UTF8Encoding]::new($false));$hashes[$n]=(Get-FileHash -LiteralPath (Join-Path $root ($n+'.py'))).Hash.ToLowerInvariant()}
+            $proof=@{schemaVersion=1;accepted=$true;host='fixture';image=$image;isolated=$true;network='none';liveIndexMounted=$false;negativeControlReproduced=$true;fixtureSha256=('b'*64);files=$hashes;regression=@(@{test='interrupted_incremental_resume';modules=2;new_function_found=$true;ancestor_unchanged=$true},@{test='selective_repair';preserves_vectors=$true;honors_omissions=$true})}
+            $spec=@{image=$image;fixtureSha256=('b'*64);files=$hashes;proofSha256=''}
+            if($Xsd){
+                $spec.schemaVersion=2;$spec.xsdFixtureSha256=('c'*64)
+                $registeredPackage=Get-HostCodeRepairPackage
+                $registeredPackage.image|Should -Match '^comol/1c_code_metadata_mcp@sha256:[a-f0-9]{64}$'
+                @($registeredPackage.targets.'dev-ermakov').Count|Should -Be 2
+                @($registeredPackage.targets.'dev-karimov-new').Count|Should -Be 2
+                $script:SharedPackageDrift=$false
+                function Get-HostCodeRepairPackage { return @{image=$(if($script:SharedPackageDrift){'changed'}else{$image});files=$hashes;xsdFixtureSha256=$spec.xsdFixtureSha256;qualification=('qualifications/'+('a'*64)+'/xsd-v2/proof.json')} }
+                $proof.xsdFixtureSha256=$spec.xsdFixtureSha256
+                $proof.xsd=@{positive=$true;parserLimitsPreserved=$true;xsdLaneOnlyInvalidated=$true;negativeControls=@{'unknown-root'='invalid';'unknown-deep-child'='invalid';'wrong-title-child'='invalid';'wrong-nesting'='invalid'}}
+            }
+            $server=@{id='code';image=$image;ownerRepair=$spec}
+            function Save-CodeOwnerTestProof { [IO.File]::WriteAllText((Join-Path $root 'qualification.json'),($proof|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false));$spec.proofSha256=(Get-FileHash -LiteralPath (Join-Path $root 'qualification.json')).Hash.ToLowerInvariant() }
+            Save-CodeOwnerTestProof
+            $mounts=@(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server)
+            $mounts.Count|Should -Be $(if($Xsd){3}else{2})
+            @($mounts|Where-Object readOnly -eq $true).Count|Should -Be $(if($Xsd){3}else{2})
+            $mounts.container|Should -Contain '/app/src/main.py'
+            $mounts.container|Should -Contain '/app/src/index_generation/driver.py'
+            if($Xsd){
+                $mounts.container|Should -Contain '/app/src/xsd_schema_generator.py'
+                $script:SharedPackageDrift=$true
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*shared four-target package*'
+                $script:SharedPackageDrift=$false
+                $proof.xsd.positive=$false;Save-CodeOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original XSD regression*'
+                $proof.xsd.positive=$true
+                $proof.xsd.negativeControls['wrong-nesting']='valid';Save-CodeOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original XSD regression*'
+                $proof.xsd.negativeControls['wrong-nesting']='invalid';Save-CodeOwnerTestProof
+                $saved=$spec.xsdFixtureSha256;$spec.Remove('xsdFixtureSha256')
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*XSD qualification*'
+                $spec.xsdFixtureSha256=$saved
+                $proof.negativeControlReproduced=$false;$proof.resumeUpstreamPassed=$true
+                $proof.upstreamRegressionOutput=($proof.regression|ForEach-Object{$_|ConvertTo-Json -Compress}) -join "`n"
+                Save-CodeOwnerTestProof
+                @(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server).Count|Should -Be 3
+                $proof.upstreamRegressionOutput='';Save-CodeOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*wrong native invariant or scope*'
+                $proof.negativeControlReproduced=$true;$proof.resumeUpstreamPassed=$false;Save-CodeOwnerTestProof
+            }
+            $script:OwnerMounts=@($mounts|ForEach-Object {@{Type='bind';Source=$_.host;Destination=$_.container;RW=$false}})
+            function Invoke-DockerCommandCapture { return ($script:OwnerMounts|ConvertTo-Json -Compress) }
+            Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            if($Xsd){
+                (Get-FileHash -LiteralPath (Join-Path $legacyRoot 'qualification.json')).Hash|Should -Be $legacySha
+                @($mounts|Where-Object {$_.host -notlike '*\xsd-v2\*'}).Count|Should -Be 0
+                Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $false
+                $completeMounts=@($script:OwnerMounts)
+                $script:OwnerMounts=@($completeMounts|Where-Object Destination -ne '/app/src/xsd_schema_generator.py')
+                Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $true
+                $script:OwnerMounts=@($completeMounts)
+                $oldGenerator=Join-Path $legacyRoot 'old-generator.py';[IO.File]::WriteAllText($oldGenerator,'original vendor generator')
+                $binding=@($script:OwnerMounts|Where-Object Destination -eq '/app/src/xsd_schema_generator.py')[0];$binding.Source=$oldGenerator
+                Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $true
+                $binding.Source=Join-Path $root 'xsd_schema_generator.py'
+                Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $false
+            }else{Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $false}
+            foreach($binding in $script:OwnerMounts){$path=[string]$binding.Source;$binding.Source='/run/desktop/mnt/host/'+$path.Substring(0,1).ToLowerInvariant()+'/'+$path.Substring(3).Replace('\','/')}
+            Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            function Get-BetaProjectVolumes { return @() }
+            Assert-BetaProjectContainerMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            function Get-HostLocalValues { return @{} }
+            function Get-HostDefaultVolumeEntries { return @() }
+            function Test-HostServerNeedsEmbedding { return $false }
+            @(Resolve-ServerVolumes -Config $config -Server $server).Count|Should -Be $(if($Xsd){3}else{2})
+            $script:OwnerMounts[0].RW=$true
+            {Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}}|Should -Throw '*read-only*'
+            $script:OwnerMounts[0].RW=$false
+            $script:OwnerMounts[0].Source=Join-Path $root 'another.py'
+            {Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}}|Should -Throw '*another file*'
+            foreach($change in @(@{key='network';value='host'},@{key='host';value='another'},@{key='negativeControlReproduced';value=$false},@{key='liveIndexMounted';value=$true})){
+                $previous=$proof[$change.key];$proof[$change.key]=$change.value;Save-CodeOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*wrong native invariant or scope*'
+                $proof[$change.key]=$previous
+            }
+            Save-CodeOwnerTestProof
+            $proof.regression[0].modules=1;Save-CodeOwnerTestProof
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original native regression did not pass*'
+            $proof.regression[0].modules=2;Save-CodeOwnerTestProof
+            $server.image='comol/1c_code_metadata_mcp@sha256:'+('c'*64)
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*another image*'
+            $server.image=$image
+            [IO.File]::AppendAllText((Join-Path $root 'driver.py'),'changed')
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*file changed: driver*'
+            @(Get-QualifiedHostOwnerRepairMounts -Config @{} -Server @{id='code';image='legacy'}).Count|Should -Be 0
+        }
+    }
+
+    It "selects the shared package's own XSD directory and requires its declared role rights proof" -Tag HostOwnerRepair {
+        $configPath=Join-Path $TestDrive 'rights repair config.json'
+        $repairState=Join-Path $TestDrive 'права роли Code с пробелом'
+        @{schemaVersion=1;hostId='fixture';stateRoot=$repairState}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config=Read-HostConfig
+            $image='comol/1c_code_metadata_mcp@sha256:'+('a'*64)
+            $digestRoot=Join-Path $repairState ('repairs\owner\code\'+('a'*64))
+            $accepted=Join-Path $digestRoot 'xsd-v2';$root=Join-Path $digestRoot 'xsd-v3'
+            foreach($directory in @($accepted,$root)){$null=New-Item -ItemType Directory -Path $directory -Force}
+            $hashes=[ordered]@{}
+            foreach($n in @('driver','main','xsd_schema_generator')){
+                [IO.File]::WriteAllText((Join-Path $accepted ($n+'.py')),('# v2 '+$n),[Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText((Join-Path $root ($n+'.py')),$(if($n -eq 'xsd_schema_generator'){'# v3 rights'}else{'# v2 '+$n}),[Text.UTF8Encoding]::new($false))
+                $hashes[$n]=(Get-FileHash -LiteralPath (Join-Path $root ($n+'.py'))).Hash.ToLowerInvariant()
+            }
+            $acceptedSha=(Get-FileHash -LiteralPath (Join-Path $accepted 'xsd_schema_generator.py')).Hash
+            $proof=@{schemaVersion=1;accepted=$true;host='fixture';image=$image;isolated=$true;network='none';liveIndexMounted=$false;negativeControlReproduced=$true;fixtureSha256=('b'*64);files=$hashes;
+                regression=@(@{test='interrupted_incremental_resume';modules=2;new_function_found=$true;ancestor_unchanged=$true},@{test='selective_repair';preserves_vectors=$true;honors_omissions=$true});
+                xsdFixtureSha256=('c'*64);xsd=@{positive=$true;parserLimitsPreserved=$true;xsdLaneOnlyInvalidated=$true;negativeControls=@{'unknown-root'='invalid';'unknown-deep-child'='invalid';'wrong-title-child'='invalid';'wrong-nesting'='invalid'}};
+                roleRightsFixtureSha256=('d'*64);roleRights=@{malformedIsError=$true;xsdLaneOnlyInvalidated=$true;
+                    positives=@{'Роль/Rights'='valid';'Role/Rights'='valid';'ПраваРоли/Rights'='valid';'RoleRights/Rights'='valid';'Роль/descriptor'='valid'};
+                    negativeControls=@{'descriptor-as-rights'='invalid';'unknown-root'='invalid';'unknown-top-child'='invalid';'unknown-deep-child'='invalid';'wrong-nesting'='invalid'}}}
+            $spec=@{schemaVersion=2;image=$image;fixtureSha256=('b'*64);xsdFixtureSha256=('c'*64);roleRightsFixtureSha256=('d'*64);files=$hashes;proofSha256=''}
+            $script:RightsPackage=@{image=$image;files=$hashes;xsdFixtureSha256=('c'*64);roleRightsFixtureSha256=('d'*64);qualification=('qualifications/'+('a'*64)+'/xsd-v3/proof.json')}
+            function Get-HostCodeRepairPackage { return $script:RightsPackage }
+            $server=@{id='code';image=$image;ownerRepair=$spec}
+            function Save-CodeOwnerTestProof { [IO.File]::WriteAllText((Join-Path $root 'qualification.json'),($proof|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false));$spec.proofSha256=(Get-FileHash -LiteralPath (Join-Path $root 'qualification.json')).Hash.ToLowerInvariant() }
+            Save-CodeOwnerTestProof
+            $mounts=@(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server)
+            $mounts.Count|Should -Be 3
+            @($mounts|Where-Object {$_.host -notlike '*\xsd-v3\*'}).Count|Should -Be 0
+            # The accepted v2 runtime is a version transition, never rewritten in place.
+            $script:OwnerMounts=@($mounts|ForEach-Object {@{Type='bind';Source=$_.host.Replace('\xsd-v3\','\xsd-v2\');Destination=$_.container;RW=$false}})
+            function Invoke-DockerCommandCapture { return ($script:OwnerMounts|ConvertTo-Json -Compress) }
+            Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $true
+            (Get-FileHash -LiteralPath (Join-Path $accepted 'xsd_schema_generator.py')).Hash|Should -Be $acceptedSha
+            foreach($change in @('missing','positive','control','fixture','spec')){
+                $saved=$proof.roleRights|ConvertTo-Json -Depth 6|ConvertFrom-Json
+                if($change -eq 'missing'){$proof.Remove('roleRights')}
+                elseif($change -eq 'positive'){$proof.roleRights.positives['Роль/Rights']='invalid'}
+                elseif($change -eq 'control'){$proof.roleRights.negativeControls.Remove('wrong-nesting')}
+                elseif($change -eq 'fixture'){$proof.roleRightsFixtureSha256=('e'*64)}
+                else{$spec.Remove('roleRightsFixtureSha256')}
+                Save-CodeOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*role rights XSD regression*'
+                $proof.roleRights=Convert-ToHash -Object $saved;$proof.roleRights.positives=Convert-ToHash -Object $saved.positives
+                $proof.roleRights.negativeControls=Convert-ToHash -Object $saved.negativeControls
+                $proof.roleRightsFixtureSha256=('d'*64);$spec.roleRightsFixtureSha256=('d'*64);Save-CodeOwnerTestProof
+            }
+            @(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server).Count|Should -Be 3
+            $script:RightsPackage.qualification='qualifications/'+('b'*64)+'/xsd-v3/proof.json'
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*own image XSD qualification*'
+        }
+    }
+    It "requires all thirty original native Graph tests and mounts both repairs through the existing resolver and cutover" -Tag HostOwnerRepair {
+        $configPath=Join-Path $TestDrive 'graph repair config.json'
+        $repairState=Join-Path $TestDrive 'ремонт Graph с пробелом'
+        @{schemaVersion=1;hostId='fixture';stateRoot=$repairState}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config=Read-HostConfig
+            $image='comol/1c_graph_metadata@sha256:'+('a'*64)
+            $root=Join-Path $repairState ('repairs\owner\graph\'+('a'*64))
+            $null=New-Item -ItemType Directory -Path $root -Force
+            $hashes=[ordered]@{}
+            foreach($n in @('run','score_floor','common_forms')){[IO.File]::WriteAllText((Join-Path $root ($n+'.py')),('# '+$n),[Text.UTF8Encoding]::new($false));$hashes[$n]=(Get-FileHash -LiteralPath (Join-Path $root ($n+'.py'))).Hash.ToLowerInvariant()}
+            $proof=@{schemaVersion=1;accepted=$true;host='fixture';image=$image;isolated=$true;network='none';liveIndexMounted=$false;fixtureSha256=('b'*64);files=$hashes;nativeSuites=@(@{name='fulltext';tests=13;failures=0;errors=0;skipped=0;native=$true},@{name='commonForms';tests=14;failures=0;errors=0;skipped=0;native=$true},@{name='combined';tests=3;failures=0;errors=0;skipped=0;native=$true})}
+            $spec=@{image=$image;fixtureSha256=('b'*64);files=$hashes;proofSha256=''}
+            $server=@{id='graph';image=$image;ownerRepair=$spec}
+            function Save-GraphOwnerTestProof { [IO.File]::WriteAllText((Join-Path $root 'qualification.json'),($proof|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false));$spec.proofSha256=(Get-FileHash -LiteralPath (Join-Path $root 'qualification.json')).Hash.ToLowerInvariant() }
+            Save-GraphOwnerTestProof
+            $mounts=@(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server)
+            ($mounts.container|Sort-Object) | Should -Be @('/app/common_forms.py','/app/run.py','/app/score_floor.py')
+            $script:OwnerMounts=@($mounts|ForEach-Object {@{Type='bind';Source=$_.host;Destination=$_.container;RW=$false}})
+            function Invoke-DockerCommandCapture { return ($script:OwnerMounts|ConvertTo-Json -Compress) }
+            function Get-BetaProjectVolumes { return @() }
+            Assert-BetaProjectContainerMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            function Get-HostLocalValues { return @{} }
+            function Get-HostDefaultVolumeEntries { return @() }
+            function Test-HostServerNeedsEmbedding { return $false }
+            @(Resolve-ServerVolumes -Config $config -Server $server).Count | Should -Be 3
+            $compose="services:`n  mcp-app:`n    volumes:`n      - existing:/app/data`n    environment:`n      KEEP: unchanged`n  neo4j:`n    volumes:`n      - retained:/data`n"
+            $changed=Set-QualifiedHostOwnerRepairComposeText -Config $config -Server $server -ComposeText $compose
+            $changed | Should -Match 'KEEP: unchanged'
+            $changed | Should -Match 'retained:/data'
+            ([regex]::Matches($changed,'read_only: true')).Count | Should -Be 3
+            ([regex]::Matches($changed,'create_host_path: false')).Count | Should -Be 3
+            foreach($file in $mounts){$changed | Should -Match ([regex]::Escape((ConvertTo-Json -InputObject $file.host -Compress)))}
+            {Set-QualifiedHostOwnerRepairComposeText -Config $config -Server $server -ComposeText $changed}|Should -Throw '*already exists*'
+            {Set-QualifiedHostOwnerRepairComposeText -Config $config -Server $server -ComposeText ($compose.Replace('mcp-app:','another:'))}|Should -Throw '*declared mcp-app volumes*'
+            $null=New-Item -ItemType Directory -Path (Join-Path $repairState 'bases/fixture/graph-beta/neo4j-data'),(Join-Path $repairState 'bases/fixture/graph-beta/mcp-state') -Force
+            Write-Text -Path (Join-Path $repairState 'graph.yml') -Value $compose
+            function Get-DistributionRoot {return $repairState}
+            function Assert-BetaProjectVolumesReady {}
+            function Get-HostEmbeddingSettings {return @{mode='openai'}}
+            function Resolve-ServerEnv {return @{OPENAI_EMBEDDING_MODEL='unchanged';OPENAI_EMBEDDING_API_BASE='https://example.test/v1';OPENAI_EMBEDDING_API_KEY='fixture-only'}}
+            $script:OwnerComposeCalls=0
+            function Invoke-DockerCommandChecked {param($Arguments) $script:OwnerComposeCalls++;$generated=Read-Text -Path $Arguments[4];([regex]::Matches($generated,'read_only: true')).Count|Should -Be 3}
+            $server.channel='stable';$server.manifestPath='releases/fixture/vibecoding1c-mcp.manifest.json';$server.composePath='graph.yml';$server.neo4jImage='neo4j@sha256:fixture'
+            $runtime=[pscustomobject]@{name='fixture';containerName='candidate';composeProject='fixture';image=$image;hostPort=1234;url='http://fixture/mcp'}
+            Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState @{configId='fixture'}
+            $script:OwnerComposeCalls | Should -Be 2
+            foreach($suite in $proof.nativeSuites){
+                foreach($key in @('failures','errors','skipped')){
+                    $suite[$key]=1;Save-GraphOwnerTestProof
+                    {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original native regression did not pass*'
+                    $suite[$key]=0
+                }
+                $suite.native=$false;Save-GraphOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original native regression did not pass*'
+                $suite.native=$true
+            }
+            $proof.nativeSuites[1].tests=13;Save-GraphOwnerTestProof
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original native regression did not pass*'
+            $proof.nativeSuites[1].tests=14;Save-GraphOwnerTestProof
+            $script:OwnerMounts[0].RW=$true
+            {Assert-BetaProjectContainerMounts -Config $config -Server $server -Runtime @{containerName='candidate'}}|Should -Throw '*read-only*'
+            $script:OwnerMounts[0].RW=$false
+            [IO.File]::AppendAllText((Join-Path $root 'score_floor.py'),'changed')
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*file changed: score_floor*'
+        }
+    }
+
+    It "prepares stable from an accepted beta without selecting a fresh generation or changing model" -Tag StableCutover {
+        $configPath = Join-Path $TestDrive 'stable-context.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $release = 'releases/fixture/vibecoding1c-mcp.manifest.json'
+            $legacy = @{ id = 'code'; scope = 'project'; mcpNameTemplate = 'itl-{projectSlug}-code' }
+            $candidate = @{ id = 'code'; scope = 'project'; channel = 'stable'; manifestPath = $release; mcpNameTemplate = 'itl-{projectSlug}-code'; containerNameTemplate = 'itl-{projectSlug}-code-xsd-v2' }
+            function Read-DistributionManifest { param($ManifestPath) if ($ManifestPath) { return @{ servers = @($candidate) } }; return @{ servers = @($legacy) } }
+            $old = @{ channel = 'beta'; containerName = 'old-code'; name = 'itl-pm4-code'; directUrl = 'http://host:1/mcp'; hostPort = 1; proxyContainerName = 'proxy'; embeddingModel = 'qwen' }
+            function Get-TrackedHostServerForIdentity { return $old }
+            function Read-HostState { return @{ configurations = @(@{ configId = 'pm4' }) } }
+            function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq 'old-code') { return 'running' }; return 'missing' }
+            $script:StableReuseNative = $false
+            $script:StableRepairChanged = $false
+            function Test-QualifiedHostCodeRepairChange { return $script:StableRepairChanged }
+            function New-ServerRuntime { return [pscustomobject]@{ name = 'itl-pm4-code'; containerName = $(if($script:StableReuseNative){'old-code'}else{'new-code'}); hostPort = 2; url = ''; proxyContainerName = ''; image = ('image@sha256:' + ('a' * 64)); embeddingModel = 'qwen' } }
+            $script:StableFixtureEnv = @{ RESET_DATABASE = 'false'; RESET_CACHE = 'false' }
+            function Resolve-ServerEnv { return $script:StableFixtureEnv }
+            function Get-BetaProjectIndexSettings { return @{ generation = 'accepted' } }
+            function Test-HostServerNeedsEmbedding { return $true }
+            $context = Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release
+            $context.retainedIndex | Should -BeTrue
+            $context.freshProjectIndex | Should -BeFalse
+            $context.retainedVersionChange | Should -BeFalse
+            $old.image = 'old@sha256:' + ('b' * 64)
+            (Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release).retainedVersionChange | Should -BeTrue
+            $old.image = $context.runtime.image
+            (Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release).retainedVersionChange | Should -BeFalse
+            $script:StableReuseNative = $true
+            { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*distinct container*'
+            $script:StableRepairChanged = $true
+            $patched = Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release
+            $patched.runtime.containerName | Should -Be 'itl-pm4-code-xsd-v2'
+            $patched.retainedVersionChange | Should -BeTrue
+            $script:StableRepairChanged = $false
+            $script:StableReuseNative = $false
+            $context.runtime.hostPort | Should -Be 1
+            $context.runtime.url | Should -Be 'http://host:1/mcp'
+            $script:StableFixtureEnv.RESET_CACHE = 'true'
+            { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*would reset retained data*'
+            $script:StableFixtureEnv.RESET_CACHE = 'false'
+            $old.embeddingModel = 'different'
+            { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*would change embedding model*'
+            $old.channel = 'stable'
+            { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*legacy layout*'
+        }
+    }
+}
+
+Describe "Standalone host owns and releases MCP sessions" -Tag HostMcpSessions {
+    BeforeAll {
+        $sessionSourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+        # Load the real functions without dispatching host setup/status or touching runtime state.
+        foreach ($relative in @('vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1', 'vibecoding1c-mcp-host/beta-cutover.ps1')) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $sessionSourceRoot $relative), [ref]$null, [ref]$null)
+            $definitions = @($ast.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
+            . ([scriptblock]::Create(($definitions.Extent.Text -join "`n")))
+        }
+    }
+    BeforeEach {
+        $script:DryRun = $false
+        $script:HostMcpFixture = @{
+            sessions = @{ foreign = $true }; created = 0; deleted = @(); peak = 1; requests = @()
+            sessionless = $false; notifyFailure = $false; deleteFailure = $false; listFailure = $false
+            toolFailures = 0; toolCalls = 0; toolResult = @{ structuredContent = @{ result = 'completed' } }
+        }
+        Mock Start-Sleep { }
+        Mock Invoke-WebRequest {
+            param($Uri, $Method, $Headers, $Body)
+            $fixture = $script:HostMcpFixture
+            if ($Method -eq 'Delete') {
+                $id = [string]$Headers['mcp-session-id']
+                if ($id -eq 'foreign' -or -not $fixture.sessions.ContainsKey($id)) { throw 'Attempted to delete an unowned or already closed session.' }
+                $fixture.deleted += $id
+                if ($fixture.deleteFailure) { throw 'fixture cleanup failure' }
+                $fixture.sessions.Remove($id)
+                return
+            }
+            $text = if ($Body -is [byte[]]) { [Text.Encoding]::UTF8.GetString($Body) } else { [string]$Body }
+            $request = $text | ConvertFrom-Json
+            $fixture.requests += [string]$request.method
+            $responseHeaders = @{}
+            $result = @{}
+            if ($request.method -eq 'initialize') {
+                if ($fixture.sessions.Count -ge 64) { throw 'fixture session cap 64' }
+                $fixture.created++
+                if (-not $fixture.sessionless) {
+                    $id = "owned-$($fixture.created)"
+                    $fixture.sessions[$id] = $true
+                    $responseHeaders['mcp-session-id'] = $id
+                    $fixture.peak = [Math]::Max($fixture.peak, $fixture.sessions.Count)
+                }
+            } else {
+                if (-not $fixture.sessionless -and -not $fixture.sessions.ContainsKey([string]$Headers['mcp-session-id'])) { throw 'Request used a closed session.' }
+                switch ($request.method) {
+                    'notifications/initialized' { if ($fixture.notifyFailure) { throw 'fixture initialized failure' } }
+                    'tools/list' {
+                        if ($request.params.PSObject.Properties['cursor']) {
+                            if ($fixture.listFailure) { throw 'fixture second-page failure' }
+                            $result = @{ tools = @(@{ name = 'second' }) }
+                        } else { $result = @{ tools = @(@{ name = 'first' }); nextCursor = 'page-2' } }
+                    }
+                    'tools/call' {
+                        $fixture.toolCalls++
+                        if ($fixture.toolFailures -gt 0) { $fixture.toolFailures--; throw 'fixture tool failure' }
+                        $result = $fixture.toolResult
+                    }
+                    default { throw "Unexpected fixture method: $($request.method)" }
+                }
+            }
+            $bytes = [Text.Encoding]::UTF8.GetBytes((@{ jsonrpc = '2.0'; id = 1; result = $result } | ConvertTo-Json -Depth 20 -Compress))
+            [pscustomobject]@{
+                Headers = $responseHeaders
+                BaseResponse = [pscustomobject]@{ ResponseUri = [uri]'http://fixture.test/effective/mcp' }
+                RawContentStream = [IO.MemoryStream]::new($bytes)
+            }
+        }
+    }
+    AfterEach { Remove-Variable -Scope Script -Name HostMcpFixture -ErrorAction SilentlyContinue }
+
+    It "does not exhaust the observed 64-session cap across repeated paginated and functional probes" {
+        foreach ($iteration in 1..40) {
+            $tools = @(Get-HostMcpToolsList -Url 'http://fixture.test/mcp')
+            ($tools.name -join ',') | Should -BeExactly 'first,second'
+            $health = Get-HostServerFunctionalHealth -Server @{ id = 'syntax'; url = 'http://fixture.test/effective/mcp' }
+            $health.status | Should -Be 'qualified' -Because $health.message
+        }
+        $script:HostMcpFixture.created | Should -Be 80
+        $script:HostMcpFixture.deleted.Count | Should -Be 80
+        $script:HostMcpFixture.peak | Should -Be 2
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.sessions.ContainsKey('foreign') | Should -BeTrue
+        Should -Invoke Invoke-WebRequest -Times 80 -Exactly -ParameterFilter { $Method -eq 'Delete' -and $Uri -eq 'http://fixture.test/effective/mcp' }
+    }
+
+    It "releases a session when initialized notification fails and preserves that failure if cleanup fails" -TestCases @(@{ CleanupFails = $false }, @{ CleanupFails = $true }) {
+        param($CleanupFails)
+        $script:HostMcpFixture.notifyFailure = $true
+        $script:HostMcpFixture.deleteFailure = $CleanupFails
+        { Open-HostMcpConnection -Url 'http://fixture.test/mcp' -WarningAction SilentlyContinue } | Should -Throw '*fixture initialized failure*'
+        $script:HostMcpFixture.deleted.Count | Should -Be 1
+        $script:HostMcpFixture.requests | Should -Not -Contain 'tools/list'
+        $script:HostMcpFixture.sessions.ContainsKey('foreign') | Should -BeTrue
+    }
+
+    It "releases after a later tools page fails and does not replace the primary error" -TestCases @(@{ CleanupFails = $false }, @{ CleanupFails = $true }) {
+        param($CleanupFails)
+        $script:HostMcpFixture.listFailure = $true
+        $script:HostMcpFixture.deleteFailure = $CleanupFails
+        { Get-HostMcpToolsList -Url 'http://fixture.test/mcp' } | Should -Throw '*fixture second-page failure*'
+        $script:HostMcpFixture.deleted.Count | Should -Be 1
+        @($script:HostMcpFixture.requests | Where-Object { $_ -eq 'tools/list' }).Count | Should -Be 2
+    }
+
+    It "keeps a successful result when the server rejects cleanup, including WarningPreference Stop" {
+        $script:HostMcpFixture.deleteFailure = $true
+        $previousWarningPreference = $WarningPreference
+        try {
+            $WarningPreference = 'Stop'
+            @(Get-HostMcpToolsList -Url 'http://fixture.test/mcp').Count | Should -Be 2
+        } finally { $WarningPreference = $previousWarningPreference }
+        $script:HostMcpFixture.deleted.Count | Should -Be 1
+    }
+
+    It "does not infer session ownership from foreign headers, tolerates stateless servers, and closes only once" {
+        Close-HostMcpConnection -Connection $null
+        Close-HostMcpConnection -Connection @{ url = 'http://fixture.test/mcp'; headers = @{ 'mcp-session-id' = 'foreign' } }
+        $script:HostMcpFixture.sessionless = $true
+        @(Get-HostMcpToolsList -Url 'http://fixture.test/mcp').Count | Should -Be 2
+        $script:HostMcpFixture.deleted.Count | Should -Be 0
+        $script:HostMcpFixture.sessionless = $false
+        $connection = Open-HostMcpConnection -Url 'http://fixture.test/mcp'
+        $connection.headers['mcp-session-id'] = 'foreign'
+        Close-HostMcpConnection -Connection $connection
+        Close-HostMcpConnection -Connection $connection
+        $script:HostMcpFixture.deleted.Count | Should -Be 1
+        $script:HostMcpFixture.deleted[0] | Should -BeExactly 'owned-2'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+    }
+
+    It "releases failed functional and beta tool probes without changing their error contracts" {
+        $script:HostMcpFixture.toolFailures = 1
+        $health = Get-HostServerFunctionalHealth -Server @{ id = 'syntax'; url = 'http://fixture.test/effective/mcp' }
+        $health.status | Should -Be 'degraded'
+        $health.message | Should -Match 'fixture tool failure'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.toolFailures = 1
+        { Assert-BetaDocsFunctionalCall -Url 'http://fixture.test/mcp' } | Should -Throw '*fixture tool failure*'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.toolResult = @{ structuredContent = @{ result = 'String documentation' } }
+        Assert-BetaDocsFunctionalCall -Url 'http://fixture.test/mcp'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.toolFailures = 1
+        { Get-BetaConfigurationIndexActivity -ServerId code -Url 'http://fixture.test/mcp' } | Should -Throw '*fixture tool failure*'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.toolResult = @{ structuredContent = @{ data = @{ indexing = @{ running = $false }; collections = @{ modules = 1 } } } }
+        (Get-BetaConfigurationIndexActivity -ServerId code -Url 'http://fixture.test/mcp').running | Should -BeFalse
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+    }
+
+    It "closes initial and replacement indexing sessions on successful completion and terminal failure" -TestCases @(@{ Fails = $false }, @{ Fails = $true }) {
+        param($Fails)
+        $connection = Open-HostMcpConnection -Url 'http://fixture.test/mcp'
+        $script:HostMcpFixture.toolFailures = 1
+        if ($Fails) { $script:HostMcpFixture.toolResult = @{ structuredContent = @{ status = 'failed' } } }
+        try {
+            if ($Fails) { { Wait-HostMcpIndexCompletion -Connection $connection -StatusTool stats -ServerId code -ConfigId fixture -TimeoutMinutes 1 -PollSeconds 0 } | Should -Throw '*Incremental indexing failed*' }
+            else { Wait-HostMcpIndexCompletion -Connection $connection -StatusTool stats -ServerId code -ConfigId fixture -TimeoutMinutes 1 -PollSeconds 0 }
+        } finally { Close-HostMcpConnection -Connection $connection }
+        $script:HostMcpFixture.created | Should -Be 2
+        $script:HostMcpFixture.deleted.Count | Should -Be 2
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+    }
+
+    It "rejects a different response endpoint for functional qualification and retains the original session cleanup" {
+        $health = Get-HostServerFunctionalHealth -Server @{ id = 'syntax'; url = 'http://fixture.test/mcp' }
+        $health.status | Should -Be 'degraded'
+        $health.message | Should -Match 'ITL_MCP_ENDPOINT_CHANGED'
+        $script:HostMcpFixture.created | Should -Be 1
+        $script:HostMcpFixture.deleted.Count | Should -Be 1
+        $script:HostMcpFixture.requests | Should -Not -Contain 'tools/call'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.sessions.ContainsKey('foreign') | Should -BeTrue
+    }
+
+    It "releases indexing operation sessions even when its first tool request fails" {
+        $script:HostMcpFixture.toolFailures = 1
+        { Invoke-CodeIncrementalIndex -Server @{ hostPort = 8000 } -ConfigId fixture -Settings @{ pollSeconds = 0; timeoutMinutes = 1 } } | Should -Throw '*fixture tool failure*'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        Invoke-CodeIncrementalIndex -Server @{ hostPort = 8000 } -ConfigId fixture -Settings @{ pollSeconds = 0; timeoutMinutes = 1 }
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        Mock Restart-GraphForIncrementalIndex { }
+        Invoke-GraphIncrementalIndex -Config @{} -Server @{ hostPort = 8000 } -ConfigId fixture -Settings @{ pollSeconds = 0; timeoutMinutes = 1 }
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+    }
+
+    It "releases readiness-only connections in candidate and rollback checks" {
+        $context = @{ serverId = 'syntax'; configId = 'fixture'; runtime = @{ url = 'http://fixture.test/mcp'; hostPort = 8000; containerName = 'candidate' }; old = @{ directUrl = 'http://fixture.test/mcp'; containerName = 'stable' } }
+        Wait-BetaCandidateReady -Context $context
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        Mock Get-HostContainerPublishState { 'missing' }
+        Mock Invoke-DockerCommandChecked { }
+        Restore-StableAfterBetaFailure -Config @{} -Context $context
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.created | Should -Be 2
+        $script:HostMcpFixture.deleted.Count | Should -Be 2
+    }
+}
+
+Describe "Standalone host MCP response URI transport" -Tag HostMcpTransport {
+    BeforeAll {
+        $sourcePath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path 'vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$null, [ref]$null)
+        $functions = @($ast.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -in @('Get-ObjectValue', 'Invoke-HostMcpHttpRequest', 'Open-HostMcpConnection', 'Close-HostMcpConnection') })
+        . ([scriptblock]::Create(($functions.Extent.Text -join "`n")))
+        $realWebRequestCmdlet = Get-Command Invoke-WebRequest -CommandType Cmdlet
+    }
+
+    It "uses the effective URL and closes a real loopback session: <Scenario>, notification failure=<FailNotify>, exact=<Exact>" -TestCases @(
+        @{ Scenario = 'direct'; FailNotify = $false; Exact = $false }, @{ Scenario = 'direct'; FailNotify = $true; Exact = $false },
+        @{ Scenario = 'redirect'; FailNotify = $false; Exact = $false }, @{ Scenario = 'redirect'; FailNotify = $true; Exact = $false },
+        @{ Scenario = 'fallback'; FailNotify = $false; Exact = $false }, @{ Scenario = 'fallback'; FailNotify = $true; Exact = $false },
+        @{ Scenario = 'direct'; FailNotify = $false; Exact = $true }, @{ Scenario = 'direct'; FailNotify = $true; Exact = $true },
+        @{ Scenario = 'redirect'; FailNotify = $false; Exact = $true }
+    ) {
+        param($Scenario, $FailNotify, $Exact)
+        # A private TCP listener exercises Invoke-WebRequest on both Windows PowerShell
+        # and pwsh without URL ACLs, external servers, Docker, or production MCP sessions.
+        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $port = $listener.LocalEndpoint.Port
+        $state = [hashtable]::Synchronized(@{ stop = $false; error = ''; requests = [Collections.ArrayList]::new(); active = 1; deleted = 0 })
+        $worker = [powershell]::Create()
+        [void]$worker.AddScript({
+            param($Listener, $State, $FailNotify, $Port)
+            try {
+                while (-not $State.stop) {
+                    if (-not $Listener.Pending()) { Start-Sleep -Milliseconds 5; continue }
+                    $client = $Listener.AcceptTcpClient()
+                    $stream = $client.GetStream()
+                    $stream.ReadTimeout = 5000
+                    $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::ASCII, $false, 4096, $true)
+                    try {
+                        $requestLine = $reader.ReadLine().Split(' ')
+                        $headers = @{}
+                        while ($line = $reader.ReadLine()) {
+                            $split = $line.IndexOf(':')
+                            $headers[$line.Substring(0, $split)] = $line.Substring($split + 1).Trim()
+                        }
+                        if ($headers['Expect'] -eq '100-continue') {
+                            $continue = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 100 Continue`r`n`r`n")
+                            $stream.Write($continue, 0, $continue.Length)
+                            $stream.Flush()
+                        }
+                        $length = [int]$headers['Content-Length']
+                        $buffer = New-Object char[] $length
+                        $offset = 0
+                        while ($offset -lt $length) {
+                            $read = $reader.Read($buffer, $offset, $length - $offset)
+                            if ($read -le 0) { throw 'Incomplete loopback request body.' }
+                            $offset += $read
+                        }
+                        $body = if ($length) { (-join $buffer) | ConvertFrom-Json } else { $null }
+                        [void]$State.requests.Add(@{ method = $requestLine[0]; path = $requestLine[1]; session = [string]$headers['mcp-session-id'] })
+                        $status = '200 OK'; $extra = ''; $json = '{}'
+                        if ($requestLine[1] -eq '/start') {
+                            $status = '307 Temporary Redirect'
+                            $extra = "Location: http://127.0.0.1:$Port/mcp`r`n"
+                        } elseif ($requestLine[0] -eq 'DELETE') {
+                            if ($headers['mcp-session-id'] -ne 'owned-loopback') { throw 'Loopback cleanup attempted a foreign session.' }
+                            $State.active--; $State.deleted++; $State.stop = $true
+                        } elseif ($body.method -eq 'initialize') {
+                            $State.active++
+                            $extra = "mcp-session-id: owned-loopback`r`n"
+                            $json = '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"loopback","version":"1"}}}'
+                        } elseif ($body.method -eq 'notifications/initialized') {
+                            if ($FailNotify) { $status = '500 FixtureFailure'; $json = '{"error":"fixture initialized failure"}' }
+                            else { $status = '202 Accepted'; $json = '' }
+                        } else { throw 'Unexpected loopback request.' }
+                        $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+                        $head = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 $status`r`n${extra}Content-Type: application/json; charset=utf-8`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n")
+                        $stream.Write($head, 0, $head.Length)
+                        $stream.Write($bytes, 0, $bytes.Length)
+                        $stream.Flush()
+                    } finally { $reader.Dispose(); $client.Dispose() }
+                }
+            } catch { $State.error = $_.Exception.Message }
+            finally { $Listener.Stop() }
+        }).AddArgument($listener).AddArgument($state).AddArgument($FailNotify).AddArgument($port)
+        $async = $worker.BeginInvoke()
+        $connection = $null
+        try {
+            if ($Scenario -eq 'fallback') {
+                # Retain a real HTTP initialize exchange, then remove optional response
+                # URI metadata to prove the already-known initial URL is preserved.
+                Mock Invoke-WebRequest {
+                    param($Uri, $Method, $Headers, $Body, $TimeoutSec, $ContentType)
+                    $response = & $realWebRequestCmdlet -UseBasicParsing -Uri $Uri -Method $Method -Headers $Headers -Body $Body -TimeoutSec 10 -ContentType $ContentType
+                    [pscustomobject]@{ Headers = $response.Headers; BaseResponse = [pscustomobject]@{} }
+                } -ParameterFilter { $Method -eq 'Post' -and $Body -match '"method":"initialize"' }
+            }
+            $path = if ($Scenario -eq 'redirect') { 'start' } else { 'mcp' }
+            $failure = $null
+            try { $connection = Open-HostMcpConnection -Url "http://127.0.0.1:$port/$path" -TimeoutSec 10 -ExactEndpoint:$Exact }
+            catch { $failure = $_ }
+            $redirectRejected = $Exact -and $Scenario -eq 'redirect'
+            if ($redirectRejected) {
+                $failure | Should -Not -BeNullOrEmpty
+                $failure.Exception.Message | Should -Match 'ITL_MCP_ENDPOINT_REDIRECT'
+                $failure.Exception.Message | Should -Match ([regex]::Escape("originalUrl='http://127.0.0.1:$port/start'"))
+                $failure.Exception.Message | Should -Match 'httpStatus=307'
+                $failure.Exception.Message | Should -Match ([regex]::Escape("location='http://127.0.0.1:$port/mcp'"))
+                $state.stop = $true
+            } elseif ($FailNotify) {
+                $failure | Should -Not -BeNullOrEmpty
+                [int]$failure.Exception.Response.StatusCode | Should -Be 500
+            } else {
+                $failure | Should -BeNullOrEmpty
+                $connection.url | Should -BeExactly "http://127.0.0.1:$port/mcp"
+                Close-HostMcpConnection -Connection $connection
+            }
+            $async.AsyncWaitHandle.WaitOne(5000) | Should -BeTrue
+            $worker.EndInvoke($async)
+            $state.error | Should -BeNullOrEmpty
+            $state.deleted | Should -Be $(if ($redirectRejected) { 0 } else { 1 })
+            $state.active | Should -Be 1
+            @($state.requests | Where-Object { $_.method -eq 'DELETE' -and $_.path -eq '/mcp' -and $_.session -eq 'owned-loopback' }).Count | Should -Be $(if ($redirectRejected) { 0 } else { 1 })
+            if ($redirectRejected) {
+                $state.requests.Count | Should -Be 1
+                $state.requests[0].path | Should -Be '/start'
+            }
+        } finally {
+            Close-HostMcpConnection -Connection $connection
+            $state.stop = $true
+            $listener.Stop()
+            if (-not $async.IsCompleted) { $worker.Stop() }
+            $worker.Dispose()
+        }
+    }
+}
+
+Describe 'Direct MCP endpoint recovery' -Tag DirectEndpointRecovery {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $RepoRoot = $context.RepoRoot
+        $McpHostPath = $context.McpHostPath
+    }
+
+
+
+    It 'recovers an open foreign direct endpoint once and preserves the other MCP: <Scenario>' -TestCases @(
+        @{ Scenario = 'repaired' }, @{ Scenario = 'matched' }, @{ Scenario = 'unverified' },
+        @{ Scenario = 'indexing' }, @{ Scenario = 'stuck' }
+    ) {
+        param($Scenario)
+        $configPath = Join-Path $TestDrive 'хост с пробелом.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $state = @{ servers = @(
+                @{ id = 'bookstack'; endpointMode = 'direct'; hostPort = 18005; containerName = 'itl-bookstack' },
+                @{ id = 'sppr'; endpointMode = 'direct'; hostPort = 18007; containerName = 'itl-sppr' }
+            ) }
+            function Read-HostState { return $state }
+            function Get-HostStatePath { return $configPath }
+            function Invoke-DockerCommand { return 0 }
+            function Get-HostContainerPublishState { return 'running' }
+            function Wait-HostTcpPortOpen { return $true }
+            $script:DirectCommands = @(); $script:DirectProofs = 0; $script:DirectPublishes = 0
+            function Invoke-DockerCommandChecked { param($Arguments) $script:DirectCommands += ,$Arguments }
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server)
+                if ($Server.id -eq 'sppr') { return @{ status = 'matched' } }
+                $script:DirectProofs++
+                $status = $Scenario
+                if ($Scenario -in @('repaired', 'stuck')) {
+                    $status = if ($script:DirectProofs -eq 1 -or $Scenario -eq 'stuck') { 'mismatch' } else { 'matched' }
+                }
+                return @{ status = $status; container_id = ('a' * 64); reason = 'fixture' }
+            }
+            function Publish-Registry { $script:DirectPublishes++ }
+            $config = @{ toolsListProxy = @{ enabled = $true; serverIds = @('bookstack', 'sppr') } }
+            if ($Scenario -eq 'stuck') {
+                { Repair-TrackedMcpHostAndPublish -Config $config } | Should -Throw '*after one restart*'
+                $script:DirectPublishes | Should -Be 0
+            } else {
+                Repair-TrackedMcpHostAndPublish -Config $config
+                $script:DirectPublishes | Should -Be 1
+            }
+            $restarts = @($script:DirectCommands | Where-Object { $_[0] -eq 'restart' })
+            if ($Scenario -in @('repaired', 'stuck')) {
+                $restarts.Count | Should -Be 1
+                ($restarts[0] -join '|') | Should -BeExactly ('restart|--time|20|' + ('a' * 64))
+                $script:DirectProofs | Should -Be 2
+            } else { $restarts.Count | Should -Be 0 }
+            @($restarts | Where-Object { $_ -contains 'itl-sppr' }).Count | Should -Be 0
+            Remove-Variable -Scope Script -Name DirectCommands,DirectProofs,DirectPublishes -ErrorAction SilentlyContinue
         }
     }
 }

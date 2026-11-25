@@ -1,5 +1,15 @@
 ﻿[CmdletBinding()]
-param([string]$Spool, [string]$Profile, [switch]$EnableSsh, [string]$RemoteAddress='LocalSubnet')
+param(
+    [string]$Spool,
+    [string]$Profile,
+    [string]$WorkerConnection,
+    [ValidateSet('disabled', 'compatible')][string]$UpdatePolicy,
+    [switch]$EnableSsh,
+    [string]$RemoteAddress='LocalSubnet',
+    [string]$Python = '',
+    [switch]$Offline,
+    [switch]$Resume
+)
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 if ($EnableSsh) {
@@ -13,12 +23,17 @@ if ($EnableSsh) {
         New-NetFirewallRule -Name 'ITL-SSH-In' -DisplayName 'ITL SSH access' -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow -RemoteAddress $RemoteAddress | Out-Null
     }
 }
-$python=(Get-Command python -ErrorAction Stop).Source
-$env:PYTHONUTF8='1'
+. (Join-Path $PSScriptRoot 'PythonRuntime.ps1')
+$python = Resolve-ItlPythonExecutable -Python $Python -Offline:$Offline
 if ($Profile) {
     if (-not $Spool) { throw 'SPOOL_REQUIRED' }
-    & $python (Join-Path $PSScriptRoot 'remote_work.py') prepare --spool $Spool --profile $Profile
-    if ($LASTEXITCODE) { throw 'WORKER_PREPARATION_FAILED' }
+    $prepareArguments = @((Join-Path $PSScriptRoot 'remote_work.py'), 'prepare', '--spool', $Spool, '--profile', $Profile)
+    if ($WorkerConnection) { $prepareArguments += @('--worker-connection', $WorkerConnection) }
+    if ($UpdatePolicy) { $prepareArguments += @('--update-policy', $UpdatePolicy) }
+    if ($Resume) { $prepareArguments += '--resume' }
+    $code = Invoke-ItlPythonCommand -Python $python -Arguments $prepareArguments
+    if ($code -ne 0) { throw 'WORKER_PREPARATION_FAILED' }
 } else {
+    if ($WorkerConnection -or $UpdatePolicy) { throw 'PROFILE_REQUIRED' }
     [ordered]@{ computer=$env:COMPUTERNAME; python=$python; sshServer=(Get-Service sshd -ErrorAction SilentlyContinue | Select-Object Name,Status); worker='manual-start'; sshChanged=[bool]$EnableSsh } | ConvertTo-Json -Depth 5
 }

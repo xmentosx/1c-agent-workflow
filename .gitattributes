@@ -1,2 +1,54 @@
 third-party/vanessa-automation/**/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 third-party/vanessa-automation/**/manifest.json text eol=lf
+# The pinned OpenSpec npm lock is authenticated by its exact source bytes.
+.agents/skills/1c-workflow/resources/openspec-cli/package-lock.json -text
+# Verbatim pinned upstream excerpts used by the executable regression.
+tests/fixtures/vanessa-nested-selection/*.bsl text eol=lf whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+tests/fixtures/vanessa-row-criteria/navigation.bsl text eol=lf whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+tests/fixtures/vanessa-client-code/*-upstream.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+tests/fixtures/vanessa-testclient-ports/*-upstream.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+# Hash-pinned client_mcp metadata, notices and native baseline are verbatim.
+third-party/client-mcp/** -text
+# Designer XML keeps native BOM/CRLF; CR is the transport line ending.
+third-party/client-mcp/**/Language.xml whitespace=cr-at-eol
+third-party/client-mcp/**/LICENSE.upstream whitespace=cr-at-eol
+tests/fixtures/client-mcp-language/Configuration.xml -text whitespace=cr-at-eol
+# Native Designer dump and stand texts of the minimal gate stand.
+tests/fixtures/gate-stand/** -text whitespace=cr-at-eol
+tests/fixtures/gate-stand/*.md text eol=lf
+tests/fixtures/gate-stand/*.json text eol=lf
+# Native Designer applicability log and test-extension module keep BOM/CRLF.
+tests/fixtures/project-tests-readiness/** -text whitespace=cr-at-eol
+# Exact upstream HTML form and module blobs retain their native bytes.
+tests/fixtures/vanessa-html-forms/lib/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,cr-at-eol
+
+# Exact upstream portability modules retain their native BOM and line endings.
+tests/fixtures/vanessa-extension-portability/lib/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,cr-at-eol
+
+# Hash-pinned excerpt and new recipe notices must survive checkout unchanged.
+tests/fixtures/vanessa-current-window-expression/function.upstream.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+tests/fixtures/vanessa-current-window-expression/provenance.json text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r6/ITL-NOTICE.txt text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r6/LICENSE.upstream -text whitespace=cr-at-eol
+third-party/vanessa-automation/1.2.043.42-itl-r7/ITL-NOTICE.txt text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r7/LICENSE.upstream -text whitespace=cr-at-eol
+third-party/vanessa-automation/1.2.043.42-itl-r8/ITL-NOTICE.txt text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r8/LICENSE.upstream -text whitespace=cr-at-eol
+third-party/vanessa-automation/1.2.043.42-itl-r10/ITL-NOTICE.txt text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r10/LICENSE.upstream -text whitespace=cr-at-eol
+third-party/vanessa-automation/1.2.043.42-itl-r11/ITL-NOTICE.txt text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r11/LICENSE.upstream -text whitespace=cr-at-eol
+third-party/vanessa-automation/1.2.043.42-itl-r12/ITL-NOTICE.txt text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r12/LICENSE.upstream -text whitespace=cr-at-eol
+third-party/vanessa-automation/1.2.043.42-itl-r18/ITL-NOTICE.txt -text whitespace=cr-at-eol
+third-party/vanessa-automation/1.2.043.42-itl-r18/LICENSE.upstream -text whitespace=cr-at-eol
+tests/fixtures/vanessa-diagnostic-screenshot/*.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+tests/fixtures/vanessa-diagnostic-screenshot/provenance.json text eol=lf
+# Verbatim PM5 artifacts (2026-11-03) for the verification-diagnostics regressions.
+tests/fixtures/vanessa-verification-diagnostics/*.lgp -text
+tests/fixtures/vanessa-verification-diagnostics/*.lgf -text
+tests/fixtures/vanessa-verification-diagnostics/*.xml -text
+tests/fixtures/vanessa-verification-diagnostics/event-log-new-errors-*.json -text
+tests/fixtures/vanessa-verification-diagnostics/provenance.json text eol=lf
+tests/fixtures/gate6-extension-findings/*.out.txt -text
+tests/fixtures/gate6-extension-findings/provenance.json text eol=lf

@@ -1,8 +1,10 @@
 """Public stdio protocol and owned-client lifecycle; fixtures do not qualify live 1C."""
 import os
+import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -10,13 +12,91 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / ".agents/skills/itl-remote-runner/scripts"))
 from itl_remote import vanessa
 from itl_remote.common import WorkError, read_json, write_json
+from itl_remote.deadlines import Deadline
 
 
 def result(text="- Статус: Success\n## Шаги (1)\n**Success**"):
     return {"content": [{"type": "text", "text": text}]}
 
 
+class SourceCaptureQuiescenceTests(unittest.TestCase):
+    def test_shutdown_acknowledgement_releases_adapter_and_later_cleanup_is_idempotent(self):
+        with tempfile.TemporaryDirectory(prefix='Замер со свободным слотом ') as directory:
+            root = Path(directory)
+            control = root / 'vanessa-control'
+            control.mkdir()
+            context_path = root / 'context.json'
+            write_json(context_path, {'jobId': 'measurement', 'phase': Deadline('source-capture', 5).record()})
+            write_json(control / 'started.json', {'jobId': 'measurement', 'pid': 123})
+            write_json(control / 'prepared.json', {'jobId': 'measurement'})
+            stopped = {'jobId': 'measurement', 'passed': True, 'errors': []}
+            seen = []
+            def daemon():
+                import time
+                until = time.monotonic() + 4
+                while time.monotonic() < until:
+                    requests = list(control.glob('request-*.json'))
+                    if requests:
+                        request = read_json(requests[0])
+                        seen.append(request)
+                        # The daemon was already shutting down for an earlier
+                        # request: no response for this new request is promised.
+                        write_json(control / 'stopped.json', stopped)
+                        return
+                    time.sleep(.01)
+            worker = threading.Thread(target=daemon)
+            worker.start()
+            try:
+                self.assertEqual('released', vanessa.quiesce(context_path)['status'])
+                self.assertEqual(stopped, vanessa.command('cleanup', context_path=context_path))
+            finally:
+                worker.join(timeout=5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(1, len(seen))
+            self.assertEqual('cleanup', seen[0]['operation'])
+            self.assertEqual('source-capture', seen[0]['phase']['name'])
+
+    def test_foreign_or_failed_adapter_is_never_treated_as_released(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            control = root / 'vanessa-control'
+            control.mkdir()
+            context_path = root / 'context.json'
+            write_json(context_path, {'jobId': 'measurement', 'phase': Deadline('source-capture', 5).record()})
+            self.assertEqual('not-used', vanessa.quiesce(context_path)['status'])
+            write_json(control / 'started.json', {'jobId': 'other', 'pid': 123})
+            with self.assertRaisesRegex(WorkError, 'FOREIGN_ADAPTER'):
+                vanessa.quiesce(context_path)
+            self.assertEqual([], list(control.glob('request-*.json')))
+            write_json(control / 'started.json', {'jobId': 'measurement', 'pid': 123})
+            for stopped in ({'jobId': 'other', 'passed': True, 'errors': []},
+                            {'jobId': 'measurement', 'passed': False, 'errors': ['client remains']},
+                            {'jobId': 'measurement', 'errors': []}):
+                write_json(control / 'stopped.json', stopped)
+                with self.subTest(stopped=stopped), self.assertRaises(WorkError):
+                    vanessa.quiesce(context_path)
+
+
 class VanessaAdapterTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell process boundary')
+    def test_owned_windows_powershell_process_reconstructs_its_module_path(self):
+        from itl_remote.common import OwnedProcess
+        shell = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+        with tempfile.TemporaryDirectory(prefix='Граница модулей PowerShell ') as directory:
+            log = Path(directory) / 'result.json'
+            command = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $proof=[Console]::In.ReadLine() | ConvertFrom-Json; @{version=$PSVersionTable.PSVersion.Major;modulePath=$env:PSModulePath;command=(Get-Command Get-FileHash -ErrorAction Stop).Name;privateInput=($proof.token.Length -eq 64)} | ConvertTo-Json -Compress"
+            private_input = (json.dumps({'token': '7' * 64}) + '\n').encode('ascii')
+            with patch.dict(os.environ, {'PSModulePath': 'PS7 incompatible modules'}):
+                with OwnedProcess([str(shell), '-NoProfile', '-Command', command], directory, log, input_data=private_input) as process:
+                    process.wait(10, lambda: False)
+                self.assertEqual('PS7 incompatible modules', os.environ['PSModulePath'])
+            observed = json.loads(log.read_text(encoding='utf-8-sig'))
+            self.assertEqual(5, observed['version'])
+            self.assertEqual('Get-FileHash', observed['command'])
+            self.assertTrue(observed['privateInput'])
+            self.assertNotIn('7' * 64, log.read_text(encoding='utf-8-sig'))
+            self.assertNotIn('PS7 incompatible modules', observed['modulePath'])
+
     def test_windows_powershell_does_not_inherit_another_editions_module_path(self):
         from itl_remote.common import native_environment
         with patch.dict(os.environ, {"PSModulePath": "PS7 incompatible modules", "ITL_KEEP": "kept"}):
@@ -98,7 +178,7 @@ for line in sys.stdin:
             write_json(root / "onec-process-123.json", launch)
             calls, closed = [], []
             class Client:
-                def __init__(self, *args): pass
+                def __init__(self, *args, **kwargs): pass
                 def tool(self, name, args):
                     return result("- Значение: 1") if name == "manage_variables" else result()
                 def close(self): closed.append(True)

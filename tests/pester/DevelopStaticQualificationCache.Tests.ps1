@@ -47,6 +47,33 @@ Describe "Develop static qualification cache" {
         (Get-FileHash -LiteralPath (Join-Path $qualificationRoot "pester.xml") -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be ([string]$restored.junit.sha256).ToLowerInvariant()
     }
 
+    It "stops a complete inventory without pwsh before Pester and uses a configured pwsh with a Unicode path" {
+        Mock Get-Command { } -ParameterFilter { $Name -eq 'pwsh.exe' }
+        $pesterRoot = Join-Path $fixtureRoot "tests\pester"
+        New-Item -ItemType Directory -Force -Path $pesterRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $pesterRoot "Core.Tests.ps1") -Encoding UTF8 -Value "It 'x' -Skip:(-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) { }"
+        Set-Content -LiteralPath (Join-Path $pesterRoot "Desktop.Tests.ps1") -Encoding UTF8 -Value "It 'y' { }"
+
+        (Resolve-WorkflowGatePwsh -RepositoryRoot $fixtureRoot).status | Should -Be 'missing'
+        { Resolve-WorkflowGatePwsh -RepositoryRoot $fixtureRoot -Required } | Should -Throw "GATE_PWSH_REQUIRED: pwsh.exe is not on PATH and git config itl.pwshPath is not set; 1 test files*(Core.Tests.ps1)*git config itl.pwshPath*"
+
+        $pwshRoot = Join-Path $fixtureRoot "PowerShell 7 путь"
+        New-Item -ItemType Directory -Force -Path $pwshRoot | Out-Null
+        & git -C $fixtureRoot config itl.pwshPath (Join-Path $pwshRoot "missing.exe")
+        { Resolve-WorkflowGatePwsh -RepositoryRoot $fixtureRoot -Required } | Should -Throw "*itl.pwshPath '$(Join-Path $pwshRoot 'missing.exe')' is not an existing pwsh.exe*"
+
+        $pwsh = Join-Path $pwshRoot "pwsh.exe"
+        [IO.File]::WriteAllBytes($pwsh, [byte[]]@())
+        & git -C $fixtureRoot config itl.pwshPath $pwsh
+        $savedPath = $env:PATH
+        try {
+            $resolved = Resolve-WorkflowGatePwsh -RepositoryRoot $fixtureRoot -Required
+            $resolved.status | Should -Be 'configured'
+            $resolved.path | Should -BeExactly $pwsh
+            ($env:PATH -split ';')[0] | Should -BeExactly $pwshRoot
+        } finally { $env:PATH = $savedPath }
+    }
+
     It "resolves a linked common Git directory through the PS 5.1 UTF-8 boundary" {
         $linkedRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl linked worktree путь " + [guid]::NewGuid().ToString("N"))
         try {

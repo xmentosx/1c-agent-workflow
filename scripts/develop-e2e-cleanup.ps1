@@ -1,6 +1,54 @@
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 
+function Restore-DevelopE2ETrackedState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$StartHead,
+        [string]$ExpectedBranch = "master"
+    )
+
+    $resolvedRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $topLevel = ((& git -C $resolvedRoot rev-parse --show-toplevel) -join "").Trim()
+    if ($LASTEXITCODE -ne 0 -or -not [string]::Equals(([IO.Path]::GetFullPath($topLevel).TrimEnd('\', '/')), $resolvedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to restore tracked state outside the exact Develop E2E repository root: $resolvedRoot"
+    }
+    $branch = ((& git -C $resolvedRoot branch --show-current) -join "").Trim()
+    if ($LASTEXITCODE -ne 0 -or ($ExpectedBranch -and $branch -cne $ExpectedBranch)) {
+        throw "Refusing to restore Develop E2E tracked state on branch '$branch'; expected '$ExpectedBranch'."
+    }
+    $head = ((& git -C $resolvedRoot rev-parse HEAD) -join "").Trim()
+    if ($LASTEXITCODE -ne 0 -or $StartHead -notmatch '^[a-f0-9]{40}$') {
+        throw "Develop E2E tracked-state cleanup could not resolve its Git boundary."
+    }
+    & git -C $resolvedRoot merge-base --is-ancestor $StartHead $head
+    if ($LASTEXITCODE -ne 0) {
+        throw "Refusing to restore Develop E2E tracked state after HEAD left the started history: start=$StartHead current=$head."
+    }
+
+    & git -C $resolvedRoot diff --quiet --
+    $worktreeDiff = $LASTEXITCODE
+    & git -C $resolvedRoot diff --cached --quiet --
+    $indexDiff = $LASTEXITCODE
+    if ($worktreeDiff -notin @(0, 1) -or $indexDiff -notin @(0, 1)) {
+        throw "Develop E2E tracked-state cleanup could not inspect tracked changes."
+    }
+    if ($worktreeDiff -eq 0 -and $indexDiff -eq 0) {
+        return [pscustomobject]@{ status = "clean"; head = $head }
+    }
+
+    & git -C $resolvedRoot reset --hard HEAD *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Develop E2E tracked-state cleanup could not restore HEAD $head." }
+    & git -C $resolvedRoot diff --quiet --
+    $worktreeAfter = $LASTEXITCODE
+    & git -C $resolvedRoot diff --cached --quiet --
+    $indexAfter = $LASTEXITCODE
+    if ($worktreeAfter -ne 0 -or $indexAfter -ne 0) {
+        throw "Develop E2E tracked-state cleanup left tracked changes at HEAD $head."
+    }
+    return [pscustomobject]@{ status = "restored"; head = $head }
+}
+
 function Get-DevelopE2ELauncherListPath {
     $appData = $env:APPDATA
     if (-not $appData) { $appData = [Environment]::GetFolderPath("ApplicationData") }
@@ -248,13 +296,70 @@ function Remove-DevelopE2EFreshProject {
         $branchResolved = [IO.Path]::GetFullPath($BranchPath)
         $expectedBranchLeaf = (Split-Path -Leaf $resolved) + "-*"
         if (-not $branchResolved.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $branchResolved) -notlike $expectedBranchLeaf) { throw "Refusing to remove unexpected fresh journey branch path: $branchResolved" }
+        # Git can unregister a worktree before discovering a locked database.
+        # Refuse before launcher/Git mutations, and respect the journey owner's
+        # native Git lock across the gaps between lifecycle commands. A journey
+        # interrupted before `git init` has no repository and so no registry or lock.
+        if (Test-Path -LiteralPath (Join-Path $resolved '.git')) {
+            $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $resolved | Where-Object { [string]::Equals([string]$_.path, $branchResolved, [StringComparison]::OrdinalIgnoreCase) })
+            if (@($registered | Where-Object { $_.locked }).Count -gt 0) { throw "FRESH_JOURNEY_IN_USE: Git worktree is locked: $branchResolved" }
+        }
+        $databaseRoot = Join-Path $branchResolved '.agent-1c/infobases'
+        foreach ($database in @(Get-ChildItem -LiteralPath $databaseRoot -File -Recurse -ErrorAction SilentlyContinue)) {
+            $probe = $null
+            try { $probe = [IO.File]::Open($database.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None) }
+            catch { throw "FRESH_JOURNEY_IN_USE: database cannot be exclusively opened; preserve the worktree and retry cleanup after its owner exits: $($database.FullName)" }
+            finally { if ($probe) { $probe.Dispose() } }
+        }
         [void](Remove-DevelopE2ELauncherRegistration -FreshProjectsRoot $FreshProjectsRoot -Path $resolved -BranchPath $branchResolved -LauncherListPath $LauncherListPath)
         if ((Test-Path -LiteralPath $resolved -PathType Container) -and (Test-Path -LiteralPath $branchResolved -PathType Container)) {
-            & git -C $resolved worktree remove --force $branchResolved
-            if ($LASTEXITCODE -ne 0) { throw "Unable to remove fresh journey branch worktree: $branchResolved" }
+            $remove = Invoke-RepositoryGit -RepositoryRoot $resolved -Arguments @('worktree', 'remove', '--force', '--', $branchResolved) -AllowFailure
+            if (Test-Path -LiteralPath $branchResolved -PathType Container) {
+                Remove-DevelopE2EOrphanedBranchDirectory -ProjectRoot $resolved -BranchPath $branchResolved -GitError ([string]$remove.stderr)
+            } elseif ($remove.exitCode -ne 0) {
+                $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $resolved | Where-Object { [string]::Equals([string]$_.path, $branchResolved, [StringComparison]::OrdinalIgnoreCase) })
+                if ($registered.Count -gt 0) { throw "Unable to remove fresh journey branch worktree '$branchResolved': $($remove.stderr.Trim())" }
+            }
         }
     }
     if (Test-Path -LiteralPath $resolved -PathType Container) { Remove-Item -LiteralPath $resolved -Recurse -Force }
+}
+
+function Remove-DevelopE2EOrphanedBranchDirectory {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot, [Parameter(Mandatory = $true)][string]$BranchPath, [string]$GitError = '')
+
+    $project = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    $branch = [IO.Path]::GetFullPath($BranchPath).TrimEnd('\', '/')
+    $leaf = Split-Path -Leaf $project
+    if ($leaf -notmatch '^d-[0-9a-f]{8}$' -or -not [string]::Equals($branch, "$project-develop-golden", [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove unexpected fresh journey branch directory: $branch"
+    }
+    $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $project | Where-Object { [string]::Equals([string]$_.path, $branch, [StringComparison]::OrdinalIgnoreCase) })
+    if ($registered.Count -gt 0) { throw "Unable to remove registered fresh journey branch worktree '$branch': $GitError" }
+    $gitFile = Join-Path $branch '.git'
+    if (-not (Test-Path -LiteralPath $gitFile -PathType Leaf)) { throw "Refusing to remove fresh journey branch without its Git pointer: $branch" }
+    $pointer = [IO.File]::ReadAllText($gitFile, [Text.Encoding]::UTF8).Trim()
+    if (-not $pointer.StartsWith('gitdir: ', [StringComparison]::Ordinal)) { throw "Refusing to remove fresh journey branch with an invalid Git pointer: $branch" }
+    $actualGitDir = [IO.Path]::GetFullPath($pointer.Substring(8)).TrimEnd('\', '/')
+    $expectedGitDir = [IO.Path]::GetFullPath((Join-Path $project ".git\worktrees\$(Split-Path -Leaf $branch)")).TrimEnd('\', '/')
+    if (-not [string]::Equals($actualGitDir, $expectedGitDir, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove fresh journey branch with a foreign Git pointer: $branch"
+    }
+    if (([IO.File]::GetAttributes($branch) -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        @(Get-ChildItem -LiteralPath $branch -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop).Count -gt 0) {
+        throw "Refusing to traverse a linked fresh journey branch directory: $branch"
+    }
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $branch -Recurse -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $branch) { throw "Directory still exists: $branch" }
+            return
+        } catch {
+            if (-not (Test-Path -LiteralPath $branch)) { return }
+            if ($attempt -eq 5) { throw "Unable to remove orphaned fresh journey branch directory '$branch' after $attempt attempts: $($_.Exception.Message)" }
+            Start-Sleep -Milliseconds (100 * $attempt)
+        }
+    }
 }
 
 function Remove-DevelopE2EExportArtifacts {
@@ -309,19 +414,41 @@ function Get-DevelopE2ERegisteredWorktrees {
     foreach ($token in $tokens) {
         if ($token -like "worktree *") {
             if ($null -ne $current) { $records.Add([pscustomobject]$current) | Out-Null }
-            $current = [ordered]@{ path = [IO.Path]::GetFullPath($token.Substring(9)); branch = "" }
+            $current = [ordered]@{ path = [IO.Path]::GetFullPath($token.Substring(9)); branch = ""; locked = $false; lockReason = '' }
             continue
         }
         if ($null -ne $current -and $token -like "branch *") {
             $current.branch = $token.Substring(7)
+        }
+        if ($null -ne $current -and ($token -eq 'locked' -or $token -like 'locked *')) {
+            $current.locked = $true
+            if ($token.Length -gt 6) { $current.lockReason = $token.Substring(7) }
         }
     }
     if ($null -ne $current) { $records.Add([pscustomobject]$current) | Out-Null }
     return @($records | ForEach-Object { $_ })
 }
 
+function Lock-DevelopE2EFreshWorktree {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot, [Parameter(Mandatory = $true)][string]$BranchPath)
+    $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $ProjectRoot | Where-Object { [string]::Equals([string]$_.path, [IO.Path]::GetFullPath($BranchPath), [StringComparison]::OrdinalIgnoreCase) })
+    if ($registered.Count -ne 1 -or $registered[0].locked) { throw "Fresh journey requires one unlocked owned worktree: $BranchPath" }
+    $reason = 'ITL Develop fresh journey ' + [guid]::NewGuid().ToString('N')
+    [void](Invoke-RepositoryGit -RepositoryRoot $ProjectRoot -Arguments @('worktree','lock','--reason',$reason,'--',$BranchPath))
+    return [pscustomobject]@{ projectRoot=$ProjectRoot; branchPath=$BranchPath; reason=$reason }
+}
+
+function Unlock-DevelopE2EFreshWorktree {
+    param([object]$Lease)
+    if (-not $Lease -or -not (Test-Path -LiteralPath $Lease.projectRoot -PathType Container)) { return }
+    $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $Lease.projectRoot | Where-Object { [string]::Equals([string]$_.path, [IO.Path]::GetFullPath($Lease.branchPath), [StringComparison]::OrdinalIgnoreCase) })
+    if ($registered.Count -eq 0) { return } # The owning close-dev-branch removed it.
+    if ($registered.Count -ne 1 -or -not $registered[0].locked -or $registered[0].lockReason -cne $Lease.reason) { throw "Fresh journey Git lock ownership changed; preserve the worktree: $($Lease.branchPath)" }
+    [void](Invoke-RepositoryGit -RepositoryRoot $Lease.projectRoot -Arguments @('worktree','unlock','--',$Lease.branchPath))
+}
+
 function Remove-DevelopE2EStaleStandWorktrees {
-    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot, [int]$MinimumAgeHours = 168)
 
     $resolvedProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
     $configPath = Join-Path $resolvedProjectRoot ".agent-1c\release-e2e.json"
@@ -331,17 +458,32 @@ function Remove-DevelopE2EStaleStandWorktrees {
     $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $preservedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     [void]$preservedPaths.Add($resolvedProjectRoot.TrimEnd('\', '/'))
-    foreach ($propertyName in @("worktreePath", "developWorktreePath")) {
-        if ($config.PSObject.Properties[$propertyName] -and [string]$config.$propertyName) {
-            [void]$preservedPaths.Add(([IO.Path]::GetFullPath([string]$config.$propertyName)).TrimEnd('\', '/'))
+    foreach ($propertyName in @("worktreePath", "developWorktreePath", "preserveWorktreePaths")) {
+        if ($config.PSObject.Properties[$propertyName]) {
+            foreach ($path in @($config.$propertyName)) {
+                if ([string]$path) {
+                    [void]$preservedPaths.Add(([IO.Path]::GetFullPath([string]$path)).TrimEnd('\', '/'))
+                }
+            }
         }
+    }
+    # Stand recovery records the worktree it replaced under any branch name;
+    # that worktree goes once its retirement has aged.
+    $agedRetired = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $retiredBefore = [DateTime]::UtcNow.AddHours(-$MinimumAgeHours)
+    foreach ($entry in @(if ($config.PSObject.Properties["retiredWorktrees"]) { @($config.retiredWorktrees) })) {
+        try {
+            $at = $entry.retiredAt
+            if ($at -isnot [datetime]) { $at = [DateTime]::Parse([string]$at, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) }
+            if ($at.ToUniversalTime() -le $retiredBefore) { [void]$agedRetired.Add(([IO.Path]::GetFullPath([string]$entry.path)).TrimEnd('\', '/') + "|refs/heads/" + [string]$entry.branch) }
+        } catch { continue }
     }
 
     $removed = New-Object System.Collections.Generic.List[object]
     foreach ($worktree in @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $resolvedProjectRoot)) {
         $path = ([IO.Path]::GetFullPath([string]$worktree.path)).TrimEnd('\', '/')
         $branch = [string]$worktree.branch
-        if ($preservedPaths.Contains($path) -or $branch -notmatch '^refs/heads/itldev/workflow-release-e2e(?:-[A-Za-z0-9._-]+)?$') { continue }
+        if ($preservedPaths.Contains($path) -or ($branch -notmatch '^refs/heads/itldev/workflow-release-e2e(?:-[A-Za-z0-9._-]+)?$' -and -not $agedRetired.Contains("$path|$branch"))) { continue }
         if (Test-Path -LiteralPath $path -PathType Container) {
             $status = Invoke-RepositoryGit -RepositoryRoot $path -Arguments @("status", "--porcelain", "--untracked-files=no")
             if ($status.stdout) { throw "Refusing to remove a stale Develop E2E worktree with tracked changes: $path" }

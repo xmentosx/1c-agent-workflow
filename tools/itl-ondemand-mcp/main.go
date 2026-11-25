@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.4.9"
+const version = "0.4.38"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -37,6 +37,15 @@ func run(args []string) error {
 	if args[0] == "vanessa-profile-start" {
 		return runVanessaProfileStart(args[1:])
 	}
+	if args[0] == "vanessa-profile-owner" {
+		return runProfileOwner(args[1:])
+	}
+	if args[0] == "vanessa-profile-stop" {
+		return runProfileOwnerControl("stop", args[1:])
+	}
+	if args[0] == "vanessa-profile-status" {
+		return runProfileOwnerControl("status", args[1:])
+	}
 	if args[0] != "serve" {
 		return fmt.Errorf("usage: itl-ondemand-mcp serve --family roctup|vanessa-ui --project-root PATH --catalog PATH --helper PATH")
 	}
@@ -46,9 +55,13 @@ func run(args []string) error {
 	catalogPath := flags.String("catalog", "", "compatibility catalog")
 	helperPath := flags.String("helper", "", "agent-1c.ps1 path")
 	idle := flags.Duration("idle-timeout", 10*time.Minute, "backend idle timeout")
+	cleanupTimeout := flags.Duration("cleanup-timeout", time.Minute, "owned backend shutdown budget")
 	surface := flags.String("surface", "gateway", "public tool surface: gateway or full")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
+	}
+	if *cleanupTimeout <= 0 || *cleanupTimeout > 24*time.Hour {
+		return fmt.Errorf("--cleanup-timeout must be positive and no greater than 24h")
 	}
 	if *family != "roctup" && *family != "vanessa-ui" {
 		return fmt.Errorf("invalid --family %q", *family)
@@ -67,20 +80,31 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateFacadeCatalog(catalog); err != nil {
+		return err
+	}
 	instanceID, err := randomID()
 	if err != nil {
 		return err
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	broker := &powershellBroker{
-		HelperPath: *helperPath, ProjectRoot: root, Family: *family,
+		privateRuntime: true,
+		HelperPath:     *helperPath, ProjectRoot: root, Family: *family,
 		InstanceID: instanceID, CatalogHash: catalog.SHA256,
+	}
+	// The installed catalogs live in assets/ondemand-mcp/catalogs next to the
+	// compatibility manifest that pins this facade's version.
+	compatibilityPath := ""
+	if absoluteCatalog, err := filepath.Abs(*catalogPath); err == nil {
+		compatibilityPath = filepath.Join(filepath.Dir(filepath.Dir(absoluteCatalog)), "compatibility.json")
 	}
 	rt := &runtime{
 		catalog: catalog, broker: broker, projectRoot: root, family: *family,
 		instanceID: instanceID, idle: *idle, catalogWait: 30 * time.Second, logger: logger,
 		vanessaConnectWait: 60 * time.Second,
 		progress:           make(map[string]*progressRoute),
+		compatibilityPath:  compatibilityPath,
 	}
 	serverName := "itl-roctup-data"
 	if *family == "vanessa-ui" {
@@ -93,6 +117,9 @@ func run(args []string) error {
 	if *surface == "gateway" {
 		addGatewayTools(server, rt)
 	} else {
+		server.AddTool(ownerRecoveryDefinition(), func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return rt.call(ctx, req)
+		})
 		for _, definition := range catalog.Data.Tools {
 			tool := definition
 			server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -101,7 +128,7 @@ func run(args []string) error {
 		}
 	}
 	err = server.Run(context.Background(), &mcp.StdioTransport{})
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), *cleanupTimeout)
 	defer cancel()
 	cleanupErr := rt.close(cleanupCtx)
 	if err != nil {

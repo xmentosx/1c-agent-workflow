@@ -1,0 +1,666 @@
+{
+  "schemaVersion": 1,
+  "id": "G3-SOURCE-CLIENT-20261020",
+  "observedUtc": "2026-10-20T20:22:03.991076+00:00",
+  "status": "PARTIAL_NATIVE_CODEX_PASSED_SOURCE_ADMISSION_AND_OTHER_CLIENTS_OPEN",
+  "qualificationSourceCommit": "8f54de3cd998d5452652fe40c0b5ceeeb543c8ff",
+  "runtimeInputs": [
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+      "blob": "fdd289d081ce45b0601a84bb034e4146eb23a94b",
+      "sha256": "2f2c4b9eb9fa694460b028a78d17062e93134f9c64f7e6d3710c39fd71ef9528"
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+      "blob": "b1da2f6c6f750b781db42c3e6129f2b204178e46",
+      "sha256": "14c269a9ad47ebb7b9ceff2b854c5c1009ac783adb51ddec55d5341e8628e25d"
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+      "blob": "098ce1b7e178e078ffe7430789565b0a93ef8102",
+      "sha256": "66841d17ffbb70c5fddbc905522d2970bbb1f6801e9c61259242dd1ff3fa29b3"
+    }
+  ],
+  "bindings": [
+    {
+      "family": "PM5",
+      "selectedBinding": {
+        "productId": "g3-pm5corp",
+        "projectId": "g3-pm5corp",
+        "requiredCapability": "product-project-registry-v1",
+        "schemaVersion": 1
+      },
+      "catalogRevision": "c439e57310c9198999686820ec5b09f6b7c12dac",
+      "endpointIntents": {
+        "code": {
+          "configId": "pm5corp",
+          "declaredVersion": null,
+          "hostId": "g3-dev-ermakov",
+          "namespace": null,
+          "readiness": "unverified",
+          "role": "code",
+          "scope": "whole-source",
+          "serverId": "code",
+          "sourceFingerprint": null,
+          "sourceId": "pm5corp-code",
+          "url": "http://dev-ermakov.itland.local:22100/mcp",
+          "viewId": ""
+        },
+        "graph": {
+          "configId": "pm5corp",
+          "declaredVersion": null,
+          "hostId": "g3-dev-ermakov",
+          "namespace": "default",
+          "readiness": "unverified",
+          "role": "graph",
+          "scope": "whole-source",
+          "serverId": "graph",
+          "sourceFingerprint": null,
+          "sourceId": "pm5corp-graph",
+          "url": "http://dev-ermakov.itland.local:22101/mcp/",
+          "viewId": ""
+        }
+      },
+      "localNegativeControls": [
+        {
+          "case": "unknown-hostId",
+          "error": "CATALOG_INVALID: sources.pm5corp-code.endpoint.hostId is unknown/ambiguous",
+          "rejected": true
+        },
+        {
+          "case": "unknown-serverId",
+          "error": "CATALOG_INVALID: sources.pm5corp-code.endpoint.serverId is unknown/ambiguous",
+          "rejected": true
+        },
+        {
+          "case": "unknown-configId",
+          "error": "CATALOG_INVALID: sources.pm5corp-code.endpoint.serverId is unknown/ambiguous",
+          "rejected": true
+        },
+        {
+          "case": "wrong-declared-namespace",
+          "expectedNamespace": "g3-wrong-namespace",
+          "mismatchDetectedByRuntime": false,
+          "observedNamespace": "default",
+          "ready": false,
+          "state": "unverified"
+        }
+      ],
+      "code": {
+        "endpoint": "http://dev-ermakov.itland.local:22100/mcp",
+        "nativeProjectId": "code-20d3eae87f48",
+        "generation": "20261019T230814Z-aca520f1",
+        "namespacePublished": false,
+        "release": {
+          "version": "1.0.0",
+          "build_digest": null,
+          "index_layout": {
+            "min": 3,
+            "max": 3
+          },
+          "source": "manifest_file",
+          "pinned": false
+        }
+      },
+      "graph": {
+        "endpoint": "http://dev-ermakov.itland.local:22101/mcp/",
+        "nativeProjectId": "pm5corp",
+        "namespace": "default",
+        "configurationRoot": "/app/code",
+        "activeGeneration": null,
+        "topLevelContext": {
+          "tool": "get_graph_project_status",
+          "mcp_namespace": null,
+          "project_id": null,
+          "correlation_id": "8ba54b3cdfca4908"
+        },
+        "readiness": {
+          "neo4j": true,
+          "lanes": {
+            "exact": null,
+            "fulltext": null,
+            "vector": null,
+            "hybrid": null,
+            "traversal": null
+          },
+          "state": "unknown",
+          "mode": {
+            "graph_only": false,
+            "embedding_provider": "ready",
+            "llm_provider": "no_api_key",
+            "vector_lane": {
+              "expected": true,
+              "reason": null
+            }
+          }
+        }
+      },
+      "runtimeAdmission": "unverified; intent resolver does not perform live source identity admission"
+    },
+    {
+      "family": "PM4",
+      "selectedBinding": {
+        "productId": "g3-pm4corp",
+        "projectId": "g3-pm4corp",
+        "requiredCapability": "product-project-registry-v1",
+        "schemaVersion": 1
+      },
+      "catalogRevision": "c439e57310c9198999686820ec5b09f6b7c12dac",
+      "endpointIntents": {
+        "code": {
+          "configId": "pm4corp",
+          "declaredVersion": null,
+          "hostId": "g3-dev-ermakov",
+          "namespace": null,
+          "readiness": "unverified",
+          "role": "code",
+          "scope": "whole-source",
+          "serverId": "code",
+          "sourceFingerprint": null,
+          "sourceId": "pm4corp-code",
+          "url": "http://dev-ermakov.itland.local:22200/mcp",
+          "viewId": ""
+        },
+        "graph": {
+          "configId": "pm4corp",
+          "declaredVersion": null,
+          "hostId": "g3-dev-ermakov",
+          "namespace": "default",
+          "readiness": "unverified",
+          "role": "graph",
+          "scope": "whole-source",
+          "serverId": "graph",
+          "sourceFingerprint": null,
+          "sourceId": "pm4corp-graph",
+          "url": "http://dev-ermakov.itland.local:22201/mcp/",
+          "viewId": ""
+        }
+      },
+      "localNegativeControls": [
+        {
+          "case": "unknown-hostId",
+          "error": "CATALOG_INVALID: sources.pm4corp-code.endpoint.hostId is unknown/ambiguous",
+          "rejected": true
+        },
+        {
+          "case": "unknown-serverId",
+          "error": "CATALOG_INVALID: sources.pm4corp-code.endpoint.serverId is unknown/ambiguous",
+          "rejected": true
+        },
+        {
+          "case": "unknown-configId",
+          "error": "CATALOG_INVALID: sources.pm4corp-code.endpoint.serverId is unknown/ambiguous",
+          "rejected": true
+        },
+        {
+          "case": "wrong-declared-namespace",
+          "expectedNamespace": "g3-wrong-namespace",
+          "mismatchDetectedByRuntime": false,
+          "observedNamespace": "default",
+          "ready": false,
+          "state": "unverified"
+        }
+      ],
+      "code": {
+        "endpoint": "http://dev-ermakov.itland.local:22200/mcp",
+        "nativeProjectId": "code-20d3eae87f48",
+        "generation": "20261017T235843Z-d972befd",
+        "namespacePublished": false,
+        "release": {
+          "version": "1.0.0",
+          "build_digest": null,
+          "index_layout": {
+            "min": 3,
+            "max": 3
+          },
+          "source": "manifest_file",
+          "pinned": false
+        }
+      },
+      "graph": {
+        "endpoint": "http://dev-ermakov.itland.local:22201/mcp/",
+        "nativeProjectId": "pm4corp",
+        "namespace": "default",
+        "configurationRoot": "/app/code",
+        "activeGeneration": null,
+        "topLevelContext": {
+          "tool": "get_graph_project_status",
+          "mcp_namespace": null,
+          "project_id": null,
+          "correlation_id": "cfc46790ffc64381"
+        },
+        "readiness": {
+          "neo4j": true,
+          "lanes": {
+            "exact": null,
+            "fulltext": null,
+            "vector": null,
+            "hybrid": null,
+            "traversal": null
+          },
+          "state": "unknown",
+          "mode": {
+            "graph_only": false,
+            "embedding_provider": "ready",
+            "llm_provider": "no_api_key",
+            "vector_lane": {
+              "expected": true,
+              "reason": null
+            }
+          }
+        }
+      },
+      "runtimeAdmission": "unverified; intent resolver does not perform live source identity admission"
+    }
+  ],
+  "nativeCodex": {
+    "exe": "C:\\Users\\xment\\AppData\\Local\\OpenAI\\Codex\\bin\\896a0166b774037a\\codex.exe",
+    "executableSha256": "f6dbf48cb70f62649c645f26c87dc9bf84cc36986202dfad8e12fb5b8ca70312",
+    "version": "0.163.0-alpha.10.2",
+    "projectRoots": [
+      "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+      "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM4"
+    ],
+    "positiveFamilies": [
+      "PM5",
+      "PM4"
+    ],
+    "toolCountPerFamily": {
+      "code": 28,
+      "graph": 54
+    },
+    "safeCallsPerFamily": 4,
+    "toolCallingSurface": "Installed Codex app-server mcpServer/tool/call, thread-scoped native connections; no LLM turn",
+    "freshContextPassed": true,
+    "reloadPassed": true,
+    "reloadPhases": [
+      {
+        "phase": "before-edit",
+        "codeGeneration": "20261019T230814Z-aca520f1",
+        "graphProjects": [
+          "pm5corp"
+        ]
+      },
+      {
+        "phase": "physical-override-without-reload",
+        "codeGeneration": "20261019T230814Z-aca520f1",
+        "graphProjects": [
+          "pm5corp"
+        ]
+      },
+      {
+        "phase": "reload-existing-thread",
+        "codeGeneration": "20261017T235843Z-d972befd",
+        "graphProjects": [
+          "pm4corp"
+        ]
+      },
+      {
+        "phase": "reload-new-thread",
+        "codeGeneration": "20261017T235843Z-d972befd",
+        "graphProjects": [
+          "pm4corp"
+        ]
+      },
+      {
+        "phase": "restore-new-thread",
+        "codeGeneration": "20261019T230814Z-aca520f1",
+        "graphProjects": [
+          "pm5corp"
+        ]
+      }
+    ],
+    "unicodePathRoundTrips": [
+      {
+        "log": "codex-PM4-rpc.jsonl",
+        "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM4",
+        "exactFixturePath": true
+      },
+      {
+        "log": "codex-PM5-rpc.jsonl",
+        "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+        "exactFixturePath": true
+      },
+      {
+        "log": "codex-reload-r2-rpc.jsonl",
+        "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+        "exactFixturePath": true
+      },
+      {
+        "log": "codex-reload-r2-rpc.jsonl",
+        "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+        "exactFixturePath": true
+      },
+      {
+        "log": "codex-reload-r2-rpc.jsonl",
+        "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+        "exactFixturePath": true
+      },
+      {
+        "log": "codex-reload-rpc.jsonl",
+        "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+        "exactFixturePath": true
+      }
+    ],
+    "globalConfigUnchangedDuringInitialRuns": true,
+    "testConfigBytesRestored": true,
+    "projectAndReceiptsUnchanged": true,
+    "limits": "No current desktop/IDE frontend or production project activation claim; no scope/readiness inferred from transport, tool count, authStatus or isError alone."
+  },
+  "clientFiles": {
+    "passed": 48,
+    "failed": 0,
+    "adapters": 12,
+    "families": 2,
+    "roles": 2,
+    "scope": "Native file readers, not active tool contexts"
+  },
+  "clientInventory": {
+    "observedUtc": "2026-10-20T20:18:52.036311+00:00",
+    "commands": {
+      "codex.exe": "C:\\Users\\xment\\AppData\\Local\\OpenAI\\Codex\\bin\\896a0166b774037a\\codex.exe",
+      "opencode": null,
+      "claude": null,
+      "kilo": null,
+      "kimi": null,
+      "qwen": null,
+      "command-code": null,
+      "zcode": null,
+      "mimocode": null,
+      "pi": null,
+      "code.cmd": "C:\\Users\\xment\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd",
+      "cursor.cmd": "C:\\Users\\xment\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin\\cursor.cmd"
+    },
+    "opencodeDesktop": {
+      "path": "C:\\Users\\xment\\AppData\\Local\\Programs\\@opencode-aidesktop\\OpenCode.exe",
+      "name": "@opencode-ai/desktop",
+      "version": "1.18.11",
+      "standaloneCliDiscovered": false,
+      "main": "./out/main/index.js"
+    },
+    "extensions": [
+      {
+        "path": "C:\\Users\\xment\\.vscode\\extensions\\kilocode.kilo-code-7.8.12-win32-x64",
+        "name": "kilo-code",
+        "version": "7.8.12"
+      }
+    ],
+    "limits": "Installed executable/extension inventory only. Codex native activation is separately exercised; Desktop/IDE presence, static files and unsupported diagnostic surfaces are not treated as tool activation. No clients installed, no real profiles reconfigured or frontend sessions started."
+  },
+  "openConditions": [
+    {
+      "id": "G3-SOURCE-ADMISSION",
+      "owner": "existing registry/source readiness",
+      "state": "Exact host/server/config preflight rejects unknowns, but correct and wrong declared namespace both stay unverified; automatic live comparison/admission is not implemented. No new barrier introduced."
+    },
+    {
+      "id": "G3-SOURCE-VERSION",
+      "owner": "source publication/identity",
+      "state": "Code has same internal ID on distinct endpoints, no published namespace, release 1.0.0 unpinned/build_digest null; Graph active generation null. Observed IDs/generations do not establish exact configuration/index version."
+    },
+    {
+      "id": "G3-CLIENT-RUNTIME-MATRIX",
+      "owner": "existing client adapters/native qualification",
+      "state": "Codex core/API qualified on private PM4/PM5 fixtures; actual desktop/IDE/frontend and remaining 11 adapters not activated. OpenCode Desktop/Cursor/Kilo installed; no standalone callable diagnostic CLI found for their project MCP tool invocation in this run. Presence/file proof is not pass; support unchanged."
+    }
+  ],
+  "cost": {
+    "nativeToolCallsAcrossAllAttempts": 23,
+    "nativeToolCallsInAcceptedRuns": 19,
+    "retainedFailedReloadAttemptCalls": 4,
+    "directSafeReadToolCalls": 16,
+    "llmTurnStarts": 0,
+    "cogneeCalls": 0,
+    "alwaysOnRuleDelta": 0,
+    "newToolSchemaDelta": 0,
+    "codeEmbeddingUsage": "Two direct compact_search calls may use existing Qwen embedding backend/cache; internal request/token usage not measured. Native stats/fulltext tests do not request model generation."
+  },
+  "harnessIncidents": [
+    {
+      "case": "initial PowerShell 5.1 no-BOM parser failure",
+      "artifact": "create-fixtures-initial-no-bom.ps1",
+      "outcome": "No fixture action reached; UTF-8 BOM and existing UTF-8 child capture used for successful retry"
+    },
+    {
+      "case": "initial native reload override produced CRCRLF",
+      "artifact": "codex-reload.json.initial",
+      "outcome": "Codex correctly rejected invalid TOML. Original bytes restored; only test writer changed to byte replacement, same phase sequence repeated successfully."
+    },
+    {
+      "case": "initial Python console diagnostic encoding",
+      "outcome": "Some first non-ASCII console summaries used Windows stream encoding; they are not transport proof. Raw HTTP/RPC JSON was written/decoded with explicit UTF-8; final inspectors used -X utf8 and exact Unicode cwd round-trip passed."
+    }
+  ],
+  "acceptance": {
+    "registryAC08": "partial/unverified admission+version",
+    "registryAC20AC26": "native Codex core PM4/PM5 plus reload subset passed; full affected-client/frontend matrix open",
+    "registryAC39": "open",
+    "memoryAC43G5": "open",
+    "releasePopulationAC36to38andAC44": "open; private synthetic catalog is not population",
+    "G1Q1Q7D9G2": "not reopened",
+    "G4": "not started",
+    "gate6": "no run/fix",
+    "workingMigration": "not started",
+    "publication": "not started",
+    "aiRulesFork": "unchanged"
+  },
+  "officialReferences": [
+    {
+      "title": "Codex App Server",
+      "url": "https://learn.chatgpt.com/docs/app-server",
+      "usedFor": "Version-matched schema generation; thread-scoped MCP discovery/call and config reload"
+    },
+    {
+      "title": "Model Context Protocol",
+      "url": "https://learn.chatgpt.com/docs/extend/mcp?surface=cli",
+      "usedFor": "Trusted project configuration and explicit client reload; shared configuration does not prove all frontend activations"
+    }
+  ],
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\check-client-files.ps1",
+      "sha256": "4ba48d978b832b1ee6f4a3964660682e8243092187eacda60a40b667de91858b",
+      "bytes": 1494
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\client-files.json",
+      "sha256": "d0a0aa96ba4cf090e720f3ac49b72e694f3586c76d033683bcb17d46b934fcf5",
+      "bytes": 5955
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\client-files.result.json",
+      "sha256": "80bdd7e145574f0aadcfc8fb39b7dab25e753656ba892b13deb21a4c7081bb8a",
+      "bytes": 410
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\client-files.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\client-files.stdout",
+      "sha256": "73cd5e6bad5fb8494fa7ca130ef7f3458809c6f25262616179004a7fed5e317e",
+      "bytes": 114
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\client-inventory.json",
+      "sha256": "a3e630f32a83fcf9fa66920542408f5961957d5fc586c5c9038f115a1401a2a8",
+      "bytes": 1323
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\client-inventory.py",
+      "sha256": "ef87bce1549e1bafdf39fafdf3020c23ed346b4fbb9436b89fde684cbc7af7f8",
+      "bytes": 1708
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-native-initial.py",
+      "sha256": "cd74af7bbcb200b91717a4092e51ff2de8186f4ebeda68eba3017aa9f98de935",
+      "bytes": 6106
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-native.json",
+      "sha256": "0fc49a704e5873575613232635593925ee3948535c4b2d0b5093884cd7ce7dc1",
+      "bytes": 718632
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-native.py",
+      "sha256": "f78764280e354ea4fe4b1f6499017890b9f4d135bde34f11fae9d60eb859ead4",
+      "bytes": 6246
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-PM4-rpc.jsonl",
+      "sha256": "90775f0dd7607f8843a00e2aaa105808f80ba1e4b6e7cdd1d388999290240ea1",
+      "bytes": 232261
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-PM4-stderr.txt",
+      "sha256": "d4c6ea3e208d45ebbbd059e567b8ff31d470ff92ded434346eb378c7e37c429c",
+      "bytes": 5151
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-PM5-rpc.jsonl",
+      "sha256": "93ed4921af947d4c96545f1f31bbcb28f893f94abe7d64dee5ac41eb1afef430",
+      "bytes": 234415
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-PM5-stderr.txt",
+      "sha256": "51310e61f1cd1d2691ab97a4e49c9b8d4a423946ef78be0168dfb71f7009fb64",
+      "bytes": 6907
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-reload-r2-rpc.jsonl",
+      "sha256": "6f417b3eba5afa740148fde96e6cbcc129d7304dd73180b9c9b1e08fa73ef786",
+      "bytes": 144437
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-reload-r2-stderr.txt",
+      "sha256": "354a315784cb34f115c4edd5c92fff15c3eb6a666a170fc8f68424ae63cee2f7",
+      "bytes": 12277
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-reload-rpc.jsonl",
+      "sha256": "f1406559709cbb41d9476de5d593c9e49d1745f9cb674edbe6b9d534cb180289",
+      "bytes": 58542
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-reload-stderr.txt",
+      "sha256": "0d50577f361f684c4baec25b0381bd013a37c9ba67dd7c79da81dbe56f4c36ee",
+      "bytes": 3435
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-reload.json",
+      "sha256": "36c8565511665a7b0a3a08361f517bc0375037ad4791740bd59fd9857a6de9fe",
+      "bytes": 124493
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-reload.json.initial",
+      "sha256": "99c62b131c3a61889813214de7c1e14d787a750cc645254b41b6a0cea2764442",
+      "bytes": 53158
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-reload.py",
+      "sha256": "f8800a555db7057507a334e70c830ccb45b629c920b031c686d82326d3c7fb47",
+      "bytes": 3849
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-reload.py.initial",
+      "sha256": "d02d53c08adc242ee7da26ef2db8d54732ed00f19369d1947ecfd6b9efddc2fe",
+      "bytes": 3837
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\collect-proof.py",
+      "sha256": "49b4e21f569b4c19f5a81ed82cd15872823cc533c70faf3cae2eef8d7f59656d",
+      "bytes": 8914
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\create-fixtures-initial-no-bom.ps1",
+      "sha256": "e374b4499db56f1c7cea8f2ce867f04cd63a1cfdbeb1b9fcf459c1bee5eb7c8d",
+      "bytes": 5693
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\create-fixtures.ps1",
+      "sha256": "2551d5b585e67502fef58917512b375e385b8790fecf3040eaaaf319dad9715e",
+      "bytes": 5708
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\discover.py",
+      "sha256": "f59012dba87cba3e2d1b04e41666e1ec424efe32dfda9a99be1f4d203ac78cea",
+      "bytes": 1696
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\discovery.json",
+      "sha256": "6aa2d2004c990a92959887076f2395e488575a72e5ee533b2c9446c1a2601ced",
+      "bytes": 1235295
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\fixture-setup.result.json",
+      "sha256": "5a87721cd0544e75b2ac308566172dd3f6a98254db7703afcec29a82f1e95269",
+      "bytes": 408
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\fixture-setup.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\fixture-setup.stdout",
+      "sha256": "b37d3a43d540cad39ea5db557a7019cd472a58d6023625883d20103c83bd6f28",
+      "bytes": 4213
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\fixtures.json",
+      "sha256": "5c9ea9181bdf040667ed97bf128436373b84d9440b6221c5ce962ed9dacee6cb",
+      "bytes": 32137
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\identity.json",
+      "sha256": "8ea3680eb79ad6e53052f426015fdb0de050213bc264b3f72bce1ed386d680c4",
+      "bytes": 231665
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\identity.py",
+      "sha256": "1713a4ce695d3573cdd6a49b4375e8f5871d335e378ee05a5af298a7fadd8faa",
+      "bytes": 2056
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\reload-before.toml",
+      "sha256": "31cab0477a797c21801a3b3d41471e5984f000bde12fffbe37a7be6c29b83c11",
+      "bytes": 388
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\reload-foreign.toml",
+      "sha256": "4c2ac211310918d4af35601cde72594b054463c0761ba3c90a7bc4436a86af50",
+      "bytes": 388
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\run-capture.ps1",
+      "sha256": "36a3e44409c969f3b7b60378ef69453001465db67b6b5077eff093d42f050859",
+      "bytes": 1216
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\schemas\\ClientRequest.json",
+      "sha256": "6b10888f163f569922d42c41e94a98b4261258abc7581c14eca867c3b125dc6f",
+      "bytes": 215097
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\schemas\\v2\\McpServerToolCallParams.json",
+      "sha256": "7039a7583a1cbf38e9e0f5fe6398ff3711acd4d654b81b0be562514087fce6ba",
+      "bytes": 380
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\schemas\\v2\\ListMcpServerStatusParams.json",
+      "sha256": "30b978c6502b37c9f0002aeba241f41c91d4c6adf0f92d89242b62ffde415a2d",
+      "bytes": 1223
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\schemas\\v2\\ThreadStartParams.json",
+      "sha256": "e9c6d3cc18d049bfbc0249add3808fb8e5a27e1a0b5a423767aafbc3859a9428",
+      "bytes": 10358
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\schemas\\v1\\InitializeParams.json",
+      "sha256": "b55124e7c0f36a1789396daa5578217a92be67f053903696236686e59f6f212e",
+      "bytes": 2401
+    }
+  ]
+}

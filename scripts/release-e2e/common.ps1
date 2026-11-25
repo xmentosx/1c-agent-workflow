@@ -6,7 +6,7 @@ function Register-ReleaseE2EStageDefinition {
         name = $Name
         version = $Version
         moduleFile = $(if ($ModuleFile) { $ModuleFile } else { "$Name.ps1" })
-        paths = @($Paths)
+        paths = @($Paths) + @('scripts/stand-env-identity.ps1')
         dependsOn = @($DependsOn)
     }
 }

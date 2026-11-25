@@ -1,0 +1,399 @@
+{
+  "schemaVersion": 1,
+  "status": "partial-current-PM5-native-client-qualification; full-G3-blocked",
+  "scope": "Code stats + Graph list_graph_projects before/after native reload; no runtime code change",
+  "sourceCommit": "08ad9751d1d55077fc80efdb27cb2565f4db1afd",
+  "installedCommit": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+  "aiRulesCommit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+  "projectRoot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+  "branchRoot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+  "clients": {
+    "kilo": {
+      "status": "passed",
+      "session": "ses_e9537dd5effeEyCzSrsFfby1L9",
+      "nativeCalls": 4,
+      "parts": [
+        "prt_16ac8426900196sastniNDHlec",
+        "prt_16ac84395001UHDohgWkt2egZP",
+        "prt_16acc8362001khR0Ck5Sju7m2P",
+        "prt_16acc83e2001r4kBedZRJoMKS7"
+      ],
+      "payloads": [
+        {
+          "kind": "Code",
+          "main": [
+            {
+              "name": "УправлениеПроектамиКОРП",
+              "path": "/app/code",
+              "role": "main",
+              "marker": "/app/code/Configuration.xml"
+            }
+          ],
+          "serverRelease": "1.0.0",
+          "configurationVersionPresent": false
+        },
+        {
+          "kind": "Graph",
+          "projectId": "pm5corp",
+          "namespace": "default",
+          "status": "ready"
+        },
+        {
+          "kind": "Code",
+          "main": [
+            {
+              "name": "УправлениеПроектамиКОРП",
+              "path": "/app/code",
+              "role": "main",
+              "marker": "/app/code/Configuration.xml"
+            }
+          ],
+          "serverRelease": "1.0.0",
+          "configurationVersionPresent": false
+        },
+        {
+          "kind": "Graph",
+          "projectId": "pm5corp",
+          "namespace": "default",
+          "status": "ready"
+        }
+      ],
+      "tokens": {
+        "tokens_input": 140744,
+        "tokens_output": 293,
+        "tokens_reasoning": 699,
+        "tokens_cache_read": 132683,
+        "tokens_cache_write": 0
+      }
+    },
+    "cursor": {
+      "status": "passed-current-3.27.12",
+      "nativeCalls": 4,
+      "calls": [
+        {
+          "namespace": "project-0-project-1c-code-metadata-mcp",
+          "toolName": "stats",
+          "mcpDetails": {
+            "description": "Read Code metadata server statistics for the loaded configuration identity."
+          },
+          "arguments": {}
+        },
+        {
+          "namespace": "project-0-project-1c-graph-metadata-mcp",
+          "toolName": "list_graph_projects",
+          "mcpDetails": {
+            "description": "List accessible Graph metadata projects and their namespaces."
+          },
+          "arguments": {}
+        },
+        {
+          "arguments": {},
+          "mcpDetails": {
+            "description": "Read Code metadata server statistics for the loaded configuration identity."
+          },
+          "namespace": "project-0-project-1c-code-metadata-mcp",
+          "toolName": "stats"
+        },
+        {
+          "arguments": {},
+          "mcpDetails": {
+            "description": "List accessible Graph metadata projects and their namespaces."
+          },
+          "namespace": "project-0-project-1c-graph-metadata-mcp",
+          "toolName": "list_graph_projects"
+        }
+      ],
+      "toolCallIds": [
+        "call-da36cf84-b6ad-4620-9e9c-618add2a0337-0\nfc_c740abde-fc62-9aaa-87b6-a64a1339b1c8_0",
+        "call-0c8a39c9-45ea-4e2d-adf3-248351a9da5d-1\nfc_abcfb4d6-cc62-93ce-8fb8-e302083ea0bb_0",
+        "call-778d6df9-1c45-49da-9c5c-640108cf0d3b-2\nfc_4d7c0aa2-b972-93c9-8982-0c5800be6728_0",
+        "call-778d6df9-1c45-49da-9c5c-640108cf0d3b-3\nfc_4d7c0aa2-b972-93c9-8982-0c5800be6728_1"
+      ],
+      "payloads": [
+        {
+          "kind": "Code",
+          "main": [
+            {
+              "name": "УправлениеПроектамиКОРП",
+              "path": "/app/code",
+              "role": "main",
+              "marker": "/app/code/Configuration.xml"
+            }
+          ],
+          "serverRelease": "1.0.0",
+          "configurationVersionPresent": false
+        },
+        {
+          "kind": "Graph",
+          "projectId": "pm5corp",
+          "namespace": "default",
+          "status": "ready"
+        },
+        {
+          "kind": "Code",
+          "main": [
+            {
+              "name": "УправлениеПроектамиКОРП",
+              "path": "/app/code",
+              "role": "main",
+              "marker": "/app/code/Configuration.xml"
+            }
+          ],
+          "serverRelease": "1.0.0",
+          "configurationVersionPresent": false
+        },
+        {
+          "kind": "Graph",
+          "projectId": "pm5corp",
+          "namespace": "default",
+          "status": "ready"
+        }
+      ],
+      "previousRun": {
+        "nativeCalls": 4,
+        "initialVersion": "3.26.16",
+        "finalVersion": "3.27.12",
+        "initialExeSha": "2c772f7a71767a31cd44d013066995a8d98125cad0b9cecfcccf3ef698806cdd",
+        "finalExeSha": "048b7934804250424d95998d800f7dfe27c27cfa14426e94daa825852c424076",
+        "strictExecutableIdentityPassed": false,
+        "updateCause": "not established; Install Now was not clicked",
+        "evidencePreserved": true
+      },
+      "currentRunExecutableStable": true
+    },
+    "opencode": {
+      "status": "blocked-provider-quota",
+      "nativeCalls": 0,
+      "session": "ses_e9526efd7ffeyYavpc891Oc9jX",
+      "error": "Free usage exceeded, subscribe to Go",
+      "deferredRetryStopped": true,
+      "rendererReload": [
+        {
+          "evidence": "opencode-new-session-network.json",
+          "scopedPathGet200": 2,
+          "scopedMcpGet200": 2,
+          "selectedRootMatches": true,
+          "bothMcpConnected": true
+        },
+        {
+          "evidence": "opencode-reload-network.json",
+          "scopedPathGet200": 2,
+          "scopedMcpGet200": 2,
+          "selectedRootMatches": true,
+          "bothMcpConnected": true
+        }
+      ]
+    }
+  },
+  "executableIdentity": [
+    {
+      "client": "vscode",
+      "exe": "C:\\Users\\xment\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
+      "sha256": "5ca701a1facb91fec1ac6bbae11fc837821a1da34ddebb91a0bad7e87ab88144",
+      "ownedProcessesClosed": 21
+    },
+    {
+      "client": "cursor",
+      "exe": "C:\\Users\\xment\\AppData\\Local\\Programs\\cursor\\Cursor.exe",
+      "sha256": "048b7934804250424d95998d800f7dfe27c27cfa14426e94daa825852c424076",
+      "ownedProcessesClosed": 13
+    },
+    {
+      "client": "opencode",
+      "exe": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\opencode-provider-repair-20261021\\release-1.19.3\\app\\OpenCode.exe",
+      "sha256": "c820792bfa615118c26d68c05bfbedcf6b24a873123bd9c56dfea213f961bc36",
+      "ownedProcessesClosed": 15
+    }
+  ],
+  "nativeToolCallsTotal": 12,
+  "nativeCallsAcceptedStableClientRuns": 8,
+  "nativeCallsEarlierCursorRunRetained": 4,
+  "nativeWrites": {
+    "kiloOnlyAddedSchemaBytes": 49,
+    "kiloAllOriginalBytesRetained": true,
+    "kiloAllMcpValuesUnchanged": true,
+    "opencodeAllMcpValuesEqualSavedPreLaunchProof": true,
+    "opencodeEntries": 5,
+    "opencodeTopKeys": [
+      "$schema",
+      "mcp"
+    ],
+    "initialFullByteGuardPassed": false,
+    "nativeWritesReported": true
+  },
+  "preservation": {
+    "guardPaths": 46,
+    "finalExactBytesAndMtime": true,
+    "fixtureCleanupIsProductRecovery": false,
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "bytes": 3295928320
+    },
+    "historicalFiles": 21,
+    "historicalRoots": 4,
+    "capsuleArtifacts": 11,
+    "priorManifests": [
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\raw-evidence-manifest.json",
+        "sha256": "34af1dc8c747868742d6a330b3a7e57d770f08eaa86740e5171206d4b4e34df4",
+        "filesVerified": 702
+      },
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\raw-evidence-manifest.json",
+        "sha256": "2afb421ee52c3c8d0c2b31b4ddf0ff31218178b8f6d096e55dfa05b0b2b2b6e0",
+        "filesVerified": 659
+      }
+    ],
+    "clientMembershipUnchanged": [
+      "kilocode",
+      "cursor"
+    ],
+    "opencodeConfigPreparation": "public sync-client-mcp -Client opencode on isolated fixture; no enrollment; exact teardown",
+    "leaseReleased": true
+  },
+  "openBlockers": [
+    {
+      "id": "G3-OPENCODE-PROVIDER-QUOTA",
+      "status": "open",
+      "reason": "Big Pickle Free usage exceeded before tools; no usable alternative profile supplied",
+      "continuation": "Use an already configured authorized available provider and repeat exactly two actual reads before and two after renderer reload on this root; retain failed quota evidence"
+    },
+    {
+      "id": "G3-B4",
+      "status": "partial",
+      "reason": "current PM5 Kilo/Cursor subset green; OpenCode native model calls and remaining frontend/platform/lifecycle cells not accepted"
+    }
+  ],
+  "boundaries": {
+    "gate6": "untouched",
+    "G4": "not started",
+    "workingMigration": "not started",
+    "publication": "not started",
+    "serverPatches": false,
+    "reindex": false,
+    "oneCLaunches": 0
+  },
+  "rawManifest": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\raw-evidence-manifest.json",
+    "sha256": "b9901b815b7f16888bcd319089fde1ac8cc3f01e495711612e61491f2aaf1932",
+    "files": 486
+  },
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\audit.json",
+      "sha256": "a0ae05210654f242f9d2d39627c487810399f089719ec479d2a139aaadc364db",
+      "bytes": 8517
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\final-identity.json",
+      "sha256": "dc570de592acbe6cf1de883d85ca8af2f3fc3ebbdadfa47ffe6949202bf2b1ee",
+      "bytes": 4842
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\historical-preservation-comparison.json",
+      "sha256": "26456a9fc74b5f3ab472ed967c81a74660d156136decc2e418be134ddd697fb6",
+      "bytes": 9584
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\capsule-final-validation.json",
+      "sha256": "a59a380ec5b8a4771e3b6387cb39509efca35d2c946a5166027fd3e9abfe2863",
+      "bytes": 3486
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\native-config-audit.json",
+      "sha256": "282e9a1f9be4e8080d3984f74c521b4057fea846d13eec676ba02c510e10be7a",
+      "bytes": 331
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\fixture-cleanup.json",
+      "sha256": "1badb6b3497da82de4daeeb01a330646e6baed3903ef2754912f5f40ebad969b",
+      "bytes": 970
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\final-original-guard.json",
+      "sha256": "ab5e0456d17a781c9a33c7cf61c4598539b66f0dbec103b9a82907b6fc94082a",
+      "bytes": 12426
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\cursor327-final-original-guard.json",
+      "sha256": "da0015302db2f6634f140af68be42a3254735e5a7f0f24d599fed0bfb61a142b",
+      "bytes": 12426
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\lease-released.json",
+      "sha256": "f27437abee310dac20a545b0b17e754633d60856a7f4a16f81067d56861e3050",
+      "bytes": 68
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\vscode-after-native-db.json",
+      "sha256": "0f969b7b163eccc01aa707e2416c4c1791b395f212f4e22c25c7428927fc7c15",
+      "bytes": 38831
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\vscode-kilo-native-window-reload-result.json",
+      "sha256": "fbed954c16f21f8f7e9cf838e9737fbfe31589829b473e4b17de43fb6d6b91d1",
+      "bytes": 379
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\cursor-after-transcript.jsonl",
+      "sha256": "860824ce134bef498bc6c83fb65d1072ab175388bde5197d62e3c55d03759ad7",
+      "bytes": 4006
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\cursor-after-payloads-result.json",
+      "sha256": "c36f6f4fae4f25785a4e3fbefe6db8cbc3a50bdb1717dfb359cf76bf5c58af34",
+      "bytes": 27640
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\opencode-before-progress-result.json",
+      "sha256": "27f2e5745f0b480d4b6495f8882ca5d5f9e93ef50a7c37bc3bbb197423d3b82d",
+      "bytes": 1269
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\opencode-canceled-after-reload-native-db.json",
+      "sha256": "2954a69370acef59247ec2d1901c940ac7bb50d33e5c649b9a8189cf72a1b939",
+      "bytes": 2307
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\opencode-new-session-network.json",
+      "sha256": "da255b1b010cab194b75e6eb800786696ff5cccb49664af7f3b762593ac64995",
+      "bytes": 4757
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\opencode-reload-network.json",
+      "sha256": "921a692925b09fd91196af64d0b577b870b5845fc7fe15a3d2f7613b2854df3d",
+      "bytes": 10676
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\opencode-after-reload-visible-result.json",
+      "sha256": "21451a99708703ea90b49cafa01e5bdce8473ba5aee471c915630a868d6cbce5",
+      "bytes": 1364
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\instrumentation-notes.json",
+      "sha256": "89a094f714ea4117fcb2ecb8a3292c5de5778f27ac3da7137c5d7feca19afc03",
+      "bytes": 1129
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\cursor-3.27.12\\cursor-after-transcript.jsonl",
+      "sha256": "a6319d69a62ef3cf57290fe8bc29851fedc0c017d2029ac70d940374b2333130",
+      "bytes": 3894
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\cursor-3.27.12\\cursor-after-payloads-result.json",
+      "sha256": "7d347284aa3483aa20bf387592255fc49b9f850f10b8ad9b14149b4b7b96b774",
+      "bytes": 27670
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\cursor-3.27.12\\cursor-native-reload-result.json",
+      "sha256": "c0fcb0d8b967454c5c85c956e75fb038480296661e1b809839bfd29d348343f5",
+      "bytes": 354
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\cursor-3.27.12\\cursor-restored-final-result.json",
+      "sha256": "3820e47234a00ed52cf6f4684fafceb310ec360c756543701fc840753cb44e43",
+      "bytes": 502
+    }
+  ]
+}

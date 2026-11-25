@@ -1,0 +1,277 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)][string]$ProjectRoot,
+    [string]$PackageRoot = '',
+    [switch]$PrepareManagedWorktrees
+)
+
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+. (Join-Path $PSScriptRoot 'lib/agent-1c.package-content.ps1')
+. (Join-Path $PSScriptRoot 'lib/agent-1c.runtime-values.ps1')
+
+function Get-CutoverFullPath([string]$Path) {
+    if (-not [IO.Path]::IsPathRooted($Path)) { $Path = Join-Path (Get-Location).Path $Path }
+    return [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+}
+
+function Assert-CutoverChildPath([string]$Root, [string]$Path) {
+    $rootFull = Get-CutoverFullPath $Root
+    $pathFull = Get-CutoverFullPath $Path
+    if (-not $pathFull.StartsWith(($rootFull + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "EXECUTION_GUARD_CUTOVER_SCOPE_INVALID: '$pathFull' is outside '$rootFull'."
+    }
+    return $pathFull
+}
+
+function Test-CutoverOwnedProcess([object]$State, [string]$PidField, [string]$StartField, [string]$ExecutableField, [string[]]$Markers) {
+    $processId = 0
+    if (-not [int]::TryParse([string]$State.$PidField, [ref]$processId) -or $processId -le 0) { return $null }
+    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    if ($null -eq $process) { return $null }
+    $expectedStart = [datetime]::MinValue
+    $rawStart = $State.$StartField
+    $parsed = if ($rawStart -is [datetime]) {
+        $expectedStart = $rawStart
+        $true
+    } else {
+        [datetime]::TryParse([string]$rawStart, [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind, [ref]$expectedStart)
+    }
+    if (-not $parsed -or
+        [math]::Abs(($process.StartTime.ToUniversalTime() - $expectedStart.ToUniversalTime()).TotalSeconds) -gt 2) { return $false }
+    $expectedExecutable = [string]$State.$ExecutableField
+    try { $actualExecutable = [IO.Path]::GetFullPath($process.Path) } catch { return $false }
+    if (-not $expectedExecutable -or -not [string]::Equals([IO.Path]::GetFullPath($expectedExecutable), $actualExecutable, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    try { $commandLine = [string](Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction Stop).CommandLine } catch { return $false }
+    $required = @($Markers | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($required.Count -eq 0 -or @($required | Where-Object { $commandLine.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -lt 0 }).Count -gt 0) { return $false }
+    return $process
+}
+
+function Assert-NoActiveCutoverRuntime([string]$Root) {
+    $runtimeRoot = Join-Path (Get-CutoverFullPath $Root) '.agent-1c\mcp\ondemand'
+    if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { return }
+    # The on-demand owner also writes <instance>.VAParams.json as launch input.
+    foreach ($statePath in @(Get-ItlOnDemandRuntimeRecordFiles -RuntimeRoot $runtimeRoot | Select-Object -ExpandProperty FullName)) {
+        try { $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw "EXECUTION_GUARD_CUTOVER_RUNTIME_STATE_INVALID: '$statePath' cannot establish whether an owned runtime is active. Preserve it and inspect through the existing runtime owner before repeating update-workflow. $($_.Exception.Message)" }
+        foreach ($entry in @(
+            @{pid='testClientPid';start='testClientProcessStartTime';exe='testClientExecutablePath';markers=@($state.testClientOwnershipMarkers)},
+            @{pid='pid';start='processStartTime';exe='executablePath';markers=@($state.ownershipMarkers)}
+        )) {
+            $owned = Test-CutoverOwnedProcess -State $state -PidField $entry.pid -StartField $entry.start -ExecutableField $entry.exe -Markers $entry.markers
+            if ($owned -eq $false) {
+                throw "EXECUTION_GUARD_CUTOVER_RUNTIME_OWNERSHIP_UNCONFIRMED: '$Root' has a live PID recorded by '$statePath' but exact ownership could not be proven. Inspect it through the existing helper before repeating the workflow update."
+            }
+            if ($null -ne $owned -and $owned -ne $false) {
+                throw "EXECUTION_GUARD_CUTOVER_ACTIVE_RUNTIME: '$Root' still has an owned runtime process $($owned.Id) recorded by '$statePath'. Stop it through the existing helper, then repeat the workflow update."
+            }
+        }
+    }
+}
+
+function Enable-ExecutionGuardGeneration([string]$Root) {
+    $rootFull = Get-CutoverFullPath $Root
+    $marker = Join-Path $rootFull '.agent-1c\execution-guard-generation.json'
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $marker))
+    $temporary = $marker + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    $backup = $marker + '.' + [guid]::NewGuid().ToString('N') + '.bak'
+    [IO.File]::WriteAllText($temporary, (([ordered]@{schemaVersion=1;generation='execution-guards-v2';updatedAtUtc=[datetime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    $replaceCompleted = $false
+    try {
+        if (Test-Path -LiteralPath $marker -PathType Leaf) {
+            # Windows PowerShell's .NET Framework rejects a null backup path.
+            # Keep an exact same-directory backup until replacement succeeds.
+            [IO.File]::Replace($temporary, $marker, $backup)
+            $replaceCompleted = $true
+        } else {
+            [IO.File]::Move($temporary, $marker)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+        if ($replaceCompleted -and (Test-Path -LiteralPath $backup -PathType Leaf)) {
+            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Invoke-CutoverGit([string]$Root, [string[]]$Arguments, [switch]$Capture) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 wraps native stderr warnings as ErrorRecords.
+        # Git's exit code, not a successful command's warning, decides failure.
+        $ErrorActionPreference = 'Continue'
+        $output = @(& git -C $Root @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "EXECUTION_GUARD_CUTOVER_GIT_FAILED: git $($Arguments -join ' ') in '$Root': $($output -join [Environment]::NewLine)"
+    }
+    if ($Capture) {
+        $stdout = @($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
+        return (($stdout -join [Environment]::NewLine).Trim())
+    }
+}
+
+function Get-CutoverManagedDirectoryPaths {
+    $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'execution-guard-cutover-paths.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    return @($manifest.directories)
+}
+
+function Get-CutoverManagedFilePaths {
+    $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'execution-guard-cutover-paths.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    return @($manifest.files)
+}
+
+function Assert-CutoverPackageReady([string]$PackageRoot) {
+    foreach ($relative in @(Get-CutoverManagedDirectoryPaths)) {
+        $source = Assert-CutoverChildPath -Root $PackageRoot -Path (Join-Path $PackageRoot $relative)
+        if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+            throw "EXECUTION_GUARD_CUTOVER_PACKAGE_MISSING: $source"
+        }
+    }
+    foreach ($relative in @(Get-CutoverManagedFilePaths)) {
+        $source = Assert-CutoverChildPath -Root $PackageRoot -Path (Join-Path $PackageRoot $relative)
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "EXECUTION_GUARD_CUTOVER_PACKAGE_MISSING: $source"
+        }
+    }
+}
+
+function Assert-CutoverWorktreeReady([string]$WorktreeRoot) {
+    [void](Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('symbolic-ref', '--quiet', 'HEAD') -Capture)
+    foreach ($markerName in @('MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'BISECT_LOG', 'rebase-apply', 'rebase-merge', 'sequencer')) {
+        $markerPath = Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('rev-parse', '--git-path', $markerName) -Capture
+        if (-not [IO.Path]::IsPathRooted($markerPath)) { $markerPath = Join-Path $WorktreeRoot $markerPath }
+        if (Test-Path -LiteralPath $markerPath) {
+            throw "EXECUTION_GUARD_CUTOVER_GIT_OPERATION_ACTIVE: '$WorktreeRoot' has '$markerName'."
+        }
+    }
+}
+
+function Copy-CutoverManagedPath([string]$PackageRoot, [string]$WorktreeRoot, [string]$RelativePath, [bool]$Directory) {
+    $source = Assert-CutoverChildPath -Root $PackageRoot -Path (Join-Path $PackageRoot $RelativePath)
+    if (-not (Test-Path -LiteralPath $source -PathType $(if ($Directory) { 'Container' } else { 'Leaf' }))) {
+        throw "EXECUTION_GUARD_CUTOVER_PACKAGE_MISSING: $source"
+    }
+    $destination = Assert-CutoverChildPath -Root $WorktreeRoot -Path (Join-Path $WorktreeRoot $RelativePath)
+    if (Test-Path -LiteralPath $destination) {
+        Remove-Item -LiteralPath $destination -Recurse:$Directory -Force -ErrorAction Stop
+    }
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+    if ($Directory) {
+        Copy-WorkflowPackageDirectoryContent -SourcePath $source -DestinationPath $destination
+    } else {
+        Copy-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop
+    }
+}
+
+function Update-CutoverManagedWorktree([string]$PackageRoot, [string]$WorktreeRoot) {
+    $directoryPaths = @(Get-CutoverManagedDirectoryPaths)
+    $filePaths = @(Get-CutoverManagedFilePaths)
+    foreach ($relative in $directoryPaths) { Copy-CutoverManagedPath -PackageRoot $PackageRoot -WorktreeRoot $WorktreeRoot -RelativePath $relative -Directory $true }
+    foreach ($relative in $filePaths) { Copy-CutoverManagedPath -PackageRoot $PackageRoot -WorktreeRoot $WorktreeRoot -RelativePath $relative -Directory $false }
+
+    $branchRef = Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('symbolic-ref', '--quiet', 'HEAD') -Capture
+    if (-not $branchRef.StartsWith('refs/heads/', [StringComparison]::Ordinal)) {
+        throw "EXECUTION_GUARD_CUTOVER_BRANCH_REQUIRED: managed worktree '$WorktreeRoot' is detached."
+    }
+    $oldHead = Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('rev-parse', 'HEAD') -Capture
+    $temporaryIndex = Join-Path ([IO.Path]::GetTempPath()) ('itl-execution-guard-cutover-' + [guid]::NewGuid().ToString('N') + '.index')
+    $previousIndexExists = Test-Path -LiteralPath 'Env:GIT_INDEX_FILE'
+    $previousIndex = [Environment]::GetEnvironmentVariable('GIT_INDEX_FILE', 'Process')
+    $managedPaths = @($directoryPaths + $filePaths | ForEach-Object { $_.Replace('\', '/') })
+    $runtimeIndexPaths = @(
+        ':(literal).agent-1c/execution-guard-generation.json',
+        ':(glob).agent-1c/execution-guard-generation.json.*',
+        ':(glob).agent-1c/execution-checkpoints/**'
+    )
+    try {
+        [Environment]::SetEnvironmentVariable('GIT_INDEX_FILE', $temporaryIndex, 'Process')
+        Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('read-tree', $oldHead)
+        Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('add', '-A', '-f', '--') + $managedPaths)
+        # A pre-v2 helper could checkpoint these workflow-owned runtime files
+        # before the branch had the new ignore contract. Repair that exact
+        # pollution in the cutover commit without deleting the live evidence.
+        Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('rm', '-r', '-f', '--cached', '--ignore-unmatch', '--') + $runtimeIndexPaths)
+        $tree = Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('write-tree') -Capture
+        $oldTree = Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('rev-parse', "$oldHead^{tree}") -Capture
+        if ($tree -cne $oldTree) {
+            $newHead = Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('commit-tree', $tree, '-p', $oldHead, '-m', 'chore: activate execution guards v2') -Capture
+            Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('update-ref', $branchRef, $newHead, $oldHead)
+        }
+    } finally {
+        if ($previousIndexExists) { [Environment]::SetEnvironmentVariable('GIT_INDEX_FILE', $previousIndex, 'Process') }
+        else { Remove-Item -LiteralPath 'Env:GIT_INDEX_FILE' -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $temporaryIndex -PathType Leaf) { Remove-Item -LiteralPath $temporaryIndex -Force -ErrorAction SilentlyContinue }
+    }
+    Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('reset', '--quiet', 'HEAD', '--') + $managedPaths + $runtimeIndexPaths)
+    # The source package is copied as bytes. On Windows, a copied LF file can
+    # remain marked dirty after reset even when Git's normalized blob matches
+    # the cutover commit. Refresh only the paths owned by this cutover.
+    Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('diff', '--quiet', '--') + $managedPaths)
+    Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('-c', 'core.safecrlf=false', 'add', '-u', '--') + $managedPaths)
+    Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('diff', '--cached', '--quiet', '--') + $managedPaths)
+}
+
+function Get-CutoverGitWorktrees([string]$Root) {
+    $raw = & git -C $Root -c core.quotepath=false worktree list --porcelain -z
+    if ($LASTEXITCODE -ne 0) { throw 'EXECUTION_GUARD_CUTOVER_WORKTREE_LIST_FAILED' }
+    $paths = [Collections.Generic.List[string]]::new()
+    $rootFull = Get-CutoverFullPath $Root
+    $currentPath = ''
+    $currentBranch = ''
+    $flush = {
+        if ($currentPath -and ([string]::Equals($currentPath, $rootFull, [StringComparison]::OrdinalIgnoreCase) -or
+            $currentBranch.StartsWith('refs/heads/itldev/', [StringComparison]::OrdinalIgnoreCase))) {
+            $paths.Add($currentPath) | Out-Null
+        }
+    }
+    foreach ($entry in (($raw -join '') -split "`0")) {
+        if ($entry.StartsWith('worktree ')) {
+            & $flush
+            $currentPath = Get-CutoverFullPath $entry.Substring(9)
+            $currentBranch = ''
+        } elseif ($entry.StartsWith('branch ')) {
+            $currentBranch = $entry.Substring(7)
+        }
+    }
+    & $flush
+    if (@($paths | Where-Object { [string]::Equals($_, $rootFull, [StringComparison]::OrdinalIgnoreCase) }).Count -ne 1) {
+        throw 'EXECUTION_GUARD_CUTOVER_MASTER_WORKTREE_MISSING'
+    }
+    return @($paths | Sort-Object -Unique)
+}
+
+$projectFull = Get-CutoverFullPath $ProjectRoot
+$roots = @($projectFull)
+if ($PrepareManagedWorktrees) { $roots = @(Get-CutoverGitWorktrees -Root $projectFull) }
+
+if ($PrepareManagedWorktrees) {
+    $packageFull = Get-CutoverFullPath $(if ($PackageRoot) { $PackageRoot } else { $projectFull })
+    Assert-CutoverPackageReady -PackageRoot $packageFull
+    foreach ($root in $roots) { Assert-CutoverWorktreeReady -WorktreeRoot $root }
+}
+
+foreach ($root in $roots) { Assert-NoActiveCutoverRuntime -Root $root }
+
+# A stopped lifecycle operation may need legacy recovery, native-recovery or
+# on-demand state to prove which effects completed. The v2 generation marker
+# switches new guards away from those old tickets; clearing them here would
+# destroy the very evidence required to resume a paused operation.
+
+if ($PrepareManagedWorktrees) {
+    foreach ($root in @($roots | Where-Object { -not [string]::Equals($_, $projectFull, [StringComparison]::OrdinalIgnoreCase) })) {
+        Update-CutoverManagedWorktree -PackageRoot $packageFull -WorktreeRoot $root
+    }
+}
+
+foreach ($root in $roots) { Enable-ExecutionGuardGeneration -Root $root }
+
+[pscustomobject]@{status='completed';generation='execution-guards-v2';project=$projectFull;worktrees=@($roots)}

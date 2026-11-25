@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "distributionRepository": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
+  "distributionCommit": "99b81a897fd5b864c4a3becc8ff13b27efeac523",
+  "distributionPackageCommit": "c11f5e0cff1fa891423fc0fcf13104df03e69416",
+  "distributionBranch": "codex/karimov-per-config-nightly-20261108",
+  "distributionBase": "9c02907121b2d513ea9f63bc6798e8e069f95205",
+  "package": "hosts/dev-karimov-new/code-package.json",
+  "packageId": "code-xsd-v3",
+  "image": "comol/1c_code_metadata_mcp@sha256:303011dbcf8815542914fc61c5ba369c61dea4aeac2e8d4ee7e304f089a99536",
+  "files": {
+    "driver": "7000a217743a95cca07f7453c4adf60767607be69fd393ac90226603af4cf953",
+    "main": "0b679a5679cd8a09e9156f8d560356c8d08526350a2d1880f1e94fdfbeafc962",
+    "xsd_schema_generator": "1afacf40d288198e3c6696cde78511ec27f2df9a571a1c53cb4f3d05abe4e091"
+  },
+  "targets": {
+    "dev-ermakov": [
+      "pm4corp",
+      "pm5corp"
+    ],
+    "dev-karimov-new": [
+      "unfpm5-code",
+      "erppm5-lts-code"
+    ]
+  },
+  "nativeProofSha256": "b116676d821647d1fb84f2eab7a501366f132e349c82b53a171bfbcc618d9cae",
+  "windowsProofSha256": "fe28e3f87fd95798584baad3617ac54eb6e54eb295068c27324cdab5c5b18b6f",
+  "release": "releases/2026-11-07-code-xsd-role-rights",
+  "defect": "PM5 report 2026-11-06 item 15: verify_xml rejected every Roles/<Obj>/Ext/Rights.xml (root Rights) because role.xsd was trained only from role descriptors.",
+  "nativeQualification": {
+    "isolated": true,
+    "network": "none",
+    "liveIndexMounted": false,
+    "originalRoleRights": "failed: ROLE_RIGHTS_UNROUTED",
+    "patchedRoleRights": "passed: 5 positives, 5 negative controls rejected, malformed input is an error",
+    "previousControls": "crash/resume and nested XSD controls unchanged and passed",
+    "xsdLaneOnlyInvalidation": "passed (PARSER_VERSION 3)"
+  },
+  "deliveryStatus": "Package and Linux/Windows proofs published in GitLab; PM5, PM4 and UNF installed, reindexed with force=false and accepted via public verify_xml; ERP installed on 2026-11-08 after the Karimov owner switched to per-configuration nightly admission (89c91cf) and the VM disk was expanded online to 274 GiB (1a9d8a0), reindexed with force=false and accepted; workflow remains unpublished.",
+  "acceptanceLimit": "Generated corpus schema for role rights; full normative Designer rights semantics, cross-corpus inputs and other XML kinds are not claimed.",
+  "deployedAcceptance": {
+    "distributionEvidence": "releases/2026-11-07-code-xsd-role-rights/deployed-acceptance-20261107.json",
+    "evidenceSha256": "b2239318fcc6cbe1ebdf6283b89300a1cac73bd655ffe18e5fe0fd3236ffeeb2",
+    "normalReindexForce": false,
+    "working1cDatabaseOperations": false,
+    "workflowPublished": false,
+    "previousContainersRetainedStopped": true,
+    "targets": {
+      "pm5corp": {
+        "accepted": true,
+        "generation": "20261106T221946Z-8907e816"
+      },
+      "pm4corp": {
+        "accepted": true,
+        "generation": "20261106T224259Z-d972befd"
+      },
+      "unfpm5": {
+        "accepted": true,
+        "generation": "20261106T220951Z-bd3507c0"
+      },
+      "erppm5-lts": {
+        "accepted": true,
+        "generation": "20261108T095314Z-3c1d46f5",
+        "karimovOwnerPackageCommit": "1a9d8a0397f2b79577938955653c3057998137b2"
+      }
+    }
+  },
+  "deliveryMode": "standalone MCP package in GitLab; no workflow publication",
+  "windowsOwnerPackage": "hosts/dev-ermakov/owner-package.json",
+  "workflowPublicationRequired": false,
+  "previousPackage": {
+    "packageId": "code-xsd-v2",
+    "distributionCommit": "cad14933910b67afaced7844ba6293fcf24a4635",
+    "xsd_schema_generator": "cedcecefd097c9d54a4eed1829643c4e4cd16e8d6e2e842dff77f2807c18e14b",
+    "nativeProofSha256": "f4f64a2e1fcc9443877152ee32d4751a0cd4cf5eeef373afb7880900e6559072",
+    "deployedEvidence": "releases/2026-10-25-code-xsd/deployed-acceptance-20261026.json"
+  }
+}

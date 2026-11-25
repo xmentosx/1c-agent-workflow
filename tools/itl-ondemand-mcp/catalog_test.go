@@ -31,6 +31,29 @@ func TestLoadCatalogAndCompare(t *testing.T) {
 	}
 }
 
+func TestDropdownOverrideInVanessaCatalog(t *testing.T) {
+	path := filepath.Join("..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs", "vanessa-ui-v0.6.5-va-1.2.043.42.json")
+	catalog, err := loadCatalog(path, "vanessa-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"execute_feature_step", "run_scenario"} {
+		args := map[string]any{}
+		if tool == "execute_feature_step" {
+			args["lineNumber"] = 1
+		}
+		for _, prompt := range []any{nil, false, true, "false"} {
+			if prompt != nil {
+				args["dropdownPrompt"] = prompt
+			}
+			err := catalog.validate(tool, args)
+			if (err != nil) != (prompt == "false") {
+				t.Fatalf("%s: dropdownPrompt=%v: %v", tool, prompt, err)
+			}
+		}
+	}
+}
+
 func TestLoadCatalogHashIgnoresLineEndingsAndBOM(t *testing.T) {
 	dir := t.TempDir()
 	lfPath := filepath.Join(dir, "lf.json")
@@ -63,8 +86,8 @@ func TestReleaseCatalogSchemasResolveAndIndex(t *testing.T) {
 		file   string
 		count  int
 	}{
-		{family: "roctup", file: "roctup-v1.7.1.json", count: 13},
-		{family: "vanessa-ui", file: "vanessa-ui-v0.6.5-va-1.2.043.28.json", count: 38},
+		{family: "roctup", file: "roctup-v1.10.0.json", count: 13},
+		{family: "vanessa-ui", file: "vanessa-ui-v0.6.5-va-1.2.043.42.json", count: 38},
 	} {
 		t.Run(test.family, func(t *testing.T) {
 			catalog, err := loadCatalog(filepath.Join(root, test.file), test.family)
@@ -84,7 +107,7 @@ func TestReleaseCatalogSchemasResolveAndIndex(t *testing.T) {
 }
 
 func TestVanessaReleaseCatalogKeepsDistinctFileArgumentNames(t *testing.T) {
-	path := filepath.Join("..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs", "vanessa-ui-v0.6.5-va-1.2.043.28.json")
+	path := filepath.Join("..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs", "vanessa-ui-v0.6.5-va-1.2.043.42.json")
 	catalog, err := loadCatalog(path, "vanessa-ui")
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +126,29 @@ func TestVanessaReleaseCatalogKeepsDistinctFileArgumentNames(t *testing.T) {
 	}
 	if err := catalog.validate("load_features", map[string]any{"filePath": featurePath}); err == nil {
 		t.Fatal("load_features accepted renamed filePath argument")
+	}
+}
+
+func TestVanessaReleaseCatalogUsesActionAwareTestClientTool(t *testing.T) {
+	path := filepath.Join("..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs", "vanessa-ui-v0.6.5-va-1.2.043.42.json")
+	catalog, err := loadCatalog(path, "vanessa-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalog.tool("connect_test_client") != nil || catalog.tool("get_VanessaAutomation_state") != nil {
+		t.Fatal("old Vanessa tool names remain in the live catalog")
+	}
+	if catalog.tool("close_test_client") == nil || catalog.tool("get_vanessa_automation_state") == nil {
+		t.Fatal("current Vanessa lifecycle tools are missing")
+	}
+	if err := catalog.validate("manage_test_client", map[string]any{"action": "connect", "profileName": "itl-ondemand"}); err != nil {
+		t.Fatalf("managed connect rejected: %v", err)
+	}
+	if err := catalog.validate("manage_test_client", map[string]any{"action": "disconnect"}); err != nil {
+		t.Fatalf("managed disconnect rejected: %v", err)
+	}
+	if err := catalog.validate("manage_test_client", map[string]any{}); err == nil {
+		t.Fatal("manage_test_client accepted a missing action")
 	}
 }
 
@@ -149,11 +195,11 @@ func TestLoadedCatalogConcurrentValidationIsSafe(t *testing.T) {
 }
 
 func TestParseBrokerOutputUsesLastMarker(t *testing.T) {
-	info, err := parseBrokerOutput("noise\n" + brokerMarker + `{"schemaVersion":1,"status":"running","url":"http://127.0.0.1:6003/mcp"}` + "\n")
+	info, err := parseBrokerOutput("noise\n" + brokerMarker + `{"schemaVersion":1,"status":"stopped","url":"http://127.0.0.1:6002/mcp"}` + "\r\n" + brokerMarker + `{"schemaVersion":1,"status":"running","url":"http://127.0.0.1:6003/mcp"}` + "\r\ntrailing noise\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Status != "running" || info.URL == "" {
+	if info.Status != "running" || info.URL != "http://127.0.0.1:6003/mcp" {
 		t.Fatalf("unexpected info: %#v", info)
 	}
 }

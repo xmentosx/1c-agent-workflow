@@ -1,0 +1,42 @@
+{
+  "repository": "https://github.com/Pr-Mex/vanessa-automation.git",
+  "commit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1",
+  "baselineRecipe": "1.2.043.42-itl-r6",
+  "baselinePatchSha256": "828cfb5277a3aef49d3330f562b6ed971efc38ae185be04af484e0b42c964a3f",
+  "path": "VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl",
+  "ranges": [
+    [
+      11632,
+      11758
+    ],
+    [
+      11767,
+      11857
+    ],
+    [
+      11911,
+      12164
+    ],
+    [
+      12799,
+      12875
+    ],
+    [
+      30713,
+      30738
+    ],
+    [
+      30862,
+      30915
+    ],
+    [
+      31047,
+      31090
+    ],
+    [
+      34117,
+      34145
+    ]
+  ],
+  "sha256": "799be89c7faf2540c731e2467cbdcd91e47077e52347ee5e33e0bcfdd3d9d0a9"
+}

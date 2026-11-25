@@ -1,0 +1,510 @@
+﻿BeforeAll {
+    $repoRoot=(Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+    $helperPath=Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    $lib=Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/lib'
+    foreach ($group in @(
+        @{file='agent-1c.core.ps1';names=@('ConvertTo-NativeCommandLineArgument','Join-NativeCommandLineArguments')},
+        @{file='agent-1c.vanessa.ps1';names=@('Invoke-ItlNativeProcessCapture')}
+    )) {
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $lib $group.file),[ref]$tokens,[ref]$errors)
+        if(@($errors).Count){throw 'Fixture native transport owner parse failed'}
+        foreach($name in $group.names){
+            $definition=@($ast.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+            if($definition.Count -ne 1){throw ('Fixture transport unavailable: '+$name)}
+            . ([scriptblock]::Create($definition[0].Extent.Text))
+        }
+    }
+    function Invoke-ContinuationGit {
+        param([string]$Root,[string[]]$Arguments)
+        $capture=Invoke-ItlNativeProcessCapture -FilePath 'git' -WorkingDirectory $Root -Arguments (@('-C',$Root,'-c','core.quotepath=false')+@($Arguments))
+        if($capture.exitCode -ne 0){throw ('Fixture Git failed: '+$capture.stderr)}
+        return $capture.stdout.Trim()
+    }
+    function Write-ContinuationJson {
+        param([string]$Path,[object]$Value)
+        [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Path)) | Out-Null
+        [IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 18),[Text.UTF8Encoding]::new($false))
+    }
+    function Write-ContinuationSource {
+        param([string]$Root,[string]$Path,[string]$Text)
+        $full=Join-Path $Root ('src/cf/'+$Path)
+        [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($full)) | Out-Null
+        [IO.File]::WriteAllText($full,($Text -replace '\r?\n',"`r`n"),[Text.UTF8Encoding]::new($true))
+    }
+    function New-ContinuationProject {
+        $root=Join-Path $TestDrive ('Продолжение загрузки 1С '+[guid]::NewGuid().ToString('N'))
+        [IO.Directory]::CreateDirectory($root) | Out-Null
+        Invoke-ContinuationGit $root @('init','--quiet') | Out-Null
+        Invoke-ContinuationGit $root @('config','user.name','fixture') | Out-Null
+        Invoke-ContinuationGit $root @('config','user.email','fixture@example.invalid') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.gitattributes'),"src/cf/** -text`r`n",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root '.gitignore'),".agent-1c/`r`nlogs/`r`nbuild/`r`n",[Text.UTF8Encoding]::new($false))
+        Write-ContinuationSource $root 'Configuration.xml' '<MetaDataObject><Configuration uuid="11111111-1111-1111-1111-111111111111"><Properties><Name>Тест</Name><Comment>исходный</Comment></Properties><ChildObjects><CommonModule>Изменённый</CommonModule><CommonModule>Прежний</CommonModule></ChildObjects></Configuration></MetaDataObject>'
+        foreach($module in @(@{name='Изменённый';uuid='22222222-2222-2222-2222-222222222222'},@{name='Прежний';uuid='33333333-3333-3333-3333-333333333333'})){
+            Write-ContinuationSource $root ('CommonModules/'+$module.name+'.xml') ('<MetaDataObject><CommonModule uuid="'+$module.uuid+'"><Properties><Name>'+$module.name+'</Name><Server>true</Server></Properties></CommonModule></MetaDataObject>')
+            Write-ContinuationSource $root ('CommonModules/'+$module.name+'/Ext/Module.bsl') "&НаСервере`r`nФункция Значение() Экспорт`r`n    Возврат 1;`r`nКонецФункции"
+        }
+        Write-ContinuationSource $root 'ConfigDumpInfo.xml' '<ConfigDumpInfo>original cursor</ConfigDumpInfo>'
+        Invoke-ContinuationGit $root @('add','--all') | Out-Null
+        Invoke-ContinuationGit $root @('commit','--quiet','-m','original configuration') | Out-Null
+        return [pscustomobject]@{root=$root;sourceRoot=(Join-Path $root 'src/cf');infoBase=(Join-Path $root '.agent-1c/infobases/База');
+            database=(Join-Path $root '.agent-1c/infobases/База/fixture-database.bin');module='CommonModules/Изменённый/Ext/Module.bsl';
+            evidence=(Join-Path $root '.agent-1c/proofs/coverage.json');fault='';calls=[Collections.Generic.List[object]]::new();applied=$false}
+    }
+    function Save-ContinuationCoverage {
+        param([object]$Fixture)
+        $requestPath=Join-Path $Fixture.root '.agent-1c/proofs/request.json'
+        $resultPath=Join-Path $Fixture.root '.agent-1c/proofs/result.json'
+        $text=[IO.File]::ReadAllText((Join-Path $Fixture.sourceRoot $Fixture.module),[Text.UTF8Encoding]::new($false,$true))
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try{$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-','').ToLowerInvariant().Substring(0,16)}finally{$sha.Dispose()}
+        $code=@{chars=$text.Length;lines=[regex]::Matches($text,'\n').Count+1;sha256=$hash}
+        Write-ContinuationJson $requestPath @{name='syntaxcheck';arguments=@{code=$text;file_name='Module.bsl'}}
+        Write-ContinuationJson $resultPath @{isError=$false;structuredContent=@{
+            diagnostics=@();summary=@{total=0;returned=0;truncated=$false};
+            filters=@{line_filter_applied=$false;severity_filter_applied=$false;suppression_applied=$false;plugins_applied=$false};
+            provenance=@{tool='syntaxcheck';analyzer_version='0.2.81';file_metrics_scope='whole_file'};
+            request_rewrite=@{applied=$false;requested=@{code=$code;file_name='Module.bsl'};used=@{code=$code;file_name='Module.bsl'};changed_by=@()}
+        }}
+        $receipt=@{schemaVersion=1;kind='itl-mcp-source-validation';taskPath='quick-fix';projectRoot=$Fixture.root;
+            sourceRoot=$Fixture.sourceRoot;sourceFingerprint=$Fixture.current.fingerprint;infoBaseKind='file';infoBasePath=$Fixture.infoBase;
+            entries=@(@{relativePath=$Fixture.module;inputSha256=(Get-ItlPlatformEvidenceHash (Join-Path $Fixture.sourceRoot $Fixture.module));
+                checker=@{server='fixture-recorded-schema-checker';capability='syntaxcheck';versionOrId='0.2.81'};
+                request=@{path='request.json';sha256=(Get-ItlPlatformEvidenceHash $requestPath)};
+                result=@{path='result.json';sha256=(Get-ItlPlatformEvidenceHash $resultPath)}})}
+        Write-ContinuationJson $Fixture.evidence $receipt
+        $coverage = Test-ItlPlatformSourceCoverage -EvidencePath $Fixture.evidence -SourceRoot $Fixture.sourceRoot -SourceFingerprint $Fixture.current.fingerprint `
+            -Files @($Fixture.module) -ProjectRoot $Fixture.root -InfoBaseKind file -InfoBasePath $Fixture.infoBase
+        $coverage.covered | Should -BeTrue -Because $coverage.reason
+    }
+}
+
+Describe 'Checked load continuation with development and production cadence' {
+    BeforeEach {
+        $script:continuationFixture=New-ContinuationProject
+        $f=$script:continuationFixture
+        $global:LASTEXITCODE=0
+        . $helperPath -ProjectRoot $f.root -DevBranchName 'continuation' -Action help *> $null
+        $script:OneCNativeOperationJournal=$null
+        $script:VerificationEvidencePath=''
+        $script:ResultPurpose='development'
+        $f | Add-Member -NotePropertyName previous -NotePropertyValue (Get-ConfigSourceFingerprint -ExportPath 'src/cf')
+        [IO.Directory]::CreateDirectory($f.infoBase) | Out-Null
+        [IO.File]::WriteAllBytes($f.database,[byte[]](1,2,3,4))
+        # The database configuration that /RollbackCfg returns the editable object to.
+        $f | Add-Member -NotePropertyName dbConfiguration -NotePropertyValue ([byte[]](1,2,3,4))
+        $before=@{safeDevBranchName='continuation';devBranchName='continuation';infoBaseKind='file';devBranchInfoBasePath=$f.infoBase;
+            worktreePath=$f.root;configLoadStatus='passed';lastConfigDesignerFingerprint=$f.previous.fingerprint;
+            lastConfigDesignerTreeObjectId=$f.previous.treeObjectId;lastConfigDesignerLoadedAt='2026-10-04T00:00:00Z';
+            loadReason='source-load';lastGate6Evidence=@{id='previous-proof'};customSetting='сохранить';enterpriseNormalizationStatus='passed'}
+        $statePath=Save-DevBranchState -SafeDevBranchName 'continuation' -State $before
+        $f | Add-Member -NotePropertyName statePath -NotePropertyValue $statePath
+        Write-ContinuationSource $f.root $f.module "&НаСервере`r`nФункция Значение() Экспорт`r`n    Возврат 2;`r`nКонецФункции"
+        Invoke-ContinuationGit $f.root @('add','--all') | Out-Null
+        Invoke-ContinuationGit $f.root @('commit','--quiet','-m','candidate body change') | Out-Null
+        $f | Add-Member -NotePropertyName current -NotePropertyValue (Get-ConfigSourceFingerprint -ExportPath 'src/cf')
+        $f | Add-Member -NotePropertyName cursorBytes -NotePropertyValue ([IO.File]::ReadAllBytes((Join-Path $f.sourceRoot 'ConfigDumpInfo.xml')))
+        # This unit qualifies the load/rollback owner, not controlled-fork
+        # validator installation. Git/source/receipt/state admission stays real.
+        Mock Assert-OneCConfigurationSourceIntegrity {} -ParameterFilter {$ExportPath -eq $script:continuationFixture.sourceRoot}
+        function Get-PlatformPath { 'fixture-1cv8.exe' }
+        function Invoke-Designer {
+            param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
+            $f=$script:continuationFixture
+            $f.calls.Add([pscustomobject]@{arguments=@($DesignerArgs);kind=$InfoBaseKind;target=$InfoBasePath})
+            $script:LastNativeProcessStarted=$true
+            $script:LastLogPath=Join-Path $f.root ('logs/1c/native-'+$f.calls.Count+'.log')
+            [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($script:LastLogPath)) | Out-Null
+            $code=0;$log='Ошибок: 0; предупреждений: 0'
+            switch($DesignerArgs[0]) {
+                '/DumpIB' { [IO.File]::Copy($f.database,$DesignerArgs[1],$true) }
+                '/LoadConfigFromFiles' {
+                    [IO.File]::WriteAllBytes($f.database,[byte[]](7,8,9))
+                    Write-ContinuationSource $f.root 'ConfigDumpInfo.xml' '<ConfigDumpInfo>editable cursor</ConfigDumpInfo>'
+                    switch($f.fault){
+                        'source changed' { [IO.File]::AppendAllText((Join-Path $f.sourceRoot $f.module),"`r`n// позднее изменение",[Text.UTF8Encoding]::new($false)) }
+                        'receipt changed' { [IO.File]::AppendAllText($f.evidence,"`r`n",[Text.UTF8Encoding]::new($false)) }
+                        'result changed' { [IO.File]::WriteAllText((Join-Path $f.root '.agent-1c/proofs/result.json'),'{"isError":true}',[Text.UTF8Encoding]::new($false)) }
+                        {$_ -in @('partial native failure','partial then module failure')} {
+                            if($DesignerArgs -contains '-partial'){$code=101;$log='Original partial native load failed before the editable boundary.'}
+                        }
+                        'owner drift' { Update-DevBranchState -State (Read-DevBranchStateFile $f.statePath) -Updates @{devBranchInfoBasePath=(Join-Path $f.root 'Другая база');customSetting='поздний выбор'} }
+                    }
+                }
+                '/CheckModules' {
+                    if($f.fault -in @('module failure','restore uncertain','borrowed failure','owner drift','partial then module failure')){$code=101;$log='Ошибка компиляции текущего модуля.'}
+                }
+                '/CheckConfig' {
+                    $code=if($f.fault -eq 'zero-code findings'){0}else{101}
+                    $log='ОбщийМодуль.Прежний.Модуль Возможно ошибочный метод: "ПрежнийМетод"'
+                }
+                '/UpdateDBCfg' {
+                    if($f.fault -eq 'apply failure'){$code=1;$log='Ошибка реструктуризации базы данных.'}
+                    else{$f.applied=$true;$f.dbConfiguration=[IO.File]::ReadAllBytes($f.database)}
+                }
+                '/RollbackCfg' {
+                    if($f.fault -in @('restore uncertain','rollback refused')){throw 'fixture native rollback failed'}
+                    [IO.File]::WriteAllBytes($f.database,$f.dbConfiguration)
+                }
+            }
+            [IO.File]::WriteAllText($script:LastLogPath,$log,[Text.UTF8Encoding]::new($false))
+            $index=[Array]::IndexOf($DesignerArgs,'/DumpResult')
+            if($index -ge 0){[IO.File]::WriteAllText($DesignerArgs[$index+1],[string]$code,[Text.UTF8Encoding]::new($false))}
+            if($code){
+                $failure=[InvalidOperationException]::new('Original native '+$DesignerArgs[0]+' failed with '+$code)
+                $failure.Data['ItlDesignerBatchResult']=[pscustomobject]@{exitCode=$code;logPath=$script:LastLogPath;operation=$DesignerArgs[0];
+                    infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;ownedProcessesReleased=$true}
+                throw $failure
+            }
+            # Preserve the observed legacy combined-load behavior in RED.
+            if(@($DesignerArgs|Where-Object{$_ -ceq '/UpdateDBCfg'}).Count -eq 1){$f.applied=$true;$f.dbConfiguration=[IO.File]::ReadAllBytes($f.database)}
+        }
+    }
+
+    AfterEach {$script:OneCNativeOperationJournal=$null;$script:VerificationEvidencePath=''}
+
+    It 'retains full findings and the exact legacy refusal through rollback and original owner continuation (native <NativeCode>)' -ForEach @(
+        @{NativeCode=101},@{NativeCode=0}
+    ) {
+        $f=$script:continuationFixture
+        $script:ResultPurpose='production'
+        # This fixture starts from the exact original corpus. Cadence changes
+        # only when the test explicitly requests production preparation.
+        $origin=Read-DevBranchStateFile $f.statePath
+        $origin.loadReason='branch-copy-seed'
+        $origin | Add-Member -NotePropertyName branchSeedConfigurationFingerprint -NotePropertyValue $f.previous.fingerprint
+        $origin | Add-Member -NotePropertyName branchSeedSourceKey -NotePropertyValue 'original-seed'
+        $origin | Add-Member -NotePropertyName branchSeedSyncId -NotePropertyValue 'original-sync'
+        Update-DevBranchState -State $origin -Updates @{loadReason='branch-copy-seed';branchSeedConfigurationFingerprint=$f.previous.fingerprint;branchSeedSourceKey='original-seed';branchSeedSyncId='original-sync'}
+        $descriptor='CommonModules/Изменённый.xml'
+        $descriptorPath=Join-Path $f.sourceRoot $descriptor
+        $original=[IO.File]::ReadAllText($descriptorPath)
+        Write-ContinuationSource $f.root $descriptor ($original.Replace('<Server>true</Server>','<Server>false</Server>'))
+        Invoke-ContinuationGit $f.root @('add','--all') | Out-Null
+        Invoke-ContinuationGit $f.root @('commit','--quiet','-m','unsupported descriptor change') | Out-Null
+        $f.current=Get-ConfigSourceFingerprint -ExportPath 'src/cf'
+        if($NativeCode -eq 0){$f.fault='zero-code findings'}
+        $repairPath=Join-Path $f.root '.agent-1c/verification-repair/current.json'
+        Write-ContinuationJson $repairPath @{sessionId='same-repair';attempts=1;maximumAttempts=5;status='active'}
+        $repairBefore=[IO.File]::ReadAllBytes($repairPath)
+        $failure=try {
+            Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' -Mode Full | Out-Null
+            $null
+        } catch {$_}
+        $failure | Should -Not -BeNullOrEmpty
+        $failure.Exception.Message | Should -Match 'GATE6_CHECK_FAILED.*structural=1 \(1 unique\), compiler=0, unknown=0.*fullFindings='
+        $failure.Exception.Message.Length | Should -BeLessThan 2500
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/CheckConfig','/RollbackCfg')
+        $f.applied | Should -BeFalse
+        [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
+        [IO.File]::ReadAllBytes((Join-Path $f.sourceRoot 'ConfigDumpInfo.xml')) | Should -Be $f.cursorBytes
+        [IO.File]::ReadAllBytes($repairPath) | Should -Be $repairBefore
+        $receiptPaths=@(Get-ChildItem -LiteralPath (Join-Path $f.root 'logs/1c') -Filter '1c-gate6-rejection*.json')
+        $receiptPaths | Should -HaveCount 1
+        $receipt=Get-Content -LiteralPath $receiptPaths[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+        $receipt.rollbackConfirmed | Should -BeTrue
+        $receipt.mechanism | Should -BeExactly 'rollback-cfg'
+        $receipt.rollbackPoint.kind | Should -BeExactly 'db-configuration'
+        $receipt.rollbackPoint.baseIdentity | Should -Match '^[a-f0-9]{64}$'
+        $receipt.snapshotRestored | Should -BeFalse
+        $receipt.cursorRestored | Should -BeTrue
+        $receipt.applyStarted | Should -BeFalse
+        $receipt.legacyContextAssessment.eligible | Should -BeFalse
+        $receipt.legacyContextAssessment.reason | Should -BeExactly ('EXISTING_DESCRIPTOR_OR_PAYLOAD_CHANGED:'+$descriptor)
+        $receipt.legacyContextAssessment.path | Should -BeExactly $descriptor
+        $receipt.legacyContextAssessment.sourceImpact.changedOwners | Should -Contain 'ОбщийМодуль.Изменённый'
+        $receipt.legacyContextAssessment.sourceImpact.impactOwners | Should -Contain 'ОбщийМодуль.Прежний'
+        $findings=Get-Content -LiteralPath $receipt.diagnostics.path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $findings.exitCode | Should -Be $NativeCode
+        $findings.dumpResult | Should -Be $NativeCode
+        $findings.findings.knownDiagnosticCount | Should -Be 1
+        $findings.findings.knownDiagnostics[0].payload | Should -BeExactly ': "ПрежнийМетод"'
+        (Get-FileHash -LiteralPath $receipt.diagnostics.path).Hash.ToLowerInvariant() | Should -BeExactly $receipt.diagnostics.sha256
+        $refusal=Get-Content -LiteralPath $receipt.legacyContextAssessment.evidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $refusal.reason | Should -BeExactly $receipt.legacyContextAssessment.reason
+
+        # Repair the unsupported fixture delta, then continue through the same
+        # owner. No source-impact rule, finding, session or counter is bypassed.
+        Write-ContinuationSource $f.root $descriptor $original
+        Invoke-ContinuationGit $f.root @('add','--all') | Out-Null
+        Invoke-ContinuationGit $f.root @('commit','--quiet','-m','restore descriptor contract') | Out-Null
+        $f.fault='';$f.calls.Clear()
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' -Mode Full
+        $f.applied | Should -BeTrue
+        $result.loaded | Should -BeTrue
+        $result.gate6Evidence.cleanPassed | Should -BeFalse
+        [IO.File]::ReadAllBytes($repairPath) | Should -Be $repairBefore
+    }
+
+    It 'keeps full development compilation without a structural check despite matching MCP evidence' {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' -Mode Full
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})[0].arguments | Should -Not -Contain '-partial'
+        $result.loadModeUsed | Should -BeExactly 'full'
+        $f.applied | Should -BeTrue
+        $configuration=@($result.gate6Evidence.steps|Where-Object step -eq 'configuration')[0]
+        $configuration.nativePassed | Should -BeFalse
+        $configuration.status | Should -BeExactly 'not-required-development'
+        $configuration.exitCode | Should -BeNullOrEmpty
+    }
+
+    It 'keeps compilation and rollback through full development fallback without structural checks' {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $f.fault='partial native failure'
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/RollbackCfg','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        $loads=@($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})
+        $loads.Count | Should -Be 2
+        $loads[0].arguments | Should -Contain '-partial'
+        $loads[1].arguments | Should -Not -Contain '-partial'
+        $loads[1].arguments | Should -Not -Contain '/UpdateDBCfg'
+        $result.loadModeUsed | Should -BeExactly 'full-fallback'
+        $result.configLoadStatus | Should -BeExactly 'fallback-succeeded'
+        $result.partialError | Should -Match 'Original native /LoadConfigFromFiles failed with 101'
+        $f.applied | Should -BeTrue
+        $configuration=@($result.gate6Evidence.steps|Where-Object step -eq 'configuration')[0]
+        $configuration.nativePassed | Should -BeFalse
+        $configuration.status | Should -BeExactly 'not-required-development'
+        $configuration.exitCode | Should -BeNullOrEmpty
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.lastConfigDesignerFingerprint | Should -BeExactly $f.current.fingerprint
+        $state.customSetting | Should -BeExactly 'сохранить'
+    }
+
+    It 'refuses a full fallback module error even when the failed partial had complete MCP coverage' {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $f.fault='partial then module failure'
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw '*CheckModules*'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Contain '/CheckModules'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/UpdateDBCfg'
+        @($f.calls|Where-Object{$_.arguments[0] -eq '/RollbackCfg'}).Count | Should -Be 2
+        $f.applied | Should -BeFalse
+        [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
+        [IO.File]::ReadAllBytes((Join-Path $f.sourceRoot 'ConfigDumpInfo.xml')) | Should -Be $f.cursorBytes
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.lastConfigDesignerFingerprint | Should -BeExactly $f.previous.fingerprint
+        $state.lastGate6Evidence.id | Should -BeExactly 'previous-proof'
+    }
+
+    It 'does not compare a borrowed partial failure against an unconfirmed previous database baseline' {
+        $script:ResultPurpose='production'
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $script:OneCNativeOperationJournal=New-OneCNativeOperationJournal
+        $dt=Join-Path $f.root '.agent-1c/enclosing.dt'
+        [IO.File]::Copy($f.database,$dt,$true)
+        $duty=Register-OneCDatabaseRestorationDuty -State ([pscustomobject]@{infoBaseKind='file';devBranchInfoBasePath=$f.infoBase}) -SnapshotPath $dt -Policy always
+        $f.fault='partial native failure'
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw '*GATE6_*'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/LoadConfigFromFiles','/CheckModules','/CheckConfig')
+        $f.applied | Should -BeFalse
+        $duty.payload.status | Should -BeExactly 'pending'
+        (Read-DevBranchStateFile $f.statePath).lastConfigDesignerFingerprint | Should -BeNullOrEmpty
+        [IO.File]::ReadAllBytes($dt) | Should -Be ([byte[]](1,2,3,4))
+    }
+
+    It 'retains native compilation even with admitted MCP proof and uses one database boundary' {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        $operations=@($f.calls|ForEach-Object{$_.arguments[0]})
+        $operations | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        @($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})[0].arguments | Should -Not -Contain '/UpdateDBCfg'
+        $f.applied | Should -BeTrue
+        $result.loaded | Should -BeTrue
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.lastConfigDesignerFingerprint | Should -BeExactly $f.current.fingerprint
+        $state.configLoadStatus | Should -BeExactly 'passed'
+        $state.customSetting | Should -BeExactly 'сохранить'
+    }
+
+    It 'refuses changed current MCP inputs after editable load and restores the exact original target for <Fault>' -ForEach @(
+        @{Fault='source changed'}
+    ) {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $f.fault=$Fault
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw
+        $f.applied | Should -BeFalse
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Contain '/RollbackCfg'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/UpdateDBCfg'
+        [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
+        [IO.File]::ReadAllBytes((Join-Path $f.sourceRoot 'ConfigDumpInfo.xml')) | Should -Be $f.cursorBytes
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.lastConfigDesignerFingerprint | Should -BeExactly $f.previous.fingerprint
+        $state.lastConfigDesignerTreeObjectId | Should -BeExactly $f.previous.treeObjectId
+        $state.lastGate6Evidence.id | Should -BeExactly 'previous-proof'
+        $state.customSetting | Should -BeExactly 'сохранить'
+        if($Fault -eq 'source changed'){[IO.File]::ReadAllText((Join-Path $f.sourceRoot $f.module)) | Should -Match 'позднее изменение'}
+    }
+
+    It 'accepts production legacy findings only from the exact original seed corpus' {
+        $f=$script:continuationFixture
+        $script:ResultPurpose='production'
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.loadReason='branch-copy-seed'
+        $state | Add-Member -NotePropertyName branchSeedConfigurationFingerprint -NotePropertyValue $f.previous.fingerprint
+        $state | Add-Member -NotePropertyName branchSeedSourceKey -NotePropertyValue 'original-seed'
+        $state | Add-Member -NotePropertyName branchSeedSyncId -NotePropertyValue 'original-sync'
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State $state -ExportPath 'src/cf' -Mode Full
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/CheckConfig','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        $result.gate6Evidence.steps[-1].assessment.status | Should -BeExactly 'accepted-with-preexisting-findings'
+        $result.gate6Evidence.steps[-1].nativePassed | Should -BeFalse
+        $f.applied | Should -BeTrue
+    }
+
+    It 'keeps native checking independent of an unconsumed MCP artifact for <Fault>' -ForEach @(
+        @{Fault='receipt changed'},@{Fault='result changed'}
+    ) {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $f.fault=$Fault
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        $f.applied | Should -BeTrue
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        $result.gate6Evidence.steps[-1].status | Should -BeExactly 'not-required-development'
+    }
+
+    It 'retains previous loaded proof only after exact checked rollback and completes the same owner operation after repair' {
+        $f=$script:continuationFixture
+        $f.fault='module failure'
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw
+        [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
+        $restored=Read-DevBranchStateFile $f.statePath
+        $restored.lastConfigDesignerFingerprint | Should -BeExactly $f.previous.fingerprint
+        $restored.lastConfigDesignerTreeObjectId | Should -BeExactly $f.previous.treeObjectId
+        $restored.lastConfigDesignerLoadedAt | Should -BeExactly '2026-10-04T00:00:00Z'
+        $restored.configLoadStatus | Should -BeExactly 'passed'
+        $restored.lastGate6Evidence.id | Should -BeExactly 'previous-proof'
+        $f.applied | Should -BeFalse
+        $f.fault=''
+        $f.calls.Clear()
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State $restored -ExportPath 'src/cf'
+        $f.applied | Should -BeTrue
+        $result.loaded | Should -BeTrue
+        $configuration=@($result.gate6Evidence.steps|Where-Object step -eq 'configuration')[0]
+        $configuration.nativePassed | Should -BeFalse
+        $configuration.exitCode | Should -BeNullOrEmpty
+        $configuration.status | Should -BeExactly 'not-required-development'
+        $configuration.exitCode | Should -BeNullOrEmpty
+        (Read-DevBranchStateFile $f.statePath).lastConfigDesignerFingerprint | Should -BeExactly $f.current.fingerprint
+    }
+
+    It 'does not restore previous proof from uncertain borrowed or changed ownership for <Fault>' -ForEach @(
+        @{Fault='restore uncertain'},@{Fault='borrowed failure'},@{Fault='owner drift'}
+    ) {
+        $f=$script:continuationFixture
+        $f.fault=$Fault
+        if($Fault -eq 'borrowed failure'){
+            $script:OneCNativeOperationJournal=New-OneCNativeOperationJournal
+            $dt=Join-Path $f.root '.agent-1c/enclosing.dt'
+            [IO.File]::Copy($f.database,$dt,$true)
+            $duty=Register-OneCDatabaseRestorationDuty -State ([pscustomobject]@{infoBaseKind='file';devBranchInfoBasePath=$f.infoBase}) -SnapshotPath $dt -Policy always
+        }
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.lastConfigDesignerFingerprint | Should -BeNullOrEmpty
+        $state.configLoadStatus | Should -BeExactly 'pending'
+        $f.applied | Should -BeFalse
+        if($Fault -eq 'borrowed failure'){
+            @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/RestoreIB'
+            @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/RollbackCfg'
+            $duty.payload.status | Should -BeExactly 'pending'
+        }
+        if($Fault -eq 'restore uncertain'){
+            # D3a: the unconfirmed rollback clears the tree proof, so the retry is one strict full load.
+            $state.lastConfigDesignerTreeObjectId | Should -BeNullOrEmpty
+        }
+        if($Fault -eq 'owner drift'){
+            $state.devBranchInfoBasePath | Should -BeExactly (Join-Path $f.root 'Другая база')
+            $state.customSetting | Should -BeExactly 'поздний выбор'
+        }
+    }
+
+    It 'does not restore old loaded proof after a started database apply and retries through one full load' {
+        $f=$script:continuationFixture
+        $f.fault='apply failure'
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw 'Original native /UpdateDBCfg failed*'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg','/RollbackCfg')
+        $f.applied | Should -BeFalse
+        [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.lastConfigDesignerFingerprint | Should -BeNullOrEmpty
+        $state.lastConfigDesignerTreeObjectId | Should -BeNullOrEmpty
+        $state.configLoadStatus | Should -BeExactly 'pending'
+        $f.fault='';$f.calls.Clear()
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        $result.loadReason | Should -BeExactly 'designer-tree-proof-missing-full-load'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        $f.calls[0].arguments | Should -Not -Contain '-partial'
+        $f.applied | Should -BeTrue
+        (Read-DevBranchStateFile $f.statePath).lastConfigDesignerTreeObjectId | Should -BeExactly $f.current.treeObjectId
+    }
+
+    It 'rolls back an unfinished previous load before any check and keeps the retry partial' {
+        $f=$script:continuationFixture
+        # A killed run left a candidate in the editable object: the fingerprint is
+        # empty while the applied tree is still recorded.
+        Update-DevBranchState -State (Read-DevBranchStateFile $f.statePath) -Updates @{lastConfigDesignerFingerprint='';configLoadStatus='pending';lastGate6Evidence=$null}
+        [IO.File]::WriteAllBytes($f.database,[byte[]](6,6,6))
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' 6>$null
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/RollbackCfg','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        $f.calls[0].arguments[0..1] | Should -Be @('/RollbackCfg','/DumpResult')
+        $f.calls[1].arguments | Should -Contain '-partial'
+        $result.loadModeUsed | Should -BeExactly 'partial'
+        $result.gate6Evidence.editableLoad.rollbackPoint.unfinishedPreviousRolledBack | Should -BeTrue
+        $f.applied | Should -BeTrue
+    }
+
+    It 'keeps an ordinary load after a finished one free of an extra rollback' {
+        $f=$script:continuationFixture
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/RollbackCfg'
+        $result.gate6Evidence.editableLoad.rollbackPoint.unfinishedPreviousRolledBack | Should -BeFalse
+    }
+
+    It 'stops before loading when the unfinished-load rollback fails and continues through one strict full load' {
+        $f=$script:continuationFixture
+        Update-DevBranchState -State (Read-DevBranchStateFile $f.statePath) -Updates @{lastConfigDesignerFingerprint='';configLoadStatus='pending';lastGate6Evidence=$null}
+        $f.fault='rollback refused'
+        $failure=try{Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf';$null}catch{$_}
+        $failure.Exception.Message | Should -Match '^GATE6_ROLLBACK_RECOVERY_FAILED: The previous load of this object did not finish; no editable load was performed\..*fixture native rollback failed.*strict full load.*reset-dev-branch'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/RollbackCfg')
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.lastConfigDesignerFingerprint | Should -BeNullOrEmpty
+        $state.lastConfigDesignerTreeObjectId | Should -BeNullOrEmpty
+        # A persistent rollback failure must not repeat: the retry replaces the object from sources.
+        $f.calls.Clear()
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        $f.calls[0].arguments | Should -Not -Contain '-partial'
+        $result.loadReason | Should -BeExactly 'designer-tree-proof-missing-full-load'
+        $f.applied | Should -BeTrue
+    }
+
+    It 'rejects legacy finding acceptance after a failed rollback because the retry has no proven tree' {
+        $f=$script:continuationFixture
+        $script:ResultPurpose='production'
+        $state=Read-DevBranchStateFile $f.statePath
+        Update-DevBranchState -State $state -Updates @{loadReason='branch-copy-seed';branchSeedConfigurationFingerprint=$f.previous.fingerprint;branchSeedSourceKey='original-seed';branchSeedSyncId='original-sync';lastConfigDesignerFingerprint='';configLoadStatus='pending'}
+        $f.fault='rollback refused'
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw '*GATE6_ROLLBACK_RECOVERY_FAILED*'
+        $f.fault='';$f.calls.Clear()
+        $failure=try{Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' 6>$null;$null}catch{$_}
+        $failure.Exception.Message | Should -Match 'GATE6_CHECK_FAILED: step=configuration'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/UpdateDBCfg'
+        @($f.calls|ForEach-Object{$_.arguments[0]})[0] | Should -Be '/LoadConfigFromFiles'
+    }
+}

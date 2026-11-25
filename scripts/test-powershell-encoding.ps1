@@ -8,6 +8,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+# Logs and run records read this output as UTF-8; the console code page garbles Cyrillic.
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
 $ProgressPreference = "SilentlyContinue"
 
 if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
@@ -64,7 +67,7 @@ if ($changed.Count -gt 0) {
             -RedirectStandardOutput $probeStdoutPath -RedirectStandardError $probeStderrPath -Wait -PassThru
         $null = $process.Handle
         if ([int]$process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $probeOutputPath -PathType Leaf)) {
-            $stderr = if (Test-Path -LiteralPath $probeStderrPath -PathType Leaf) { Get-Content -LiteralPath $probeStderrPath -Raw } else { "" }
+            $stderr = if (Test-Path -LiteralPath $probeStderrPath -PathType Leaf) { [string](Get-Content -LiteralPath $probeStderrPath -Raw -Encoding UTF8) } else { "" }
             throw "Windows PowerShell 5.1 batch decode probe failed with exit code $($process.ExitCode): $($stderr.Trim())"
         }
         $probeResults = Get-Content -LiteralPath $probeOutputPath -Raw -Encoding UTF8 | ConvertFrom-Json

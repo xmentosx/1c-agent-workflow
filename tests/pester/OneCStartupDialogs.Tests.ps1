@@ -5,7 +5,7 @@ Describe "Non-interactive 1C startup dialogs" {
         $RepoRoot = $context.RepoRoot
         $CorePath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.core.ps1"
         $VanessaPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1"
-        $VanessaBuildPath = Join-Path $RepoRoot "scripts\build-vanessa-automation-patched.ps1"
+        $VanessaBuildPath = Join-Path $RepoRoot "scripts\run-vanessa-build-runtime.ps1"
         $McpHostDumpPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1"
     }
 
@@ -16,10 +16,14 @@ Describe "Non-interactive 1C startup dialogs" {
         @($errors) | Should -HaveCount 0
         $functions = @($coreAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
 
-        foreach ($name in @("Invoke-Designer", "Invoke-Enterprise")) {
+        foreach ($name in @("Invoke-DesignerAttempt", "Invoke-Enterprise")) {
             $functionText = [string](($functions | Where-Object Name -eq $name).Extent.Text)
-            $functionText | Should -Match ([regex]::Escape('"/DisableStartupMessages", "/DisableStartupDialogs"'))
+            $functionText | Should -Match ([regex]::Escape('"/DisableStartupMessages"'))
+            $functionText | Should -Match ([regex]::Escape('"/DisableStartupDialogs"'))
         }
+
+        $designer = [string](($functions | Where-Object Name -eq "Invoke-DesignerAttempt").Extent.Text)
+        $designer | Should -Match '(?s)\$InfoBaseKind -eq "file".*?\$updateDbIndex -ge 0.*?\$args \+= @\("/AllowExecuteScheduledJobs", "-Off"\)'
 
         $backgroundEnterprise = [string](($functions | Where-Object Name -eq "Start-EnterpriseBackground").Extent.Text)
         $backgroundEnterprise | Should -Match '(?s)if \(-not \$UseTestClient\)\s*\{\s*\$args \+= "/DisableStartupDialogs"\s*\}'
@@ -44,7 +48,7 @@ Describe "Non-interactive 1C startup dialogs" {
         $buildText = Get-Content -LiteralPath $VanessaBuildPath -Raw -Encoding UTF8
         $dumpText = Get-Content -LiteralPath $McpHostDumpPath -Raw -Encoding UTF8
 
-        $buildText | Should -Match '(?s)\$createBaseArguments\s*=\s*@\(.*?"/DisableStartupDialogs".*?"/Out"'
+        $buildText | Should -Match "(?s)\`$createBaseArguments\s*=\s*@\(.*?'/DisableStartupDialogs'.*?'/Out'"
         $dumpText | Should -Match ([regex]::Escape('"/DisableStartupMessages", "/DisableStartupDialogs", "/Out"'))
     }
 }

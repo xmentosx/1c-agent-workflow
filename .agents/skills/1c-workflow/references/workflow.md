@@ -14,6 +14,8 @@ master:
   /itl-new-extension-branch <name>
   /itl-sync-master
   /itl-refresh-all
+  /itl-clean
+  /itl-delete-branch <name>
   /itl-update-workflow
   /itl-switch-client <client>
   /itl-repository-mode <workflow|external|status>
@@ -22,6 +24,7 @@ master:
 itldev/*:
   /itl
   /itl-status
+  /itl-clean
   /itl-check
   /itl-verify-fix
   /itl-refresh
@@ -55,7 +58,7 @@ Use `scripts/agent-1c.ps1` when PowerShell is available; it owns Git, 1C, worktr
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
 ```
 
-Long actions default to `timeout_ms >= 3900000`, above Designer's 3600-second limit; raise it with a higher configured limit. `status` and `help` stay short.
+Use `timeout_ms >= 14700000` for default `init-project`/`sync-master` (four hours plus 300 seconds), or configured action limit plus 300 seconds. Other long actions use `>= 3900000`; `status`/`help` stay short.
 
 Fresh target bootstrap:
 
@@ -71,7 +74,7 @@ Installed project launcher:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
 ```
 
-Do not call the wizard helper directly, run `Test-Path` preflight, use background PowerShell, or set `timeout: 0`; probes may emit CLIXML. If terminal input is unavailable, do not collect the questionnaire in chat. Launcher owns `.agent-1c/runs/<run>/status.json`, `-MaxWaitSeconds 3600`, positive long timeout, and debug-only `-KeepWindowOnFailure`. Use `timeout_ms >= 3900000`; after interruption repeat the same command. It rejects live duplicates; do not continue the lifecycle manually or edit Git/status during orphan resume.
+Do not call the wizard helper directly, run `Test-Path` preflight, use background PowerShell, or set `timeout: 0`; probes may emit CLIXML. If terminal input is unavailable, do not collect the questionnaire in chat. Launcher owns `.agent-1c/runs/<run>/status.json`, a positive long timeout, and debug-only `-KeepWindowOnFailure`. After interruption repeat the same command; it rejects live duplicates. Do not continue the lifecycle manually or edit Git/status during orphan resume.
 
 ## Always-On Safety Notes
 
@@ -82,14 +85,14 @@ Do not call the wizard helper directly, run `Test-Path` preflight, use backgroun
 - Use `/itl-check` or `check-dev-branch` for executable verification. Effective ITL modes decide which components run; a skipped component produces partial evidence, never a fresh pass. `/deploy-and-test` is a bridge to the same helper.
 - Read `references/vanessa-tests.md` and `vanessa-authoring.md` only before creating, editing, or diagnosing Vanessa feature files.
 - `ONEC_MAX_CONCURRENT_SESSIONS` limits workflow-owned 1C launches per exact infobase. Default `3`; `0` disables it. Admission counts external processes, serializes count-and-start, and reserves promised TestClient slots.
-- `errorCategory=session-capacity` is a scheduling block, not a product/test failure. The helper may once close local sessions whose exact `/F` or `/S` targets the current dev-branch infobase, regardless of launcher, then retry admission once. Source, other-branch, ambiguous, and PID-reused processes remain fail-closed; do not add retries or alter the limit.
+- `errorCategory=session-capacity` is a scheduling block. MCP and Vanessa wait without stopping existing sessions. Never replay a native launch or raise the limit to make admission pass. For deadlines, cancellation and reservations, read [session admission](session-admission.md).
 - External `Start-Process 1cv8.exe` cannot be intercepted. Project automation must dot-source `agent-1c.ps1 -Action help`, then call `Start-OneCProcessBackground` with the exact base, whole topology, `ExpectedChildRole=test-client` when applicable, purpose, and `-Visible` when needed. Direct 1C launch is forbidden.
 - For other native Windows executables, and inside the guarded 1C launcher implementation, pass `Start-Process -ArgumentList` as one joined and correctly quoted command-line string, never as a PowerShell array.
 - Do not search or load ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `build/test-results/`, or `logs/` unless diagnosing a specific helper run or artifact.
 
 ## Failure Rules
 
-Stop immediately when required parameters are missing, Git state is unexpectedly dirty, branch targets already exist, the source infobase cannot be opened, repository credentials are missing for required storage sync, 1C Designer returns non-zero, CF/CFE export fails, or `verificationPolicy=block` forbids an unverified result.
+Stop the dependent operation when required parameters are missing, Git state is unexpectedly dirty, branch targets already exist, the source infobase cannot be opened, repository credentials are missing for required storage sync, 1C Designer returns non-zero, CF/CFE export fails, or `verificationPolicy=block` forbids an unverified result.
 
 On `ITL_INFOBASE_APPLICATION_NOT_READY`, run `update-dev-branch-base`, then retry the original MCP/test action once; never move this mutation into MCP.
 

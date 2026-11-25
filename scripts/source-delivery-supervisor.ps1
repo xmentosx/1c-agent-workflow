@@ -10,32 +10,58 @@ param(
     [string[]]$CoverageContract = @(),
     [string]$AiRulesSource = "",
     [string]$E2EProjectRoot = "",
+    [string]$AgentTarget = "",
     [string]$FreshProjectsRoot = "C:\itlj",
     [string]$GateScript = "",
     [string]$ComponentFinalizerScript = "",
     [string]$CompatibilityPromoterScript = "",
     [string]$Version = "",
+    [ValidateSet("Auto", "Develop", "Master")]
+    [string]$CleanupChannel = "Auto",
     [ValidateSet("Summary", "Runs", "Full")]
     [string]$StatusDetail = "Summary",
     [ValidateSet("Auto", "Restart")]
     [string]$ReleaseResumeMode = "Auto",
     [string]$ResumePlan = "",
-    [string]$ApproveLongPlan = "",
+    [string]$Replan = "",
+    [ValidateSet('Current', 'Frozen')]
+    [string]$ReplanQueueScope = 'Current',
+    [string[]]$FrozenRepair = @(),
+    [string]$ReplanCheckpointSha256 = '',
     [string]$SupervisorCommit = "",
+    [ValidateSet("develop", "master")]
+    [string]$SupervisorChannel = "",
+    [string]$StatusReaderCommit = "",
+    [switch]$CleanupExecutor,
+    [ValidateSet("Develop", "Master")]
+    [string]$CleanupExecutorChannel = "Develop",
+    [ValidateSet("manual", "pre-operation", "post-operation")]
+    [string]$CleanupExecutorPhase = "manual",
+    [string]$CleanupExecutorCommit = "",
+    [string]$CleanupAuthorityCommit = "",
+    [string]$CleanupOperationId = "",
+    [string]$CleanupDelegationToken = "",
+    [string]$CleanupResultPath = "",
+    [switch]$CleanupCompactState,
     [switch]$BootstrapSupervisor,
     [switch]$RetryBlockedStage,
-    [switch]$RequireRelease
+    [switch]$RequireRelease,
+    [string[]]$DeferEntry = @(),
+    [string]$DeferReason = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$deliveryUtf8 = New-Object Text.UTF8Encoding($false)
+[Console]::InputEncoding = $deliveryUtf8
+[Console]::OutputEncoding = $deliveryUtf8
+$OutputEncoding = $deliveryUtf8
 Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 if (-not $RepositoryRoot) { throw "Stable delivery supervisor requires an explicit candidate RepositoryRoot." }
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
-. (Join-Path $PSScriptRoot "develop-e2e-qualification.ps1")
 
 $script:Root = [System.IO.Path]::GetFullPath($RepositoryRoot)
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
@@ -48,11 +74,12 @@ $script:ComponentFinalizerScript = if ($ComponentFinalizerScript) { [System.IO.P
 $script:CompatibilityPromoterScript = if ($CompatibilityPromoterScript) { [System.IO.Path]::GetFullPath($CompatibilityPromoterScript) } else { Join-Path $script:Root "scripts\promote-ai-rules-compatibility.ps1" }
 $script:QueueRoot = "refs/itl/develop-queue"
 $script:DeliverySupervisorCommit = $SupervisorCommit
+$script:DeliverySupervisorChannel = if ($SupervisorChannel) { $SupervisorChannel } elseif ($Action -in @("Plan", "PublishDevelop")) { "develop" } else { "master" }
 $script:DeliverySupervisorBootstrap = [bool]$BootstrapSupervisor
 $script:DeliveryCustomGateBoundary = [bool]$GateScript -and $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
 
 function Invoke-DeliveryGit {
-    param([string[]]$Arguments, [switch]$AllowFailure, [AllowNull()][string]$StandardInput = $null)
+    param([string[]]$Arguments, [switch]$AllowFailure, [AllowNull()][object]$StandardInput = $null)
     return Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure -StandardInput $StandardInput
 }
 
@@ -78,56 +105,123 @@ function Get-DeliveryCommonGitDirectory {
 }
 
 . (Join-Path $PSScriptRoot "source-delivery-process.ps1")
+. (Join-Path $PSScriptRoot "source-delivery-release-recovery.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-queue.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-component.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-plan.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-resources.ps1")
+. (Join-Path $PSScriptRoot "source-delivery-ref-cleanup.ps1")
+. (Join-Path $PSScriptRoot "source-delivery-evidence.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-candidate.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-cleanup.ps1")
 
 [void](Invoke-DeliveryGit -Arguments @("rev-parse", "--git-dir"))
+# A pinned temp copy may wait hours for the delivery lock while another
+# publication's cleanup runs; lease it to this live process.
+try { [void](Write-SourceDeliverySupervisorLease -SupervisorRoot (Split-Path -Parent $PSScriptRoot)) }
+catch { Write-Warning "Delivery supervisor lease was not written; only the idle window protects this copy: $($_.Exception.Message)" }
+if ($CleanupExecutor) {
+    Invoke-DeliveryDelegatedCleanupExecutor `
+        -Channel $CleanupExecutorChannel `
+        -Phase $CleanupExecutorPhase `
+        -ExecutorCommit $CleanupExecutorCommit `
+        -AuthorityCommit $CleanupAuthorityCommit `
+        -OperationId $CleanupOperationId `
+        -DelegationToken $CleanupDelegationToken `
+        -ResultPath $CleanupResultPath `
+        -FreshProjectsRoot $FreshProjectsRoot `
+        -E2EProjectRoot $E2EProjectRoot `
+        -CompactState:$CleanupCompactState
+    return
+}
 if ($RequireRelease -and $Action -notin @("Plan", "PublishDevelop")) { throw "-RequireRelease is valid only with -Action Plan or PublishDevelop." }
 if ($RetryBlockedStage -and $Action -ne "PublishDevelop") { throw "-RetryBlockedStage is valid only with -Action PublishDevelop." }
 if ($ResumePlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { throw "-ResumePlan is valid only for a publication action." }
-if ($ApproveLongPlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { throw "-ApproveLongPlan is valid only for a publication action." }
+if ($Replan -and ($Action -ne 'PublishDevelop' -or $ResumePlan)) { throw '-Replan is valid only for PublishDevelop and cannot be combined with -ResumePlan.' }
+if (($ReplanQueueScope -ne 'Current' -or $ReplanCheckpointSha256) -and -not $Replan) { throw 'Frozen recovery parameters require -Replan.' }
+if($FrozenRepair.Count -and ($Action -ne 'PublishDevelop' -or -not $Replan -or $ReplanQueueScope -cne 'Frozen')){throw '-FrozenRepair requires PublishDevelop -Replan with -ReplanQueueScope Frozen.'}
+if (($DeferEntry.Count -or $DeferReason) -and ($Action -ne 'PublishDevelop' -or $ResumePlan -or $ReplanQueueScope -ne 'Current')) { throw '-DeferEntry is valid only for PublishDevelop with the current queue, not with -ResumePlan or a Frozen Replan.' }
 if ($StatusDetail -ne "Summary" -and $Action -ne "Status") { throw "-StatusDetail is valid only with -Action Status." }
+if ($CleanupChannel -ne "Auto" -and $Action -ne "Cleanup") { throw "-CleanupChannel is valid only with -Action Cleanup." }
 
 $script:ActiveOperation = $null
 try {
+    $queuedBeforeLock = @(if ($Action -eq "PublishDevelop") { Get-QueueEntries })
     if ($Action -in @("Cleanup", "PublishDevelop", "PromoteRelease", "ReleaseMaster")) {
         [void](Enter-DeliveryOperation -Action $Action)
-        if ($Action -ne "Cleanup" -and -not $script:DeliveryCustomGateBoundary) {
-            [void](Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase "pre-operation")
-        }
+    }
+    $publishedWhileWaiting = if ($Action -eq "PublishDevelop" -and [int]$script:DeliveryOperationWaitedSeconds -gt 0) {
+        Get-DevelopQueuePublishedWhileWaiting -Entries $queuedBeforeLock -WaitedSeconds ([int]$script:DeliveryOperationWaitedSeconds)
+    } else { $null }
+    # Every stand consumer qualifies on this clone's fixture stand; a legacy
+    # stand passed by an older command is replaced with a warning.
+    if ($Action -in @("Plan", "DiagnoseFull", "PublishDevelop", "PromoteRelease", "ReleaseMaster") -and -not $script:DeliveryCustomGateBoundary) {
+        $E2EProjectRoot = Resolve-DeliveryGateStand -Requested $E2EProjectRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget
     }
     $result = switch ($Action) {
         "RegisterChange" { Register-SourceChange }
         "Status" {
             $history = Get-DeliveryRunHistory -Limit $(if ($StatusDetail -eq "Summary") { 3 } else { 20 }) -IncludeDetails:($StatusDetail -eq "Full")
             $attempt = Read-DevelopPublicationAttempt
+            $statusReaderDirty = [bool](Invoke-DeliveryGit -Arguments @("status", "--porcelain", "--untracked-files=all")).stdout
             [pscustomobject]@{
                 status = "ok"
-                supervisor = [pscustomobject]@{ commit=$script:DeliverySupervisorCommit; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
+                statusReader = [pscustomobject]@{ commit=$StatusReaderCommit; role="read-only-inspector"; workingTreeDirty=$statusReaderDirty }
+                authoritySupervisor = [pscustomobject]@{ commit=$script:DeliverySupervisorCommit; role="lock-queue-push-owner"; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
+                supervisor = [pscustomobject]@{ commit=$script:DeliverySupervisorCommit; role="lock-queue-push-owner"; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
+                developAuthoritySupervisor = [pscustomobject]@{ commit=$(try { Get-GitValue -Arguments @("rev-parse", "refs/remotes/$script:Remote/develop") } catch { "" }); role="develop-lock-queue-push-owner" }
+                masterAuthoritySupervisor = [pscustomobject]@{ commit=$(try { Get-GitValue -Arguments @("rev-parse", "refs/remotes/$script:Remote/master") } catch { "" }); role="master-lock-queue-push-owner" }
+                cleanupPolicy = [pscustomobject]@{ manualDefault="develop"; publishDevelop="develop"; releaseMaster="master"; promoteRelease=@("develop", "master") }
                 queue = @(Get-QueueEntries | ForEach-Object { [pscustomobject]@{ id=$_.id; base=$_.base; head=$_.head } })
+                deferredQueue = @((Get-QueueDeferrals).Values | Sort-Object id | ForEach-Object { [pscustomobject]@{ id=[string]$_.id; head=[string]$_.head; stage=[string]$_.stage; reason=[string]$_.reason; deferredAt=[string]$_.deferredAt; continuation=[string]$_.continuation } })
+                sourceCandidate = (Get-SourceCandidateStatus)
                 activeOperation = (Get-DeliveryOperationStatus)
-                publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
+                gateSlots = (Get-SourceGateSlotStatus)
+                publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; releaseCapabilities=$(if ($attempt.PSObject.Properties.Name -contains 'releaseCapabilities') { @($attempt.releaseCapabilities) } else { @() }); fullReleaseRequested=$(if ($attempt.PSObject.Properties.Name -contains 'fullReleaseRequested') { [bool]$attempt.fullReleaseRequested } else { $false }); failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
                 cleanupDebt = (Get-DeliveryResourceLedgerSummary)
+                disposition = (Get-DeliveryDispositionReport)
+                recoveryArchives = $(if ($StatusDetail -eq 'Full') { Get-DeliveryRecoveryInventory -IncludeEntries } else { $null })
+                sourceStores = $(if ($StatusDetail -eq 'Full') { Get-DeliveryStoreInventory } else { $null })
+                deferralHistory = $(if ($StatusDetail -eq 'Full') { Get-QueueDeferralHistory } else { $null })
+                unstableTests = $(if ($StatusDetail -eq 'Full') { @(Get-DeliveryUnstableTests -Entries @((Get-DeliveryRunHistory -Limit $script:DeliveryRunHotIndexCapacity -IncludeDetails).lastRuns)) } else { $null })
                 runHistory = $history
             }
         }
         "Plan" { New-AccumulatedDeliveryPlan -RequireRelease:$RequireRelease }
-        "Cleanup" { Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase "manual" }
-        "DiagnoseFull" { Invoke-DeliveryDiagnosticFull -AiRulesSource $AiRulesSource -E2EProjectRoot $E2EProjectRoot }
-        "PublishDevelop" { Publish-AccumulatedDevelop }
-        "PromoteRelease" { Promote-AccumulatedDevelopToMaster }
-        "ReleaseMaster" { Release-DevelopToMaster }
-    }
-    if ($Action -in @("PublishDevelop", "PromoteRelease", "ReleaseMaster") -and -not $script:DeliveryCustomGateBoundary -and $result -and [string]$result.status -in @("published", "released")) {
-        $cleanup = Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase "post-operation"
-        $result | Add-Member -NotePropertyName cleanup -NotePropertyValue $cleanup -Force
-        if ([string]$cleanup.status -eq "completed-with-warnings") {
-            $result | Add-Member -NotePropertyName deliveryStatus -NotePropertyValue "completed-with-cleanup-warnings" -Force
+        "Cleanup" {
+            $selectedCleanupChannel = if ($CleanupChannel -eq "Auto") { "Develop" } else { $CleanupChannel }
+            $channelCleanup = Invoke-DeliveryChannelCleanupSafely -Channel $selectedCleanupChannel -Phase "manual" -CompactState
+            $cleanup = $channelCleanup.cleanup
+            $cleanup | Add-Member -NotePropertyName executor -NotePropertyValue $channelCleanup.executor -Force
+            $cleanup | Add-Member -NotePropertyName stateCompaction -NotePropertyValue $channelCleanup.stateCompaction -Force
+            $refCleanup = Invoke-DeliveryRefDispositionCleanup
+            $cleanup | Add-Member -NotePropertyName refCleanup -NotePropertyValue $refCleanup
+            $recoveryCleanup = Invoke-DeliveryRecoveryCleanup
+            $cleanup | Add-Member -NotePropertyName recoveryArchives -NotePropertyValue $recoveryCleanup
+            $storeCleanup = Invoke-DeliveryStoreRetention
+            $cleanup | Add-Member -NotePropertyName sourceStores -NotePropertyValue $storeCleanup
+            if (([string]$refCleanup.status -eq 'needs-attention' -or [string]$recoveryCleanup.status -eq 'completed-with-warnings' -or [string]$storeCleanup.status -eq 'completed-with-warnings') -and [string]$cleanup.status -eq 'completed') {
+                $cleanup | Add-Member -NotePropertyName status -NotePropertyValue 'completed-with-warnings' -Force
+            }
+            $cleanup
         }
+        "DiagnoseFull" { Invoke-DeliveryDiagnosticFull -AiRulesSource $AiRulesSource -E2EProjectRoot $E2EProjectRoot }
+        "PublishDevelop" {
+            if ($publishedWhileWaiting -and -not ($DeferEntry.Count -or $DeferReason)) { $publishedWhileWaiting }
+            else {
+                # Requested deferrals are written under the operation lock, before
+                # the candidate is built; the publication then excludes them.
+                $requestedDeferrals = @(if ($DeferEntry.Count -or $DeferReason) { Add-RequestedQueueDeferrals -Ids $DeferEntry -Reason $DeferReason })
+                $published = if ($script:DeliveryCustomGateBoundary) { Publish-DevelopDeferringFailingEntries } else { Invoke-PublishDevelopWithCleanup }
+                if ($requestedDeferrals.Count -and $published) {
+                    $automatic = if ($published.PSObject.Properties['deferredEntries']) { @($published.deferredEntries) } else { @() }
+                    $published | Add-Member -NotePropertyName deferredEntries -NotePropertyValue (@($requestedDeferrals) + $automatic) -Force
+                }
+                $published
+            }
+        }
+        "PromoteRelease" { Promote-AccumulatedDevelopToMaster -WithChannelCleanup:(-not $script:DeliveryCustomGateBoundary) }
+        "ReleaseMaster" { if ($script:DeliveryCustomGateBoundary) { Release-DevelopToMaster } else { Invoke-ReleaseMasterWithCleanup } }
     }
     $result | ConvertTo-Json -Depth 16
 } finally {

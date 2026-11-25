@@ -45,7 +45,9 @@ Describe "ai_rules compatibility promotion" {
         }
     }
 
-    It "promotes only the two aiRules1c lock fields without reformatting the file" {
+    It "promotes only the two aiRules1c lock fields without reformatting the file with <QualificationKind> proof" -ForEach @(
+        @{QualificationKind='legacy'}, @{QualificationKind='passed nonreusable schema 4'}
+    ) {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-promotion-" + [guid]::NewGuid().ToString('N'))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'templates'), (Join-Path $tempRoot 'build\test-results\qualification') | Out-Null
@@ -90,6 +92,12 @@ Describe "ai_rules compatibility promotion" {
                 }
                 result = [ordered]@{ passed = 1; failed = 0; skipped = 0 }
                 finishedAt = '2026-08-01T10:00:00Z'
+            }
+            if ($QualificationKind -ne 'legacy') {
+                $qualification.schemaVersion = 4
+                $qualification.reusable = $false
+                $qualification.pesterInputs = [ordered]@{schemaVersion=1;kind='itl-pester-input-identity';runtimeIdentityStatus='unknown';runtimeIdentitySha256='';reusable=$false;files=@(@{path='tests/pester/Fixture.Tests.ps1';digest=''})}
+                $qualification.inventory = @{tests=@(@{path='tests/pester/Fixture.Tests.ps1';sha256=('a'*64)})}
             }
             $qualificationPath = Join-Path $tempRoot 'build\test-results\qualification\full.json'
             [IO.File]::WriteAllText($qualificationPath, (($qualification | ConvertTo-Json -Depth 8) + "`n"), $Utf8NoBom)

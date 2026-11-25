@@ -1,29 +1,29 @@
-# Direct full-cycle в ветке разработки
+# Direct full-cycle in a development branch
 
-Используйте этот reference после того, как upstream `AGENTS.md` и `verification-policy.md` определили `executionPath=full-cycle`, а границы, решение и критерии приёмки достаточно ясны для `planningMode=direct`. Promotion trigger или высокий verification risk усиливает проверки, но сам по себе не требует OpenSpec.
+Use this reference after upstream `AGENTS.md` and `verification-policy.md` have set `executionPath=full-cycle` and the boundaries, solution and acceptance criteria are clear enough for `planningMode=direct`. A promotion trigger or a high verification risk strengthens the checks, but by itself it does not require OpenSpec.
 
-## Общее правило готовности
+## Readiness rule
 
-Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке любая доработка агентом под настроенными `exportPath`/`extensionsPath` считается готовой только после релевантных сценариев под `testsPath` и fresh passed `/itl-check`; direct full-cycle исключений не даёт. Явно выбранный ITL lite допускает только partial evidence с формулировкой `implemented; executable verification skipped`. На `master` правка исходников остаётся branch-safety blocker.
+Here `itldev/*` means the current Git branch name (`git branch --show-current`), not a directory or a file glob. In such a branch a change under `exportPath`/`extensionsPath` passes the assessment of applicable obligations and a fresh passed `/itl-check`; `testsPath` stores retained tests, and sufficient one-off proof needs no placeholder test file. A started runner with zero tests, invalid JUnit or a failure remains an error. On `master` a source edit remains a branch-safety blocker.
 
-Перед тестами алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Слой с режимом `off` автоматически не создаётся. Пропуск никогда не называется `готово/verified/done`; при `verificationPolicy=block` он блокирует result/close, при `warn` требует явного подтверждения partial result.
+Before algorithm tests read `references/yaxunit-tests.md`; before Vanessa tests read `references/vanessa-tests.md`. Mode `off` forbids the automatic run, not authoring a test or reusing already fresh sufficient proof. Without such proof the skip stays partial: `verificationPolicy=block` blocks result/close, `warn` permits a warned export; closing the branch needs a separate confirmation.
 
-## Процесс
+## Process
 
-Direct full-cycle использует полный upstream процесс анализа, точечного изменения и применимых проверок, но не создает OpenSpec-артефакты.
+Direct full-cycle uses the full upstream process of analysis, targeted change and applicable checks, but creates no OpenSpec artifacts.
 
-Перед изменением агент записывает:
+Before the change record:
 
 ```text
 executionPath=full-cycle
 planningMode=direct
-Reason: <promotion trigger или причина выхода за quick-fix>; scope and solution are clear.
+Reason: <promotion trigger or why quick-fix was exceeded>; scope and solution are clear.
 ```
 
-После реализации действуют релевантные YAxUnit-тесты границ, Vanessa-сценарии интеграции/UI и один финальный fresh passed `/itl-check`. Высокий verification risk усиливает проверки, а не создает proposal автоматически.
+After implementation obtain sufficient proof under `verification-change.md`: applicable existing or new checks, including an admissible one-off observation. The final fresh passed `/itl-check` assesses overall readiness. A high verification risk strengthens the necessary checks; it does not create a proposal or a duplicate suite automatically.
 
-Финальный `/itl-check` выполняется после последней правки и принадлежит helper: он обновляет копию базы текущей ветки, запускает YAxUnit, Vanessa Automation через `TESTMANAGER -> TESTCLIENT`, читает JUnit и проверяет event-log baseline. Не заменяйте его MCP, headless EPF или `/deploy-and-test`.
+The final `/itl-check` runs after the last relevant edit and belongs to the helper: it decides the needed branch infobase update, runs the selected YAxUnit and Vanessa Automation through `TESTMANAGER -> TESTCLIENT`, checks JUnit and the event-log baseline, and accounts for applicable retained proof. An interactive MCP confirmation needs no duplicate test file but does not replace the final helper assessment. Do not replace it with a headless EPF or `/deploy-and-test`.
 
-Если проверка упала, проанализируйте отчёт Vanessa, лог 1С, event-log evidence и изменённый код; исправьте причину и повторите полный helper-owned цикл. Лимит recovery — три полных неуспешных запуска одной repair session, после чего нужно вернуть blocker diagnostics и не заявлять completion.
+If the check fails, analyze the selected runner report, the 1C log, event-log evidence and the changed code; fix the cause and repeat the full helper-owned cycle. The helper decides repeated runs and proof applicability; do not manually repeat unaffected observations. After three failed repairs without progress on the same obstacle perform systemic diagnosis before another full run (`verification-result.md`); a blocked repair returns blocker diagnostics and never claims completion.
 
-Только после fresh passed `/itl-check` можно переходить к `/itl-result` или заявлять готовность. При partial/skipped evidence применяйте `verificationPolicy`; такой результат никогда не становится normal fresh pass.
+Claim verified readiness only after a fresh passed `/itl-check`. For `/itl-result` with partial/skipped evidence apply `verificationPolicy`; such a result never becomes a normal fresh pass.

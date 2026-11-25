@@ -1,0 +1,255 @@
+[
+    {
+        "step":  "create-dataset",
+        "at":  "2026-11-11T14:09:04.9652006Z",
+        "value":  {
+                      "status":  200,
+                      "name":  "itl_qualification_name_20261111_e0b647c3",
+                      "id":  "b036df0a-1530-59a1-9c75-d632e18378c3",
+                      "ms":  644
+                  }
+    },
+    {
+        "step":  "create-dataset-again-same-name",
+        "at":  "2026-11-11T14:09:05.3722914Z",
+        "value":  {
+                      "status":  200,
+                      "sameId":  true,
+                      "ms":  399
+                  }
+    },
+    {
+        "step":  "remember-v1-file-upload",
+        "at":  "2026-11-11T14:09:35.5136260Z",
+        "value":  {
+                      "status":  200,
+                      "body":  {
+                                   "status":  "completed",
+                                   "dataset_name":  "itl_qualification_name_20261111_e0b647c3",
+                                   "dataset_id":  "b036df0a-1530-59a1-9c75-d632e18378c3",
+                                   "pipeline_run_id":  "b591e545-e3b6-4ed8-aa24-2c699bfad695",
+                                   "items_processed":  1,
+                                   "elapsed_seconds":  29.721019244985655,
+                                   "items":  [
+                                                 {
+                                                     "id":  "27c5a41a-513b-44d1-9227-b202108f0fd6"
+                                                 }
+                                             ]
+                               },
+                      "error":  null,
+                      "ms":  30133
+                  }
+    },
+    {
+        "step":  "listing-after-v1",
+        "at":  "2026-11-11T14:09:35.8369165Z",
+        "value":  {
+                      "status":  200,
+                      "ms":  314,
+                      "count":  1,
+                      "items":  [
+                                    {
+                                        "id":  "27c5a41a-513b-44d1-9227-b202108f0fd6",
+                                        "name":  "itlq__candidate__title-one",
+                                        "label":  "probe-v1",
+                                        "externalMetadata":  {
+                                                                 "itlStatus":  "candidate",
+                                                                 "itlTitle":  "title one",
+                                                                 "_cognee":  {
+                                                                                 "source_uri":  "file:///home/cognee/itlq__candidate__title-one.txt"
+                                                                             }
+                                                             },
+                                        "createdAt":  "2026-11-11T14:09:06.943780",
+                                        "updatedAt":  "2026-11-11T14:09:36.237695",
+                                        "extension":  "txt",
+                                        "dataSize":  167
+                                    }
+                                ]
+                  }
+    },
+    {
+        "step":  "update-v2-ascii-name",
+        "at":  "2026-11-11T14:09:49.8510650Z",
+        "value":  {
+                      "status":  200,
+                      "body":  {
+                                   "status":  "incremental",
+                                   "regions":  1,
+                                   "deleted_chunks":  1,
+                                   "added_chunks":  1,
+                                   "reused_chunks":  0,
+                                   "redated_chunks":  0,
+                                   "kept_chunks":  0,
+                                   "reindexed_chunks":  0,
+                                   "total_chunks":  1,
+                                   "data_id":  "27c5a41a-513b-44d1-9227-b202108f0fd6",
+                                   "dataset_id":  "b036df0a-1530-59a1-9c75-d632e18378c3",
+                                   "duration_seconds":  13.657,
+                                   "pipeline_run_id":  "c327072e-e147-4ecf-8702-59a854461a3f",
+                                   "fallback":  null,
+                                   "error":  null
+                               },
+                      "error":  null,
+                      "ms":  14007
+                  }
+    },
+    {
+        "step":  "listing-after-v2",
+        "at":  "2026-11-11T14:09:50.1200701Z",
+        "value":  {
+                      "status":  200,
+                      "ms":  267,
+                      "count":  1,
+                      "items":  [
+                                    {
+                                        "id":  "27c5a41a-513b-44d1-9227-b202108f0fd6",
+                                        "name":  "itlq__verified__title-two",
+                                        "label":  "probe-v1",
+                                        "externalMetadata":  {
+                                                                 "itlStatus":  "candidate",
+                                                                 "itlTitle":  "title one",
+                                                                 "_cognee":  {
+                                                                                 "source_uri":  "file:///home/cognee/itlq__candidate__title-one.txt"
+                                                                             }
+                                                             },
+                                        "createdAt":  "2026-11-11T14:09:06.943780",
+                                        "updatedAt":  "2026-11-11T14:09:50.839373",
+                                        "extension":  "txt",
+                                        "dataSize":  186
+                                    }
+                                ]
+                  }
+    },
+    {
+        "step":  "raw-after-v2",
+        "at":  "2026-11-11T14:09:50.4140545Z",
+        "value":  {
+                      "status":  200,
+                      "body":  "{\"format\":\"itl-memory-qualification\",\"noteId\":\"q1\",\"title\":\"title two\",\"status\":\"verified\",\"fact\":\"Qualification probe version two about listing names after update; the status changed.\"}",
+                      "ms":  291
+                  }
+    },
+    {
+        "step":  "update-v3-cyrillic-name",
+        "at":  "2026-11-11T14:10:05.8372529Z",
+        "value":  {
+                      "status":  200,
+                      "body":  {
+                                   "status":  "incremental",
+                                   "regions":  1,
+                                   "deleted_chunks":  1,
+                                   "added_chunks":  1,
+                                   "reused_chunks":  0,
+                                   "redated_chunks":  0,
+                                   "kept_chunks":  0,
+                                   "reindexed_chunks":  0,
+                                   "total_chunks":  1,
+                                   "data_id":  "27c5a41a-513b-44d1-9227-b202108f0fd6",
+                                   "dataset_id":  "b036df0a-1530-59a1-9c75-d632e18378c3",
+                                   "duration_seconds":  15.069,
+                                   "pipeline_run_id":  "2fbecee2-68f3-4b77-a13a-7deac202c1ed",
+                                   "fallback":  null,
+                                   "error":  null
+                               },
+                      "error":  null,
+                      "ms":  15421
+                  }
+    },
+    {
+        "step":  "listing-after-v3",
+        "at":  "2026-11-11T14:10:06.1048604Z",
+        "value":  {
+                      "status":  200,
+                      "ms":  266,
+                      "count":  1,
+                      "items":  [
+                                    {
+                                        "id":  "27c5a41a-513b-44d1-9227-b202108f0fd6",
+                                        "name":  "itlq__standing__Заголовок три",
+                                        "label":  "probe-v1",
+                                        "externalMetadata":  {
+                                                                 "itlStatus":  "candidate",
+                                                                 "itlTitle":  "title one",
+                                                                 "_cognee":  {
+                                                                                 "source_uri":  "file:///home/cognee/itlq__candidate__title-one.txt"
+                                                                             }
+                                                             },
+                                        "createdAt":  "2026-11-11T14:09:06.943780",
+                                        "updatedAt":  "2026-11-11T14:10:06.825019",
+                                        "extension":  "txt",
+                                        "dataSize":  245
+                                    }
+                                ]
+                  }
+    },
+    {
+        "step":  "remember-identical-v3-with-new-metadata",
+        "at":  "2026-11-11T14:10:06.7911251Z",
+        "value":  {
+                      "status":  200,
+                      "body":  {
+                                   "status":  "completed",
+                                   "dataset_name":  "itl_qualification_name_20261111_e0b647c3",
+                                   "dataset_id":  "b036df0a-1530-59a1-9c75-d632e18378c3",
+                                   "pipeline_run_id":  "7ba70177-1cdb-4432-a24b-6039083e8f65",
+                                   "items_processed":  1,
+                                   "elapsed_seconds":  0.30588426208123565,
+                                   "items":  [
+                                                 {
+                                                     "id":  "27c5a41a-513b-44d1-9227-b202108f0fd6"
+                                                 }
+                                             ]
+                               },
+                      "error":  null,
+                      "ms":  686
+                  }
+    },
+    {
+        "step":  "listing-after-identical-remember",
+        "at":  "2026-11-11T14:10:07.0694194Z",
+        "value":  {
+                      "status":  200,
+                      "ms":  276,
+                      "count":  1,
+                      "items":  [
+                                    {
+                                        "id":  "27c5a41a-513b-44d1-9227-b202108f0fd6",
+                                        "name":  "itlq__standing__Заголовок три",
+                                        "label":  "probe-v1",
+                                        "externalMetadata":  {
+                                                                 "itlStatus":  "candidate",
+                                                                 "itlTitle":  "title one",
+                                                                 "_cognee":  {
+                                                                                 "source_uri":  "file:///home/cognee/itlq__candidate__title-one.txt"
+                                                                             }
+                                                             },
+                                        "createdAt":  "2026-11-11T14:09:06.943780",
+                                        "updatedAt":  "2026-11-11T14:10:06.825019",
+                                        "extension":  "txt",
+                                        "dataSize":  245
+                                    }
+                                ]
+                  }
+    },
+    {
+        "step":  "count",
+        "at":  "2026-11-11T14:10:07.3779269Z",
+        "value":  {
+                      "status":  200,
+                      "body":  {
+                                   "count":  1
+                               },
+                      "ms":  306
+                  }
+    },
+    {
+        "step":  "cleanup-delete-dataset",
+        "at":  "2026-11-11T14:10:10.2977332Z",
+        "value":  {
+                      "status":  200,
+                      "error":  null,
+                      "stillListed":  0,
+                      "ms":  2662
+                  }
+    }
+]

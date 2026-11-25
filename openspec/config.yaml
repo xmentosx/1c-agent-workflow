@@ -1,0 +1,14 @@
+schema: spec-driven
+
+context: |
+  This is the 1c-agent-workflow SOURCE repository, not an installed 1C project.
+  Follow AGENTS.md and read docs/source-planning.md for the chosen planning flow.
+  Architecture ownership and checkpoints: docs/package-architecture.md.
+  Verification and delivery: docs/local-quality-gate.md.
+  Reuse the user's confirmed discovery decisions and existing authorization.
+
+rules:
+  proposal:
+    - Apply the source-planning sufficient-proposal contract and cite material evidence.
+  tasks:
+    - Tie completion to the change's acceptance evidence, including test-plan.md when present.

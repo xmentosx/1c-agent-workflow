@@ -12,7 +12,60 @@ When bounded JSON sets `userReportOmitted=true`, the complete report remains ava
 
 Use direct `agent-1c.ps1` only for actions that the compact runner intentionally does not expose, including short read-only actions and explicitly documented internal diagnostics.
 
+Workflow migration recovery uses `scripts/update-installed-workflow.ps1` from an exact clean compatible source checkout. `-Recovery status` lists up to ten retained root snapshots and their ids; `-Recovery restore -SnapshotId <id>` restores the selected package and owned settings through the same `update-workflow` owner. It creates a workflow-only return commit and preserves unrelated business work/index. The source helper remains available while the installed package is replaced. A changed owned file, settings value, backup or later HEAD stops recovery with scoped reconciliation; repeat the same source-side command after resolving that conflict. Interrupted restore and a lost commit acknowledgement retain the root receipt and resume without a second commit. A pending unresolved business merge requires its original compatible lifecycle recovery before backward package rollback. Project-local CLI caches and external stores are outside this restore. Reopen/reload the client context after completion.
+
 Mutating actions are serialized per worktree through the ignored lifecycle operation lock. Concurrent ordinary operations in separate development worktrees are allowed; actions that also mutate master acquire both scopes. Temporary contention waits automatically; use `status` to inspect the waiter and holder. See [lock waiting and cancellation](branch-lifecycle.md#lifecycle-operation-lock) for the timeout and cancel contract. Do not delete lock files or edit operation JSON. Status remains observable during active work and removes proven-stale on-demand leases only when it can immediately take lifecycle then runtime locks without disturbing the active operation record.
+
+For an ambiguous pending post-copy state, use the same source-side recovery owner and [scoped workflow-update recovery](workflow-update-recovery.md). It preserves bytes for review and binds acknowledgement to exact observed hashes; it does not silently accept later edits or replace the recorded update candidate.
+
+Catalog apply recovery uses `vibecoding1c-mcp-status -CatalogAction status` and
+`vibecoding1c-mcp-select -CatalogAction resume|restore|cancel`. Status is local
+and does not refresh the registry. Cancel cooperatively signals the pinned
+operation and may let its current write finish; it does not undo completed
+writes. Resume retains the operation ID and catalog SHA. Restore uses the same
+client writer to restore only its owned entries, preserving unrelated settings.
+A changed owned key or an unconfirmed physical write requires comparison with
+the retained operation before continuing; never delete its IDs or ownership
+records. Configuration success still requires client reload/new-session
+observation before claiming the tools are active.
+
+For a catalog project use `vibecoding1c-mcp-status -CatalogAction list` (lists every
+published project with its product; `familyMatch=false` marks a family other
+than the installed one), then `-CatalogAction preview -CatalogProjectId <id>` or explicit `vibecoding1c-mcp-select -CatalogAction select -CatalogProjectId
+<id>`. Selection requires an existing published record. Prepare a missing project
+separately with `-CatalogAction create`; a denied Git publication retains a private
+request and its stable ID for review, not runtime association. `-CatalogRecordPath`
+accepts a prepared business record for creation. These actions do not create SPPR/Mantis
+objects. `-CatalogAction sync` uses the same startup plan; `context` reports only
+the selected project, role intentions and integration defaults. Missing optional
+links remain deferred. Interactive init chooses the project before unattended
+work; JSON init requires `projectId` (an existing binding is retained on resume).
+Missing base-family metadata must be completed and published separately.
+
+Bound operations check the catalog once with a 10-second metadata deadline.
+A valid applied context continues offline with a freshness warning. Conflicts
+offer keep-local, registry or defer before writes; use `-CatalogDecision` for an
+explicit automated choice. Unattended ambiguity does not choose for the user.
+To install an older incompatible package, first use `-CatalogAction
+restore-compatible` with the current helper. It restores the proven initial
+owned settings/binding and preserves unrelated values; conflicts retain the
+current helper and need resolution. An unbound project must select a published
+project before update copies the package; old `later` preferences do not bypass
+this. Source-side `scripts/update-installed-workflow.ps1` accepts `-CatalogProjectId`
+and optional `-CatalogProfileId`/`-CatalogDecision` for unattended continuation.
+If an older caller already copied the package, the fresh child requires selection
+before file post-copy; failure retains the update snapshot for the same helper's
+resume/recovery. No empty answer or failed association completes the transition.
+Already bound projects do not repeat selection. Association uses memory default-on
+when configured, preserves explicit off, and does not claim native readiness.
+
+For Mantis calls read `context.integrationDefaults`: pass `mantisSearch.filters`
+to the existing search tool; an explicit issue ID can be read globally. Use the
+matching `mantisCreateRoutes` purpose for creation, asking only for this operation
+when absent. Keep the existing writer's `operation_id` unchanged on retry and
+use its status/unknown-outcome recovery. Catalog defaults never replace that
+journal or authorize a write. SPPR exact links identify native objects; similarity
+search is separate evidence and cannot substitute for a missing exact link.
 
 Common internal actions:
 
@@ -31,9 +84,20 @@ install-yaxunit
 repair-dev-branch-tooling
 install-agent-browser
 install-windows-mcp
+provision-openspec-cli
+openspec-context
+openspec-new-change
+openspec-archive-change
 install-ui-tools
 ui-tools-status
 begin-verification-repair
+extend-verification-repair
+begin-one-off-proof
+complete-one-off-proof
+begin-verification-change
+complete-verification-change
+attest-verification-suites
+acknowledge-event-log-errors
 vibecoding1c-mcp-setup
 vibecoding1c-mcp-update
 vibecoding1c-mcp-status
@@ -44,8 +108,10 @@ vibecoding1c-mcp-refresh-registry
 vibecoding1c-mcp-rotate-keys
 vibecoding1c-mcp-ensure-model
 vibecoding1c-mcp-write-client-config
+sync-client-mcp
 context-benchmark
 update-workflow
+update-workflow-branch
 update-ai-rules
 doctor
 itl-litemode
@@ -76,6 +142,11 @@ stop-dev-branch-test-clients
 start-vanessa-profile
 status-vanessa-profile
 stop-vanessa-profile
+window-helper-status
+window-helper-stop
+window-helper-restart
+window-show
+window-hide
 check-dev-branch
 verify-dev-branch
 refresh-dev-branch
@@ -84,11 +155,14 @@ refresh-all-dev-branches
 reset-dev-branch
 lock-config-repository-objects
 export-dev-branch-result
+get-review-scope
 close-dev-branch
+delete-dev-branch
 switch-master
 switch-dev-branch
 list-dev-branches
 status
+clean-artifacts
 configure-auxiliary-contour
 status-auxiliary-contours
 update-auxiliary-contour
@@ -96,6 +170,7 @@ dump-auxiliary-contour
 check-auxiliary-contour
 export-auxiliary-contour-result
 reset-auxiliary-contour
+remove-auxiliary-contour
 release-e2e-snapshot
 release-e2e-restore
 release-e2e-prepare-ondemand
@@ -114,7 +189,7 @@ Extension helper actions are advanced/helper commands. `new-extension-dev-branch
 
 `stop-dev-branch-test-clients` stops only the Vanessa `TESTMANAGER` in the current worktree's service infobase and `TESTCLIENT` processes in its development infobase, then fails if any remain. Successful Vanessa verification performs the same cleanup automatically. It never stops foreign worktree test processes.
 
-`cleanup-interrupted-vanessa-run` is private to the monitored `run-itl-command.ps1` parent after its exact child helper exits without terminal status. It requires matching lifecycle-owned infobase, `VAParams.json`, and TestClient ports, never falls back to branch-wide cleanup, and must not be invoked manually.
+`cleanup-interrupted-vanessa-run` is the legacy exact fallback when no durable database/native recovery ticket is available. It requires matching lifecycle-owned infobase, `VAParams.json`, and TestClient ports, never falls back to branch-wide cleanup, and must not be invoked manually.
 
 `validate-test-classification` is the short static continuation after refresh or
 catalog edits. It inventories Vanessa feature files and YAxUnit `Module.bsl`
@@ -137,9 +212,9 @@ create one catch-all suite, relabel real acceptance as explicit, delete scenario
 weaken assertions, or ask the developer to perform the migration. Then run the
 compact helper with `-Action validate-test-classification`; its post-refresh
 baseline rejects changed or lost scenario behavior and it does not start 1C. Do
-not run `/itl-check` unless separately requested. Report the successful refresh
-together with the completed classification instead of returning the original
-report alone. For refresh-all, repeat this bounded continuation in every listed
+not run `/itl-check` unless separately requested. Return the validator's complete `userReport` verbatim; retain the original refresh report as history.
+For missing historical context, return the original refresh report verbatim followed
+by the standalone classification report. Never repeat refresh to rebuild reporting. For refresh-all, repeat this bounded continuation in every listed
 branch worktree.
 `classify-tests-and-repeat-original-itl-command` follows the same repair and
 static validation, then repeats the original command; its preflight stopped
@@ -155,7 +230,11 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action stop-vanessa-profile
 ```
 
-`start-vanessa-profile` opens exactly one ownership-proven branch-local `TESTMANAGER -> TESTCLIENT` pair, positively proves the manager connection, and opens the specified `.feature` without `StartFeaturePlayer` or `run_scenario`. The pair stays open until `stop-vanessa-profile`. Start/reuse/status return `ITL_VANESSA_PROFILE_REPORT` with safe PID, port, infobase, feature, and connection fields only; they do not create JUnit or verification verdicts. `stop-vanessa-profile` delegates to the shared branch-safe Vanessa runtime release primitive and is idempotent. These actions are manual diagnostics, not `/itl-check` or release-gate substitutes.
+`window-helper-status`, `window-helper-stop` and `window-helper-restart` report, stop or restart the window helpers that serve hidden TestClients of this project; `-AllWindowHelperGroups` covers every helper of the current user. Stopping is always safe, and with `ONEC_WINDOW_MODE=visible` it shows the hidden main windows. `window-show` and `window-hide` with `-WindowProcessId` or `-VanessaTestPort` show a hidden TestClient of this project below the active window without taking focus, keep its new windows visible, and hide it again; showing grants no OS input, and a process outside the helper groups is refused unchanged.
+
+`start-vanessa-profile` opens exactly one ownership-proven branch-local `TESTMANAGER -> TESTCLIENT` pair, positively proves the manager connection, and opens the specified `.feature` without `StartFeaturePlayer` or `run_scenario`. The pair stays open until `stop-vanessa-profile`. A persistent process retains its database reservation after the helper exits. Reuse belongs to the starting operation: Codex uses `CODEX_THREAD_ID`; another chat waits for the owner to stop instead of changing its feature or clients. Start/reuse/status return `ITL_VANESSA_PROFILE_REPORT` with safe PID, port, infobase, feature, connection and `ownerId` fields; they do not create JUnit or verification verdicts.
+
+Outside a chat, use a stable `-VanessaProfileOwnerId` for related start/stop commands, or retain the generated `ownerId` returned by start and pass it to stop. Agents must not copy another chat's ID from branch state to bypass waiting. Stop validates the caller and delegates to the persistent owner before local locks; it is idempotent for that owner and preserves unconfirmed cleanup for recovery. Legacy profiles keep the shared branch-safe release route. These actions are manual diagnostics, not `/itl-check` or release-gate substitutes.
 
 `release-e2e-config-roundtrip` is reserved for `scripts/invoke-release-e2e.ps1`. It dumps the dedicated branch infobase into ignored local state, writes evidence under ignored `build/test-results`, and proves that a root `Configuration.xml` `Comment` loaded in strict `Partial` mode roundtrips while `Ext/ParentConfigurations.bin` is present. Do not expose it as a slash command or use it for ordinary project work.
 
@@ -167,7 +246,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 
 `release-e2e-extension-smoke` is also reserved for the Release runner. It uses the public extension initialization lifecycle to create an Empty extension, produce and reload a CFE, validate both normalized dumps, and restore the disposable infobase and worktree from a snapshot. It is not a project command and must not have a slash wrapper.
 
-ROCTUP and Vanessa dependencies are cached by init/update/refresh in immutable user-local version/SHA directories. Agents call the stable `itl-roctup-data` and `itl-vanessa-ui` servers; private backends start on first use, stop on idle/client exit, and appear in general `status`/`doctor` diagnostics.
+ROCTUP and Vanessa dependencies are cached by init/update/refresh in immutable user-local version/SHA directories. Agents call the stable `itl-roctup-data` and `itl-vanessa-ui` servers; private backends may stay idle between calls, while database ownership is limited to each active call's exact execution guard. Runtime identity appears in general `status`/`doctor` diagnostics and mutating supervisors drain only exact workflow-owned backends.
 
 `context-benchmark` is a Kilo-only read-only diagnostic exposed through natural-language requests such as "measure context" or "замерь контекст"; it has no slash command. `-BenchmarkMode run` requires an explicit `-BenchmarkModel provider/model` and `-ConfirmTokenSpend`, then creates one fixed no-tool `OK` request through the Kilo CLI. `analyze` reads one real IDE session by `-BenchmarkSessionId`; `compare` accepts session ids or saved summaries through `-BenchmarkBaseline` and `-BenchmarkCandidate`. Summaries under ignored `.agent-1c/diagnostics/context-benchmark/` contain counters and provenance only, never transcript text, tool arguments, URLs, or secrets.
 
@@ -175,7 +254,7 @@ To measure Browser Automation, switch it manually in Kilo Settings, reload Kilo,
 
 UI tool actions install the exact lock versions and reconcile direct `stdio` entries owned by `ui-tools`. They preserve foreign same-name entries, do not use the on-demand facade or ITL port registry, and never create a desktop lock. `ui-tools-status` reports `configured`, `external`, `missing`, or `degraded`; configured is not a runtime-health claim.
 
-vibecoding1c MCP actions (`vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`) are exposed through helper actions or natural-language requests. They manage remote LAN registry discovery, per-server remote/local selection, private vibecoding1c MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and managed MCP entries for the single active client. Setup applies saved selection and runs selection first when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote is the default provider; config-specific remote vibecoding1c MCP always needs an explicit per-server `configId`, and `code`/`graph` selections do not inherit `configId` or `hostId` from each other. Local `code`/`graph` can be selected for project or branch scope. Vanessa UI MCP is managed separately by the on-demand facade and is always branch-local.
+vibecoding1c MCP actions (`vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`) are exposed through helper actions or natural-language requests. They manage remote LAN registry discovery, per-server remote/local selection, private vibecoding1c MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and managed MCP entries for the selected session client while preserving other installed clients. `sync-client-mcp` requires explicit `-Client` and writes vibecoding1c, on-demand facade, and UI MCP entries into that client's config without changing the active client, `ai_rules_1c`, or generated skills/commands. The helper preflights these families together; project rules updates preflight all selected clients before invoking the fork installer or deleting legacy defaults. A conflicting owner or changed input preserves the current files: review the reported key/edit, resolve its ownership, then repeat the original command. Never restore an old MCP snapshot over a late user edit. After Cursor `.cursor/mcp.json` is written, reload the window, enable ITL servers in `+ -> MCP Servers`, and open a new Agent chat; an already open chat is not attached. Do not dot-source internal MCP writers as a supported scenario. For legacy unbound projects, setup applies saved selection and runs selection first when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote is the default provider; config-specific remote vibecoding1c MCP always needs an explicit per-server `configId`, and `code`/`graph` selections do not inherit `configId` or `hostId` from each other. Local `code`/`graph` can be selected for project or branch scope. Vanessa UI MCP is managed separately by the on-demand facade and is always branch-local.
 
 In the short `/itl` panel, show advanced/helper actions only as grouped additional capabilities, not as visible slash commands:
 
@@ -187,12 +266,12 @@ Extension branches: initialize extension; set/dump are recovery actions
 Maintenance/recovery: update base without tests, update workflow/rules, close/list/switch branches
 ```
 
-`update-ai-rules` refreshes files from the configured `ai_rules_1c` source with `-McpMode delegated`. A configured immutable `aiRules.ref` remains pinned in both `fresh` and `locked`; the controlled fork never consumes `main`. The installer preserves client MCP entries while idempotently ensuring Kilo loads `USER-RULES.md`; ITL owns the only transactional MCP reconcile when ready vibecoding1c replacements exist. It records the resolved commit in `.agent-1c/dependency-lock.json` and reapplies the ITL overlay in `USER-RULES.md`. If selection/state is incomplete, existing MCP entries are preserved. It does not normally append to `AGENTS.md` when the configured `AGENTS.md` already points to `USER-RULES.md`.
+`update-ai-rules` refreshes the selected immutable controlled fork `ai_rules_1c` build with `-McpMode delegated`. The installed workflow and its explicit qualified hotfix define that build; legacy `fresh`/`locked` are aliases, and fork `main` is never selected. See [dependency versions](../../../../docs/itl-workflow/dependency-versions.md). The installer preserves client MCP entries while idempotently ensuring Kilo loads `USER-RULES.md`; ITL owns the only transactional MCP reconcile when ready vibecoding1c replacements exist. It records the resolved commit in `.agent-1c/dependency-lock.json` and reapplies the ITL overlay in `USER-RULES.md`. If selection/state is incomplete, existing MCP entries are preserved. It does not normally append to `AGENTS.md` when the configured `AGENTS.md` already points to `USER-RULES.md`.
 
-`doctor` is read-only and reports the exact-one client, pinned provenance, five ITL skills, mode values, and master/dev state. `itl-litemode` atomically controls only the two ITL verification keys. `itl-switch-client` owns clean-master guards, snapshot, model reset, pinned adapter replacement, rollback, and reload guidance.
+`doctor` is read-only and reports the configured client set, pinned provenance, ITL skills, mode values, and master/dev state. `itl-litemode` atomically controls only the ITL verification keys. `itl-switch-client -Mode switch|status` reads the current membership without changing it; `attach|detach|reconcile` use clean-master guards, snapshot, pinned adapter reconciliation, rollback, and reload guidance.
 
 `update1cbase`, `loadfrom1cbase`, `getconfigfiles`, and `deploy-and-test` are the implementations behind the four upstream-visible bridges. They reconcile state, prove the branch infobase, refuse source/master execution, and retain rollback evidence for dumps.
 
-`update-workflow` refreshes the installed ITL workflow package in an already initialized project. It can be invoked from `master` or an active `itldev/*` worktree. The compact runner resolves the checked-out `master` worktree before starting the mutating helper, so the clean-state check, managed copies, immutable dependency-cache population, and local updater commit still apply only to `master`; the invoking development branch is neither switched nor modified. The pre-copy phase copies only managed workflow files (never root `AGENTS.md`), records `workflowPackage`, then always starts the installed helper in a fresh PowerShell process with internal `post-copy`; only that new process updates rules, MCP, the active client's generated command surface for `master`, and final checks. Generated client surfaces stay local and ignored. After success, refresh every affected development branch through `/itl-refresh` or `/itl-refresh-lite`, or all active ready branches through `/itl-refresh-all`; refresh validates/fills missing cache entries and rewrites branch bindings before loading 1C. For Kilo, `status` and `doctor` report the installed `1c-workflow-fast` contract/SHA; the actually cached skill is not observable through a Kilo API. If behavior still follows an older route, perform `/reload` before diagnosing a workflow source defect. ITL never inspects or deletes Kilo's internal cache/hidden worktrees. Projects whose old updater predates this re-exec contract need a one-time double run: the first installs it, the second guarantees all post-copy work runs on it. Later updates need one run.
+update-workflow updates the installed package from the master worktree. For the first migration from an old installed helper, use the current source package scripts/update-installed-workflow.ps1 with an exact clean source checkout; it enters the current helper before any managed file is copied. The helper snapshots the complete managed write-set, copies package files, starts the new helper in a fresh process, then updates rules, client surfaces, dependency locks, owned environment/MCP contributions and the local master commit. It processes each available registered itldev/* worktree from the same candidate under its own lifecycle lock, up to three at once in separate update-workflow-branch helpers (-MaxParallelWorkflowBranches 1-4; 1 restores the sequential rollout; a next branch waits while less than 1.5 GB of memory is free), retaining business edits, staged index entries and stopped-operation checkpoints. This file-only update does not merge configuration source, load an infobase or run tests. The per-root report records completed, deferred and blocked outcomes; repeat update-workflow from master for unfinished roots. Resume a stopped branch operation through its original command. Run refresh only when its normal source/configuration synchronization is wanted. Reload clients when the report requests it; for Kilo, status and doctor report the installed 1c-workflow-fast contract/SHA, while the actual client cache is not observable through a Kilo API.
 
 For normal developer work, prefer the short `/itl-*` commands documented in the README and developer guide.

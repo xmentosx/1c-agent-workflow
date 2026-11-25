@@ -5,6 +5,8 @@ from pathlib import Path
 import time
 
 from itl_remote.common import WorkError, read_json, write_json
+from itl_remote.deadlines import Deadline
+from itl_remote.operation_producer import publish
 
 
 def context():
@@ -12,17 +14,23 @@ def context():
 
 
 @contextlib.contextmanager
-def measurement(timeout=300):
+def measurement(timeout=None):
     value = context()
     iteration = Path(value["iteration"])
     write_json(iteration / "ready.json", {"jobId": value["jobId"], "ready": True})
-    deadline = time.monotonic() + timeout
+    deadline = Deadline.from_context(value)
+    # An explicit legacy caller limit may narrow, but never extend, its parent.
+    if timeout is not None:
+        deadline = Deadline("ready", min(timeout, deadline.remaining()), cancel_path=value.get("cancelPath"))
     while not (iteration / "go.json").exists():
-        if time.monotonic() > deadline:
-            raise WorkError("CONTROLLER_START_TIMEOUT")
+        deadline.remaining()
         time.sleep(0.01)
-    if read_json(iteration / "go.json")["jobId"] != value["jobId"]:
+    signal = read_json(iteration / "go.json")
+    if signal["jobId"] != value["jobId"]:
         raise WorkError("FOREIGN_START_SIGNAL")
+    if signal.get("phase"):
+        value["phase"] = signal["phase"]
+        Deadline.from_context(value).remaining()
     started = time.monotonic_ns()
     yield value
     finished = time.monotonic_ns()
@@ -37,3 +45,18 @@ def verify(checks):
                {"jobId": value["jobId"], "passed": passed, "checks": checks})
     if not passed:
         raise WorkError("SCENARIO_ASSERTIONS_FAILED")
+
+
+def publish_operation_evidence(envelope, fragments):
+    """Merge transported producer fragments into the iteration's private sidecar."""
+    value = context()
+    diagnostics = value.get("diagnostics")
+    if not diagnostics:
+        raise WorkError("OPERATION_EVIDENCE_NOT_REQUESTED")
+    envelope = dict(envelope)
+    envelope.setdefault("schemaVersion", 1)
+    envelope.setdefault("jobId", value["jobId"])
+    envelope.setdefault("iterationId", value["iterationIndex"])
+    envelope.setdefault("diagnostics", {"level": diagnostics["level"]})
+    destination = Path(value["iteration"]) / diagnostics["evidencePath"]
+    return publish(envelope, fragments, destination)

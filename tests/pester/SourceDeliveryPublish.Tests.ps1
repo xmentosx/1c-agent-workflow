@@ -1,6 +1,69 @@
-BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
+BeforeAll {
+    . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1")
+
+    function New-DeliveryCapabilityFixture {
+        param([string[]]$MissingComponent = @())
+        $fixture = New-DeliveryFixture
+        $catalogRoot = Join-Path $fixture.root 'scripts\release-e2e'
+        New-Item -ItemType Directory -Force -Path $catalogRoot | Out-Null
+        $catalog = [ordered]@{ schemaVersion=1; stages=@(
+            [ordered]@{ id='config-cadence'; version=1; budgetSeconds=10; dependsOn=@(); paths=@('README.md') },
+            [ordered]@{ id='extension-smoke'; version=1; budgetSeconds=10; dependsOn=@('config-cadence'); paths=@('README.md') },
+            [ordered]@{ id='ondemand-mcp'; version=1; budgetSeconds=10; dependsOn=@(); paths=@('README.md') }
+        ) }
+        Set-Content -LiteralPath (Join-Path $catalogRoot 'stages.json') -Encoding UTF8 -Value ($catalog | ConvertTo-Json -Depth 8)
+        $vanessaCapabilities = @(if ('vanessaAutomation' -in $MissingComponent) { 'extension-smoke' })
+        $onDemandCapabilities = @(if ('itlOndemandMcp' -in $MissingComponent) { 'ondemand-mcp' })
+        $plan = [ordered]@{
+            status='planned'; requiredReleaseCapabilities=@($vanessaCapabilities) + @($onDemandCapabilities)
+            components=@(
+                [ordered]@{ name='aiRules1c'; status='matched'; requiredReleaseCapabilities=@() },
+                [ordered]@{ name='vanessaAutomation'; status=$(if($vanessaCapabilities.Count){'missing'}else{'matched'}); requiredReleaseCapabilities=@($vanessaCapabilities) },
+                [ordered]@{ name='itlOndemandMcp'; status=$(if($onDemandCapabilities.Count){'missing'}else{'matched'}); requiredReleaseCapabilities=@($onDemandCapabilities) }
+            )
+        }
+        Set-Content -LiteralPath "$($fixture.finalizer).plan.json" -Encoding UTF8 -Value ($plan | ConvertTo-Json -Depth 8)
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root 'tests\pester') | Out-Null
+        Set-Content -LiteralPath (Join-Path $fixture.root 'tests\pester\Capability.Tests.ps1') -Encoding UTF8 -Value "Describe 'capability fixture' { It 'works' { `$true | Should -BeTrue } }"
+        & git -C $fixture.root add --all
+        & git -C $fixture.root commit --quiet -m 'test: capability candidate' *> $null
+        Invoke-DeliveryTestPowerShell -Arguments @('-Action','RegisterChange','-RepositoryRoot',('"' + $fixture.root + '"'),'-GateScript',('"' + $fixture.gate + '"')) | Out-Null
+        return $fixture
+    }
+}
 
 Describe "Source develop queue and delivery" {
+    It 'requires only on-demand Release proof before finalizer and push without RequireRelease' {
+            $fixture = $null; $oldFailure = $env:ITL_TEST_FAIL_DELIVERY_RELEASE
+            try {
+                $fixture = New-DeliveryCapabilityFixture -MissingComponent @('itlOndemandMcp')
+                $env:ITL_TEST_FAIL_DELIVERY_RELEASE = 'true'
+                $failed = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-GateScript',('"' + $fixture.gate + '"'),'-ComponentFinalizerScript',('"' + $fixture.finalizer + '"')) -AllowFailure
+                $failed.exitCode | Should -Not -Be 0
+                @((Get-Content -LiteralPath (Join-Path $fixture.root 'build\gate-release-capabilities.log') -Encoding UTF8)) | Should -Be @('ondemand-mcp')
+                Test-Path -LiteralPath $fixture.finalizerLog | Should -BeFalse
+                (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $fixture.base
+                @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -Not -BeNullOrEmpty
+
+                $env:ITL_TEST_FAIL_DELIVERY_RELEASE = 'false'
+                $published = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-GateScript',('"' + $fixture.gate + '"'),'-ComponentFinalizerScript',('"' + $fixture.finalizer + '"'))
+                $payload = $published.stdout | ConvertFrom-Json
+                @($payload.releaseCapabilities) | Should -Be @('ondemand-mcp')
+                $payload.fullReleaseQualified | Should -BeFalse
+                $payload.masterReleased | Should -BeFalse
+                $gateCandidates = @(Get-Content -LiteralPath (Join-Path $fixture.root 'build\gate-candidates.log') -Encoding UTF8)
+                @($gateCandidates | Where-Object { $_ -like 'Release *' }) |
+                    Should -Be @("Release $($payload.commit)", "Release $($payload.commit)")
+                @((Get-Content -LiteralPath (Join-Path $fixture.root 'build\gate-release-capabilities.log') -Encoding UTF8)) | Should -Be @('ondemand-mcp','ondemand-mcp')
+                (Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8 | Select-Object -Last 1 | ConvertFrom-Json).releaseQualified | Should -BeTrue
+                (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $payload.commit
+                @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -BeNullOrEmpty
+            } finally {
+                $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
+                Remove-DeliveryFixture -Fixture $fixture
+            }
+        }
+
     It "keeps function names unique across the split delivery implementation" {
             $names = foreach ($path in $DeliverySourcePaths) {
                 $tokens = $null
@@ -79,6 +142,21 @@ Describe "Source develop queue and delivery" {
             $missing.installable | Should -BeFalse
             $missing.aiRulesStatus | Should -Be "missing"
             (Get-DependencyLockInstallability -Lock ([pscustomobject]@{ dependencies = [pscustomobject]@{ aiRules1c = [pscustomobject]@{ ref = "itl-v1-r99"; compatibilityStatus = "passed" } } })).installable | Should -BeTrue
+            $canonicalLock = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            # Only the controlled-fork status is test-local; every other entry is the actual source template.
+            $canonicalLock.dependencies.aiRules1c.compatibilityStatus = 'passed'
+            $canonicalState = Get-DependencyLockInstallability -Lock $canonicalLock
+            $canonicalState.installable | Should -BeTrue -Because (@($canonicalState.blockers | ForEach-Object { "$($_.name)=$($_.status)" }) -join ', ')
+            $canonicalState.aiRulesStatus | Should -Be 'passed'
+            @($canonicalState.blockers).Count | Should -Be 0
+            $canonicalLock.dependencies.openSpecCli.PSObject.Properties.Name | Should -Not -Contain 'compatibilityStatus'
+            Add-Member -InputObject $canonicalLock.dependencies -MemberType NoteProperty -Name unknownPendingDependency -Value ([pscustomobject]@{ compatibilityStatus = 'pending' })
+            $unknownPending = Get-DependencyLockInstallability -Lock $canonicalLock
+            $unknownPending.installable | Should -BeFalse
+            $unknownPending.aiRulesStatus | Should -Be 'passed'
+            @($unknownPending.blockers).Count | Should -Be 1
+            $unknownPending.blockers[0].name | Should -Be 'unknownPendingDependency'
+            $unknownPending.blockers[0].status | Should -Be 'pending'
             $publisher = (Get-DeliveryFunctionDefinitions -Names @('Publish-AccumulatedDevelop')).Extent.Text
             $publisher.IndexOf('[void](Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path)') | Should -BeLessThan $publisher.IndexOf('Invoke-SourceGate -Mode "Develop"')
             $publisher.IndexOf('Assert-ComponentPublicationFinalizerPreflight') | Should -BeLessThan $publisher.IndexOf('Invoke-SourceGate -Mode "Develop"')
@@ -86,6 +164,35 @@ Describe "Source develop queue and delivery" {
             $promotion = (Get-DeliveryFunctionDefinitions -Names @('Invoke-DevelopCompatibilityPromotion')).Extent.Text
             $promotion | Should -Match 'Restore-DevelopCompatibilityQualification'
             $promotion.IndexOf('Write-DevelopPublicationAttempt -Attempt $Attempt') | Should -BeLessThan $promotion.IndexOf('Assert-DevelopPublicationStageMayRun -Attempt $Attempt -Stage "compatibility-promotion"')
+        }
+
+    It "records develop publication phases and reuses only the prior develop qualification" {
+            # Moved from the entrypoint Admission suite: these markers are owned
+            # by source-delivery-candidate.ps1, which selects this suite.
+            Get-DeliverySourceText -All | Should -Not -Match 'Restore-DeliveryContinuationQualification'
+            $text = Get-DeliverySourceText -Name 'source-delivery-candidate.ps1'
+            $text | Should -Match 'publication-attempts\\develop\.json'
+            $text | Should -Match 'develop-qualified'
+            $text | Should -Match 'component-finalized'
+            $text | Should -Match 'same failure twice'
+            $text | Should -Match 'Restore-PriorDevelopPublicationQualification'
+            $text | Should -Match 'Invoke-SourceGate -Mode "Develop" -WorkingRoot \$worktree\.path -TargetBaseRef \$remoteDevelop'
+            $text | Should -Match 'Promote-AccumulatedDevelopToMaster'
+        }
+
+    It "runs every publication phase in one operation, bounded only by the plan's stage budgets" {
+            # 2026-11-07: a 69-minute Develop stopped the run before Release and
+            # needed a manual relaunch of the same plan.
+            @(Get-DeliveryFunctionDefinitions -Names @('Assert-DevelopPublicationOperationBudget')).Count | Should -Be 0
+            $publisher = (Get-DeliveryFunctionDefinitions -Names @('Publish-AccumulatedDevelop')).Extent.Text
+            $promotion = (Get-DeliveryFunctionDefinitions -Names @('Invoke-DevelopCompatibilityPromotion')).Extent.Text
+            foreach ($text in @($publisher, $promotion)) { $text | Should -Not -Match '(?i)wall-clock|TotalMinutes' }
+            $develop = $publisher.IndexOf('Invoke-SourceGate -Mode "Develop"')
+            $release = $publisher.IndexOf('Invoke-SourceGate -Mode "Release"')
+            $develop | Should -BeGreaterThan 0
+            $release | Should -BeGreaterThan $develop
+            $publisher.Substring($develop, $release - $develop) | Should -Match '-HardBudgetSeconds \(Get-DeliveryPlanGateBudgetSeconds -Plan \$deliveryPlan -Mode "Develop"\)'
+            $publisher.Substring($release) | Should -Match '-HardBudgetSeconds \(Get-DeliveryPlanGateBudgetSeconds -Plan \$deliveryPlan -Mode "Release"\)'
         }
 
     It "passes origin develop as the Develop base and restores its route reports before the gate" {

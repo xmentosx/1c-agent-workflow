@@ -1,0 +1,9 @@
+{
+  "protocolVersion": 1,
+  "owner": "itl-workflow",
+  "actions": {
+    "update": "update-ai-rules",
+    "attach": "itl-switch-client",
+    "doctor": "doctor"
+  }
+}

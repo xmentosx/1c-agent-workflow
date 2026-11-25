@@ -1,0 +1,844 @@
+{
+  "schemaVersion": 1,
+  "scope": "G3-B5 current PM5 warm no-op cost qualification; no implementation change",
+  "sourceCommit": "0f97af70fc08fa155436d704535d035847474f16",
+  "installedCommit": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+  "identity": {
+    "projectRoot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+    "workflowCommit": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+    "sourceCommit": "0f97af70fc08fa155436d704535d035847474f16",
+    "runtime": [
+      {
+        "sha256": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1"
+      },
+      {
+        "sha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1"
+      },
+      {
+        "sha256": "e3cf8bfc951a75d966ca4fab8e8bd7819e756b65b6dffd3e41c4983d12cb8428",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1"
+      },
+      {
+        "sha256": null,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-jsonc.ps1"
+      },
+      {
+        "sha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1"
+      },
+      {
+        "sha256": "dc8c5776be672b638ecba0159db7f011724ab11495f24f8c4bf73f1e0546c0e8",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1"
+      },
+      {
+        "sha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1"
+      },
+      {
+        "sha256": "7959c8fb846516305a2a43d39bcd46f98d5ed265e5c1ef50c75cb16ed34d66fc",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1"
+      },
+      {
+        "sha256": "5413a3442d5fc92e60460eda5550737574f609d429b20a15f26bbfaa49db9a67",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1"
+      },
+      {
+        "sha256": "5cf5a7a2d337fa40cf36e0220c326e29a100b838325bc7b3bf85f6434e59f818",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1"
+      }
+    ],
+    "git": "git version 2.54.0.windows.1",
+    "originRevision": "c943f8e6ca1f536b2c3692e4bf4115d8daf84351",
+    "database": {
+      "topology": "file",
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "bytes": 3295928320
+    },
+    "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+    "computer": "MEGABOOK",
+    "client": "kilocode",
+    "observedUtc": "2026-10-23T21:31:20.7230628Z",
+    "powershell": "5.1.26100.9711",
+    "llmCalls": 0,
+    "os": {
+      "ubr": 9711,
+      "build": "26300",
+      "product": "Windows 10 Home"
+    },
+    "branchRoot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+    "newAlwaysOnBytes": 0,
+    "action": "sync-client-mcp"
+  },
+  "cost": {
+    "schemaVersion": 1,
+    "samples": 100,
+    "blocks": 20,
+    "warmups": 4,
+    "order": "AB then BA, full/off then off/full; one catalog boundary control per block",
+    "medianTargetMs": 1000,
+    "p95TargetMs": 2000,
+    "observerCostNotSubtracted": true,
+    "samePhysicalRoot": true,
+    "currentLegacyRouteBaseline": true,
+    "historicalPackageBaseline": false,
+    "no1cLaunch": true,
+    "actualLlmTokensMeasured": false,
+    "catalog_full_cli_ms": {
+      "n": 20,
+      "median": 5194.769050000001,
+      "p95": 5711.6528,
+      "minimum": 4640.5516,
+      "maximum": 5754.4802,
+      "values": [
+        5662.330800000001,
+        5511.5142000000005,
+        4640.5516,
+        4752.0216,
+        4827.8550000000005,
+        4813.446800000001,
+        5309.253000000001,
+        5117.3188,
+        5426.195000000001,
+        5754.4802,
+        5372.0236,
+        5151.5612,
+        5044.6143,
+        5703.098800000001,
+        5023.6211,
+        5711.6528,
+        5143.6939,
+        5179.7146,
+        5209.8235,
+        5389.6776
+      ]
+    },
+    "catalog_common_window_ms": {
+      "n": 20,
+      "median": 1003.5823,
+      "p95": 1176.8951,
+      "minimum": 876.4698000000001,
+      "maximum": 1197.2648000000002,
+      "values": [
+        1068.7705,
+        971.0079000000001,
+        876.4698000000001,
+        940.3482,
+        988.9136000000001,
+        949.5741,
+        986.7548,
+        1000.7444,
+        1046.7757000000001,
+        1197.2648000000002,
+        1176.8951,
+        913.1125000000001,
+        1006.4202,
+        1107.8201000000001,
+        1035.8704,
+        1117.1692,
+        930.8036000000001,
+        968.0171,
+        1107.8774,
+        1137.5673000000002
+      ]
+    },
+    "catalog_full_startup_ms": {
+      "n": 20,
+      "median": 995.59115,
+      "p95": 1168.8192000000001,
+      "minimum": 868.1979,
+      "maximum": 1189.0783000000001,
+      "values": [
+        1060.058,
+        962.5998000000001,
+        868.1979,
+        932.4772,
+        981.0048,
+        941.5537,
+        977.5352,
+        992.7616,
+        1038.2819,
+        1189.0783000000001,
+        1168.8192000000001,
+        904.7968000000001,
+        998.4207,
+        1098.3919,
+        1026.0995,
+        1109.0315,
+        920.9183,
+        959.7886000000001,
+        1099.4604000000002,
+        1129.0479
+      ],
+      "bootstrapMedian95Pct": [
+        961.1942000000001,
+        1079.22495
+      ]
+    },
+    "catalog_initialize_ms": {
+      "n": 20,
+      "median": 953.50885,
+      "p95": 1126.4874,
+      "minimum": 819.4306,
+      "maximum": 1146.5239000000001,
+      "values": [
+        1013.7945000000001,
+        922.3442,
+        819.4306,
+        891.4794,
+        943.1519000000001,
+        896.3562000000001,
+        906.2841000000001,
+        948.7914000000001,
+        992.8479000000001,
+        1146.5239000000001,
+        1126.4874,
+        864.6648,
+        958.2263,
+        1057.1949,
+        973.3451,
+        1071.0963000000002,
+        878.3954,
+        913.33,
+        1058.1832,
+        966.1663000000001
+      ]
+    },
+    "catalog_import_to_initialize_ms": {
+      "n": 20,
+      "median": 42.53865000000002,
+      "p95": 71.25109999999995,
+      "minimum": 37.85289999999998,
+      "maximum": 162.88159999999993,
+      "values": [
+        46.26349999999991,
+        40.25560000000007,
+        48.76729999999998,
+        40.997799999999984,
+        37.85289999999998,
+        45.19749999999999,
+        71.25109999999995,
+        43.97019999999998,
+        45.433999999999855,
+        42.55439999999999,
+        42.33180000000016,
+        40.13200000000006,
+        40.19439999999997,
+        41.197000000000116,
+        52.75440000000003,
+        37.935199999999895,
+        42.52290000000005,
+        46.45860000000005,
+        41.27720000000022,
+        162.88159999999993
+      ]
+    },
+    "catalog_off_cli_ms": {
+      "n": 20,
+      "median": 5164.985250000001,
+      "p95": 6142.298900000001,
+      "minimum": 4656.1464000000005,
+      "maximum": 6697.2344,
+      "values": [
+        5045.3532000000005,
+        5179.840200000001,
+        4809.1762,
+        4708.8469000000005,
+        4839.9084,
+        4656.1464000000005,
+        5332.4403,
+        5170.298000000001,
+        5371.6016,
+        5134.287600000001,
+        5318.4205,
+        5026.2832,
+        5275.1672,
+        5681.072700000001,
+        5159.672500000001,
+        5147.2487,
+        5159.6475,
+        6697.2344,
+        5231.0203,
+        6142.298900000001
+      ]
+    },
+    "legacy_full_cli_ms": {
+      "n": 20,
+      "median": 4325.393050000001,
+      "p95": 5216.1463,
+      "minimum": 4015.4809,
+      "maximum": 5466.0857000000005,
+      "values": [
+        4401.2203,
+        5466.0857000000005,
+        4015.4809,
+        4199.3621,
+        4194.1494,
+        4200.8686,
+        5216.1463,
+        4340.048400000001,
+        4666.2502,
+        4422.4107,
+        4534.2754,
+        4758.749,
+        4310.737700000001,
+        4295.3576,
+        4166.133400000001,
+        4169.963400000001,
+        4818.3945,
+        4952.318,
+        4296.6389,
+        4240.2811
+      ]
+    },
+    "legacy_common_window_ms": {
+      "n": 20,
+      "median": 24.902100000000004,
+      "p95": 28.003800000000002,
+      "minimum": 21.340600000000002,
+      "maximum": 28.9217,
+      "values": [
+        25.227400000000003,
+        27.217100000000002,
+        23.7407,
+        26.813000000000002,
+        25.2624,
+        25.8073,
+        21.485500000000002,
+        22.6053,
+        23.662000000000003,
+        28.9217,
+        21.340600000000002,
+        24.576800000000002,
+        24.3202,
+        24.264300000000002,
+        21.858800000000002,
+        23.2788,
+        25.507900000000003,
+        28.003800000000002,
+        26.614800000000002,
+        26.716800000000003
+      ]
+    },
+    "legacy_off_cli_ms": {
+      "n": 20,
+      "median": 4567.8158,
+      "p95": 5065.7331,
+      "minimum": 4003.8405000000002,
+      "maximum": 5151.9006,
+      "values": [
+        4849.9763,
+        5151.9006,
+        4531.2092,
+        4198.2481,
+        4036.8046000000004,
+        4100.17,
+        4277.2741000000005,
+        4203.8396,
+        4883.7607,
+        4761.9802,
+        4701.988600000001,
+        4604.4224,
+        4167.9826,
+        4252.0822,
+        4619.6124,
+        4003.8405000000002,
+        5065.7331,
+        4505.9851,
+        4789.1083,
+        4946.5723
+      ]
+    },
+    "catalog_boundary_startup_ms": {
+      "n": 20,
+      "median": 993.7718,
+      "p95": 1269.9872,
+      "minimum": 883.3733000000001,
+      "maximum": 1498.2135,
+      "values": [
+        1139.7503000000002,
+        905.1205,
+        1028.4014,
+        1121.6884,
+        927.3488000000001,
+        930.0697,
+        883.3733000000001,
+        1053.8428000000001,
+        963.1542000000001,
+        1122.1722,
+        1110.8912,
+        1024.3894,
+        899.7142,
+        926.8594,
+        1269.9872,
+        927.3613,
+        941.9574,
+        1068.5148000000002,
+        1498.2135,
+        931.1052000000001
+      ]
+    },
+    "paired_full_cli_delta_ms": {
+      "n": 20,
+      "median": 746.9106999999999,
+      "p95": 1407.7412000000004,
+      "minimum": 45.428499999999985,
+      "maximum": 1541.6893999999993,
+      "values": [
+        1261.1105000000007,
+        45.428499999999985,
+        625.0706999999998,
+        552.6594999999998,
+        633.7056000000002,
+        612.5782000000008,
+        93.10670000000027,
+        777.2703999999994,
+        759.9448000000002,
+        1332.0694999999996,
+        837.7482,
+        392.8122000000003,
+        733.8765999999996,
+        1407.7412000000004,
+        857.4876999999997,
+        1541.6893999999993,
+        325.2993999999999,
+        227.39660000000003,
+        913.1846000000005,
+        1149.3964999999998
+      ],
+      "bootstrapMedian95Pct": [
+        582.6188500000003,
+        885.3361500000001
+      ]
+    },
+    "paired_off_cli_delta_ms": {
+      "n": 20,
+      "median": 548.0182500000005,
+      "p95": 1428.9905000000008,
+      "minimum": 27.93960000000061,
+      "maximum": 2191.2493000000004,
+      "values": [
+        195.3769000000002,
+        27.93960000000061,
+        277.96699999999964,
+        510.59880000000067,
+        803.1037999999999,
+        555.9764000000005,
+        1055.1661999999997,
+        966.4584000000004,
+        487.84090000000015,
+        372.3074000000006,
+        616.4318999999996,
+        421.8607999999995,
+        1107.1845999999996,
+        1428.9905000000008,
+        540.0601000000006,
+        1143.4081999999999,
+        93.91439999999966,
+        2191.2493000000004,
+        441.91200000000026,
+        1195.7266000000009
+      ],
+      "bootstrapMedian95Pct": [
+        431.88639999999987,
+        1010.8123
+      ]
+    },
+    "medianMarginMs": 4.4088500000000295,
+    "stableSubSecondSlaEstablished": false,
+    "costPassed": true,
+    "fullStartupSamplesOver1000Ms": 9,
+    "counts": {
+      "catalogFull": 20,
+      "legacyFull": 20,
+      "catalogUnprofiled": 20,
+      "legacyUnprofiled": 20,
+      "catalogBoundary": 20
+    },
+    "allNativeExitZero": true,
+    "instrumentationErrors": 0,
+    "fullCatalogStartupGitCounts": [
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      },
+      {
+        "fetch": 1,
+        "merge": 1,
+        "rev-parse": 1
+      }
+    ],
+    "startupPowershellHttpCalls": 0,
+    "legacyOwnerMtimeWrites": 42,
+    "protectedChecks": 936
+  },
+  "historicalDistributions": [
+    {
+      "directory": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\startup",
+      "resultPath": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\startup\\warm-result.json",
+      "resultSha256": "9d437c6587bd013fea50ef3f27c6b4a253a8ae683646e34c9acb660c2eb408c5",
+      "n": 20,
+      "medianMs": 1006.3140000000001,
+      "p95Ms": 1353.585,
+      "minimumMs": 774.4733,
+      "maximumMs": 1375.6138,
+      "bootstrapMedian95Pct": [
+        812.8541500000001,
+        1116.2905500000002
+      ],
+      "samplesAbove1000": 10,
+      "valuesMs": [
+        1197.1909,
+        804.4745,
+        789.1833,
+        1013.0691,
+        999.5589,
+        1179.5366000000001,
+        1014.5914,
+        796.2299,
+        1353.585,
+        821.2338000000001,
+        803.1698,
+        774.4733,
+        993.6086,
+        1375.6138,
+        979.4489000000001,
+        795.9812000000001,
+        1342.9955,
+        1014.0436000000001,
+        1053.0445,
+        1188.4928
+      ],
+      "comparison": "Historical distinct package/revision/fixture-state; not alternating causal code A/B; no samples discarded"
+    },
+    {
+      "directory": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023",
+      "resultPath": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\batch-result.json",
+      "resultSha256": "1e29293edacb55718faffdda220ad1e7fbb36967045a356cefa14ae67ebe03bc",
+      "n": 20,
+      "medianMs": 932.0738,
+      "p95Ms": 1238.2177000000001,
+      "minimumMs": 827.1728,
+      "maximumMs": 1341.5088,
+      "bootstrapMedian95Pct": [
+        849.3949500000001,
+        1032.2244500000002
+      ],
+      "samplesAbove1000": 10,
+      "valuesMs": [
+        1173.0419000000002,
+        845.0848000000001,
+        859.7397000000001,
+        837.2222,
+        1018.2373,
+        1150.5857,
+        860.6458,
+        827.1728,
+        1046.2116,
+        1015.5142000000001,
+        1341.5088,
+        843.7426,
+        857.4026,
+        1003.5018,
+        1010.6370000000001,
+        848.6167,
+        850.1732000000001,
+        836.4753000000001,
+        1238.2177000000001,
+        1117.5929
+      ],
+      "comparison": "Historical distinct package/revision/fixture-state; not alternating causal code A/B; no samples discarded"
+    }
+  ],
+  "phaseDiagnostic": {
+    "variant": "catalog",
+    "commonWindowMs": 1363.5743,
+    "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+    "initializeToMainMs": 1307.1434000000002,
+    "http": 0,
+    "observer": "diagnostic",
+    "errors": [],
+    "events": [
+      {
+        "command": "Read-ProjectConfig",
+        "atMs": null
+      },
+      {
+        "command": "Read-ProjectConfig",
+        "atMs": null
+      },
+      {
+        "command": "Read-ItlProductProjectSnapshot",
+        "atMs": 520.0948000000001
+      },
+      {
+        "command": "Update-Vibecoding1cMcpRegistryCheckout",
+        "atMs": 531.0994000000001
+      },
+      {
+        "command": "Get-ItlProductProjectNoOpInputs",
+        "atMs": 1023.4091000000001
+      },
+      {
+        "command": "Set-ItlProductProjectOperationContext",
+        "atMs": 1313.823
+      },
+      {
+        "command": "Read-ProjectConfig",
+        "atMs": 1316.4647
+      },
+      {
+        "command": "New-ItlProductProjectPreview",
+        "atMs": 1363.5743
+      },
+      {
+        "command": "New-ItlProductProjectPreview",
+        "atMs": 1363.5743
+      },
+      {
+        "command": "New-ItlProductProjectPreview",
+        "atMs": 1363.5743
+      },
+      {
+        "command": "New-ItlProductProjectPreview",
+        "atMs": 1363.5743
+      },
+      {
+        "command": "New-ItlProductProjectPreview",
+        "atMs": 1363.5743
+      },
+      {
+        "command": "New-ItlProductProjectPreview",
+        "atMs": 1363.5743
+      },
+      {
+        "command": "New-ItlProductProjectPreview",
+        "atMs": 1363.5743
+      },
+      {
+        "command": "New-ItlProductProjectPreview",
+        "atMs": 1363.5743
+      },
+      {
+        "command": "New-ItlProductProjectPreview",
+        "atMs": 1363.5743
+      },
+      {
+        "command": "New-ItlProductProjectPreview",
+        "atMs": 1363.5743
+      }
+    ],
+    "publicInvocationSucceeded": true,
+    "startupGit": {
+      "fetch": 1,
+      "merge": 1,
+      "rev-parse": 1
+    },
+    "phases": {
+      "before-snapshot": 516.4977,
+      "binding-read-complete": 289.3352,
+      "snapshot-complete": 1311.2695,
+      "applied-read-complete": 491.15930000000003,
+      "operation-read-complete": 273.24260000000004
+    },
+    "git": {
+      "fetch": 1,
+      "merge": 1,
+      "rev-parse": 1
+    },
+    "main": {
+      "revision": "c943f8e6ca1f536b2c3692e4bf4115d8daf84351",
+      "productId": "pm5-corp",
+      "projectId": "pm5-core-development"
+    },
+    "imports": 2,
+    "finishedUtc": "2026-10-23T21:40:22.1022724Z",
+    "startupHttp": 0,
+    "label": "phase-catalog",
+    "pid": 20432,
+    "startupCalls": 1,
+    "startupCpuMs": 765.625,
+    "mainEntered": true,
+    "startedUtc": "2026-10-23T21:40:16.6579765Z",
+    "startupWindowMs": 1354.7161,
+    "cpuBefore": 1750
+  },
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\cost-result.json",
+      "sha256": "a14d5dd5aa891fe0a2312b0eb8f0b1fffa6a91f5482e689c7832be167a319ae2",
+      "bytes": 10396
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\historical-distribution.json",
+      "sha256": "af7c7fb45078e8d620751eb17572131bf712edecb4bed03c34ae8b958dca72b9",
+      "bytes": 2550
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\identity-before.json",
+      "sha256": "5d7235da68c2ecfe956d32605c927bb2980e15675acd037f10454a9f6445c726",
+      "bytes": 3905
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\identity-after.json",
+      "sha256": "89653de93ec0b8c90b9f483e43419c1763fe9ce9d41bd2356a4af1418bcaf8bb",
+      "bytes": 3905
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\preparation-result.json",
+      "sha256": "f00b5d8be9a385bb9b33cf95313aaff3ee829d86f630d3a61c38fd69c7d97240",
+      "bytes": 313
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\measure-native-steps.json",
+      "sha256": "8492397fe2e34ceee4f295c7a742ac1a3df8474ba263cd99f3d5b65b2d3a379e",
+      "bytes": 177591
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\phase-qualify-native-steps.json",
+      "sha256": "410fd75653ca7a7e9727600ab3f519c28514d73a6e44c5f83adb624696c527da",
+      "bytes": 9156
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\phase-catalog-profile.json",
+      "sha256": "20ed04b8eeb4485111c4cab9829dc8eff0c3f3cd8f4d92d93095812ea407d16d",
+      "bytes": 4225
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\phase-legacy-profile.json",
+      "sha256": "529d977ce51a4ad6f7f377035779be15701ba7661659d69999baf653333488db",
+      "bytes": 1312
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\original-states.json",
+      "sha256": "2c233917a1beb8aa1952746cec6eafddb86055536e011e194bc05ee71bfc3a8f",
+      "bytes": 1913
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\measure-roots-after.json",
+      "sha256": "c6f4928a8046e3f4cb2327f45f4f72354654d6712c95c1f44080fec60bf08e4d",
+      "bytes": 1297
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\preserved-before.json",
+      "sha256": "52a7cf56d283a472f4e0162219625a8fb903f9878316317d1b56847aeba67cc8",
+      "bytes": 9482
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\preserved-after.json",
+      "sha256": "d3a47619fd93c921daf8a9308e56b7ef07bd9a6b3386dcdd62a90845a2d8d104",
+      "bytes": 9482
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\raw-evidence-manifest.json",
+      "sha256": "2afb421ee52c3c8d0c2b31b4ddf0ff31218178b8f6d096e55dfa05b0b2b2b6e0",
+      "bytes": 200946
+    }
+  ],
+  "rawManifestSha256": "2afb421ee52c3c8d0c2b31b4ddf0ff31218178b8f6d096e55dfa05b0b2b2b6e0",
+  "rawFileCount": 659,
+  "fullG3Accepted": false,
+  "forbiddenWorkStarted": false,
+  "goalsChanged": false,
+  "sourceRuntimeChanged": false,
+  "baselineQualified": true,
+  "scopeLimits": [
+    "Current package legacy unbound route, not a historical pre-G3 binary comparison",
+    "One Windows 11 host, same-user local file-base PM5, Kilo config command; no 1C launch",
+    "Warm no-op cost only; original publisher-only/change/offline/source/client/platform qualification retain their own evidence",
+    "Actual LLM input/output/cached tokens and billing not measured"
+  ]
+}

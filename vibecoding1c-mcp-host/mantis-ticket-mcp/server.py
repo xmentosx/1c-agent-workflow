@@ -9,6 +9,7 @@ import mimetypes
 import os
 import re
 import traceback
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -16,6 +17,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlparse
 from urllib.request import Request, urlopen
+from mantis_tools import worker_tool
+from mantis_state import timestamp
 
 
 OCR_NOTICE = (
@@ -208,14 +211,19 @@ class MantisClient:
         raise MantisApiError(f"Mantis REST response did not contain issue {issue_id}.")
 
     def get_issue_file(self, issue_id: int, file_id: int) -> Dict[str, Any]:
+        # 2.28.1's direct file endpoint does not reliably enforce the parent
+        # private-note visibility. Require a visible reference even in read-only
+        # rollback mode, where the local search index is disabled.
+        from mantis_state import sources
+        issue = self.get_issue(issue_id)
+        if not any(source_file == int(file_id) for _, _, _, source_file, _ in sources(issue)):
+            raise MantisApiError(f"File {file_id} is not present in the visible issue {issue_id} or its comments")
         data = self.request_json(f"/api/rest/issues/{issue_id}/files/{file_id}")
         files = data.get("files") if isinstance(data, dict) else None
         if isinstance(files, list) and files:
             for file_entry in files:
                 if int_value(file_entry.get("id")) == file_id:
                     return file_entry
-            if isinstance(files[0], dict):
-                return files[0]
         raise MantisApiError(f"Mantis REST response did not contain file {file_id} for issue {issue_id}.")
 
 
@@ -745,12 +753,168 @@ class MantisTicketService:
         normalized["comments"] = notes
         normalized["attachments"] = issue_attachments
         normalized["agent_context_markdown"] = self.build_agent_context(normalized)
+        if hasattr(self.client, "validate_issue_snapshot"):
+            self.client.validate_issue_snapshot(issue)
         return {"ok": True, "ticket": normalized}
+
+    def read_comments(self, url_or_id: str, note_id: int = 0, direction: str = "newest",
+                      limit: int = 10, cursor: str = "") -> Dict[str, Any]:
+        """Read bounded discussion pages and continue long notes without truncation."""
+        if direction not in {"newest", "oldest"}:
+            raise ValueError("direction must be newest or oldest")
+        if not 1 <= int(limit) <= 20 or int(note_id) < 0:
+            raise ValueError("limit must be 1..20 and note_id must be non-negative")
+        issue_id = extract_issue_id(url_or_id)
+        issue = self.client.get_issue(issue_id)
+        notes = [note for note in self.as_list(issue.get("notes")) if isinstance(note, dict)]
+        notes.sort(key=lambda note: (str(note.get("created_at") or ""), int_value(note.get("id"))),
+                   reverse=direction == "newest")
+        if note_id:
+            notes = [note for note in notes if int_value(note.get("id")) == int(note_id)]
+            if not notes:
+                raise MantisApiError("Comment is not visible in this issue")
+        version = hashlib.sha256(json.dumps(notes, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        position, offset = 0, 0
+        if cursor:
+            if len(cursor) > 512:
+                raise ValueError("Invalid comment cursor; restart without cursor")
+            try:
+                token = json.loads(base64.urlsafe_b64decode(cursor))
+                if (token["issue_id"], token["note_id"], token["direction"], token["version"]) != (issue_id, int(note_id), direction, version):
+                    return {"ok": False, "status": "discussion_changed",
+                            "continuation": "Discussion changed; restart without cursor"}
+                position, offset = int(token["position"]), int(token["offset"])
+                if not (0 <= position < len(notes) and 0 <= offset < len(str(notes[position].get("text") or "")) + 1):
+                    raise ValueError()
+            except (ValueError, KeyError, TypeError) as exc:
+                raise ValueError("Invalid comment cursor; restart without cursor") from exc
+        result = {"ok": True, "issue_id": issue_id, "direction": direction, "comments": [],
+                  "next_cursor": "", "output_char_limit": 12000, "discussion_version": version}
+        def make_cursor(pos, char_offset):
+            return base64.urlsafe_b64encode(json.dumps({"issue_id": issue_id, "note_id": int(note_id),
+                "direction": direction, "version": version, "position": pos, "offset": char_offset},
+                separators=(",", ":")).encode()).decode()
+        while position < len(notes) and len(result["comments"]) < int(limit):
+            note = notes[position]
+            raw = str(note.get("text") or "")
+            part = raw[offset:offset + 3000]
+            attachments = [{"id": int_value(file.get("id")), "filename": str(file.get("filename") or "")[:300],
+                            "size": int_value(file.get("size"))} for file in self.as_list(note.get("attachments"))
+                           if isinstance(file, dict)][:20]
+            reporter = normalize_user(note.get("reporter"))
+            card = {"id": int_value(note.get("id")), "reporter": {key: str(reporter.get(key) or "")[:120]
+                    if key != "id" else reporter.get("id") for key in ("id", "name", "real_name")},
+                    "created_at": note.get("created_at", ""), "updated_at": note.get("updated_at", ""),
+                    "url": f"{self.settings.base_url}/view.php?id={issue_id}#c{int_value(note.get('id'))}",
+                    "text": part, "text_offset": offset, "text_complete": offset + len(part) >= len(raw),
+                    "attachments": attachments}
+            previous_cursor = result["next_cursor"]
+            result["comments"].append(card)
+            next_position, next_offset = (position + 1, 0) if card["text_complete"] else (position, offset + len(part))
+            result["next_cursor"] = make_cursor(next_position, next_offset) if next_position < len(notes) else ""
+            if len(json.dumps(result, ensure_ascii=False)) > 11600:
+                result["comments"].pop()
+                if not result["comments"]:
+                    raise ValueError("Comment metadata exceeds the 12000-character response limit")
+                result["next_cursor"] = previous_cursor
+                break
+            position, offset = next_position, next_offset
+        if hasattr(self.client, "validate_issue_snapshot"):
+            self.client.validate_issue_snapshot(issue)
+        return result
+
+    def ticket_history(self, url_or_id: str, from_date: str = "", to_date: str = "",
+                       kinds: Optional[List[str]] = None, limit: int = 10, cursor: str = "") -> Dict[str, Any]:
+        """Page fields from the account-visible Mantis history of one issue."""
+        if not 1 <= int(limit) <= 20:
+            raise ValueError("limit must be 1..20")
+        if kinds is not None and (not isinstance(kinds, list) or len(kinds) > 20 or
+                                  any(not isinstance(kind, str) or len(kind) > 80 for kind in kinds)):
+            raise ValueError("kinds must be up to 20 Mantis event names")
+        issue_id = extract_issue_id(url_or_id)
+        issue = self.client.get_issue(issue_id)
+        raw_history = issue.get("history") or []
+        if not isinstance(raw_history, list):
+            raise MantisApiError("Mantis returned an invalid issue history")
+        visible_fields = {"status", "handler", "reporter", "priority", "severity", "resolution",
+                          "reproducibility", "version", "target_version", "fixed_in_version",
+                          "view_state", "summary", "project", "category"}
+        events = []
+        omitted = 0
+        for raw in raw_history:
+            if not isinstance(raw, dict):
+                omitted += 1
+                continue
+            field = raw.get("field") or {}
+            field_name = str(field.get("name") or "") if isinstance(field, dict) else str(field)
+            if field_name not in visible_fields:
+                # In 2.28.1 note/file/custom-field events may have different
+                # visibility from the issue. Never expose their raw values.
+                omitted += 1
+                continue
+            event_type = raw.get("type") or {}
+            kind = str(event_type.get("name") or event_type.get("id") or "") if isinstance(event_type, dict) else str(event_type)
+            date = str(raw.get("created_at") or "")
+            if from_date and timestamp(date) < timestamp(from_date):
+                continue
+            if to_date and timestamp(date) > timestamp(to_date):
+                continue
+            if kinds and kind not in kinds:
+                continue
+            user = normalize_user(raw.get("user"))
+            def value(name):
+                source = raw.get(name)
+                if isinstance(source, dict):
+                    return {key: source[key] for key in ("id", "name", "label") if key in source}
+                return str(source or "")[:2000]
+            events.append({"created_at": date, "user": {key: user.get(key) for key in ("id", "name", "real_name")},
+                           "kind": kind, "field": field_name, "old_value": value("old_value"),
+                           "new_value": value("new_value"),
+                           "value_truncated": any(len(str(raw.get(name) or "")) > 2000
+                                                  for name in ("old_value", "new_value") if not isinstance(raw.get(name), dict))})
+        events.sort(key=lambda event: (timestamp(event["created_at"]), event["field"], event["kind"]), reverse=True)
+        version = hashlib.sha256(json.dumps(raw_history, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        identity = hashlib.sha256(json.dumps([issue_id, from_date, to_date, kinds or []], ensure_ascii=False).encode()).hexdigest()
+        offset = 0
+        if cursor:
+            if len(cursor) > 512:
+                raise ValueError("Invalid history cursor")
+            try:
+                token = json.loads(base64.urlsafe_b64decode(cursor))
+                if token["identity"] != identity or token["version"] != version:
+                    return {"ok": False, "status": "history_changed", "continuation": "Restart without cursor"}
+                offset = int(token["offset"])
+                if not 0 <= offset <= len(events):
+                    raise ValueError()
+            except (KeyError, ValueError, TypeError) as exc:
+                raise ValueError("Invalid history cursor") from exc
+        result = {"ok": True, "issue_id": issue_id, "events": [], "next_cursor": "",
+                  "coverage": "visible_issue_fields_only", "omitted_unverified_events": omitted,
+                  "history_in_payload": "history" in issue, "output_char_limit": 12000}
+        for event in events[offset:offset + int(limit)]:
+            result["events"].append(event)
+            next_offset = offset + len(result["events"])
+            result["next_cursor"] = base64.urlsafe_b64encode(json.dumps({"identity": identity,
+                "version": version, "offset": next_offset}, separators=(",", ":")).encode()).decode() if next_offset < len(events) else ""
+            if len(json.dumps(result, ensure_ascii=False)) > 11600:
+                result["events"].pop()
+                if not result["events"]:
+                    raise ValueError("One history event exceeds the 12000-character response limit")
+                next_offset -= 1
+                result["next_cursor"] = base64.urlsafe_b64encode(json.dumps({"identity": identity,
+                    "version": version, "offset": next_offset}, separators=(",", ":")).encode()).decode()
+                break
+        if hasattr(self.client, "validate_issue_snapshot"):
+            self.client.validate_issue_snapshot(issue)
+        return result
 
     def get_attachment(self, issue_id: int, file_id: int, include_content: bool = True) -> Dict[str, Any]:
         data = self.client.get_issue_file(int(issue_id), int(file_id))
         meta = self.normalize_attachment_meta(int(issue_id), data, scope="unknown", note_id=0)
         content = decode_file_content(data)
+        if not content and meta["size"] > 0:
+            meta["original_available"] = False
+            meta["source_status"] = "missing_source_bytes"
         if content:
             meta.update(self.cache_attachment(int(issue_id), int(file_id), meta["filename"], content))
             meta["sha256"] = hashlib.sha256(content).hexdigest()
@@ -911,8 +1075,11 @@ class MantisTicketService:
 
     def cache_attachment(self, issue_id: int, file_id: int, filename: str, content: bytes) -> Dict[str, Any]:
         path = self.cached_attachment_path(issue_id, file_id, filename)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
+        with self.attachment_guard(issue_id, file_id):
+            if path.parent.is_symlink() or getattr(path.parent, "is_junction", lambda: False)() or path.is_symlink():
+                raise MantisApiError("Unexpected link in the Mantis attachment cache")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
         return {
             "cache_key": f"{issue_id}/{file_id}",
             "cached": True,
@@ -920,6 +1087,9 @@ class MantisTicketService:
 
     def cached_attachment_path(self, issue_id: int, file_id: int, filename: str) -> Path:
         return self.settings.attachment_cache_path / str(issue_id) / f"{file_id}-{safe_filename(filename)}"
+
+    def attachment_guard(self, issue_id: int, file_id: int):
+        return self.client.attachment_guard(issue_id, file_id) if hasattr(self.client, "attachment_guard") else nullcontext()
 
     def read_cached_attachment(self, attachment: Dict[str, Any]) -> bytes:
         if not attachment.get("cached"):
@@ -930,7 +1100,8 @@ class MantisTicketService:
             str(attachment.get("filename") or "attachment"),
         )
         try:
-            return path.read_bytes()
+            with self.attachment_guard(int_value(attachment.get("issue_id")), int_value(attachment.get("id"))):
+                return path.read_bytes()
         except OSError:
             return b""
 
@@ -1030,7 +1201,22 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
 
     settings = Settings.from_env()
     service = MantisTicketService(settings)
-    mcp = FastMCP("mantis-ticket", stateless_http=True)
+    from mantis_runtime import Runtime, actor_name
+    runtime = Runtime(settings, service.client)
+    if runtime.index:
+        service.client = runtime
+
+    @asynccontextmanager
+    async def lifespan(app):
+        if runtime.index:
+            runtime.index.start()
+        try:
+            yield {}
+        finally:
+            if runtime.index:
+                runtime.index.close()
+
+    mcp = FastMCP("mantis-ticket", stateless_http=True, lifespan=lifespan)
 
     output_schema = {"type": "object", "additionalProperties": True}
 
@@ -1119,6 +1305,7 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
         )
 
     @mcp.tool(output_schema=output_schema)
+    @worker_tool
     def read_ticket(
         url_or_id: str,
         include_comments: bool = True,
@@ -1127,26 +1314,78 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
     ) -> Any:
         """Read a Mantis ticket with original images as visual content. Set image_ocr=true only as a non-visual fallback."""
         try:
+            if runtime.index:
+                runtime.audit(actor_name(), "read_ticket", extract_issue_id(url_or_id))
             result = service.read_ticket(
                 url_or_id=url_or_id,
                 include_comments=include_comments,
                 include_attachments=include_attachments,
                 image_ocr=image_ocr,
             )
+            if runtime.index:
+                verified = runtime.index.state.one("SELECT verified FROM issues WHERE id=?", (extract_issue_id(url_or_id),))
+                if not verified:
+                    raise MantisApiError("Issue access changed during reading; retry a fresh read")
+                result["freshness"] = {"mantis": runtime.index.remote_status,
+                    "last_verified": verified["verified"]}
             return ticket_tool_result(result, image_ocr=image_ocr)
         except Exception as exc:
             return error_tool_result(exc)
 
     @mcp.tool(output_schema=output_schema)
+    @worker_tool
+    def read_comments(url_or_id: str, note_id: int = 0, direction: str = "newest",
+                      limit: int = 10, cursor: str = "") -> Any:
+        """Read up to 10 comments (max 20) or one note_id; use next_cursor for pages and long text."""
+        try:
+            issue_id = extract_issue_id(url_or_id)
+            if runtime.index:
+                runtime.audit(actor_name(), "read_comments", issue_id)
+            result = service.read_comments(url_or_id, note_id, direction, limit, cursor)
+            if runtime.index and result.get("ok"):
+                verified = runtime.index.state.one("SELECT verified FROM issues WHERE id=?", (issue_id,))
+                if not verified:
+                    raise MantisApiError("Issue access changed during reading; retry a fresh read")
+                result["freshness"] = {"mantis": runtime.index.remote_status, "last_verified": verified["verified"]}
+            return ToolResult(content=[TextContent(type="text", text=f"Mantis comments: {len(result.get('comments', []))}; next page: {bool(result.get('next_cursor'))}. Results are in structuredContent.")],
+                              structured_content=result)
+        except Exception as exc:
+            return error_tool_result(exc)
+
+    @mcp.tool(output_schema=output_schema)
+    @worker_tool
+    def ticket_history(url_or_id: str, from_date: str = "", to_date: str = "",
+                       kinds: Optional[List[str]] = None, limit: int = 10, cursor: str = "") -> Any:
+        """Page visible issue-field history, newest first (10 default, max 20); excludes unverified private-source events."""
+        try:
+            issue_id = extract_issue_id(url_or_id)
+            if runtime.index:
+                runtime.audit(actor_name(), "ticket_history", issue_id)
+            result = service.ticket_history(url_or_id, from_date, to_date, kinds, limit, cursor)
+            if runtime.index and result.get("ok"):
+                verified = runtime.index.state.one("SELECT verified FROM issues WHERE id=?", (issue_id,))
+                if not verified:
+                    raise MantisApiError("Issue access changed during history reading; retry a fresh read")
+                result["freshness"] = {"mantis": runtime.index.remote_status, "last_verified": verified["verified"]}
+            return ToolResult(content=[TextContent(type="text", text=f"Mantis history: {len(result.get('events', []))} event(s); next page: {bool(result.get('next_cursor'))}. Results are in structuredContent.")],
+                              structured_content=result)
+        except Exception as exc:
+            return error_tool_result(exc)
+
+    @mcp.tool(output_schema=output_schema)
+    @worker_tool
     def get_attachment(issue_id: int, file_id: int, include_content: bool = True) -> Any:
         """Return an original Mantis image as visual content and preserve structured attachment metadata."""
         try:
+            if runtime.index:
+                runtime.audit(actor_name(), "get_attachment", f"{issue_id}/{file_id}")
             result = service.get_attachment(issue_id=issue_id, file_id=file_id, include_content=include_content)
             return attachment_tool_result(result)
         except Exception as exc:
             return error_tool_result(exc)
 
     @mcp.tool
+    @worker_tool
     def health() -> Dict[str, Any]:
         """Return basic Mantis ticket MCP configuration health without contacting Mantis."""
         return {
@@ -1156,8 +1395,10 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
             "attachment_cache_path": str(settings.attachment_cache_path),
             "ocr_enabled": settings.ocr_enabled,
             "ocr_languages": list(settings.ocr_languages),
+            "index": runtime.health(),
         }
 
+    runtime.register(mcp)
     return mcp, service
 
 

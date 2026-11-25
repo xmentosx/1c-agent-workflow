@@ -1,0 +1,493 @@
+﻿BeforeAll {
+    . (Join-Path $PSScriptRoot "TestSupport.ps1")
+    $context = Initialize-WorkflowPesterContext
+    $RepoRoot = $context.RepoRoot
+}
+
+Describe 'Pester shard selected-test identity' {
+    BeforeAll {
+        function New-ShardIdentityFixture([string]$Name) {
+            $root = Join-Path $TestDrive "Кэш с пробелом $Name"
+            $testRoot = Join-Path $root 'tests/pester'
+            New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+            [IO.File]::WriteAllText((Join-Path $testRoot 'Alpha.Tests.ps1'), "Describe 'AlphaFixture' { It 'alpha' { `$true | Should -BeTrue } }", [Text.UTF8Encoding]::new($true))
+            [IO.File]::WriteAllText((Join-Path $testRoot 'Beta.Tests.ps1'), "Describe 'BetaFixture' { It 'beta one' { `$true | Should -BeTrue }; It 'beta two' { `$true | Should -BeTrue } }", [Text.UTF8Encoding]::new($true))
+            $tests = @('tests/pester/Alpha.Tests.ps1', 'tests/pester/Beta.Tests.ps1')
+            $catalog = [ordered]@{ schemaVersion = 1; contracts = @([ordered]@{
+                id = 'shared'; owner = 'fixture'; primaryTest = $tests[0]; gate = 'full'; budgetSeconds = 30
+                paths = $tests; tests = $tests
+            }) }
+            [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'selection.json'), (@{ tests = $tests } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root '.gitignore'), "out*/`n", [Text.UTF8Encoding]::new($false))
+            & git -C $root init -q
+            & git -C $root config user.name 'ITL Test'
+            & git -C $root config user.email 'itl-test@example.invalid'
+            & git -C $root add --all
+            & git -C $root commit -qm fixture
+            $LASTEXITCODE | Should -Be 0
+            return $root
+        }
+        function Invoke-ShardIdentityFixture([string]$Root, [string]$OutputName) {
+            $output = Join-Path $Root $OutputName
+            $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @(
+                '-RepositoryRoot', $Root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'),
+                '-WorkerCount', '1', '-SelectionPath', (Join-Path $Root 'selection.json'))
+            $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
+            return (($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json)
+        }
+        function Assert-ShardIdentityResults($Summary, [string]$OutputRoot) {
+            $alpha = @($Summary.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Alpha.Tests.ps1' })
+            $beta = @($Summary.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Beta.Tests.ps1' })
+            $alpha.Count | Should -Be 1; $beta.Count | Should -Be 1
+            $alpha[0].passed | Should -Be 1; $beta[0].passed | Should -Be 2
+            [xml]$xml = Get-Content -LiteralPath (Join-Path $OutputRoot 'pester.xml') -Raw
+            @($xml.SelectNodes('//testcase')).Count | Should -Be 3
+            @($xml.SelectNodes('//testcase') | Where-Object { $_.name -like '*alpha*' }).Count | Should -Be 1
+            @($xml.SelectNodes('//testcase') | Where-Object { $_.name -like '*beta*' }).Count | Should -Be 2
+        }
+    }
+
+    It 'reuses runtime proof after prose edits but invalidates real document, code and shared inputs' {
+        $root=New-ShardIdentityFixture 'Проверки документации'
+        $runtime='tests/pester/VanessaRuntimeCleanup.Tests.ps1'
+        $guidance='tests/pester/VerificationGuidance.Tests.ps1'
+        $code='.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1'
+        $prose='.agents/skills/1c-workflow/references/verification-change.md'
+        $document='.agents/skills/1c-workflow/references/yaxunit-tests.md'
+        $support='tests/pester/TestSupport.ps1'
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $production=Get-QualityContractCatalog $RepoRoot
+        # Use the actual owner assignments, with tiny executable consumers.
+        # No native/OneScript dependencies belong to these two fixture tests.
+        $owners=@($production.contracts | Where-Object {$runtime -in $_.tests -or $guidance -in $_.tests})
+        $catalog=@{schemaVersion=1;contracts=$owners}
+        foreach($path in @($code,$prose,$document,$support)) {
+            $target=Join-Path $root $path
+            [void][IO.Directory]::CreateDirectory((Split-Path $target))
+            [IO.File]::WriteAllText($target,'fixture',[Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllText((Join-Path $root $support),"`$script:FixtureSharedValue='fixture'",[Text.UTF8Encoding]::new($false))
+        foreach($test in @($runtime,$guidance)) {
+            $fixtureInput=if($test -eq $runtime){$code}else{$document}
+            $body="Describe 'Actual input consumer' { It 'reads its input' { . (Join-Path `$PSScriptRoot 'TestSupport.ps1'); `$script:FixtureSharedValue | Should -Be 'fixture'; `$root=Split-Path -Parent (Split-Path -Parent `$PSScriptRoot); (Get-Content -LiteralPath (Join-Path `$root '$fixtureInput') -Raw -ErrorAction Stop) | Should -Match 'fixture' } }"
+            [IO.File]::WriteAllText((Join-Path $root $test),$body,[Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'),($catalog|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'),(@{tests=@($runtime,$guidance)}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        & git -C $root add --all;& git -C $root commit -qm 'document consumers'
+        $cold=Invoke-ShardIdentityFixture $root 'out-doc-cold'
+        $cold.executedWorkerCount | Should -Be 2
+        $cold.failed | Should -Be 0
+        [IO.File]::AppendAllText((Join-Path $root $prose),"`nUnrelated agent guidance.")
+        & git -C $root add --all;& git -C $root commit -qm 'prose only'
+        $warm=Invoke-ShardIdentityFixture $root 'out-doc-prose'
+        $warm.reusedWorkerCount | Should -Be 2
+        $warm.executedWorkerCount | Should -Be 0
+        foreach($case in @(
+            @{path=$document;executed=$guidance;reused=$runtime},
+            @{path=$code;executed=$runtime;reused=$guidance}
+        )) {
+            [IO.File]::AppendAllText((Join-Path $root $case.path),"`n# changed fixture input")
+            & git -C $root add --all;& git -C $root commit -qm 'consumed input'
+            $changed=Invoke-ShardIdentityFixture $root ('out-doc-'+[IO.Path]::GetFileNameWithoutExtension($case.path))
+            $changed.executedWorkerCount | Should -Be 1
+            $changed.reusedWorkerCount | Should -Be 1
+            @($changed.workers | Where-Object execution -eq 'executed' | ForEach-Object {Split-Path $_.paths[0] -Leaf}) | Should -Be @((Split-Path $case.executed -Leaf))
+            @($changed.workers | Where-Object execution -eq 'reused' | ForEach-Object {Split-Path $_.paths[0] -Leaf}) | Should -Be @((Split-Path $case.reused -Leaf))
+        }
+        [IO.File]::AppendAllText((Join-Path $root $support),"`n# shared loaded input")
+        & git -C $root add --all;& git -C $root commit -qm 'shared input'
+        $changed=Invoke-ShardIdentityFixture $root 'out-doc-shared'
+        $changed.executedWorkerCount | Should -Be 2
+        $changed.reusedWorkerCount | Should -Be 0
+        # A missing real document must not reuse its previous passing proof.
+        & git -C $root rm -q -- $document
+        & git -C $root commit -qm 'missing consumed document'
+        $output=Join-Path $root 'out-doc-missing'
+        $run=Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @(
+            '-RepositoryRoot',$root,'-OutputRoot',$output,'-JunitPath',(Join-Path $output 'pester.xml'),
+            '-WorkerCount','1','-SelectionPath',(Join-Path $root 'selection.json'))
+        $run.exitCode | Should -Not -Be 0
+        $result=Get-Content -LiteralPath (Join-Path $output 'pester-shards/summary.json') -Raw | ConvertFrom-Json
+        $result.failed | Should -Be 1
+        $result.reusedWorkerCount | Should -Be 1
+        $result.executedWorkerCount | Should -Be 1
+    }
+
+    It 'binds cross-host support only to its actual fixture consumer' {
+        $root=New-ShardIdentityFixture 'Граница helper'
+        $consumer='tests/pester/VerificationSelection.Tests.ps1'
+        $independent='tests/pester/VanessaRuntimeCleanup.Tests.ps1'
+        $support='tests/pester/VerificationHostIdentitySupport.ps1'
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $production=Get-QualityContractCatalog $RepoRoot
+        $owners=@($production.contracts | Where-Object { $consumer -in $_.tests -or $independent -in $_.tests })
+        $catalog=@{schemaVersion=1;contracts=$owners}
+        [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'),($catalog|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root $support),"`$script:CrossHostInput='fixture'",[Text.UTF8Encoding]::new($false))
+        $body="Describe 'Cross host consumer' { It 'loads actual support' { . (Join-Path `$PSScriptRoot 'VerificationHostIdentitySupport.ps1'); `$script:CrossHostInput | Should -Be 'fixture' } }"
+        [IO.File]::WriteAllText((Join-Path $root $consumer),$body,[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root $independent),"Describe 'Independent consumer' { It 'passes' { `$true | Should -BeTrue } }",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'),(@{tests=@($consumer,$independent)}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        & git -C $root add --all; & git -C $root commit -qm consumers
+        (Invoke-ShardIdentityFixture $root 'out-cold').executedWorkerCount | Should -Be 2
+        (Invoke-ShardIdentityFixture $root 'out-warm').reusedWorkerCount | Should -Be 2
+        [IO.File]::AppendAllText((Join-Path $root $support),"`n# changed consumed helper")
+        & git -C $root add --all; & git -C $root commit -qm support
+        $changed=Invoke-ShardIdentityFixture $root 'out-support'
+        $changed.executedWorkerCount | Should -Be 1
+        $changed.reusedWorkerCount | Should -Be 1
+        @($changed.workers | Where-Object execution -eq 'executed' | ForEach-Object { Split-Path $_.paths[0] -Leaf }) | Should -Be @('VerificationSelection.Tests.ps1')
+        & git -C $root rm -q -- $support; & git -C $root commit -qm missing-support
+        $output=Join-Path $root 'out-missing'
+        $run=Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @(
+            '-RepositoryRoot',$root,'-OutputRoot',$output,'-JunitPath',(Join-Path $output 'pester.xml'),
+            '-WorkerCount','1','-SelectionPath',(Join-Path $root 'selection.json'))
+        $run.exitCode | Should -Not -Be 0
+        $missing=Get-Content (Join-Path $output 'pester-shards/summary.json') -Raw | ConvertFrom-Json
+        $missing.failed | Should -Be 1
+        $missing.reusedWorkerCount | Should -Be 1
+    }
+
+    It 'keeps a co-listed test proof when only another exact test file of its contract changes' {
+        # Observed 2026-11-20: an AuxiliaryContours.Tests.ps1 edit re-executed
+        # DevBranchLifecycle and three other DevBranch files (about 1000 s) in Develop.
+        $root = New-ShardIdentityFixture 'Соседний тест'
+        (Invoke-ShardIdentityFixture $root 'out-cold').executedWorkerCount | Should -Be 2
+        [IO.File]::AppendAllText((Join-Path $root 'tests/pester/Beta.Tests.ps1'), "`n# sibling-only edit")
+        & git -C $root add --all; & git -C $root commit -qm 'sibling test edit'
+        $sibling = Invoke-ShardIdentityFixture $root 'out-sibling'
+        @($sibling.workers | Where-Object execution -eq 'reused' | ForEach-Object { Split-Path $_.paths[0] -Leaf }) | Should -Be @('Alpha.Tests.ps1')
+        @($sibling.workers | Where-Object execution -eq 'executed' | ForEach-Object { Split-Path $_.paths[0] -Leaf }) | Should -Be @('Beta.Tests.ps1')
+
+        # A test that names the sibling file may read it, so the sibling stays its input.
+        [IO.File]::WriteAllText((Join-Path $root 'tests/pester/Alpha.Tests.ps1'), "Describe 'AlphaFixture' { It 'alpha' { 'Beta.Tests.ps1' | Should -Not -BeNullOrEmpty } }", [Text.UTF8Encoding]::new($true))
+        & git -C $root add --all; & git -C $root commit -qm 'alpha names beta'
+        (Invoke-ShardIdentityFixture $root 'out-named-cold').executedWorkerCount | Should -Be 1
+        [IO.File]::AppendAllText((Join-Path $root 'tests/pester/Beta.Tests.ps1'), "`n# named sibling edit")
+        & git -C $root add --all; & git -C $root commit -qm 'named sibling edit'
+        $named = Invoke-ShardIdentityFixture $root 'out-named'
+        $named.executedWorkerCount | Should -Be 2
+
+        # A glob owner path still binds every matching test file.
+        [IO.File]::WriteAllText((Join-Path $root 'tests/pester/Alpha.Tests.ps1'), "Describe 'AlphaFixture' { It 'alpha' { `$true | Should -BeTrue } }", [Text.UTF8Encoding]::new($true))
+        $catalog = Get-Content -LiteralPath (Join-Path $root 'tests/quality-contracts.json') -Raw | ConvertFrom-Json
+        $catalog.contracts[0].paths = @('tests/pester/*.Tests.ps1')
+        [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        & git -C $root add --all; & git -C $root commit -qm 'glob owner'
+        (Invoke-ShardIdentityFixture $root 'out-glob-cold').executedWorkerCount | Should -Be 2
+        [IO.File]::AppendAllText((Join-Path $root 'tests/pester/Beta.Tests.ps1'), "`n# globbed sibling edit")
+        & git -C $root add --all; & git -C $root commit -qm 'globbed sibling edit'
+        (Invoke-ShardIdentityFixture $root 'out-glob').executedWorkerCount | Should -Be 2
+    }
+
+    It 'separates tests with identical owner inputs and reuses each exact result in another worktree' {
+        $root = New-ShardIdentityFixture 'Разные тесты'
+        $first = Invoke-ShardIdentityFixture $root 'out-first'
+        $first.executedWorkerCount | Should -Be 2
+        @($first.workers.inputDigest | Sort-Object -Unique).Count | Should -Be 2
+        Assert-ShardIdentityResults $first (Join-Path $root 'out-first')
+        $other = Join-Path $TestDrive 'Вторая рабочая копия'
+        & git -C $root worktree add -q -b other $other
+        $LASTEXITCODE | Should -Be 0
+        $second = Invoke-ShardIdentityFixture $other 'out-second'
+        $second.executedWorkerCount | Should -Be 0; $second.reusedWorkerCount | Should -Be 2
+        Assert-ShardIdentityResults $second (Join-Path $other 'out-second')
+        @($second.workers.inputDigest | Sort-Object) | Should -Be @($first.workers.inputDigest | Sort-Object)
+    }
+
+    It 'preserves a valid-hash foreign <Kind> cache entry and executes then reuses the requested test' -ForEach @(
+        @{ Kind = 'different file' }, @{ Kind = 'same basename under another relative directory' }
+    ) {
+        $root = New-ShardIdentityFixture $Kind
+        $first = Invoke-ShardIdentityFixture $root 'out-first'
+        $alpha = $first.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Alpha.Tests.ps1' }
+        $beta = $first.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Beta.Tests.ps1' }
+        $slot = Join-Path $root ('.git/itl/pester-shards/v1/' + $alpha.inputDigest)
+        $foreign = Get-Content -LiteralPath (Join-Path $root "out-first/pester-shards/worker-$($beta.worker).result.json") -Raw | ConvertFrom-Json
+        $foreign.inputDigest = $alpha.inputDigest
+        if ($Kind -like 'same basename*') { $foreign.paths = @((Join-Path $root 'tests/pester/Другой каталог/Alpha.Tests.ps1')) }
+        [IO.File]::WriteAllText((Join-Path $slot 'result.json'), ($foreign | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        Copy-Item -LiteralPath (Join-Path $root "out-first/pester-shards/worker-$($beta.worker).xml") -Destination (Join-Path $slot 'pester.xml') -Force
+        $manifest = Get-Content -LiteralPath (Join-Path $slot 'manifest.json') -Raw | ConvertFrom-Json
+        $manifest.resultSha256 = (Get-FileHash -LiteralPath (Join-Path $slot 'result.json')).Hash.ToLowerInvariant()
+        $manifest.junitSha256 = (Get-FileHash -LiteralPath (Join-Path $slot 'pester.xml')).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText((Join-Path $slot 'manifest.json'), ($manifest | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $before = @('manifest.json', 'result.json', 'pester.xml') | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $slot $_)).Hash }
+        $second = Invoke-ShardIdentityFixture $root 'out-second'
+        $second.executedWorkerCount | Should -Be 1; $second.reusedWorkerCount | Should -Be 1
+        Assert-ShardIdentityResults $second (Join-Path $root 'out-second')
+        @(@('manifest.json', 'result.json', 'pester.xml') | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $slot $_)).Hash }) | Should -Be $before
+        $third = Invoke-ShardIdentityFixture $root 'out-third'
+        $third.executedWorkerCount | Should -Be 0; $third.reusedWorkerCount | Should -Be 2
+        Assert-ShardIdentityResults $third (Join-Path $root 'out-third')
+    }
+
+    It 'does not seed the shared cache from a prior local result belonging to another test' {
+        $root = New-ShardIdentityFixture 'Локальный чужой результат'
+        $first = Invoke-ShardIdentityFixture $root 'out-first'
+        $alpha = $first.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Alpha.Tests.ps1' }
+        $beta = $first.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Beta.Tests.ps1' }
+        $slot = [IO.Path]::GetFullPath((Join-Path $root ('.git/itl/pester-shards/v1/' + $alpha.inputDigest)))
+        $preserved = [IO.Path]::GetFullPath((Join-Path $root 'out-preserved-cache'))
+        foreach ($path in @($slot, $preserved)) { $path.StartsWith([IO.Path]::GetFullPath($root) + '\', [StringComparison]::OrdinalIgnoreCase) | Should -BeTrue }
+        Move-Item -LiteralPath $slot -Destination $preserved
+        $workers = Join-Path $root 'out-first/pester-shards'
+        Copy-Item -LiteralPath (Join-Path $workers "worker-$($beta.worker).result.json") -Destination (Join-Path $workers "worker-$($alpha.worker).result.json") -Force
+        Copy-Item -LiteralPath (Join-Path $workers "worker-$($beta.worker).xml") -Destination (Join-Path $workers "worker-$($alpha.worker).xml") -Force
+        $second = Invoke-ShardIdentityFixture $root 'out-first'
+        $second.executedWorkerCount | Should -Be 1; $second.reusedWorkerCount | Should -Be 1
+        Assert-ShardIdentityResults $second (Join-Path $root 'out-first')
+    }
+    It 'invalidates native-build shard reuse when its actual loaded helper or guard changes' {
+        $root = New-ShardIdentityFixture 'Нативные зависимости'
+        $nativeTest='tests/pester/VanessaBuildRuntime.Tests.ps1'
+        Move-Item -LiteralPath (Join-Path $root 'tests/pester/Alpha.Tests.ps1') -Destination (Join-Path $root $nativeTest)
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json')
+        . (Join-Path $RepoRoot 'scripts/client-mcp-build.ps1')
+        $nativeInputs=@(Get-ClientMcpBuildInputPaths -RepositoryRoot $RepoRoot)
+        foreach($inputPath in $nativeInputs){
+            $path=Join-Path $root $inputPath
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+            [IO.File]::WriteAllText($path, "# native fixture input`n", [Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'), (@{tests=@($nativeTest)}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        & git -C $root add --all
+        & git -C $root commit -qm native-inputs
+        $LASTEXITCODE | Should -Be 0
+        $first=Invoke-ShardIdentityFixture $root 'out-native-first'
+        $first.executedWorkerCount | Should -Be 1
+        $same=Invoke-ShardIdentityFixture $root 'out-native-same'
+        $same.reusedWorkerCount | Should -Be 1
+        $priorDigest=[string]$same.workers[0].inputDigest
+        $changes=@('.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1',
+            '.agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1',
+            '.agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py')
+        for($index=0;$index -lt $changes.Count;$index++){
+            $changed=$changes[$index]
+            [IO.File]::AppendAllText((Join-Path $root $changed), "# changed owner input`n",[Text.UTF8Encoding]::new($false))
+            & git -C $root add -- $changed
+            & git -C $root commit -qm changed-native-input
+            $LASTEXITCODE | Should -Be 0
+            $fresh=Invoke-ShardIdentityFixture $root "out-native-fresh-$index"
+            $fresh.executedWorkerCount | Should -Be 1 -Because "$changed must invalidate the native-build evidence"
+            $fresh.reusedWorkerCount | Should -Be 0
+            $fresh.workers[0].inputDigest | Should -Not -Be $priorDigest
+            $same=Invoke-ShardIdentityFixture $root "out-native-reuse-$index"
+            $same.reusedWorkerCount | Should -Be 1
+            $priorDigest=[string]$same.workers[0].inputDigest
+        }
+        # An absent declared dependency must never qualify a cached result.
+        & git -C $root rm -q -- $changes[2]
+        & git -C $root commit -qm missing-native-input
+        $LASTEXITCODE | Should -Be 0
+        $missing=Invoke-ShardIdentityFixture $root 'out-native-missing-first'
+        $missing.executedWorkerCount | Should -Be 1
+        $missing.workers[0].inputDigest | Should -BeNullOrEmpty
+        $again=Invoke-ShardIdentityFixture $root 'out-native-missing-second'
+        $again.executedWorkerCount | Should -Be 1
+        $again.reusedWorkerCount | Should -Be 0
+        $catalog=Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $patterns=@($catalog.contracts | Where-Object {$nativeTest -in @($_.tests)} | ForEach-Object { @($_.paths); $extra=$_.PSObject.Properties['reuseInputPaths']; if($extra){@($extra.Value)} })
+        @($nativeInputs | Where-Object {$path=$_;@($patterns | Where-Object {$path -like $_}).Count -eq 0}) | Should -BeNullOrEmpty
+    }
+
+    It 'reuses custom-gate publication proof across native planner changes and invalidates an orchestration change' {
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $root=New-ShardIdentityFixture 'Native scope'
+        $test='tests/pester/SourceDeliveryFrozenPublication.Tests.ps1'
+        $catalog=Get-QualityContractCatalog $RepoRoot
+        $owners=@($catalog.contracts|Where-Object {$test -in @($_.tests)})
+        $patterns=@($owners|ForEach-Object {@($_.paths);Get-QualityContractReuseInputPaths $_})
+        $tracked=@(Get-RepositoryGitPathList $RepoRoot @('ls-files','-z','--'))
+        foreach($relative in @(Select-QualityPaths $tracked $patterns)) {
+            $target=Join-Path $root $relative
+            [void][IO.Directory]::CreateDirectory((Split-Path $target))
+            Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target -Force
+        }
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json') -Force
+        # The actual frozen fixture suites separately execute the real custom
+        # gate. This fixture checks production shard selection/cache admission.
+        [IO.File]::WriteAllText((Join-Path $root $test),"Describe 'Publication fixture' { It 'passed' { `$true|Should -BeTrue } }")
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'),(@{tests=@($test)}|ConvertTo-Json))
+        & git -C $root add --all; & git -C $root commit -qm 'custom gate scope'
+        $first=Invoke-ShardIdentityFixture $root 'out-scope-first'
+        $first.executedWorkerCount | Should -Be 1
+        $first.workers[0].inputDigest | Should -Not -BeNullOrEmpty
+        foreach($path in @('scripts/delivery-native-plan.ps1','scripts/develop-e2e-qualification.ps1','scripts/develop-journey-inputs.ps1','scripts/develop-e2e-scenarios.ps1')) {
+            $native=Join-Path $root $path
+            [IO.File]::WriteAllText($native,"throw 'native planner must not load for a custom gate'")
+        }
+        & git -C $root add --all; & git -C $root commit -qm 'native planner only'
+        $warm=Invoke-ShardIdentityFixture $root 'out-scope-warm'
+        $warm.reusedWorkerCount | Should -Be 1
+        $warm.workers[0].inputDigest | Should -Be $first.workers[0].inputDigest
+        $selected=Resolve-QualityContractsForPaths $catalog @('scripts/delivery-native-plan.ps1')
+        @($selected.tests) | Should -Not -Contain $test
+        @($selected.tests | Sort-Object) | Should -Be @('tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1','tests/pester/SourceDeliveryIncremental.Tests.ps1','tests/pester/SourceDeliveryPlan.Tests.ps1')
+        [IO.File]::AppendAllText((Join-Path $root 'scripts/source-delivery-candidate.ps1'),"`n# orchestration change")
+        & git -C $root add --all; & git -C $root commit -qm 'orchestration change'
+        $changed=Invoke-ShardIdentityFixture $root 'out-scope-changed'
+        $changed.executedWorkerCount | Should -Be 1
+        $changed.workers[0].inputDigest | Should -Not -Be $first.workers[0].inputDigest
+    }
+
+    It 'reuses an unchanged <Family> group after a sibling edit but invalidates the shared fixture' -TestCases @(
+        @{Family='workflow';First='WorkflowUpdateRollback';Second='WorkflowUpdateReceiptRecovery';Support='WorkflowUpdateRollback.TestSupport.ps1'},
+        @{Family='planner';First='SourceDeliveryIncremental';Second='DeliveryScenarioAuthentication';Support='SourceDeliveryIncremental.TestSupport.ps1'}
+    ) {
+        param($Family,$First,$Second,$Support)
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $root=New-ShardIdentityFixture ('Operation scope '+$Family)
+        $tests=@(('tests/pester/'+$First+'.Tests.ps1'),('tests/pester/'+$Second+'.Tests.ps1'))
+        $catalog=Get-QualityContractCatalog $RepoRoot
+        $owners=@($catalog.contracts|Where-Object {@($_.tests|Where-Object {$_ -in $tests}).Count})
+        $patterns=@($owners|ForEach-Object {@($_.paths);Get-QualityContractReuseInputPaths $_})
+        $tracked=@(Get-RepositoryGitPathList $RepoRoot @('ls-files','-z','--'))
+        foreach($relative in @(Select-QualityPaths $tracked $patterns)) {
+            $target=Join-Path $root $relative;[void][IO.Directory]::CreateDirectory((Split-Path $target))
+            Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target -Force
+        }
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json') -Force
+        foreach($test in $tests) {
+            [IO.File]::WriteAllText((Join-Path $root $test),"Describe 'Workflow fixture' { It 'passed' { `$true|Should -BeTrue } }")
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'),(@{tests=$tests}|ConvertTo-Json))
+        & git -C $root add --all;& git -C $root commit -qm 'workflow group scope'
+        $first=Invoke-ShardIdentityFixture $root 'out-workflow-first'
+        $first.executedWorkerCount | Should -Be 2
+        [IO.File]::AppendAllText((Join-Path $root $tests[1]),"`n# changed receipt regression")
+        & git -C $root add --all;& git -C $root commit -qm 'one operation regression'
+        $warm=Invoke-ShardIdentityFixture $root 'out-workflow-sibling'
+        $warm.executedWorkerCount | Should -Be 1
+        $warm.reusedWorkerCount | Should -Be 1
+        @($warm.workers|Where-Object execution -eq reused|ForEach-Object {$_.paths[0]})[0] | Should -BeLike ('*'+(Split-Path $tests[0] -Leaf))
+        @((Resolve-QualityContractsForPaths $catalog @($tests[1])).tests) | Should -Be @($tests[1])
+        [IO.File]::AppendAllText((Join-Path $root ('tests/pester/'+$Support)),"`n# changed shared fixture")
+        & git -C $root add --all;& git -C $root commit -qm 'shared workflow fixture'
+        $changed=Invoke-ShardIdentityFixture $root 'out-workflow-shared'
+        $changed.executedWorkerCount | Should -Be 2
+        $changed.reusedWorkerCount | Should -Be 0
+    }
+
+    It 'rejects malformed reuse input paths: <kind>' -TestCases @(
+        @{kind='empty';paths=@()}, @{kind='blank';paths=@('')},
+        @{kind='outside';paths=@('../secret.ps1')},
+        @{kind='absolute';paths=@('C:\outside.ps1')},
+        @{kind='duplicate';paths=@('lib/core.ps1','lib/core.ps1')}
+    ) {
+        param($kind,$paths)
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $contract=[pscustomobject]@{id='native-fixture';reuseInputPaths=$paths}
+        {Get-QualityContractReuseInputPaths -Contract $contract} | Should -Throw '*reuseInputPaths*'
+    }
+}
+
+Describe 'Static script loads in Pester shard identity' {
+    BeforeAll {
+        function New-StaticLoadFixture([string]$Name) {
+            $root = Join-Path $TestDrive "Кэш с пробелом $Name"
+            $utf8 = [Text.UTF8Encoding]::new($true)
+            foreach ($test in @('Alpha', 'Beta')) {
+                $path = Join-Path $root "tests/pester/$test.Tests.ps1"
+                [void][IO.Directory]::CreateDirectory((Split-Path $path))
+                [IO.File]::WriteAllText($path, "Describe '$test fixture' { It 'passes' { `$true | Should -BeTrue } }", $utf8)
+            }
+            $library = Join-Path $root 'scripts/библиотека с пробелом/помощник.ps1'
+            [void][IO.Directory]::CreateDirectory((Split-Path $library))
+            [IO.File]::WriteAllText($library, "function Get-FixtureValue { 1 }`n", $utf8)
+            # The agent-1c.ps1 shape: a library root and a literal module list.
+            [IO.File]::WriteAllText((Join-Path $root 'scripts/entry.ps1'), "`$script:LibRoot = Join-Path `$PSScriptRoot 'библиотека с пробелом'`n`$script:Modules = @('помощник.ps1')`nforeach (`$module in `$script:Modules) { . (Join-Path `$script:LibRoot `$module) }`n", $utf8)
+            $tests = @('tests/pester/Alpha.Tests.ps1', 'tests/pester/Beta.Tests.ps1')
+            # The library is deliberately not declared in paths or reuseInputPaths.
+            $catalog = [ordered]@{ schemaVersion = 1; contracts = @([ordered]@{
+                id = 'static-load'; owner = 'fixture'; primaryTest = $tests[0]; gate = 'full'; budgetSeconds = 30
+                paths = @($tests + 'scripts/entry.ps1'); tests = $tests
+            }) }
+            [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'selection.json'), (@{ tests = $tests } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root '.gitignore'), "out*/`n", [Text.UTF8Encoding]::new($false))
+            Save-StaticLoadFixture $root 'fixture'
+            return $root
+        }
+        function Save-StaticLoadFixture([string]$Root, [string]$Message) {
+            if (-not (Test-Path -LiteralPath (Join-Path $Root '.git'))) {
+                & git -C $Root init -q
+                & git -C $Root config user.name 'ITL Test'
+                & git -C $Root config user.email 'itl-test@example.invalid'
+            }
+            & git -C $Root add --all
+            & git -C $Root commit -qm $Message
+            $LASTEXITCODE | Should -Be 0
+        }
+        function Invoke-StaticLoadShards([string]$Root, [string]$OutputName) {
+            $output = Join-Path $Root $OutputName
+            $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @(
+                '-RepositoryRoot', $Root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'),
+                '-WorkerCount', '1', '-SelectionPath', (Join-Path $Root 'selection.json'))
+            $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
+            return (($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json)
+        }
+    }
+
+    It 'invalidates shards when an undeclared dot-sourced library changes and refuses reuse for a dynamic module list' {
+        $root = New-StaticLoadFixture 'загрузки'
+        $first = Invoke-StaticLoadShards $root 'out-static-first'
+        $first.executedWorkerCount | Should -Be 2
+        $warm = Invoke-StaticLoadShards $root 'out-static-warm'
+        $warm.reusedWorkerCount | Should -Be 2
+        [IO.File]::AppendAllText((Join-Path $root 'scripts/библиотека с пробелом/помощник.ps1'), "function Get-FixtureValue { 2 }`n")
+        Save-StaticLoadFixture $root 'library change'
+        $changed = Invoke-StaticLoadShards $root 'out-static-changed'
+        $changed.executedWorkerCount | Should -Be 2
+        $changed.reusedWorkerCount | Should -Be 0
+        @($changed.workers.inputDigest | Where-Object { $_ -in @($first.workers.inputDigest) }) | Should -BeNullOrEmpty
+        # A module list that cannot be read statically is fail-closed: no reuse key.
+        [IO.File]::WriteAllText((Join-Path $root 'scripts/entry.ps1'), "`$script:LibRoot = Join-Path `$PSScriptRoot 'библиотека с пробелом'`nforeach (`$module in (Get-ChildItem -LiteralPath `$script:LibRoot)) { . (Join-Path `$script:LibRoot `$module.Name) }`n", [Text.UTF8Encoding]::new($true))
+        Save-StaticLoadFixture $root 'dynamic module list'
+        $dynamic = Invoke-StaticLoadShards $root 'out-static-dynamic'
+        $dynamic.executedWorkerCount | Should -Be 2
+        @($dynamic.workers | Where-Object { $_.inputDigest }) | Should -BeNullOrEmpty
+    }
+
+    It 'no longer reuses the <Test> shard of 2026-11-20 after its loaded <Changed> changes' -TestCases @(
+        @{ Test = 'ExecutionGuardCutover'; Changed = '.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1' },
+        @{ Test = 'AuxiliaryContours'; Changed = '.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1' }
+    ) {
+        param($Test, $Changed)
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $root = Join-Path $TestDrive "Повтор публикации с пробелом $Test"
+        $testPath = "tests/pester/$Test.Tests.ps1"
+        $catalog = Get-QualityContractCatalog $RepoRoot
+        $patterns = @($catalog.contracts | Where-Object { $testPath -in @($_.tests) } | ForEach-Object { @($_.paths); Get-QualityContractReuseInputPaths $_ })
+        $tracked = @(Get-RepositoryGitPathList $RepoRoot @('ls-files', '-z', '--'))
+        foreach ($relative in @(@(Select-QualityPaths $tracked $patterns) + $Changed | Sort-Object -Unique)) {
+            $target = Join-Path $root $relative
+            [void][IO.Directory]::CreateDirectory((Split-Path $target))
+            Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target -Force
+        }
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json') -Force
+        # The real catalog and production sources bind the shard; the test body
+        # itself is replaced so the fixture measures identity, not the suite.
+        [IO.File]::WriteAllText((Join-Path $root $testPath), "Describe 'Publication replay' { It 'passed' { `$true | Should -BeTrue } }")
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'), (@{ tests = @($testPath) } | ConvertTo-Json))
+        [IO.File]::WriteAllText((Join-Path $root '.gitignore'), "out*/`n", [Text.UTF8Encoding]::new($false))
+        Save-StaticLoadFixture $root 'publication replay'
+        $first = Invoke-StaticLoadShards $root 'out-replay-first'
+        $first.executedWorkerCount | Should -Be 1
+        $first.workers[0].inputDigest | Should -Not -BeNullOrEmpty
+        $warm = Invoke-StaticLoadShards $root 'out-replay-warm'
+        $warm.reusedWorkerCount | Should -Be 1
+        [IO.File]::AppendAllText((Join-Path $root $Changed), "`n# loaded dependency change")
+        Save-StaticLoadFixture $root 'loaded dependency change'
+        $changed = Invoke-StaticLoadShards $root 'out-replay-changed'
+        $changed.executedWorkerCount | Should -Be 1
+        $changed.reusedWorkerCount | Should -Be 0
+        $changed.workers[0].inputDigest | Should -Not -Be $first.workers[0].inputDigest
+    }
+}

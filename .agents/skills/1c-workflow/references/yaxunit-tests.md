@@ -8,7 +8,19 @@ Read this reference before changing non-trivial calculations, parsers, selectors
 
 ## Required decision
 
-Before implementation, identify the changed decision points and risky invariants. Add or update YAxUnit tests when the change can be exercised without a real user journey. At minimum cover:
+Before implementation, identify the changed decision points and risky invariants
+and inspect existing coverage. Choose sufficient proof under
+`verification-change.md`. Add or update YAxUnit tests when they close a material
+gap with proportionate effort, especially for local decisions and boundary
+tables. Being unit-testable alone does not require duplicating sufficient
+existing or one-off proof. Conversely, one successful integration example does
+not establish all changed local decisions. Decide retention separately under
+`verification-suite-selection.md`; preserve existing required tests.
+
+Cover the following cases where applicable to the changed contract and risk,
+using equivalence partitions and existing proof. Do not invent unsupported
+states or large workloads without a relevant risk, or repeat the same matrix
+at another layer without a distinct gap:
 
 - the ordinary representative case;
 - empty input and the smallest valid input;
@@ -36,7 +48,7 @@ Correctness failures cannot be waived by a speed improvement. Large data sets, c
 
 ## Test groups and cadence
 
-Organize the hierarchical test extension by the owning production subsystem, object, and algorithm. Within each owner, keep fast functional/boundary cases, retained defect regressions, and optimization invariants as recognizable groups. Parameter rows are cases within one contract, not separate execution groups. Every new or changed exported `Module.bsl` must be classified immediately in the YAxUnit catalog described by `verification-suite-selection.md`; do not leave classification for refresh or the final check.
+Organize the hierarchical test extension by the owning production subsystem, object, and algorithm. Within each owner, keep fast functional/boundary cases, retained defect regressions, and optimization invariants as recognizable groups. Parameter rows are cases within one contract, not separate execution groups. Classify each new or changed test `Module.bsl` in the YAxUnit catalog, and decide applicability for each new branch-owned production BSL change after the workflow adoption baseline as described by `verification-suite-selection.md`. Reuse sufficient existing tests before adding one. A legacy module that has not changed since adoption does not gain a test obligation. Make these agent-owned decisions before the final check.
 
 Run all `purpose=default-fast` groups together in one normal YAxUnit session. Their owners let a YAxUnit-covered production change reuse unrelated Vanessa proof when YAxUnit is scheduled; they do not select a subset of unit groups. Do not start a separate 1C process per group: platform and extension startup commonly dominate unit-test time. Keep `purpose=explicit-benchmark` modules outside the default `ИсполняемыеСценарии` registration and run them only through an explicit project benchmark harness. The machine preflight requires complete module/owner assignments and rejects an explicit benchmark module referenced by ordinary registration. Add owner-aware selective execution only after measurements show that the complete fast YAxUnit suite is a material bottleneck; any later selection must preserve a final unfiltered fast run.
 
@@ -44,10 +56,106 @@ Run all `purpose=default-fast` groups together in one normal YAxUnit session. Th
 
 Put tests in the hierarchical test extension configured by `yaxunit.testsPath` (default `tests/yaxunit`). Register them from exported `ИсполняемыеСценарии`. Prefer testing a deterministic server/common-module function. If important logic is buried in a form or long procedure, extract the narrow pure calculation or decision into a suitable common module without changing its public behavior. Do not expose broad production APIs solely for tests and do not copy the algorithm into the test.
 
+A test leaves no data behind and prepares its own: register it with `ЮТТесты.ВТранзакции()`, or with `УдалениеТестовыхДанных()` and create data through `ЮТест.Данные()` when another session (a background or scheduled job) must see it. Never create uniquely named data on every run without removing it.
+
+By default tests check the configuration exactly as stored in the repository:
+the test extension contains no `&Перед`, `&После`, `&Вместо` or
+`&ИзменениеИКонтроль`. Assert results from outside (written data, user-visible
+state, effective rights) and reproduce failures the way users meet them: rights,
+a lock held by a second session, invalid data. If a requirement cannot be proven
+without an interceptor, do not add one yourself; ask the user, naming the
+requirement, why outside proof is insufficient, the target method, what will
+break the interceptor, and the alternative without one. Once permitted, prefer,
+in this order (a preference, not a ban):
+
+- an exported method over an internal one;
+- `&Перед`/`&После` for a procedure that needs code only before or after the call;
+- `&Вместо` only for a function, a needed result, catching the original
+  exception, a mock or a fault simulation; it calls `ПродолжитьВызов` with the
+  same parameters and returns its result, skipping the original only in a branch
+  the test itself enabled;
+- `&ИзменениеИКонтроль` only to insert into the middle of a method; every edit of
+  that method then requires updating the test copy.
+
+Simulate only a failure that is really possible at that boundary; enable the
+substitution in its own test only and remove it when the test completes. Mock
+only an external boundary and keep at least one scenario that crosses it
+unmocked. When a platform transaction already guarantees all-or-nothing, an
+artificial fault test is unnecessary; a failure through rights suffices.
+Interceptor mechanics and `ПродолжитьВызов` semantics follow the controlled-fork
+standard `extension-patterns`.
+
 Use Vanessa instead of YAxUnit when the assertion depends on a form, command visibility, permissions in an actual session, document/register persistence, exchange, background jobs, or a multi-object user workflow. Complex changes commonly need both layers: a boundary matrix in YAxUnit and one or two representative Vanessa scenarios.
 
 ## Execution contract
 
 Before any normal executable verification starts, `/itl-check` validates both test catalogs. Missing, invalid, ambiguous, or incomplete classification stops before Designer or Enterprise. It then loads the workflow-pinned YAxUnit CFE and the separate test extension, disables safe mode and unsafe-action protection only for the fixed `YAXUNIT` extension through the local Designer Agent allowlist, and runs `1C:Enterprise /C RunUnitTests=<config.json>`. The authoritative result is JUnit under `build/test-results/yaxunit`; a missing report, zero executed tests, failures, or errors fails verification. The exit-code file is supplemental and a disagreement is reported.
+
+For a task that requires project-test SafeMode off, the agent passes
+`-DisableProjectTestsSafeMode` to the normal helper command under the user's
+authorization; do not ask again for that same task. No project-file edit is
+required. The JSON boolean `yaxunit.testsDisableSafeMode=true` remains a reusable
+project opt-in. Without either request the default is `false`; ambient
+environment variables do not grant this permission. `yaxunit.testsExtensionName` must match the registered
+`Configuration.xml` identifier exactly, including Cyrillic. Tooling roles,
+wildcards and command syntax are refused. The helper verifies source and runtime
+content, the exact infobase and live Designer PID/start/EXE/listener before issuing
+an execution-context-bound capability to the pinned facade. Only SafeMode is
+changed; the project's unsafe-action protection and content remain unchanged.
+
+Project tests load through the existing snapshot/checked-load owner. Its exact
+registered source, applicability, database apply and fresh-session readiness
+remain mandatory. AllExtensions module/configuration checks retain their actual
+native results as environment diagnostics; their aggregate failure does not
+block this installation or claim a clean environment. Malformed/unknown native
+completion still blocks. This policy does not apply to production extension
+loads or qualify other extensions. JUnit failures remain failures.
+
+Every run that executes test-extension code (YAxUnit, any Vanessa run including
+named or filtered scenarios, and the Vanessa UI MCP TestClient) first passes the
+same readiness owner: changed test sources reload, and one check prepares them
+once. Loading changed sources prints a `WARN` for each `&Вместо` without
+`ПродолжитьВызов`; it does not block. When the test extension adopts
+configuration objects and the loaded configuration changed since its proof,
+`/CheckCanApplyConfigurationExtensions` runs without reload. On
+`ITL_PROJECT_TESTS_NOT_APPLICABLE` no test starts: correct the listed
+interceptors in the test sources, then repeat the original command.
+
+An old content-only receipt is rechecked under the existing exact-base guard and
+owned runtime drain. If SafeMode is already off, no extension reload or setter
+is needed. An interrupted setter retains an additive pending marker in the same
+receipt. Continue `repair-dev-branch-tooling` on the same branch, then the original
+check: the owner first proves quiescence, probes fresh content/settings and
+resolves the result. An unidentified live Designer or conflicting target/proof
+blocks that dependent operation with its owner continuation; it is never stopped
+by guessing its PID. Downgrade is permitted only after quiescence and resolution
+of pending work; older helpers retain their content-only receipt semantics and
+do not implement the opt-in. Source tests or a new executable hash alone do not
+qualify the helper/facade pair for native operation.
+
+## Diagnostic module filter and timeout
+
+While fixing a test, pass `-YAxUnitModule <Module>[,<Module>]` to the normal
+`check-dev-branch` command. Names are test `CommonModules` of the configured
+test extension; an unknown name stops before the load. The helper passes them
+to YAxUnit `filter.modules` (supported by the pinned 25.12 release). The run is
+diagnostic only: it records no YAxUnit status or component evidence, uses the
+test-extension readiness proof when sources are unchanged, and does not start
+unnamed Vanessa. Name `-ExplicitVerificationComponent vanessa` or `all` to add
+it. A Vanessa feature or tag diagnostic run likewise skips unnamed YAxUnit. A
+filter cannot be combined with a repair session. Finish with an unfiltered check.
+
+In the `change` model a filtered run may close a one-off criterion whose
+`admissibleProof` includes `yaxunit-junit`: begin the proof, run the filter,
+then complete it with `artifactPaths` set to that run's `junit.xml` and
+`diagnostic-inputs.json`. The manifest binds the module sources, the whole test
+extension source and the loaded target; an edit afterwards invalidates the
+receipt. Without a receipt the filtered result closes nothing.
+
+`YAXUNIT_TEST_TIMEOUT_SECONDS` (default `1800`) bounds one YAxUnit run. On
+`ITL_YAXUNIT_TIMEOUT` the message names the value, elapsed time and completed
+tests. For a larger suite set the value in the project `.dev.env` above the
+measured full run, then repeat the original command; do not override it only for
+one process.
 
 Do not commit the downloaded CFE, generated JSON, logs, or reports. Do not call a locally installed unpinned YAxUnit build. `ITL_YAXUNIT_TESTING=off` may skip execution, but skipped executable verification is partial evidence and must never be reported as verified or done.

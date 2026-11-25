@@ -1,0 +1,667 @@
+{
+  "date": "2026-10-23",
+  "status": "functional-native-race-subsets-passed-exact-foreign-byte-acceptance-failed",
+  "sourceBase": "8b6265689071cedcf39f8bff51b05357ea4cc574",
+  "installedImplementation": "44ce6ebad18b635c582ca26e96d6e9d4ce96c081",
+  "identity": {
+    "normalCatalog": {
+      "cache": "C:\\itlj\\g3-pm5-current-20261022\\mcp-home\\registry",
+      "previousOrigin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\origin.git",
+      "originHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "previousHead": "f00ff92bb69afee1b80d02b51440c023f86ae29a",
+      "unchanged": true,
+      "cacheHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "origin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\owned-mcp-defer-repair-20261022\\origin.git"
+    },
+    "ownedProcessesGone": true,
+    "rootIdentityUnchanged": true,
+    "roots": [
+      {
+        "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+        "workflow": "44ce6ebad18b635c582ca26e96d6e9d4ce96c081",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "749ac670ab2d7b282b0512b6c005d79b512d79ff31c5f16dd31e17bb64d18958",
+        "bindingPresent": true,
+        "head": "baea203b8ed0294170f3cde76895ed1f6c808bc6"
+      },
+      {
+        "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "workflow": "44ce6ebad18b635c582ca26e96d6e9d4ce96c081",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "8894b542bfc78a9f147a9c4b610a74baf99778e1f4362d473c7a048a66b03068",
+        "bindingPresent": false,
+        "head": "d0053b937db9852a95717262759dfeed2738e31b"
+      }
+    ],
+    "installedImplementation": "44ce6ebad18b635c582ca26e96d6e9d4ce96c081",
+    "observedUtc": "2026-10-23T11:58:50.7350854Z",
+    "runtime": [
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+        "sha256": "c204c13a55f2bd504c6ae3c2e70087e46305179fab1c6f015bf3b84daea93da4"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        "sha256": "5413a3442d5fc92e60460eda5550737574f609d429b20a15f26bbfaa49db9a67"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+        "sha256": "06ae086e0054262643b0a3513cb2069f9075304bebb858935408fe9824f08efd"
+      },
+      {
+        "bothInstalledAndSourceEqual": true,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+        "sha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a"
+      }
+    ],
+    "sourceBase": "8b6265689071cedcf39f8bff51b05357ea4cc574",
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "unchanged": true,
+      "bytes": 3295928320
+    }
+  },
+  "analysis": {
+    "status": "native-stale-consent-and-partial-stop-passed-exact-foreign-byte-acceptance-failed",
+    "early": {
+      "noNewDecisionRefused": true,
+      "earlyObserver": {
+        "mainEntered": false,
+        "main": null,
+        "label": "early-owned",
+        "instrumentationErrors": [],
+        "finishedUtc": "2026-10-23T11:53:49.1992929Z",
+        "decision": "registry",
+        "pid": 31332,
+        "window": "early",
+        "paused": true
+      },
+      "passed": true,
+      "noMain": true,
+      "revision": "61d202f17d2e2d75af2c3ca8e5d711b199920bbb",
+      "decision": "registry",
+      "staleDecisionRefusedBeforeAnyWrites": true,
+      "actualConflict": true,
+      "freshKeepLocalAndNextOriginalPassed": true
+    },
+    "late": [
+      {
+        "laterTip": "637b1ae28e92b65fafd631623a9edb51e8132e9c",
+        "originalMain": {
+          "productId": "pm5-corp",
+          "cursorGraph": "http://127.0.0.1:9/g3-race-resume",
+          "nativeClientOverrides": {
+            "cursor/vibecoding1c": []
+          },
+          "kiloGraph": "http://127.0.0.1:9/g3-race-resume",
+          "projectId": "pm5-core-development",
+          "revision": "637b1ae28e92b65fafd631623a9edb51e8132e9c",
+          "utc": "2026-10-23T11:54:56.8682783Z"
+        },
+        "editorPid": 30680,
+        "recovery": "resume",
+        "passed": true,
+        "operationId": "a904948cb4694409830e3698dfe7e37b",
+        "completed": "completed",
+        "writerPid": 55676,
+        "foreignEntry": "g3-race-foreign-resume",
+        "foreignPreservedAndNotAdopted": true,
+        "pinned": "56c17a842051213c8fdee20fb88c7295165d9f34"
+      },
+      {
+        "laterTip": "a4e6a41947cce96d3564ac5bc3cb41055529a4f4",
+        "originalMain": {
+          "productId": "pm5-corp",
+          "cursorGraph": "http://dev-ermakov.itland.local:22101/mcp/",
+          "nativeClientOverrides": {
+            "cursor/vibecoding1c": []
+          },
+          "kiloGraph": "http://dev-ermakov.itland.local:22101/mcp/",
+          "projectId": "pm5-core-development",
+          "revision": "0e8e5b71bfb98115523ff47121b244a45efbbf7b",
+          "utc": "2026-10-23T11:55:31.6517176Z"
+        },
+        "editorPid": 63464,
+        "recovery": "restore",
+        "passed": true,
+        "operationId": "3a4c3e1fce164cf089d874d310f4c53a",
+        "completed": "restored",
+        "writerPid": 54184,
+        "foreignEntry": "g3-race-foreign-restore",
+        "foreignPreservedAndNotAdopted": true,
+        "pinned": "b831f5be5e8e4267988506b4c50d87a5545dd572"
+      }
+    ],
+    "nativePublicCalls": 20,
+    "expectedFailures": 4,
+    "successfulPublicCalls": 16,
+    "independentExternalEditors": 7,
+    "foreignComparisons": [
+      {
+        "case": "resume",
+        "phase": "refused",
+        "foreignSemanticEqual": true,
+        "foreignValueBytesEqual": true,
+        "foreignOrderEqual": true,
+        "beforeForeignOrder": [
+          "qualification-foreign",
+          "g3-race-foreign-resume"
+        ],
+        "afterForeignOrder": [
+          "qualification-foreign",
+          "g3-race-foreign-resume"
+        ],
+        "allActualKilocodeOwnerKeys": [
+          "1c-code-metadata-mcp",
+          "1c-graph-metadata-mcp",
+          "agent-browser",
+          "itl-roctup-data",
+          "itl-vanessa-ui",
+          "onec-code-metadata-mcp",
+          "onec-graph-metadata-mcp"
+        ],
+        "scope": "diagnostic only; does not replace or weaken the retained strict outside-Code/Graph-value byte assertion"
+      },
+      {
+        "case": "resume",
+        "phase": "recovered",
+        "foreignSemanticEqual": true,
+        "foreignValueBytesEqual": true,
+        "foreignOrderEqual": false,
+        "beforeForeignOrder": [
+          "qualification-foreign",
+          "g3-race-foreign-resume"
+        ],
+        "afterForeignOrder": [
+          "g3-race-foreign-resume",
+          "qualification-foreign"
+        ],
+        "allActualKilocodeOwnerKeys": [
+          "1c-code-metadata-mcp",
+          "1c-graph-metadata-mcp",
+          "agent-browser",
+          "itl-roctup-data",
+          "itl-vanessa-ui",
+          "onec-code-metadata-mcp",
+          "onec-graph-metadata-mcp"
+        ],
+        "scope": "diagnostic only; does not replace or weaken the retained strict outside-Code/Graph-value byte assertion"
+      },
+      {
+        "case": "resume",
+        "phase": "original-passed",
+        "foreignSemanticEqual": true,
+        "foreignValueBytesEqual": true,
+        "foreignOrderEqual": false,
+        "beforeForeignOrder": [
+          "qualification-foreign",
+          "g3-race-foreign-resume"
+        ],
+        "afterForeignOrder": [
+          "g3-race-foreign-resume",
+          "qualification-foreign"
+        ],
+        "allActualKilocodeOwnerKeys": [
+          "1c-code-metadata-mcp",
+          "1c-graph-metadata-mcp",
+          "agent-browser",
+          "itl-roctup-data",
+          "itl-vanessa-ui",
+          "onec-code-metadata-mcp",
+          "onec-graph-metadata-mcp"
+        ],
+        "scope": "diagnostic only; does not replace or weaken the retained strict outside-Code/Graph-value byte assertion"
+      },
+      {
+        "case": "restore",
+        "phase": "refused",
+        "foreignSemanticEqual": true,
+        "foreignValueBytesEqual": true,
+        "foreignOrderEqual": true,
+        "beforeForeignOrder": [
+          "qualification-foreign",
+          "g3-race-foreign-restore"
+        ],
+        "afterForeignOrder": [
+          "qualification-foreign",
+          "g3-race-foreign-restore"
+        ],
+        "allActualKilocodeOwnerKeys": [
+          "1c-code-metadata-mcp",
+          "1c-graph-metadata-mcp",
+          "agent-browser",
+          "itl-roctup-data",
+          "itl-vanessa-ui",
+          "onec-code-metadata-mcp",
+          "onec-graph-metadata-mcp"
+        ],
+        "scope": "diagnostic only; does not replace or weaken the retained strict outside-Code/Graph-value byte assertion"
+      },
+      {
+        "case": "restore",
+        "phase": "recovered",
+        "foreignSemanticEqual": true,
+        "foreignValueBytesEqual": true,
+        "foreignOrderEqual": false,
+        "beforeForeignOrder": [
+          "qualification-foreign",
+          "g3-race-foreign-restore"
+        ],
+        "afterForeignOrder": [
+          "g3-race-foreign-restore",
+          "qualification-foreign"
+        ],
+        "allActualKilocodeOwnerKeys": [
+          "1c-code-metadata-mcp",
+          "1c-graph-metadata-mcp",
+          "agent-browser",
+          "itl-roctup-data",
+          "itl-vanessa-ui",
+          "onec-code-metadata-mcp",
+          "onec-graph-metadata-mcp"
+        ],
+        "scope": "diagnostic only; does not replace or weaken the retained strict outside-Code/Graph-value byte assertion"
+      },
+      {
+        "case": "restore",
+        "phase": "original-passed",
+        "foreignSemanticEqual": true,
+        "foreignValueBytesEqual": true,
+        "foreignOrderEqual": false,
+        "beforeForeignOrder": [
+          "qualification-foreign",
+          "g3-race-foreign-restore"
+        ],
+        "afterForeignOrder": [
+          "g3-race-foreign-restore",
+          "qualification-foreign"
+        ],
+        "allActualKilocodeOwnerKeys": [
+          "1c-code-metadata-mcp",
+          "1c-graph-metadata-mcp",
+          "agent-browser",
+          "itl-roctup-data",
+          "itl-vanessa-ui",
+          "onec-code-metadata-mcp",
+          "onec-graph-metadata-mcp"
+        ],
+        "scope": "diagnostic only; does not replace or weaken the retained strict outside-Code/Graph-value byte assertion"
+      }
+    ],
+    "finalClients": [
+      {
+        "path": ".kilo/kilo.json",
+        "semanticEqual": true,
+        "entireFileBytesEqual": false,
+        "beforeSha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94",
+        "afterSha256": "0564068481b8300ba3991b471348f86478c23b306766485447f861cdf6e1f8a2"
+      },
+      {
+        "path": ".cursor/mcp.json",
+        "semanticEqual": true,
+        "entireFileBytesEqual": false,
+        "beforeSha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9",
+        "afterSha256": "e41beb2517279fe08629b2fabb1cfe22ddb69fa8bbdac95db3ad5a0e25cf4bb9"
+      }
+    ],
+    "strictByteAssertions": "failed-retained-unchanged",
+    "finding": {
+      "id": "G3-MCP-FOREIGN-BYTE-PRESERVATION",
+      "status": "open",
+      "confirmed": "Existing generic JSON writer ordinal-sorts the entire MCP container, including external keys. The foreign entry moves relative to existing unowned entries on resume/restore. Actual foreign values and their individual raw value spans are preserved in all six comparisons.",
+      "owner": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1: Write-ItlClientMcpEndpoints",
+      "additionalOwnedFormatting": "Restore also changes property order within other ITL-owned common MCP entries. This is not classified as loss of unowned values.",
+      "criteria": [
+        "task4.2",
+        "task5.2",
+        "AC-16",
+        "AC-24",
+        "AC-26",
+        "AC-39"
+      ],
+      "continuation": "Retain original external append/unchanged byte assertions; repair preservation in the existing JSON writer, then repeat both original recovery paths. Do not substitute semantic-only success or change external edit order to fit sorting.",
+      "runtimeBarrierAdded": false
+    },
+    "scope": {
+      "consent": "Supported explicit CLI -CatalogDecision registry; actual Read-Host/GUI answer timing not repeated",
+      "execution": "real installed helpers and physical client files; timing-only command breakpoints and separate external editor process, no runtime replacement/mock",
+      "performance": "functional race qualification, not Startup benchmark",
+      "contextUtf8Bytes": 2157,
+      "contextBytesDiv4Proxy": 540,
+      "actualTokensAndBilling": "unknown",
+      "newAlwaysOnBytes": 0
+    }
+  },
+  "finding": {
+    "id": "G3-MCP-FOREIGN-BYTE-PRESERVATION",
+    "status": "open",
+    "confirmed": "Existing generic JSON writer ordinal-sorts the entire MCP container, including external keys. The foreign entry moves relative to existing unowned entries on resume/restore. Actual foreign values and their individual raw value spans are preserved in all six comparisons.",
+    "owner": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1: Write-ItlClientMcpEndpoints",
+    "additionalOwnedFormatting": "Restore also changes property order within other ITL-owned common MCP entries. This is not classified as loss of unowned values.",
+    "criteria": [
+      "task4.2",
+      "task5.2",
+      "AC-16",
+      "AC-24",
+      "AC-26",
+      "AC-39"
+    ],
+    "continuation": "Retain original external append/unchanged byte assertions; repair preservation in the existing JSON writer, then repeat both original recovery paths. Do not substitute semantic-only success or change external edit order to fit sorting.",
+    "runtimeBarrierAdded": false
+  },
+  "publicExecution": {
+    "finalReplayCalls": 20,
+    "finalReplaySuccesses": 16,
+    "finalReplayExpectedFailures": 4,
+    "finalReplayEditors": 7,
+    "initialFailedAttemptPublicCalls": 2,
+    "initialCleanupPublicCalls": 8,
+    "initialPreexistingEditorCalls": 1,
+    "initialAttemptAccepted": false
+  },
+  "failedHarness": {
+    "continuation": "Archive original script/observer/output/physical state; public explicit-registry reconciliation back to initial desired URL, then complete original race series on same root/package in a fresh evidence directory.",
+    "originalPublicCommandSucceeded": true,
+    "originalRaceAssertionFailed": true,
+    "accepted": false,
+    "runtimeDefectEstablished": false,
+    "cause": "Strict-mode observer dereferenced completed operation activeWrite=null before publishing the pause file; no post-confirmation external edit was executed.",
+    "manualMarkerOrOwnershipEdits": false
+  },
+  "preservation": {
+    "protectedFiles": 21,
+    "oldRoots": 4,
+    "gate6Artifacts": 7,
+    "capsuleArtifacts": 11,
+    "priorRawFiles": 1553,
+    "strictBeforeAfter": "passed",
+    "currentClientSemantics": "same as original",
+    "currentClientExactBytes": "failed; current observed state retained, no manual backup overwrite",
+    "originalRawSeedMissing": false,
+    "historicalFailures": "retained"
+  },
+  "ownerScope": {
+    "runtimeOrTestChanges": false,
+    "continuation": "repair existing JSON writer foreign order/byte preservation and repeat original append/race/recovery inputs, unchanged strict assertions",
+    "memory": "same registry context/apply owner; no separate writer/cache/recovery/probe; six areas/home/grants/optional OpenViking/ai_rules unchanged"
+  },
+  "remaining": [
+    "G3-MCP-FOREIGN-BYTE-PRESERVATION / full task4.2/5.2/AC-16/24/26/39",
+    "actual Read-Host/GUI answer timing and independent terminal users",
+    "other installed/client/PM4/platform and full G3 criteria",
+    "feature incremental baseline and actual tokens/billing",
+    "registry release population AC-36-38",
+    "memory consumer4.2/G4/AC-43/G5/44"
+  ],
+  "notPerformed": [
+    "runtime/test patch or installation update",
+    "Gate6",
+    "G4/Cognee/OpenViking development",
+    "working-project migration",
+    "workflow/shared-registry publication",
+    "server/client upgrades",
+    "new state/lock/coordinator/runtime barrier",
+    "manual operation/ownership/applied-record repair",
+    "relaxed assertions or Startup goal"
+  ],
+  "validation": {
+    "openSpecCli": "1.13.1",
+    "registryStrict": "passed",
+    "memoryStrict": "passed",
+    "ownerTests": "unchanged, not rerun; native functional qualification and strict failing byte assertions retained",
+    "sourceRegistration": "separate source-delivery ledger owns mandatory Targeted; cannot accept the open native finding"
+  },
+  "rawManifest": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\raw-manifest.json",
+    "bytes": 116975,
+    "sha256": "a390bd860b400b36e66c1270288e631fdd25a9adb46569a161d713452f46218d"
+  },
+  "rawManifestFileCount": 362,
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\analysis.json",
+      "bytes": 9645,
+      "sha256": "74fd5b426e13800f4533ae7b7350ea9be6fd6e34079ede5e7eff2c6136fc538a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\analyse.py",
+      "bytes": 6095,
+      "sha256": "397d7ef50040d8ae57f2ce792bae812baf2013c236882963add46320cef9c17d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\native.ps1",
+      "bytes": 14917,
+      "sha256": "c2b97536726dd2d35b13a8534a932461f6a339f8e6ab67b2f300616804368485"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\paused-command.ps1",
+      "bytes": 4079,
+      "sha256": "38852107008d84bf8652a074c8decdc1d28523245d6d037657ddda4d1d12958c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\external-edit.ps1",
+      "bytes": 3016,
+      "sha256": "8791750ed7f7ea6cf994200562aa714d370cf6aa394becd98d640a13b8bfdbee"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\common.ps1",
+      "bytes": 1851,
+      "sha256": "bfc3360837b83deebd57f257d9d99ce80accb6845cf292760a030e68e952d17e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\driver-functions.ps1",
+      "bytes": 2959,
+      "sha256": "680b2b1999204b2bb88ffb7905e7db2ac852488bfb2556d6bf8d1aa25492d8aa"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\support.ps1",
+      "bytes": 1258,
+      "sha256": "7bd0cfdfe74599e812b3c63ab47ee33bbc10faad7957b233a16eda9a9d2683e7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\roots-before.json",
+      "bytes": 1297,
+      "sha256": "1ca61ac4d74dbc65a9e2feeb9d67518f3efa038a369c116d9fa03238fdd14f6a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\roots-after.json",
+      "bytes": 1297,
+      "sha256": "1ca61ac4d74dbc65a9e2feeb9d67518f3efa038a369c116d9fa03238fdd14f6a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\identity-final.json",
+      "bytes": 4575,
+      "sha256": "4b06260feeb3f961e1549e80037ff96418cef82c1e2c7a640665d7aa7cf00854"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\private-origin.json",
+      "bytes": 440,
+      "sha256": "c1dafbf8757a7cfaea746d208938a34213c28873ffbd8e4a14079e1a0b095afb"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\batch-result.json",
+      "bytes": 550,
+      "sha256": "49a15de3843dae8d304a24083fe38e6065cef7cbd0d54b3bff423cd02cd121c9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\batch-steps.json",
+      "bytes": 6252,
+      "sha256": "3c1eca9d6ff9058935abf3cfdeda0cbb53688787d75813b298ca205242e74d21"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\early-owned-paused.json",
+      "bytes": 4756,
+      "sha256": "6c73230356c4b5f14eb4d789e46c62eeedd1e8f6b82a3ed760b703fdb17fcfef"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\early-owned-handoff.json",
+      "bytes": 5784,
+      "sha256": "9e544d2e896ccb9cd7c4ce238cc726b6993605c0ba6a676ed172d6a325dc7031"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\early-owned-observer.json",
+      "bytes": 300,
+      "sha256": "31b7c6d56ef9654d298cc67a668cc984af158c407ba06ef4a213c81fc05e6217"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\early-result.json",
+      "bytes": 874,
+      "sha256": "15a97b24ccc63056bdda4976e6fc14e01200cc9769ff7361f15d2a6d11edc7d4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\early-fresh-keep-local-observer.json",
+      "bytes": 1060,
+      "sha256": "10420951fe52dc4b6cb250de01955214a1602b2bdcca1a2b13ae9060db08e831"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\late-resume-paused.json",
+      "bytes": 3963,
+      "sha256": "c1ceeff7e7e30dee843082033c6283b1eaa35e438d5f753e648e81dd6ff9f038"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\late-resume-handoff.json",
+      "bytes": 5778,
+      "sha256": "cc7dff2663c52deb9cf767537fd2d4349238a11d80b495dfb3bbbf280d075d91"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\late-resume-observer.json",
+      "bytes": 299,
+      "sha256": "c3ea939c96fa1fd4f1182d90f9e1bbe599bdb8c9fdc2e5f30563da1927d7fc59"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\late-resume-case.json",
+      "bytes": 1153,
+      "sha256": "efaca8f76b520f9cb5211421bef47a372b4d76eff10d517462254ef6d4e4b234"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\late-restore-paused.json",
+      "bytes": 3963,
+      "sha256": "ef21497ca0cd03479b650808a0587df1f6ac94a74f618b8f0797b2aec2c33bfa"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\late-restore-handoff.json",
+      "bytes": 5778,
+      "sha256": "c9c02a2928e791677320a21f13a09c810d69f1b91a4212f8800e9ca0075366ef"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\late-restore-observer.json",
+      "bytes": 300,
+      "sha256": "2360ccf35e5a1d4d46e95582db47103422b76c92e6b82d099820933b278c3389"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\late-restore-case.json",
+      "bytes": 1172,
+      "sha256": "826ef65a99e723a87a04af57cb10d2746b8a9099012ca752bd0455f3507c9b15"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\strict-failures.json",
+      "bytes": 234,
+      "sha256": "db6d3d81a6da5ce07fd68cd5483189b0be0d53391f19a47db2ce968ab64be783"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\verify-foreign-bytes.py",
+      "bytes": 1849,
+      "sha256": "44439fa6b2346a33a4df9c2d75d1c7a9826c2f5e1cf7f6fa3bbf1b728bd480ac"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\foreign-byte-strict-failure.log",
+      "bytes": 445,
+      "sha256": "00c661d0a1175abd2187d555350c406c96ff6ef767503dd6f8aaa4adfd6e5c07"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\verify-client-bytes.py",
+      "bytes": 2674,
+      "sha256": "4fbed234fd1cf32fc0caff2597164c36b591dd22bae8de490ef0351f8a540d2a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\final-client-byte-strict-failure.log",
+      "bytes": 382,
+      "sha256": "812bd7264eaab3782bda54e46176a4c4a4987b252e881aa24f90c6d082252b6e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\preserved-before.json",
+      "bytes": 9482,
+      "sha256": "35291247be7943ffb6670e03d1b727316cef99f7e75a022389cdeb61255e344d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\preserved-after.json",
+      "bytes": 9482,
+      "sha256": "808feaa1092cd0f9149f421f821f76d826794cb8ff5cd154116f7f6020d5edb2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\previous-evidence-preservation.json",
+      "bytes": 611806,
+      "sha256": "9e1071dc69de5d708cf717c838c7538b04ea8925e9c3d0acdaec15d31b045bb3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\capsule-final-validation.json",
+      "bytes": 3486,
+      "sha256": "1fd141f87f69bf4c27f0f893d65c138ef86033db842fba086db9dd309a1c1a08"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\registry-validation.log",
+      "bytes": 48,
+      "sha256": "55c0a9360e6774d5f191edc2a2f835964bc440456bca0dd3359480a590bc1515"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\memory-validation.log",
+      "bytes": 44,
+      "sha256": "ac0368ff6c9e7efaac0feca8670d0e264cf03114681e7abeaac7cc326b7c8891"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\collect-evidence.py",
+      "bytes": 6230,
+      "sha256": "24db77620dee2e68f91b9950c0b58a3a050155bcf728de7a0c1bb41879abb84f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-20261023\\harness-failure.json",
+      "bytes": 612,
+      "sha256": "05905c5dd9562b4a6aa96c9d7bf67ecbfb913d83a6862cc53e29c0ced2d3779f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-20261023\\paused-command-initial.ps1",
+      "bytes": 3820,
+      "sha256": "a3f64ac77d2ba282f47619f7d0915b157394c1b2b1037a67dd977c631e79a8ac"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-20261023\\native-initial.ps1",
+      "bytes": 14914,
+      "sha256": "c63bd5141bd757f74cc9367114779147db090f943db1ca18b57472dcb8d14322"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-20261023\\early-owned-observer.json",
+      "bytes": 1212,
+      "sha256": "2b581a15703b475f5389904f397aefa69a2cb699f4f0548114fb6e6887a88131"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-20261023\\early-owned-result.json",
+      "bytes": 195,
+      "sha256": "91cb3b7ce863320f8c890f06925e40b33feb0fff0f76042793cb1efa7b790f23"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-20261023\\recover-observer.ps1",
+      "bytes": 1663,
+      "sha256": "a985c000087219a5d689067a9240b1db1400f3c0e966097adaa036bc93ccd5c2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-20261023\\observer-cleanup-steps.json",
+      "bytes": 485,
+      "sha256": "3923517d16ad8b5b7c620f39917b36568bb4d7279bf825fcb4d4d3f47e6d8eb2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\external-edit-race-replay-20261023\\raw-manifest.json",
+      "bytes": 116975,
+      "sha256": "a390bd860b400b36e66c1270288e631fdd25a9adb46569a161d713452f46218d"
+    }
+  ]
+}

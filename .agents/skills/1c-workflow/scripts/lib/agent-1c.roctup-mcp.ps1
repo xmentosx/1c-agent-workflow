@@ -1,4 +1,4 @@
-function ConvertTo-ItlBranchMcpSafeSegment {
+﻿function ConvertTo-ItlBranchMcpSafeSegment {
     param([string]$Value)
 
     if ([string]::IsNullOrWhiteSpace($Value)) {
@@ -49,7 +49,7 @@ function Get-RoctupMcpInstallRoot {
         return $resolved
     }
 
-    $lock = Get-DependencyLockEntry -Name "roctupMcpToolkit"
+    $lock = Get-WorkflowDependencyEntry -Name "roctupMcpToolkit"
     $version = [string](Get-ConfigValueFromObject -Object $lock -Path "version" -Default "")
     $sha256 = [string](Get-ConfigValueFromObject -Object $lock -Path "sha256" -Default "")
     return (Get-ItlSharedArtifactDirectory -Family "roctup-mcp-toolkit" -Version $version -Sha256 $sha256)
@@ -130,6 +130,38 @@ function Get-RoctupMcpUrl {
     return "http://127.0.0.1:$Port/mcp"
 }
 
+function Test-ItlInteractiveDesktopSession {
+    # A service, scheduled task or remote non-interactive logon has no user
+    # desktop (session 0 or UserInteractive=false): nobody can answer a dialog.
+    try { return [Environment]::UserInteractive -and [Diagnostics.Process]::GetCurrentProcess().SessionId -ne 0 } catch { return $false }
+}
+
+function Get-RoctupDataChangeMode {
+    $mode = ([string](Get-EnvValue -Name 'ROCTUP_DATA_CHANGES' -Default 'auto')).Trim().ToLowerInvariant()
+    if ($mode -ne 'auto' -and $mode -ne 'confirm') {
+        throw "ITL_ROCTUP_DATA_CHANGES_INVALID: ROCTUP_DATA_CHANGES must be 'auto' or 'confirm', found '$mode'. Fix .dev.env and repeat the call."
+    }
+    return $mode
+}
+
+function Get-RoctupMcpStartupCommand {
+    param([int]$Port)
+    # ROCTUP checks execute_code for dangerous keywords: it first runs code
+    # whose every keyword is auto-allowed, then asks in a visible dialog when
+    # danger_confirm=true, otherwise rejects at once with dangerous_keywords.
+    # Every key is explicit because an omitted one falls back to the
+    # processing's saved settings. The managed branch infobase is the safety
+    # boundary, so 'auto' runs Записать and privileged mode without a dialog
+    # and rejects everything else at once; the agent routes that code through
+    # the Vanessa code step instead. 'confirm' keeps the per-call dialog; a
+    # session without a desktop still rejects at once.
+    if ((Get-RoctupDataChangeMode) -eq 'auto') {
+        return "startup;mode=embedded;port=$Port;danger_confirm=false;danger_auto_write=true;danger_auto_priv=true"
+    }
+    $confirm = $(if (Test-ItlInteractiveDesktopSession) { 'true' } else { 'false' })
+    return "startup;mode=embedded;port=$Port;danger_confirm=$confirm;danger_auto_write=false;danger_auto_priv=false"
+}
+
 function Get-RoctupMcpHealthUrl {
     param([int]$Port)
     return "http://127.0.0.1:$Port/health"
@@ -137,55 +169,28 @@ function Get-RoctupMcpHealthUrl {
 
 function Get-RoctupMcpReleaseAssetInfo {
     $assetName = Get-RoctupMcpAssetName
-    $mode = Get-DependencyMode
-    $locked = Get-DependencyLockEntry -Name "roctupMcpToolkit"
-    if ($mode -eq "locked") {
-        $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
-        $lockedAssetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
-        $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
-        $sha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
-        if (-not $version -or -not $lockedAssetName -or -not $url -or -not $sha256) {
-            throw "Dependency mode is locked, but roctupMcpToolkit.version, assetName, url, and sha256 must all be set in .agent-1c/dependency-lock.json."
-        }
-        if ($lockedAssetName -ne $assetName) {
-            throw "Dependency lock ROCTUP asset '$lockedAssetName' is incompatible with this platform. Expected '$assetName'; provide a platform-specific roctupMcpToolkit lock entry."
-        }
-        $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family "roctup"
-        $requiredVersion = [string]$compatible.backendVersions.roctup
-        if ($version -ne $requiredVersion) {
-            throw "ITL_ONDEMAND_BACKEND_UNSUPPORTED: locked ROCTUP version '$version' has no packaged compatibility catalog; required '$requiredVersion'."
-        }
-        return [pscustomobject]@{
-            url = $url
-            name = $lockedAssetName
-            version = $version
-            expectedSha256 = $sha256
-            source = "dependency-lock"
-        }
+    $plan = Get-WorkflowDependencyPlan
+    $entry = Get-WorkflowDependencyEntry -Name 'roctupMcpToolkit' -Plan $plan
+    $version = [string](Get-ConfigValueFromObject $entry 'version' '')
+    $name = [string](Get-ConfigValueFromObject $entry 'assetName' '')
+    $url = [string](Get-ConfigValueFromObject $entry 'url' '')
+    $sha256 = [string](Get-ConfigValueFromObject $entry 'sha256' '')
+    $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family roctup -Plan $plan
+    if ($name -ne $assetName -or -not $url -or $sha256 -notmatch '^[a-fA-F0-9]{64}$' -or $version -cne [string]$compatible.backendVersions.roctup) {
+        throw 'ITL_ONDEMAND_BACKEND_UNSUPPORTED: ROCTUP requires the complete selected workflow/hotfix pin and matching catalog. Run update-workflow or provide a platform-specific roctupMcpToolkit lock entry as a qualified -DependencySelectionFile.'
     }
-
-    # A newer upstream release may change tools/list. Fresh therefore means the
-    # newest version admitted by the workflow compatibility manifest, not GitHub latest.
-    $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family "roctup"
-    $requiredVersion = [string]$compatible.backendVersions.roctup
-    $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
-    $lockedAssetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
-    $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
-    $sha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
-    if ($version -ne $requiredVersion -or $lockedAssetName -ne $assetName -or -not $url -or -not $sha256) {
-        throw "ITL_ONDEMAND_BACKEND_UNSUPPORTED: fresh ROCTUP requires compatibility-manifest version '$requiredVersion' and a complete roctupMcpToolkit lock entry for '$assetName'. Actual version: '$version'."
-    }
-    return [pscustomobject]@{
-        url = $url
-        name = $lockedAssetName
-        version = $version
-        expectedSha256 = $sha256
-        source = "compatibility-manifest"
-    }
+    return [pscustomobject]@{url=$url;name=$name;version=$version;expectedSha256=$sha256;source='workflow-selection'}
 }
 
 function Save-RoctupMcpArtifact {
     param([object]$AssetInfo)
+
+    $selected = Get-WorkflowDependencyEntry -Name roctupMcpToolkit
+    foreach ($pair in @(@('version','version'),@('name','assetName'),@('expectedSha256','sha256'))) {
+        if ([string](Get-ConfigValueFromObject $AssetInfo $pair[0] '') -ine [string](Get-ConfigValueFromObject $selected $pair[1] '')) {
+            throw 'DEPENDENCY_ACQUISITION_DRIFT: ROCTUP artifact differs from the selected workflow/hotfix. Apply a qualified selection through update-workflow, then repeat installation.'
+        }
+    }
 
     $installRoot = Get-RoctupMcpInstallRoot
     New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
@@ -204,20 +209,31 @@ function Save-RoctupMcpArtifact {
     if ($expected) {
         if ($hash -eq $expected) {
             Write-Host "ROCTUP MCP artifact hash matches dependency lock."
-        } elseif ((Get-DependencyMode) -eq "locked" -or (Test-DependencyLockRateLimitFallbackSource -Source ([string]$AssetInfo.source))) {
-            throw "ROCTUP MCP artifact SHA256 mismatch. Expected $expected, got $hash."
         } else {
-            Write-Host "[WARN] ROCTUP MCP artifact hash differs from expected metadata. Actual SHA256 is logged above."
+            throw "ROCTUP MCP artifact SHA256 mismatch. Expected $expected, got $hash."
         }
     }
 
     if (-not (Test-DependencyLockRateLimitFallbackSource -Source ([string]$AssetInfo.source))) {
-        Update-DependencyLockEntry -Name "roctupMcpToolkit" -Values @{
+        $pin = @{
             version = [string]$AssetInfo.version
             assetName = [string]$AssetInfo.name
             url = $source
             sha256 = $hash
-            source = [string]$AssetInfo.source
+        }
+        $locked = Get-WorkflowDependencyEntry -Name 'roctupMcpToolkit'
+        $samePin = $true
+        foreach ($key in $pin.Keys) {
+            if ([string](Get-ConfigValueFromObject -Object $locked -Path $key -Default '') -cne $pin[$key]) {
+                $samePin = $false
+                break
+            }
+        }
+        # Acquisition verifies an existing pin; it does not replace its
+        # recorded provenance with the runtime resolver's source label.
+        if (-not $samePin) {
+            $pin.source = [string]$AssetInfo.source
+            Update-DependencyLockEntry -Name 'roctupMcpToolkit' -Values $pin
         }
     }
 
@@ -293,6 +309,18 @@ function Install-RoctupMcpArtifact {
     param([switch]$ForceDownload)
 
     $asset = Get-RoctupMcpReleaseAssetInfo
+    $runEntry = $null
+    if ($ForceDownload) {
+        # One update-workflow run reacquires the shared artifact and skills
+        # cache once per exact pin; every worktree still records its settings.
+        $runEntry = Get-WorkflowUpdateRunSharedEntry -Kind 'roctup-mcp-artifact' -Identity ([ordered]@{ asset = $asset; installRoot = [string](Get-RoctupMcpInstallRoot) })
+        if ($null -ne $runEntry -and $runEntry.ContainsKey('value')) {
+            $shared = $runEntry['value']
+            Write-Host "ROCTUP MCP artifact verified earlier in this update run."
+            Save-RoctupMcpInstallSettingsToDotEnv -EpfPath $shared.path -Version $shared.version -Sha256 $shared.sha256
+            return $shared
+        }
+    }
     $expected = ([string]$asset.expectedSha256).ToLowerInvariant()
     $existingEpf = Find-RoctupMcpEpf
     if ($existingEpf -and -not $ForceDownload) {
@@ -334,6 +362,7 @@ function Install-RoctupMcpArtifact {
     $artifact = Save-RoctupMcpArtifact -AssetInfo $asset
     Save-RoctupMcpInstallSettingsToDotEnv -EpfPath $artifact.path -Version $artifact.version -Sha256 $artifact.sha256
     Install-RoctupMcpSkillsBestEffort -Version $artifact.version -InstallRoot (Get-RoctupMcpInstallRoot)
+    if ($null -ne $runEntry) { $runEntry['value'] = $artifact }
     return $artifact
 }
 
@@ -471,15 +500,20 @@ function Save-RoctupMcpRuntimeSettingsToDotEnv {
 function Wait-RoctupMcpPort {
     param(
         [int]$Port,
-        [int]$TimeoutSeconds = 30
+        [int]$TimeoutSeconds = 30,
+        [AllowNull()][object]$FocusGuard = $null
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        if (Test-TcpPortOpen -Port $Port -TimeoutMilliseconds 500) {
+        Invoke-OneCLaunchFocusReturn -Guard $FocusGuard | Out-Null
+        if (Test-TcpPortOpen -Port $Port -TimeoutMilliseconds 250) {
+            Invoke-OneCLaunchFocusReturn -Guard $FocusGuard | Out-Null
             return $true
         }
-        Start-Sleep -Milliseconds 500
+        # A hidden ROCTUP window may take the foreground while it starts; the guard
+        # is checked at least every 500 ms during its first 60 seconds.
+        Start-Sleep -Milliseconds $(if ($null -ne $FocusGuard) { 200 } else { 500 })
     }
 
     return $false
@@ -496,6 +530,30 @@ function Read-CurrentDevBranchStateForRoctupMcp {
     $state = Read-DevBranchState -Name ""
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation $Operation
     return $state
+}
+
+function Start-RoctupMcpEnterprise {
+    param(
+        [object]$State,
+        [string]$ArtifactPath,
+        [int]$Port,
+        [string]$User = (Get-EnvValue -Name 'IB_USER'),
+        [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD'),
+        [hashtable]$SessionWait = @{}
+    )
+
+    $command = Get-RoctupMcpStartupCommand -Port $Port
+    $result = Start-EnterpriseBackground -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+        -User $User -Password $Password @SessionWait -EnterpriseArgs @('/Execute', $ArtifactPath, "/C$command")
+    if ((Get-StateValue -State $result -Name 'windowMode' -Default '') -eq 'hidden' -and (Test-ItlInteractiveDesktopSession)) {
+        try {
+            $watch = Start-ItlOneCMainFrameWatch -Process $result.process
+            $watch.Dispose()
+        } catch {
+            Write-Host "[WARN] ITL_WINDOW_HELPER_UNAVAILABLE: ROCTUP main window may become visible. $($_.Exception.Message)"
+        }
+    }
+    return $result
 }
 
 function Start-RoctupMcpForState {
@@ -563,11 +621,7 @@ function Start-RoctupMcpForState {
     }
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
 
-    $command = "startup;mode=embedded;port=$port"
-    $result = Start-EnterpriseBackground `
-        -InfoBasePath $state.devBranchInfoBasePath `
-        -InfoBaseKind $state.infoBaseKind `
-        -EnterpriseArgs @("/Execute", $artifact.path, "/C$command")
+    $result = Start-RoctupMcpEnterprise -State $state -ArtifactPath $artifact.path -Port $port
 
     Update-DevBranchState -State $state -Updates @{
         roctupMcpPort = $port
@@ -584,7 +638,7 @@ function Start-RoctupMcpForState {
     Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $state) -Status "running" -ProcessId $result.process.Id -LeaseToken $portLeaseToken
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
-    if (-not (Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30)) {
+    if (-not (Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 -FocusGuard (Get-StateValue -State $result -Name 'focusGuard' -Default $null))) {
         $message = "ROCTUP MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
         Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $state) -Status "failed" -ProcessId $result.process.Id -LeaseToken $portLeaseToken
         Update-DevBranchState -State $state -Updates @{
@@ -859,22 +913,23 @@ function Write-ItlBranchMcpKiloConfig {
 }
 
 function Write-ItlBranchMcpClientConfig {
-    param([object]$State)
+    param([object]$State, [switch]$PreserveAuxiliaryResources)
 
     Ensure-GitIgnore
     # Remove only legacy ITL-owned remote entries, then materialize the two
     # stable stdio facades. Backend ports never enter client configuration.
     Remove-ItlLegacyBranchMcpEntries
-    $path = Write-ItlOnDemandMcpClientConfig
+    $path = Write-ItlOnDemandMcpClientConfig -PreserveUserChanges:$PreserveAuxiliaryResources
     if ($path) { Write-Host "ITL on-demand MCP client config: $path" }
 }
 
 function Invoke-DevBranchDefaultMcpSetup {
-    param([object]$State)
+    param([object]$State, [switch]$PreserveAuxiliaryResources)
 
     $state = $State
     Write-Section "Prepare branch-local MCP"
-    Stop-ItlOnDemandBackends
+    if ($PreserveAuxiliaryResources) { Stop-ItlOnDemandBackends -InfoBasePath $State.devBranchInfoBasePath }
+    else { Stop-ItlOnDemandBackends }
     $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $state
     if ($roctupRuntime.processAlive) {
         try {
@@ -910,9 +965,9 @@ function Invoke-DevBranchDefaultMcpSetup {
     }
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
-    Write-ItlBranchMcpClientConfig -State $state
-    Write-Host "ROCTUP tools are available through itl-roctup-data resolve_tool/call_tool; the backend starts on the first inner call."
-    Write-Host "Vanessa UI tools are available through itl-vanessa-ui resolve_tool/call_tool; the backend starts on the first inner call."
+    Write-ItlBranchMcpClientConfig -State $state -PreserveAuxiliaryResources:$PreserveAuxiliaryResources
+    Write-Host "ROCTUP tools are available through itl-roctup-data resolve_tool/call_tool; each inner call has its own execution guard."
+    Write-Host "Vanessa UI tools are available through itl-vanessa-ui resolve_tool/call_tool; each inner call has its own execution guard."
     return (Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default ""))
 }
 
@@ -927,9 +982,19 @@ function Invoke-DevBranchMcpRestartAfterInfobaseLoad {
         return (Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default ""))
     }
 
+    $loadedTarget = [string](Get-StateValue $LoadResult 'infoBasePath' '')
+    $loadedKind = [string](Get-StateValue $LoadResult 'infoBaseKind' '')
+    if ([string]::IsNullOrWhiteSpace($loadedTarget) -or $loadedKind -notin @('file','server')) {
+        throw 'ITL_ONDEMAND_LOAD_TARGET_REQUIRED: the loaded infobase must be identified before backend cleanup.'
+    }
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
-    Write-Host "Stopping on-demand MCP backend instances after $Reason; the next tool call starts fresh instances."
-    Stop-ItlOnDemandBackends
+    $currentTarget = [string](Get-StateValue $state 'devBranchInfoBasePath' '')
+    if (-not (Test-ItlOnDemandInfoBaseMatch -First $loadedTarget -Second $currentTarget) -or
+        $loadedKind -cne [string](Get-StateValue $state 'infoBaseKind' '')) {
+        throw 'ITL_ONDEMAND_LOAD_TARGET_CHANGED: branch database changed after load; no backend was stopped.'
+    }
+    Write-Host "Stopping on-demand MCP backends for the loaded infobase after $Reason; the next tool call starts fresh instances."
+    Stop-ItlOnDemandBackends -InfoBasePath $loadedTarget -Strict
     Write-ItlBranchMcpClientConfig -State $state
     return (Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default ""))
 }

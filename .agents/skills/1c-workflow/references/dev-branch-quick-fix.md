@@ -1,76 +1,22 @@
-# Quick-fix в ветке разработки
+# Direct quick-fix in a development branch
 
-Используйте этот reference после того, как upstream `AGENTS.md` и `verification-policy.md` независимо определили `executionPath=quick-fix` и `planningMode=direct`. Если eligibility limits нарушены или найден promotion trigger, переключите только execution path на `full-cycle`; planning mode остаётся `direct`, пока пользовательский запрос или ценность формального согласования отдельно не выберут OpenSpec.
+Use this reference after upstream `AGENTS.md` and `verification-policy.md` have independently set `executionPath=quick-fix` and `planningMode=direct`. When eligibility limits are exceeded or a promotion trigger appears, switch only the execution path to `full-cycle`; the planning mode stays `direct` until the user's request or the value of formal agreement separately selects OpenSpec.
 
-Этот leaf описывает direct quick-fix без OpenSpec.
+This leaf covers a direct quick-fix without OpenSpec.
 
-## Общее правило готовности
+## Readiness rule
 
-Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке любая доработка агентом под настроенными `exportPath`/`extensionsPath` считается готовой только после релевантных сценариев под `testsPath` и fresh passed `/itl-check`; quick-fix исключений не даёт. Явно выбранный ITL lite допускает только partial evidence с формулировкой `implemented; executable verification skipped`. На `master` правка исходников остаётся branch-safety blocker.
+Here `itldev/*` means the current Git branch name (`git branch --show-current`), not a directory or a file glob. In such a branch a change under `exportPath`/`extensionsPath` passes the assessment of applicable obligations and a fresh passed `/itl-check`; `testsPath` stores retained tests, and sufficient one-off proof needs no placeholder test file. A started runner with zero tests, invalid JUnit or a failure remains an error. On `master` a source edit remains a branch-safety blocker.
 
-Перед тестами локального алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Соответствующий слой с режимом `off` автоматически не создаётся. Пропуск никогда не называется `готово/verified/done`; при `verificationPolicy=block` он блокирует result/close, при `warn` требует явного подтверждения partial result.
+Before tests of a local algorithm read `references/yaxunit-tests.md`; before Vanessa tests read `references/vanessa-tests.md`. Mode `off` forbids the automatic run, not authoring a test or reusing already fresh sufficient proof. Without such proof the skip stays partial: `verificationPolicy=block` blocks result/close, `warn` permits a warned export; closing the branch needs a separate confirmation.
 
-### 1. Поставить задачу
+## Steps
 
-```text
-Сделай quick-fix без OpenSpec.
+1. Find the fault and make the minimal fix. Do not change the architecture or add metadata; when the task outgrows quick-fix, switch the execution path as described above.
+2. Use targeted/static checks while implementing (at least the syntax check of every touched module).
+3. Choose proof under `verification-change.md`. For a quick-fix reuse sufficient existing proof; on a gap obtain a targeted current result. Choose the layer by the change: YAxUnit for local logic and its boundaries, Vanessa integration for interaction of objects, registers, documents or exchanges, Vanessa UI for forms, commands and visible behavior; overlapping risks need both layers. Retaining a regression test is a separate risk-based decision under `verification-suite-selection.md`: add a retained regression test only when future changes need it, and limit each extra scenario to a distinct material risk.
+4. After the last relevant edit run one fresh unfiltered `/itl-check` (skill-based clients such as Codex use `$itl-check`; `/itl` shows the exact command name of the current client). It loads the changed files into the branch infobase and runs the selected checks; do not update the base separately beforehand.
+5. If the check fails, analyze the runner report, the 1C log and the changed code, fix the cause and repeat the needed check within one persisted repair session. The helper owns its limit and recovery; an exhausted budget yields honest diagnostics, not another hidden loop.
+6. Report the changed files and how the fix was verified.
 
-Проблема:
-<описание ошибки>
-
-Ожидаемый результат:
-<что должно работать>
-
-Ограничения:
-- меняй минимально необходимый код;
-- не меняй архитектуру;
-- не добавляй новые метаданные;
-- если выяснится, что задача больше quick-fix, переключи execution path на full-cycle; planning mode оставь direct, пока отдельно не нужен OpenSpec.
-```
-
-### 2. Реализовать исправление
-
-Агент должен:
-
-- найти место ошибки;
-- внести минимальное исправление;
-- создать или обновить целевой regression test: YAxUnit для локального алгоритма, Vanessa в `tests/features` для интеграции или UI;
-- проверить синтаксис;
-- кратко написать, какие файлы изменены;
-- описать, чем проверено.
-
-Если во время quick-fix обнаружен upstream promotion trigger или нарушены eligibility limits, execution path переключается на full-cycle. Planning mode остаётся direct, если отдельно не выбран OpenSpec для формального исследования и согласования.
-
-### 3. Обновить базу ветки разработки
-
-После изменения файлов обязательно обновите базу ветки разработки.
-
-В Kilo Code:
-
-```text
-/itl-check
-```
-
-В Codex:
-
-```text
-$itl-check
-```
-
-Агент должен обновить копию базы текущей ветки разработки измененными файлами конфигурации.
-
-### 4. Протестировать исправление
-
-Исполняемая проверка делается через Vanessa Automation:
-
-```text
-/itl-check
-```
-
-Для quick-fix переиспользуйте достаточное существующее Vanessa-покрытие; при пробеле создайте или обновите один целевой regression test. Второй сценарий добавляется только для отдельной значимой границы или негативного случая. Если нарушены upstream eligibility limits, execution path переключается на full-cycle; planning mode от этого автоматически не меняется.
-
-Тип проверки выбирается по сути изменения: YAxUnit — для локальной логики и её границ, Vanessa integration — для взаимодействия объектов, регистров, документов или обменов, Vanessa UI — для форм, команд и видимого поведения. При пересечении рисков нужны оба слоя.
-
-Если тест упал, агент должен сам проанализировать отчет Vanessa, лог 1С и измененный код, исправить ошибку и снова выполнить `/itl-check`. Лимит - 3 попытки на одну группу ошибок. После 3 неуспешных попыток агент останавливается, фиксирует диагностику и просит решение разработчика.
-
-Только после успешного тестирования можно переходить к выгрузке `CF` или review.
+Before `CF` export and branch close the helper assesses current evidence: `block` requires a sufficient fresh pass, `warn` keeps an explicitly warned export when verification is incomplete. Review does not replace runtime proof.

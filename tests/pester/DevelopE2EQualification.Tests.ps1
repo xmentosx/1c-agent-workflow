@@ -1,7 +1,8 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot "TestSupport.ps1")
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
+    $script:sourceE2EArtifactBinding = $null
     . (Join-Path $RepoRoot "scripts\git-path-list.ps1")
     . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
     . (Join-Path $RepoRoot "scripts\develop-e2e-qualification.ps1")
@@ -35,6 +36,7 @@ BeforeAll {
         [IO.File]::WriteAllText((Join-Path $Root "tests\features\fixture.feature"), "# language: ru`n", [Text.UTF8Encoding]::new($false))
         $catalog = [ordered]@{
             schemaVersion = 1
+            pesterWorkers = [ordered]@{ targetedImplicitDefault=4 }
             continuationScopes = [ordered]@{ static=@('tests/pester/*'); deliveryPostGate=@('post-gate/*'); gate=@('scripts/*'); develop=@('develop/*'); release=@('release/*') }
             developJourneys = [ordered]@{
                 names = @('upgrade','fresh')
@@ -57,53 +59,806 @@ BeforeAll {
 }
 
 Describe "Develop E2E journey qualification router" {
-    It "validates exact journey names, exact full paths, and known route contracts" {
-        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
-        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
-        @($catalog.developJourneys.names) | Should -Be @('upgrade','fresh')
-        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'scripts/check.ps1'
-        @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/git-path-list.ps1'
-        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'scripts/develop-e2e-qualification.ps1'
-        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'tests/quality-contracts.json'
-        foreach ($leaf in @('scripts/source-delivery.ps1','scripts/source-delivery-process.ps1','scripts/source-delivery-queue.ps1','scripts/source-delivery-component.ps1','scripts/source-delivery-candidate.ps1')) {
-            @($catalog.developJourneys.fullPaths) | Should -Not -Contain $leaf
+    BeforeAll {
+        . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')
+        function New-AncestorJourneyFixture {
+            param([switch]$IncludePesterOwnerInputs,[switch]$IncludeManifestRepair,[switch]$IncludeUpdateScope,[switch]$IncludeUpdateDocument)
+            $root = Join-Path $TestDrive ('ancestor ' + (Get-NonAsciiFixtureSegment) + ' ' + [guid]::NewGuid().ToString('N'))
+            [void](New-RouterFixture -Root $root)
+            $catalog = Get-QualityContractCatalog -RepositoryRoot $root
+            if ($IncludePesterOwnerInputs) { $catalog.contracts[0].paths += 'tests/pester/*' }
+            $catalog.continuationScopes.gate += 'tests/quality-contracts.json'
+            $catalog | Add-Member -NotePropertyName budgets -NotePropertyValue ([pscustomobject]@{releaseHardSeconds=14940})
+            Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
+            $runtime = Join-Path $root ('.agents/skills/1c-workflow/scripts/runtime ' + (Get-NonAsciiFixtureSegment) + '.ps1')
+            [IO.File]::WriteAllText($runtime, "'original runtime'`r`n", [Text.UTF8Encoding]::new($true))
+            if($IncludeUpdateScope) {
+                $catalog.contracts[0].paths += '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+                Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
+                New-Item -ItemType Directory -Force -Path (Join-Path $root '.agents/skills/1c-workflow/scripts/lib') | Out-Null
+                [IO.File]::WriteAllText((Join-Path $root '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'), "function Update-WorkflowPackage { 'old update' }`nfunction Initialize-Project { 'shared' }`n",[Text.UTF8Encoding]::new($true))
+            }
+            if($IncludeUpdateDocument) {
+                $doc='.agents/skills/1c-workflow/references/workflow-update-recovery.md'
+                $catalog.contracts[0].paths += $doc
+                Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $root $doc)) | Out-Null
+                [IO.File]::WriteAllText((Join-Path $root '.gitattributes'),($doc+" text eol=crlf`n"),[Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText((Join-Path $root $doc),"# Recovery`r`nOriginal instructions`r`n",[Text.UTF8Encoding]::new($true))
+            }
+            if ($IncludeManifestRepair) {
+                New-Item -ItemType Directory -Force -Path (Join-Path $root 'scripts') | Out-Null
+                [IO.File]::WriteAllText((Join-Path $root 'scripts/source-e2e-manifest-repair.ps1'), "'original semantic repair'`r`n", [Text.UTF8Encoding]::new($true))
+            }
+            & git -C $root add --all; & git -C $root commit --quiet -m 'captured journey inputs'
+            $commit = (& git -C $root rev-parse HEAD).Trim(); $tree = (& git -C $root rev-parse 'HEAD^{tree}').Trim()
+            $external = [ordered]@{complete=$true;standStateSha256=('c'*64);runtime=('r'*64);artifacts=@(('a'*64),('b'*64));environment=('e'*64)}
+            $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $root -Journey fresh -Catalog $catalog -ExternalBinding $external
+            $inputs | Should -Not -BeNullOrEmpty
+            $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $root -ChangedPath @('fixture/change.txt')
+            $report = New-DevelopE2ERouteReport -RepositoryRoot $root -Plan $plan -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) -JourneyResult ([pscustomobject]@{name='fresh';status='passed'})
+            $reportPath = Join-Path $root '.git/original-report.json'
+            Write-Utf8Json -Path $reportPath -Value $report
+            $cache = Save-DevelopE2EQualification -RepositoryRoot $root -ReportPath $reportPath -Tree $tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) -InputIdentity $inputs
+            return [pscustomobject]@{root=$root;catalog=$catalog;external=$external;inputs=$inputs;commit=$commit;tree=$tree;cache=$cache;runtime=$runtime;reportSha=(Get-FileHash -LiteralPath (Join-Path $cache 'route-report.json')).Hash}
         }
-
-        $invalid = $catalog | ConvertTo-Json -Depth 16 | ConvertFrom-Json
-        $invalid.developJourneys.routes.upgrade.contracts = @('missing-owner')
-        { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $invalid } | Should -Throw '*unknown quality contracts*'
-        $invalid = $catalog | ConvertTo-Json -Depth 16 | ConvertFrom-Json
-        $invalid.developJourneys.fullPaths = @('scripts/*.ps1')
-        { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $invalid } | Should -Throw '*unique exact repository-relative paths*'
+        function Publish-AncestorFixtureTargeted {
+            param([object]$Fixture)
+            $commit = (& git -C $Fixture.root rev-parse HEAD).Trim(); $tree = (& git -C $Fixture.root rev-parse 'HEAD^{tree}').Trim()
+            $run = [ordered]@{schemaVersion=3;mode='Targeted';status='passed';exitCode=0;commit=$commit;tree=$tree;finishedAt=[datetime]::UtcNow.ToString('o');stages=@(@{name='pester';status='passed'},@{name='tracked-state';status='passed'},@{name='git-diff-check';status='passed'})}
+            Write-Utf8Json -Path (Join-Path $Fixture.root '.git/itl/runs/fixture-targeted-proof.json') -Value $run
+            return $tree
+        }
+        function Find-AncestorFixtureProof {
+            param([object]$Fixture,[string]$Tree,[object]$StaticProof=$null,[Collections.Generic.List[object]]$Diagnostics=$null)
+            $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $Fixture.root -Journey fresh -Catalog $Fixture.catalog -ExternalBinding $Fixture.external
+            Get-DevelopE2EAncestorQualification -RepositoryRoot $Fixture.root -Tree $Tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) -InputIdentity $inputs -StaticProof $StaticProof -Diagnostics $Diagnostics
+        }
+        function New-CurrentStaticFixtureProof {
+            param([object]$Fixture)
+            . (Join-Path $context.RepoRoot 'scripts/develop-static-qualification.ps1')
+            $commit = (& git -C $Fixture.root rev-parse HEAD).Trim()
+            $tree = (& git -C $Fixture.root rev-parse 'HEAD^{tree}').Trim()
+            $root = Join-Path $Fixture.root '.git/qualification'
+            New-Item -ItemType Directory -Force -Path $root | Out-Null
+            $junit = Join-Path $root 'pester.xml'
+            [IO.File]::WriteAllText($junit, '<testsuites tests="1" failures="0" errors="0" />')
+            $tests = @(Get-ChildItem -LiteralPath (Join-Path $Fixture.root 'tests/pester') -File -Filter '*.Tests.ps1' | ForEach-Object { 'tests/pester/' + $_.Name })
+            $q = @{schemaVersion=4;kind='itl-workflow-full-qualification';status='passed';reusable=$false
+                repository=@{commit=$commit;tree=$tree;worktreeClean=$true};result=@{passed=1;failed=0;skipped=0}
+                pesterInputs=@{schemaVersion=1;kind='itl-pester-input-identity';reusable=$false;runtimeIdentityStatus='known';runtimeIdentitySha256=('a'*64);files=@($tests|ForEach-Object{@{path=$_;digest=''}})}
+                inventory=@{tests=@($tests|ForEach-Object{@{path=$_}})};junit=@{sha256=(Get-FileHash -LiteralPath $junit).Hash.ToLowerInvariant()}
+                stages=@('pester','git-diff-check','static-tracked-state','ai-rules-compatibility'|ForEach-Object{@{name=$_;status='passed'}})}
+            $path = Join-Path $root 'full.json'
+            Write-Utf8Json -Path $path -Value $q
+            return Save-DevelopE2ECurrentStaticProof -QualificationPath $path -Commit $commit -Tree $tree
+        }
     }
 
-    It "routes each installed owner to the journey that exercises its behavior" {
-        $installed = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1')
-        $installed.reason | Should -Be 'quality-contract-route'
-        @($installed.contracts) | Should -Be @('mcp-hosts')
-        @($installed.journeys) | Should -Be @('fresh')
-        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('templates/dependency-lock.json') | Select-Object -ExpandProperty journeys) | Should -Be @('fresh')
-        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/build-ai-rules-release.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade')
-        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade','fresh')
+    It 'routes update-only changes to upgrade and reuses the original fresh proof without rewriting it' {
+        $f=New-AncestorJourneyFixture -IncludeUpdateScope
+        $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        $physical=Join-Path $f.root $path
+        $text=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($physical))
+        [IO.File]::WriteAllBytes($physical,[Text.Encoding]::UTF8.GetBytes($text.Replace('old update','fixed update')))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'update-only repair'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        $plan=Resolve-DevelopE2EJourneyPlan -RepositoryRoot $f.root -BaseRef $f.commit -Catalog $f.catalog
+        @($plan.journeys) | Should -Be @('upgrade')
+        $proof=Find-AncestorFixtureProof -Fixture $f -Tree $tree
+        $proof | Should -Not -BeNullOrEmpty
+        (Get-FileHash -LiteralPath $proof.reportPath).Hash | Should -BeExactly $f.reportSha
+        $proof.report.repository.commit | Should -BeExactly $f.commit
+        $failedInputs=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $failedPath=Join-Path $f.root '.git/itl/runs/new-develop-failure.json'
+        Write-Utf8Json -Path $failedPath -Value @{schemaVersion=3;mode='Develop';status='failed';commit=(& git -C $f.root rev-parse HEAD).Trim();tree=$tree;finishedAt=[datetime]::UtcNow.AddSeconds(1).ToString('o');stages=@(@{name='develop-e2e-fresh';status='failed'});journeyInputIdentities=@{fresh=$failedInputs}}
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        Remove-Item -LiteralPath $failedPath
+        # The exact same file also owns shared initialization: retain fresh.
+        [IO.File]::WriteAllBytes($physical,[Text.Encoding]::UTF8.GetBytes($text.Replace("'shared'","'changed shared'")))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'shared initialization change'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        @( (Resolve-DevelopE2EJourneyPlan -RepositoryRoot $f.root -BaseRef $f.commit -Catalog $f.catalog).journeys) | Should -Be @('upgrade','fresh')
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+    }
 
-        $standalone = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('vibecoding1c-mcp-host/codechecker-overlay/retry_policy.py')
-        $standalone.reason | Should -Be 'no-develop-journey-route'
-        @($standalone.contracts) | Should -Be @('standalone-mcp-host')
-        @($standalone.journeys) | Should -BeNullOrEmpty
-
-        foreach ($leaf in @('process','queue','component')) {
-            $path = "scripts/source-delivery-$leaf.ps1"
-            $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
-            $plan.reason | Should -Be 'no-develop-journey-route'
-            @($plan.contracts) | Should -Be @("source-delivery-$leaf")
-            @($plan.journeys) | Should -BeNullOrEmpty
+    It 'keeps fresh selected for missing baseline, unknown functions, parse errors and changed shared entrypoint code' {
+        $f=New-AncestorJourneyFixture -IncludeUpdateScope
+        $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        Test-DevelopJourneyUnaffectedPath -RepositoryRoot $f.root -Path $path | Should -BeFalse
+        {Get-DevelopJourneySourceProjection $path "function Update-WorkflowPackage { 'update' }; function Initialize-Project { Update-WorkflowPackage }"} | Should -Throw '*SHARED_CALLER*'
+        foreach($text in @("function Update-WorkflowPackage { 'fixed' }; function Unknown-Shared { 'new' }",'function Broken {')) {
+            [IO.File]::WriteAllText((Join-Path $f.root $path),$text,[Text.UTF8Encoding]::new($true))
+            Test-DevelopJourneyUnaffectedPath -RepositoryRoot $f.root -Path $path -BaseRef $f.commit | Should -BeFalse
         }
-        $entrypoint = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery.ps1')
-        @($entrypoint.contracts) | Should -Be @('source-delivery-entrypoint'); @($entrypoint.journeys) | Should -BeNullOrEmpty
-        $candidate = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery-candidate.ps1')
-        @($candidate.contracts) | Should -Be @('source-delivery-candidate'); @($candidate.journeys) | Should -BeNullOrEmpty
-        $cleanup = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/develop-e2e-cleanup.ps1')
-        @($cleanup.contracts) | Should -Be @('source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
+        $entry='.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        $before="param([string]`$Action,[string]`$WorkflowUpdateRecovery)`nfunction Get-Agent1cReexecArguments { 'shared' }"
+        $after="param([string]`$Action,[ValidateSet('','legacy-copy')][string]`$WorkflowUpdateRecovery,[string]`$WorkflowUpdateLegacySourceRoot)`nfunction Get-Agent1cReexecArguments { if (`$WorkflowUpdateRecovery -eq 'legacy-copy') { 'recovery' }`n 'shared' }"
+        (Get-DevelopJourneySourceProjection $entry $after) | Should -BeExactly (Get-DevelopJourneySourceProjection $entry $before)
+        (Get-DevelopJourneySourceProjection $entry ($after.Replace("'shared'","'changed'"))) | Should -Not -BeExactly (Get-DevelopJourneySourceProjection $entry $before)
+        (Get-DevelopJourneySourceProjection $entry ($after.Replace("'recovery' }","'recovery' } else { 'shared path' }"))) | Should -Not -BeExactly (Get-DevelopJourneySourceProjection $entry $before)
+        {Get-DevelopJourneySourceProjection $entry ($after.Replace('[string]$WorkflowUpdateLegacySourceRoot','[string]$WorkflowUpdateLegacySourceRoot=(Invoke-Unknown)'))} | Should -Throw '*SHARED_DEFAULT*'
+        {Get-DevelopJourneySourceProjection $entry ($after.Replace('[string]$WorkflowUpdateLegacySourceRoot','[Parameter(Mandatory)][string]$WorkflowUpdateLegacySourceRoot'))} | Should -Throw '*SHARED_ATTRIBUTE*'
+        (Get-DevelopJourneySourceProjection $entry ($before.Replace("'shared'","return`n'shared'"))) | Should -Not -BeExactly (Get-DevelopJourneySourceProjection $entry ($before.Replace("'shared'","return 'shared'")))
+    }
+
+    It 'isolates artifact discovery from both journeys but retains shared stand behavior and callers' {
+        $path='scripts/stand-env-identity.ps1'
+        $before="function Find-SourceE2EArtifactBinding { 'old lookup' }`nfunction Get-DevelopPositiveStandRoot { 'shared stand' }"
+        foreach($journey in @('upgrade','fresh')) {
+            $baseline=Get-DevelopJourneySourceProjection -Path $path -Text $before -Journey $journey
+            (Get-DevelopJourneySourceProjection -Path $path -Text ($before.Replace('old lookup','new lookup')) -Journey $journey) | Should -BeExactly $baseline
+            (Get-DevelopJourneySourceProjection -Path $path -Text ($before.Replace('shared stand','changed stand')) -Journey $journey) | Should -Not -BeExactly $baseline
+            {Get-DevelopJourneySourceProjection -Path $path -Text ($before+"`nFind-SourceE2EArtifactBinding") -Journey $journey} | Should -Throw '*SHARED_CALLER*'
+        }
+    }
+
+    It 'keeps accelerated token normalization identical to its original fallback on Unicode source (<Repeat>)' -TestCases @(@{Repeat=1},@{Repeat=180}) {
+        param($Repeat)
+        $chunk=@'
+function Read-Example {
+    $path = 'C:\путь с пробелом'
+    $value = @"
+первая строка
+вторая строка
+"@
+    # Ignore this comment, retaining actual statement separators.
+    if ($true) {
+        Write-Output `
+            $value
+    }
+    return
+    'separate statement'
+}
+'@
+        $text=([string][char]0xFEFF)+(@(1..$Repeat|ForEach-Object {$chunk}) -join "`n")
+        $tokens=$null;$errors=$null
+        [void][Management.Automation.Language.Parser]::ParseInput($text.TrimStart([char]0xFEFF),[ref]$tokens,[ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        if($Repeat -eq 180) {$tokens.Count | Should -BeGreaterThan 4096}
+        else {$tokens.Count | Should -BeLessThan 4096}
+        $normalizer=Get-DevelopSourceTokenNormalizer
+        ($normalizer -is [type]) | Should -BeTrue
+        $fast=$normalizer::Normalize($tokens)
+        Mock Get-DevelopSourceTokenNormalizer {$normalizer}
+        ConvertTo-DevelopSourceTokens $text | Should -BeExactly $fast
+        Should -Invoke Get-DevelopSourceTokenNormalizer -Times 1 -Exactly
+        Mock Get-DevelopSourceTokenNormalizer {$null}
+        ConvertTo-DevelopSourceTokens $text | Should -BeExactly $fast
+        {ConvertTo-DevelopSourceTokens ($text+"`nfunction broken {")} | Should -Throw '*PARSE_ERROR*'
+    }
+
+    It 'projects multiple disjoint function spans in numeric reverse order on Windows PowerShell' {
+        $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        $names=(Get-DevelopJourneyExcludedScope $path).functions
+        $before=(@($names | ForEach-Object { "function $_ { 'update before' }`n'shared $_'" }) -join "`n")
+        $after=$before.Replace('update before','update after with a different length')
+        $baseline=Get-DevelopJourneySourceProjection -Path $path -Text $before
+        (Get-DevelopJourneySourceProjection -Path $path -Text $after) | Should -BeExactly $baseline
+        (Get-DevelopJourneySourceProjection -Path $path -Text ($after.Replace('shared ','changed shared '))) | Should -Not -BeExactly $baseline
+    }
+
+    It 'keeps upgrade dependencies for shared callers, unknown functions, malformed and else paths' {
+        $path='scripts/invoke-develop-e2e.ps1'
+        $before='function Get-BranchWorktree { param($Root) "old" }; if ($requestedJourneys -contains "fresh") { Get-BranchWorktree -Root "fresh" }; "shared"'
+        $before+="`n`$message=@'`nmultiline literal`nsecond line`n'@`n"
+        $after=$before.Replace('"old"','"new"')
+        $baseline=Get-DevelopJourneySourceProjection -Path $path -Text $before -Journey upgrade
+        (Get-DevelopJourneySourceProjection -Path $path -Text $after -Journey upgrade) | Should -BeExactly $baseline
+        (Get-DevelopJourneySourceProjection -Path $path -Text ($after.Replace("`n","`r`n")) -Journey upgrade) | Should -BeExactly $baseline
+        foreach($text in @($after.Replace('"shared"','"changed shared"'),($after+'; function Unknown { "new runtime" }'))) {
+            (Get-DevelopJourneySourceProjection -Path $path -Text $text -Journey upgrade) | Should -Not -BeExactly $baseline
+        }
+        {Get-DevelopJourneySourceProjection -Path $path -Text ($after.Replace('}; "shared"','} else { "changed" }; "shared"')) -Journey upgrade} | Should -Throw '*SHARED_CALLER*'
+        {Get-DevelopJourneySourceProjection -Path $path -Text ($after+'; Get-BranchWorktree -Root "upgrade"') -Journey upgrade} | Should -Throw '*SHARED_CALLER*'
+        {Get-DevelopJourneySourceProjection -Path $path -Text ($after+'; function Broken {') -Journey upgrade} | Should -Throw '*PARSE_ERROR*'
+        Test-DevelopJourneyUnaffectedPath -RepositoryRoot $RepoRoot -Path $path -Journey upgrade | Should -BeFalse
+    }
+
+    It 'keeps update-only selection in a long Unicode checkout when reading a historical Git object' {
+        $prefix='history '+(Get-NonAsciiFixtureSegment)+' '
+        $segment=$prefix+('x'*[math]::Max(1,160-$TestDrive.Length-1-$prefix.Length))
+        $root=Join-Path $TestDrive $segment
+        [void](New-RouterFixture $root)
+        $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        $physical=Join-Path $root $path
+        [void][IO.Directory]::CreateDirectory((Split-Path $physical))
+        $before="function Update-WorkflowPackage { 'before' }; function Initialize-Project { 'shared' }`n"
+        [IO.File]::WriteAllText($physical,$before,[Text.UTF8Encoding]::new($true))
+        $catalog=Get-QualityContractCatalog $root
+        $catalog.contracts[0].paths += $path
+        Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
+        & git -C $root add --all; & git -C $root commit --quiet -m 'long path baseline'
+        $base=(& git -C $root rev-parse HEAD).Trim()
+        ($root.Length+1+$base.Length+1+$path.Length) | Should -BeGreaterThan 260
+        (Get-DevelopHistoricalSourceText -RepositoryRoot $root -Commit $base -Path $path) | Should -BeExactly (([string][char]0xFEFF)+$before)
+        [IO.File]::WriteAllText($physical,$before.Replace("'before'","'after'"),[Text.UTF8Encoding]::new($true))
+        & git -C $root add --all; & git -C $root commit --quiet -m 'update-only long path'
+        @((Resolve-DevelopE2EJourneyPlan -RepositoryRoot $root -BaseRef $base).journeys) | Should -Be @('upgrade')
+    }
+
+    It 'retains native receipts when only isolated test paths are added to their owner and explains rejected proof' {
+        $f=New-AncestorJourneyFixture
+        $f.catalog.contracts[0].paths += 'tests/pester/Fixture.Tests.ps1'
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'static owner path only'
+        $tree=Publish-AncestorFixtureTargeted $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        $diagnostics=[Collections.Generic.List[object]]::new()
+        [IO.File]::AppendAllText((Join-Path $f.cache 'route-report.json'),'tampered')
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree -Diagnostics $diagnostics | Should -BeNullOrEmpty
+        @($diagnostics.code) | Should -Contain 'REPORT_SHA_MISMATCH'
+        for($i=0;$i -lt 20;$i++) {Add-DevelopReuseDiagnostic -Diagnostics $diagnostics -Code 'INPUTS_NOT_EQUIVALENT' -Inputs @(1..20|ForEach-Object{"source:path$_"})}
+        $diagnostics.Count | Should -Be 8
+        $diagnostics[1].inputs.Count | Should -Be 12
+        $diagnostics[1].omittedInputCount | Should -Be 8
+    }
+
+    It 'retains old E2E across a deadline-only change but rejects environment, workload and proof changes' {
+        $f=New-AncestorJourneyFixture
+        $f.catalog.developJourneys.routes.fresh | Add-Member -NotePropertyName hardSeconds -NotePropertyValue 3600
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'deadline only'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        $f.external.environment='different'
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        $f.external.environment='e'*64
+        [IO.File]::AppendAllText((Join-Path $f.cache 'route-report.json'),'tampered')
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+    }
+
+    It 'authenticates the original positive-stand fingerprint when reusing update-only changes' {
+        $f=New-AncestorJourneyFixture -IncludeUpdateScope
+        $old=$f.inputs|ConvertTo-Json -Depth 24|ConvertFrom-Json
+        $positiveExternal=@{complete=$true;environment='positive stand'}
+        $oldPositive=[ordered]@{schemaVersion=2;journey='fresh';contract=$old.inventory.contract;inputs=$old.inventory.inputs;external=$positiveExternal}
+        $old.inventory.external|Add-Member -NotePropertyName positiveStandInputIdentity -NotePropertyValue (Get-DevelopE2ECanonicalJsonSha256 $oldPositive)
+        $old.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $old.inventory
+        $path=Join-Path $f.root '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        $text=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($path))
+        [IO.File]::WriteAllBytes($path,[Text.Encoding]::UTF8.GetBytes($text.Replace('old update','new update')))
+        $current=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $newPositive=[ordered]@{schemaVersion=2;journey='fresh';contract=$current.inventory.contract;inputs=$current.inventory.inputs;external=$positiveExternal}
+        $positive=[pscustomobject]@{inventory=$newPositive;fingerprint=Get-DevelopE2ECanonicalJsonSha256 $newPositive}
+        $current | Add-Member -NotePropertyName positiveInputIdentity -NotePropertyValue $positive
+        $current.inventory.external['positiveStandInputIdentity']=$positive.fingerprint
+        $current.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $current.inventory
+        Test-DevelopE2EEquivalentInput -RepositoryRoot $f.root -Recorded $old -Current $current -QualifiedCommit $f.commit | Should -BeTrue
+        $positiveExternal.environment='changed positive environment'
+        $positive.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $newPositive
+        $current.inventory.external.positiveStandInputIdentity=$positive.fingerprint
+        $current.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $current.inventory
+        Test-DevelopE2EEquivalentInput -RepositoryRoot $f.root -Recorded $old -Current $current -QualifiedCommit $f.commit | Should -BeFalse
+    }
+
+    It 'reuses workflow PowerShell source across LF and CRLF without normalizing BOM, content or 1C transport' {
+        $f = New-AncestorJourneyFixture
+        $bytes = [IO.File]::ReadAllBytes($f.runtime)
+        $text = [Text.Encoding]::UTF8.GetString($bytes)
+        [IO.File]::WriteAllBytes($f.runtime, [Text.Encoding]::UTF8.GetBytes($text.Replace("`r`n", "`n")))
+        $current = Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $current.fingerprint | Should -BeExactly $f.inputs.fingerprint
+        $f.catalog.budgets.releaseHardSeconds = 15540
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'different checkout line endings'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        [IO.File]::WriteAllBytes($f.runtime, [Text.Encoding]::UTF8.GetBytes($text.TrimStart([char]0xFEFF)))
+        (Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external).fingerprint | Should -Not -BeExactly $current.fingerprint
+        $transport = Join-Path $f.root 'src/cf/Configuration.xml'
+        [IO.File]::WriteAllText($transport, "<Configuration />`r`n", [Text.UTF8Encoding]::new($false))
+        $before = Get-DevelopE2EInputFileSha256 -Path $transport -RelativePath 'src/cf/Configuration.xml'
+        [IO.File]::WriteAllText($transport, "<Configuration />`n", [Text.UTF8Encoding]::new($false))
+        Get-DevelopE2EInputFileSha256 -Path $transport -RelativePath 'src/cf/Configuration.xml' | Should -Not -BeExactly $before
+    }
+
+    It 'authenticates a historical CRLF recovery document against its Git LF blob without relaxing runtime hashes' {
+        $f=New-AncestorJourneyFixture -IncludeUpdateDocument
+        $doc='.agents/skills/1c-workflow/references/workflow-update-recovery.md'
+        $historical=Get-DevelopHistoricalSourceText -RepositoryRoot $f.root -Commit $f.commit -Path $doc
+        $historical.Contains("`r`n") | Should -BeFalse
+        [IO.File]::WriteAllText((Join-Path $f.root $doc),"# Recovery`r`nCorrected instructions`r`n",[Text.UTF8Encoding]::new($true))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'recovery documentation only'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        $proof=Find-AncestorFixtureProof -Fixture $f -Tree $tree
+        $proof | Should -Not -BeNullOrEmpty
+        (Get-FileHash -LiteralPath $proof.reportPath).Hash | Should -BeExactly $f.reportSha
+        # Changing an unrelated runtime input still forbids old native proof.
+        [IO.File]::AppendAllText($f.runtime,"`n'changed runtime'")
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+    }
+
+    It 'defers the original fail-fast route until current static proof and then reuses the unchanged native journey' {
+        $f = New-AncestorJourneyFixture
+        [IO.File]::AppendAllText((Join-Path $f.root 'tests/pester/Fixture.Tests.ps1'), '# test-only repair')
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'static support repair'
+        $commit = (& git -C $f.root rev-parse HEAD).Trim(); $tree = (& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+        Get-ExactTargetedRunProof -RepositoryRoot $f.root -Commit $commit -Tree $tree | Should -BeNullOrEmpty
+        $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$tokens,[ref]$errors)
+        $definition=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Ensure-DevelopE2ERoute'},$true)
+        . ([scriptblock]::Create($definition.Extent.Text))
+        $repoRoot=$f.root;$qualityCatalog=$f.catalog;$E2EProjectRoot=$f.root;$AgentTarget='kilocode'
+        $script:developQualificationRoot=Join-Path $f.root '.git/current';New-Item -ItemType Directory -Force -Path $script:developQualificationRoot|Out-Null
+        $script:developRulesSource=$f.root;$script:developCurrentStaticProof=$null;$script:developAncestorRoutes=@{};$script:stages=@()
+        $script:releaseContext=$null;$script:aiRulesRelease=$null
+        function Invoke-GateStage {}
+        function Add-ReusedStage {}
+        function Get-DevelopE2EIdentitySha256 {}
+        Mock Get-DevelopE2EIdentitySha256 {'a'*64};Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+        Mock Get-DevelopE2EInputIdentity {$f.inputs}
+        Mock Invoke-GateStage {throw 'Native journey must not execute for matching inputs'}
+        Mock Add-ReusedStage {}
+        $plan=[pscustomobject]@{journeys=@('fresh')}
+        Ensure-DevelopE2ERoute -Journey fresh -Plan $plan -DeferForStatic | Should -BeNullOrEmpty
+        Test-Path -LiteralPath (Join-Path $script:developQualificationRoot 'develop-e2e-fresh.json') | Should -BeFalse
+        $script:developAncestorRoutes.Count | Should -Be 0
+        $script:developCurrentStaticProof=New-CurrentStaticFixtureProof -Fixture $f
+        $script:developCurrentStaticProof | Should -Not -BeNullOrEmpty
+        $path=Ensure-DevelopE2ERoute -Journey fresh -Plan $plan
+        (Get-FileHash -LiteralPath $path).Hash | Should -BeExactly $f.reportSha
+        $record=$script:developAncestorRoutes.fresh.continuation
+        $record.proofKind | Should -BeExactly 'owner-input-static'
+        Test-RecordedWorkflowContinuation -Record $record -Commit $commit -Tree $tree | Should -BeTrue
+        # Replacing the mutable Full report must not corrupt immutable provenance.
+        [IO.File]::WriteAllText((Join-Path $f.root '.git/qualification/full.json'), '{}')
+        Test-RecordedWorkflowContinuation -Record $record -Commit $commit -Tree $tree | Should -BeTrue
+        [IO.File]::AppendAllText($record.staticProof.junitPath, 'altered')
+        Test-RecordedWorkflowContinuation -Record $record -Commit $commit -Tree $tree | Should -BeFalse
+        Should -Invoke Invoke-GateStage -Times 0 -Exactly
+    }
+
+    It 'keeps static continuation closed for failed, incomplete, foreign and tampered proof and newer native failures' {
+        $f=New-AncestorJourneyFixture
+        [IO.File]::AppendAllText((Join-Path $f.root 'tests/pester/Fixture.Tests.ps1'), '# static repair')
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'test repair'
+        $commit=(& git -C $f.root rev-parse HEAD).Trim();$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+        $proof=New-CurrentStaticFixtureProof -Fixture $f
+        Test-WorkflowCurrentStaticProof -Proof $proof -Commit $f.commit -Tree $tree | Should -BeFalse
+        $q=Get-Content -LiteralPath $proof.path -Raw|ConvertFrom-Json
+        foreach($fault in @('failed','inventory','stage','dirty','tree')) {
+            $bad=$q|ConvertTo-Json -Depth 16|ConvertFrom-Json
+            switch($fault){
+                failed {$bad.result.failed=1}
+                inventory {$bad.inventory.tests=@()}
+                stage {$bad.stages=@($bad.stages|Where-Object name -ne 'static-tracked-state')}
+                dirty {$bad.repository.worktreeClean=$false}
+                tree {$bad.repository.tree='0'*40}
+            }
+            Write-Utf8Json -Path $proof.path -Value $bad
+            $proof.sha256=(Get-FileHash -LiteralPath $proof.path).Hash.ToLowerInvariant()
+            Test-WorkflowCurrentStaticProof -Proof $proof -Commit $commit -Tree $tree | Should -BeFalse -Because $fault
+        }
+        Write-Utf8Json -Path $proof.path -Value $q;$proof.sha256=(Get-FileHash -LiteralPath $proof.path).Hash.ToLowerInvariant()
+        $args=@{RepositoryRoot=$f.root;Tree=$tree;Journey='fresh';IdentitySha256=('a'*64);StandStateSha256=('c'*64);InputIdentity=$f.inputs;StaticProof=$proof}
+        Get-DevelopE2EAncestorQualification @args | Should -Not -BeNullOrEmpty
+        # The legacy envelope also hashes admission receipts. Its historical
+        # identity stays intact; complete current owner inputs authorize reuse.
+        $args.IdentitySha256='f'*64
+        $continued=Get-DevelopE2EAncestorQualification @args
+        $continued.report.identitySha256 | Should -BeExactly ('a'*64)
+        $f.external.environment='changed environment'
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree -StaticProof $proof | Should -BeNullOrEmpty
+        $f.external.environment='e'*64
+        $run=@{schemaVersion=3;mode='Develop';status='failed';commit=$commit;tree=$tree;finishedAt=[datetime]::UtcNow.AddSeconds(1).ToString('o');stages=@(@{name='develop-e2e-fresh';status='failed'});journeyInputIdentities=@{fresh=$f.inputs}}
+        Write-Utf8Json -Path (Join-Path $f.root '.git/itl/runs/new-develop-failure.json') -Value $run
+        Get-DevelopE2EAncestorQualification @args | Should -BeNullOrEmpty
+        Remove-Item -LiteralPath (Join-Path $f.root '.git/itl/runs/new-develop-failure.json')
+        [IO.File]::AppendAllText($f.runtime, '# changed native runtime')
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree -StaticProof $proof | Should -BeNullOrEmpty
+        & git -C $f.root restore -- .
+        [IO.File]::WriteAllText((Join-Path $f.root 'unowned-input.txt'), 'unknown dependency')
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'unknown input'
+        $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim();$proof=New-CurrentStaticFixtureProof -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree -StaticProof $proof | Should -BeNullOrEmpty
+    }
+
+    It 'continues a real Git ancestor after a Release-only budget change and preserves original report bytes' {
+        $f = New-AncestorJourneyFixture
+        $f.catalog.budgets.releaseHardSeconds = 15540
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'Release budget only'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        $tree | Should -Not -Be $f.tree
+        $currentInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $currentInputs.fingerprint | Should -BeExactly $f.inputs.fingerprint
+        $proof = Find-AncestorFixtureProof -Fixture $f -Tree $tree
+        $proof | Should -Not -BeNullOrEmpty
+        $proof.report.repository.commit | Should -BeExactly $f.commit
+        $proof.report.repository.tree | Should -BeExactly $f.tree
+        (Get-FileHash -LiteralPath $proof.reportPath).Hash | Should -BeExactly $f.reportSha
+        $proof.continuation.currentTree | Should -BeExactly $tree
+    }
+
+    It 'invalidates journey proof when the shared manifest repair changes' {
+        $f = New-AncestorJourneyFixture -IncludeManifestRepair
+        [IO.File]::WriteAllText((Join-Path $f.root 'scripts/source-e2e-manifest-repair.ps1'), "'changed semantic repair'`r`n", [Text.UTF8Encoding]::new($true))
+        & git -C $f.root add --all
+        & git -C $f.root commit --quiet -m 'change shared semantic repair'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        $current = Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $current.fingerprint | Should -Not -BeExactly $f.inputs.fingerprint
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+    }
+
+    It 'preserves journey proof across isolated Pester layout changes while rejecting unknown owner inputs' {
+        $f = New-AncestorJourneyFixture -IncludePesterOwnerInputs
+        [IO.File]::WriteAllText((Join-Path $f.root 'tests/pester/Fixture.Tests.ps1'), '# split static suite', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $f.root 'tests/pester/control.Tests.ps1'), '# extracted static suite', [Text.UTF8Encoding]::new($false))
+        $f.catalog.contracts[0].tests += 'tests/pester/control.Tests.ps1'
+        $f.catalog.contracts[0].primaryTest = 'tests/pester/control.Tests.ps1'
+        $f.catalog.contracts[0].owner = 'renamed static description'
+        $f.catalog.contracts[0].budgetSeconds = 90
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'split isolated Pester layout'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        $current = Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $current.fingerprint | Should -BeExactly $f.inputs.fingerprint
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        $f.catalog.contracts[0] | Add-Member -NotePropertyName unknownRuntimeInput -NotePropertyValue 'unclassified'
+        Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external | Should -BeNullOrEmpty
+    }
+
+    It 'reuses an unaffected journey for a known independent owner while rejecting unknown paths and newly routed inputs' {
+        $f = New-AncestorJourneyFixture
+        $component = Join-Path $f.root 'component/worker.py'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $component) | Out-Null
+        [IO.File]::WriteAllText($component, '# independent component', [Text.UTF8Encoding]::new($false))
+        $f.catalog.contracts += [pscustomobject]@{id='component';owner='independent component';gate='targeted';budgetSeconds=30;primaryTest='tests/pester/Fixture.Tests.ps1';paths=@('component/*','scripts/develop-static-qualification.ps1');tests=@('tests/pester/Fixture.Tests.ps1')}
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'known independent owner'
+        $tree = (& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        [void](Publish-AncestorFixtureTargeted -Fixture $f)
+        $proof = Find-AncestorFixtureProof -Fixture $f -Tree $tree
+        $proof | Should -Not -BeNullOrEmpty
+        @($proof.continuation.scopes) | Should -Contain 'owner-input-exact'
+        # Static report production is independently owned. Its actual module path
+        # must remain outside native inputs while Full validates its own proof.
+        $writer=Join-Path $f.root 'scripts/develop-static-qualification.ps1'
+        [IO.File]::WriteAllText($writer, '# static qualification writer', [Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'independent static report writer'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        [IO.File]::AppendAllText($writer, "`n# changed static report layout", [Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'static writer change'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        $unknown = Join-Path $f.root 'unknown-input.txt'
+        [IO.File]::WriteAllText($unknown, 'unowned', [Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'unknown dependency'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        Remove-Item -LiteralPath $unknown
+        $f.catalog.developJourneys.routes.fresh.contracts += 'component'
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'component becomes a journey input'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+    }
+
+    It 'requires an actual exact Targeted proof and refuses changed runtime or external bindings' {
+        $f = New-AncestorJourneyFixture
+        [IO.File]::WriteAllText((Join-Path $f.root 'tests/pester/control.Tests.ps1'), '# changed static fixture', [Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'static fixture only'
+        $tree = (& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        [void](Publish-AncestorFixtureTargeted -Fixture $f)
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        $f.external.environment='f'*64
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        $f.external.environment='e'*64
+        [IO.File]::AppendAllText($f.runtime, "'changed runtime'`r`n", [Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'runtime changed'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+    }
+
+    It 'keeps Develop budget and owner routing visible and falls back for incomplete legacy bindings' {
+        $f = New-AncestorJourneyFixture
+        $f.catalog.developJourneys.routes.fresh | Add-Member -NotePropertyName hardSeconds -NotePropertyValue 3600
+        $changed = Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $changed.fingerprint | Should -Not -Be $f.inputs.fingerprint
+        $f.external.complete=$false
+        Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external | Should -BeNullOrEmpty
+        $manifestPath=Join-Path $f.cache 'manifest.json'; $manifest=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8|ConvertFrom-Json
+        $manifest.schemaVersion=1
+        Write-Utf8Json -Path $manifestPath -Value $manifest
+        $f.catalog=Get-QualityContractCatalog -RepositoryRoot $f.root; $f.external.complete=$true
+        Find-AncestorFixtureProof -Fixture $f -Tree $f.tree | Should -BeNullOrEmpty
+        $restored=Join-Path $f.root '.git/legacy-exact.json'
+        Restore-DevelopE2EQualification -RepositoryRoot $f.root -OutputPath $restored -Tree $f.tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeTrue
+    }
+
+    It 'refuses corrupt cached proof and a newer comparable failed journey while allowing a static failure' {
+        $f=New-AncestorJourneyFixture
+        [IO.File]::WriteAllText((Join-Path $f.root 'tests/pester/control.Tests.ps1'), '# static', [Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'static only'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        $commit=(& git -C $f.root rev-parse HEAD).Trim()
+        $run=[ordered]@{schemaVersion=1;mode='Develop';status='failed';commit=$commit;tree=$tree;finishedAt=[datetime]::UtcNow.AddSeconds(1).ToString('o');stages=@(@{name='pester';status='failed'})}
+        $runPath=Join-Path $f.root '.git/itl/runs/new-develop-failure.json';Write-Utf8Json -Path $runPath -Value $run
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        $run.stages=@(@{name='develop-e2e-fresh';status='failed'});Write-Utf8Json -Path $runPath -Value $run
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        $run['journeyInputIdentities']=@{fresh=$f.inputs};Write-Utf8Json -Path $runPath -Value $run
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        $other=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding ([ordered]@{complete=$true;environment='different failed environment'})
+        $run.journeyInputIdentities.fresh=$other;Write-Utf8Json -Path $runPath -Value $run
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        Remove-Item -LiteralPath $runPath
+        [IO.File]::AppendAllText((Join-Path $f.cache 'route-report.json'), 'corrupt', [Text.UTF8Encoding]::new($false))
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+    }
+
+    It 'roundtrips complete ancestor provenance through the actual writer and reader (static=<UseCurrentStatic>)' -TestCases @(@{UseCurrentStatic=$false},@{UseCurrentStatic=$true}) {
+        param($UseCurrentStatic)
+        $f=New-AncestorJourneyFixture
+        $f.catalog.budgets.releaseHardSeconds=15540
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'Release-only budget'
+        $static=$null
+        if($UseCurrentStatic){$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim();$static=New-CurrentStaticFixtureProof -Fixture $f}
+        else{$tree=Publish-AncestorFixtureTargeted -Fixture $f}
+        $commit=(& git -C $f.root rev-parse HEAD).Trim()
+        $proof=Find-AncestorFixtureProof -Fixture $f -Tree $tree -StaticProof $static
+        $proof | Should -Not -BeNullOrEmpty
+        $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$t,[ref]$e)
+        foreach($name in @('Get-RelativeRepositoryPath','Test-DevelopQualification')){
+            $definition=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        $repoRoot=$f.root;$qualityCatalog=$f.catalog;$E2EProjectRoot=$f.root;$AgentTarget='kilocode'
+        $aiRulesRelease=[pscustomobject]@{sourceRoot=$f.root};$resolvedAiRulesSource=$f.root
+        $qualificationFullPath=Join-Path $f.root '.git/current-full.json'
+        $developQualificationFullPath=Join-Path $f.root '.git/current-develop.json'
+        Write-Utf8Json -Path $qualificationFullPath -Value @{status='passed';repository=@{commit=$commit;tree=$tree}}
+        $record=[ordered]@{path=$proof.reportPath;sha256=$proof.sha256;evidenceCommit=$f.commit;evidenceTree=$f.tree;identitySha256=('a'*64);standStateSha256=('c'*64);execution='continued';inputIdentity=$proof.inputIdentity;continuation=$proof.continuation}
+        $records=[ordered]@{fresh=$record}
+        $plan=[pscustomobject]@{kind='itl-develop-e2e-journey-plan';journeys=@('fresh')}
+        $combined=Join-Path $f.root '.git/current-combined.json'
+        Write-Utf8Json -Path $combined -Value @{kind='itl-develop-e2e-combined';status='passed';candidate=@{tree=$tree};plan=$plan;journeys=$records}
+        [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $combined -IdentitySha256 ('a'*64) -JourneyRecords $records -Plan $plan)
+        Mock Get-DevelopE2EInputIdentity {$f.inputs}
+        (Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 ('a'*64) -ExpectedStandStateSha256 ('c'*64)).reuseKind | Should -BeExactly 'exact-commit'
+        $saved=Get-Content -LiteralPath $developQualificationFullPath -Raw -Encoding UTF8|ConvertFrom-Json
+        (Get-DevelopE2ECanonicalJsonSha256 -Value $saved.journeys.fresh.inputIdentity.inventory) | Should -BeExactly $f.inputs.fingerprint
+        $canonicalReport=Join-Path (Split-Path -Parent $developQualificationFullPath) 'develop-e2e-summary.json'
+        $canonicalSha=(Get-FileHash -LiteralPath $canonicalReport).Hash
+        [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $canonicalReport -IdentitySha256 ('a'*64) -JourneyRecords $records -Plan $plan)
+        (Get-FileHash -LiteralPath $canonicalReport).Hash | Should -BeExactly $canonicalSha
+        (Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 ('a'*64) -ExpectedStandStateSha256 ('c'*64)).reuseKind | Should -BeExactly 'exact-commit'
+        if($UseCurrentStatic){$saved.journeys.fresh.continuation.staticProof.sha256='0'*64}
+        else{$saved.journeys.fresh.continuation.targetedRunSha256='0'*64}
+        Write-Utf8Json -Path $developQualificationFullPath -Value $saved
+        Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 ('a'*64) -ExpectedStandStateSha256 ('c'*64) | Should -BeNullOrEmpty
+        (Get-FileHash -LiteralPath $proof.reportPath).Hash | Should -BeExactly $f.reportSha
+    }
+
+    It 'binds the default native artifact preparation without optional process overrides or Full host pollution' {
+        $f=New-AncestorJourneyFixture
+        $artifact=Join-Path $f.root ('.git/artifact ' + (Get-NonAsciiFixtureSegment) + '.bin')
+        [IO.File]::WriteAllBytes($artifact,[byte[]](0,1,2,3))
+        $sha=(Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+        Write-Utf8Json -Path (Join-Path $f.root 'templates/dependency-lock.json') -Value @{dependencies=@{
+            vanessaAutomation=@{sha256=$sha};itlOndemandMcp=@{sha256=$sha}
+            vanessaMcp=@{clientMcp=@{sha256=$sha;assetName='client fixture.cfe';url='https://example.invalid/never-used'}}
+        }}
+        $clientPath=Join-Path $f.root 'build/third-party/client-mcp/client fixture.cfe'
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $clientPath))
+        [IO.File]::WriteAllBytes($clientPath,[byte[]](0,1,2,3))
+        $downloadHelper=Join-Path $f.root '.agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1'
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $downloadHelper))
+        Copy-Item -LiteralPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1') -Destination $downloadHelper
+        $buildText="param([switch]`$SkipTests)`n[pscustomobject]@{path='"+$artifact.Replace("'","''")+"';sha256='$sha'}`n"
+        [IO.File]::WriteAllText((Join-Path $f.root 'scripts/Build-ItlOnDemandMcp.ps1'),$buildText,[Text.UTF8Encoding]::new($true))
+        Write-Utf8Json -Path (Join-Path $f.root '.agent-1c/project.json') -Value @{aiRules=@{tools=@('kilocode')}}
+        Write-Utf8Json -Path (Join-Path $f.root '.agent-1c/release-e2e.json') -Value @{developWorktreePath=$f.root}
+        [IO.File]::WriteAllText((Join-Path $f.root '.dev.env'),"PLATFORM_PATH=$artifact`r`n",[Text.UTF8Encoding]::new($true))
+        Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+        Mock Get-Command {[pscustomobject]@{Source=$artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+        $keys=@('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE','ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $previous=@{}
+        try {
+            foreach($key in $keys){$previous[$key]=[Environment]::GetEnvironmentVariable($key,'Process');[Environment]::SetEnvironmentVariable($key,$null,'Process')}
+            Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.root -AiRulesSource $f.root -AgentTarget kilocode | Should -BeNullOrEmpty
+            $binding=Resolve-SourceE2EArtifactBinding -RepositoryRoot $f.root -ArchivePath $artifact -Offline
+            $bindingPath=Join-Path $f.root '.git/binding.json'
+            Write-Utf8Json -Path $bindingPath -Value $binding
+            $transported=Get-Content -LiteralPath $bindingPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $before=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.root -AiRulesSource $f.root -AgentTarget kilocode -ArtifactBinding $transported -Verbose
+            $before | Should -Not -BeNullOrEmpty
+            @($before.inventory.external.artifacts.Values | Where-Object {$_ -cne $sha}) | Should -HaveCount 0
+            # Exercise the normal recursive positive-stand binding, not only an
+            # injected ExternalBinding. Fresh consumes that stand as a seed,
+            # while only the negative-fixture functions execute in upgrade.
+            $positive=Join-Path $f.root ('.git/positive ' + (Get-NonAsciiFixtureSegment))
+            Write-Utf8Json -Path (Join-Path $positive '.agent-1c/project.json') -Value @{aiRules=@{tools=@('kilocode')}}
+            Write-Utf8Json -Path (Join-Path $positive '.agent-1c/release-e2e.json') -Value @{developWorktreePath=$positive}
+            Copy-Item -LiteralPath (Join-Path $f.root '.dev.env') -Destination (Join-Path $positive '.dev.env')
+            $configPath=Join-Path $f.root '.agent-1c/release-e2e.json'
+            $config=@{developWorktreePath=$f.root;developConfigurationRejection=@{positiveProjectRoot=$positive};qualificationFixtures=@{Develop=@{path='unchanged capsule';sha256=('a'*64);workflowUpdateAdmission=@{master=@{head=('b'*40)}}}}}
+            Write-Utf8Json -Path $configPath -Value $config
+            $rejection=Join-Path $f.root 'scripts/develop-configuration-rejection.ps1'
+            $rejectionText='# original rejection'
+            [IO.File]::WriteAllText($rejection, $rejectionText, [Text.UTF8Encoding]::new($true))
+            & git -C $f.root add scripts/develop-configuration-rejection.ps1; & git -C $f.root commit --quiet -m 'rejection fixture'
+            $normal=@{RepositoryRoot=$f.root;Catalog=$f.catalog;ProjectRoot=$f.root;AiRulesSource=$f.root;AgentTarget='kilocode';ArtifactBinding=$transported}
+            $normal.Catalog=Get-QualityContractCatalog -RepositoryRoot $context.RepoRoot
+            $fresh=Get-DevelopE2EInputIdentity @normal -Journey fresh
+            $upgrade=Get-DevelopE2EInputIdentity @normal -Journey upgrade
+            $fresh | Should -Not -BeNullOrEmpty; $upgrade | Should -Not -BeNullOrEmpty
+            $hasher=(Get-Command Get-DevelopE2EInputFileSha256).ScriptBlock
+            $reads=[Collections.Generic.List[string]]::new()
+            Mock Get-DevelopE2EInputFileSha256 {
+                param($Path,$RelativePath)
+                $reads.Add($RelativePath)
+                & $hasher -Path $Path -RelativePath $RelativePath
+            }
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
+            $reads.Count | Should -Be @($fresh.inventory.inputs).Count
+            $positiveEnv=Join-Path $positive '.dev.env';$positiveBytes=[IO.File]::ReadAllBytes($positiveEnv)
+            [IO.File]::AppendAllText($positiveEnv,"UI_TESTING=changed`n")
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
+            [IO.File]::WriteAllBytes($positiveEnv,$positiveBytes)
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
+            [IO.File]::AppendAllText($rejection, '# receipt fix')
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
+            (Get-DevelopE2EInputIdentity @normal -Journey upgrade).fingerprint | Should -Not -BeExactly $upgrade.fingerprint
+            [IO.File]::WriteAllText($rejection, $rejectionText, [Text.UTF8Encoding]::new($true))
+            $config.qualificationFixtures.Develop.workflowUpdateAdmission.master.head='c'*40
+            Write-Utf8Json -Path $configPath -Value $config
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
+            $config.qualificationFixtures.Develop.sha256='d'*64
+            Write-Utf8Json -Path $configPath -Value $config
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
+            $config.qualificationFixtures.Develop.sha256='a'*64
+            $config['unknownRuntimeSetting']='unclassified'
+            Write-Utf8Json -Path $configPath -Value $config
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
+            $config.Remove('unknownRuntimeSetting');Write-Utf8Json -Path $configPath -Value $config
+            # Source fixtures, artifact bytes and external policy still bind fresh.
+            [IO.File]::AppendAllText((Join-Path $f.root 'scripts/source-e2e-manifest-repair.ps1'), '# shared repair')
+            & git -C $f.root add scripts/source-e2e-manifest-repair.ps1
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
+            foreach($key in $keys){[Environment]::GetEnvironmentVariable($key,'Process') | Should -BeNullOrEmpty}
+            [IO.File]::WriteAllBytes($clientPath,[byte[]](9,8,7))
+            Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.root -AiRulesSource $f.root -AgentTarget kilocode -ArtifactBinding $transported | Should -BeNullOrEmpty
+            {Get-SourceE2EArtifactBindingHashes -RepositoryRoot $f.root -Binding $transported} | Should -Throw '*SOURCE_E2E_ARTIFACT_HASH_MISMATCH*'
+            {Resolve-SourceE2EArtifactBinding -RepositoryRoot $f.root -ArchivePath $artifact -Offline} | Should -Throw '*SOURCE_E2E_CLIENT_ARTIFACT_MISSING*'
+        } finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$previous[$key],'Process')}}
+    }
+
+    It 'invalidates a complete physical binding when only the persisted UI policy alias changes' {
+        $f=New-AncestorJourneyFixture
+        New-Item -ItemType Directory -Force -Path (Join-Path $f.root '.agent-1c') | Out-Null
+        Write-Utf8Json -Path (Join-Path $f.root '.agent-1c/project.json') -Value @{aiRules=@{tools=@('kilocode')}}
+        Write-Utf8Json -Path (Join-Path $f.root '.agent-1c/release-e2e.json') -Value @{developWorktreePath=$f.root}
+        $artifact=Join-Path $f.root '.git/native fixture bytes.bin'
+        [IO.File]::WriteAllBytes($artifact,[byte[]](0,1,2,3))
+        $envPath=Join-Path $f.root '.dev.env'
+        [IO.File]::WriteAllText($envPath,"PLATFORM_PATH=$artifact`r`nAGENT_1C_UI_TESTING=off`r`n",[Text.UTF8Encoding]::new($true))
+        Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+        Mock Get-Command {[pscustomobject]@{Source=$artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+        # The pinned relay is part of a complete physical binding, like the facade.
+        $keys=@('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE','ITL_ONDEMAND_RELAY_SOURCE_BUILD_EXE')
+        $previous=@{}
+        try {
+            foreach($key in $keys){$previous[$key]=[Environment]::GetEnvironmentVariable($key,'Process');[Environment]::SetEnvironmentVariable($key,$artifact,'Process')}
+            $before=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.root -AiRulesSource $f.root -AgentTarget kilocode
+            $before | Should -Not -BeNullOrEmpty
+            $stable=Get-DeliveryStableDotEnvSha256 -Path $envPath
+            [IO.File]::WriteAllText($envPath,"PLATFORM_PATH=$artifact`r`nAGENT_1C_UI_TESTING=essential`r`n",[Text.UTF8Encoding]::new($true))
+            (Get-DeliveryStableDotEnvSha256 -Path $envPath) | Should -BeExactly $stable
+            $after=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.root -AiRulesSource $f.root -AgentTarget kilocode
+            $after | Should -Not -BeNullOrEmpty
+            $after.fingerprint | Should -Not -Be $before.fingerprint
+            $after.inventory.external.uiPolicySha256 | Should -Not -Be $before.inventory.external.uiPolicySha256
+            $after.inventory.external.processEnvironmentSha256 | Should -BeExactly $before.inventory.external.processEnvironmentSha256
+        } finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$previous[$key],'Process')}}
+    }
+
+    It 'invalidates journey proof when a declared reuse-only child dependency changes' {
+        $f=New-AncestorJourneyFixture
+        $path=Join-Path $f.root 'process/child.ps1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path)|Out-Null
+        [IO.File]::WriteAllText($path,'original child owner',[Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'child dependency'
+        $f.catalog.contracts[0]|Add-Member -NotePropertyName reuseInputPaths -NotePropertyValue @('process/child.ps1')
+        $before=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ExternalBinding $f.external
+        $before|Should -Not -BeNullOrEmpty
+        @($before.inventory.inputs.path)|Should -Contain 'process/child.ps1'
+        [IO.File]::WriteAllText($path,'changed child owner',[Text.UTF8Encoding]::new($false))
+        $after=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ExternalBinding $f.external
+        $after|Should -Not -BeNullOrEmpty
+        $after.fingerprint|Should -Not -BeExactly $before.fingerprint
+    }
+
+    It 'orders the actual tracked input inventory ordinally across PowerShell host collation rules' {
+        $f=New-AncestorJourneyFixture
+        $path=Join-Path $f.root '.agents/skills/1c-workflow-fast/SKILL.md'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path)|Out-Null
+        [IO.File]::WriteAllText($path,"# Unicode input $([char]0x041F)`r`n",[Text.UTF8Encoding]::new($true))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'hyphen versus slash input'
+        $identity=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $identity | Should -Not -BeNullOrEmpty
+        @($identity.inventory.inputs).Count | Should -Be 4
+        $identity.inventory.inputs[0].path | Should -BeExactly '.agents/skills/1c-workflow-fast/SKILL.md'
+        $identity.inventory.inputs[1].path | Should -BeExactly '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    }
+
+
+
+
+    It "continues source OpenSpec Markdown with exact Targeted proof but rejects executable and configuration neighbors" {
+        . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $fixtureRoot = Join-Path $TestDrive ("OpenSpec continuation $(Get-NonAsciiFixtureSegment) with spaces")
+        New-RouterFixture -Root $fixtureRoot | Out-Null
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $fixtureRoot 'tests/quality-contracts.json')
+        & git -C $fixtureRoot add -- tests/quality-contracts.json
+        & git -C $fixtureRoot commit -m 'use production continuation catalog' *> $null
+        $base = (& git -C $fixtureRoot rev-parse HEAD).Trim()
+        $docPaths = @(
+            'openspec/changes/upgrade-ai-rules-upstream-20a083e5/test-plan.md',
+            'openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/gate6-r41-qualification.md'
+        )
+        foreach ($relative in $docPaths) {
+            $path = Join-Path $fixtureRoot $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+            [IO.File]::WriteAllText($path, "# Source acceptance record`n", [Text.UTF8Encoding]::new($false))
+        }
+        & git -C $fixtureRoot add -- @docPaths
+        & git -C $fixtureRoot commit -m 'record source acceptance' *> $null
+        $commit = (& git -C $fixtureRoot rev-parse HEAD).Trim()
+        $tree = (& git -C $fixtureRoot rev-parse 'HEAD^{tree}').Trim()
+        $arguments = @{ RepositoryRoot=$fixtureRoot; QualifiedCommit=$base; CurrentCommit=$commit; CurrentTree=$tree }
+        Get-WorkflowContinuationProof @arguments | Should -BeNullOrEmpty
+        $runPath = Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $fixtureRoot) 'itl/runs/20261007-000000-000-targeted-fixture.json'
+        $run = [ordered]@{
+            schemaVersion=3; id=[guid]::NewGuid().ToString('N'); mode='Targeted'; status='passed'; exitCode=0
+            commit=$commit; tree=$tree; startedAt='2026-10-07T00:00:00Z'; finishedAt='2026-10-07T00:00:01Z'
+            durationMs=1000; stages=@(
+                @{ name='pester'; status='passed' },
+                @{ name='git-diff-check'; status='passed' },
+                @{ name='tracked-state'; status='passed' }
+            )
+        }
+        Write-Utf8Json -Path $runPath -Value $run
+        $proof = Get-WorkflowContinuationProof @arguments
+        $proof | Should -Not -BeNullOrEmpty
+        @($proof.paths | Sort-Object) | Should -Be @($docPaths | Sort-Object)
+        @($proof.scopes) | Should -Be @('static')
+        $proof.targetedRunSha256 | Should -Be (Get-FileHash -LiteralPath $runPath).Hash.ToLowerInvariant()
+        Test-RecordedWorkflowContinuation -Record $proof -Commit $commit -Tree $tree | Should -BeTrue
+        $journeyPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($proof.paths) -Catalog $catalog
+        $journeyPlan.reason | Should -Be 'no-develop-journey-route'
+        @($journeyPlan.journeys) | Should -BeNullOrEmpty
+
+        $run.tree = '0' * 40
+        Write-Utf8Json -Path $runPath -Value $run
+        Get-WorkflowContinuationProof @arguments | Should -BeNullOrEmpty
+        $run.tree = $tree
+        Write-Utf8Json -Path $runPath -Value $run
+        [IO.File]::AppendAllText($runPath, ' ', [Text.UTF8Encoding]::new($false))
+        Test-RecordedWorkflowContinuation -Record $proof -Commit $commit -Tree $tree | Should -BeFalse
+
+        foreach ($relative in @(
+            'openspec/changes/upgrade-ai-rules-upstream-20a083e5/hook.ps1',
+            'openspec/changes/upgrade-ai-rules-upstream-20a083e5/config.yaml',
+            'openspec/changes/upgrade-ai-rules-upstream-20a083e5/config.json'
+        )) {
+            $previous = (& git -C $fixtureRoot rev-parse HEAD).Trim()
+            [IO.File]::WriteAllText((Join-Path $fixtureRoot $relative), 'unclassified input', [Text.UTF8Encoding]::new($false))
+            & git -C $fixtureRoot add -- $relative
+            & git -C $fixtureRoot commit -m 'add non-Markdown neighbor' *> $null
+            $run.commit = (& git -C $fixtureRoot rev-parse HEAD).Trim()
+            $run.tree = (& git -C $fixtureRoot rev-parse 'HEAD^{tree}').Trim()
+            Write-Utf8Json -Path $runPath -Value $run
+            Get-ExactTargetedRunProof -RepositoryRoot $fixtureRoot -Commit $run.commit -Tree $run.tree | Should -Not -BeNullOrEmpty
+            Get-WorkflowContinuationProof -RepositoryRoot $fixtureRoot -QualifiedCommit $previous -CurrentCommit $run.commit -CurrentTree $run.tree | Should -BeNullOrEmpty -Because $relative
+        }
+        @(Get-RepositoryGitPathList -RepositoryRoot $fixtureRoot -Arguments @('diff', '--name-only', '-z', 'HEAD', '--')).Count | Should -Be 0
     }
 
     It "blocks unknown ownership, fails closed for orchestration paths, and skips direct tests" {
@@ -238,6 +993,49 @@ Describe "Develop E2E journey qualification router" {
         }
     }
 
+    It "accepts a static-only empty schema4 baseline without widening selective journeys" {
+        $tokens = $null; $parseErrors = $null
+        $checker = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$parseErrors)
+        @($parseErrors).Count | Should -Be 0
+        $carry = $checker.Find({param($node)
+            $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if ($baselineValid)', [StringComparison]::Ordinal)
+        }, $true)
+        $partial = $checker.Find({param($node)
+            $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if (-not $baselineValid -and $plannedJourneys.Count', [StringComparison]::Ordinal)
+        }, $true)
+        $carry | Should -Not -BeNullOrEmpty; $partial | Should -Not -BeNullOrEmpty
+        $allJourneys = @('upgrade','fresh')
+        $baseline = '{"schemaVersion":4,"status":"passed","journeys":{},"identitySha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' | ConvertFrom-Json
+        $baselineValid = $true; $plannedJourneys = @(); $routeRecords = [ordered]@{}
+        . ([scriptblock]::Create($carry.Extent.Text))
+        $baselineValid | Should -BeFalse
+        $routeRecords.Count | Should -Be 0
+        { . ([scriptblock]::Create($partial.Extent.Text)) } | Should -Not -Throw
+
+        $baselineValid = $true; $plannedJourneys = @('upgrade'); $routeRecords = [ordered]@{}
+        . ([scriptblock]::Create($carry.Extent.Text))
+        $baselineValid | Should -BeFalse
+        $routeRecords.Count | Should -Be 0
+        { . ([scriptblock]::Create($partial.Extent.Text)) } | Should -Throw '*DEVELOP_E2E_CONTINUATION_REQUIRED*'
+
+        $baseline.journeys | Add-Member -NotePropertyName fresh -NotePropertyValue ([pscustomobject]@{path='missing.json'})
+        $baselineValid = $true
+        . ([scriptblock]::Create($carry.Extent.Text))
+        $baselineValid | Should -BeFalse
+        { . ([scriptblock]::Create($partial.Extent.Text)) } | Should -Throw '*DEVELOP_E2E_CONTINUATION_REQUIRED*'
+
+        # Schema 3 permits the old non-continued record without execution. A
+        # missing report must still reject continuation rather than fail on
+        # that optional property or invent evidence for the unplanned journey.
+        $baseline.schemaVersion = 3
+        $baseline.journeys.fresh | Add-Member -NotePropertyName evidenceTree -NotePropertyValue ('a' * 40)
+        $developStandStateSha256 = 'c' * 64
+        $baselineValid = $true
+        . ([scriptblock]::Create($carry.Extent.Text))
+        $baselineValid | Should -BeFalse
+        { . ([scriptblock]::Create($partial.Extent.Text)) } | Should -Throw '*DEVELOP_E2E_CONTINUATION_REQUIRED*'
+    }
+
     It "recomputes mutable stand identity after a journey before checkpointing it" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\check.ps1') -Raw -Encoding UTF8
         $helperStart = $check.IndexOf('function Ensure-DevelopE2ERoute', [StringComparison]::Ordinal)
@@ -261,12 +1059,188 @@ Describe "Develop E2E journey qualification router" {
         $routeValidation | Should -BeGreaterThan $postStageIdentity
     }
 
+    It "scopes the client MCP build source to E2E and restores it after project overwrite and failure" {
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        $names = @('VANESSA_MCP_CLIENT_CFE_PATH', 'ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $saved = @{}
+        foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+        try {
+            $root = Join-Path $TestDrive 'Нативный источник E2E с пробелом'
+            [void][IO.Directory]::CreateDirectory($root)
+            $candidate = Join-Path $root 'client_mcp.v0.6.5-itl-r1.cfe'
+            [IO.File]::WriteAllBytes($candidate, [Text.Encoding]::UTF8.GetBytes('scoped input bytes'))
+            $hash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
+            [Environment]::SetEnvironmentVariable($names[0], $candidate, 'Process')
+            [Environment]::SetEnvironmentVariable($names[1], 'previous-owner-source', 'Process')
+            $scope = Enter-SourceE2EClientMcpBuildScope
+            try {
+                [Environment]::SetEnvironmentVariable($names[0], 'old-persisted-project-path', 'Process')
+                [Environment]::GetEnvironmentVariable($names[1], 'Process') | Should -BeExactly $candidate
+                throw 'original E2E stage failed'
+            } catch {
+                $_.Exception.Message | Should -BeExactly 'original E2E stage failed'
+            } finally {
+                Exit-SourceE2EClientMcpBuildScope -Scope $scope
+            }
+            [Environment]::GetEnvironmentVariable($names[1], 'Process') | Should -BeExactly 'previous-owner-source'
+            (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash | Should -BeExactly $hash
+        } finally {
+            foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        }
+    }
+
+    It "does not inject an absent client MCP source and confines scope wiring to actual E2E stages" {
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        $names = @('VANESSA_MCP_CLIENT_CFE_PATH', 'ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $saved = @{}
+        foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+        try {
+            [Environment]::SetEnvironmentVariable($names[0], $null, 'Process')
+            [Environment]::SetEnvironmentVariable($names[1], 'foreign-inherited-source', 'Process')
+            $scope = Enter-SourceE2EClientMcpBuildScope
+            try { [Environment]::GetEnvironmentVariable($names[1], 'Process') | Should -BeNullOrEmpty }
+            finally { Exit-SourceE2EClientMcpBuildScope -Scope $scope }
+            [Environment]::GetEnvironmentVariable($names[1], 'Process') | Should -BeExactly 'foreign-inherited-source'
+        } finally {
+            foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        }
+        foreach ($name in @('invoke-develop-e2e.ps1','invoke-release-e2e.ps1')) {
+            $tokens=$null; $errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot ('scripts/' + $name)),[ref]$tokens,[ref]$errors)
+            @($errors) | Should -BeNullOrEmpty
+            foreach ($commandName in @('Enter-SourceE2EClientMcpBuildScope','Exit-SourceE2EClientMcpBuildScope')) {
+                $calls=@($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq $commandName },$true))
+                $calls.Count | Should -Be 1
+                $parent=$calls[0].Parent
+                while($parent -and $parent -isnot [Management.Automation.Language.TryStatementAst]){$parent=$parent.Parent}
+                $parent | Should -Not -BeNullOrEmpty
+                $block=if($commandName -like 'Enter-*'){$parent.Body}else{$parent.Finally}
+                $calls[0].Extent.StartOffset | Should -BeGreaterOrEqual $block.Extent.StartOffset
+                $calls[0].Extent.EndOffset | Should -BeLessOrEqual $block.Extent.EndOffset
+            }
+        }
+        (Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/check.ps1') -Raw -Encoding UTF8) | Should -Not -Match 'Enter-SourceE2EClientMcpBuildScope'
+    }
+    It "passes the scoped client MCP source to the real Release preflight refresh child before checkpointing" {
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        $tokens=$null; $errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-release-e2e.ps1'),[ref]$tokens,[ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $call=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Sync-E2EWorktreeFromMaster'},$true))[0]
+        $scopeTry=$call.Parent
+        while($scopeTry -and $scopeTry -isnot [Management.Automation.Language.TryStatementAst]){$scopeTry=$scopeTry.Parent}
+        $scopeTry | Should -Not -BeNullOrEmpty
+        $scopeTry.Body.Statements[0].Extent.Text | Should -Match 'Enter-SourceE2EClientMcpBuildScope'
+        $scopeTry.Finally.Extent.Text | Should -Match 'Exit-SourceE2EClientMcpBuildScope'
+        $sync=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Sync-E2EWorktreeFromMaster'},$true)
+        . ([scriptblock]::Create($sync.Extent.Text))
+        $base=Join-Path $TestDrive 'Подготовка Release с пробелом'
+        $worktreePath=Join-Path $base 'Рабочая ветка'
+        [void][IO.Directory]::CreateDirectory((Join-Path $worktreePath '.agent-1c'))
+        & git -C $worktreePath init -b master *> $null
+        & git -C $worktreePath config user.name 'ITL Test'
+        & git -C $worktreePath config user.email 'test@example.invalid'
+        [IO.File]::WriteAllText((Join-Path $worktreePath '.gitignore'), "/.agent-1c/`n/.dev.env`n",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $worktreePath 'baseline.txt'),'before',[Text.Encoding]::ASCII)
+        & git -C $worktreePath add .gitignore baseline.txt
+        & git -C $worktreePath commit -m 'test: original branch baseline' *> $null
+        & git -C $worktreePath branch itldev/preflight
+        [IO.File]::WriteAllText((Join-Path $worktreePath 'baseline.txt'),'new master',[Text.Encoding]::ASCII)
+        & git -C $worktreePath add baseline.txt
+        & git -C $worktreePath commit -m 'test: pending preflight master refresh' *> $null
+        & git -C $worktreePath checkout --quiet itldev/preflight *> $null
+        $LASTEXITCODE | Should -Be 0
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'templates/project.json') -Destination (Join-Path $worktreePath '.agent-1c/project.json')
+        $candidate=Join-Path $base 'client_mcp.v0.6.5-itl-r1.cfe'
+        [IO.File]::WriteAllBytes($candidate,[Text.Encoding]::UTF8.GetBytes('native candidate fixture'))
+        $oldPath=Join-Path $base 'old shared d109/client_mcp.cfe'
+        [IO.File]::WriteAllText((Join-Path $worktreePath '.dev.env'),"VANESSA_MCP_CLIENT_CFE_PATH=$oldPath`r`n",[Text.UTF8Encoding]::new($true))
+        $childPath=Join-Path $base 'Дочерний helper.ps1'
+        $childResultPath=Join-Path $base 'Дочерний результат.json'
+        $childLines=@(
+            'param([string]$HelperPath,[string]$ProjectRoot,[string]$ResultPath)',
+            '$ErrorActionPreference="Stop"',
+            '. $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null',
+            'Save-VanessaAutomationSettingsToDotEnv -EpfPath (Join-Path $ProjectRoot "fixture.epf") -Version "fixture" *> $null',
+            '[IO.File]::WriteAllText($ResultPath, (([ordered]@{ source=[Environment]::GetEnvironmentVariable("ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE","Process"); setting=Get-EnvValue -Name "VANESSA_MCP_CLIENT_CFE_PATH" } | ConvertTo-Json)),[Text.UTF8Encoding]::new($false))'
+        )
+        [IO.File]::WriteAllText($childPath,($childLines -join "`r`n"),[Text.UTF8Encoding]::new($true))
+        function Invoke-E2EHelper {
+            param([string]$Action,[int]$TimeoutSeconds)
+            $Action | Should -BeExactly 'refresh-dev-branch'
+            $TimeoutSeconds | Should -Be 7200
+            & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $childPath -HelperPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -ProjectRoot $worktreePath -ResultPath $childResultPath *> (Join-Path $base 'preflight-child.log')
+            $LASTEXITCODE | Should -Be 0
+            & git -C $worktreePath merge --ff-only master *> $null
+            $LASTEXITCODE | Should -Be 0
+        }
+        $names=@('VANESSA_MCP_CLIENT_CFE_PATH','ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $saved=@{}
+        foreach($name in $names){$saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
+        try {
+            [Environment]::SetEnvironmentVariable($names[0],$candidate,'Process')
+            [Environment]::SetEnvironmentVariable($names[1],'previous-owner-source','Process')
+            try {
+                . ([scriptblock]::Create($scopeTry.Body.Statements[0].Extent.Text))
+                (Sync-E2EWorktreeFromMaster) | Should -BeTrue
+            } finally {
+                . ([scriptblock]::Create($scopeTry.Finally.Statements[0].Extent.Text))
+            }
+            $result=Get-Content -LiteralPath $childResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $result.source | Should -BeExactly $candidate
+            $result.setting | Should -BeExactly $oldPath
+            [Environment]::GetEnvironmentVariable($names[1],'Process') | Should -BeExactly 'previous-owner-source'
+        } finally {
+            foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$saved[$name],'Process')}
+        }
+    }
+
+    It "restores the client MCP source on an actual Release rejection before preflight" {
+        $names=@('VANESSA_MCP_CLIENT_CFE_PATH','ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $saved=@{}
+        foreach($name in $names){$saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
+        try {
+            [Environment]::SetEnvironmentVariable($names[0],(Join-Path $TestDrive 'Новый кандидат с пробелом/client_mcp.cfe'),'Process')
+            [Environment]::SetEnvironmentVariable($names[1],'previous-owner-source','Process')
+            { & (Join-Path $RepoRoot 'scripts/invoke-release-e2e.ps1') -ProjectRoot (Join-Path $TestDrive 'Стенд без настроек') -AiRulesSource $RepoRoot } | Should -Throw '*Dedicated E2E stand config is missing*'
+            [Environment]::GetEnvironmentVariable($names[1],'Process') | Should -BeExactly 'previous-owner-source'
+        } finally {
+            foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$saved[$name],'Process')}
+        }
+    }
+    It "keeps Develop proof identity across helper-owned env changes and invalidates semantic changes" {
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-DevelopE2EIdentitySha256' }, $true)
+        $definition | Should -Not -BeNullOrEmpty
+        . ([scriptblock]::Create($definition.Extent.Text))
+
+        $stand = Join-Path $TestDrive ("proof $(Get-NonAsciiFixtureSegment) with spaces")
+        $configRoot = Join-Path $stand '.agent-1c'
+        New-Item -ItemType Directory -Force -Path $configRoot | Out-Null
+        [IO.File]::WriteAllText((Join-Path $configRoot 'project.json'), '{}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $configRoot 'release-e2e.json'), '{}', [Text.UTF8Encoding]::new($false))
+        $envPath = Join-Path $stand '.dev.env'
+        $context = [pscustomobject]@{ artifacts=[pscustomobject]@{ vanessaAutomation=[pscustomobject]@{ sha256='a' * 64 } }; managedPackage=[pscustomobject]@{ sha256='b' * 64 } }
+        $fork = [pscustomobject]@{ commit='c' * 40; tree='d' * 40; tag='test-tag' }
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
+        $before = Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand
+        $kiloIdentity = Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand -AgentTarget kilocode
+        (Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand -AgentTarget codex) | Should -Not -Be $kiloIdentity
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`nEXPORT_PATH=src/cf`n", [Text.UTF8Encoding]::new($false))
+        (Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand) | Should -Be $before
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\new-1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=third`n", [Text.UTF8Encoding]::new($false))
+        (Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand) | Should -Not -Be $before
+    }
+
     It "accepts writer-produced documentation qualification with continued routes while rejecting invalid evidence" {
         $tokens = $null
         $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
-        foreach ($name in @('Get-RelativeRepositoryPath', 'Write-DevelopQualification', 'Test-DevelopQualification')) {
+        foreach ($name in @('Get-RelativeRepositoryPath', 'Test-DevelopQualification', 'Update-DevelopQualificationFullBinding')) {
             $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
             . ([scriptblock]::Create($definition.Extent.Text))
         }
@@ -331,7 +1305,73 @@ Describe "Develop E2E journey qualification router" {
         Test-DevelopQualification @arguments | Should -BeNullOrEmpty
         $arguments.ExpectedStandStateSha256 = $standHash
         (Test-DevelopQualification @arguments).reuseKind | Should -Be 'exact-commit'
+        $previousFullProof = [pscustomobject]@{qualification=(Get-Content -LiteralPath $qualificationFullPath -Raw -Encoding UTF8|ConvertFrom-Json)}
+        $originalReportSha = (Get-FileHash -LiteralPath (Join-Path $repoRoot $qualification.e2e.path)).Hash
+        $originalRouteHashes = @($records.Values | ForEach-Object { (Get-FileHash -LiteralPath $_.path).Hash })
+        Write-Utf8Json -Path $qualificationFullPath -Value @{status='passed';repository=@{commit=$commit;tree=$tree};staticRefresh='fresh scheduler qualification'}
+        Test-DevelopQualification @arguments | Should -BeNullOrEmpty
+        $developBefore = (Get-FileHash -LiteralPath $developQualificationFullPath).Hash
+        $arguments.ExpectedStandStateSha256 = 'd' * 64
+        { Update-DevelopQualificationFullBinding @arguments -PreviousFullProof $previousFullProof } | Should -Throw '*Run Develop before Release*'
+        (Get-FileHash -LiteralPath $developQualificationFullPath).Hash | Should -Be $developBefore
+        $arguments.ExpectedStandStateSha256 = $standHash
+        $rebound = Update-DevelopQualificationFullBinding @arguments -PreviousFullProof $previousFullProof
+        $rebound.reuseKind | Should -Be 'exact-commit'
+        $rebound.qualification.fullQualificationSha256 | Should -Be (Get-FileHash -LiteralPath $qualificationFullPath).Hash.ToLowerInvariant()
+        (Get-FileHash -LiteralPath (Join-Path $repoRoot $qualification.e2e.path)).Hash | Should -Be $originalReportSha
+        @($records.Values | ForEach-Object { (Get-FileHash -LiteralPath $_.path).Hash }) | Should -Be $originalRouteHashes
         Add-Content -LiteralPath $records.fresh.path -Value 'tampered'
         Test-DevelopQualification @arguments | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Static-only Develop completion' {
+    It 'writes only static completion and cannot satisfy a subsequent Release live proof' {
+        $tokens=$null; $errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$tokens,[ref]$errors)
+        foreach ($name in @('Get-RelativeRepositoryPath','Test-DevelopQualification')) {
+            $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        $repoRoot=Join-Path $TestDrive 'static completion'
+        $qualificationFullPath=Join-Path $repoRoot 'build/full.json'
+        $developQualificationFullPath=Join-Path $repoRoot 'build/develop.json'
+        Write-Utf8Json $qualificationFullPath @{status='passed'}
+        $reportPath=Join-Path $repoRoot 'static.json'
+        Write-Utf8Json $reportPath @{kind='itl-develop-static-completion';status='passed';journeys=@{}}
+        $before=(Get-FileHash $qualificationFullPath).Hash
+        $plan=[pscustomobject]@{journeys=@()}
+        $record=Write-DevelopQualification -Commit ('a'*40) -Tree ('b'*40) -ReportPath $reportPath -JourneyRecords ([ordered]@{}) -Plan $plan -StaticOnly
+        $record.kind | Should -Be 'itl-workflow-develop-static-completion'
+        $record.reusable | Should -BeFalse
+        $record.journeys.Count | Should -Be 0
+        $record.fullQualificationSha256 | Should -Be $before.ToLowerInvariant()
+        Test-DevelopQualification -Commit ('a'*40) -Tree ('b'*40) -ExpectedIdentitySha256 ('c'*64) -ExpectedStandStateSha256 ('d'*64) | Should -BeNullOrEmpty
+        $plan.journeys=@('upgrade')
+        { Write-DevelopQualification -Commit ('a'*40) -Tree ('b'*40) -ReportPath $reportPath -JourneyRecords ([ordered]@{}) -Plan $plan -StaticOnly } | Should -Throw '*cannot satisfy selected live journeys*'
+        (Get-FileHash $qualificationFullPath).Hash | Should -Be $before
+    }
+    It 'requires a stand only for the actual live routing, before any expensive stage' {
+        $text=[IO.File]::ReadAllText((Join-Path $RepoRoot 'scripts/check.ps1'))
+        $start=$text.IndexOf('    $commit = (& git rev-parse HEAD).Trim()')
+        $end=$text.IndexOf('    $trackedBefore =', $start)
+        $admission=[scriptblock]::Create($text.Substring($start,$end-$start))
+        function Resolve-AiRulesSource { return '' }
+        $repoRoot=Join-Path $TestDrive 'stand admission'
+        [void](New-RouterFixture $repoRoot)
+        $qualityCatalog=Get-QualityContractCatalog $repoRoot
+        $effectiveMode='Develop';$BaseRef='HEAD';$E2EProjectRoot='';$aiRulesRelease=$null
+        Push-Location $repoRoot
+        try {
+            Mock Resolve-DevelopE2EJourneyPlan {[pscustomobject]@{journeys=@()}}
+            { . $admission } | Should -Not -Throw
+            $E2EProjectRoot=Join-Path $TestDrive 'supplied route continuation stand'
+            (& { . $admission; $developNeedsStand }) | Should -BeTrue
+            $E2EProjectRoot=''
+            Mock Resolve-DevelopE2EJourneyPlan {[pscustomobject]@{journeys=@('upgrade')}}
+            { . $admission } | Should -Throw '*requires -E2EProjectRoot*'
+            $effectiveMode='Release'
+            { . $admission } | Should -Throw '*requires -E2EProjectRoot*'
+        } finally { Pop-Location }
     }
 }

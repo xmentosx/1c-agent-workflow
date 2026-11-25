@@ -1,0 +1,38 @@
+[
+  {
+    "suite": "LocalQualityGate",
+    "caseSumSeconds": 42.9,
+    "orderingWeightSeconds": 48,
+    "source": "012a1225 named original Local worker JUnit via local-quality-review.csv; historical estimate, not new runtime"
+  },
+  {
+    "suite": "LocalGateTransport",
+    "caseSumSeconds": 14.923,
+    "orderingWeightSeconds": 20,
+    "source": "012a1225 named original Local worker JUnit via local-quality-review.csv; historical estimate, not new runtime"
+  },
+  {
+    "suite": "LocalTargetedSelection",
+    "caseSumSeconds": 110.044,
+    "orderingWeightSeconds": 116,
+    "source": "012a1225 named original Local worker JUnit via local-quality-review.csv; historical estimate, not new runtime"
+  },
+  {
+    "suite": "LocalShardCache",
+    "caseSumSeconds": 102.045,
+    "orderingWeightSeconds": 108,
+    "source": "012a1225 named original Local worker JUnit via local-quality-review.csv; historical estimate, not new runtime"
+  },
+  {
+    "suite": "CompactRunnerFreshContinuation",
+    "caseSumSeconds": 138.787,
+    "orderingWeightSeconds": 144,
+    "source": "1af9455b accepted worker2 JUnit; unchanged workload, historical estimate"
+  },
+  {
+    "suite": "CompactRunnerLongContinuation",
+    "caseSumSeconds": 133.089,
+    "orderingWeightSeconds": 139,
+    "source": "1af9455b accepted worker2 JUnit; unchanged workload, historical estimate"
+  }
+]

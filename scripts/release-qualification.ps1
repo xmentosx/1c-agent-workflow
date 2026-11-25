@@ -1,3 +1,23 @@
+. (Join-Path $PSScriptRoot 'invoke-pester-runtime.ps1')
+
+function Test-WorkflowFullQualificationRecord {
+    param([object]$Qualification)
+    try {
+        if (-not $Qualification -or [string]$Qualification.kind -cne 'itl-workflow-full-qualification' -or
+            [string]$Qualification.status -cne 'passed') { return $false }
+        # Some legacy transport callers historically validated the envelope
+        # without a schema field. Strict readers still enforce their versions.
+        if (-not $Qualification.PSObject.Properties['schemaVersion']) { return [bool]$Qualification.reusable }
+        if ([int]$Qualification.schemaVersion -in @(1,2,3)) { return [bool]$Qualification.reusable }
+        if ([int]$Qualification.schemaVersion -ne 4 -or $Qualification.reusable -isnot [bool] -or
+            -not (Test-PesterInputIdentityRecord $Qualification.pesterInputs) -or
+            [bool]$Qualification.reusable -ne [bool]$Qualification.pesterInputs.reusable) { return $false }
+        $tests = @($Qualification.inventory.tests | Where-Object { [string]$_.path -like '*.Tests.ps1' } | ForEach-Object { [string]$_.path } | Sort-Object)
+        $inputs = @($Qualification.pesterInputs.files | ForEach-Object { [string]$_.path } | Sort-Object)
+        return $tests.Count -gt 0 -and ($tests -join "`n") -ceq ($inputs -join "`n")
+    } catch { return $false }
+}
+
 function Get-WorkflowQualificationReuseKind {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -43,6 +63,49 @@ function Test-WorkflowContinuationPattern {
     return $wildcard.IsMatch($Path.Replace('\', '/'))
 }
 
+function Get-DeliveryIndexedTargetedRunPaths {
+    param(
+        [Parameter(Mandatory = $true)][string]$CommonGitPath,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][string]$Tree
+    )
+    $runRoot = Join-Path $CommonGitPath "itl\runs"
+    $indexPath = Join-Path $CommonGitPath "itl\run-index\v1\hot.json"
+    if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf)) { return @() }
+    try {
+        $index = Get-Content -LiteralPath $indexPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([int]$index.schemaVersion -ne 1 -or [string]$index.kind -cne "itl-delivery-run-hot-index" -or
+            [int]$index.capacity -le 0 -or @($index.entries).Count -gt [int]$index.capacity -or
+            [IO.Path]::GetFullPath([string]$index.sourceDirectory) -cne [IO.Path]::GetFullPath($runRoot)) { return @() }
+        $actualStamp = if (Test-Path -LiteralPath $runRoot -PathType Container) { (Get-Item -LiteralPath $runRoot).LastWriteTimeUtc.ToString("o") } else { "" }
+        if ([string]$index.sourceDirectoryLastWriteTimeUtc -cne $actualStamp) { return @() }
+        $paths = [Collections.Generic.List[string]]::new()
+        foreach ($entry in @($index.entries | Where-Object { [string]$_.commit -ceq $Commit -and [string]$_.tree -ceq $Tree })) {
+            try { $candidate = [IO.Path]::GetFullPath([string]$entry.rawPath) } catch { continue }
+            if ([string]::Equals((Split-Path -Parent $candidate), [IO.Path]::GetFullPath($runRoot), [StringComparison]::OrdinalIgnoreCase) -and
+                (Split-Path -Leaf $candidate) -like '*-targeted-*.json') { $paths.Add($candidate) | Out-Null }
+        }
+        return @($paths)
+    } catch { return @() }
+}
+
+function Test-WorkflowTargetedRunProof {
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()][object]$Run,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][string]$Tree
+    )
+    try {
+        # Schemas 2 and 3 added timing/failure metadata to the same proof.
+        # Keep future formats closed until their producer contract is known.
+        if ([string]$Run.schemaVersion -cnotin @('1', '2', '3') -or [string]$Run.mode -ne 'Targeted' -or
+            [string]$Run.status -ne 'passed' -or [int]$Run.exitCode -ne 0 -or
+            [string]$Run.commit -ne $Commit -or [string]$Run.tree -ne $Tree) { return $false }
+        $passedStages = @($Run.stages | Where-Object { [string]$_.status -eq 'passed' } | ForEach-Object { [string]$_.name })
+        return $passedStages -contains 'pester' -and $passedStages -contains 'tracked-state' -and $passedStages -contains 'git-diff-check'
+    } catch { return $false }
+}
+
 function Get-ExactTargetedRunProof {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -57,15 +120,25 @@ function Get-ExactTargetedRunProof {
     $runRoot = Join-Path $commonGitPath "itl\runs"
     if (-not (Test-Path -LiteralPath $runRoot -PathType Container)) { return $null }
 
-    foreach ($file in @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*-targeted-*.json" | Sort-Object Name -Descending)) {
-        try { $run = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
-        if ([int]$run.schemaVersion -ne 1 -or [string]$run.mode -ne "Targeted" -or [string]$run.status -ne "passed" -or
-            [int]$run.exitCode -ne 0 -or [string]$run.commit -ne $Commit -or [string]$run.tree -ne $Tree) { continue }
-        $stageNames = @($run.stages | Where-Object { [string]$_.status -eq "passed" } | ForEach-Object { [string]$_.name })
-        if ($stageNames -notcontains "pester" -or $stageNames -notcontains "tracked-state" -or $stageNames -notcontains "git-diff-check") { continue }
+    foreach ($path in @(Get-DeliveryIndexedTargetedRunPaths -CommonGitPath $commonGitPath -Commit $Commit -Tree $Tree)) {
+        try { $run = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
+        if (-not (Test-WorkflowTargetedRunProof -Run $run -Commit $Commit -Tree $Tree)) { continue }
         return [pscustomobject]@{
-            path = $file.FullName
-            sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            path = $path
+            sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            run = $run
+        }
+    }
+    # A missing, stale, or bounded index cannot weaken proof lookup. Raw proof is
+    # immutable and remains the authority; the fallback also preserves the
+    # existing exact identity and passed-stage acceptance contract.
+    foreach ($file in @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*-targeted-*.json" | Sort-Object Name -Descending)) {
+        $path = $file.FullName
+        try { $run = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
+        if (-not (Test-WorkflowTargetedRunProof -Run $run -Commit $Commit -Tree $Tree)) { continue }
+        return [pscustomobject]@{
+            path = $path
+            sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
             run = $run
         }
     }
@@ -204,6 +277,83 @@ function Get-WorkflowContinuationProof {
     }
 }
 
+function Test-WorkflowForkTransitionArtifact {
+    param([object]$Qualification,[string]$FullPath)
+    try {
+        if(-not $Qualification.PSObject.Properties['fork'] -or -not $Qualification.fork -or -not $Qualification.fork.PSObject.Properties['transitionProof']) {return $true}
+        $ref=$Qualification.fork.transitionProof
+        return $ref.sha256 -cmatch '^[a-f0-9]{64}$' -and $ref.path -ceq ('fork-transitions-'+$ref.sha256+'.json') -and
+            (Get-FileHash -LiteralPath (Join-Path (Split-Path -Parent $FullPath) $ref.path) -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $ref.sha256
+    } catch {return $false}
+}
+
+function Copy-WorkflowForkTransitionArtifact {
+    param([string]$FullPath,[string]$Destination)
+    $q=Get-Content -LiteralPath $FullPath -Raw -Encoding UTF8|ConvertFrom-Json
+    if(-not (Test-WorkflowForkTransitionArtifact $q $FullPath)) {throw 'FORK_TRANSITION_ARTIFACT_CHANGED'}
+    if($q.PSObject.Properties['fork'] -and $q.fork -and $q.fork.PSObject.Properties['transitionProof']) {
+        $name=[string]$q.fork.transitionProof.path
+        Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $FullPath) $name) -Destination (Join-Path $Destination $name) -Force
+    }
+}
+
+function Resolve-WorkflowGatePwsh {
+    # Cases that compare the Desktop and Core hosts skip without pwsh.exe, and
+    # a complete static proof rejects any skipped case. Resolve pwsh before the
+    # long Pester stage: PATH first, then the clone's git config itl.pwshPath,
+    # whose directory is prepended to PATH for every gate child.
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot, [switch]$Required)
+    $found = @(Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($found.Count) { return [pscustomobject]@{ status = 'path'; path = [string]$found[0].Source } }
+    if (-not (Get-Command Invoke-RepositoryGit -ErrorAction SilentlyContinue)) {
+        . (Join-Path $PSScriptRoot "git-path-list.ps1")
+    }
+    $configured = ([string](Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('config', '--get', 'itl.pwshPath') -AllowFailure).stdout).Trim()
+    $problem = 'pwsh.exe is not on PATH and git config itl.pwshPath is not set'
+    if ($configured) {
+        if ((Test-Path -LiteralPath $configured -PathType Leaf) -and [IO.Path]::GetFileName($configured) -ieq 'pwsh.exe') {
+            $env:PATH = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($configured)) + [IO.Path]::PathSeparator + $env:PATH
+            return [pscustomobject]@{ status = 'configured'; path = [IO.Path]::GetFullPath($configured) }
+        }
+        $problem = "git config itl.pwshPath '$configured' is not an existing pwsh.exe"
+    }
+    if ($Required) {
+        $dependent = @(Get-ChildItem -LiteralPath (Join-Path $RepositoryRoot 'tests\pester') -Filter '*.Tests.ps1' -File -ErrorAction SilentlyContinue |
+            Where-Object { (Select-String -LiteralPath $_.FullName -Pattern 'Get-Command pwsh' -SimpleMatch -Quiet -Encoding UTF8) } | ForEach-Object { $_.Name } | Sort-Object)
+        throw "GATE_PWSH_REQUIRED: $problem; $($dependent.Count) test files would skip their Core-host cases and the complete static proof rejects skipped tests ($($dependent -join ', ')). Point the clone at an existing PowerShell 7 with: git config itl.pwshPath '<full path to pwsh.exe>', then repeat the same command. No system install is required."
+    }
+    return [pscustomobject]@{ status = 'missing'; path = '' }
+}
+
+function Test-WorkflowCurrentStaticProof {
+    param([object]$Proof, [string]$Commit, [string]$Tree)
+    try {
+        if (-not $Proof -or [string]$Proof.sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+            [string]$Proof.junitSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+            (Get-FileHash -LiteralPath $Proof.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$Proof.sha256 -or
+            (Get-FileHash -LiteralPath $Proof.junitPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$Proof.junitSha256) { return $false }
+        $q = Get-Content -LiteralPath $Proof.path -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([int]$q.schemaVersion -ne 4 -or [string]$q.kind -cne 'itl-workflow-full-qualification' -or
+            [string]$q.status -cne 'passed' -or $q.repository.worktreeClean -isnot [bool] -or -not $q.repository.worktreeClean -or
+            [string]$q.repository.commit -cne $Commit -or [string]$q.repository.tree -cne $Tree -or
+            [int]$q.result.passed -le 0 -or [int]$q.result.failed -ne 0 -or [int]$q.result.skipped -ne 0 -or
+            [string]$q.junit.sha256 -cne [string]$Proof.junitSha256 -or
+            -not (Test-PesterInputIdentityRecord $q.pesterInputs)) { return $false }
+        if (@($q.stages | Where-Object { [string]$_.status -ceq 'failed' }).Count -gt 0) { return $false }
+        $tests = @($q.inventory.tests | Where-Object { [string]$_.path -like '*.Tests.ps1' } | ForEach-Object { [string]$_.path } | Sort-Object)
+        $inputs = @($q.pesterInputs.files | ForEach-Object { [string]$_.path } | Sort-Object)
+        if ($tests.Count -eq 0 -or ($tests -join "`n") -cne ($inputs -join "`n")) { return $false }
+        $passed = @($q.stages | Where-Object { [string]$_.status -ceq 'passed' } | ForEach-Object { [string]$_.name })
+        foreach ($name in @('pester','git-diff-check','static-tracked-state','ai-rules-compatibility')) {
+            if ($name -notin $passed) { return $false }
+        }
+        if(-not (Test-WorkflowForkTransitionArtifact $q $Proof.path)) {return $false}
+        # This proves a completed static gate for this candidate, not permission
+        # to reuse its Pester pack. Nonreusable/unknown shards still run normally.
+        return $true
+    } catch { return $false }
+}
+
 function Test-RecordedWorkflowContinuation {
     param(
         [Parameter(Mandatory = $true)][object]$Record,
@@ -212,6 +362,10 @@ function Test-RecordedWorkflowContinuation {
     )
 
     try {
+        if ($Record.PSObject.Properties['proofKind'] -and [string]$Record.proofKind -ceq 'owner-input-static') {
+            if ([string]$Record.currentCommit -cne $Commit -or [string]$Record.currentTree -cne $Tree) { return $false }
+            return Test-WorkflowCurrentStaticProof -Proof $Record.staticProof -Commit $Commit -Tree $Tree
+        }
         $path = [string]$Record.targetedRunPath
         if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$Record.targetedRunSha256).ToLowerInvariant()) { return $false }
@@ -220,7 +374,6 @@ function Test-RecordedWorkflowContinuation {
         if ($Record.PSObject.Properties["currentTree"] -and [string]$Record.currentTree -cne $Tree) { return $false }
         $targetedCommit = if ($Record.PSObject.Properties["targetedCommit"] -and [string]$Record.targetedCommit) { [string]$Record.targetedCommit } else { $Commit }
         $targetedTree = if ($Record.PSObject.Properties["targetedTree"] -and [string]$Record.targetedTree) { [string]$Record.targetedTree } else { $Tree }
-        return [int]$run.schemaVersion -eq 1 -and [string]$run.mode -eq "Targeted" -and [string]$run.status -eq "passed" -and
-            [int]$run.exitCode -eq 0 -and [string]$run.commit -eq $targetedCommit -and [string]$run.tree -eq $targetedTree
+        return Test-WorkflowTargetedRunProof -Run $run -Commit $targetedCommit -Tree $targetedTree
     } catch { return $false }
 }

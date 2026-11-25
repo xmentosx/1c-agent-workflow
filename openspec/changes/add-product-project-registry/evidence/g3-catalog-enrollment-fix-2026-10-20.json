@@ -1,0 +1,528 @@
+{
+  "date": "2026-10-20",
+  "status": "G3-CATALOG-LEGACY-ENROLLMENT fixed; bounded PM5 original journey passed; full G3 remains open",
+  "implementationCommits": [
+    "8ee68833c1e94f290648974a887cdb7c63d49c35",
+    "07083d7c85df41e8ac609a9d9b2220269c760ec9"
+  ],
+  "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+  "projectRoot": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project",
+  "branchRoot": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch",
+  "catalogCommit": "0e040ccae17caf9b2521d33a3b18b66daa6ba9c4",
+  "baselineWorkflowCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+  "testCatalogScope": "Same local pilot catalog with optional/unconfigured sources and empty endpoint registry; full existing endpoint registry exercised separately via protected PlanOnly controls. Not client/source-binding acceptance.",
+  "finalRoots": [
+    {
+      "root": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project",
+      "head": "3256f5dce8a5a87c41276fbe5d45db265f783f19",
+      "workflowCommit": "4ca9cedf616a631363cb57a4536458bb16198feb",
+      "aiRulesCommit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "aiRulesRef": "itl-main-5700f54-r43",
+      "trees": {
+        "tests/features": "420e755eb736eeb581895cc760ba6b91b8d2d8a7",
+        "src/cf": "53a9c5c3256d9ee6851ca367a5457dd5b5660a73",
+        "src/cfe": null
+      },
+      "changed": [],
+      "untracked": []
+    },
+    {
+      "root": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch",
+      "head": "6dcca645732329a3d6916fc16d2fd09773b9819c",
+      "workflowCommit": "4ca9cedf616a631363cb57a4536458bb16198feb",
+      "aiRulesCommit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "aiRulesRef": "itl-main-5700f54-r43",
+      "trees": {
+        "tests/features": "f5b55f819a8b30180b3efb203fe0738b075a060b",
+        "src/cf": "79d912aee1e711c0bcefd4660131902c1b731e3e",
+        "src/cfe": null
+      },
+      "changed": [],
+      "untracked": []
+    }
+  ],
+  "nativeUpdates": {
+    "initial-update-result": {
+      "sourceCommit": "8ee68833c1e94f290648974a887cdb7c63d49c35",
+      "observedUtc": "2026-10-20T10:30:23.5246897Z",
+      "exitCode": 0,
+      "durationMs": 288997,
+      "status": "succeeded"
+    },
+    "fix-transition-update-result": {
+      "sourceCommit": "07083d7c85df41e8ac609a9d9b2220269c760ec9",
+      "observedUtc": "2026-10-20T11:03:33.6663987Z",
+      "exitCode": 0,
+      "durationMs": 240761,
+      "status": "succeeded"
+    },
+    "after-later-update-result": {
+      "sourceCommit": "4ca9cedf616a631363cb57a4536458bb16198feb",
+      "observedUtc": "2026-10-20T11:09:37.6839771Z",
+      "exitCode": 0,
+      "durationMs": 9408,
+      "status": "succeeded"
+    }
+  },
+  "acceptedForegroundUpgrade": {
+    "exitCode": 0,
+    "observedUtc": "2026-10-20T11:08:58.2927524Z",
+    "logPath": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\runs\\g3-enrollment-accepted\\console.log",
+    "sourceCommit": "4ca9cedf616a631363cb57a4536458bb16198feb",
+    "durationMs": 257356,
+    "statusPath": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\runs\\g3-enrollment-accepted\\status.json"
+  },
+  "foregroundInputObservation": {
+    "corroboration": [
+      "accepted-foreground-update.transcript.txt",
+      "accepted-foreground-update-result.json",
+      "after-later.json"
+    ],
+    "promptVisible": true,
+    "answerOutputChunk": "add355",
+    "completionText": "Package update completed; catalog association explicitly deferred. Use catalog select when ready.",
+    "sessionId": 19285,
+    "exitCode": 0,
+    "input": "later",
+    "recordedUtc": "2026-10-20T11:14:55.5555255Z",
+    "prompt": "Workflow updated. Associate this local project with the catalog: choose / new / later (empty keeps it unchanged):",
+    "promptOutputChunk": "df1586",
+    "source": "Observed PTY tool responses, recorded after the run; not a PowerShell transcript of Read-Host"
+  },
+  "transcriptLimitation": "PowerShell Start-Transcript retained completion output but not the direct Read-Host question/input; visibility/input use the separately labeled PTY observation plus persisted later and terminal exit.",
+  "foregroundDurationIncludesOperatorInput": true,
+  "sameVersionControl": {
+    "result": {
+      "exitCode": 0,
+      "sourceCommit": "8ee68833c1e94f290648974a887cdb7c63d49c35",
+      "durationMs": 4342,
+      "observedUtc": "2026-10-20T10:34:08.4467053Z"
+    },
+    "isPostCopyProof": false
+  },
+  "interruptedUpgrade": {
+    "from": "8ee68833",
+    "to": "4f484a70",
+    "wholeCommandAccepted": false,
+    "finding": "Legacy reconcile passed, but Read-Host in captured CreateNoWindow child could not receive foreground input; normal owned cleanup confirmed.",
+    "cleanup": {
+      "cleanup": {
+        "confirmed": true,
+        "error": ""
+      },
+      "processId": 31764,
+      "commandLine": "\"powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1\" -Action update-workflow -ProjectRoot \"C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\" -ConfigPath \"C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\project.json\" -InitMode configured -AgentTarget kilocode -Mode status -RunLogPath \"C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\runs\\g3-enrollment-upgrade\\console.log\" -OperationId 736f0cfdc50b4005927c8226a35c1302 -OperationOwnerPid 49832 -OperationContinuation -RunStatusPath \"C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\runs\\g3-enrollment-upgrade\\status.json.fresh-49832-6c034a1565b744138fd17cce1ece7440.json\" -LifecyclePhase post-copy",
+      "reason": "Foreground caller interrupted after empty input could not reach the captured CreateNoWindow post-copy child; no offer answer recorded.",
+      "observedUtc": "2026-10-20T10:52:22.9046187Z",
+      "wholeCommandAccepted": false
+    }
+  },
+  "stateTransitions": {
+    "after-initial": {
+      "binding": null,
+      "legacyEnrolled": false,
+      "selectionExists": false,
+      "rawSelectionKeys": []
+    },
+    "after-select": {
+      "binding": {
+        "productId": "pm5-corp",
+        "projectId": "pm5-core-development",
+        "requiredCapability": "product-project-registry-v1",
+        "schemaVersion": 1
+      },
+      "legacyEnrolled": false,
+      "selectionExists": true,
+      "rawSelectionKeys": [
+        "productProject"
+      ]
+    },
+    "after-select-restore": {
+      "binding": null,
+      "legacyEnrolled": false,
+      "selectionExists": false,
+      "rawSelectionKeys": []
+    },
+    "after-new": {
+      "binding": {
+        "productId": "pm5-corp",
+        "projectId": "project-4e7abd8a07de4c6cb318c544b4edf63d",
+        "requiredCapability": "product-project-registry-v1",
+        "schemaVersion": 1
+      },
+      "legacyEnrolled": false,
+      "selectionExists": true,
+      "rawSelectionKeys": [
+        "productProject"
+      ]
+    },
+    "after-new-restore": {
+      "binding": null,
+      "legacyEnrolled": false,
+      "selectionExists": true,
+      "rawSelectionKeys": [
+        "productProject"
+      ]
+    },
+    "after-interrupted-upgrade": {
+      "binding": null,
+      "legacyEnrolled": false,
+      "selectionExists": true,
+      "rawSelectionKeys": [
+        "productProject"
+      ]
+    },
+    "after-fix-transition": {
+      "binding": null,
+      "legacyEnrolled": false,
+      "selectionExists": true,
+      "rawSelectionKeys": [
+        "productProject"
+      ]
+    },
+    "after-later": {
+      "binding": null,
+      "legacyEnrolled": false,
+      "selectionExists": true,
+      "rawSelectionKeys": [
+        "productProject"
+      ]
+    },
+    "after-late-select": {
+      "binding": {
+        "productId": "pm5-corp",
+        "projectId": "pm5-core-development",
+        "requiredCapability": "product-project-registry-v1",
+        "schemaVersion": 1
+      },
+      "legacyEnrolled": false,
+      "selectionExists": true,
+      "rawSelectionKeys": [
+        "productProject"
+      ]
+    },
+    "final": {
+      "binding": null,
+      "legacyEnrolled": false,
+      "selectionExists": true,
+      "rawSelectionKeys": [
+        "productProject"
+      ]
+    }
+  },
+  "preservedDraft": [
+    {
+      "baseRecordHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "baseRevision": "0e040ccae17caf9b2521d33a3b18b66daa6ba9c4",
+      "collection": "projects",
+      "confirmedRevision": null,
+      "record": {
+        "name": "G3 harmless local PM5 project",
+        "productId": "pm5-corp",
+        "projectId": "project-4e7abd8a07de4c6cb318c544b4edf63d"
+      },
+      "status": "prepared-request"
+    }
+  ],
+  "testBatches": {
+    "red": {
+      "passed": 1,
+      "seconds": 9.5428749,
+      "failed": 3,
+      "powerShell": "5.1.26100.9711",
+      "phase": "red",
+      "skipped": 0
+    },
+    "green": {
+      "passed": 158,
+      "seconds": 203.864874,
+      "failed": 0,
+      "powerShell": "5.1.26100.9711",
+      "phase": "green",
+      "skipped": 0
+    },
+    "setup": {
+      "passed": 26,
+      "seconds": 26.6002218,
+      "failed": 0,
+      "powerShell": "5.1.26100.9711",
+      "phase": "setup",
+      "skipped": 0
+    },
+    "prompt": {
+      "passed": 96,
+      "seconds": 373.8584462,
+      "failed": 0,
+      "powerShell": "5.1.26100.9711",
+      "phase": "prompt",
+      "skipped": 0
+    }
+  },
+  "fullRegistryControls": {
+    "full-registry-control": {
+      "registrySha256": "ea40a0efad06ca1c99a4d221b16520767c17f7e013f8f14e863033d76d21ebcf",
+      "result": {
+        "reconciled": false,
+        "preserved": true,
+        "replacements": [],
+        "pruned": []
+      },
+      "protectedInputsUnchanged": true,
+      "legacyEnrolled": false
+    },
+    "final-full-registry-control": {
+      "registrySha256": "a3129a37fbe872ec185e96f7632e023e7902df0dd4b1c69468018b707cba63ae",
+      "result": {
+        "reconciled": false,
+        "preserved": true,
+        "replacements": [],
+        "pruned": []
+      },
+      "protectedInputsUnchanged": true,
+      "legacyEnrolled": false
+    }
+  },
+  "scopeAndCosts": {
+    "alwaysOnInstructionsOrSchemaChanged": false,
+    "newRuntimeStateOwnerOrPromptBridge": false,
+    "startupOverheadComparison": "not measured; native update durations are qualification cost, not startup overhead",
+    "memoryImplementationStarted": false,
+    "workProjectMigrationStarted": false,
+    "published": false
+  },
+  "standValidation": {
+    "gate6NotRerun": true,
+    "frozenSeedValid": true,
+    "seedDescriptorSha256": "ab2f3a01476c3ef065ed5416f2e1814a2ec38fd006b7d1ff43cccf7eea22db07",
+    "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "originalGate6EvidenceUnchanged": [
+      {
+        "sha256": "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl"
+      },
+      {
+        "sha256": "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml"
+      },
+      {
+        "sha256": "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml"
+      },
+      {
+        "sha256": "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json"
+      },
+      {
+        "sha256": "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result"
+      },
+      {
+        "sha256": "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log"
+      },
+      {
+        "sha256": "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log"
+      }
+    ],
+    "seedHead": "9ee1073525eae722222b9696bfa623e757f1bd09",
+    "observedUtc": "2026-10-20T11:14:02.4246915Z",
+    "seedDescriptorPath": "D:/Git/itl-workflow-e2e-pm5/.agent-1c/release-e2e.json",
+    "ownedProcessesRemaining": 0,
+    "checkerCorrection": "First final checker compared project.json with the baseline hash of release-e2e.json. That path mismatch is corrected; failed checker log retained, no seed files changed."
+  },
+  "workloadTreesUnchanged": true,
+  "gate6": {
+    "status": "read-only analyzed, not fixed or rerun",
+    "evidence": "g3-gate6-analysis-2026-10-20.json"
+  },
+  "remaining": [
+    "G3-LEGACY-CALLER-OFFER: first upgrade of an old caller did not ask; next-version success with a new caller does not satisfy that first-upgrade SHALL",
+    "Gate 6 product finding and original application-ready/fork acceptance",
+    "full G3/AC-39 and remaining source/client/stand journeys",
+    "release population 5.7/AC-36-38 and memory AC-44",
+    "G4 and installed G5/AC-43 not started or accepted"
+  ],
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-initial.json",
+      "sha256": "a21c5aab6d7573076586ae28d73e4b78878722ac8e37053aa46b2aaa6f1f33f3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-select.json",
+      "sha256": "f91d3787f3d1f7fd40d86ad95da8068b1fe7cd327403f51ac5f810f463f69e2b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-select-restore.json",
+      "sha256": "a0301fd52bce57ad971d4144c0d47f5d3a4c35ee078ef749d9426eb84df1ca75"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-new.json",
+      "sha256": "5d52b26a70ea7e872b00bebaf44ef02def7262c14f64a8dbfe0ec21cd08f66d9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-new-restore.json",
+      "sha256": "6e1ad79838de0085d4495c30bfeeff502042e15f761307e68b2f7a265cb0cbf3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-interrupted-upgrade.json",
+      "sha256": "88010dcc71b400807b913227f14bd8c66482c532b6d01bc8c43becc44f8298d1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-fix-transition.json",
+      "sha256": "d7eb424f0b03b3223610138f83ea6d87ab02efae904b78c70a07882758b9403e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-later.json",
+      "sha256": "cf66421675fe192663efccd7536cffcf94704005c7f669e54ab7645c0d43200e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-late-select.json",
+      "sha256": "77d55d36cb458a41a471b9dde186fcb2a494b51692df396d649127b7d37872cd"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\final.json",
+      "sha256": "bb8f88a759bc9432cdc69b61ef7f49caff3f9ae1f116082dcce0562e1f224bde"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\initial-update-result.json",
+      "sha256": "b48845a161009a97c4987df146e3a679be9343d92a295924d08080faf523c9fd"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\fix-transition-update-result.json",
+      "sha256": "9ce5f1a6c406336e3f070162a0c464448bfd751ba2f22550de2771c8c6f541c9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-later-update-result.json",
+      "sha256": "7840939e2a3afaa1f64cd90e99f4ea55efbef910cb702a2ddcf052bf264395b7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\accepted-foreground-update-result.json",
+      "sha256": "2c3465a8e85fe1a650849c235f2abf83468a3676033910ff474a1705e5f1daea"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\foreground-update-result.json",
+      "sha256": "b5ecbd66e09b4632e950c4b7c87837308ace9f7eac510a6b16bcec4612fbb7aa"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\upgrade-owned-prompt-cleanup.json",
+      "sha256": "d3a63740e4fe2a92b1862d553afcde021335d842096521f6489498ea918d4317"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\before-update.json",
+      "sha256": "9e24d690bbf5c685d8b260d901c3df8384d1a41373d7f33e46e30f5d6d60b51b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\prepare-result.json",
+      "sha256": "c9ce8dd40374a4a683ac2f163acd8cd9e5bba4a0855e0359eb61801bf0a5526b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\full-registry-control.json",
+      "sha256": "c25742d5d90f77a6fafedd4b839bf8fe11696fa4636d1f7c4af711495ab8e6ba"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\final-full-registry-control.json",
+      "sha256": "1ddf0dae698e61d6943941570bc7b7d395f88afbdd8d6be1f0c9134d01ddc84d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\final-stand-validation.json",
+      "sha256": "4f24a93fbe12bb892ba4509479832ce18d9dbdbf5ec436fe5b06d64e10f7926d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\foreground-input-observation.json",
+      "sha256": "437d2ad90219df2d837aad143950b5736aaded3debf7cc8060dd650e8317be4d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\red.json",
+      "sha256": "417c94b6aa46f8a6f258e848fd65849b24b5989ad2f248e10f73caf0f98147de"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\green.json",
+      "sha256": "803dc8dcefdcb64c32bf746750dc9691e8e573c92ea9ac1fa48c1e8c646c838e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\setup.json",
+      "sha256": "32f34fa2b786d75912451a84d862161116904b30f455df93dc50038633b40ad2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\prompt.json",
+      "sha256": "bb4f55248f3832b77f92e233baa999732adb4ea3abc3573d39727e2458830015"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\select.transcript.txt",
+      "sha256": "0c3fccadfd03b85f9679070c6327245871a76eae2cfa98df2ab78eb6fe324fd3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\new.transcript.txt",
+      "sha256": "93a45bd9166ad8e6ab39ad6fa08ae33412700278ec565a92a849c48bfe2a4518"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\foreground-update.transcript.txt",
+      "sha256": "92ac77e92a8f87195ece18673e09961e1867981a2266eef9a1e576d7be8e91ef"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\upgrade-foreground-update.transcript.txt",
+      "sha256": "9e7efc573d3abdaa35f6f274e256605e3948ca876fc669117f691498d09dc87b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\accepted-foreground-update.transcript.txt",
+      "sha256": "4893ee460e6f730e74cd55ca0e0008f1abb66ad69a3cb80903983d7e006852c0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\late-select.transcript.txt",
+      "sha256": "330dc02a5abc165dfe1d1f6dbea4c50384d5448dd09a7b593a86cc2807a65ef3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\late-restore.log",
+      "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\red.xml",
+      "sha256": "ea3d6a98e9e0e458275e47b0809f7b1a59a8100237b927d856fbd839568ae1af"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\green.xml",
+      "sha256": "3699772536f8538e755f0c839f6ed08a29c313be23674363f3ee7f22425ca4ec"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\setup.xml",
+      "sha256": "60b5b9f30c2669d17bc78d3f10ac8391d6bc2c3664a23617072959fcbae1b2e4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\prompt.xml",
+      "sha256": "c3bc4b3c59ab98a0315988f14407b2048904282cf46ecffcf17b4c6faf3fdc11"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\final-stand-validation.log",
+      "sha256": "96935337a96db74e535aaa1468f052573fc4c04f1d2e5719fbdb9d0a74a2306f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\final-stand-validation-corrected.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\initial-update-native\\update-workflow-1663eda25a574044955c73f19d8ba975.stdout.log",
+      "sha256": "48dc82747c5d81f3871cde915848e2f6eb6f30eff866dd419b9f950bbfab3fe1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\initial-update-native\\update-workflow-1663eda25a574044955c73f19d8ba975.stderr.log",
+      "sha256": "55ebde602ce869a93ddfec377d45b01174eecbfcd02eea0a2d9e77ecc7afc3bb"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\fix-transition-update-native\\update-workflow-bafb2ff3b61d458794ed9c8d01a11649.stdout.log",
+      "sha256": "18332328e3e4238f10400e868cebc2f4c16b8ce9b5214d3dd5dacb6e0d3fa5e4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\fix-transition-update-native\\update-workflow-bafb2ff3b61d458794ed9c8d01a11649.stderr.log",
+      "sha256": "f4a3cd07c6d870be6e514670eb5f66c3186f2701f346d5aeeab8846f628e00fe"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-later-update-native\\update-workflow-a6e5f81e91aa40e48183738dd78e6dca.stdout.log",
+      "sha256": "c75d0a6d9ee9539b323b3df4bc360e3ce36c671078cdf9ff8cc4fc454f39fea2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\enrollment-fix-20261020\\after-later-update-native\\update-workflow-a6e5f81e91aa40e48183738dd78e6dca.stderr.log",
+      "sha256": "a5f287c4c1178c4ddde9b0981633be3c8cabbc8b4da8eb37455d0bbce65060ca"
+    }
+  ]
+}

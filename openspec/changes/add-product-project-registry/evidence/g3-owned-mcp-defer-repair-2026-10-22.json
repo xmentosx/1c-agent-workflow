@@ -1,0 +1,2748 @@
+{
+  "schemaVersion": 1,
+  "observedUtc": "2026-10-22T16:15:35.899492+00:00",
+  "sourceBase": "72d335642caf59e9e825d842c68802c9a08c335e",
+  "implementationSource": {
+    "files": [
+      {
+        "sha256": "06ae086e0054262643b0a3513cb2069f9075304bebb858935408fe9824f08efd",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1"
+      },
+      {
+        "sha256": "3ce5039ca7687c00634e1cd0b1ede978500528544ae6249b3132bb2fc0c7e462",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1"
+      }
+    ],
+    "commit": "d8eacc4ef8d0dae73063b72a025f48cca3c2ac93"
+  },
+  "installedPrevious": "d109a95dc1db95199bb3b2d4114b6cafddd05adb",
+  "installedCurrent": "d8eacc4ef8d0dae73063b72a025f48cca3c2ac93",
+  "aiRulesUnchanged": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+  "owners": [
+    {
+      "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+      "invariant": "Historical lastWritten alone cannot protect a key absent both physically and from current ownership. Present keys and still-owned manual deletions retain the existing protection and collision guards."
+    },
+    {
+      "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+      "invariant": "Reusing the pinned applied revision without a new decision retains saved defer. Explicit registry/keep-local/defer or a different desired context follows existing resolution; no new state/owner/schema."
+    }
+  ],
+  "focusedRepro": {
+    "stage": "green-final",
+    "durationMs": 17613,
+    "files": [
+      "tests/pester/MultiClientMcpOwnership.Tests.ps1",
+      "tests/pester/ProductProjectApply.Tests.ps1"
+    ],
+    "allOwners": false,
+    "skipped": 0,
+    "passed": 14,
+    "notRun": 84,
+    "failed": 0
+  },
+  "completeOwnerBatch": {
+    "stage": "green-all-final",
+    "durationMs": 106678,
+    "files": [
+      "tests/pester/MultiClientMcpOwnership.Tests.ps1",
+      "tests/pester/ProductProjectApply.Tests.ps1"
+    ],
+    "allOwners": true,
+    "skipped": 0,
+    "passed": 98,
+    "notRun": 0,
+    "failed": 0
+  },
+  "retainedAttempts": [
+    {
+      "file": "red.json",
+      "result": {
+        "stage": "red",
+        "durationMs": 27961,
+        "files": [
+          "tests/pester/MultiClientMcpOwnership.Tests.ps1",
+          "tests/pester/ProductProjectApply.Tests.ps1"
+        ],
+        "allOwners": false,
+        "skipped": 0,
+        "passed": 0,
+        "notRun": 84,
+        "failed": 14
+      }
+    },
+    {
+      "file": "red-owner.json",
+      "result": {
+        "stage": "red-owner",
+        "durationMs": 22819,
+        "files": [
+          "tests/pester/MultiClientMcpOwnership.Tests.ps1",
+          "tests/pester/ProductProjectApply.Tests.ps1"
+        ],
+        "allOwners": false,
+        "skipped": 0,
+        "passed": 1,
+        "notRun": 84,
+        "failed": 13
+      }
+    },
+    {
+      "file": "red-repro.json",
+      "result": {
+        "stage": "red-repro",
+        "durationMs": 17991,
+        "files": [
+          "tests/pester/MultiClientMcpOwnership.Tests.ps1",
+          "tests/pester/ProductProjectApply.Tests.ps1"
+        ],
+        "allOwners": false,
+        "skipped": 0,
+        "passed": 1,
+        "notRun": 84,
+        "failed": 13
+      }
+    },
+    {
+      "file": "green-owners.json",
+      "result": {
+        "stage": "green-owners",
+        "durationMs": 98635,
+        "files": [
+          "tests/pester/MultiClientMcpOwnership.Tests.ps1",
+          "tests/pester/ProductProjectApply.Tests.ps1"
+        ],
+        "allOwners": true,
+        "skipped": 0,
+        "passed": 96,
+        "notRun": 0,
+        "failed": 2
+      }
+    },
+    {
+      "file": "green-repro.json",
+      "result": {
+        "stage": "green-repro",
+        "durationMs": 18579,
+        "files": [
+          "tests/pester/MultiClientMcpOwnership.Tests.ps1",
+          "tests/pester/ProductProjectApply.Tests.ps1"
+        ],
+        "allOwners": false,
+        "skipped": 0,
+        "passed": 13,
+        "notRun": 84,
+        "failed": 1
+      }
+    }
+  ],
+  "harnessCorrections": "Initial new fixtures corrected named parameter order, shallow PSObject access, writer newline and native Qwen httpUrl/Codex key assertions. None changes the retired-key/defer workload or weakens native protection/no-op assertions. Original failed PM5 evidence remains immutable.",
+  "fixtureCheckpoint": {
+    "reason": "Normal managed package update requires a clean tracked stand; checkpoint only the existing binding without changing config, receipts or foreign fields",
+    "oldHead": "fd9a31f734b4eac86a603dc989dac70d8df74b6c",
+    "head": "dce7d42318c1a912183e0907927ecc1b66ce4afc",
+    "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+  },
+  "nativeUpdate": {
+    "exitCode": 0,
+    "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\owned-mcp-defer-repair-20261022\\update-logs\\update-workflow-3f7215d69e194fb89c09606efa467bf4.stdout.log",
+    "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\owned-mcp-defer-repair-20261022\\update-logs\\update-workflow-3f7215d69e194fb89c09606efa467bf4.stderr.log",
+    "durationMs": 314822
+  },
+  "updateFirstAttempt": {
+    "status": "failed",
+    "snapshotId": "647dc78ad13e4589bea409101a8b00fe",
+    "error": "WORKFLOW_UPDATE_RECONCILIATION_REQUIRED: .kilo/kilo.json changed after recorded post-copy-running state",
+    "cause": "New startup applied the recovered catalog endpoints before post-copy consistency check",
+    "recoveryStatusExit": 0,
+    "statusChangedPathCount": 0,
+    "continuation": "Same exact-source update-workflow command",
+    "reconciliationFileUsed": false,
+    "receiptEditedManually": false,
+    "acceptance": "First attempt not green; normal owner continuation completed main and sibling. Does not close all first-pass installed-upgrade criteria."
+  },
+  "replaySelect": {
+    "codeGraphEachPresent": true,
+    "passed": true,
+    "clients": [
+      "kilocode",
+      "cursor"
+    ],
+    "nativeSteps": [
+      {
+        "durationMs": 5042,
+        "stderrBytes": 0,
+        "stdoutBytes": 369,
+        "arguments": [
+          "-CatalogAction",
+          "restore-compatible"
+        ],
+        "name": "initial-compatible-restore",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 9620,
+        "stderrBytes": 0,
+        "stdoutBytes": 663,
+        "arguments": [
+          "-CatalogAction",
+          "select",
+          "-CatalogProjectId",
+          "pm5-core-development"
+        ],
+        "name": "original-two-client-select",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 4203,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [
+          "-Client",
+          "kilocode"
+        ],
+        "name": "original-explicit-kilo-writer",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      },
+      {
+        "durationMs": 5083,
+        "stderrBytes": 0,
+        "stdoutBytes": 433,
+        "arguments": [
+          "-CatalogAction",
+          "sync",
+          "-CatalogDecision",
+          "registry"
+        ],
+        "name": "original-explicit-registry-sync",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      }
+    ],
+    "foreignPreserved": true,
+    "originalKiloRetiredStateRecovered": true,
+    "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+    "kiloImportedMasksDisabled": true
+  },
+  "conflicts": [
+    {
+      "priorRevision": "4ce71e33c6ab9b962c1aff8d3ff86fde4efff15d",
+      "foreignPreserved": true,
+      "ordinaryRepeatExit": 0,
+      "desiredRevision": "9b8f48703c0f1fc6212d3386030c1d743c582b0d",
+      "repeatProtectedStable": true,
+      "passed": true,
+      "decision": "keep-local",
+      "appliedRevision": "9b8f48703c0f1fc6212d3386030c1d743c582b0d",
+      "noAnswerExit": 1,
+      "manualGraphPreserved": true,
+      "noAnswerProtectedStable": true
+    },
+    {
+      "priorRevision": "b42af46d7953d534018e10255227fc5bfd1ab4ef",
+      "foreignPreserved": true,
+      "ordinaryRepeatExit": 0,
+      "desiredRevision": "a519aae53bce6ef5b93516b57f3b0db37950f655",
+      "repeatProtectedStable": true,
+      "passed": true,
+      "decision": "defer",
+      "appliedRevision": "b42af46d7953d534018e10255227fc5bfd1ab4ef",
+      "noAnswerExit": 1,
+      "manualGraphPreserved": true,
+      "noAnswerProtectedStable": true
+    },
+    {
+      "priorRevision": "abb81980b6b93efb716b68949cc8c4d1c5c86f2a",
+      "foreignPreserved": true,
+      "ordinaryRepeatExit": 0,
+      "desiredRevision": "a04d06c23d878ffeff936063a733481884fcdca6",
+      "repeatProtectedStable": true,
+      "passed": true,
+      "decision": "registry",
+      "appliedRevision": "a04d06c23d878ffeff936063a733481884fcdca6",
+      "noAnswerExit": 1,
+      "manualGraphPreserved": false,
+      "noAnswerProtectedStable": true
+    }
+  ],
+  "nextOrdinaryAfterDefer": {
+    "priorRevision": "db0728cff84d780333eaa46f3d93cb200ea62c98",
+    "foreignPreserved": true,
+    "ordinaryRepeatExit": 0,
+    "desiredRevision": "3e56d57e5221acb649e42d714ecec522c015a133",
+    "repeatProtectedStable": true,
+    "passed": true,
+    "secondOrdinaryProtectedStable": true,
+    "decision": "defer",
+    "appliedRevision": "db0728cff84d780333eaa46f3d93cb200ea62c98",
+    "noAnswerExit": 1,
+    "manualGraphPreserved": true,
+    "noAnswerProtectedStable": true
+  },
+  "multiClientPartial": {
+    "unrelatedEditSurvivedOwnedRestore": true,
+    "passed": true,
+    "priorRevision": "170589b3879e111bcbd6e4953b1d120cf094f29f",
+    "operationId": "c607370e563f447db1cdc8b5cd42db9a",
+    "pinnedRevision": "a825e58f4e000d40e6b2d90c4f0b432d81bdf86f",
+    "finalTip": "db0728cff84d780333eaa46f3d93cb200ea62c98",
+    "markerStayedOnPriorRevision": true,
+    "faultClient": "cursor",
+    "foreignOwnedResumeAndRestoreBlocked": true,
+    "steps": [
+      {
+        "durationMs": 8221,
+        "stderrBytes": 328,
+        "stdoutBytes": 433,
+        "arguments": [
+          "-CatalogAction",
+          "sync",
+          "-CatalogDecision",
+          "registry"
+        ],
+        "name": "two-client-real-partial",
+        "exitCode": 1,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 2714,
+        "stderrBytes": 297,
+        "stdoutBytes": 0,
+        "arguments": [
+          "-Client",
+          "kilocode"
+        ],
+        "name": "partial-main-blocked",
+        "exitCode": 1,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "sync-client-mcp"
+      },
+      {
+        "durationMs": 2971,
+        "stderrBytes": 0,
+        "stdoutBytes": 415,
+        "arguments": [
+          "-CatalogAction",
+          "status"
+        ],
+        "name": "partial-status",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 2662,
+        "stderrBytes": 378,
+        "stdoutBytes": 0,
+        "arguments": [
+          "-CatalogAction",
+          "resume"
+        ],
+        "name": "foreign-owned-resume-blocked",
+        "exitCode": 1,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 2766,
+        "stderrBytes": 378,
+        "stdoutBytes": 0,
+        "arguments": [
+          "-CatalogAction",
+          "restore"
+        ],
+        "name": "foreign-owned-restore-blocked",
+        "exitCode": 1,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 4103,
+        "stderrBytes": 0,
+        "stdoutBytes": 324,
+        "arguments": [
+          "-CatalogAction",
+          "resume"
+        ],
+        "name": "two-client-pinned-resume",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 3640,
+        "stderrBytes": 0,
+        "stdoutBytes": 318,
+        "arguments": [
+          "-CatalogAction",
+          "restore"
+        ],
+        "name": "two-client-owned-restore-with-foreign",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 5366,
+        "stderrBytes": 0,
+        "stdoutBytes": 489,
+        "arguments": [
+          "-CatalogAction",
+          "sync",
+          "-CatalogDecision",
+          "registry"
+        ],
+        "name": "post-partial-registry-sync",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      }
+    ],
+    "actualAWrite": true,
+    "pinnedResume": true,
+    "newerTip": "40f4519eda3f715380c773863519853f253ca2b4"
+  },
+  "warmNoOp": {
+    "count": 10,
+    "passed": true,
+    "protected": {
+      ".cursor/mcp.json": {
+        "ticks": 639282821360380240,
+        "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+      },
+      ".agent-1c/mcp/client-managed.json": {
+        "ticks": 639282821360711820,
+        "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+      },
+      ".agent-1c/mcp/product-context-operation.json": {
+        "ticks": 639282821419477183,
+        "sha256": "e0c0c2de494092bf5acb75d5bc91cc3548f41377791f008f77cce68313cb52c6"
+      },
+      ".agent-1c/mcp/product-context-applied.json": {
+        "ticks": 639282821419331914,
+        "sha256": "fb259555a8148ab8b3569a569dd632b96cada7e17944fd5ebc146b15cfdef849"
+      },
+      ".agent-1c/mcp/vibecoding1c-selection.json": {
+        "ticks": 639282821418278659,
+        "sha256": "a60240e1bc394467cc8c0abd1ca6513b8c24422e379b00dd6e073fff07f11e0a"
+      },
+      ".agent-1c/project.json": {
+        "ticks": 639282820053902575,
+        "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+      },
+      ".kilo/kilo.json": {
+        "ticks": 639282821357899603,
+        "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+      }
+    },
+    "limit": "Whole public CLI on the repaired two-client stand; not paired isolated Startup or agent token delta",
+    "p95Ms": 4283,
+    "steps": [
+      {
+        "durationMs": 4065,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [],
+        "name": "warm-01",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      },
+      {
+        "durationMs": 4026,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [],
+        "name": "warm-02",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      },
+      {
+        "durationMs": 4283,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [],
+        "name": "warm-03",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      },
+      {
+        "durationMs": 4055,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [],
+        "name": "warm-04",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      },
+      {
+        "durationMs": 4059,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [],
+        "name": "warm-05",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      },
+      {
+        "durationMs": 4266,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [],
+        "name": "warm-06",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      },
+      {
+        "durationMs": 3774,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [],
+        "name": "warm-07",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      },
+      {
+        "durationMs": 3948,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [],
+        "name": "warm-08",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      },
+      {
+        "durationMs": 3774,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [],
+        "name": "warm-09",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      },
+      {
+        "durationMs": 3934,
+        "stderrBytes": 0,
+        "stdoutBytes": 477,
+        "arguments": [],
+        "name": "warm-10",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-write-client-config"
+      }
+    ],
+    "medianMs": 4040.5,
+    "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project"
+  },
+  "offline": [
+    {
+      "transportSeconds": [
+        22.191523999999998
+      ],
+      "offlineWarning": true,
+      "exitCode": 0,
+      "metadataDeadlineSeconds": 10,
+      "protectedCount": 8,
+      "transportCount": 1,
+      "requestAccepted": true,
+      "kind": "applied-cache",
+      "wholeCliMs": 24900,
+      "protectedStable": true,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "passed": true,
+      "mainPhaseReached": true,
+      "trace": {
+        "transportCount": 1,
+        "transportStart": "2026-10-22T16:12:21.003235Z",
+        "firstFallbackRead": "2026-10-22T16:12:31.027740Z",
+        "toFallbackReadSeconds": 10.024505
+      },
+      "limit": "Continuation/no guessed association and protected bytes+mtime only; not full CLI<=10s, strict transport cleanup or native tools readiness"
+    },
+    {
+      "transportSeconds": [
+        22.001799
+      ],
+      "offlineWarning": false,
+      "exitCode": 1,
+      "metadataDeadlineSeconds": 10,
+      "protectedCount": 8,
+      "transportCount": 1,
+      "requestAccepted": true,
+      "kind": "no-cache",
+      "wholeCliMs": 24983,
+      "protectedStable": true,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "passed": true,
+      "mainPhaseReached": false,
+      "trace": {
+        "transportCount": 1,
+        "transportStart": "2026-10-22T16:12:46.566774Z",
+        "firstFallbackRead": "2026-10-22T16:12:56.578654Z",
+        "toFallbackReadSeconds": 10.01188
+      },
+      "limit": "Continuation/no guessed association and protected bytes+mtime only; not full CLI<=10s, strict transport cleanup or native tools readiness"
+    }
+  ],
+  "finalState": {
+    "keptOriginalFailedEvidence": true,
+    "memoryOptIn": false,
+    "businessChanged": [],
+    "nativeToolActivation": "unverified",
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "unchanged": true,
+      "bytes": 3295928320
+    },
+    "roots": [
+      {
+        "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+        "workflow": "d8eacc4ef8d0dae73063b72a025f48cca3c2ac93",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "80d51a34fbb0863582ebb9d6818d637bfc409934b9019c5fe81b4747f9e003c9",
+        "bindingPresent": true,
+        "head": "e6c217fabc64d727044eb44373cb136b5fdca7e3"
+      },
+      {
+        "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "workflow": "d8eacc4ef8d0dae73063b72a025f48cca3c2ac93",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "328eb5e314836fd9e9eee725b193fc1291c03a2bfc1fb6f8ceb644ad9246eeaa",
+        "bindingPresent": false,
+        "head": "702e175bbcda3ee66e00b4a1d4cf939ebb0639f9"
+      }
+    ]
+  },
+  "preservation": {
+    "files": [
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5\\.agent-1c\\release-e2e.json",
+        "sha256": "c801f456323309cf009e392e3652dd3d78930ddc6e19a8eafe196745aa0f769b",
+        "bytes": 32342
+      },
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight\\.agent-1c\\dev-branches\\workflow-release-e2e-preflight.json",
+        "sha256": "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456",
+        "bytes": 21228
+      },
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+        "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+        "bytes": 8643
+      },
+      {
+        "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\project.json",
+        "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format.diff",
+        "sha256": "0e9f8753905740798c313a587628e5375e912603b1684eefd4f77e7121c4dc38",
+        "bytes": 5277
+      },
+      {
+        "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+        "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+        "bytes": 3295928320
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl",
+        "sha256": "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782",
+        "bytes": 844555
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml",
+        "sha256": "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa",
+        "bytes": 525269
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml",
+        "sha256": "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d",
+        "bytes": 13917
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+        "sha256": "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+        "bytes": 2739
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result",
+        "sha256": "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+        "bytes": 6
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log",
+        "sha256": "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+        "bytes": 141700
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log",
+        "sha256": "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+        "bytes": 93
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\dependency-lock.json",
+        "sha256": "8ec8af0a98f4a91b11f97942841feb0f1afa223732621a18ee55c0e69c546a4c",
+        "bytes": 16521
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\dependency-lock.json",
+        "sha256": "6e3c249ea46e1451489e39e0489c890c6d69fc772c0d623603fdb8ccd95cd796",
+        "bytes": 16521
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\project.json",
+        "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\dependency-lock.json",
+        "sha256": "b4b97e15b003ced4a2d176705e859de6ee0dbff615b8d397cedf4702f61cf541",
+        "bytes": 16521
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\dependency-lock.json",
+        "sha256": "5c06d4e1ba1c6dbb542746e62d1a9a040eaaef0ff40b1dedde8da981eb526beb",
+        "bytes": 16521
+      }
+    ],
+    "missingOriginalRawSeed": false,
+    "allPreserved": true,
+    "observedUtc": "2026-10-22T16:15:01.5587745Z",
+    "gate6Artifacts": 7,
+    "roots": [
+      {
+        "changed": [],
+        "root": "D:\\Git\\itl-workflow-e2e-pm5",
+        "head": "4e540b3cada85eb6d711c383d22ee368c306e045",
+        "untracked": []
+      },
+      {
+        "changed": [],
+        "root": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight",
+        "head": "cc49bc30bda0223877eda0287bf810cf8329c60c",
+        "untracked": []
+      },
+      {
+        "changed": [
+          ".agent-1c/project.json"
+        ],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+        "head": "308ac59380112deb797e3eaeafbfa115bd605f4a",
+        "untracked": []
+      },
+      {
+        "changed": [],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch",
+        "head": "1db160699bc69643e5d7f926139846b009f2f754",
+        "untracked": []
+      }
+    ]
+  },
+  "capsule": {
+    "artifactHashes": [
+      {
+        "path": "branch.env",
+        "sha256": "b1d10c2976413c7141aef4e75ddfb9f5c9d40496aca57893aa57af887bf8d703"
+      },
+      {
+        "path": "infobase.dt",
+        "sha256": "faefe7b1ce594dae2d18fe3f7b7f0697ace80eaba4e4ff9e432ad672cb97179c"
+      },
+      {
+        "path": "master.env",
+        "sha256": "aa9e8198b55cfb1a11c10773c570e1d238a0714f2dfda5dec8d37703dcf3d976"
+      },
+      {
+        "path": "release-e2e.json",
+        "sha256": "7ec92eaa9244c8556c2be46d32e4c65d3da28ad8f8dc7f4c6d5ff7d07402d788"
+      },
+      {
+        "path": "source.bundle",
+        "sha256": "997cb11daa09dddb29f0e6549624976ec0cba9c518af733b55bd35e41132d6d7"
+      },
+      {
+        "path": "state.json",
+        "sha256": "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456"
+      },
+      {
+        "path": "context/branch/.agent-1c/event-log-baselines/workflow-release-e2e-preflight.json",
+        "sha256": "e4d05b00b678997db7628c03b63a3adb909b7097ddc97d70542c94c8dee73eda"
+      },
+      {
+        "path": "context/branch/.agent-1c/event-log-cursors/workflow-release-e2e-preflight.pending.json",
+        "sha256": "a2c3ac883aaeb9ca64cb8e59a2037c467fe1aacb699aabe93a958a42d8227c5d"
+      },
+      {
+        "path": "context/branch/.agent-1c/runs/auto-update/5260e8441e3e48a783bb5466740139f7.result.json",
+        "sha256": "56e6e2efc950169946c7315e73817c532ad1d84e3dc4f6bec5658afef67ad090"
+      },
+      {
+        "path": "context/master/.agent-1c/branch-seed/d36790cc833a54009c15b29614df6fce67f9ab2ad0e89758b54c739541b40692/event-log-baseline.json",
+        "sha256": "85c9dbd8d4ee398fa71b151abc7988b544dbd3c9605de018e9e252c5093ba614"
+      },
+      {
+        "path": "context/master/.agent-1c/event-log-signature-cache/6313c6efc6c4ba7874c0d0e4c78c3aba397f7695b8e99fe4bb266f679a925b19.json",
+        "sha256": "115820bab388c127818eaf131dd73ad033202797c85ed57b5430fff6851e36e7"
+      }
+    ],
+    "approvedExplicitSnapshotAdmission": true,
+    "artifactsVerified": 11,
+    "originalRawSeedCurrentness": "unavailable",
+    "capsuleUnchanged": true,
+    "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "liveSeedAdmissionBypassed": false,
+    "observedUtc": "2026-10-22T16:14:52.5865823Z",
+    "manifestPath": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json"
+  },
+  "closedBlockers": [
+    "G3-CATALOG-OWNED-MCP-REENABLE",
+    "G3-DEFER-MCP-WRITER-PREFERENCE-LOSS"
+  ],
+  "acceptanceLimit": "Closed in the unchanged original Kilo+Cursor PM5 root/history plus actual two-client file fault/foreign edit/pinned recovery. No native client discovery/tool activation is inferred from physical config proof.",
+  "remaining": [
+    "Full G3/AC-39 and first-pass/cold/other installed paths",
+    "Interactive conflict cancel/invalid/no-answer, corrupt cache and invalid-applied installed variants",
+    "PM4, Windows10/Server/terminal and remaining frontend/live source/fresh init/branch/refresh/downgrade journeys",
+    "Exact transport child cleanup/isolated Startup and paired token/cost acceptance",
+    "Mandatory release population AC-36..38/5.7; memory4.2/G4/AC-43/G5/44"
+  ],
+  "cost": {
+    "newRuntimeIO": 0,
+    "newAlwaysOnInstructionOrToolSchemaBytes": 0,
+    "newOwnerOrPersistentState": false,
+    "nativeCodeGraphToolCalls": 0,
+    "cogneeCalls": 0,
+    "clientLlmCanaryTurns": 0,
+    "timingLimit": "Warm whole CLI and source test timings are not paired isolated Startup or memory/LLM billing delta"
+  },
+  "unchangedBoundaries": [
+    "Gate6",
+    "G4 implementation/opt-in",
+    "working project migration",
+    "workflow publication",
+    "shared registry publication",
+    "Code/Graph server patches",
+    "controlled ai_rules_1c fork"
+  ],
+  "fullG3Accepted": false,
+  "sourceDelivery": "Final local commit/Targeted registration are inspected through source-delivery Status; not publication",
+  "nativeSteps": [
+    {
+      "durationMs": 6092,
+      "stderrBytes": 0,
+      "stdoutBytes": 550,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "defer"
+      ],
+      "name": "defer-decision",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 5476,
+      "stderrBytes": 0,
+      "stdoutBytes": 550,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "defer"
+      ],
+      "name": "defer-next-decision",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4936,
+      "stderrBytes": 264,
+      "stdoutBytes": 433,
+      "arguments": [
+        "-CatalogAction",
+        "sync"
+      ],
+      "name": "defer-next-no-answer",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 5212,
+      "stderrBytes": 0,
+      "stdoutBytes": 1039,
+      "arguments": [],
+      "name": "defer-next-ordinary-repeat",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 5956,
+      "stderrBytes": 0,
+      "stdoutBytes": 557,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "defer-next-registry-reconcile",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 5615,
+      "stderrBytes": 0,
+      "stdoutBytes": 1039,
+      "arguments": [],
+      "name": "defer-next-second-ordinary",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 4917,
+      "stderrBytes": 264,
+      "stdoutBytes": 433,
+      "arguments": [
+        "-CatalogAction",
+        "sync"
+      ],
+      "name": "defer-no-answer",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 5458,
+      "stderrBytes": 0,
+      "stdoutBytes": 1039,
+      "arguments": [],
+      "name": "defer-ordinary-repeat",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 6039,
+      "stderrBytes": 0,
+      "stdoutBytes": 557,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "defer-registry-reconcile",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 2766,
+      "stderrBytes": 378,
+      "stdoutBytes": 0,
+      "arguments": [
+        "-CatalogAction",
+        "restore"
+      ],
+      "name": "foreign-owned-restore-blocked",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 2662,
+      "stderrBytes": 378,
+      "stdoutBytes": 0,
+      "arguments": [
+        "-CatalogAction",
+        "resume"
+      ],
+      "name": "foreign-owned-resume-blocked",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 5042,
+      "stderrBytes": 0,
+      "stdoutBytes": 369,
+      "arguments": [
+        "-CatalogAction",
+        "restore-compatible"
+      ],
+      "name": "initial-compatible-restore",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 5533,
+      "stderrBytes": 0,
+      "stdoutBytes": 911,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "keep-local"
+      ],
+      "name": "keep-local-decision",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4399,
+      "stderrBytes": 264,
+      "stdoutBytes": 433,
+      "arguments": [
+        "-CatalogAction",
+        "sync"
+      ],
+      "name": "keep-local-no-answer",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4747,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "keep-local-ordinary-repeat",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 5629,
+      "stderrBytes": 0,
+      "stdoutBytes": 557,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "keep-local-registry-reconcile",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 24900,
+      "stderrBytes": 0,
+      "stdoutBytes": 593,
+      "arguments": [],
+      "name": "offline-applied-cache",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 24983,
+      "stderrBytes": 255,
+      "stdoutBytes": 32,
+      "arguments": [
+        "-CatalogAction",
+        "select",
+        "-CatalogProjectId",
+        "pm5-core-development"
+      ],
+      "name": "offline-no-cache",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4203,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [
+        "-Client",
+        "kilocode"
+      ],
+      "name": "original-explicit-kilo-writer",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 5083,
+      "stderrBytes": 0,
+      "stdoutBytes": 433,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "original-explicit-registry-sync",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 9620,
+      "stderrBytes": 0,
+      "stdoutBytes": 663,
+      "arguments": [
+        "-CatalogAction",
+        "select",
+        "-CatalogProjectId",
+        "pm5-core-development"
+      ],
+      "name": "original-two-client-select",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 2714,
+      "stderrBytes": 297,
+      "stdoutBytes": 0,
+      "arguments": [
+        "-Client",
+        "kilocode"
+      ],
+      "name": "partial-main-blocked",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "sync-client-mcp"
+    },
+    {
+      "durationMs": 2971,
+      "stderrBytes": 0,
+      "stdoutBytes": 415,
+      "arguments": [
+        "-CatalogAction",
+        "status"
+      ],
+      "name": "partial-status",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 5366,
+      "stderrBytes": 0,
+      "stdoutBytes": 489,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "post-partial-registry-sync",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 6152,
+      "stderrBytes": 0,
+      "stdoutBytes": 557,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "registry-decision",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4666,
+      "stderrBytes": 264,
+      "stdoutBytes": 433,
+      "arguments": [
+        "-CatalogAction",
+        "sync"
+      ],
+      "name": "registry-no-answer",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 3809,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "registry-ordinary-repeat",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 5761,
+      "stderrBytes": 0,
+      "stdoutBytes": 557,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "registry-registry-reconcile",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 3640,
+      "stderrBytes": 0,
+      "stdoutBytes": 318,
+      "arguments": [
+        "-CatalogAction",
+        "restore"
+      ],
+      "name": "two-client-owned-restore-with-foreign",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4103,
+      "stderrBytes": 0,
+      "stdoutBytes": 324,
+      "arguments": [
+        "-CatalogAction",
+        "resume"
+      ],
+      "name": "two-client-pinned-resume",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 8221,
+      "stderrBytes": 328,
+      "stdoutBytes": 433,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "two-client-real-partial",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4065,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "warm-01",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 4026,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "warm-02",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 4283,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "warm-03",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 4055,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "warm-04",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 4059,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "warm-05",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 4266,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "warm-06",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 3774,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "warm-07",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 3948,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "warm-08",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 3774,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "warm-09",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 3934,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "warm-10",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    }
+  ],
+  "rawEvidence": [
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-conflicts-roots.json",
+      "sha256": "a44eb65cfde8bdce2faad0e507da5b637a2f6b15a717b6f4a692e9a4c7550f26",
+      "bytes": 1297
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-defer-next-roots.json",
+      "sha256": "a44eb65cfde8bdce2faad0e507da5b637a2f6b15a717b6f4a692e9a4c7550f26",
+      "bytes": 1297
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-offline-roots.json",
+      "sha256": "a44eb65cfde8bdce2faad0e507da5b637a2f6b15a717b6f4a692e9a4c7550f26",
+      "bytes": 1297
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-continuation/.agent-1c_mcp_client-managed.json",
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82",
+      "bytes": 3887
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-continuation/.agent-1c_mcp_product-context-applied.json",
+      "sha256": "94ce2fa8cf6b505b098035abb82b9a21b6be38a1a7557c80d4265f38d8a739d2",
+      "bytes": 34523
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-continuation/.agent-1c_mcp_product-context-operation.json",
+      "sha256": "5a2462e4164d66a4e04f7e02e0dd81c6fa61b67f06cb54a23414efb5c5f66bc1",
+      "bytes": 49953
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-continuation/.agent-1c_mcp_vibecoding1c-selection.json",
+      "sha256": "816e8ff17d22e08d66a9d59b2855d5175d29d7b048ccf107957cff192da20b3c",
+      "bytes": 1755
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-continuation/.agent-1c_project.json",
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "bytes": 3141
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-continuation/.cursor_mcp.json",
+      "sha256": "9c78b49b8621cab57000240c8756444bb1ed9f34b68d83c0d1075b75d807726f",
+      "bytes": 5551
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-continuation/.kilo_kilo.json",
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94",
+      "bytes": 7256
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-select/.agent-1c_mcp_client-managed.json",
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82",
+      "bytes": 3887
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-select/.agent-1c_mcp_product-context-applied.json",
+      "sha256": "94ce2fa8cf6b505b098035abb82b9a21b6be38a1a7557c80d4265f38d8a739d2",
+      "bytes": 34523
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-select/.agent-1c_mcp_product-context-operation.json",
+      "sha256": "5a2462e4164d66a4e04f7e02e0dd81c6fa61b67f06cb54a23414efb5c5f66bc1",
+      "bytes": 49953
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-select/.agent-1c_mcp_vibecoding1c-selection.json",
+      "sha256": "816e8ff17d22e08d66a9d59b2855d5175d29d7b048ccf107957cff192da20b3c",
+      "bytes": 1755
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-select/.agent-1c_project.json",
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "bytes": 3141
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-select/.cursor_mcp.json",
+      "sha256": "9c78b49b8621cab57000240c8756444bb1ed9f34b68d83c0d1075b75d807726f",
+      "bytes": 5551
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-original-select/.kilo_kilo.json",
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94",
+      "bytes": 7256
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/after-update-roots.json",
+      "sha256": "a44eb65cfde8bdce2faad0e507da5b637a2f6b15a717b6f4a692e9a4c7550f26",
+      "bytes": 1297
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/applied-cache-after.json",
+      "sha256": "c320e10df1439569985b328b9a4892e9d320c4452266c60be743c08033a65440",
+      "bytes": 1758
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/applied-cache-before.json",
+      "sha256": "c320e10df1439569985b328b9a4892e9d320c4452266c60be743c08033a65440",
+      "bytes": 1758
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/applied-cache-git-trace.jsonl",
+      "sha256": "adebddaf7eb327781664241eccbc21dc72fa9d8520f5cd6c0fc1408e388d1c4e",
+      "bytes": 49012
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/before-roots.json",
+      "sha256": "bfbc9202cf4e2d91684d06004a860bc81f6fc87419e62633b0424b66ed96cd28",
+      "bytes": 1343
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/before-update/.agent-1c_dependency-lock.json",
+      "sha256": "da9888c5b076af6590e39d282440c82cdb8cab19de0a6af4bce1dad4dcf7a298",
+      "bytes": 16521
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/before-update/.agent-1c_mcp_client-managed.json",
+      "sha256": "b5e364fdb8d3ab4dac019849f6e0c527052880829bbcb761bb58b3bbec86519c",
+      "bytes": 3515
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/before-update/.agent-1c_mcp_product-context-applied.json",
+      "sha256": "dc6d998d34c1f84493701c43de8cfdce688e3653a221fb4dfc611a36504e880d",
+      "bytes": 33415
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/before-update/.agent-1c_mcp_product-context-operation.json",
+      "sha256": "136d2e3cc9f3ba938933dd6af7806e6e4f95d7ac588e9f4c37480c376dc0e18c",
+      "bytes": 72453
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/before-update/.agent-1c_mcp_vibecoding1c-selection.json",
+      "sha256": "88f7b380e49b9414acd6155dd060d724e06c9a94186f4b39b32d46dfddf94c55",
+      "bytes": 1911
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/before-update/.agent-1c_project.json",
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "bytes": 3141
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/before-update/.cursor_mcp.json",
+      "sha256": "b0b678f727f74cdda5f03e95bdf19c87ed18f5be6b045de47f7e4ae2a00fe846",
+      "bytes": 5099
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/before-update/.kilo_kilo.json",
+      "sha256": "f48b2b6a5fd947415eeda2c484c17073c1cba6ceaf367d6a9ea11a52383256f3",
+      "bytes": 5064
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/capsule-final-validation.json",
+      "sha256": "8f3364b527cca61c07ad7eac2d08d3cfc873f3218b735eefe44a160dbdba4abe",
+      "bytes": 3486
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/common.ps1",
+      "sha256": "80e43510c21971717321ba45c6792bbb5037b698a106aa4a4ec19f496bdf9a8f",
+      "bytes": 1861
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/conflict-matrix.json",
+      "sha256": "27888237d45921438af865805f7d8f049ab5aaf5e63a6cfd49e5f3459bb2c0e6",
+      "bytes": 1548
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/conflict-native-steps.json",
+      "sha256": "5193f0b33d38fffdc2567715a997b4f84b675fa03028149def3ec9e3e28b92bb",
+      "bytes": 5987
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/conflicts.ps1",
+      "sha256": "a652006e6c90e93eb47a619a198afbcea18ce484de2ecbe1cf55062ea374f09a",
+      "bytes": 4952
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-after-no-answer.json",
+      "sha256": "52992672739a2d997d7532c6a4806f1b0e566792cf20662f6392e24a38e9d18d",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-after-repeat.json",
+      "sha256": "70f8dddb372424f71081149e8e51ce90030ce70b3e7aec9f9829a5e317900224",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-before-repeat.json",
+      "sha256": "70f8dddb372424f71081149e8e51ce90030ce70b3e7aec9f9829a5e317900224",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-before.json",
+      "sha256": "52992672739a2d997d7532c6a4806f1b0e566792cf20662f6392e24a38e9d18d",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-decision-result.json",
+      "sha256": "eb98ff00ff5a75086082543cdc3d6a2ecfc37be4df9d97dd41d477e79f67be2a",
+      "bytes": 484
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-decision.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-decision.stdout.log",
+      "sha256": "aca93c166984abf5a03de7329bbc1b53375c19c74f631118d0d8a15c23741c84",
+      "bytes": 550
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-manual-cursor.json",
+      "sha256": "26b214e64e21634692a9b28aed5904fdeed3d85c7b7e8fe6830346306ddc215c",
+      "bytes": 5542
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-after-no-answer.json",
+      "sha256": "d5c35f0ba69c7b3ad34243e53f9156d5778efe813746a8b7c363b493275ed16a",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-after-repeat.json",
+      "sha256": "3786e38eb516f63b84aff40eb8ad6fbfb73506922e8fe9206383a96f171c1fb1",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-after-second.json",
+      "sha256": "3786e38eb516f63b84aff40eb8ad6fbfb73506922e8fe9206383a96f171c1fb1",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-before-repeat.json",
+      "sha256": "3786e38eb516f63b84aff40eb8ad6fbfb73506922e8fe9206383a96f171c1fb1",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-before.json",
+      "sha256": "d5c35f0ba69c7b3ad34243e53f9156d5778efe813746a8b7c363b493275ed16a",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-command.ps1",
+      "sha256": "2a28fb352c898e70babd3b3ac62a443a29a999764dab9cdb6d7f9f56fdf01d11",
+      "bytes": 5365
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-decision-result.json",
+      "sha256": "c07a6c54e19a810cf434f97d8e93a1ca28f8660c6d8c060878c73abfcca1b292",
+      "bytes": 489
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-decision.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-decision.stdout.log",
+      "sha256": "aca93c166984abf5a03de7329bbc1b53375c19c74f631118d0d8a15c23741c84",
+      "bytes": 550
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-manual-cursor.json",
+      "sha256": "69b45e1e97aa0f0ce7e7eda95bb4bfb0f9ad2e74ef345693a4d91d9a1d63c5ad",
+      "bytes": 5828
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-matrix.json",
+      "sha256": "539e6b24954903cf7b3d6f6dba36277dad3b6851e14d60886c85e2a8ce11646b",
+      "bytes": 502
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-native-steps.json",
+      "sha256": "8325d7453e543579b31fa351487155e0fe94ae444575722f893fec68335d3fc7",
+      "bytes": 2418
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-no-answer-result.json",
+      "sha256": "a7030884d0f8f43c7aca09b8d0f0121ccb6bea6c87972c31fe52b4ebd192ed17",
+      "bytes": 417
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-no-answer.stderr.log",
+      "sha256": "370555e46e9b3bf0aec478987aa3f3df7a1ff1e205b2123c5aaf7796fe24ca10",
+      "bytes": 264
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-no-answer.stdout.log",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-ordinary-repeat-result.json",
+      "sha256": "84ca7e9fe93e93d60621dd1725279d7b014b6367e40823c733522daafa09fade",
+      "bytes": 366
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-ordinary-repeat.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-ordinary-repeat.stdout.log",
+      "sha256": "840e8ee865de26d658c014f5185129d0bb048e2ddfd5d3a89c3ebbaa220b6957",
+      "bytes": 1039
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-registry-reconcile-result.json",
+      "sha256": "a040a7b226c8e1a80b3a1b2e9a122d7ca0e9e229dfee87ca547be1d43ccad823",
+      "bytes": 502
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-registry-reconcile.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-registry-reconcile.stdout.log",
+      "sha256": "2495a8c7cd7c8052f304476f23d864e8a96d8e8e11beb5b132aa4e58517e3832",
+      "bytes": 557
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-second-ordinary-result.json",
+      "sha256": "2e7478f20d183bebecd5419cc8a7ae17b186e2e19c46539cc3c7c68dff2e1c60",
+      "bytes": 366
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-second-ordinary.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-second-ordinary.stdout.log",
+      "sha256": "840e8ee865de26d658c014f5185129d0bb048e2ddfd5d3a89c3ebbaa220b6957",
+      "bytes": 1039
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-next-selection.json",
+      "sha256": "48e860e17b4d6ef162a7ba29a8c083f20f91f24cff91f31110f19f9d091c75f4",
+      "bytes": 2458
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-no-answer-result.json",
+      "sha256": "b67cd4c3a0fcdee8819ad59c042d024137374318b2aca0c793fac7c5959b5e14",
+      "bytes": 412
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-no-answer.stderr.log",
+      "sha256": "370555e46e9b3bf0aec478987aa3f3df7a1ff1e205b2123c5aaf7796fe24ca10",
+      "bytes": 264
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-no-answer.stdout.log",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-ordinary-repeat-result.json",
+      "sha256": "9c88f82d238f7f3f2415c03c633771444f253e9feb0dd464a2747dc0b7db9c87",
+      "bytes": 361
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-ordinary-repeat.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-ordinary-repeat.stdout.log",
+      "sha256": "840e8ee865de26d658c014f5185129d0bb048e2ddfd5d3a89c3ebbaa220b6957",
+      "bytes": 1039
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-registry-reconcile-result.json",
+      "sha256": "112c6ff3401793819ce0b04fc299d5e0dff6db17a52e4242ae1c2705143f903b",
+      "bytes": 497
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-registry-reconcile.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-registry-reconcile.stdout.log",
+      "sha256": "2495a8c7cd7c8052f304476f23d864e8a96d8e8e11beb5b132aa4e58517e3832",
+      "bytes": 557
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/defer-selection.json",
+      "sha256": "5c4508ac8706c39974e0906bfe5c49e2506ccaf2f38c241af02d0985dc7255c8",
+      "bytes": 2458
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/driver-functions.ps1",
+      "sha256": "892052a28cf0a20f9ada401788207a0b299e519486d30658fb88e948d21b6514",
+      "bytes": 2658
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/final-observation/.agent-1c_dependency-lock.json",
+      "sha256": "80d51a34fbb0863582ebb9d6818d637bfc409934b9019c5fe81b4747f9e003c9",
+      "bytes": 16521
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/final-observation/.agent-1c_mcp_client-managed.json",
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82",
+      "bytes": 3887
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/final-observation/.agent-1c_mcp_product-context-applied.json",
+      "sha256": "736cf96af07dab7e5525d75835d2846c430692e6a14ef0c9867ea1fc04ceebd4",
+      "bytes": 34691
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/final-observation/.agent-1c_mcp_product-context-operation.json",
+      "sha256": "94471476d0c2ab379462375597e7b897c3bc4c1d63f5960096517e1f132a603d",
+      "bytes": 100117
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/final-observation/.agent-1c_mcp_vibecoding1c-selection.json",
+      "sha256": "92a9c7662f7a67535068aa1224c5bc399dec5e3a76a2d8eeca59ce61143a1a56",
+      "bytes": 1911
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/final-observation/.agent-1c_project.json",
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "bytes": 3141
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/final-observation/.cursor_mcp.json",
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9",
+      "bytes": 5837
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/final-observation/.kilo_kilo.json",
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94",
+      "bytes": 7256
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/final-state.json",
+      "sha256": "83548744251d0be3f9c96594f375a3e9ea8753d84543d1e41961fc983de26ec9",
+      "bytes": 2307
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/final.ps1",
+      "sha256": "ae9c3052f355e1f6b33b527a14152940444d7649f68163b5d56967fd427d85d1",
+      "bytes": 1602
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/fixture-checkpoint.json",
+      "sha256": "ac454d2fba7712a320b27788385179ae4e766c7a664f673111afabf1c1e812a5",
+      "bytes": 383
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/foreign-owned-restore-blocked-result.json",
+      "sha256": "26e864e21cabf782734d0f2421922c7971c6173d3005c05758b5783d4a02faec",
+      "bytes": 427
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/foreign-owned-restore-blocked.stderr.log",
+      "sha256": "29bc33c260ca1e5dd097f76e7f04bec7de99ec225163b15a61aac71492c02e51",
+      "bytes": 378
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/foreign-owned-restore-blocked.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/foreign-owned-resume-blocked-result.json",
+      "sha256": "1077710e661e61ceae3d0234c45ce789dbd966a4779d5f30f86ff4d48cf76ab0",
+      "bytes": 425
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/foreign-owned-resume-blocked.stderr.log",
+      "sha256": "29bc33c260ca1e5dd097f76e7f04bec7de99ec225163b15a61aac71492c02e51",
+      "bytes": 378
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/foreign-owned-resume-blocked.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/green-all-final.json",
+      "sha256": "061c1723c89fb2fe03a64d99941be9c92e249a1fe4f32c0de3b0f0b4a97be421",
+      "bytes": 341
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/green-all-final.xml",
+      "sha256": "f54e477969a21b8fc67cd536c1e6881f7abb625da3850866ccf3ecb930f522c3",
+      "bytes": 42300
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/green-final.json",
+      "sha256": "ad2784afe5ccb43736f92aba6a2bbfc2575a4632190db86f3e4b73aa76af482a",
+      "bytes": 338
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/green-final.xml",
+      "sha256": "f27a1be6f688082a91dd15b5b0412f0fe90935db9ca809667cc8761ee3971622",
+      "bytes": 10646
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/green-owners.json",
+      "sha256": "989a9f0d74005bb3bbe59b8ef2bf1af56e5d87ec21cc45ab2773ad8199f7d6b5",
+      "bytes": 337
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/green-owners.xml",
+      "sha256": "feb4d0c2c91d863029fb92e518ec0d2975971bf30babbfa3309a800a16f6536e",
+      "bytes": 43505
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/green-repro.json",
+      "sha256": "cb02d88081f848618b4ebfe8de368da562452551ace818b816e3669e015a332c",
+      "bytes": 338
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/green-repro.xml",
+      "sha256": "264475888b6f835c237789efef32d23914032bd776856efe6e6211b5f1b13248",
+      "bytes": 11109
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/implementation-source.json",
+      "sha256": "59c4d4af8ed7d452f4b7c39c17b16d43645bfa89973b5e8d956428d709a93235",
+      "bytes": 599
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/initial-compatible-restore-result.json",
+      "sha256": "e08c269d258b7adb502e1a6386659c6a5084dc6a0811fe49fc3ddfda9f87997a",
+      "bytes": 435
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/initial-compatible-restore.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/initial-compatible-restore.stdout.log",
+      "sha256": "7cea1211d38b6863a71ff63e248370c562dfd9a7abdc50fa2017e0da86353b2d",
+      "bytes": 369
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-after-no-answer.json",
+      "sha256": "a4a7dcf21e615e77ca1d9dfcdeadc32af5f9aa487d504207469f5af0300b87f3",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-after-repeat.json",
+      "sha256": "cb431b92c5837ee9e8272c16798cb686eaab223e38477420a0903827e7c06932",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-before-repeat.json",
+      "sha256": "cb431b92c5837ee9e8272c16798cb686eaab223e38477420a0903827e7c06932",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-before.json",
+      "sha256": "a4a7dcf21e615e77ca1d9dfcdeadc32af5f9aa487d504207469f5af0300b87f3",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-decision-result.json",
+      "sha256": "e81c06e9334795c34ad643ec243a39d06af2d73f955908b0f2c4f5e7189c0365",
+      "bytes": 494
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-decision.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-decision.stdout.log",
+      "sha256": "7ad6210372f011627e7c3c0cb952c6cdeffafdace1b3cf2aac1b2f6510a2d182",
+      "bytes": 911
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-manual-cursor.json",
+      "sha256": "edf919821938d3a0ed2c0af25abb6ddbca718658cff54a4369cdd4367fdac355",
+      "bytes": 5547
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-no-answer-result.json",
+      "sha256": "62ca2ede33284c9ac7279d565aae3499ce34b8416d18676837a6fc473f47c429",
+      "bytes": 417
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-no-answer.stderr.log",
+      "sha256": "370555e46e9b3bf0aec478987aa3f3df7a1ff1e205b2123c5aaf7796fe24ca10",
+      "bytes": 264
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-no-answer.stdout.log",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-ordinary-repeat-result.json",
+      "sha256": "49b33712f77ec86dfbc91bff812b5392252de0707e3568654e626f34f63c464c",
+      "bytes": 365
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-ordinary-repeat.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-ordinary-repeat.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-registry-reconcile-result.json",
+      "sha256": "b23f5a4decf246f2f71f1d05c11e648c1707f725ad8ffca56d7ca15634bf6ad0",
+      "bytes": 502
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-registry-reconcile.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-registry-reconcile.stdout.log",
+      "sha256": "2495a8c7cd7c8052f304476f23d864e8a96d8e8e11beb5b132aa4e58517e3832",
+      "bytes": 557
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/keep-local-selection.json",
+      "sha256": "11dde2539f0e3de4951ab55e21e256113af8ffe0b702b4abdf45270125d6807e",
+      "bytes": 2011
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/multi-client-partial-result.json",
+      "sha256": "e22efc8b0dab151a64b4547226494ade7dbb8b1de00115b9e8dcbadfdc29613f",
+      "bytes": 6093
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/multiclient-partial.ps1",
+      "sha256": "23f9b5054490fd61b869517ec87b99064a9c6d82f83bf5d3bae930b88eb973c0",
+      "bytes": 6725
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/native-update.json",
+      "sha256": "cad3ba3a7252ff62063776fef7578d676697f8fc2590df552198f34e4713be80",
+      "bytes": 522
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/no-cache-after.json",
+      "sha256": "b0c3dff79461b7cad18485bc9f0099d9d86e84791e18790b9123bf6649b8d024",
+      "bytes": 1458
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/no-cache-before.json",
+      "sha256": "b0c3dff79461b7cad18485bc9f0099d9d86e84791e18790b9123bf6649b8d024",
+      "bytes": 1458
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/no-cache-git-trace.jsonl",
+      "sha256": "55790f6beff0701e328226a45ffb7fd4b97f0f97a77dfd1e6fcf39cc1b7631d8",
+      "bytes": 17310
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/offline-applied-cache-result.json",
+      "sha256": "35f91af1bf61d090eea9c92048282b5d557448ff1e168eb2fbc9055a2ee72053",
+      "bytes": 361
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/offline-applied-cache.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/offline-applied-cache.stdout.log",
+      "sha256": "fde4c2a326252d8a754ad08af8580d65488a10f730812fa3ee1daa583a5acf67",
+      "bytes": 593
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/offline-matrix.json",
+      "sha256": "f3f2d5e1f30efa19196d30a88772dc2119d6daedba957df7d05af1c579cbd257",
+      "bytes": 1222
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/offline-native-steps.json",
+      "sha256": "d0191e2b8657c6a39f9ddaa08dff63d0490a840fea81e533ec7fac5813cb8b1b",
+      "bytes": 979
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/offline-no-cache-result.json",
+      "sha256": "62d90fef9bcff0d9fb5acae12f92a5df8337e6695cc0b36c7115849f3aef8c64",
+      "bytes": 505
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/offline-no-cache.stderr.log",
+      "sha256": "6affab844b4886d47f71a2b23eed43b1d845ff0d8ebdcba445459170325b3bdc",
+      "bytes": 255
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/offline-no-cache.stdout.log",
+      "sha256": "9b3fab22fc89a33cf7f4e9d08072e43f29c2999ed2af63b6e8417b2ce9d534b4",
+      "bytes": 32
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/offline.ps1",
+      "sha256": "8634fa99a571388111eceae53cddbf812e6506a2fb61bbaae80a6b89b80bdc35",
+      "bytes": 4596
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-explicit-kilo-writer-result.json",
+      "sha256": "143b90683b57df05801632c76fa30c9195f11febd4bdd82d378d245c9f3a1db8",
+      "bytes": 434
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-explicit-kilo-writer.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-explicit-kilo-writer.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-explicit-registry-sync-result.json",
+      "sha256": "e260cae84998b504b032675470cc45ad9ba0067a7265c0e46de61df949f15049",
+      "bytes": 504
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-explicit-registry-sync.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-explicit-registry-sync.stdout.log",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-origin.json",
+      "sha256": "5eab25c8cc666873df0e0a7a723bf0fe3fdddd5339e6e5292d5cc913b2490dc8",
+      "bytes": 245
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-two-client-select-result.json",
+      "sha256": "808668ab84cc89a026e8793aeaa0336683a37721f13b9397b36e0d7ae8aea27b",
+      "bytes": 514
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-two-client-select.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-two-client-select.stdout.log",
+      "sha256": "055579c8dabb3168081406633a87251ab265d0db8d30d9586cbd916fdfcff046",
+      "bytes": 663
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/original-unbound-reproducer.json",
+      "sha256": "8c2a6be3f2f325eaa1f8253e2a80f2fc8551fb4d296e7aff949dfe5858f6309b",
+      "bytes": 17334
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-before-foreign-edit/.agent-1c_mcp_client-managed.json",
+      "sha256": "e7f76b8276cce433c4bc14df7a277b08f5b9280f711b12587fa1a1ef4148790a",
+      "bytes": 3887
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-before-foreign-edit/.agent-1c_mcp_product-context-applied.json",
+      "sha256": "8c7f7e2d12c58c9ff2cc50393140c164e47ef9a571cc979191691c3b7ae32b12",
+      "bytes": 34677
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-before-foreign-edit/.agent-1c_mcp_product-context-operation.json",
+      "sha256": "d2326ca268da7d584f9d22f27f612cc5a7c23f4e0f86990dd70ed6b36afed5b1",
+      "bytes": 121201
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-before-foreign-edit/.agent-1c_mcp_vibecoding1c-selection.json",
+      "sha256": "54650fe43f4b17abd3439123447f83bbac6e81214d98a0dbf6692d42fb953559",
+      "bytes": 1911
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-before-foreign-edit/.agent-1c_project.json",
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "bytes": 3141
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-before-foreign-edit/.cursor_mcp.json",
+      "sha256": "9c78b49b8621cab57000240c8756444bb1ed9f34b68d83c0d1075b75d807726f",
+      "bytes": 5551
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-before-foreign-edit/.kilo_kilo.json",
+      "sha256": "478d86bae3b39c75a523a18f48375a79759123c5973282c409be9592a6a5161c",
+      "bytes": 7240
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-main-blocked-result.json",
+      "sha256": "8cae3f5469e7e6d2eacca1d48f2e0b417e8d47f7256f56c5b8e308c106a659a7",
+      "bytes": 404
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-main-blocked.stderr.log",
+      "sha256": "bfe420260fdc942537cbf594350462e402cc248c9f37a5cc8a5eeeb7515c6cb1",
+      "bytes": 297
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-main-blocked.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-native-steps.json",
+      "sha256": "8ed654300d403543dbb61d7dee0facd85cc76558a6a1377d2a2c3933a957c0ed",
+      "bytes": 3979
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-restored-with-foreign/.agent-1c_mcp_client-managed.json",
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82",
+      "bytes": 3887
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-restored-with-foreign/.agent-1c_mcp_product-context-applied.json",
+      "sha256": "25bab932ff5d20d7633ce12bb6118fdee7054b4acb2ce645afdcf3a2f7023699",
+      "bytes": 34677
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-restored-with-foreign/.agent-1c_mcp_product-context-operation.json",
+      "sha256": "1e33864dfbcbb72dc71dcb5ee8244968b2ad415cf166f1a8014b825ebe1ac2b9",
+      "bytes": 101671
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-restored-with-foreign/.agent-1c_mcp_vibecoding1c-selection.json",
+      "sha256": "54650fe43f4b17abd3439123447f83bbac6e81214d98a0dbf6692d42fb953559",
+      "bytes": 1911
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-restored-with-foreign/.agent-1c_project.json",
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "bytes": 3141
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-restored-with-foreign/.cursor_mcp.json",
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab",
+      "bytes": 5837
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-restored-with-foreign/.kilo_kilo.json",
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19",
+      "bytes": 7256
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-resumed/.agent-1c_mcp_client-managed.json",
+      "sha256": "349a2a149ed3d74370bac0aac37f6d518968da7cac83b342d9e02ed4d84e90d8",
+      "bytes": 3887
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-resumed/.agent-1c_mcp_product-context-applied.json",
+      "sha256": "b9c605a5530bf7d8cff5a4be45620c57aecbb734f17980c24183a9318f5cd855",
+      "bytes": 34637
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-resumed/.agent-1c_mcp_product-context-operation.json",
+      "sha256": "b970c12678a4ebc3d2fc9d3f560c5cd4a9cb17453cbd23002114d993f55ca833",
+      "bytes": 100383
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-resumed/.agent-1c_mcp_vibecoding1c-selection.json",
+      "sha256": "e5a20b0f03a08670813e141677cc3379dd351f344b1579360e27ce28c5555b5a",
+      "bytes": 1911
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-resumed/.agent-1c_project.json",
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "bytes": 3141
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-resumed/.cursor_mcp.json",
+      "sha256": "963a7e8cd41a0aef712b70250eeffea2cc6a54bf4d7344235ad1b6e2147b7b41",
+      "bytes": 5543
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-resumed/.kilo_kilo.json",
+      "sha256": "478d86bae3b39c75a523a18f48375a79759123c5973282c409be9592a6a5161c",
+      "bytes": 7240
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-status-result.json",
+      "sha256": "beccb02878a8be12a93163886d2b71283a436fece046ed6ca35b583cc1d5aeda",
+      "bytes": 411
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-status.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-status.stdout.log",
+      "sha256": "271c909bcfcc45d039b0e0696b47689cedafed4a1eca9f84e865fe7b45ef52b5",
+      "bytes": 415
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-with-foreign-owned-edit/.agent-1c_mcp_client-managed.json",
+      "sha256": "e7f76b8276cce433c4bc14df7a277b08f5b9280f711b12587fa1a1ef4148790a",
+      "bytes": 3887
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-with-foreign-owned-edit/.agent-1c_mcp_product-context-applied.json",
+      "sha256": "8c7f7e2d12c58c9ff2cc50393140c164e47ef9a571cc979191691c3b7ae32b12",
+      "bytes": 34677
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-with-foreign-owned-edit/.agent-1c_mcp_product-context-operation.json",
+      "sha256": "d2326ca268da7d584f9d22f27f612cc5a7c23f4e0f86990dd70ed6b36afed5b1",
+      "bytes": 121201
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-with-foreign-owned-edit/.agent-1c_mcp_vibecoding1c-selection.json",
+      "sha256": "54650fe43f4b17abd3439123447f83bbac6e81214d98a0dbf6692d42fb953559",
+      "bytes": 1911
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-with-foreign-owned-edit/.agent-1c_project.json",
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "bytes": 3141
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-with-foreign-owned-edit/.cursor_mcp.json",
+      "sha256": "f3b40a2ff469252d30cad3cad85e7701303262c2c6e61c9369b8830e00919a71",
+      "bytes": 5552
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/partial-with-foreign-owned-edit/.kilo_kilo.json",
+      "sha256": "478d86bae3b39c75a523a18f48375a79759123c5973282c409be9592a6a5161c",
+      "bytes": 7240
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/pm5-copy-receipt.json",
+      "sha256": "2eb19aef95b08122d53fb2f1579cdd6f0553db410fd86a4000245e0899c4c69e",
+      "bytes": 2145
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/post-partial-registry-sync-result.json",
+      "sha256": "51c200c370204a8f7789a8b17424c56be723644e33539980fb38d6f555103161",
+      "bytes": 499
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/post-partial-registry-sync.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/post-partial-registry-sync.stdout.log",
+      "sha256": "2d83c0c376cb97a55e1e8432dbe2bf4f887ad73f991a435aa7e864c2611f3e7c",
+      "bytes": 489
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/prepare.ps1",
+      "sha256": "0b2cbb18c4894153ea8d56ac7b0dad73afbd1a655967d29788052dea91c63fec",
+      "bytes": 3181
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/preserve.ps1",
+      "sha256": "05e32d00fca53c7886dfd9e7a5d4b467f135528e52cc2dc0d82550c842344789",
+      "bytes": 3489
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/preserved-after.json",
+      "sha256": "0e05cfdae7c5aa18df245766e81b8755f5d2fb932607495d905ea91bb62742bd",
+      "bytes": 9482
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/preserved-before.json",
+      "sha256": "073617a04d4b9b4c2394549031d876cfd332d6f99e3fec86c6572ce3b02d619b",
+      "bytes": 9482
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/record-results.py",
+      "sha256": "f7c478b3430ccc53203b3e5b0a64e5968b65d4819e126364a46a459208c5bddc",
+      "bytes": 7511
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/red-owner.json",
+      "sha256": "7555ea0b8c8713f8672c83d0b5e231b89031bee85b697c4ef2347a68f48a2b40",
+      "bytes": 336
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/red-owner.xml",
+      "sha256": "c3af0e895c39383abd995aa34d00a45f7717850e9ddf43fbfe0382166fd937be",
+      "bytes": 18944
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/red-repro.json",
+      "sha256": "92f70ad50494be00f0f9012ab343853aeefca37f706f451efbe93153e3094d57",
+      "bytes": 336
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/red-repro.xml",
+      "sha256": "685785f6655e59030750b83e791a00cde2304050e630b551f4bc5399bb662ddc",
+      "bytes": 19121
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/red.json",
+      "sha256": "7bae25f7dff938cbedf0fffb2cad034f43395c0021426552b4f53587ff4e15ba",
+      "bytes": 330
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/red.xml",
+      "sha256": "32a370e4fac92cf46f839f42642827f651c2cfdc2e4faf1fd526e742ecadc240",
+      "bytes": 27364
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-after-no-answer.json",
+      "sha256": "ccf7b8587d1f381b4c5cbca95a839269a84dbcda055ed08a0ff563abc8084196",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-after-repeat.json",
+      "sha256": "9df33e99e464e528eec8b6b19d913a1af1cc25747c3705b17bfc05c815ba774c",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-before-repeat.json",
+      "sha256": "9df33e99e464e528eec8b6b19d913a1af1cc25747c3705b17bfc05c815ba774c",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-before.json",
+      "sha256": "ccf7b8587d1f381b4c5cbca95a839269a84dbcda055ed08a0ff563abc8084196",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-decision-result.json",
+      "sha256": "36fa1fb62d7e9121558a4f2410195269dd582716d60edb02f14fa3165cb133c4",
+      "bytes": 490
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-decision.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-decision.stdout.log",
+      "sha256": "2495a8c7cd7c8052f304476f23d864e8a96d8e8e11beb5b132aa4e58517e3832",
+      "bytes": 557
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-manual-cursor.json",
+      "sha256": "f5a60296e31fa5a4bb1b20b3389bdbacd29c4f6af294cf1a2f75830d41b3a5da",
+      "bytes": 5545
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-no-answer-result.json",
+      "sha256": "3a79d9679554a277c6f7634dcc64b92b3eb66ed84d311e85caa3beb9b7a9b07e",
+      "bytes": 415
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-no-answer.stderr.log",
+      "sha256": "370555e46e9b3bf0aec478987aa3f3df7a1ff1e205b2123c5aaf7796fe24ca10",
+      "bytes": 264
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-no-answer.stdout.log",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-ordinary-repeat-result.json",
+      "sha256": "7a4831d0997c5bdc016532be518ccd4238097fd8eee8d99cab0dd0336351a235",
+      "bytes": 363
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-ordinary-repeat.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-ordinary-repeat.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-registry-reconcile-result.json",
+      "sha256": "06ef63b63f9f1d9caa80c758cdcc061dd28b4f14a3c7e6960cb27dd1d8ebb720",
+      "bytes": 500
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-registry-reconcile.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-registry-reconcile.stdout.log",
+      "sha256": "2495a8c7cd7c8052f304476f23d864e8a96d8e8e11beb5b132aa4e58517e3832",
+      "bytes": 557
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/registry-selection.json",
+      "sha256": "f966020e9175cbe0176b847d968f8b7bb830955b2e797a4ee344b593df908112",
+      "bytes": 1909
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/replay-select-result.json",
+      "sha256": "21b3e791d0694fe67c20282f5560c69252301d01a50c2fb288ec8c8c1d582974",
+      "bytes": 3694
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/replay-select.ps1",
+      "sha256": "a83cd06809e5b4e43e5c2277a5bb165377446a96b7da741408419eafa7c70309",
+      "bytes": 2659
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/run-tests.ps1",
+      "sha256": "074d5a7d199023ba2510fb32c442b4a2e37df3bf366fe90e28de82cca7c7c243",
+      "bytes": 1220
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/two-client-owned-restore-with-foreign-result.json",
+      "sha256": "f4f474d36cf0f90a9978e3a8e475f081b91a1034211a496fbdbe9d060ea65d66",
+      "bytes": 435
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/two-client-owned-restore-with-foreign.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/two-client-owned-restore-with-foreign.stdout.log",
+      "sha256": "0b45bff1ad46e7e3eefdbd037ff04d5541d176a64cb7e9c61318b875769b840a",
+      "bytes": 318
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/two-client-pinned-resume-result.json",
+      "sha256": "4d315de1117513224dd485d2e847e6d5cd3ac8cc5fc8a0720ad0bfffcdd774cc",
+      "bytes": 421
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/two-client-pinned-resume.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/two-client-pinned-resume.stdout.log",
+      "sha256": "a5affeb4c4fe9c667658afe2017c1c221ffc489ce05fc1c04c05c2b62717e864",
+      "bytes": 324
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/two-client-real-partial-result.json",
+      "sha256": "6a0f8215fe8fe4c42fe6616faa8410bea2dc39671a68286e6fbb7538090b8bfb",
+      "bytes": 498
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/two-client-real-partial.stderr.log",
+      "sha256": "678b88de46aac5270c4e8b834ed6ddf692fa7fdb51d6fb552a8b6e2babdb79a9",
+      "bytes": 328
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/two-client-real-partial.stdout.log",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/update-logs/update-workflow-3f7215d69e194fb89c09606efa467bf4.stderr.log",
+      "sha256": "3dd76b3ebf335290a999a38fbe18bdd4bc64259fe4fa8132439afae71b77a82b",
+      "bytes": 3265
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/update-logs/update-workflow-3f7215d69e194fb89c09606efa467bf4.stdout.log",
+      "sha256": "2e69f4707b07db0f12d00f9f772951046249f82408707ef69180fdbd99fcb0d2",
+      "bytes": 1711
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/update-logs/update-workflow-863050f53c7a4084afc2c49b1584f192.stderr.log",
+      "sha256": "c7344fbe2500c3cb787b7343330c76fb44169a8fd9f5d1f291a5ef043990b2ed",
+      "bytes": 2027
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/update-logs/update-workflow-863050f53c7a4084afc2c49b1584f192.stdout.log",
+      "sha256": "f33fd59899c85a0a73fced0a56f7f2baf62e3414124951003bdd20d4df397792",
+      "bytes": 2248
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/update-recovery-status-result.json",
+      "sha256": "2c3265f2c8bbea5b81766f695a9df10dc49ae21d5e4c841fcfafacea2bd7cf99",
+      "bytes": 21
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/update-recovery-status.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/update-recovery-status.stdout.log",
+      "sha256": "c6996ed9e7f85493225d646e99a9ee6334688036112f93b6448b761883c13b28",
+      "bytes": 952
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/update.ps1",
+      "sha256": "d18db4279dcbed5b2945a9f649708e93589d4ee366f08647ee87011d9f2a3836",
+      "bytes": 1280
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/verify-capsule.ps1",
+      "sha256": "37d43a6f360f279d4aa5996323027704a65890068fc87b05efde489b4925d70a",
+      "bytes": 769
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-01-result.json",
+      "sha256": "ace00a1807b6848e3ec4fd13f787026032d0784fd47f09a94f5062853de086d8",
+      "bytes": 346
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-01.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-01.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-02-result.json",
+      "sha256": "15e51faa73975cad1885e16097db75ed2c3452c7e14b03e82d7a68e2d1e91713",
+      "bytes": 346
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-02.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-02.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-03-result.json",
+      "sha256": "0deb869156b542396a68e034cca28d42e63870ad08f84ebd3f2be26284427dc8",
+      "bytes": 346
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-03.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-03.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-04-result.json",
+      "sha256": "9b5f92a9570a056b07aa0acef8bc51537da65087dc87ff9f397ec921cc9b52fc",
+      "bytes": 346
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-04.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-04.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-05-result.json",
+      "sha256": "84488cc48c09ff4183fe1d84152e09d6ec5f7e888665b7ca7f18875bcb5136b2",
+      "bytes": 346
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-05.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-05.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-06-result.json",
+      "sha256": "cf57d0f7d6298b4bd06d195878a1e599b9e234579ed575ce1d6cc2e29411301a",
+      "bytes": 346
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-06.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-06.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-07-result.json",
+      "sha256": "02909413a02a1b3a0f292e6c2b0d329a0cfde2f69a70a1ddae6a05bb80f4a1c7",
+      "bytes": 346
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-07.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-07.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-08-result.json",
+      "sha256": "a9ee3098e6c1f0e85c494930922ee1ce5f41b9d13b2c3557e3afe52c090f6068",
+      "bytes": 346
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-08.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-08.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-09-result.json",
+      "sha256": "300d7877e08dc70d3c0d1808589d8cfec13ee52e073aa5e6a4e383cbdde2933a",
+      "bytes": 346
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-09.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-09.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-10-result.json",
+      "sha256": "0e1ad64a60b2901407b5e307c4d743383b03580d4a550e53de2eca454b91797c",
+      "bytes": 346
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-10.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-10.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-final.ps1",
+      "sha256": "aefae3bf9970895733f462253c6eccedad9fb984ea7113de687baee099859882",
+      "bytes": 1201
+    },
+    {
+      "path": "build/test-results/g3/owned-mcp-defer-repair-20261022/warm-noop-result.json",
+      "sha256": "c50611ccac1971127ae705d37526b010f5e6921f05ef93d4e3c45970498bc7cb",
+      "bytes": 8358
+    }
+  ]
+}

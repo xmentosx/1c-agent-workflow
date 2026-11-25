@@ -1,10 +1,11 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $utf8 = New-Object System.Text.UTF8Encoding $false
 [Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
+. (Join-Path $PSScriptRoot "lib\itl-runner-timeout.ps1")
 
 $windowed = $false
 $helperArgs = [System.Collections.Generic.List[string]]::new()
@@ -126,9 +127,9 @@ function Resolve-ItlResponseStyle {
     param([string]$ProjectRoot)
 
     $mode = (Get-ProjectSetting -ProjectRoot $ProjectRoot -Name "CAVEMAN").Trim().ToLowerInvariant()
-    if ($mode -notin @("on", "auto", "off")) { $mode = "on" }
-    $level = (Get-ProjectSetting -ProjectRoot $ProjectRoot -Name "CAVEMAN_LEVEL").Trim().ToLowerInvariant()
-    if ($level -notin @("lite", "full", "ultra")) { $level = "full" }
+    if ($mode -notin @("on", "auto", "off")) { $mode = "auto" }
+    # The upstream level is session-only; persisted CAVEMAN_LEVEL is ignored.
+    $level = "full"
     $active = $mode -in @("on", "auto")
     return [ordered]@{
         mode = $mode
@@ -260,6 +261,83 @@ function Get-RunnerOwnedLifecycleRecord {
     return $record
 }
 
+function Get-RunnerTerminalLifecycleRecord {
+    param(
+        [string]$Path,
+        [int]$HelperProcessId,
+        [string]$Action,
+        [string]$ProjectRoot,
+        [DateTime]$NotBeforeUtc
+    )
+    $record = Read-JsonFile -Path $Path
+    $status = [string](Get-ObjectValue -Object $record -Name "status" -Default "")
+    $operationId = [string](Get-ObjectValue -Object $record -Name "operationId" -Default "")
+    [DateTimeOffset]$lifecycleStartedAt = [DateTimeOffset]::MinValue
+    $startedAtText = [string](Get-ObjectValue -Object $record -Name "startedAt" -Default "")
+    $startedAtValid = $startedAtText -and [DateTimeOffset]::TryParse($startedAtText, [ref]$lifecycleStartedAt)
+    if ($null -eq $record -or $status -notin @("succeeded", "failed", "cancelled") -or
+        $operationId -cnotmatch '^[a-f0-9]{32}$' -or -not $startedAtValid -or
+        $lifecycleStartedAt.UtcDateTime -lt $NotBeforeUtc.AddSeconds(-5) -or
+        [int](Get-ObjectValue -Object $record -Name "pid" -Default 0) -ne $HelperProcessId -or
+        [string](Get-ObjectValue -Object $record -Name "action" -Default "") -ne $Action -or
+        -not (Test-SamePath -First ([string](Get-ObjectValue -Object $record -Name "projectRoot" -Default "")) -Second $ProjectRoot)) {
+        return $null
+    }
+    return $record
+}
+
+function Restore-RunnerStatusFromTerminalLifecycle {
+    param(
+        [object]$Status,
+        [object]$LifecycleRecord,
+        [string]$StatusPath,
+        [string]$LogPath,
+        [string]$Action,
+        [string]$ProjectRoot,
+        [DateTime]$StartedAt
+    )
+    if ($null -eq $LifecycleRecord) { return $Status }
+    if ($null -eq $Status) {
+        $Status = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            action = $Action
+            projectRoot = $ProjectRoot
+            pid = [int](Get-ObjectValue -Object $LifecycleRecord -Name "pid" -Default 0)
+            launcherPid = 0
+            startedAt = $StartedAt.ToString("o")
+            lastLogPath = ""
+            runLogPath = $LogPath
+        }
+    }
+    $lifecycleStatus = [string](Get-ObjectValue -Object $LifecycleRecord -Name "status" -Default "")
+    $lifecycleExitCode = [int](Get-ObjectValue -Object $LifecycleRecord -Name "exitCode" -Default $(if ($lifecycleStatus -eq "succeeded") { 0 } else { 1 }))
+    $lifecyclePhase = [string](Get-ObjectValue -Object $LifecycleRecord -Name "phase" -Default "")
+    $lifecycleDetail = [string](Get-ObjectValue -Object $LifecycleRecord -Name "detail" -Default "")
+    $lifecycleErrorCode = [string](Get-ObjectValue -Object $LifecycleRecord -Name "errorCode" -Default "")
+    $lifecycleErrorMessage = [string](Get-ObjectValue -Object $LifecycleRecord -Name "errorMessage" -Default "")
+    $finishedAt = [string](Get-ObjectValue -Object $LifecycleRecord -Name "finishedAt" -Default "")
+    if (-not $finishedAt) { $finishedAt = (Get-Date).ToString("o") }
+
+    Set-ObjectValue -Object $Status -Name "schemaVersion" -Value 1
+    Set-ObjectValue -Object $Status -Name "status" -Value $lifecycleStatus
+    Set-ObjectValue -Object $Status -Name "action" -Value $Action
+    Set-ObjectValue -Object $Status -Name "projectRoot" -Value $ProjectRoot
+    Set-ObjectValue -Object $Status -Name "updatedAt" -Value $finishedAt
+    Set-ObjectValue -Object $Status -Name "finishedAt" -Value $finishedAt
+    Set-ObjectValue -Object $Status -Name "exitCode" -Value $lifecycleExitCode
+    Set-ObjectValue -Object $Status -Name "runLogPath" -Value $LogPath
+    Set-ObjectValue -Object $Status -Name "stage" -Value $(if ($lifecyclePhase) { $lifecyclePhase } else { "complete" })
+    Set-ObjectValue -Object $Status -Name "stageDetail" -Value $(if ($lifecycleDetail) { $lifecycleDetail } else { "Recovered exact terminal lifecycle state after helper reexec." })
+    Set-ObjectValue -Object $Status -Name "errorCode" -Value $lifecycleErrorCode
+    Set-ObjectValue -Object $Status -Name "errorMessage" -Value $lifecycleErrorMessage
+    if ($lifecycleStatus -eq "succeeded") {
+        Set-ObjectValue -Object $Status -Name "errorCategory" -Value ""
+        Set-ObjectValue -Object $Status -Name "requiredAction" -Value ""
+    }
+    Write-JsonFileAtomic -Path $StatusPath -Value $Status
+    return $Status
+}
+
 function Get-InterruptedVanessaRunEvidence {
     param(
         [object]$LifecycleRecord,
@@ -277,7 +355,11 @@ function Get-InterruptedVanessaRunEvidence {
     $projectPrefix = (Resolve-NormalizedPath -Path $ProjectRoot) + [System.IO.Path]::DirectorySeparatorChar
     $resolvedParamsPath = Resolve-NormalizedPath -Path $paramsPath
     $reason = ""
-    if ([int](Get-ObjectValue -Object $evidence -Name "schemaVersion" -Default 0) -ne 1 -or
+    $schemaVersion = [int](Get-ObjectValue -Object $evidence -Name "schemaVersion" -Default 0)
+    if ($schemaVersion -notin @(1, 2)) {
+        $reason = "unsupported lifecycle Vanessa evidence schemaVersion=$schemaVersion"
+    }
+    if (-not $reason -and (
         [string](Get-ObjectValue -Object $evidence -Name "operationId" -Default "") -cne $operationId -or
         [int](Get-ObjectValue -Object $evidence -Name "ownerPid" -Default 0) -ne $HelperProcessId -or
         [int](Get-ObjectValue -Object $evidence -Name "processId" -Default 0) -ne $expectedProcessId -or
@@ -285,7 +367,9 @@ function Get-InterruptedVanessaRunEvidence {
         -not $resolvedParamsPath.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
         -not (Test-Path -LiteralPath $resolvedParamsPath -PathType Leaf) -or
         -not [string](Get-ObjectValue -Object $evidence -Name "infoBasePath" -Default "") -or
-        $ports.Count -eq 0 -or @($ports | Where-Object { $_ -le 0 -or $_ -gt 65535 }).Count -gt 0) {
+        ($schemaVersion -eq 2 -and -not [string](Get-ObjectValue -Object $evidence -Name "testClientInfoBasePath" -Default "")) -or
+        $ports.Count -eq 0 -or @($ports | Where-Object { $_ -le 0 -or $_ -gt 65535 }).Count -gt 0
+    )) {
         $reason = "exact lifecycle Vanessa evidence is incomplete or inconsistent"
     }
     $statusEvidence = Get-ObjectValue -Object $RunStatus -Name "activeVanessaRun" -Default $null
@@ -309,6 +393,7 @@ function Invoke-InterruptedVanessaRunRecovery {
         "-ProjectRoot", $ProjectRoot,
         "-Action", "cleanup-interrupted-vanessa-run",
         "-InterruptedVanessaInfoBasePath", ([string]$evidence.infoBasePath),
+        "-InterruptedVanessaTestClientInfoBasePath", ([string](Get-ObjectValue -Object $evidence -Name "testClientInfoBasePath" -Default "")),
         "-InterruptedVanessaRunParamsPath", ([string]$evidence.runParamsPath),
         "-InterruptedVanessaTestPorts", (@($EvidenceResult.ports) -join ',')
     )
@@ -357,6 +442,26 @@ function Get-PositiveRunnerSetting {
     return $parsed
 }
 
+function Get-RunnerHeartbeatAgeSeconds {
+    param([string]$StatusPath, [int]$HelperProcessId, [DateTime]$NotBeforeUtc)
+
+    $heartbeatPath = $StatusPath + ".heartbeat"
+    if (-not (Test-Path -LiteralPath $heartbeatPath -PathType Leaf)) { return [double]::PositiveInfinity }
+    try {
+        # Share write/delete with the helper: a poll must not fail on, or make
+        # fail, the heartbeat touch and owner removal that run concurrently.
+        $stream = [IO.FileStream]::new($heartbeatPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        try { $identity = [IO.StreamReader]::new($stream, [Text.Encoding]::ASCII).ReadToEnd().Trim() }
+        finally { $stream.Dispose() }
+        if ($identity -cne [string]$HelperProcessId) { return [double]::PositiveInfinity }
+        $writtenAtUtc = [IO.File]::GetLastWriteTimeUtc($heartbeatPath)
+        if ($writtenAtUtc -lt $NotBeforeUtc.AddSeconds(-5)) { return [double]::PositiveInfinity }
+        return [Math]::Max(0, ([DateTime]::UtcNow - $writtenAtUtc).TotalSeconds)
+    } catch {
+        return [double]::PositiveInfinity
+    }
+}
+
 function Get-RunStatusFreshness {
     param(
         [object]$Status,
@@ -389,13 +494,49 @@ function Get-RunStatusFreshness {
     return [pscustomobject]@{ ageSeconds = 0; source = "unavailable"; updatedAt = $updatedAtText }
 }
 
+function Get-RunnerLivenessSnapshot {
+    param([string]$StatusPath, [int]$HelperProcessId, [DateTime]$NotBeforeUtc)
+
+    # The writer publishes main status before deleting its sidecar. Sample the
+    # sidecar first: either it is fresh, or the following main read sees handoff.
+    $heartbeatAge = Get-RunnerHeartbeatAgeSeconds -StatusPath $StatusPath -HelperProcessId $HelperProcessId -NotBeforeUtc $NotBeforeUtc
+    $status = Read-JsonFile -Path $StatusPath
+    $ownedStatus = [int](Get-ObjectValue -Object $status -Name 'pid' -Default 0) -eq $HelperProcessId
+    if (-not $ownedStatus) { $heartbeatAge = [double]::PositiveInfinity }
+    $freshness = Get-RunStatusFreshness -Status $status -Path $StatusPath -NotBeforeUtc $NotBeforeUtc.AddSeconds(-5)
+    $statusAge = [int][Math]::Floor([double]$freshness.ageSeconds)
+    return [pscustomobject]@{
+        status = $status
+        ownedStatus = $ownedStatus
+        freshness = $freshness
+        statusAgeSeconds = $statusAge
+        heartbeatAgeSeconds = $heartbeatAge
+        livenessAgeSeconds = [Math]::Min([double]$statusAge, $heartbeatAge)
+    }
+}
+
 function Stop-RunnerOwnedProcessTree {
-    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [IntPtr]$JobHandle = [IntPtr]::Zero
+    )
 
     $errors = [System.Collections.Generic.List[string]]::new()
     try { $Process.Refresh() } catch {}
     if ($Process.HasExited) {
         return [pscustomobject]@{ confirmed = $true; error = "" }
+    }
+    if ($JobHandle -ne [IntPtr]::Zero) {
+        try {
+            # The existing job owns the complete tree from process creation.
+            # Stop that exact tree without starting a second process-tree walker.
+            [ItlCompactHelperProcessJob]::Terminate($JobHandle)
+            $Process.WaitForExit(10000) | Out-Null
+            $Process.Refresh()
+            if ($Process.HasExited) { return [pscustomobject]@{ confirmed = $true; error = "" } }
+        } catch {
+            $errors.Add($_.Exception.Message) | Out-Null
+        }
     }
     try {
         & taskkill.exe /PID ([string]$Process.Id) /T /F *> $null
@@ -419,6 +560,269 @@ function Stop-RunnerOwnedProcessTree {
     }
 }
 
+function Close-CompactHelperProcessJob {
+    param([IntPtr]$JobHandle, [AllowNull()][object]$Process)
+
+    if ($JobHandle -eq [IntPtr]::Zero -or $env:OS -ne "Windows_NT") { return }
+    try {
+        [ItlCompactHelperProcessJob]::Close($JobHandle)
+    } catch {
+        if ($null -ne $Process) { [void](Stop-RunnerOwnedProcessTree -Process $Process) }
+        throw
+    }
+}
+
+function Start-CompactHelperProcess {
+    param(
+        [string]$EncodedCommand,
+        [string]$WorkingDirectory
+    )
+
+    $argumentList = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $EncodedCommand"
+    if ($env:OS -ne "Windows_NT") {
+        $process = Start-Process `
+            -FilePath "powershell" `
+            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $EncodedCommand) `
+            -WorkingDirectory $WorkingDirectory `
+            -WindowStyle Hidden `
+            -PassThru
+        return [pscustomobject]@{ process = $process; jobHandle = [IntPtr]::Zero }
+    }
+
+    if (-not ("ItlCompactHelperProcessJob" -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class ItlCompactHelperProcessJob
+{
+    private const UInt32 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const Int32 JobObjectExtendedLimitInformation = 9;
+    private const UInt32 EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+    private const UInt32 CREATE_SUSPENDED = 0x00000004;
+    private const UInt32 CREATE_NEW_CONSOLE = 0x00000010;
+    private const UInt32 CREATE_NEW_PROCESS_GROUP = 0x00000200;
+    private const UInt32 STARTF_USESHOWWINDOW = 0x00000001;
+    private const UInt32 PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+    {
+        public Int64 PerProcessUserTimeLimit;
+        public Int64 PerJobUserTimeLimit;
+        public UInt32 LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public UInt32 ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public UInt32 PriorityClass;
+        public UInt32 SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IO_COUNTERS
+    {
+        public UInt64 ReadOperationCount;
+        public UInt64 WriteOperationCount;
+        public UInt64 OtherOperationCount;
+        public UInt64 ReadTransferCount;
+        public UInt64 WriteTransferCount;
+        public UInt64 OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct STARTUPINFOEX
+    {
+        public Int32 cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public UInt32 dwX;
+        public UInt32 dwY;
+        public UInt32 dwXSize;
+        public UInt32 dwYSize;
+        public UInt32 dwXCountChars;
+        public UInt32 dwYCountChars;
+        public UInt32 dwFillAttribute;
+        public UInt32 dwFlags;
+        public UInt16 wShowWindow;
+        public UInt16 cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+        public IntPtr lpAttributeList;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public UInt32 dwProcessId;
+        public UInt32 dwThreadId;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct RTL_OSVERSIONINFOEX
+    {
+        public UInt32 dwOSVersionInfoSize;
+        public UInt32 dwMajorVersion;
+        public UInt32 dwMinorVersion;
+        public UInt32 dwBuildNumber;
+        public UInt32 dwPlatformId;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string szCSDVersion;
+        public UInt16 wServicePackMajor;
+        public UInt16 wServicePackMinor;
+        public UInt16 wSuiteMask;
+        public Byte wProductType;
+        public Byte wReserved;
+    }
+
+    public sealed class StartedProcess
+    {
+        public Process Process;
+        public IntPtr JobHandle;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(IntPtr job, Int32 informationClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION information, UInt32 informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateJobObject(IntPtr job, UInt32 exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool InitializeProcThreadAttributeList(IntPtr attributeList, Int32 attributeCount, UInt32 flags, ref IntPtr size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool UpdateProcThreadAttribute(IntPtr attributeList, UInt32 flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previousValue, IntPtr returnSize);
+
+    [DllImport("kernel32.dll")]
+    private static extern void DeleteProcThreadAttributeList(IntPtr attributeList);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateProcess(string applicationName, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, UInt32 creationFlags, IntPtr environment, string currentDirectory, ref STARTUPINFOEX startupInfo, out PROCESS_INFORMATION processInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern UInt32 ResumeThread(IntPtr thread);
+
+    [DllImport("ntdll.dll", CharSet = CharSet.Unicode)]
+    private static extern Int32 RtlGetVersion(ref RTL_OSVERSIONINFOEX versionInformation);
+
+    private static void AssertAtomicJobListSupport()
+    {
+        RTL_OSVERSIONINFOEX version = new RTL_OSVERSIONINFOEX();
+        version.dwOSVersionInfoSize = (UInt32)Marshal.SizeOf(typeof(RTL_OSVERSIONINFOEX));
+        Int32 status = RtlGetVersion(ref version);
+        if (status != 0)
+            throw new PlatformNotSupportedException("Unable to verify Windows 10 or Windows Server 2016+ support required for compact helper process ownership (RtlGetVersion status " + status + ").");
+        if (version.dwMajorVersion < 10)
+            throw new PlatformNotSupportedException("Compact helper process ownership requires Windows 10 or Windows Server 2016+; detected Windows " + version.dwMajorVersion + "." + version.dwMinorVersion + " build " + version.dwBuildNumber + ".");
+    }
+
+    public static StartedProcess Start(string executable, string arguments, string workingDirectory)
+    {
+        AssertAtomicJobListSupport();
+        IntPtr job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateJobObject failed.");
+        IntPtr attributeList = IntPtr.Zero;
+        IntPtr jobList = IntPtr.Zero;
+        PROCESS_INFORMATION processInformation = new PROCESS_INFORMATION();
+        try
+        {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION information = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            UInt32 length = (UInt32)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+            if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref information, length))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "SetInformationJobObject failed.");
+
+            IntPtr attributeSize = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeSize);
+            attributeList = Marshal.AllocHGlobal(attributeSize);
+            if (!InitializeProcThreadAttributeList(attributeList, 1, 0, ref attributeSize))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "InitializeProcThreadAttributeList failed.");
+
+            jobList = Marshal.AllocHGlobal(IntPtr.Size);
+            Marshal.WriteIntPtr(jobList, job);
+            if (!UpdateProcThreadAttribute(attributeList, 0, new IntPtr(PROC_THREAD_ATTRIBUTE_JOB_LIST), jobList, new IntPtr(IntPtr.Size), IntPtr.Zero, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute for the compact helper job failed.");
+
+            STARTUPINFOEX startupInfo = new STARTUPINFOEX();
+            startupInfo.cb = Marshal.SizeOf(typeof(STARTUPINFOEX));
+            startupInfo.dwFlags = STARTF_USESHOWWINDOW;
+            startupInfo.wShowWindow = 0;
+            startupInfo.lpAttributeList = attributeList;
+            StringBuilder commandLine = new StringBuilder("\"" + executable + "\" " + arguments);
+            UInt32 creationFlags = EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED;
+            if (!CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, false, creationFlags, IntPtr.Zero, workingDirectory, ref startupInfo, out processInformation))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcess for the compact helper failed.");
+            StartedProcess started = new StartedProcess();
+            started.Process = Process.GetProcessById((Int32)processInformation.dwProcessId);
+            IntPtr ownedProcessHandle = started.Process.Handle;
+            started.JobHandle = job;
+            if (ResumeThread(processInformation.hThread) == UInt32.MaxValue)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "ResumeThread for the compact helper failed.");
+            job = IntPtr.Zero;
+            return started;
+        }
+        finally
+        {
+            if (processInformation.hThread != IntPtr.Zero) CloseHandle(processInformation.hThread);
+            if (processInformation.hProcess != IntPtr.Zero) CloseHandle(processInformation.hProcess);
+            if (attributeList != IntPtr.Zero) { DeleteProcThreadAttributeList(attributeList); Marshal.FreeHGlobal(attributeList); }
+            if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
+            if (job != IntPtr.Zero) CloseHandle(job);
+        }
+    }
+
+    public static void Terminate(IntPtr job)
+    {
+        if (!TerminateJobObject(job, 1))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "TerminateJobObject for compact helper failed.");
+    }
+
+    public static void Close(IntPtr job)
+    {
+        if (job != IntPtr.Zero && !CloseHandle(job))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "CloseHandle for compact helper process job failed.");
+    }
+}
+'@
+    }
+
+    $powershellPath = (Get-Command "powershell.exe" -ErrorAction Stop).Source
+    $started = [ItlCompactHelperProcessJob]::Start($powershellPath, $argumentList, $WorkingDirectory)
+    try {
+        $process = $started.Process
+        $null = $process.Handle
+        return [pscustomobject]@{ process = $process; jobHandle = [IntPtr]$started.JobHandle }
+    } catch {
+        try { [ItlCompactHelperProcessJob]::Close([IntPtr]$started.JobHandle) } catch {}
+        throw
+    }
+}
+
 function Find-LauncherRunDirectory {
     param([object[]]$Output, [datetime]$StartedAt, [string]$RunsRoot)
     foreach ($line in @($Output)) {
@@ -437,13 +841,13 @@ function Find-LauncherRunDirectory {
 
 $allowedActions = @(
     "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "adopt-dev-worktree", "close-dev-branch", "check-dev-branch",
-    "begin-verification-repair", "repair-dev-branch-tooling", "init-dev-branch-extension", "update-dev-branch-base", "verify-dev-branch",
-    "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "sync-master", "export-dev-branch-result", "update-workflow",
-    "itl-switch-client"
+    "begin-verification-repair", "extend-verification-repair", "begin-one-off-proof", "complete-one-off-proof", "begin-verification-change", "complete-verification-change", "attest-verification-suites", "acknowledge-event-log-errors", "validate-test-classification", "repair-dev-branch-tooling", "init-dev-branch-extension", "update-dev-branch-base", "verify-dev-branch",
+    "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "sync-master", "export-dev-branch-result", "get-review-scope", "update-workflow", "update-workflow-branch",
+    "itl-switch-client", "clean-artifacts", "delete-dev-branch"
 )
 $action = Get-ArgumentValue -Arguments @($helperArgs) -Name "-Action"
 if ($action -notin $allowedActions) {
-    throw "run-itl-command.ps1 accepts only compact ITL actions: $($allowedActions -join ', ')."
+    throw "run-itl-command.ps1 accepts only compact ITL actions: $($allowedActions -join ', '). If '$action' is a documented non-compact helper action (references/advanced-actions.md), run it directly: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action $action <arguments>."
 }
 foreach ($reserved in @("-RunStatusPath", "-RunLogPath", "-ProjectRoot")) {
     if (@($helperArgs | Where-Object { [string]$_ -ieq $reserved }).Count -gt 0) {
@@ -466,13 +870,19 @@ if ($refreshMasterRunnerPath) {
 $responseStyle = Resolve-ItlResponseStyle -ProjectRoot $invocationRoot
 [Console]::Error.WriteLine("ITL response-style: mode=$($responseStyle.mode); level=$($responseStyle.level); active=$(([string]$responseStyle.active).ToLowerInvariant()); profile=$($responseStyle.profile); task=execution")
 $projectRoot = Resolve-UpdateWorkflowProjectRoot -InvocationRoot $invocationRoot -Action $action
+$operationPolicy = Resolve-ItlRunnerTimeout -ProjectRoot $projectRoot -Action $action
 $runsRoot = Join-Path $projectRoot ".agent-1c\runs"
 New-Item -ItemType Directory -Force -Path $runsRoot | Out-Null
 $startedAt = Get-Date
+$operationDeadlineUtc = $startedAt.ToUniversalTime().AddSeconds([int]$operationPolicy.seconds)
+$maximumDeadlineUtc = $startedAt.ToUniversalTime().AddSeconds(86400)
+$operationDeadlineSource = "$($operationPolicy.source):$($operationPolicy.setting)"
+[Console]::Error.WriteLine("ITL timeout: action=$action; seconds=$($operationPolicy.seconds); source=$($operationPolicy.source); setting=$($operationPolicy.setting); deadlineUtc=$($operationDeadlineUtc.ToString('o'))")
 $exitCode = 1
 $runDirectory = ""
 $statusPath = ""
 $logPath = ""
+$argumentsErrorPath = ""
 $runnerFailureMessage = ""
 $runnerFailureNoProgressSeconds = 0
 
@@ -498,7 +908,8 @@ if ($windowed) {
     $logPath = Join-Path $runDirectory "console.log"
     [System.IO.File]::WriteAllText($logPath, "", $utf8)
     $helperPath = Join-Path $PSScriptRoot "agent-1c.ps1"
-    $monitoredArgs = @("-ProjectRoot", $projectRoot, "-RunStatusPath", $statusPath, "-RunLogPath", $logPath) + @($helperArgs)
+    $argumentsErrorPath = $statusPath + ".arguments-error"
+    $monitoredArgs =@("-ProjectRoot", $projectRoot, "-RunStatusPath", $statusPath, "-RunLogPath", $logPath) + @($helperArgs)
     $helperInvocation = "& " + (ConvertTo-PowerShellLiteral -Value $helperPath) + " " + ((@($monitoredArgs) | ForEach-Object { ConvertTo-PowerShellArgumentToken -Value ([string]$_) }) -join " ")
     $commandText = @"
 `$utf8 = New-Object System.Text.UTF8Encoding `$false
@@ -507,11 +918,58 @@ if ($windowed) {
 `$OutputEncoding = `$utf8
 `$ProgressPreference = 'SilentlyContinue'
 `$ErrorActionPreference = 'Stop'
+# Bind the one console API directly; compiling another C# assembly delays the
+# helper's first status. The parent's kill-on-close job already owns its lifetime.
+`$consoleAssembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly([Reflection.AssemblyName]::new('ItlHelperConsole'), [Reflection.Emit.AssemblyBuilderAccess]::Run)
+`$consoleType = `$consoleAssembly.DefineDynamicModule('Console').DefineType('ItlHelperConsole', [Reflection.TypeAttributes]'Public, Abstract, Sealed')
+`$consoleMethod = `$consoleType.DefinePInvokeMethod('SetConsoleCtrlHandler', 'kernel32.dll', [Reflection.MethodAttributes]'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [bool], [Type[]]@([IntPtr], [bool]), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Auto)
+`$consoleMethod.SetImplementationFlags([Reflection.MethodImplAttributes]::PreserveSig)
+`$consoleApi = `$consoleType.CreateType()
+`$consoleApi::SetConsoleCtrlHandler([IntPtr]::Zero, `$false) | Out-Null
 `$helperExitCode = 1
 `$global:LASTEXITCODE = `$null
+# This wrapper is the only compact run-log writer: it alone timestamps records
+# and appends the stage/section duration table. Agent stdout stays unchanged.
+`$itlRunLogPath = $(ConvertTo-PowerShellLiteral -Value $logPath)
+`$itlRunStartedAt = [DateTime]::Now
+`$itlRunTimings = [ordered]@{}
+`$itlRunOpenSpans = @{}
+function Write-ItlCompactRunLogRecord([string]`$Text, [DateTime]`$At) {
+    [IO.File]::AppendAllText(`$itlRunLogPath, (`$At.ToString('HH:mm:ss.fff') + ' ' + `$Text + [Environment]::NewLine), `$utf8)
+}
+function Step-ItlCompactRunTiming([string]`$Kind, [string]`$Name, [DateTime]`$At) {
+    `$open = `$itlRunOpenSpans[`$Kind]
+    if (`$null -ne `$open) {
+        `$key = `$Kind + [char]0 + `$open.name
+        if (-not `$itlRunTimings.Contains(`$key)) { `$itlRunTimings[`$key] = [pscustomobject]@{kind=`$Kind; name=`$open.name; count=0; ticks=[int64]0} }
+        `$itlRunTimings[`$key].count++
+        `$itlRunTimings[`$key].ticks += (`$At - `$open.startedAt).Ticks
+    }
+    `$itlRunOpenSpans[`$Kind] = if (`$Name) { @{name=`$Name; startedAt=`$At} } else { `$null }
+}
+# Explicit 'ITL step:'/'ITL step end:' markers time one helper phase from entry
+# to exit (inclusive of nested steps). A section ends at its next header, a
+# stage transition or a step boundary, so it never absorbs later unmarked work.
+`$itlRunOpenSteps = @{}
+function Step-ItlCompactRunStep([string]`$Name, [bool]`$Begin, [DateTime]`$At) {
+    Step-ItlCompactRunTiming 'section' '' `$At
+    if (`$Begin) { `$itlRunOpenSteps[`$Name] = `$At; return }
+    if (-not `$itlRunOpenSteps.ContainsKey(`$Name)) { return }
+    `$key = 'step' + [char]0 + `$Name
+    if (-not `$itlRunTimings.Contains(`$key)) { `$itlRunTimings[`$key] = [pscustomobject]@{kind='step'; name=`$Name; count=0; ticks=[int64]0} }
+    `$itlRunTimings[`$key].count++
+    `$itlRunTimings[`$key].ticks += (`$At - `$itlRunOpenSteps[`$Name]).Ticks
+    `$itlRunOpenSteps.Remove(`$Name)
+}
 try {
     $helperInvocation *>&1 | ForEach-Object {
-        [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), ([string]`$_ + [Environment]::NewLine), `$utf8)
+        `$itlAt = [DateTime]::Now
+        `$itlText = [string]`$_
+        if (`$itlText -cmatch '^ITL stage: (.+)$') { Step-ItlCompactRunTiming 'section' '' `$itlAt; Step-ItlCompactRunTiming 'stage' `$Matches[1].Trim() `$itlAt }
+        elseif (`$itlText -cmatch '^ITL step end: (.+)$') { Step-ItlCompactRunStep `$Matches[1].Trim() `$false `$itlAt }
+        elseif (`$itlText -cmatch '^ITL step: (.+)$') { Step-ItlCompactRunStep `$Matches[1].Trim() `$true `$itlAt }
+        elseif (`$itlText -cmatch '^== (.+) ==$') { Step-ItlCompactRunTiming 'section' `$Matches[1].Trim() `$itlAt }
+        Write-ItlCompactRunLogRecord `$itlText `$itlAt
     }
     `$pipelineSucceeded = `$?
     if (`$LASTEXITCODE -is [int] -and `$LASTEXITCODE -ne 0) { `$helperExitCode = [int]`$LASTEXITCODE }
@@ -519,10 +977,28 @@ try {
     else { `$helperExitCode = 1 }
 } catch {
     [Console]::Error.WriteLine(`$_.Exception.Message)
-    [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), (`$_.Exception.Message + [Environment]::NewLine), `$utf8)
+    Write-ItlCompactRunLogRecord `$_.Exception.Message ([DateTime]::Now)
+    # The helper rejected its own command line before it could publish status.
+    `$itlBinding = `$_.Exception -as [System.Management.Automation.ParameterBindingException]
+    if (`$null -ne `$itlBinding -and `$null -ne `$itlBinding.CommandInvocation -and [string]`$itlBinding.CommandInvocation.MyCommand.Path -ieq $(ConvertTo-PowerShellLiteral -Value $helperPath)) {
+        [IO.File]::WriteAllText($(ConvertTo-PowerShellLiteral -Value $argumentsErrorPath), `$itlBinding.Message, `$utf8)
+    }
     `$helperExitCode = 1
+} finally {
+    try {
+        `$itlEndedAt = [DateTime]::Now
+        Step-ItlCompactRunTiming 'stage' '' `$itlEndedAt
+        Step-ItlCompactRunTiming 'section' '' `$itlEndedAt
+        Write-ItlCompactRunLogRecord 'ITL run timings (kind, duration, count, name):' `$itlEndedAt
+        foreach (`$row in `$itlRunTimings.Values) {
+            Write-ItlCompactRunLogRecord ('  {0,-7} {1} {2,4}x  {3}' -f `$row.kind, ([TimeSpan]`$row.ticks).ToString('hh\:mm\:ss\.fff'), `$row.count, `$row.name) `$itlEndedAt
+        }
+        Write-ItlCompactRunLogRecord ('  {0,-7} {1}        run' -f 'total', (`$itlEndedAt - `$itlRunStartedAt).ToString('hh\:mm\:ss\.fff')) `$itlEndedAt
+    } catch { [Console]::Error.WriteLine("ITL run timing table skipped: `$(`$_.Exception.Message)") }
 }
-[Environment]::Exit(`$helperExitCode)
+# Leave through the host: [Environment]::Exit on the pipeline thread races the
+# console host's shutdown and can surface 0x80131029 instead of this code.
+exit `$helperExitCode
 "@
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
     $staleWarningSeconds = Get-PositiveRunnerSetting -Name "ITL_RUNNER_STATUS_STALE_WARNING_SECONDS" -Default 45
@@ -531,27 +1007,31 @@ try {
         throw "ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS must be greater than ITL_RUNNER_STATUS_STALE_WARNING_SECONDS."
     }
     $originalPowerShellModulePath = $env:PSModulePath
+    $timeoutEnvironmentNames = @("ITL_RUNNER_EFFECTIVE_TIMEOUT_SECONDS", "ITL_RUNNER_TIMEOUT_SOURCE", "ITL_RUNNER_DEADLINE_UTC")
+    $previousTimeoutEnvironment = @{}
+    foreach ($name in $timeoutEnvironmentNames) {
+        $previousTimeoutEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+    }
     $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
+    $helperJobHandle = [IntPtr]::Zero
     try {
-        # Start-Process preserves PowerShell Core's module path verbatim. Remove
-        # only the Core runtime module root before launching Windows PowerShell
-        # so its built-in modules (including Get-FileHash) can autoload.
+        [Environment]::SetEnvironmentVariable("ITL_RUNNER_EFFECTIVE_TIMEOUT_SECONDS", [string]$operationPolicy.seconds, "Process")
+        [Environment]::SetEnvironmentVariable("ITL_RUNNER_TIMEOUT_SOURCE", "$($operationPolicy.source):$($operationPolicy.setting)", "Process")
+        [Environment]::SetEnvironmentVariable("ITL_RUNNER_DEADLINE_UTC", $operationDeadlineUtc.ToString("o"), "Process")
+        # CreateProcess inherits this process environment. Remove only the Core
+        # runtime module root before launching Windows PowerShell so its
+        # built-in modules (including Get-FileHash) can autoload.
         if ($resetModulePathForWindowsPowerShell) {
-            $coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules")).TrimEnd('\')
-            $compatibleModuleRoots = @($originalPowerShellModulePath -split ';' | Where-Object {
-                if ([string]::IsNullOrWhiteSpace($_)) { return $false }
-                try { return -not [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd('\'), $coreModuleRoot, [StringComparison]::OrdinalIgnoreCase) }
-                catch { return $true }
-            })
-            $env:PSModulePath = $compatibleModuleRoots -join ';'
+            . (Join-Path $PSScriptRoot 'lib/itl-powershell-environment.ps1')
+            $env:PSModulePath = Get-ItlWindowsPowerShellModulePath -ModulePath $originalPowerShellModulePath
         }
-        $helperProcess = Start-Process `
-            -FilePath "powershell" `
-            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
-            -WorkingDirectory $projectRoot `
-            -WindowStyle Hidden `
-            -PassThru
+        $startedHelper = Start-CompactHelperProcess -EncodedCommand $encodedCommand -WorkingDirectory $projectRoot
+        $helperProcess = $startedHelper.process
+        $helperJobHandle = [IntPtr]$startedHelper.jobHandle
     } finally {
+        foreach ($name in $timeoutEnvironmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $previousTimeoutEnvironment[$name], "Process")
+        }
         if ($resetModulePathForWindowsPowerShell) {
             if ($null -eq $originalPowerShellModulePath) { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }
             else { $env:PSModulePath = $originalPowerShellModulePath }
@@ -563,58 +1043,140 @@ try {
     $lastProgressStage = ""
     $lastProgressLiveness = ""
     $lastProgressAt = [DateTime]::MinValue
-    while (-not $helperProcess.HasExited) {
-        $currentStatus = Read-JsonFile -Path $statusPath
-        $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name "stage" -Default "")
-        $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
-        $freshness = Get-RunStatusFreshness -Status $currentStatus -Path $statusPath -NotBeforeUtc ($startedAt.ToUniversalTime().AddSeconds(-5))
-        $statusAgeSeconds = [int][Math]::Floor([double]$freshness.ageSeconds)
-        $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
-        # The helper owns the operation-specific stall budget. A generic runner
-        # watchdog must not preempt a live Designer probe before that budget can
-        # expire and publish its own terminal diagnosis.
-        $effectiveStaleTimeoutSeconds = if ($publishedStallRemainingSeconds -gt 0) {
-            [Math]::Max($staleTimeoutSeconds, $publishedStallRemainingSeconds + $staleWarningSeconds)
-        } else {
-            $staleTimeoutSeconds
-        }
-        $staleStatus = $publishedLiveness -and $statusAgeSeconds -ge $staleWarningSeconds
-        $displayLiveness = if ($staleStatus) { "stale-status" } else { $publishedLiveness }
-        $stageChanged = $currentStage -and $currentStage -ne $lastProgressStage
-        $livenessChanged = $currentStage -and $displayLiveness -ne $lastProgressLiveness
-        $heartbeatDue = $currentStage -and ([DateTime]::UtcNow - $lastProgressAt).TotalSeconds -ge 30
-        if ($stageChanged -or $livenessChanged -or $heartbeatDue) {
-            $lastProgressStage = $currentStage
-            $lastProgressLiveness = $displayLiveness
-            $lastProgressAt = [DateTime]::UtcNow
-            $elapsed = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
-            $detail = Limit-Text -Value (Get-ObjectValue -Object $currentStatus -Name "stageDetail" -Default "") -Length 300
-            $publishedNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0)
-            $publishedTimeoutRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "timeoutRemainingSeconds" -Default 0)
-            $noProgressSeconds = if ($staleStatus) { $publishedNoProgressSeconds + $statusAgeSeconds } else { $publishedNoProgressSeconds }
-            $stallRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedStallRemainingSeconds - $statusAgeSeconds) } else { $publishedStallRemainingSeconds }
-            $timeoutRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedTimeoutRemainingSeconds - $statusAgeSeconds) } else { $publishedTimeoutRemainingSeconds }
-            $freshnessDetail = if ($staleStatus) { "statusAge=${statusAgeSeconds}s; freshnessSource=$($freshness.source); publishedLiveness=$publishedLiveness; " } else { "" }
-            [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; liveness=$displayLiveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallRemainingSeconds}s; timeoutRemaining=${timeoutRemainingSeconds}s; ${freshnessDetail}detail=$detail")
-        }
-        if ($publishedLiveness -and $statusAgeSeconds -ge $effectiveStaleTimeoutSeconds) {
-            $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
-            $updatedAt = [string]$freshness.updatedAt
-            $runnerFailureMessage = "RUNNER_STATUS_STALE status.json was not updated for ${statusAgeSeconds}s (effective watchdog ${effectiveStaleTimeoutSeconds}s) while helper PID $($helperProcess.Id) reported liveness '$publishedLiveness' at stage '$currentStage' (updatedAt='$updatedAt'). The runner stopped only its helper process tree."
-            $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
-            if (-not $termination.confirmed) {
-                throw "$runnerFailureMessage Helper process tree termination was not confirmed: $($termination.error)"
+    $reservedPhaseBudgets = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $terminalExitDeadlineUtc = [DateTime]::MinValue
+    try {
+        while (-not $helperProcess.HasExited) {
+            $snapshot = Get-RunnerLivenessSnapshot -StatusPath $statusPath -HelperProcessId $helperProcess.Id -NotBeforeUtc $startedAt.ToUniversalTime()
+            $currentStatus = $snapshot.status
+            $terminalStatusInFlight = [string](Get-ObjectValue -Object $currentStatus -Name "status" -Default "") -in @("succeeded", "failed", "cancelled")
+            if ($terminalStatusInFlight) {
+                if ($helperProcess.HasExited) { continue }
+                if ($terminalExitDeadlineUtc -eq [DateTime]::MinValue) {
+                    # Terminal work uses the existing bounded process-cleanup
+                    # grace, still capped by the global maximum deadline.
+                    $cleanupDeadlineUtc = [DateTime]::UtcNow.AddSeconds(60)
+                    $terminalExitDeadlineUtc = if ($cleanupDeadlineUtc -lt $maximumDeadlineUtc) { $cleanupDeadlineUtc } else { $maximumDeadlineUtc }
+                }
+                if ([DateTime]::UtcNow -ge $terminalExitDeadlineUtc) {
+                    $runnerFailureMessage = "RUNNER_OPERATION_TIMEOUT helper PID $($helperProcess.Id) wrote terminal status but did not exit within the bounded grace period."
+                    $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess -JobHandle $helperJobHandle
+                    if (-not $termination.confirmed) { throw "$runnerFailureMessage Owned process tree termination was not confirmed: $($termination.error)" }
+                    break
+                }
+                $helperProcess.WaitForExit(500) | Out-Null
+                continue
             }
-            break
+            $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name "stage" -Default "")
+            $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
+            $freshness = $snapshot.freshness
+            $statusAgeSeconds = $snapshot.statusAgeSeconds
+            $heartbeatAgeSeconds = $snapshot.heartbeatAgeSeconds
+            $livenessAgeSeconds = $snapshot.livenessAgeSeconds
+            $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
+            $publishedTimeoutRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "timeoutRemainingSeconds" -Default 0)
+            $elapsed = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
+            # The helper owns the operation-specific stall budget. A generic runner
+            # watchdog must not preempt a live Designer probe before that budget can
+            # expire and publish its own terminal diagnosis.
+            $effectiveStaleTimeoutSeconds = if ($publishedStallRemainingSeconds -gt 0) {
+                [Math]::Max($staleTimeoutSeconds, $publishedStallRemainingSeconds + $staleWarningSeconds)
+            } else {
+                $staleTimeoutSeconds
+            }
+            # Reserve a reported native phase budget once for this stage. Repeated
+            # remaining-time reports cannot move the deadline on every poll.
+            $phaseRemainingSeconds = [Math]::Max($publishedTimeoutRemainingSeconds, $publishedStallRemainingSeconds)
+            $phaseBudgetKey = "$currentStage|$publishedLiveness|$([string](Get-ObjectValue -Object $currentStatus -Name 'probePhase' -Default ''))"
+            if ($currentStage -and $phaseRemainingSeconds -gt 0 -and $reservedPhaseBudgets.Add($phaseBudgetKey)) {
+                # Remaining time belongs to the published snapshot. A delayed
+                # reader must not grant the phase that elapsed time a second time.
+                $phaseRemainingAtReadSeconds = $phaseRemainingSeconds - [double]$freshness.ageSeconds
+                $phaseDeadlineUtc = [DateTime]::UtcNow.AddSeconds($phaseRemainingAtReadSeconds)
+                if ($phaseDeadlineUtc -gt $operationDeadlineUtc) {
+                    $operationDeadlineUtc = if ($phaseDeadlineUtc -lt $maximumDeadlineUtc) { $phaseDeadlineUtc } else { $maximumDeadlineUtc }
+                    $operationDeadlineSource = "phase-budget:$phaseBudgetKey"
+                    [Console]::Error.WriteLine("ITL timeout extension: source=$operationDeadlineSource; deadlineUtc=$($operationDeadlineUtc.ToString('o')); maximumUtc=$($maximumDeadlineUtc.ToString('o'))")
+                }
+            }
+            $effectiveOperationTimeoutSeconds = [int][Math]::Ceiling(($operationDeadlineUtc - $startedAt.ToUniversalTime()).TotalSeconds)
+            $staleStatus = $currentStage -and $livenessAgeSeconds -ge $staleWarningSeconds
+            $displayLiveness = if ($staleStatus) { "stale-status" } elseif ($heartbeatAgeSeconds -lt $statusAgeSeconds) { "helper-heartbeat" } else { $publishedLiveness }
+            $stageChanged = $currentStage -and $currentStage -ne $lastProgressStage
+            $livenessChanged = $currentStage -and $displayLiveness -ne $lastProgressLiveness
+            $heartbeatDue = $currentStage -and ([DateTime]::UtcNow - $lastProgressAt).TotalSeconds -ge 30
+            if ($stageChanged -or $livenessChanged -or $heartbeatDue) {
+                $lastProgressStage = $currentStage
+                $lastProgressLiveness = $displayLiveness
+                $lastProgressAt = [DateTime]::UtcNow
+                $detail = Limit-Text -Value (Get-ObjectValue -Object $currentStatus -Name "stageDetail" -Default "") -Length 300
+                $publishedNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0)
+                $noProgressSeconds = if ($staleStatus) { $publishedNoProgressSeconds + $statusAgeSeconds } else { $publishedNoProgressSeconds }
+                $stallRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedStallRemainingSeconds - $statusAgeSeconds) } else { $publishedStallRemainingSeconds }
+                $timeoutRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedTimeoutRemainingSeconds - $statusAgeSeconds) } else { $publishedTimeoutRemainingSeconds }
+                $freshnessDetail = if ($staleStatus) { "statusAge=${statusAgeSeconds}s; freshnessSource=$($freshness.source); publishedLiveness=$publishedLiveness; " } else { "" }
+                [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; liveness=$displayLiveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallRemainingSeconds}s; timeoutRemaining=${timeoutRemainingSeconds}s; ${freshnessDetail}detail=$detail")
+            }
+            if ([DateTime]::UtcNow -ge $operationDeadlineUtc -and -not $helperProcess.HasExited) {
+                $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
+                $updatedAt = [string]$freshness.updatedAt
+                $runnerFailureMessage = "RUNNER_OPERATION_TIMEOUT helper PID $($helperProcess.Id) exceeded the ${effectiveOperationTimeoutSeconds}s operation limit after ${elapsed}s at stage '$currentStage' (liveness='$publishedLiveness'; updatedAt='$updatedAt'). The runner stopped only its helper process tree."
+                $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess -JobHandle $helperJobHandle
+                if (-not $termination.confirmed) {
+                    throw "$runnerFailureMessage Helper process tree termination was not confirmed: $($termination.error)"
+                }
+                break
+            }
+            if ($currentStage -and $livenessAgeSeconds -ge $effectiveStaleTimeoutSeconds -and -not $helperProcess.HasExited) {
+                # Work may have completed since the progress snapshot. Recheck
+                # the same owned helper before making the stale-stop decision.
+                $latest = Get-RunnerLivenessSnapshot -StatusPath $statusPath -HelperProcessId $helperProcess.Id -NotBeforeUtc $startedAt.ToUniversalTime()
+                if ($helperProcess.HasExited) { continue }
+                if ($latest.ownedStatus) {
+                    $latestTerminal = [string](Get-ObjectValue -Object $latest.status -Name 'status' -Default '') -in @('succeeded', 'failed', 'cancelled')
+                    $latestStall = [int](Get-ObjectValue -Object $latest.status -Name 'stallTimeoutRemainingSeconds' -Default 0)
+                    $latestStaleLimit = if ($latestStall -gt 0) { [Math]::Max($staleTimeoutSeconds, $latestStall + $staleWarningSeconds) } else { $staleTimeoutSeconds }
+                    if ($latestTerminal -or $latest.livenessAgeSeconds -lt $latestStaleLimit) { continue }
+                    $currentStatus = $latest.status
+                    $freshness = $latest.freshness
+                    $statusAgeSeconds = $latest.statusAgeSeconds
+                    $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name 'stage' -Default '')
+                    $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name 'liveness' -Default '')
+                }
+                $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
+                $updatedAt = [string]$freshness.updatedAt
+                $runnerFailureMessage = "RUNNER_STATUS_STALE status.json was not updated for ${statusAgeSeconds}s (effective watchdog ${effectiveStaleTimeoutSeconds}s) while helper PID $($helperProcess.Id) reported liveness '$publishedLiveness' at stage '$currentStage' (updatedAt='$updatedAt'). The runner stopped only its helper process tree."
+                $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess -JobHandle $helperJobHandle
+                if (-not $termination.confirmed) {
+                    throw "$runnerFailureMessage Helper process tree termination was not confirmed: $($termination.error)"
+                }
+                break
+            }
+            $helperProcess.WaitForExit(500) | Out-Null
         }
-        $helperProcess.WaitForExit(500) | Out-Null
+        $helperProcess.WaitForExit()
+        $exitCode = [int]$helperProcess.ExitCode
+    } finally {
+        Close-CompactHelperProcessJob -JobHandle $helperJobHandle -Process $helperProcess
+        Remove-Item -LiteralPath ($statusPath + ".heartbeat") -Force -ErrorAction SilentlyContinue
     }
-    $helperProcess.WaitForExit()
-    $exitCode = [int]$helperProcess.ExitCode
 }
 
 $status = Read-JsonFile -Path $statusPath
 $terminalStatus = [string](Get-ObjectValue -Object $status -Name "status" -Default "")
+if ($runnerFailureMessage -and $terminalStatus -in @("succeeded", "failed", "cancelled")) {
+    # A still-live helper at the deadline has not completed its owned cleanup.
+    $terminalStatus = "running"
+    Set-ObjectValue -Object $status -Name "status" -Value "running"
+}
+if ($terminalStatus -notin @("succeeded", "failed", "cancelled") -and -not $windowed -and -not $runnerFailureMessage) {
+    $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
+    $terminalLifecycle = Get-RunnerTerminalLifecycleRecord -Path $lifecyclePath -HelperProcessId $helperProcess.Id -Action $action -ProjectRoot $projectRoot -NotBeforeUtc $startedAt.ToUniversalTime()
+    if ($null -ne $terminalLifecycle) {
+        $status = Restore-RunnerStatusFromTerminalLifecycle -Status $status -LifecycleRecord $terminalLifecycle -StatusPath $statusPath -LogPath $logPath -Action $action -ProjectRoot $projectRoot -StartedAt $startedAt
+        $terminalStatus = [string](Get-ObjectValue -Object $status -Name "status" -Default "")
+    }
+}
 if ($terminalStatus -eq "succeeded") {
     # A valid terminal success is authoritative over a handled native probe
     # code inherited by the PowerShell helper host.
@@ -626,9 +1188,17 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     $now = Get-Date
     $effectiveExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
     $previousStage = [string](Get-ObjectValue -Object $status -Name "stage" -Default "")
-    $message = if ($runnerFailureMessage) { $runnerFailureMessage } else { "ITL helper exited with code $exitCode before writing a terminal status. Log: $logPath" }
-    $runnerStage = if ($runnerFailureMessage) { "runner.status-stale" } else { "runner.helper-exited" }
-    $runnerErrorCode = if ($runnerFailureMessage) { "LIFECYCLE_OPERATION_STATUS_STALE" } else { "LIFECYCLE_OPERATION_HELPER_EXITED" }
+    # A command line split by the caller's shell fails parameter binding before
+    # the helper can publish status; report it as an argument error, not an exit.
+    $argumentsError = ""
+    if (-not $runnerFailureMessage -and $argumentsErrorPath -and (Test-Path -LiteralPath $argumentsErrorPath -PathType Leaf)) {
+        $argumentsError = ([IO.File]::ReadAllText($argumentsErrorPath, $utf8)).Trim()
+    }
+    $argumentsRequiredAction = if ($argumentsError) { "Repeat the command with every value passed as one named argument (-Name value); quote a value that contains spaces as a single argument." } else { "" }
+    $message = if ($runnerFailureMessage) { $runnerFailureMessage } elseif ($argumentsError) { "ITL_ARGUMENTS_INVALID agent-1c.ps1 rejected its arguments before starting: $argumentsError $argumentsRequiredAction Log: $logPath" } else { "ITL helper exited with code $exitCode before writing a terminal status. Log: $logPath" }
+    $operationTimedOut = [string]$runnerFailureMessage -like "RUNNER_OPERATION_TIMEOUT*"
+    $runnerStage = if ($operationTimedOut) { "runner.operation-timeout" } elseif ($runnerFailureMessage) { "runner.status-stale" } elseif ($argumentsError) { "runner.arguments-invalid" } else { "runner.helper-exited" }
+    $runnerErrorCode = if ($operationTimedOut) { "LIFECYCLE_OPERATION_TIMEOUT" } elseif ($runnerFailureMessage) { "LIFECYCLE_OPERATION_STATUS_STALE" } elseif ($argumentsError) { "LIFECYCLE_OPERATION_ARGUMENTS_INVALID" } else { "LIFECYCLE_OPERATION_HELPER_EXITED" }
     if (-not $windowed) {
         $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
         $lifecycleRecord = Get-RunnerOwnedLifecycleRecord -Path $lifecyclePath -HelperProcessId $helperProcess.Id -Action $action -ProjectRoot $projectRoot
@@ -637,9 +1207,9 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
             if ($evidenceResult.present -and $evidenceResult.valid) {
                 $recovery = Invoke-InterruptedVanessaRunRecovery -HelperPath $helperPath -ProjectRoot $projectRoot -EvidenceResult $evidenceResult -LogPath $logPath
                 $message += if ($recovery.succeeded) {
-                    " Exact interrupted Vanessa run cleanup succeeded."
+                    " Exact interrupted Vanessa process cleanup succeeded."
                 } else {
-                    " Exact interrupted Vanessa run cleanup failed with code $($recovery.exitCode); broad cleanup was not attempted."
+                    " Exact interrupted Vanessa process cleanup failed with code $($recovery.exitCode); broad cleanup was not attempted."
                 }
             } elseif ($evidenceResult.present) {
                 $message += " Interrupted Vanessa cleanup was not attempted because $($evidenceResult.reason); broad cleanup was not attempted."
@@ -653,7 +1223,8 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
             schemaVersion = 1
             action = $action
             projectRoot = $projectRoot
-            pid = 0
+            # Preserve the owned helper even if it exits before its first status.
+            pid = $(if (-not $windowed) { [int]$helperProcess.Id } else { 0 })
             launcherPid = 0
             startedAt = $startedAt.ToString("o")
             lastLogPath = ""
@@ -662,6 +1233,9 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     }
     Set-ObjectValue -Object $status -Name "schemaVersion" -Value 1
     Set-ObjectValue -Object $status -Name "status" -Value "failed"
+    Set-ObjectValue -Object $status -Name "operationTimeoutSeconds" -Value ([int][Math]::Ceiling(($operationDeadlineUtc - $startedAt.ToUniversalTime()).TotalSeconds))
+    Set-ObjectValue -Object $status -Name "operationTimeoutSource" -Value $operationDeadlineSource
+    Set-ObjectValue -Object $status -Name "operationDeadlineUtc" -Value $operationDeadlineUtc.ToString("o")
     Set-ObjectValue -Object $status -Name "action" -Value $action
     Set-ObjectValue -Object $status -Name "updatedAt" -Value $now.ToString("o")
     Set-ObjectValue -Object $status -Name "finishedAt" -Value $now.ToString("o")
@@ -670,11 +1244,14 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     Set-ObjectValue -Object $status -Name "errorMessage" -Value $message
     Set-ObjectValue -Object $status -Name "errorCode" -Value $runnerErrorCode
     Set-ObjectValue -Object $status -Name "errorCategory" -Value "runner"
-    Set-ObjectValue -Object $status -Name "requiredAction" -Value ""
+    Set-ObjectValue -Object $status -Name "requiredAction" -Value $argumentsRequiredAction
+    Set-ObjectValue -Object $status -Name "blockerRequiresUserDecision" -Value $false
+    Set-ObjectValue -Object $status -Name "blockerRetryOriginalCommand" -Value $false
     Set-ObjectValue -Object $status -Name "stage" -Value $runnerStage
     Set-ObjectValue -Object $status -Name "stageDetail" -Value $detail
     if ($runnerFailureMessage) {
-        Set-ObjectValue -Object $status -Name "liveness" -Value "failed-stale-status"
+        $failedLiveness = if ($operationTimedOut) { "failed-operation-timeout" } else { "failed-stale-status" }
+        Set-ObjectValue -Object $status -Name "liveness" -Value $failedLiveness
         Set-ObjectValue -Object $status -Name "noProgressSeconds" -Value $runnerFailureNoProgressSeconds
         Set-ObjectValue -Object $status -Name "stallTimeoutRemainingSeconds" -Value 0
         Set-ObjectValue -Object $status -Name "timeoutRemainingSeconds" -Value 0
@@ -684,6 +1261,16 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
 $errorText = Limit-Text -Value (Get-ObjectValue -Object $status -Name "errorMessage" -Default "") -Length 1400
 $errorCategory = [string](Get-ObjectValue -Object $status -Name "errorCategory" -Default "")
 $requiredAction = [string](Get-ObjectValue -Object $status -Name "requiredAction" -Default "")
+$blockerClassification = [string](Get-ObjectValue -Object $status -Name "blockerClassification" -Default "")
+$blockerRequiresUserDecision = [bool](Get-ObjectValue -Object $status -Name "blockerRequiresUserDecision" -Default $false)
+$blockerRetryOriginalCommand = [bool](Get-ObjectValue -Object $status -Name "blockerRetryOriginalCommand" -Default $false)
+$blockerAction = Get-ObjectValue -Object $status -Name "blockerAction" -Default $null
+$blockerOwner = Get-ObjectValue -Object $status -Name "blockerOwner" -Default $null
+$recoveryStatus = [string](Get-ObjectValue -Object $status -Name "recoveryStatus" -Default "")
+$ownedProcessesStopped = @((Get-ObjectValue -Object $status -Name "ownedProcessesStopped" -Default @()))
+$foreignProcessesStopped = @((Get-ObjectValue -Object $status -Name "foreignProcessesStopped" -Default @()))
+$databaseReleased = [bool](Get-ObjectValue -Object $status -Name "databaseReleased" -Default $false)
+$retryOriginalCommand = [bool](Get-ObjectValue -Object $status -Name "retryOriginalCommand" -Default $false)
 $devBranch = [string](Get-ObjectValue -Object $status -Name "devBranch" -Default "")
 $worktreePath = [string](Get-ObjectValue -Object $status -Name "worktreePath" -Default "")
 $extensionInitializationStatus = [string](Get-ObjectValue -Object $status -Name "extensionInitializationStatus" -Default "")
@@ -725,6 +1312,16 @@ $summary = [ordered]@{
     error = $errorText
     errorCategory = $errorCategory
     requiredAction = $requiredAction
+    blockerClassification = $blockerClassification
+    blockerRequiresUserDecision = $blockerRequiresUserDecision
+    blockerRetryOriginalCommand = $blockerRetryOriginalCommand
+    blockerAction = $blockerAction
+    blockerOwner = $blockerOwner
+    recoveryStatus = $recoveryStatus
+    ownedProcessesStopped = @($ownedProcessesStopped)
+    foreignProcessesStopped = @($foreignProcessesStopped)
+    databaseReleased = $databaseReleased
+    retryOriginalCommand = $retryOriginalCommand
     refreshMasterCommit = [string](Get-ObjectValue -Object $status -Name "refreshMasterCommit" -Default "")
     devBranch = $devBranch
     worktreePath = $worktreePath
@@ -753,6 +1350,8 @@ $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
 $userReportOmitted = $false
 $userReportPath = ""
 $userReportSource = "inline"
+$blockerActionOmitted = $false
+$blockerActionPath = ""
 if ($summaryText.Length -gt 4000) {
     $summary.error = Limit-Text -Value $summary.error -Length 400
     $summary.stageDetail = Limit-Text -Value $summary.stageDetail -Length 300
@@ -792,6 +1391,16 @@ if ($summaryText.Length -gt 4000) {
         error = Limit-Text -Value $errorText -Length 400
         errorCategory = Limit-Text -Value $errorCategory -Length 120
         requiredAction = Limit-Text -Value $requiredAction -Length 400
+        blockerClassification = Limit-Text -Value $blockerClassification -Length 120
+        blockerRequiresUserDecision = $blockerRequiresUserDecision
+        blockerRetryOriginalCommand = $blockerRetryOriginalCommand
+        blockerAction = $blockerAction
+        blockerOwner = $blockerOwner
+        recoveryStatus = $recoveryStatus
+        ownedProcessesStopped = @($ownedProcessesStopped)
+        foreignProcessesStopped = @($foreignProcessesStopped)
+        databaseReleased = $databaseReleased
+        retryOriginalCommand = $retryOriginalCommand
         refreshMasterCommit = [string](Get-ObjectValue -Object $status -Name "refreshMasterCommit" -Default "")
         userReport = ""
         userReportOmitted = $userReportOmitted
@@ -813,6 +1422,17 @@ if ($summaryText.Length -gt 4000) {
         status = Limit-Text -Value $status.status -Length 40
         nextAction = Limit-Text -Value $nextAction -Length 240
         error = Limit-Text -Value $errorText -Length 240
+        errorCategory = Limit-Text -Value $errorCategory -Length 120
+        requiredAction = Limit-Text -Value $requiredAction -Length 240
+        blockerClassification = Limit-Text -Value $blockerClassification -Length 120
+        blockerRequiresUserDecision = $blockerRequiresUserDecision
+        blockerRetryOriginalCommand = $blockerRetryOriginalCommand
+        blockerAction = $blockerAction
+        recoveryStatus = $recoveryStatus
+        ownedProcessesStopped = @($ownedProcessesStopped)
+        foreignProcessesStopped = @($foreignProcessesStopped)
+        databaseReleased = $databaseReleased
+        retryOriginalCommand = $retryOriginalCommand
         userReportOmitted = $userReportOmitted
         userReportPath = $userReportPath
         userReportSource = $userReportSource
@@ -821,6 +1441,22 @@ if ($summaryText.Length -gt 4000) {
         statusPath = $statusPath
     }
     $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
+    if ($summaryText.Length -gt 4000 -and $null -ne $blockerAction) {
+        # A user decision may carry a complete choice list. Move it whole to a
+        # file instead of letting the last level drop the blocker it belongs to.
+        $blockerActionOmitted = $true
+        $blockerActionPath = Resolve-NormalizedPath -Path (Join-Path $runDirectory "blocker-action.json")
+        try {
+            Write-JsonFileAtomic -Path $blockerActionPath -Value $blockerAction
+        } catch {
+            # status.json already holds the complete blockerAction property.
+            $blockerActionPath = Resolve-NormalizedPath -Path $statusPath
+        }
+        $summary.blockerAction = $null
+        $summary["blockerActionOmitted"] = $true
+        $summary["blockerActionPath"] = $blockerActionPath
+        $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
+    }
 }
 if ($summaryText.Length -gt 4000) {
     $summary = if ($userReportOmitted) {
@@ -837,7 +1473,26 @@ if ($summaryText.Length -gt 4000) {
             statusPath = $statusPath
         }
     }
+    if ($blockerClassification) {
+        # The agent cannot continue a blocker it cannot see; these few fields
+        # stay in every level while large content stays in its file.
+        $summary["requiredAction"] = Limit-Text -Value $requiredAction -Length 240
+        $summary["blockerClassification"] = Limit-Text -Value $blockerClassification -Length 120
+        $summary["blockerRequiresUserDecision"] = $blockerRequiresUserDecision
+        $summary["blockerActionOmitted"] = $blockerActionOmitted
+        $summary["blockerActionPath"] = $blockerActionPath
+        $summary["statusPath"] = $statusPath
+    }
     $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
+}
+if ($blockerActionOmitted) {
+    try {
+        Set-ObjectValue -Object $status -Name "blockerActionOmitted" -Value $true
+        Set-ObjectValue -Object $status -Name "blockerActionPath" -Value $blockerActionPath
+        Write-JsonFileAtomic -Path $statusPath -Value $status
+    } catch {
+        [Console]::Error.WriteLine("ITL compact summary warning: could not add blocker action artifact metadata to status.json: $($_.Exception.Message)")
+    }
 }
 if ($userReportOmitted) {
     try {
@@ -851,4 +1506,6 @@ if ($userReportOmitted) {
     }
 }
 Write-Output $summaryText
-[Environment]::Exit($exitCode)
+# Return through the PowerShell host so a calling script can finish its finally
+# blocks. Forced CLR shutdown can also replace the intended cancellation code.
+exit $exitCode

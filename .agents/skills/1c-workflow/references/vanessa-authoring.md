@@ -4,7 +4,7 @@ Read this together with `vanessa-tests.md` only while creating, editing, or diag
 
 ## Flow
 
-There is no separate Vanessa authoring gate. Use the pre-registered `itl-vanessa-ui` facade only when it shortens test development or resolves a concrete runtime question. Static code, metadata, local libraries, and existing scenarios come first.
+There is no separate Vanessa authoring gate. Use the pre-registered `itl-vanessa-ui` facade only when it shortens test development or resolves a concrete runtime question; a one-off `runtime-observation` from `verification-change.md` is such a question. Static code, metadata, local libraries, and existing scenarios come first.
 
 Before a runtime MCP call, make the copied branch infobase current when configuration or extension sources changed. `update-dev-branch-base` compares the source fingerprint and skips Designer/Enterprise when the infobase is already current. A `.feature`-only edit does not require an infobase update. On `ITL_INFOBASE_APPLICATION_NOT_READY`, run that helper once and repeat the original MCP call once; do not add a `run_scenario` retry.
 
@@ -12,13 +12,15 @@ Known inner tools may be passed directly to `call_tool`: `search_for_steps_by_ke
 
 The search schema is `search_name`, `search_description`, `search_type`, `exclude_name`, `exclude_description`, `exclude_type`, and `limit`. Never invent `keywords`, call the private endpoint through raw HTTP, or treat KB/reference text as proof that the current runtime exposes a step. If semantic search and local libraries do not reveal a suitable standard step, `frequently_used_steps` is an optional fallback, not a mandatory inventory dump. Query `get_data_from_knowledge_base` only for a named gap and only in small portions; never default to `format=all`. Its text `search_string` is a string; prefer a narrow `question_search` or `answers_search`, and use `questions_only` plus one `one_question` when browsing by question number is cheaper. When interpreting a run, pair `run_scenario` with `get_test_results` from the same facade instance and feature SHA; do not aggregate stale calls, screenshots, or evidence from another instance.
 
-Source-only lint warns about SQL-style `''` inside single-quoted Gherkin values, current-row selection without concrete positioning, unexplained `Пауза`, unsupported cross-step state, and mixed client/server BSL context. These warnings are cheap preflight diagnostics; they neither execute nor certify a scenario.
+Source-only lint warns about SQL-style `''` inside single-quoted Gherkin values, current-row selection without concrete positioning, unexplained `Пауза`, unsupported cross-step state, mixed client/server BSL context, and adjacent same-context code steps. These warnings are cheap preflight diagnostics; they neither execute nor certify a scenario.
 
 For a concrete scenario pattern, open only the selected section of `vanessa-recipes.md` and its matching file under `assets/vanessa-authoring-examples`. A `@template` example must have all `<...>` markers replaced and its exact steps/selectors validated in the current project. Do not copy upstream AI prompts or external features wholesale.
 
 When runtime interaction is genuinely unknown, recording is an optional discovery loop: call `user_actions_recording` with `start`, perform the shortest interaction, then call it with `stop`. Treat Turbo Gherkin as an untrusted draft and normalize it into deterministic setup, stable internal names, and exact assertions. Use `execute_form_actions` for a short deterministic batch instead of many field-by-field calls, but stop the batch before a modal dialog, window change, or intermediate state that must be inspected. Read only relevant form state. Do not use command-interface `get_all` unless the route itself is unknown or the task audits the complete command interface. For screenshots, call `get_window_list_os` first and pass one exact returned title to `get_window_screenshot_os`; a screenshot never replaces structured evidence.
 
 `run_scenario` mode `reloadAndRunFromLine` is a diagnostic shortcut only when `lineNumber` is the actual line of a runnable step. It can bypass setup, so rerun the complete focused scenario before interpreting behavior and still use `/itl-check` for verification.
+
+OS keyboard, mouse and drag steps through VanessaExt take the user's keyboard and mouse for their duration (with a consent prompt in the default hidden window mode); prefer test-protocol steps and use OS input only where the protocol cannot reach the control.
 
 ## Libraries And References
 
@@ -35,7 +37,11 @@ In BSL use `ПолучитьНавигационнуюСсылку(Объект.
 
 For arbitrary BSL, classify the execution context before authoring. The plain server step runs in the empty TestManager service infobase; product metadata managers and database access must use the TestClient-side `на сервере (Расширение)` step. Forms and client-only common modules also run in the TestClient/extension context. When both are required, compute and serialize the reference on the server, store it through a supported Vanessa variable step, and restore it in the client block. Do not use `СохранитьЗначение`/`ВосстановитьЗначение` to bridge VAExtension steps.
 
+ITL runs execute the `(Расширение)` code steps, including the `через буфер обмена` variants, through the file-code channel: no TestClient form opens and a failure reports the original error. The code runs outside a form, so do not reference `ЭтаФорма`. Combine adjacent code of one context into one step. Use ROCTUP `execute_query` to explore or diagnose data; keep business assertions in the scenario, because an external query never replaces them.
+
 ## Diagnose One Run
+
+For an asynchronous UI command, connect the scenario's TestClient profile and use the Core step `И Я жду до 20 секунд значение "Да" от выражения клиента "$КодНаблюдения$"`. Prepare the client expression to return the expected string on success and one short, non-sensitive observation (for example the HTML controller's rejection message) while waiting. The step includes the last value and the original error in the failure. Keep the subsequent assertion of the actual window or business result. A handled form/HTML rejection can leave the event log empty. If the UI evidence is insufficient, use ROCTUP to replay the read-only command parser with the same payload.
 
 `/itl-check` is the only executable verification gate. Inspect its current run in this order: `status.json`, JUnit, the error directory, fresh event-log report/entries, `vanessa.log`, then TestClient `/Out`. Treat `/Out` as supplementary because Enterprise may leave it empty.
 
@@ -49,3 +55,5 @@ Treat its category as a routing hint, not a proven root cause:
 After a terminal failed `/itl-check`, if the current artifacts leave a named UI/runtime question unresolved and the next edit depends on its answer, use one bounded `itl-vanessa-ui` diagnostic on the unchanged tree after the helper run and its owned cleanup finish, before editing or spending the next full repair attempt. If the facade is not exposed, cannot start, or cannot answer that question, record the limitation and continue from the minimum sufficient current evidence. Skip this diagnostic when the artifacts already answer the question; it consumes no repair attempt, creates no pass, and does not relax the configured repair-session limit or final `/itl-check`.
 
 Do not delete, skip, filter, or weaken a scenario merely to make verification green. Change an expected value or core assertion only when requirement evidence shows that the test was wrong. A screenshot is supplementary: capture the intended TestManager window before cleanup and never substitute it for structured results.
+
+For recurring tests of a business result, keep product code intact and prefer, in order: typing the value; opening the list, asserting its items and typing the value when membership matters; input by string; a real dropdown selection only when the field requires it. Commit a typed value by moving focus and assert the handler result or reference identity, not the displayed text. In a hidden TestClient only the selection itself takes the user's focus. Check the list itself in a one-off Vanessa UI MCP scenario unless ongoing regression coverage is explicitly needed. Agree scenario tags `@ITLDropdownPrompt` or `@ITLDropdownNoPrompt` and run overrides with the user.

@@ -1,37 +1,42 @@
 {
   "schemaVersion": 1,
-  "facadeVersion": "0.4.9",
-  "minimumFacadeVersion": "0.4.9",
+  "facadeVersion": "0.4.38",
+  "minimumFacadeVersion": "0.4.17",
   "families": {
     "roctup": {
       "serverName": "itl-roctup-data",
       "backendVersions": {
-        "roctup": "v1.7.1"
+        "roctup": "v1.10.0"
       },
       "lockKeys": [
         "roctupMcpToolkit"
       ],
       "qualification": "live-tools-list",
-      "catalog": "catalogs/roctup-v1.7.1.json",
-      "catalogSha256": "c61009dafbd8d781f44482419a72036155acc5a60f5a65c2d10df6e046cb8011"
+      "catalog": "catalogs/roctup-v1.10.0.json",
+      "catalogSha256": "5a4a6b04444a817db1e763214e369685a4e1f9befb107478a2f9d6776bfc5d77"
     },
     "vanessa-ui": {
       "serverName": "itl-vanessa-ui",
       "backendVersions": {
         "clientMcp": "v0.6.5",
-        "vaExtension": "1.2.043.28",
-        "vanessaAutomation": "1.2.043.28",
-        "vanessaExt": "1.3.9.131"
+        "vaExtension": "1.2.043.42",
+        "vanessaAutomation": "1.2.043.42",
+        "vanessaExt": "1.3.9.139"
       },
       "backendRevisions": {
-        "vanessaAutomation": "itl-r8"
+        "vanessaAutomation": "itl-r18"
       },
       "vanessaAutomationArtifact": {
-        "archiveSha256": "0a5eab8fbc93bf6db053ebcbf99b511c440c737a6f5f6d68840002ac9743bb50",
-        "epfSha256": "178995192dd02a701fb6301a497c50028cac1b40c40e703de544647c2f84ad5b",
-        "manifestSha256": "43366ce71aa2657b4d20e46fff6e9a2d6848df0d02d6d63ca8718c6e4a7da781",
-        "patchSha256": "b12426595cd0fa603698d9682d48bcb00b403ffce747ffdf02e00fd9f7ad5943",
-        "upstreamCommit": "f3a01778a14d29b38204685deea0131274d438ff"
+        "archiveSha256": "ce3dddbded9ba2429bf976e5cd8d41c5d7475458cbbb88cd198e21cd5569b9e2",
+        "epfSha256": "7b6ae82e54f1ed06a19be0ab6652994cf6883be02ddfc2c8bd18ffd5b391d53c",
+        "manifestSha256": "04dce00b2e3f8fd6bb5e19d398371250481fbe02b10453f55fb2362831b0d932",
+        "patchSha256": "51fbdc4fe46dc7d119b63494341df6006ec56bbb52da3a7a11d5d92e1d5afef1",
+        "upstreamCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1"
+      },
+      "pairedExtensionArtifact": {
+        "assetName": "VAExtension.1.32-itl-r18.cfe",
+        "sha256": "fc964181ec3e623c21985656cba1c5ecb77f90c0a47316d945580ebe6212a510",
+        "protocol": "itl-file-code-v1"
       },
       "lockKeys": [
         "vanessaAutomation",
@@ -40,14 +45,14 @@
       ],
       "embeddedDependencies": {
         "vanessaExt": {
-          "version": "1.3.9.131",
+          "version": "1.3.9.139",
           "assetName": "AddIn.zip",
-          "sha256": "9ccae6b95077f196641070e358a654047ccf4a4197722d8acf8b2d82c4acea5a"
+          "sha256": "4d7b8c1a9054d8d902ddc07720613c48a0c481c87edff4391589e4cd4ea15514"
         }
       },
       "qualification": "live-tools-list",
-      "catalog": "catalogs/vanessa-ui-v0.6.5-va-1.2.043.28.json",
-      "catalogSha256": "4d262a09d1faa4a4a74425e434088d628405892d745617f16f002d3b7f5e07eb"
+      "catalog": "catalogs/vanessa-ui-v0.6.5-va-1.2.043.42.json",
+      "catalogSha256": "eab0f36040dd5ff13dccadf867b8bee2051296b528f37b95e378ec20bb5edc5e"
     }
   }
 }

@@ -1,0 +1,137 @@
+{
+  "status": "native-passed-registration-separate",
+  "nativeSourceCommit": "3645c8e46184284b50573a6164709252533a986c",
+  "target": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+  "nativeExitCode": 0,
+  "nativeStatus": "succeeded",
+  "durationMs": 331540,
+  "roots": [
+    {
+      "pendingTransactions": 0,
+      "untracked": [],
+      "head": "891afc69630fee01a89c79a9908ccdaaa33616ee",
+      "configurationUnchanged": true,
+      "configurationTree": "53a9c5c3256d9ee6851ca367a5457dd5b5660a73",
+      "gate6Artifacts": 0,
+      "schema": 1,
+      "projectMode": "locked",
+      "runtime": [
+        {
+          "path": ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+          "sha256": "3f760f936e9ed66a9c5ca9cd7710e5307b1171bdd76cd3277eb1337bec58c6c2",
+          "equalsOriginalOldSource": true
+        },
+        {
+          "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+          "sha256": "069c16172c84c0d1b599bc0e80645f46fb2756b788ac6e1745051a6a6863d4ba",
+          "equalsOriginalOldSource": true
+        },
+        {
+          "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+          "sha256": "1117f6140e7bf760297d2f25619accaa4b5557f84b1db94fc312af714d098fa1",
+          "equalsOriginalOldSource": true
+        }
+      ],
+      "dirty": [],
+      "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project",
+      "lockMode": "locked",
+      "aiRules": "827e5ccaa7e319dc5871555f7e997093478359c4",
+      "envMode": "DEPENDENCY_MODE=locked",
+      "workflow": "fa0e3c91694112c1da3ecda7209a8a81ea828264"
+    },
+    {
+      "pendingTransactions": 0,
+      "untracked": [],
+      "head": "16d77dd5938d5c61bbf164a02300efde484e6fb8",
+      "configurationUnchanged": true,
+      "configurationTree": "79d912aee1e711c0bcefd4660131902c1b731e3e",
+      "gate6Artifacts": 0,
+      "schema": 1,
+      "projectMode": "locked",
+      "runtime": [
+        {
+          "path": ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+          "sha256": "3f760f936e9ed66a9c5ca9cd7710e5307b1171bdd76cd3277eb1337bec58c6c2",
+          "equalsOriginalOldSource": true
+        },
+        {
+          "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+          "sha256": "069c16172c84c0d1b599bc0e80645f46fb2756b788ac6e1745051a6a6863d4ba",
+          "equalsOriginalOldSource": true
+        },
+        {
+          "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+          "sha256": "1117f6140e7bf760297d2f25619accaa4b5557f84b1db94fc312af714d098fa1",
+          "equalsOriginalOldSource": true
+        }
+      ],
+      "dirty": [],
+      "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch",
+      "lockMode": "locked",
+      "aiRules": "827e5ccaa7e319dc5871555f7e997093478359c4",
+      "envMode": "DEPENDENCY_MODE=locked",
+      "workflow": "fa0e3c91694112c1da3ecda7209a8a81ea828264"
+    }
+  ],
+  "database": {
+    "path": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+    "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+    "unchanged": true,
+    "bytes": 3295928320
+  },
+  "transactions": [
+    {
+      "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project",
+      "snapshot": "itl-workflow-update-completed-51c2cd62e3c8404597f283fa4da81d02",
+      "phase": "post-copy-complete",
+      "target": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+      "executor": "3645c8e46184284b50573a6164709252533a986c",
+      "completedHead": "891afc69630fee01a89c79a9908ccdaaa33616ee",
+      "dependencyPlanPresent": true
+    },
+    {
+      "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch",
+      "snapshot": "itl-workflow-update-completed-399283752e274338b8bf90768e596e20",
+      "phase": "post-copy-complete",
+      "target": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+      "executor": "3645c8e46184284b50573a6164709252533a986c",
+      "completedHead": "00e8956efa5638484917ef5351dcab05b7f0ace3",
+      "dependencyPlanPresent": true
+    },
+    {
+      "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch",
+      "snapshot": "itl-workflow-update-completed-8eecf3e5e3f6444e8c7f22100149ebf0",
+      "phase": "post-copy-complete",
+      "target": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+      "executor": "3645c8e46184284b50573a6164709252533a986c",
+      "completedHead": "16d77dd5938d5c61bbf164a02300efde484e6fb8",
+      "dependencyPlanPresent": true
+    }
+  ],
+  "originalStandPreserved": true,
+  "priorRawFiles": 957,
+  "runtimeSha256": {
+    ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1": "306920036bc08baf2d23ceec3fb2a1bf665342eefddb7a43a84abca82954f4c2",
+    "scripts/update-installed-workflow.ps1": "cd4f913e9945e1f0fd324232677f1bda9f7d27ef318bb7b751f4d45f111a7956"
+  },
+  "raw": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-executor-20261025",
+    "files": 266,
+    "manifestSha256": "7284481afd963e7dc7baf833fefd4701f36a6aeeb379791bef795394a55200f5"
+  },
+  "fixtureCorrections": [
+    "Removed one global source-build EXE override: exact old and current cached artifacts require distinct SHA values; installer SHA assertions retained",
+    "Read optional executor/intent diagnostic fields through existing safe accessor; mandatory verifier assertions retained"
+  ],
+  "newTestCases": 0,
+  "gate6Started": false,
+  "g4Started": false,
+  "workingMigration": false,
+  "publication": false,
+  "registration": {
+    "authority": "scripts/source-delivery.ps1 -Action Status",
+    "queueId": "product-project-registry-g2",
+    "separateFromNative": true
+  },
+  "fullG3Accepted": false
+}

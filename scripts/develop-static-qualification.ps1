@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'release-qualification.ps1')
 
 if (-not (Get-Command Get-RepositoryCommonGitDirectory -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot "git-path-list.ps1")
@@ -25,10 +26,8 @@ function Test-DevelopStaticQualificationSource {
     if (-not (Test-Path -LiteralPath $FullPath -PathType Leaf) -or -not (Test-Path -LiteralPath $PesterPath -PathType Leaf)) { return $false }
     try {
         $qualification = Get-Content -LiteralPath $FullPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([int]$qualification.schemaVersion -notin @(1, 2, 3) -or
-            [string]$qualification.kind -ne "itl-workflow-full-qualification" -or
-            [string]$qualification.status -ne "passed" -or
-            -not [bool]$qualification.reusable -or
+        if(-not (Test-WorkflowForkTransitionArtifact $qualification $FullPath)) {return $false}
+        if ([int]$qualification.schemaVersion -notin @(1,2,3,4) -or -not (Test-WorkflowFullQualificationRecord $qualification) -or
             -not [bool]$qualification.repository.worktreeClean -or
             [string]$qualification.repository.tree -ne $Tree) { return $false }
         $pesterHash = (Get-FileHash -LiteralPath $PesterPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -60,6 +59,7 @@ function Save-DevelopStaticQualification {
     try {
         Copy-Item -LiteralPath $fullPath -Destination $temporaryFull -Force
         Copy-Item -LiteralPath $pesterPath -Destination $temporaryPester -Force
+        Copy-WorkflowForkTransitionArtifact -FullPath $fullPath -Destination $target
         $manifest = [ordered]@{
             schemaVersion = 1
             kind = "itl-develop-static-qualification-cache"
@@ -106,6 +106,7 @@ function Restore-DevelopStaticQualification {
         try {
             Copy-Item -LiteralPath $fullPath -Destination $temporaryFull -Force
             Copy-Item -LiteralPath $pesterPath -Destination $temporaryPester -Force
+            Copy-WorkflowForkTransitionArtifact -FullPath $fullPath -Destination $QualificationRoot
             Move-Item -LiteralPath $temporaryFull -Destination (Join-Path $QualificationRoot "full.json") -Force
             Move-Item -LiteralPath $temporaryPester -Destination (Join-Path $QualificationRoot "pester.xml") -Force
         } finally {
@@ -132,4 +133,98 @@ function Get-DevelopStaticQualificationCacheMatch {
     }
     if (-not (Restore-DevelopStaticQualification -RepositoryRoot $RepositoryRoot -QualificationRoot $QualificationRoot -Tree $Tree)) { return $null }
     return & $Validate $true
+}
+
+function Save-DevelopE2ECurrentStaticProof {
+    param([string]$QualificationPath, [string]$Commit, [string]$Tree)
+    # Called only after check.ps1 completes the current candidate's static gate.
+    # Freeze its bytes alongside the existing qualification artifacts: Release
+    # may later replace full.json/pester.xml without changing route provenance.
+    $junit = Join-Path (Split-Path -Parent $QualificationPath) 'pester.xml'
+    $sha = (Get-FileHash -LiteralPath $QualificationPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $junitSha = (Get-FileHash -LiteralPath $junit -Algorithm SHA256).Hash.ToLowerInvariant()
+    $proof = [pscustomobject]@{path=$QualificationPath;sha256=$sha;junitPath=$junit;junitSha256=$junitSha}
+    if (-not (Test-WorkflowCurrentStaticProof -Proof $proof -Commit $Commit -Tree $Tree)) { return $null }
+    $root = Join-Path (Split-Path -Parent $QualificationPath) "journey-static/$sha"
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    Copy-Item -LiteralPath $QualificationPath -Destination (Join-Path $root 'full.json') -Force
+    Copy-Item -LiteralPath $junit -Destination (Join-Path $root 'pester.xml') -Force
+    Copy-WorkflowForkTransitionArtifact -FullPath $QualificationPath -Destination $root
+    $proof.path = Join-Path $root 'full.json'; $proof.junitPath = Join-Path $root 'pester.xml'
+    if (-not (Test-WorkflowCurrentStaticProof -Proof $proof -Commit $Commit -Tree $Tree)) { return $null }
+    return $proof
+}
+
+function Write-WorkflowQualification {
+    param(
+        [string]$Commit,
+        [string]$Tree,
+        [object]$Result,
+        [string]$EvidenceCommit,
+        [string]$ReuseKind,
+        [object]$SourceQualification = $null,
+        [object]$ContinuationProof = $null
+    )
+    $qualificationRoot = Split-Path -Parent $qualificationFullPath
+    $qualificationJunitPath = Join-Path $qualificationRoot "pester.xml"
+    New-Item -ItemType Directory -Force -Path $qualificationRoot | Out-Null
+    if (-not $SourceQualification -and (Test-Path -LiteralPath $junitPath -PathType Leaf)) {
+        if (-not [string]::Equals([IO.Path]::GetFullPath($junitPath), [IO.Path]::GetFullPath($qualificationJunitPath), [StringComparison]::OrdinalIgnoreCase)) {
+            Copy-Item -LiteralPath $junitPath -Destination $qualificationJunitPath -Force
+        }
+    }
+    if (-not (Test-Path -LiteralPath $qualificationJunitPath -PathType Leaf)) { throw "Reusable workflow qualification has no canonical JUnit evidence." }
+    $testInventory = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot "tests\pester") -Recurse -File -Filter "*.ps1" | Sort-Object FullName | ForEach-Object { New-InventoryEntry -Path $_.FullName -Root $repoRoot })
+    $scriptInventory = @(Get-WorkflowGateScriptPaths | ForEach-Object { New-InventoryEntry -Path $_ -Root $repoRoot })
+    $forkRecord = if ($SourceQualification) { $SourceQualification.fork } else {
+        [ordered]@{
+            repo = [string]$aiRulesRelease.repo; tag = [string]$aiRulesRelease.tag; commit = [string]$aiRulesRelease.commit; tree = [string]$aiRulesRelease.tree
+            upstreamRef = [string]$aiRulesRelease.upstreamRef; upstreamCommit = [string]$aiRulesRelease.upstreamCommit
+            qualificationPath = $forkQualificationPath; qualificationSha256 = $forkQualificationSha256
+        }
+    }
+    $transitionPath=Join-Path $qualificationRoot 'fork-transitions.json'
+    if(-not $SourceQualification -and (Test-Path -LiteralPath $transitionPath -PathType Leaf)) {
+        $transitionSha=(Get-FileHash -LiteralPath $transitionPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $transitionName='fork-transitions-'+$transitionSha+'.json'
+        Copy-Item -LiteralPath $transitionPath -Destination (Join-Path $qualificationRoot $transitionName) -Force
+        $forkRecord['transitionProof']=[ordered]@{path=$transitionName;sha256=$transitionSha}
+    }
+    $pesterInputs = if ($SourceQualification) { $SourceQualification.pesterInputs } else { $pesterShardSummary.inputIdentity }
+    if (-not (Test-PesterInputIdentityRecord $pesterInputs)) { throw 'Passed Full qualification requires the actual scheduler input manifest.' }
+    $qualification = [ordered]@{
+        schemaVersion = 4
+        kind = "itl-workflow-full-qualification"
+        status = "passed"
+        reusable = [bool]$pesterInputs.reusable
+        pesterInputs = $pesterInputs
+        repository = [ordered]@{ name = "1c-agent-workflow"; commit = $Commit; tree = $Tree; worktreeClean = $true; evidenceCommit = $EvidenceCommit; reuseKind = $ReuseKind }
+        fork = $forkRecord
+        environment = [ordered]@{
+            powershellVersion = [string]$PSVersionTable.PSVersion; powershellEdition = [string]$PSVersionTable.PSEdition
+            pesterVersion = $(if ($SourceQualification) { [string]$SourceQualification.environment.pesterVersion } else { $pesterVersion })
+            platform = $(if ($PSVersionTable.ContainsKey("Platform")) { [string]$PSVersionTable["Platform"] } else { "Win32NT" })
+            os = $(if ($PSVersionTable.ContainsKey("OS")) { [string]$PSVersionTable["OS"] } else { [string][System.Environment]::OSVersion.VersionString })
+        }
+        inventory = [ordered]@{ tests = $testInventory; scripts = $scriptInventory }
+        junit = [ordered]@{ path = Get-RelativeRepositoryPath -Path $qualificationJunitPath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $qualificationJunitPath -Algorithm SHA256).Hash.ToLowerInvariant() }
+        result = $Result
+        stages = @($stages | ForEach-Object { $_ })
+        startedAt = $startedAt.ToString("o")
+        finishedAt = [DateTime]::UtcNow.ToString("o")
+        durationMs = [int64]$overallStopwatch.ElapsedMilliseconds
+        error = $null
+    }
+    if ($ContinuationProof) {
+        $qualification["continuation"] = [ordered]@{
+            qualifiedCommit = [string]$ContinuationProof.qualifiedCommit
+            paths = @($ContinuationProof.paths)
+            scopes = @($ContinuationProof.scopes)
+            targetedRunPath = [string]$ContinuationProof.targetedRunPath
+            targetedRunSha256 = [string]$ContinuationProof.targetedRunSha256
+            targetedFinishedAt = [string]$ContinuationProof.targetedFinishedAt
+        }
+    }
+    [System.IO.File]::WriteAllText($qualificationFullPath, (($qualification | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+    return $qualification
 }

@@ -9,9 +9,11 @@ param(
     [string]$ResumeRunStatusPath = "",
     [ValidateSet("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")]
     [string]$AgentTarget = "",
+    [string]$CatalogProjectId = '',
+    [string]$CatalogProfileId = '',
     [ValidateSet("", "opus5", "sonnet5", "fable5", "gpt56")]
     [string]$AgentModel = "",
-    [int]$InitMaxWaitSeconds = 3600,
+    [Nullable[int]]$InitMaxWaitSeconds = $null,
     [switch]$KeepWindowOnFailure,
     [switch]$SkipWorkflowSourceFreshnessCheck
 )
@@ -29,8 +31,8 @@ function Get-BootstrapUtf8Text {
     return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Base64))
 }
 
-if ($InitMaxWaitSeconds -lt 0) {
-    throw "InitMaxWaitSeconds must be 0 or greater."
+if ($null -ne $InitMaxWaitSeconds -and ($InitMaxWaitSeconds -lt 1 -or $InitMaxWaitSeconds -gt 86400)) {
+    throw "InitMaxWaitSeconds must be between 1 and 86400."
 }
 
 function Normalize-Agent1cFullPathText {
@@ -279,6 +281,8 @@ function Assert-SourcePackage {
         "install-agent-1c-workflow.ps1",
         "AGENT-INSTALL.md",
         ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1",
+        ".agents\skills\1c-workflow\scripts\execution-guard-cutover.ps1",
+        ".agents\skills\1c-workflow\chatgpt\mcp_bridge.py",
         ".agents\skills\1c-workflow-fast\SKILL.md",
         ".agents\skills\product-docs\SKILL.md",
         ".agents\skills\itl-roctup-1c-data\SKILL.md",
@@ -339,7 +343,7 @@ function Copy-ManagedDirectory {
     if (Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue) {
         Remove-Item -LiteralPath $targetPath -Recurse -Force
     }
-    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Recurse -Force
+    Copy-WorkflowPackageDirectoryContent -SourcePath $sourcePath -DestinationPath $targetPath
     Write-Host "Installed workflow directory: $RelativePath"
 }
 
@@ -485,6 +489,7 @@ if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
 
 $projectRootFull = Resolve-Agent1cFullPath -Path $ProjectRoot
 $sourceRootFull = Resolve-Agent1cFullPath -Path $SourceRoot
+. (Join-Path $scriptRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.package-content.ps1')
 $callerRoot = Resolve-Agent1cFullPath -Path (Get-Location).Path
 
 if (-not (Test-Path -LiteralPath $sourceRootFull -PathType Container -ErrorAction SilentlyContinue)) {
@@ -557,12 +562,20 @@ try {
         exit 0
     }
 
+    $cutoverPath = Join-Path $projectRootFull '.agents\skills\1c-workflow\scripts\execution-guard-cutover.ps1'
+    if (-not (Test-Path -LiteralPath $cutoverPath -PathType Leaf)) {
+        throw "Installed execution-guard cutover entrypoint was not found: $cutoverPath"
+    }
+    & $cutoverPath -ProjectRoot $projectRootFull | Out-Null
+
     $launcherPath = Join-Path $projectRootFull ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
     if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf -ErrorAction SilentlyContinue)) {
         throw "Installed monitored launcher was not found: $launcherPath"
     }
 
     $initArgs = @("-Action", "init-project", "-InitMode", $InitMode)
+    if ($CatalogProjectId) { $initArgs += @('-CatalogProjectId', $CatalogProjectId) }
+    if ($CatalogProfileId) { $initArgs += @('-CatalogProfileId', $CatalogProfileId) }
     if ($AgentTarget) {
         $initArgs += @("-AgentTarget", $AgentTarget)
     }
@@ -600,7 +613,9 @@ try {
     if ($KeepWindowOnFailure) {
         $launcherArgs += "-KeepWindowOnFailure"
     }
-    $launcherArgs += @("-MaxWaitSeconds", [string]$InitMaxWaitSeconds)
+    if ($null -ne $InitMaxWaitSeconds) {
+        $launcherArgs += @("-MaxWaitSeconds", [string]$InitMaxWaitSeconds)
+    }
     $launcherArgs += @("--") + $initArgs
 
     Write-Host "Starting monitored ITL initialization."

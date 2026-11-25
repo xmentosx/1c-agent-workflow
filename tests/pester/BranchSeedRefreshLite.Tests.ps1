@@ -6,6 +6,152 @@
         $HelperPath = $context.HelperPath
     }
 
+    It "keeps the authoritative seed fingerprint byte-exact through <Scenario> with autocrlf true" -ForEach @(
+        @{ Scenario = 'first initialization'; Legacy = $false; FailDumpOnce = $false }
+        @{ Scenario = 'legacy master sync'; Legacy = $true; FailDumpOnce = $false }
+        @{ Scenario = 'failed master sync and same-command retry'; Legacy = $true; FailDumpOnce = $true }
+    ) {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("ИТЛ seed CRLF с пробелом " + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportRoot = Join-Path $tempRoot 'src\cf'
+            $sourceRoot = Join-Path $tempRoot '.agent-1c\source база'
+            New-Item -ItemType Directory -Force -Path $exportRoot, $sourceRoot | Out-Null
+            $utf8 = [Text.UTF8Encoding]::new($false)
+            $configurationBytes = $utf8.GetBytes("<Configuration>`r`n  <Comment>Исходная конфигурация</Comment>`r`n</Configuration>`r`n")
+            $moduleBytes = $utf8.GetBytes("Процедура Проверка() Экспорт`r`nКонецПроцедуры`r`n")
+            [IO.File]::WriteAllBytes((Join-Path $sourceRoot '1Cv8.1CD'), [byte[]](1, 2, 3))
+            [IO.File]::WriteAllBytes((Join-Path $exportRoot 'Configuration.xml'), $configurationBytes)
+            [IO.File]::WriteAllBytes((Join-Path $exportRoot 'Модуль с пробелом.bsl'), $moduleBytes)
+            [IO.File]::WriteAllText((Join-Path $exportRoot 'ConfigDumpInfo.xml'), '<ConfigDumpInfo/>', $utf8)
+            [IO.File]::WriteAllText((Join-Path $tempRoot '.gitignore'), ".agent-1c/`n.dev.env`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $tempRoot '.gitattributes'), "*.md text eol=lf`n", $utf8)
+            & git -C $tempRoot init --quiet -b master
+            $LASTEXITCODE | Should -Be 0
+            & git -C $tempRoot config user.name 'ITL seed fingerprint fixture'
+            & git -C $tempRoot config user.email 'seed-tests@example.invalid'
+            & git -C $tempRoot config core.autocrlf true
+            if ($Legacy) {
+                & git -C $tempRoot add --all
+                & git -C $tempRoot commit --quiet -m 'legacy normalized configuration'
+                $LASTEXITCODE | Should -Be 0
+            }
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -AgentTarget kilocode -Action help *> $null
+                $InitMode = 'configured'
+                $Action = if ($Legacy) { 'sync-master' } else { 'init-project' }
+                $RunStatusPath = ''
+                $script:FixtureDumpAttempts = 0
+                function Write-Section {}
+                function Set-RunStage {}
+                # This source/index fixture never launches 1C or exports long platform paths.
+                function Assert-Agent1cInitialProjectRootPathBudget { return [pscustomobject]@{ valid=$true } }
+                function Prepare-ConfiguredInitProjectSettings {}
+                function Complete-InitProjectSettingsPreparation {}
+                function Apply-BootstrapWorkflowPackageProvenance {}
+                function Sync-WorkflowManagedDependencyLockEntries {}
+                function Enter-ItlInitializationNativePhase {}
+                function Initialize-SourceInfoBaseUnsafeActionProtection {}
+                function Get-EnvValue { param($Name, $Default); if ($Name -eq 'VIBECODING1C_MCP_SETUP_DURING_INIT') { return $false }; return $Default }
+                function Check-Tools {}
+                function Remove-ItlOnDemandStaleInstances {}
+                function Install-RoctupMcp {}
+                function Install-VanessaMcpArtifacts {}
+                function Install-ItlOnDemandMcp {}
+                function Get-DevBranchInfoBaseRoot { return (Join-Path $tempRoot '.agent-1c\infobases') }
+                function Ensure-GitRepository {}
+                function Ensure-GitIgnore {}
+                function Checkout-Master {}
+                function Clear-DevBranchContext {}
+                function Update-BaseFromRepository { return $false }
+                function Get-SourceUsesRepository { return $false }
+                function Get-SourceRepositoryUpdateMode { return 'external' }
+                function Get-InfoBaseKind { return 'file' }
+                function Get-SourceInfoBasePath { return $sourceRoot }
+                function Get-MainWorktreePath { return $tempRoot }
+                function Get-ExportPath { return 'src/cf' }
+                function Get-ExtensionsPath { return 'src/cfe' }
+                function Get-SourceConfigurationGenerationId { return ('a' * 40) }
+                function Get-SourceEventLogSeedBaseline {
+                    return [ordered]@{ schemaVersion=2; reader='fixture-empty'; signatures=@(); errorCount=0; failureEvidence='' }
+                }
+                function Invoke-Designer { throw 'Native Designer must not run in the source-byte regression' }
+                function Dump-ConfigToFilesFromInfoBase {
+                    $script:FixtureDumpAttempts++
+                    if ($FailDumpOnce -and $script:FixtureDumpAttempts -eq 1) { throw 'fixture-native-dump-failed' }
+                    [IO.File]::WriteAllBytes((Join-Path $exportRoot 'Configuration.xml'), $configurationBytes)
+                    [IO.File]::WriteAllBytes((Join-Path $exportRoot 'Модуль с пробелом.bsl'), $moduleBytes)
+                    return [pscustomobject]@{ exportPath='src/cf'; absoluteExportPath=$exportRoot }
+                }
+                function Install-AiRules1c { throw 'fixture-stop-after-authoritative-commit' }
+                function Sync-KiloItlCommandSurface {}
+                function Write-AndSetRunUserReport {}
+                $firstFailure = ''
+                $failedSeedStatus = ''
+                $statusBeforeRetry = @()
+                $attributesBefore = [IO.File]::ReadAllText((Join-Path $tempRoot '.gitattributes'))
+                $attributesAfterFailure = ''
+                if ($Legacy) {
+                    if ($FailDumpOnce) {
+                        try { Sync-Master -NoDelegate -SeedPolicy Rebuild 6>$null } catch { $firstFailure = $_.Exception.Message }
+                        $failedSeedStatus = [string](Read-BranchSeedManifest).status
+                        $statusBeforeRetry = @(Get-GitPathList -Arguments @('status', '--porcelain', '-z'))
+                        $attributesAfterFailure = [IO.File]::ReadAllText((Join-Path $tempRoot '.gitattributes'))
+                    }
+                    Sync-Master -NoDelegate -SeedPolicy Rebuild 6>$null
+                } else {
+                    $stoppedAtOwnedBoundary = ''
+                    try { Initialize-Project 6>$null } catch { $stoppedAtOwnedBoundary = $_.Exception.Message }
+                    if ($stoppedAtOwnedBoundary -cne 'fixture-stop-after-authoritative-commit') { throw "Unexpected init failure: $stoppedAtOwnedBoundary" }
+                }
+                $seed = Read-BranchSeedManifest
+                $current = Get-ConfigSourceFingerprint -ExportPath 'src/cf'
+                $configurationBlob = (Get-GitOutput @('rev-parse', 'HEAD:src/cf/Configuration.xml')).Trim()
+                $moduleBlob = (Get-GitOutput @('rev-parse', 'HEAD:src/cf/Модуль с пробелом.bsl')).Trim()
+                $blobs = Get-GitBlobBytesBatch -Root $tempRoot -ObjectIds @($configurationBlob, $moduleBlob)
+                [pscustomobject]@{
+                    seed=$seed; current=$current
+                    committedConfiguration=[Convert]::ToBase64String($blobs[$configurationBlob])
+                    committedModule=[Convert]::ToBase64String($blobs[$moduleBlob])
+                    worktreeConfiguration=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $exportRoot 'Configuration.xml')))
+                    worktreeModule=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $exportRoot 'Модуль с пробелом.bsl')))
+                    status=@(Get-GitPathList -Arguments @('status', '--porcelain', '-z', '--', 'src/cf', '.gitattributes'))
+                    fullStatus=@(Get-GitPathList -Arguments @('status', '--porcelain', '-z'))
+                    firstFailure=$firstFailure; failedSeedStatus=$failedSeedStatus; statusBeforeRetry=$statusBeforeRetry
+                    attributesBefore=$attributesBefore; attributesAfterFailure=$attributesAfterFailure
+                }
+            }
+
+            $result.seed.status | Should -Be 'ready'
+            $result.seed.configurationFingerprint | Should -BeExactly $result.current.fingerprint
+            $result.seed.configurationFileCount | Should -Be $result.current.fileCount
+            $result.committedConfiguration | Should -BeExactly ([Convert]::ToBase64String($configurationBytes))
+            $result.committedModule | Should -BeExactly ([Convert]::ToBase64String($moduleBytes))
+            $result.worktreeConfiguration | Should -BeExactly $result.committedConfiguration
+            $result.worktreeModule | Should -BeExactly $result.committedModule
+            $result.status.Count | Should -Be 0
+            if ($Legacy) { $result.fullStatus.Count | Should -Be 0 }
+            else {
+                # Init is deliberately stopped before its later workflow commit owns .gitignore.
+                $result.fullStatus | Should -Be @('?? .gitignore')
+            }
+            if ($FailDumpOnce) {
+                $result.firstFailure | Should -BeExactly 'fixture-native-dump-failed'
+                $result.failedSeedStatus | Should -Be 'failed'
+                $result.statusBeforeRetry.Count | Should -Be 0
+                $result.attributesAfterFailure | Should -BeExactly $result.attributesBefore
+            }
+        } finally {
+            $resolvedFixtureRoot = [IO.Path]::GetFullPath($tempRoot)
+            $resolvedTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+            if (-not $resolvedFixtureRoot.StartsWith($resolvedTempRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+                [IO.Path]::GetFileName($resolvedFixtureRoot) -notmatch '^ИТЛ seed CRLF с пробелом [a-f0-9]{32}$') {
+                throw "Seed byte fixture cleanup target is outside its owned temporary root: $resolvedFixtureRoot"
+            }
+            if (Test-Path -LiteralPath $resolvedFixtureRoot) { Remove-Item -LiteralPath $resolvedFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
     It "keeps one latest file seed with DoNotCopy marker and transfers signatures without raw 1Cv8Log" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-latest-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -18,6 +164,7 @@
 
             $result = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $tempRoot
                 function Get-BranchSeedRoot { return $seedRoot }
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return $sourceRoot }
@@ -43,15 +190,18 @@
                     return [pscustomobject]@{ fingerprint = "fingerprint"; fileCount = 7 }
                 }
 
-                $first = New-BranchSeed -ConfigurationFingerprint "old" -ConfigurationFileCount 1 -DumpConfigurationFromSeed
+                $first = New-BranchSeed -ConfigurationFingerprint "" -ConfigurationFileCount 0 -DumpConfigurationFromSeed
                 [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8.1CD"), [byte[]](4, 5, 6, 7))
                 Set-Content -LiteralPath (Join-Path $sourceRoot "DoNotCopy.txt") -Encoding ASCII -Value "source-marker-two"
-                $second = New-BranchSeed -ConfigurationFingerprint "old" -ConfigurationFileCount 1 -DumpConfigurationFromSeed
+                $second = New-BranchSeed -ConfigurationFingerprint "" -ConfigurationFileCount 0 -DumpConfigurationFromSeed
+                $confirmed = Ensure-BranchSeed -Policy EnsureCompatible -ConfigurationFingerprint "fingerprint" -SourceGenerationId ("b" * 40)
                 $branchInfoBasePath = Join-Path $tempRoot "branch base"
                 Restore-DevBranchFromSeed -DevBranchName "feature" -DevBranchInfoBasePath $branchInfoBasePath | Out-Null
                 [pscustomobject]@{
                     firstSyncId = [string]$first.syncId
                     secondSyncId = [string]$second.syncId
+                    confirmedSyncId = [string]$confirmed.syncId
+                    confirmedGenerationId = [string]$confirmed.sourceGenerationId
                     manifest = $second
                     artifacts = @(Get-ChildItem -LiteralPath $seedRoot -Recurse -File -Filter "1Cv8.1CD")
                     rawLogs = @(Get-ChildItem -LiteralPath $seedRoot -Recurse -Directory -Filter "1Cv8Log")
@@ -63,6 +213,8 @@
             }
 
             $result.firstSyncId | Should -Not -Be $result.secondSyncId
+            $result.confirmedSyncId | Should -Be $result.secondSyncId
+            $result.confirmedGenerationId | Should -Be ("b" * 40)
             $result.manifest.status | Should -Be "ready"
             $result.manifest.configurationFingerprint | Should -Be "fingerprint"
             @($result.artifacts).Count | Should -Be 1
@@ -88,6 +240,7 @@
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
                 $script:unbindCalls = @()
                 $script:unbindObservedBeforeDump = $false
+                $script:ProjectRoot = $tempRoot
                 function Get-BranchSeedRoot { return $seedRoot }
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return $sourceRoot }
@@ -123,7 +276,7 @@
                     return [pscustomobject]@{ fingerprint = "detached"; fileCount = 1 }
                 }
 
-                $manifest = New-BranchSeed -ConfigurationFingerprint "attached" -ConfigurationFileCount 1 -DumpConfigurationFromSeed
+                $manifest = New-BranchSeed -ConfigurationFingerprint "" -ConfigurationFileCount 0 -DumpConfigurationFromSeed
                 [pscustomobject]@{
                     manifest = $manifest
                     unbindCalls = @($script:unbindCalls)
@@ -155,6 +308,7 @@
 
             $result = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $tempRoot
                 function Get-BranchSeedRoot { return $seedRoot }
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return $sourceRoot }
@@ -224,7 +378,7 @@
         }
     }
 
-    It "trusts the already dumped source fingerprint during refresh but still validates an explicit seed rebuild" {
+    It "validates a rebuilt file seed even when a source fingerprint was supplied" {
         & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             function Read-BranchSeedManifest { return $null }
@@ -239,17 +393,254 @@
                 }
             }
 
-            $refreshSeed = Ensure-BranchSeed -Policy EnsureCompatible -ConfigurationFingerprint "source-fingerprint" -ConfigurationFileCount 17 -TrustProvidedConfigurationFingerprint
+            $refreshSeed = Ensure-BranchSeed -Policy EnsureCompatible -ConfigurationFingerprint "source-fingerprint" -ConfigurationFileCount 17
             $explicitSeed = Ensure-BranchSeed -Policy Rebuild -ConfigurationFingerprint "" -ConfigurationFileCount 0
 
             $refreshSeed.fingerprint | Should -Be "source-fingerprint"
             $refreshSeed.fileCount | Should -Be 17
-            $refreshSeed.dumpedFromSeed | Should -BeFalse
+            $refreshSeed.dumpedFromSeed | Should -BeTrue
             $explicitSeed.dumpedFromSeed | Should -BeTrue
 
             $lifecycleText = Read-Utf8Text -Path (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
             $syncBody = [regex]::Match($lifecycleText, '(?s)function Sync-Master\s*\{.*?(?=\r?\nfunction )').Value
-            $syncBody | Should -Match '(?s)Dump-ConfigToFiles.*?Ensure-BranchSeed.*?-TrustProvidedConfigurationFingerprint'
+            $syncBody | Should -Not -Match 'TrustProvidedConfigurationFingerprint'
+        }
+    }
+
+    It "rejects a copied seed whose configuration differs from the source export" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-mismatch-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $sourceRoot = Join-Path $tempRoot "исходная база"
+            $seedRoot = Join-Path $tempRoot "общий seed"
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8.1CD"), [byte[]](1, 2, 3))
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $tempRoot
+                function Get-BranchSeedRoot { return $seedRoot }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceInfoBasePath { return $sourceRoot }
+                function Get-SourceUsesRepository { return $false }
+                function Get-MainWorktreePath { return $RepoRoot }
+                function Get-SourceEventLogSeedBaseline {
+                    return [ordered]@{ signatures = @(); errorCount = 0; reader = "fixture"; failureEvidence = "" }
+                }
+                function Dump-ConfigToFilesFromInfoBase { return [pscustomobject]@{ exportPath = "src/cf" } }
+                function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "different"; fileCount = 1 } }
+                $failure = ""
+                try { New-BranchSeed -ConfigurationFingerprint "expected" -DumpConfigurationFromSeed | Out-Null }
+                catch { $failure = $_.Exception.Message }
+                [pscustomobject]@{
+                    failure = $failure
+                    manifest = Read-BranchSeedManifest
+                    artifactExists = Test-Path -LiteralPath (Get-BranchSeedPaths).artifactPath
+                }
+            }
+            $result.failure | Should -Match "BRANCH_SEED_CONFIGURATION_MISMATCH"
+            $result.manifest.status | Should -Be "failed"
+            $result.artifactExists | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "retries a full seed export when the incremental cursor is incompatible" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-fallback-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $sourceRoot = Join-Path $tempRoot "исходная база"
+            $seedRoot = Join-Path $tempRoot "общий seed"
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8.1CD"), [byte[]](1, 2, 3))
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:dumpModes = [System.Collections.Generic.List[string]]::new()
+                $script:ProjectRoot = $tempRoot
+                function Get-BranchSeedRoot { return $seedRoot }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceInfoBasePath { return $sourceRoot }
+                function Get-SourceUsesRepository { return $false }
+                function Get-MainWorktreePath { return $RepoRoot }
+                function Get-SourceEventLogSeedBaseline {
+                    return [ordered]@{ signatures = @(); errorCount = 0; reader = "fixture"; failureEvidence = "" }
+                }
+                function Dump-ConfigToFilesFromInfoBase {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [switch]$IncrementalFromCurrentExport)
+                    if ($IncrementalFromCurrentExport) {
+                        $script:dumpModes.Add("incremental") | Out-Null
+                        throw "ConfigDumpInfo format mismatch"
+                    }
+                    $script:dumpModes.Add("full") | Out-Null
+                    return [pscustomobject]@{ exportPath = "src/cf" }
+                }
+                function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "new"; fileCount = 2 } }
+                $manifest = New-BranchSeed -ConfigurationFingerprint "" -DumpConfigurationFromSeed -IncrementalFromCurrentExport 3>$null
+                [pscustomobject]@{ modes=@($script:dumpModes); manifest=$manifest }
+            }
+            $result.modes | Should -Be @("incremental", "full")
+            $result.manifest.status | Should -Be "ready"
+            $result.manifest.configurationFingerprint | Should -Be "new"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "uses the source generation ID to skip both export and seed copy on an unchanged full refresh" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-refresh-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportRoot = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $exportRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $exportRoot "Configuration.xml") -Value "<Configuration/>" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $exportRoot "ConfigDumpInfo.xml") -Value "<ConfigDumpInfo/>" -Encoding UTF8
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:seedBuilds = 0
+                $script:sourceDumps = 0
+                function Assert-CleanGit {}
+                function Checkout-Master {}
+                function Clear-DevBranchContext {}
+                function Get-SourceUsesRepository { return $false }
+                function Get-SourceRepositoryUpdateMode { return "external" }
+                function Update-BaseFromRepository { return $false }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceConfigurationGenerationId { return ("a" * 40) }
+                function Read-BranchSeedManifest { param([switch]$AllowMissing) return [pscustomobject]@{
+                    status = "ready"; sourceGenerationId = ("a" * 40); configurationFingerprint = "same"
+                    artifactPath = "seed"; syncId = "existing"; artifactKind = "file-1cd"; baselineCount = 0
+                } }
+                function Test-BranchSeedArtifactReady { param($Manifest) return $true }
+                function Get-ExportPath { return "src/cf" }
+                function Assert-ExportPathInsideProject { param($ExportPath) return $exportRoot }
+                function Ensure-BranchSeed { $script:seedBuilds++; throw "unexpected seed rebuild" }
+                function Dump-ConfigToFiles { $script:sourceDumps++; throw "unexpected source dump" }
+                function Commit-AuthoritativeExportPathIfChanged { return $false }
+                function Sync-KiloItlCommandSurface {}
+                function Get-CurrentCommit { return ("b" * 40) }
+                function Write-AndSetRunUserReport { param($Lines) }
+                Sync-Master -NoDelegate -SeedPolicy EnsureCompatible 6>$null
+                [pscustomobject]@{ seedBuilds = $script:seedBuilds; sourceDumps = $script:sourceDumps }
+            }
+            $result.seedBuilds | Should -Be 0
+            $result.sourceDumps | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "accepts a legacy seed manifest without source generation ID during full refresh" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl legacy seed путь с пробелом " + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportRoot = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $exportRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $exportRoot "Configuration.xml") -Value "<Configuration/>" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $exportRoot "ConfigDumpInfo.xml") -Value "<ConfigDumpInfo/>" -Encoding UTF8
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $tempRoot
+                function Assert-CleanGit {}
+                function Checkout-Master {}
+                function Clear-DevBranchContext {}
+                function Get-SourceUsesRepository { return $false }
+                function Get-SourceRepositoryUpdateMode { return "external" }
+                function Update-BaseFromRepository { return $false }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceConfigurationGenerationId { return ("b" * 40) }
+                function Read-BranchSeedManifest { param([switch]$AllowMissing) return [pscustomobject]@{
+                    status = "ready"; configurationFingerprint = "old"; artifactPath = "seed"; syncId = "legacy"
+                } }
+                function Test-BranchSeedArtifactReady { param($Manifest) return $true }
+                function Get-ExportPath { return "src/cf" }
+                function Assert-ExportPathInsideProject { param($ExportPath) return $exportRoot }
+                function Dump-ConfigToFiles { return [pscustomobject]@{ exportPath = $exportRoot } }
+                function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "current"; fileCount = 2 } }
+                function Ensure-BranchSeed {
+                    param($Policy, $ConfigurationFingerprint, $ConfigurationFileCount, $SourceGenerationId)
+                    $script:seedPolicy = $Policy
+                    $script:seedGenerationId = $SourceGenerationId
+                    return [pscustomobject]@{
+                        artifactPath = "seed"; syncId = "updated"; artifactKind = "file-1cd"
+                        configurationFingerprint = "current"; baselineCount = 0; status = "ready"
+                    }
+                }
+                function Commit-AuthoritativeExportPathIfChanged { return $false }
+                function Sync-KiloItlCommandSurface {}
+                function Get-CurrentCommit { return ("c" * 40) }
+                function Write-AndSetRunUserReport { param($Lines) }
+                Sync-Master -NoDelegate -SeedPolicy EnsureCompatible 6>$null
+                [pscustomobject]@{ policy = $script:seedPolicy; generationId = $script:seedGenerationId }
+            }
+            $result.policy | Should -Be "EnsureCompatible"
+            $result.generationId | Should -Be ("b" * 40)
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "records source generation ID on a compatible legacy seed" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Read-BranchSeedManifest { param([switch]$AllowMissing) return [pscustomobject]@{
+                status = "ready"; configurationFingerprint = "current"; artifactPath = "seed"; syncId = "legacy"
+            } }
+            function Test-BranchSeedArtifactReady { param($Manifest) return $true }
+            function Set-BranchSeedSourceGenerationId {
+                param($Manifest, $SourceGenerationId)
+                return [pscustomobject]@{ syncId = $Manifest.syncId; sourceGenerationId = $SourceGenerationId }
+            }
+            Ensure-BranchSeed -Policy EnsureCompatible -ConfigurationFingerprint "current" -SourceGenerationId ("b" * 40)
+        }
+        $result.syncId | Should -Be "legacy"
+        $result.sourceGenerationId | Should -Be ("b" * 40)
+    }
+
+    It "rebuilds a changed seed with an incremental export based on the previous tree" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-incremental-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportRoot = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $exportRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $exportRoot "Configuration.xml") -Value "<Configuration/>" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $exportRoot "ConfigDumpInfo.xml") -Value "<ConfigDumpInfo/>" -Encoding UTF8
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:seedArguments = $null
+                function Assert-CleanGit {}
+                function Checkout-Master {}
+                function Clear-DevBranchContext {}
+                function Get-SourceUsesRepository { return $false }
+                function Get-SourceRepositoryUpdateMode { return "external" }
+                function Update-BaseFromRepository { return $false }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceConfigurationGenerationId { return ("b" * 40) }
+                function Read-BranchSeedManifest { param([switch]$AllowMissing) return [pscustomobject]@{
+                    status = "ready"; sourceGenerationId = ("a" * 40); configurationFingerprint = "old"
+                    artifactPath = "seed"; syncId = "existing"; artifactKind = "file-1cd"; baselineCount = 0
+                } }
+                function Test-BranchSeedArtifactReady { param($Manifest) return $true }
+                function Get-ExportPath { return "src/cf" }
+                function Assert-ExportPathInsideProject { param($ExportPath) return $exportRoot }
+                function Ensure-BranchSeed {
+                    param($Policy, $ConfigurationFingerprint, $SourceGenerationId, [switch]$IncrementalFromCurrentExport)
+                    $script:seedArguments = [pscustomobject]@{
+                        policy = $Policy; sourceGenerationId = $SourceGenerationId
+                        incremental = $IncrementalFromCurrentExport.IsPresent
+                    }
+                    return [pscustomobject]@{
+                        status="ready"; artifactPath="seed"; artifactKind="file-1cd"
+                        configurationFingerprint="new"; syncId="rebuilt"; baselineCount=0
+                    }
+                }
+                function Dump-ConfigToFiles { throw "source Designer dump must not run" }
+                function Commit-AuthoritativeExportPathIfChanged { return $false }
+                function Sync-KiloItlCommandSurface {}
+                function Get-CurrentCommit { return ("c" * 40) }
+                function Write-AndSetRunUserReport { param($Lines) }
+                Sync-Master -NoDelegate -SeedPolicy EnsureCompatible 6>$null
+                $script:seedArguments
+            }
+            $result.policy | Should -Be "Rebuild"
+            $result.sourceGenerationId | Should -Be ("b" * 40)
+            $result.incremental | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -386,7 +777,7 @@ param([string]$Operation,[string]$ProjectRoot)
             '(?s)function Invoke-DevBranchRuntimeAfterGitPhase \{.*?(?=\r?\nfunction New-DevBranchCore)'
         ).Value
         $runtimeSection | Should -Not -BeNullOrEmpty
-        $runtimeSection | Should -Match '(?s)Complete-Agent1cLifecycleOperation.*Exit-Agent1cLifecycleOperation.*Invoke-InProjectContext.*Enter-Agent1cLifecycleOperation.*Initialize-DevBranchRuntime'
+        $runtimeSection | Should -Match '(?s)Complete-Agent1cLifecycleOperation.*Exit-Agent1cLifecycleOperation.*Invoke-InProjectContext.*Enter-ItlInitializationRuntimeAdmission.*Initialize-DevBranchRuntime'
         $runtimeSection | Should -Not -Match '&\s*powershell'
     }
 
@@ -532,6 +923,31 @@ param([string]$Operation,[string]$ProjectRoot)
                 $script:Resumed
             }
             $resumed | Should -BeTrue
+        }
+    }
+
+    It "passes the parent's explicit client to every refresh-all branch process" {
+        # Release E2E run from another agent: children without -AgentTarget detected
+        # that agent from the environment and failed with ITL_CLIENT_NOT_ATTACHED.
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl refresh клиент " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $calls = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:Calls = [System.Collections.Generic.List[string]]::new()
+                function Start-Process { param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, $RedirectStandardOutput, $RedirectStandardError, [switch]$PassThru) $script:Calls.Add([string]$ArgumentList) | Out-Null; [pscustomobject]@{ Id = 1 } }
+                $target = [pscustomobject]@{ name = "одна ветка"; branch = "itldev/one"; worktreePath = $tempRoot }
+                foreach ($client in @(" kilocode ", "")) {
+                    $AgentTarget = $client
+                    Start-RefreshAllBranchProcess -Target $target -MasterCommit ("a" * 40) -OutputRoot $tempRoot | Out-Null
+                }
+                @($script:Calls)
+            }
+            $calls.Count | Should -Be 2
+            $calls[0] | Should -Match '-Action refresh-dev-branch-lite -ExpectedMasterCommit a{40} -AgentTarget kilocode$'
+            $calls[1] | Should -Not -Match 'AgentTarget'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

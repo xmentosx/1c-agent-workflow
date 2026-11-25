@@ -1,0 +1,182 @@
+# Disposable diagnostic artifacts
+
+The existing `clean-artifacts` owner also consumes immutable producer receipts
+under `.agent-1c/diagnostic-artifacts/<32-hex-id>.json`. It runs automatically
+after successful ITL actions and terminal measurement process cleanup, without
+Codex, chat automation or an additional confirmation. The retention age
+is `ITL_DIAGNOSTIC_ARTIFACT_RETENTION_DAYS` (default 7, minimum 1); the existing
+`ITL_ARTIFACT_CLEANUP_ENABLED=false` disables automatic cleanup.
+
+The local and remote measurement engine creates a unique
+`build/diagnostic-runtime/<id>/native-temp` in an installed Windows project and
+passes it as TEMP/TMP to its owned command trees. After all process cleanup
+succeeds, it writes an exact completion receipt and invokes the installed helper
+with `-Action clean-artifacts -CleanupDiagnosticsOnly -DiagnosticCompletionPath
+<project-relative receipt>`. The helper enrolls only the named native temporary
+files, then applies the existing env age and protected-path policy. Unknown files
+in that directory remain. An interrupted run or failed process cleanup never
+enrolls its files. Retention failures go to `artifact-retention.json` as warnings
+and leave the measurement result unchanged. Portable workers without an installed
+project package retain their files. An older installed helper must be updated
+before it can accept the new completion argument.
+
+Other diagnostic producers use that same completion call with `producer`, `kind`,
+`disposablePaths`, `retainedPaths`, terminal `status` and `cleanupConfirmed` in
+their immutable receipt. A receipt is at most 1 MiB and names at most 4096 files,
+registered in batches of 256. Alternatively, after a diagnostic reaches a
+terminal outcome and its owned processes have finished cleanup, its producer
+calls `Register-ItlDiagnosticArtifacts` from the
+artifact-retention library. Supply the exact project root, producer name,
+project-relative terminal receipt, kind, disposable file list and retained
+originals. The terminal receipt must report `status` as `completed`, `succeeded`,
+`passed`, `failed` or `cancelled`, and `cleanupConfirmed=true`. A failure may
+finish cleanly without being accepted; registering its expendable files never
+changes the diagnostic outcome or acceptance evidence.
+
+Four producer-declared file classes are eligible:
+
+- `native-temp`: individual `v8_<hex>_<hex>.tmp` files directly inside a
+  `*-temp` directory below `build`, after their owning 1C processes finish.
+- `derived-trace`: XML/ETLX derivatives below `build`, with the original ETL
+  retained and hashed. Keep the decoder command/version, successful decoding
+  result and any small extracted summary in the retained evidence list.
+- `superseded-attempt`: individually named text/check artifacts of a completed
+  attempt below `build`, with a successful replacement receipt outside that
+  attempt. The producer supplies `attemptRoot`, `supersededBy` and the complete
+  `retainedPaths` dependency list. References can reach much older attempts;
+  neither a larger attempt number nor the latest three directories proves that
+  an older file is disposable. Current evidence, unique source edits, live
+  inputs, rollback material and executable helpers must remain. Databases,
+  original traces, CF/CFE/DT, archives and source-snapshot trees cannot use this
+  class. Unknown legacy directories require review, never automatic adoption.
+- `agent-task-temp`: individually declared temporary files inside
+  `build/agent-artifacts/<task>/tmp/`, after terminal task/consumer completion.
+  This class is eligible immediately through the same owner; the other classes
+  retain their age policy. Databases, DT backups, original ETL, source-snapshot
+  trees and handoffs remain excluded. A temporary CF/CFE or investigation helper
+  is eligible only in this task's `tmp/` and only when explicitly declared
+  disposable. Proof, recovery and all transitive dependencies must be retained.
+  The common completion protocol for every client is in
+  [project artifact placement](../../../../docs/itl-workflow/ARTIFACTS.md).
+
+Registration hashes each disposable and retained file and records exact size,
+timestamp and enrollment time. It never enrolls a directory, a database, a DT backup, a raw
+trace or a handoff. An analyzer response can expire only as an explicitly
+superseded attempt; its current replacement and dependencies must remain.
+Do not mark an artifact that
+still serves as original test/validation evidence, a live input, an executable
+workaround, a rollback snapshot or unfinished work. Preserve raw inputs/outputs
+and cumulative counters. Whole unmarked task folders follow the bounded idle
+rule below, not this per-file enrollment.
+
+Planning reads only bounded individual manifests in their dedicated directory and cheap candidate metadata;
+hashing large files happens at registration and actual removal, not every
+routine status. Execution rechecks the immutable manifest and retained original
+hashes, then verifies and deletes the same exclusively opened Windows file
+handle. Open files, byte/timestamp changes, missing originals, references from
+the owning cleanup plan or another diagnostic receipt, and reparse/outside paths
+retain the file. A missing, failed or changed replacement preserves its old
+attempt. Unreadable dependency manifests skip diagnostic cleanup with a warning;
+repair the producer's record before the next ordinary command. The next
+ordinary cleanup can continue after the owner closes a file; no process is
+stopped, guard bypassed or proof rewritten. Already removed entries are no-ops.
+
+`Invoke-ItlDiagnosticArtifactCleanup -ProjectRoot <root> -DryRun` provides a
+diagnostic-only preview for an existing trusted package caller. Its default age
+is seven days; automatic callers pass the age from the existing policy and honor
+its enabled flag. `-MinimumAgeDays 0` is reserved for an explicitly authorized
+reviewed immediate cleanup. The caller supplies `-ProtectedPaths` from
+`Get-ItlArtifactProtectedPaths`; do not create a second deletion policy.
+
+Project callers can use the existing helper command
+`agent-1c.ps1 -Action clean-artifacts -CleanupDiagnosticsOnly -ProjectRoot <root>`.
+It honors the enabled flag and diagnostic age, uses the existing lifecycle lock
+and protected evidence paths, and does not sweep CF, run or recovery archives.
+Add `-CleanupDryRun` for a preview. Keep routine output bounded to counts/bytes;
+retained-file warnings explain why the original task's files were left intact.
+Fresh files survive enrollment and become eligible at a later diagnostic
+completion or ordinary automatic ITL cleanup. There is no idle-time timer or
+resident service; an inactive project does not generate new diagnostic files.
+
+Agent-task completions additionally bind `taskRoot` and keep their completion
+receipt outside `tmp/`. Batches use identity derived from the unchanged receipt,
+canonical exact file list and retained paths, so a repeated completion reuses
+its original records even after deletion. It cannot adopt replacement bytes at
+an old path. An empty disposable list can register evidence protection alone.
+Deletion rechecks current workflow proof/recovery references as well as the
+retained file hashes. Small audit and protection receipts remain. Disabling
+automatic cleanup also disables completion-driven enrollment/removal; a dry-run
+does not enroll a new receipt.
+
+Agent task folders are bounded even without a receipt. In the current worktree
+the same owner treats every direct child of `build/agent-artifacts/`,
+`build/test-results/` (except `vanessa`, `yaxunit`, `tooling-probe`,
+`release-e2e`), `build/` (except helper-owned `result`, `test-results`,
+`agent-artifacts`, `event-log`, `data-mcp-tools-loader`, `tooling-probe`,
+`diagnostic-runtime` and folders with Git-tracked files), `.agent-1c/runs/`
+without a helper `status.json` (except `auto-update` and `ai-rules-migration-*`)
+and `.agent-1c/tmp/` (except `tooling-probe`) as one task folder. Per group it
+keeps the `ITL_RUN_ARTIFACT_KEEP_COUNT` (3) folders with the newest write
+anywhere inside; any other folder goes whole, including DT, ETL or recovery
+files, once nothing inside changed for `ITL_RUNTIME_ARTIFACT_RETENTION_DAYS` (7).
+Folders holding current workflow evidence or a retained dependency of a
+completion receipt stay; an unreadable receipt store keeps every such folder.
+Links, busy files and failures are left and retried by the next cleanup.
+Helper `build/event-log/export-*` folders use the same count and age; an ITL
+run whose record still says `running` after its deadline with its process gone
+is abandoned and ages like a completed run; a `.agent-1c/branch-dumps`
+transaction without writes for an hour was interrupted and goes.
+
+A successful `reset-dev-branch` recreates the branch: it writes no archive and
+removes this worktree's previous-task runtime untouched since the reset started
+(the groups above regardless of count or age, also `vanessa`/`yaxunit` reports
+and receipt-retained files, plus `build/event-log`, `.agent-1c/branch-dumps`,
+`.agent-1c/fork-history`, top-level `.agent-1c/snapshots/*.dt*` (checked loads
+no longer create `gate6-*.dt`; such files are legacy of older runs), `logs/` and
+this branch's legacy main `.agent-1c/branch-archives/<branch>`). It keeps live
+runs, workflow update/incident snapshots, `handoffs/`, `build/result` and
+current workflow evidence, and reports removed counts/bytes and leftovers.
+Before that cleanup it retires the previous task's verification records
+(`current-change.json`, `proof.json`, `one-off/` receipts and history) into
+`.agent-1c/verification-selection/changes/reset-<new HEAD>*`; the reset's new
+tooling generation already makes them unusable, and archived records retain no
+files. After a completed reset, cleanup also ignores suite and one-off receipts
+started before that reset, so receipts left by an older reset release their
+reports to the normal count and age rules.
+
+When a branch command finishes a check and adopts its successful replacement,
+the producer can send this completion through that same command (paths below
+are illustrative):
+
+```json
+{
+  "status": "failed",
+  "cleanupConfirmed": true,
+  "producer": "branch-check",
+  "kind": "superseded-attempt",
+  "attemptRoot": "build/checks/attempt-1",
+  "supersededBy": "build/checks/attempt-2/result.json",
+  "disposablePaths": ["build/checks/attempt-1/answer.raw.json"],
+  "retainedPaths": ["build/checks/attempt-2/answer.raw.json"]
+}
+```
+
+The replacement receipt must have `status` equal to `passed`, `succeeded` or
+`completed`. The producer lists all transitive dependencies in `retainedPaths`,
+including files in older attempts. The helper also retains the replacement
+receipt automatically and hashes it. Enrollment waits seven days by default;
+the next relevant successful branch command performs cleanup locally. No timer,
+external service, directory-wide deletion or verification acceptance change is
+introduced. Without a producer receipt, individual files inside a still-active
+task folder are not enrolled; the folder as a whole follows the idle rule above.
+
+Unknown completion, unknown ownership or a missing original means retain, not a
+new approval gate on the original development task. Reports must distinguish
+eligible logical bytes, compressed storage, actual deletions and filesystem
+free-space changes.
+
+### Auxiliary contour inventory
+
+Explicit `/itl-clean` and its preview show a separate inventory of unregistered or unidentified local file bases, contour state, MCP wrappers and client entries, and connection key names in `.dev.env`. The inventory preserves its findings. It excludes recognized active bases, avoids links, and reports when a directory size or part of the inventory could not be established within the local scan budget.
+
+Confirmed auxiliary archives use the existing keep count for each branch and contour, even after deregistration. The default is two and the minimum is one. Cleanup reports retained archives separately from releasable bytes. The automatic cleanup uses the same retention policy and skips the inventory.

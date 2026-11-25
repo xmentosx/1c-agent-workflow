@@ -1,4 +1,4 @@
-Describe "GitHub dependency rate-limit fallback" {
+﻿Describe "GitHub dependency rate-limit fallback" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -16,9 +16,16 @@ Describe "GitHub dependency rate-limit fallback" {
         . (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1")
         . (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.roctup-mcp.ps1")
 
+        . $context.HelperPath -ProjectRoot $script:ProjectRoot -Action help *> $null
+        Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'templates') -Destination (Join-Path $script:ProjectRoot 'templates') -Recurse
+
         $script:SavedGitHubToken = [Environment]::GetEnvironmentVariable("GITHUB_TOKEN", "Process")
         $script:SavedGhToken = [Environment]::GetEnvironmentVariable("GH_TOKEN", "Process")
         $script:SavedVanessaSourceBuild = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
+    }
+
+    BeforeEach {
+        Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'templates/dependency-lock.json') -Destination (Join-Path $script:ProjectRoot 'templates/dependency-lock.json') -Force
     }
 
     AfterEach {
@@ -47,23 +54,67 @@ Describe "GitHub dependency rate-limit fallback" {
         (Get-GitHubRateLimitRecoveryMessage -Operation "test operation" -FailureInfo ([pscustomobject]@{ reset = "" })) | Should -Not -Match "primary-secret|secondary-secret"
     }
 
-    It "uses complete dependency-lock entries after a confirmed GitHub API rate limit" {
+    It "uses the exact installed baseline even when GitHub API discovery is unavailable" {
         Mock Invoke-RestMethod {
             $exception = [System.Exception]::new("API rate limit exceeded")
             $exception.Data["StatusCode"] = 403
             throw $exception
         }
 
-        $roctup = Get-GitHubReleaseAssetInfo -Repository "ROCTUP/1c-mcp-toolkit" -AssetNameLike "MCP_Toolkit.epf" -OverrideEnvName "" -DefaultFileName "MCP_Toolkit.epf" -RetryCount 1
-        $client = Get-GitHubReleaseAssetInfo -Repository "1c-neurofish/onec-client-mcp-devkit" -AssetNameLike "client_mcp.cfe" -OverrideEnvName "" -DefaultFileName "client_mcp.cfe" -RetryCount 1
-        $extension = Get-GitHubReleaseAssetInfo -Repository "Pr-Mex/vanessa-automation" -AssetNameLike "VAExtension*.cfe" -OverrideEnvName "" -DefaultFileName "VAExtension.cfe" -RetryCount 1
-        @($roctup, $client, $extension) | ForEach-Object {
-            $_.source | Should -Be "dependency-lock rate-limit fallback"
-            $_.expectedSha256 | Should -Match '^[a-f0-9]{64}$'
+        $lockPath = $script:DependencyLockPath
+        $savedLock = [IO.File]::ReadAllBytes($lockPath)
+        $manifest = Read-DependencyLockManifest
+        # Published f5466e6ff98e95bae989a80d65809d1bff2bc31e retained this legacy API asset.
+        # Only this entry belongs to the legacy request; the other two pins stay current.
+        $manifest.dependencies.vanessaMcp.clientMcp = [pscustomobject]@{
+            version = 'v0.6.5'
+            assetName = 'client_mcp.cfe'
+            url = 'https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe'
+            sha256 = 'd1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f'
+            source = 'template baseline'
+            updatedAt = '2026-05-26T19:34:34Z'
         }
-        $roctup.name | Should -Be "MCP_Toolkit.epf"
-        $client.name | Should -Be "client_mcp.cfe"
-        $extension.name | Should -Be "VAExtension.1.29.cfe"
+        try {
+            [IO.File]::WriteAllText($lockPath, ($manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+            # This installed legacy package owns that legacy asset, rather than borrowing another build.
+            [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'templates/dependency-lock.json'), ($manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+            $roctup = Get-GitHubReleaseAssetInfo -Repository "ROCTUP/1c-mcp-toolkit" -AssetNameLike "MCP_Toolkit.epf" -OverrideEnvName "" -DefaultFileName "MCP_Toolkit.epf" -RetryCount 1
+            $client = Get-GitHubReleaseAssetInfo -Repository "1c-neurofish/onec-client-mcp-devkit" -AssetNameLike "client_mcp.cfe" -OverrideEnvName "" -DefaultFileName "client_mcp.cfe" -RetryCount 1
+            $extension = Get-GitHubReleaseAssetInfo -Repository "Pr-Mex/vanessa-automation" -AssetNameLike "VAExtension*.cfe" -OverrideEnvName "" -DefaultFileName "VAExtension.cfe" -RetryCount 1
+            @($roctup, $client, $extension) | ForEach-Object {
+                $_.source | Should -Be "workflow-selection"
+                $_.expectedSha256 | Should -Match '^[a-f0-9]{64}$'
+            }
+            $roctup.name | Should -Be "MCP_Toolkit.epf"
+            $client.name | Should -Be "client_mcp.cfe"
+            $extension.name | Should -Be "VAExtension.1.32-itl-r18.cfe"
+            $extension.expectedSha256 | Should -Be "fc964181ec3e623c21985656cba1c5ecb77f90c0a47316d945580ebe6212a510"
+            $client.version | Should -BeExactly 'v0.6.5'
+            $client.url | Should -BeExactly 'https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe'
+            $client.expectedSha256 | Should -BeExactly 'd1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f'
+        } finally {
+            [IO.File]::WriteAllBytes($lockPath, $savedLock)
+        }
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath)) | Should -BeExactly ([Convert]::ToBase64String($savedLock))
+    }
+
+    It "does not borrow the current owned client asset for a rate-limited legacy asset request" {
+        $lockPath = $script:DependencyLockPath
+        $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath))
+        $current = (Read-DependencyLockManifest).dependencies.vanessaMcp.clientMcp
+        $current.assetName | Should -BeExactly 'client_mcp.v0.6.5-itl-r1.cfe'
+        $current.sha256 | Should -Match '^[a-f0-9]{64}$'
+        Mock Invoke-RestMethod {
+            $exception = [System.Exception]::new("API rate limit exceeded")
+            $exception.Data["StatusCode"] = 403
+            throw $exception
+        }
+
+        {
+            Get-GitHubReleaseAssetInfo -Repository "1c-neurofish/onec-client-mcp-devkit" -AssetNameLike "client_mcp.cfe" -OverrideEnvName "" -DefaultFileName "client_mcp.cfe" -RetryCount 1
+        } | Should -Throw '*DEPENDENCY_EXACT_RELEASE_REQUIRED*'
+        Assert-MockCalled Invoke-RestMethod -Times 0 -Exactly
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath)) | Should -BeExactly $before
     }
 
     It "uses the immutable workflow-pinned Vanessa asset without a mutable publication flag or releases-latest query" {
@@ -75,8 +126,8 @@ Describe "GitHub dependency rate-limit fallback" {
         $lock.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Not -Contain "publicationStatus"
         $download = Get-VanessaAutomationDownloadInfo
         $download.source | Should -Be "workflow-pinned"
-        $download.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r8/vanessa-automation-single.1.2.043.28-itl-r8.zip"
-        $download.expectedSha256 | Should -Be "0a5eab8fbc93bf6db053ebcbf99b511c440c737a6f5f6d68840002ac9743bb50"
+        $download.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r18/vanessa-automation-single.1.2.043.42-itl-r18.zip"
+        $download.expectedSha256 | Should -Be "ce3dddbded9ba2429bf976e5cd8d41c5d7475458cbbb88cd198e21cd5569b9e2"
         Assert-MockCalled Invoke-RestMethod -Times 0
     }
 
@@ -104,16 +155,11 @@ Describe "GitHub dependency rate-limit fallback" {
         { Assert-VanessaSourceBuildArchiveMatchesActivePin } | Should -Not -Throw
     }
 
-    It "does not use the lock for a non-rate-limit API failure" {
-        Mock Invoke-RestMethod {
-            $exception = [System.Exception]::new("Not Found")
-            $exception.Data["StatusCode"] = 404
-            throw $exception
-        }
-
-        {
-            Get-GitHubReleaseAssetInfo -Repository "ROCTUP/1c-mcp-toolkit" -AssetNameLike "MCP_Toolkit.epf" -OverrideEnvName "" -DefaultFileName "MCP_Toolkit.epf" -RetryCount 1
-        } | Should -Throw "*Could not resolve GitHub release asset*"
+    It "uses the selected pin without querying even a failing upstream discovery API" {
+        Mock Invoke-RestMethod { throw 'Not Found' }
+        $asset = Get-GitHubReleaseAssetInfo -Repository 'ROCTUP/1c-mcp-toolkit' -AssetNameLike 'MCP_Toolkit.epf' -OverrideEnvName '' -DefaultFileName 'MCP_Toolkit.epf'
+        $asset.expectedSha256 | Should -Be (Read-DependencyLockManifest).dependencies.roctupMcpToolkit.sha256
+        Assert-MockCalled Invoke-RestMethod -Times 0 -Exactly
     }
 
     It "keeps the baseline lock unchanged after a fallback artifact download" {
@@ -130,6 +176,7 @@ Describe "GitHub dependency rate-limit fallback" {
             source = "dependency-lock rate-limit fallback"
         }
 
+        Mock Get-WorkflowDependencyEntry { [pscustomobject]@{version=$asset.version;assetName=$asset.name;sha256=$asset.expectedSha256} }
         Save-RoctupMcpArtifact -AssetInfo $asset | Out-Null
 
         (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
@@ -146,7 +193,75 @@ Describe "GitHub dependency rate-limit fallback" {
             source = "dependency-lock rate-limit fallback"
         }
 
+        Mock Get-WorkflowDependencyEntry { [pscustomobject]@{version=$asset.version;assetName=$asset.name;sha256=$asset.expectedSha256} }
         { Save-RoctupMcpArtifact -AssetInfo $asset } | Should -Throw "*SHA256 mismatch*"
+    }
+
+    It "keeps the tracked lock byte-identical when acquiring the same verified ROCTUP pin from <priorSource>" -TestCases @(
+        @{ priorSource = 'template baseline' }
+        @{ priorSource = 'compatibility-manifest' }
+    ) {
+        param($priorSource)
+        $lockPath = Join-Path $script:ProjectRoot '.agent-1c\dependency-lock.json'
+        $savedLock = [IO.File]::ReadAllBytes($lockPath)
+        $nonAsciiWord = "$([char]0x0422)$([char]0x0435)$([char]0x0441)$([char]0x0442)"
+        $artifactRoot = Join-Path $TestDrive ('ROCTUP source ' + $nonAsciiWord + ' ' + [guid]::NewGuid().ToString('N'))
+        $installRoot = Join-Path $artifactRoot ('Artifact cache ' + $nonAsciiWord)
+        New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+        $sourcePath = Join-Path $artifactRoot 'MCP_Toolkit.epf'
+        [IO.File]::WriteAllBytes($sourcePath, [Text.Encoding]::UTF8.GetBytes('exact pinned ROCTUP payload'))
+        $sha256 = (Get-FileHash -LiteralPath $sourcePath).Hash.ToLowerInvariant()
+        $manifest = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.dependencies.roctupMcpToolkit = [pscustomobject]@{
+            version='v1.7.1'; assetName='MCP_Toolkit.epf'; url=$sourcePath; sha256=$sha256
+            source=$priorSource; updatedAt='original qualification time'
+        }
+        [IO.File]::WriteAllText($lockPath, (($manifest | ConvertTo-Json -Depth 20) + "`r`n"), [Text.UTF8Encoding]::new($true))
+        [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'templates/dependency-lock.json'), ($manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath))
+        Mock Get-RoctupMcpInstallRoot { $installRoot }
+        try {
+            $asset = [pscustomobject]@{url=$sourcePath; name='MCP_Toolkit.epf'; version='v1.7.1'; expectedSha256=$sha256; source='compatibility-manifest'}
+            $result = Save-RoctupMcpArtifact -AssetInfo $asset
+            $result.sha256 | Should -BeExactly $sha256
+            (Get-FileHash -LiteralPath $result.path).Hash.ToLowerInvariant() | Should -BeExactly $sha256
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath)) | Should -BeExactly $before
+        } finally {
+            [IO.File]::WriteAllBytes($lockPath, $savedLock)
+        }
+    }
+
+    It "refuses a materially changed artifact before acquisition until its qualified selection is applied" {
+        $lockPath = Join-Path $script:ProjectRoot '.agent-1c\dependency-lock.json'
+        $savedLock = [IO.File]::ReadAllBytes($lockPath)
+        $nonAsciiWord = "$([char]0x0422)$([char]0x0435)$([char]0x0441)$([char]0x0442)"
+        $artifactRoot = Join-Path $TestDrive ('ROCTUP new source ' + $nonAsciiWord + ' ' + [guid]::NewGuid().ToString('N'))
+        $installRoot = Join-Path $artifactRoot ('Artifact cache ' + $nonAsciiWord)
+        New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+        $sourcePath = Join-Path $artifactRoot 'MCP_Toolkit.epf'
+        [IO.File]::WriteAllBytes($sourcePath, [Text.Encoding]::UTF8.GetBytes('new verified ROCTUP payload'))
+        $sha256 = (Get-FileHash -LiteralPath $sourcePath).Hash.ToLowerInvariant()
+        Mock Get-RoctupMcpInstallRoot { $installRoot }
+        try {
+            $asset = [pscustomobject]@{url=$sourcePath; name='MCP_Toolkit.epf'; version='test-new-pin'; expectedSha256=$sha256; source='explicit new pin'}
+            { Save-RoctupMcpArtifact -AssetInfo $asset } | Should -Throw '*DEPENDENCY_ACQUISITION_DRIFT*'
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath)) | Should -BeExactly ([Convert]::ToBase64String($savedLock))
+            # Model the already admitted complete workflow/hotfix in the owning package fixture.
+            $manifest = Read-DependencyLockManifest
+            $manifest.dependencies.roctupMcpToolkit = [pscustomobject]@{version=$asset.version;assetName=$asset.name;url=$asset.url;sha256=$asset.expectedSha256;source=$asset.source;updatedAt='qualification'}
+            [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'templates/dependency-lock.json'), ($manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+            Write-DependencyLockManifest -Manifest $manifest
+            $result = Save-RoctupMcpArtifact -AssetInfo $asset
+            $actual = (Read-DependencyLockManifest).dependencies.roctupMcpToolkit
+            $actual.version | Should -BeExactly 'test-new-pin'
+            $actual.url | Should -BeExactly $sourcePath
+            $actual.sha256 | Should -BeExactly $sha256
+            $actual.source | Should -BeExactly 'explicit new pin'
+            $actual.updatedAt | Should -Not -BeNullOrEmpty
+            (Get-FileHash -LiteralPath $result.path).Hash.ToLowerInvariant() | Should -BeExactly $sha256
+        } finally {
+            [IO.File]::WriteAllBytes($lockPath, $savedLock)
+        }
     }
 
     It "routes ROCTUP skills through the shared authenticated GitHub API helper" {

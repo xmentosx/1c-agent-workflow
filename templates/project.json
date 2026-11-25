@@ -24,7 +24,7 @@
   "sourceInfoBaseName": "",
   "sourceInfoBaseUnsafeActionProtectionMode": "manual-confirm",
   "repositoryPath": "",
-  "dependencyMode": "fresh",
+  "dependencyMode": "workflow",
   "agentModel": "",
   "verificationPolicy": "warn",
   "devBranchInfoBaseRoot": ".agent-1c/infobases/dev-branches",
@@ -34,8 +34,11 @@
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-    "ref": "itl-main-410951e7-r33",
+    "ref": "itl-main-2f640143-r64",
     "tools": []
+  },
+  "openSpec": {
+    "storeId": ""
   },
   "vibecoding1cMcp": {
     "registryRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git",
@@ -63,6 +66,7 @@
   "yaxunit": {
     "installRoot": ".agent-1c/tools/yaxunit",
     "testsExtensionName": "tests",
+    "testsDisableSafeMode": false,
     "testsPath": "tests/yaxunit",
     "reportsPath": "build/test-results/yaxunit"
   },

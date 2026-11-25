@@ -1,17 +1,40 @@
-"""The same measurement engine runs locally, in the SSH worker and for an AI agent."""
+"""The same measurement engine runs locally or in a worker, optionally agent-orchestrated."""
 from __future__ import annotations
 
 import contextlib
+import base64
+import json
 import os
 from pathlib import Path
 import platform
 import statistics
 import sys
+import threading
 import time
 
-from .common import FileLock, OwnedProcess, WorkError, digest, identity, read_json, stamp, write_json
-from .jobs import authorize, job_id, status, validate_package
-from .profiling import Rdbg, prepare_debug_server
+from .common import (FileLock, OwnedProcess, WorkError, beneath, digest, host_memory_snapshot,
+                     identity, read_json, resolve_resource_limits, stamp, write_json)
+from .common import ResourceContext, beneath, process_identity
+from .jobs import authorize, execution_contract, job_id, status, validate_package
+from .profiling import Rdbg, prepare_debug_server, required_profile_types, profile_client_type
+from .execution_guard import ExecutionGuard, target_execution
+from .deadlines import Deadline, budgets
+
+
+def database_binding(target):
+    """Return a public, credential-free identity for the explicitly selected base."""
+    info_base = target.get("infoBase")
+    if not isinstance(info_base, dict) or info_base.get("kind") not in ("file", "server"):
+        return {"databaseIdentity": None, "databaseTopology": None,
+                "databaseIdentityEvidence": "unbound: target.infoBase was not explicitly configured"}
+    path = info_base.get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise WorkError("TARGET_INFOBASE_PATH_REQUIRED")
+    kind = info_base["kind"]
+    declared_path = str(Path(path).resolve()) if kind == "file" else path.strip()
+    return {"databaseIdentity": identity({"kind": kind, "path": declared_path}),
+            "databaseTopology": kind,
+            "databaseIdentityEvidence": "hash of explicit target.infoBase kind and path; declaration, not runtime-loaded proof"}
 
 
 def render(command, variables):
@@ -24,34 +47,97 @@ def render(command, variables):
 
 
 def wait_json(path, process, timeout, cancelled):
-    deadline = time.monotonic() + timeout
+    deadline = timeout if isinstance(timeout, Deadline) else Deadline("ready", timeout)
     while not path.exists():
         if cancelled():
             raise WorkError("CANCELLED")
         if process.process.poll() is not None:
             raise WorkError("WORKLOAD_EXITED_WITHOUT_SIGNAL: " + path.name)
-        if time.monotonic() >= deadline:
-            raise WorkError("WORKLOAD_READY_TIMEOUT: " + path.name)
+        process.monitor()
+        deadline.remaining()
         time.sleep(0.01)
     return read_json(path)
 
 
-def run_measurement(package, target, run, request, scenario, cancelled, progress):
+def capture_provenance(run, request, scenario, target, *, executor=None):
+    """Retain public input evidence before waiting or starting any runtime."""
+    path = Path(run) / "provenance.json"
+    database = database_binding(target)
+    execution = execution_contract(request)
+    record = {"schemaVersion": 1, "jobId": request["id"], "parentId": request.get("parentId"),
+              "requestSha256": identity(request), "scenarioSha256": request["scenarioSha256"],
+              "scenarioInputsSha256": identity(request["files"]), "files": request["files"],
+              "scenarioId": scenario["id"], "parameters": request["parameters"],
+              "mode": request["mode"], "repeats": request["repeats"], "warmups": request["warmups"],
+              "operations": request["operations"], "runner": execution["runner"],
+              "agentPolicy": execution["agentPolicy"], "requestedRoute": execution["legacyRoute"],
+              "targetName": request["target"], "host": platform.node(), "pythonVersion": platform.python_version(),
+              "adapter": scenario.get("adapter", "command"), "readiness": scenario["readyDescription"],
+              "phaseTimeoutSeconds": budgets(scenario), "repeatable": scenario["repeatable"], "mutates": scenario["mutates"],
+              "sourceAnalysis": scenario.get("sourceAnalysis", "none"),
+              "sourceAnalysisModules": scenario.get("sourceAnalysisModules"),
+              "dataIdentity": scenario["dataIdentity"], "sourceIdentity": target.get("sourceIdentity"),
+              "environmentIdentity": target.get("environmentIdentity"),
+              "identityEvidence": "data/source/environment are declarations; exact loaded state requires runtime evidence"}
+    record.update(database)
+    if scenario.get("diagnostics") is not None:
+        record["diagnostics"] = scenario["diagnostics"]
+    # A target profile can contain credentials, lease tokens and private adapter
+    # settings. Only the explicitly public declarations above belong here.
+    if path.exists():
+        previous = read_json(path)
+        record["recordedAt"] = previous.get("recordedAt")
+        record["executor"] = executor or previous.get("executor")
+        if record != previous:
+            raise WorkError("MEASUREMENT_PROVENANCE_CHANGED: retained inputs differ; original evidence preserved")
+    else:
+        record.update(recordedAt=stamp(), executor=executor or "direct-engine")
+        write_json(path, record)
+    return {"path": path.name, "sha256": digest(path)}
+
+
+def run_measurement(package, target, run, request, scenario, cancelled, progress, *, execution_guard=None, cancel_path=None, provenance_reference=None):
     run = Path(run)
     run.mkdir(parents=True, exist_ok=True)
+    provenance = capture_provenance(run, request, scenario, target)
+    if provenance_reference is not None and provenance != provenance_reference:
+        raise WorkError("MEASUREMENT_PROVENANCE_CHANGED: retained bytes changed before runtime")
     variables = {"python": sys.executable, "runtime": Path(__file__).resolve().parent.parent,
                  "workspace": Path(target["workspace"]).resolve(), "input": Path(package) / "input",
                  "run": run, "context": run / "context.json"}
+    phase_budgets = budgets(scenario)
     context = {"schemaVersion": 1, "jobId": request["id"], "parameters": request["parameters"],
-               "target": target, "scenarioId": scenario["id"], "operations": request["operations"]}
+               "target": target, "scenarioId": scenario["id"], "operations": request["operations"],
+               "phaseTimeoutSeconds": phase_budgets, "cancelPath": str(cancel_path) if cancel_path else None}
+    if scenario.get("diagnostics") is not None:
+        context["diagnostics"] = scenario["diagnostics"]
+    child_environment = {"ITL_RUN_CONTEXT": str(variables["context"])}
+    from . import diagnostic_retention
+    diagnostic_owner = None
+    diagnostic_warning = None
+    try:
+        diagnostic_owner = diagnostic_retention.prepare(variables["workspace"])
+        if diagnostic_owner:
+            child_environment.update(TEMP=str(diagnostic_owner["temporary"]), TMP=str(diagnostic_owner["temporary"]))
+    except Exception as error:
+        diagnostic_warning = str(error)  # Auxiliary retention cannot block the measurement.
+    if execution_guard:
+        child_context = execution_guard.context()
+        context["executionContext"] = child_context["encoded"]
+        context["executionContextKey"] = base64.urlsafe_b64encode(child_context["key"]).decode("ascii")
+        child_environment["ITL_EXECUTION_CONTEXT"] = context["executionContext"]
+        child_environment["ITL_EXECUTION_CONTEXT_KEY"] = context["executionContextKey"]
     # This file is machine-local, not included in the user-facing result archive.
     write_json(variables["context"], context)
     commands = scenario["commands"]
-    timeout = float(scenario.get("timeoutSeconds", 300))
-    if not 0 < timeout <= 86400:
-        raise WorkError("INVALID_SCENARIO_TIMEOUT")
     processes = []
+    resource_limits = resolve_resource_limits(target, request["operations"])
+    resource_telemetry = run / "resource-telemetry.jsonl"
+    resource_context = ResourceContext(resource_limits, resource_telemetry)
+    profile_paths = []
+    profile_evidence = []
     profiler = None
+    database = database_binding(target)
     result = {"schemaVersion": 1, "jobId": request["id"], "scenarioId": scenario["id"],
               "requestSha256": identity(request), "scenarioSha256": request["scenarioSha256"],
               "scenarioInputsSha256": identity(request["files"]),
@@ -59,22 +145,131 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
               "sourceIdentity": target.get("sourceIdentity"), "host": platform.node(),
               "environmentIdentity": target.get("environmentIdentity"),
               "identityEvidence": "declared-by-profile-and-scenario; runtime adapters own exact loaded-data/source proof",
+              "sourceAnalysisPolicy": scenario.get("sourceAnalysis", "none"),
               "readiness": scenario["readyDescription"], "mode": request["mode"],
-              "startedAt": stamp(), "timings": [], "profiles": [], "phases": [],
-              "status": "running", "limitations": [], "cleanupErrors": []}
+              "startedAt": stamp(), "provenance": provenance, "timings": [], "profiles": [], "phases": [], "iterations": [],
+               "loadedState": {"status": "unavailable", "reason": "runtime-profile-not-collected",
+                               "runtimeObserved": False, "wholeConfigurationSourceProven": False,
+                               "dataStateProven": False, "evidence": None},
+               "status": "running", "limitations": [], "cleanupErrors": [],
+                "resourceEvidence": {"policy": resource_limits, "hostBefore": None,
+                                    "hostAfter": None, "telemetry": resource_telemetry.name,
+                                     "processes": []}}
+    result["resourceEvidence"]["contextId"] = resource_context.context_id
+    result.update(database)
+    result["operationEvidence"] = ({"status": "notRequested"} if scenario.get("diagnostics") is None else
+                                   {"status": "running", "iterations": []})
+    if execution_guard:
+        result["execution"] = {"protocol": "execution-guards-v2",
+                               "executionId": execution_guard.execution_id,
+                               "operation": execution_guard.operation,
+                               "resources": execution_guard.resources,
+                               "waitSeconds": max(0.0, time.monotonic() - execution_guard.wait_started)
+                               if execution_guard.wait_started is not None else 0.0}
 
-    def command(name):
+    def persist_progress():
+        # Public evidence is independent of the private context and final result.
+        # Keep profile rows in their artifacts, not in every progress snapshot.
+        snapshot = {key: result[key] for key in (
+            "schemaVersion", "jobId", "scenarioId", "startedAt", "provenance",
+            "timings", "iterations", "phases", "loadedState", "limitations", "cleanupErrors",
+            "resourceEvidence", "operationEvidence")}
+        snapshot.update(updatedAt=stamp(), status=result["status"] if "finishedAt" in result else "running",
+                        resultAvailable=(run / "result.json").is_file(), profiles=[])
+        for evidence in profile_evidence:
+            verified = any(item["iteration"] == evidence["iteration"] and item["status"] == "verified"
+                           for item in result["iterations"])
+            snapshot["profiles"].append({**evidence, "workloadVerified": verified})
+        for key in ("execution", "sourceManifest", "sourceResolution", "error", "finishedAt"):
+            if key in result:
+                snapshot[key] = result[key]
+        write_json(run / "progress.json", snapshot)
+
+    def refresh_profile_evidence():
+        # Hash only when producing or remapping profiles, not at every phase.
+        profile_evidence.clear()
+        for profile, path in zip(result["profiles"], profile_paths):
+            profile_evidence.append({"iteration": int(path.parent.name.split("-", 1)[0]),
+                                     "path": path.relative_to(run).as_posix(), "sha256": digest(path),
+                                     "complete": profile["complete"], "coverage": profile.get("coverage", {})})
+        refresh_loaded_state_evidence()
+
+    def refresh_loaded_state_evidence():
+        if not result["profiles"]:
+            return
+        from .loaded_state import write_evidence
+        result["loadedState"] = write_evidence(run, result, profile_paths, profile_evidence)
+
+    def collect_operation_evidence(iteration, index):
+        diagnostics = scenario.get("diagnostics")
+        if diagnostics is None:
+            return
+        from .operation_evidence import analyze_file
+        source = beneath(iteration, diagnostics["evidencePath"])
+        destination = iteration / "operation-evidence.json"
+        item = {"iteration": index, "level": diagnostics["level"], "required": diagnostics.get("required", False)}
+        try:
+            if not source.is_file():
+                raise WorkError("OPERATION_EVIDENCE_NOT_PRODUCED")
+            item.update(analyze_file(source, destination, job_id=request["id"], iteration_id=index))
+            item["path"] = (iteration / item["path"]).relative_to(run).as_posix()
+            item["reportPath"] = (iteration / item["reportPath"]).relative_to(run).as_posix()
+        except (OSError, ValueError, WorkError) as error:
+            item.update(status="invalid", error=str(error))
+        result["operationEvidence"]["iterations"].append(item)
+        statuses = [entry["status"] for entry in result["operationEvidence"]["iterations"]]
+        result["operationEvidence"]["status"] = ("complete" if statuses and all(status == "complete" for status in statuses)
+                                                   else "invalid" if any(status == "invalid" for status in statuses)
+                                                   else "partial")
+        if item["status"] != "complete":
+            detail = item.get("error") or "; ".join(item.get("limitations", [])) or "coverage is partial"
+            result["limitations"].append("OPERATION_EVIDENCE_%s: %s" % (item["status"].upper(), detail))
+
+    def start_phase(name):
+        deadline = Deadline(name, phase_budgets[name], cancel_path=context["cancelPath"])
+        context["phase"] = deadline.record()
+        write_json(variables["context"], context)
+        progress(name)
+        return deadline
+
+    @contextlib.contextmanager
+    def phase(name, deadline=None):
+        deadline = deadline or start_phase(name)
+        begin = time.monotonic()
+        record = {"name": name, "startedAt": stamp(), "status": "running", "timeoutSeconds": deadline.timeout,
+                  "iteration": context.get("iterationIndex"), "iterationKind": context.get("iterationKind")}
+        result["phases"].append(record)
+        persist_progress()
+        try:
+            deadline.remaining()
+            yield deadline
+            record["status"] = "completed"
+        except Exception as error:
+            record.update(status="failed", error=str(error))
+            raise
+        finally:
+            record["seconds"] = time.monotonic() - begin
+            persist_progress()
+
+    def command(name, deadline=None):
         if name not in commands:
             return
         if cancelled() and name != "cleanup":
             raise WorkError("CANCELLED")
-        progress(name)
-        begin = time.monotonic()
-        process = OwnedProcess(render(commands[name], variables), variables["workspace"], run / (name + ".log"),
-                               {"ITL_RUN_CONTEXT": str(variables["context"])})
-        processes.append(process)
-        process.wait(timeout, cancelled if name != "cleanup" else lambda: False)
-        result["phases"].append({"name": name, "seconds": time.monotonic() - begin})
+        with phase(name, deadline) as active_deadline:
+            process = resource_context.process(render(commands[name], variables), variables["workspace"],
+                                               run / (name + ".log"), child_environment)
+            processes.append(process)
+            try:
+                process.wait(active_deadline.remaining(), cancelled if name != "cleanup" else lambda: False)
+            except Exception:
+                # Stop this command's owned tree before starting recovery/cleanup.
+                # A persistent adapter started by prepare has its separate owner.
+                try:
+                    process.close()
+                except Exception as cleanup:
+                    result["cleanupErrors"].append(str(cleanup))
+                raise
 
     def open_profiler(iteration):
         proof = read_json(run / "runtime-proof.json")
@@ -90,15 +285,20 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         from .common import capture
         capture(["powershell.exe", "-NoProfile", "-File", str(variables["runtime"] / "Test-OneCProcessRecord.ps1"),
                  "-RecordPath", str(launch_path)], timeout=20)
-        proof["requiredTypes"] = ["ManagedClient", "Server"] if target.get("infoBase", {}).get("kind") == "server" else ["ManagedClient"]
-        collector = Rdbg(effective_rdbg, proof, iteration / "raw")
+        proof["requiredTypes"] = required_profile_types(target.get("infoBase", {}).get("kind"), profile_client_type(proof))
+        collector = Rdbg({**effective_rdbg, "sourceAnalysis": scenario.get("sourceAnalysis", "none"),
+                          "sourceAnalysisModules": scenario.get("sourceAnalysisModules")}, proof, iteration / "raw")
         collector.open()
         return collector
 
+    current_iteration = None
+    persist_progress()
     try:
+        result["resourceEvidence"]["hostBefore"] = host_memory_snapshot()
         command("update")
         if request["mode"] != "time":
-            effective_rdbg = prepare_debug_server(target, run, processes, cancelled)
+            effective_rdbg = prepare_debug_server(target, run, processes, cancelled,
+                                                  resource_context=resource_context)
             context["rdbg"] = effective_rdbg
             write_json(variables["context"], context)
         else:
@@ -123,38 +323,46 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             variables["iteration"] = iteration
             context.update(iteration=str(iteration), iterationKind=kind, iterationIndex=index)
             write_json(variables["context"], context)
+            current_iteration = {"iteration": index, "kind": kind, "status": "running", "startedAt": stamp()}
+            result["iterations"].append(current_iteration)
+            persist_progress()
             progress(kind)
             if kind == "profile":
                 if not effective_rdbg:
                     result["limitations"].append("RDBG is not configured; requested profile is unavailable.")
+                    current_iteration.update(status="skipped", reason="profile-unavailable", finishedAt=stamp())
+                    persist_progress()
                     continue
-            workload_process = None
             if scenario.get("adapter", "command") == "handshake":
-                process = OwnedProcess(render(commands["action"], variables), variables["workspace"],
-                                       iteration / "action.log", {"ITL_RUN_CONTEXT": str(variables["context"])})
-                processes.append(process)
-                ready = wait_json(iteration / "ready.json", process, timeout, cancelled)
-                if ready.get("jobId") != request["id"] or ready.get("ready") is not True:
-                    raise WorkError("WORKLOAD_READINESS_UNPROVEN")
+                with phase("ready") as readiness_deadline:
+                    process = resource_context.process(render(commands["action"], variables),
+                                                       variables["workspace"], iteration / "action.log",
+                                                       child_environment)
+                    processes.append(process)
+                    ready = wait_json(iteration / "ready.json", process, readiness_deadline, cancelled)
+                    if ready.get("jobId") != request["id"] or ready.get("ready") is not True:
+                        raise WorkError("WORKLOAD_READINESS_UNPROVEN")
                 if kind == "profile":
                     profiler = open_profiler(iteration)
                 if profiler:
                     profiler.start()
-                begin = time.monotonic_ns()
-                write_json(iteration / "go.json", {"jobId": request["id"], "startedNs": begin})
-                done = wait_json(iteration / "done.json", process, timeout, cancelled)
-                end = time.monotonic_ns()
-                if done.get("jobId") != request["id"] or done.get("ready") is not True:
-                    raise WorkError("WORKLOAD_COMPLETION_UNPROVEN")
-                command("ready")
-                if "ready" in commands:
+                # Persist action boundaries outside the measured interval.
+                with phase("action") as action_deadline:
+                    begin = time.monotonic_ns()
+                    write_json(iteration / "go.json", {"jobId": request["id"], "startedNs": begin, "phase": action_deadline.record()})
+                    done = wait_json(iteration / "done.json", process, action_deadline, cancelled)
                     end = time.monotonic_ns()
-                elif "startedNs" in done or "finishedNs" in done:
-                    a, b = done.get("startedNs"), done.get("finishedNs")
-                    if not isinstance(a, int) or not isinstance(b, int) or not begin <= a <= b <= end:
-                        raise WorkError("WORKLOAD_CLOCK_INVALID")
-                    begin, end = a, b
-                workload_process = process
+                    if done.get("jobId") != request["id"] or done.get("ready") is not True:
+                        raise WorkError("WORKLOAD_COMPLETION_UNPROVEN")
+                    process.wait(action_deadline.remaining(), cancelled)
+                    command("ready")
+                    if "ready" in commands:
+                        end = time.monotonic_ns()
+                    elif "startedNs" in done or "finishedNs" in done:
+                        a, b = done.get("startedNs"), done.get("finishedNs")
+                        if not isinstance(a, int) or not isinstance(b, int) or not begin <= a <= b <= end:
+                            raise WorkError("WORKLOAD_CLOCK_INVALID")
+                        begin, end = a, b
             else:
                 if kind == "profile":
                     profiler = open_profiler(iteration)
@@ -166,12 +374,18 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                 end = time.monotonic_ns()
             if profiler:
                 try:
-                    result["profiles"].append(profiler.finish())
+                    profile_result = profiler.finish()
+                    write_json(iteration / "profile.json", profile_result)
+                    result["profiles"].append(profile_result)
+                    profile_paths.append(iteration / "profile.json")
+                    refresh_profile_evidence()
+                    if not profile_result["complete"]:
+                        result["limitations"].append("PROFILE_INCOMPLETE: " + json.dumps(profile_result.get("coverage", {}), ensure_ascii=False))
+                    persist_progress()
                 finally:
                     profiler.close()
                     profiler = None
-            if workload_process:
-                workload_process.wait(timeout, cancelled)
+            collect_operation_evidence(iteration, index)
             command("verify")
             verification = read_json(iteration / "verification.json")
             checks = verification.get("checks")
@@ -180,10 +394,33 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             if kind == "time":
                 result["timings"].append({"iteration": index, "seconds": (end - begin) / 1e9,
                                           "profileEnabled": False, "verified": True})
+            current_iteration.update(status="verified", finishedAt=stamp())
+            refresh_loaded_state_evidence()
+            persist_progress()
+        source_policy = scenario.get("sourceAnalysis", "none")
+        if source_policy != "none" and result["profiles"]:
+            from .source_analysis import resolve_sources
+            def before_source_capture(deadline):
+                if "quiesce" in commands:
+                    command("quiesce", deadline)
+                from .vanessa import quiesce
+                return quiesce(variables["context"])
+            with phase("source-capture") as source_deadline:
+                try:
+                    resolve_sources(variables["context"], result["profiles"], profile_paths, source_policy,
+                                    scenario.get("sourceAnalysisModules"), source_deadline, result,
+                                    before_capture=before_source_capture)
+                finally:
+                    refresh_profile_evidence()
+        elif source_policy == "required":
+            raise WorkError("SOURCE_ANALYSIS_PROFILE_UNAVAILABLE")
         result["status"] = "partial" if result["limitations"] else "completed"
     except Exception as error:
-        result["status"] = "cancelled" if str(error) == "CANCELLED" else "needs-attention"
+        if current_iteration is not None and current_iteration["status"] == "running":
+            current_iteration.update(status="failed", error=str(error), finishedAt=stamp())
+        result["status"] = "cancelled" if str(error) == "CANCELLED" else "failed"
         result["error"] = str(error)
+        result["cleanupErrors"].extend(getattr(error, "cleanup_errors", []))
     finally:
         if profiler:
             try:
@@ -199,14 +436,30 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                 process.close()
             except Exception as error:
                 result["cleanupErrors"].append(str(error))
+        result["resourceEvidence"]["processes"] = [process.resource_summary() for process in processes]
+        try:
+            result["resourceEvidence"]["hostAfter"] = host_memory_snapshot()
+        except Exception as error:
+            result["cleanupErrors"].append(str(error))
         if result["cleanupErrors"]:
-            result["status"] = "needs-attention"
+            result["status"] = "failed"
+        if result["operationEvidence"]["status"] == "running":
+            result["operationEvidence"]["status"] = "notExecuted"
         result["finishedAt"] = stamp()
         seconds = [item["seconds"] for item in result["timings"]]
         result["summary"] = {"count": len(seconds), "medianSeconds": statistics.median(seconds) if seconds else None,
                              "minSeconds": min(seconds) if seconds else None, "maxSeconds": max(seconds) if seconds else None}
         write_json(run / "result.json", result)
+        persist_progress()
         report(run, result)
+        try:
+            retention = ({"status": "warning", "error": diagnostic_warning} if diagnostic_warning else
+                         diagnostic_retention.complete(diagnostic_owner, result, run))
+        except Exception as error:
+            retention = {"status": "warning", "error": str(error)}
+        # Separate evidence: never rewrite the terminal result hashed by enrollment.
+        with contextlib.suppress(OSError):
+            write_json(run / "artifact-retention.json", retention)
     return result
 
 
@@ -219,8 +472,30 @@ def report(run, result):
     lines += ["| %s | %.6f |" % (r["iteration"], r["seconds"]) for r in result["timings"]]
     lines += ["", "Median: " + str(summary["medianSeconds"]), "",
               "A small sample is diagnostic evidence, not statistical proof of a speedup.", "",
-              "Profiles: %d; native PFF: not produced." % len(result["profiles"])]
+              "Profiles: %d; native PFF: not produced." % len(result["profiles"]), "",
+              "Database binding: topology=%s; identity=%s; evidence=%s." % (
+                  result.get("databaseTopology") or "unbound",
+                  result.get("databaseIdentity") or "unbound",
+                  result.get("databaseIdentityEvidence") or "not supplied")]
+    loaded = result["loadedState"]
+    lines += ["", "Loaded-state evidence: %s; runtime configuration versions: %s; source-bound modules: %d/%d; whole configuration source proven: %s; data state proven: %s." % (
+        loaded["status"], ", ".join(loaded.get("configurationVersions", [])) or "unavailable",
+        loaded.get("sourceBoundModuleCount", 0), loaded.get("sourceRequestedModuleCount", 0),
+        str(loaded["wholeConfigurationSourceProven"]).lower(), str(loaded["dataStateProven"]).lower())]
+    resources = result.get("resourceEvidence", {})
+    process_peaks = [item.get("peakObservedJobMemoryBytes", 0) for item in resources.get("processes", [])]
+    lines += ["", "Resource guard: enabled; peak observed owned-job memory bytes: " +
+              str(max(process_peaks) if process_peaks else 0) + "."]
     lines += ["", *result["limitations"]]
+    evidence = result.get("operationEvidence", {"status": "notRequested"})
+    lines += ["", "Operation evidence: " + evidence["status"] + "."]
+    for item in evidence.get("iterations", []):
+        detail = ""
+        if item.get("reportPath"):
+            detail = " — [operation map](%s)" % item["reportPath"]
+        lines.append("- iteration %s, level %s: %s%s%s" % (
+            item["iteration"], item["level"], item["status"],
+            " (" + item["error"] + ")" if item.get("error") else "", detail))
     if result.get("error"):
         lines += ["", "Error: " + result["error"]]
     (Path(run) / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -228,7 +503,8 @@ def report(run, result):
 
 def compare(left, right):
     left, right = read_json(left), read_json(right)
-    incompatible = [key for key in ("scenarioSha256", "scenarioInputsSha256", "parameters", "dataIdentity", "host", "environmentIdentity", "readiness")
+    incompatible = [key for key in ("scenarioSha256", "scenarioInputsSha256", "parameters", "dataIdentity",
+                                    "databaseIdentity", "databaseTopology", "host", "environmentIdentity", "readiness")
                     if left.get(key) != right.get(key) or left.get(key) is None]
     if incompatible:
         raise WorkError("INCOMPARABLE_RUNS: " + ", ".join(incompatible))
@@ -241,19 +517,38 @@ def compare(left, right):
             "sourceIdentity": [left.get("sourceIdentity"), right.get("sourceIdentity")]}
 
 
-def execute_job(spool, identifier, profile, *, via_agent=False):
+def execute_job(spool, identifier, profile, *, via_agent=False, expected_runner=None):
     spool = Path(spool).resolve()
     identifier = job_id(identifier)
     request, scenario = validate_package(spool / "jobs" / identifier)
+    if request.get("kind") == "host-command":
+        if via_agent or expected_runner == "local":
+            raise WorkError("EXECUTION_RUNNER_MISMATCH")
+        from .host_commands import execute as execute_host_command
+        return execute_host_command(spool, identifier, profile)
     authorize(request, scenario, profile)
-    if request["route"] == "agent" and not via_agent:
+    requested_execution = execution_contract(request)
+    if expected_runner is not None and requested_execution["runner"] != expected_runner:
+        raise WorkError("EXECUTION_RUNNER_MISMATCH")
+    if requested_execution["agentPolicy"] == "requested" and not via_agent:
         from .agents import dispatch
         return dispatch(spool, request, profile, scenario)
-    with FileLock(spool / "worker.lock"):
+    # One claim per job prevents replay without serializing unrelated databases.
+    with FileLock(spool / "claims" / (identifier + ".lock")):
         state = status(spool, identifier)
         if state["status"] != "queued" and not (via_agent and state["status"] == "agent-running"):
-            if state["status"] == "running":
-                state.update(status="needs-attention", error="INTERRUPTED_OWNER: inspect effects; no automatic replay", updatedAt=stamp())
+            if state["status"] in ("running", "waiting-for-base"):
+                expected_owner = state.get("ownerIdentity")
+                try:
+                    current_owner = process_identity(state.get("ownerPid"))
+                except (WorkError, TypeError, ValueError):
+                    current_owner = None
+                error = ("INTERRUPTED_OWNER_IDENTITY_MISMATCH: previous execution was not replayed"
+                         if isinstance(expected_owner, dict) and current_owner != expected_owner else
+                         "INTERRUPTED_OWNER: previous execution was not replayed")
+                state.update(status="interrupted", error=error, updatedAt=stamp(),
+                             reconciliation={"expectedOwner": expected_owner, "observedOwner": current_owner,
+                                             "workloadReplayed": False})
                 write_json(spool / "state" / (identifier + ".json"), state)
             return state
         package = spool / "jobs" / identifier
@@ -264,21 +559,83 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
             state.update(status="cancelled", updatedAt=stamp())
             write_json(spool / "state" / (identifier + ".json"), state)
             return state
-        base = target.get("infoBase", {"kind": "workspace", "path": target["workspace"]})
-        base_path = str(Path(base["path"]).resolve()) if base["kind"] in ("file", "workspace") else base["path"].strip()
-        lock_identity = identity({"kind": base["kind"].lower(), "path": os.path.normcase(base_path).casefold()})
-        lock_root = Path(os.environ.get("PROGRAMDATA", tempfile_root())) / "ITL" / "remote-work-locks"
-        with FileLock(lock_root / (lock_identity + ".lock")):
-            def progress(phase):
-                state.update(status="running", phase=phase, ownerPid=os.getpid(), updatedAt=stamp())
+        execution = target_execution(target)
+        provenance = capture_provenance(spool / "runs" / identifier, request, scenario, target,
+                                        executor="agent" if via_agent else requested_execution["runner"])
+        profile_path = spool / "profile.json"
+        profile_fingerprint = digest(profile_path) if profile_path.is_file() else None
+        executor_identity = process_identity(os.getpid())
+        state_lock = threading.Lock()
+        def waiting(record):
+            with state_lock:
+                guard_state = record.get("state")
+                if guard_state not in ("waiting", "running"):
+                    return
+                state.update(status="waiting-for-base" if guard_state == "waiting" else "running",
+                             execution={key: record.get(key) for key in
+                                        ("protocol", "executionId", "operation", "resources", "state", "waitSeconds")},
+                             ownerPid=os.getpid(), ownerIdentity=executor_identity, updatedAt=stamp())
+                if guard_state == "waiting":
+                    state["phase"] = "admission"
+                elif state.get("phase") in (None, "admission"):
+                    state["phase"] = "preparing"
                 write_json(spool / "state" / (identifier + ".json"), state)
-            progress("preparing")
-            result = run_measurement(package, target, spool / "runs" / identifier, request, scenario, cancelled, progress)
-            state.update(status=result["status"], phase="finished", result=str(spool / "runs" / identifier / "result.json"), updatedAt=stamp())
-            if result.get("error"):
-                state["error"] = result["error"]
+        def progress(phase):
+            with state_lock:
+                state.update(status="running", phase=phase, ownerPid=os.getpid(),
+                             ownerIdentity=executor_identity, updatedAt=stamp())
+                write_json(spool / "state" / (identifier + ".json"), state)
+        result = None
+        try:
+            inherited = os.environ.get("ITL_EXECUTION_CONTEXT")
+            inherited_key = (base64.urlsafe_b64decode(os.environ["ITL_EXECUTION_CONTEXT_KEY"].encode("ascii"))
+                             if inherited else None)
+            guard_context = ExecutionGuard(execution["root"], execution["resources"], "measure",
+                                           execution_id=identifier, timeout=execution["waitTimeoutSeconds"],
+                                           cancelled=cancelled, progress=waiting,
+                                           cancel_path=spool / "control" / (identifier + ".cancel.json"),
+                                           inherited_context=inherited, context_key=inherited_key)
+            with guard_context as guard:
+                # Revalidate immutable inputs and target authorization after the
+                # queue. Actual loaded configuration/data checks belong to prepare.
+                try:
+                    request, scenario = validate_package(package)
+                    if profile_fingerprint and digest(profile_path) != profile_fingerprint:
+                        raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED: worker profile changed during admission")
+                    current_target = authorize(request, scenario, profile)
+                    if target_execution(current_target) != execution:
+                        raise WorkError("EXECUTION_GUARD_TARGET_CHANGED")
+                    if capture_provenance(spool / "runs" / identifier, request, scenario, current_target) != provenance:
+                        raise WorkError("MEASUREMENT_PROVENANCE_CHANGED: retained bytes changed while waiting")
+                except Exception:
+                    # Only immutable-input checks ran inside this boundary.
+                    # No runtime, source capture or restoration was started;
+                    # an ordinary preflight failure must not create native debt.
+                    raise
+                state["execution"] = {"protocol": "execution-guards-v2", "executionId": guard.execution_id,
+                                      "operation": guard.operation, "resources": guard.resources,
+                                      "state": "running", "waitSeconds": guard.record.get("waitSeconds")}
+                progress("preparing")
+                result = run_measurement(package, current_target, spool / "runs" / identifier, request, scenario, cancelled,
+                                         progress, execution_guard=guard,
+                                         cancel_path=spool / "control" / (identifier + ".cancel.json"), provenance_reference=provenance)
+                terminal = ("succeeded" if result["status"] in ("completed", "partial") else
+                            "cancelled" if result["status"] == "cancelled" else "failed")
+                guard.terminal(terminal, error=result.get("error"),
+                               artifacts=[str(spool / "runs" / identifier / "result.json")])
+                state.update(status=result["status"], phase="finished", execution=result.get("execution"),
+                             result=str(spool / "runs" / identifier / "result.json"), updatedAt=stamp())
+                if result.get("error"):
+                    state["error"] = result["error"]
+                write_json(spool / "state" / (identifier + ".json"), state)
+        except WorkError as error:
+            state.update(status="cancelled" if str(error) in ("EXECUTION_GUARD_CANCELLED", "CANCELLED") else "failed",
+                         error=str(error), updatedAt=stamp())
             write_json(spool / "state" / (identifier + ".json"), state)
-    if result["status"] == "needs-attention" and request["route"] == "auto" and profile.get("agentFallback") and not via_agent:
+            return state
+    if (result["status"] == "failed" and
+            requested_execution["agentPolicy"] == "diagnosis-on-failure" and
+            profile.get("agentFallback") and not via_agent):
         from .agents import dispatch
         dispatch(spool, request, profile, scenario, diagnosis=True)
     return state

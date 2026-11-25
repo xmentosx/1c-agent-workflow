@@ -174,35 +174,112 @@ Describe "controlled ai_rules_1c release overlay" {
         }
     }
 
+    It "keeps the exact new upstream root before the ITL appendix" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-root-" + [guid]::NewGuid().ToString('N'))
+        $forkRoot = Join-Path $tempRoot 'fork'
+        $overlayRoot = Join-Path $tempRoot 'overlay'
+        try {
+            New-Item -ItemType Directory -Force -Path $forkRoot, $overlayRoot | Out-Null
+            & git -C $forkRoot init --quiet
+            & git -C $forkRoot config user.email tests@example.invalid
+            & git -C $forkRoot config user.name 'ITL Tests'
+            $upstreamRoot = "# Rules`n## New verification`nconditional gate`n"
+            $appendix = [IO.File]::ReadAllText((Join-Path $RepoRoot 'templates\ai-rules-overlay\ITL-ROOT.md'), $Utf8NoBom).Replace("`r`n", "`n")
+            $expectedRoot = $upstreamRoot + "`n" + $appendix
+            [IO.File]::WriteAllText((Join-Path $forkRoot 'AGENTS.md'), $upstreamRoot, $Utf8NoBom)
+            & git -C $forkRoot add AGENTS.md
+            & git -C $forkRoot commit --quiet -m upstream
+            $upstreamCommit = (& git -C $forkRoot rev-parse HEAD).Trim()
+            & git -C $forkRoot switch -q -c release/test
+            [IO.File]::WriteAllText((Join-Path $overlayRoot 'ITL-ROOT.md'), $appendix, $Utf8NoBom)
+            $manifest = [ordered]@{
+                schemaVersion = 3
+                baselineUpstreamCommit = $upstreamCommit
+                baselineReleaseCommit = $upstreamCommit
+                intakeUpstreamCommit = $upstreamCommit
+                targetPath = 'AGENTS.md'
+                targetTemplate = 'ITL-ROOT.md'
+                targetComposition = 'append-upstream'
+                maximumTargetCharacters = 22000
+                requiredUpstreamAnchors = @('## New verification')
+                requiredTargetAnchors = @('## New verification', '## ITL managed-project ownership', 'executionPath=quick-fix|full-cycle')
+                additionalTargets = @()
+                pathDecisions = @(
+                    [ordered]@{
+                        path = 'AGENTS.md'; requirementId = 'ITL-ROOT-001'; disposition = 'resolved'; reason = 'Preserve upstream and append ITL ownership.'
+                        upstreamSha256 = Get-NormalizedTextSha256 $upstreamRoot
+                        baselineSha256 = Get-NormalizedTextSha256 $upstreamRoot
+                        resultSha256 = Get-NormalizedTextSha256 $expectedRoot
+                    }
+                )
+            }
+            [IO.File]::WriteAllText((Join-Path $overlayRoot 'sections.json'), (($manifest | ConvertTo-Json -Depth 8) + "`n"), $Utf8NoBom)
+            $rootContract = [ordered]@{
+                schemaVersion = 1; upstreamPath = 'AGENTS.md'
+                mappings = @([ordered]@{ upstreamAnchor = '## New verification'; destination = 'AGENTS.md'; destinationAnchor = '## New verification'; disposition = 'upstream-root' })
+            }
+            [IO.File]::WriteAllText((Join-Path $overlayRoot 'root-contract.json'), (($rootContract | ConvertTo-Json -Depth 8) + "`n"), $Utf8NoBom)
+            $reportPath = Join-Path $tempRoot 'report.json'
+
+            & $BuilderPath -AiRulesRoot $forkRoot -UpstreamCommit $upstreamCommit -OverlayRoot $overlayRoot -ReportPath $reportPath -Mode Prepare
+            [IO.File]::ReadAllText((Join-Path $forkRoot 'AGENTS.md'), $Utf8NoBom) | Should -BeExactly $expectedRoot
+            & git -C $forkRoot add AGENTS.md
+            & git -C $forkRoot commit --quiet -m downstream-root
+            & $BuilderPath -AiRulesRoot $forkRoot -UpstreamCommit $upstreamCommit -OverlayRoot $overlayRoot -ReportPath $reportPath -Mode Verify
+            (Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be 'verified'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "routes structural Form.xml edits through the specialized tool" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
-        foreach ($marker in @(
-            'existing `Form.xml` must use `1c-form-edit`',
-            'never a manual one-line fix',
-            'state why the form tool does not apply before editing'
-        )) {
-            $agentsText | Should -Match ([regex]::Escape($marker))
+        $agentsText | Should -Match 'Read the matching on-demand ITL rule before changing a\s+managed form'
+        $agentsText | Should -Match ([regex]::Escape('content/rules/itl-managed-form-context.md'))
+        # Tool semantics belong to the exact fork's metadata skill/domain rule
+        # and R8Policy regression; the source appendix owns their routing.
+        $ledger = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/ai-rules-overlay/sections.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($path in @('content/skills/1c-metadata-manage/SKILL.md', 'content/rules/forms-add.md',
+                'content/skills/1c-metadata-manage/docs/form-manage.md', 'tests/R8Policy.Tests.ps1')) {
+            $entry = @($ledger.pathDecisions | Where-Object path -eq $path)
+            $entry.Count | Should -Be 1
+            $entry[0].disposition | Should -Not -Be 'delete'
+            $entry[0].resultSha256 | Should -Match '^[0-9a-f]{64}$'
         }
+    }
+
+    It "overrides generic repository activation only for ready unbound branch development" {
+        $rules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
+        $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/references/branch-lifecycle.md') -Raw -Encoding UTF8
+        $rules | Should -Match 'Source `REPOSITORY_PATH` never requires source lock/commit for local edits or verification in ready unbound branch copies'
+        $rules | Should -Match 'overrides generic repository activation'
+        $rules | Should -Match 'Explicit source operations retain repository discipline'
+        $lifecycle | Should -Match 'even while source Designer is open'
+        $lifecycle | Should -Match 'never an automatic prerequisite of branch development, verification, export or merge'
+        $lifecycle | Should -Match 'do not clear repository settings or unbind source'
+        $lifecycle | Should -Match "never bypass another owner's capture"
     }
 
     It "keeps eligible local BSL fixes on quick-fix without weakening completion" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
-        foreach ($marker in @(
-            'An internal BSL fix that preserves public contracts may remain a quick-fix',
-            'do not promote it solely because it corrects existing behavior',
-            'relevant Vanessa coverage exists or was updated',
-            'a fresh successful `/itl-check` completed after the last change'
-        )) {
-            $agentsText | Should -Match ([regex]::Escape($marker))
-        }
-        $agentsText | Should -Not -Match 'public APIs.*changes to existing behavior always promote'
+        $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
+        $agentsText | Should -Match ([regex]::Escape('executionPath=quick-fix|full-cycle'))
+        $agentsText | Should -Match 'helper-owned evidence assessment'
+        $userRules | Should -Match ([regex]::Escape('Quick-fix obeys `QUICKFIX_MAX_LINES`'))
+        $userRules | Should -Match 'sufficient current evidence'
+        $userRules | Should -Match 'retaining a regression and its cadence are separate risk-based decisions'
+        $userRules | Should -Match ([regex]::Escape('Run fresh unfiltered `/itl-check` after the last relevant edit'))
+        $userRules | Should -Match 'fragment-only proof remains partial'
+        $userRules | Should -Match ([regex]::Escape('Execution `off` does not prohibit authoring needed tests'))
+        $userRules | Should -Not -Match 'Do not author an `off` test layer'
     }
 
     It "keeps full-cycle execution separate from OpenSpec planning" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
         $forkUserRulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\USER-RULES.md") -Raw -Encoding UTF8
         $projectUserRulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Raw -Encoding UTF8
-        $agentsText | Should -Match 'Full-cycle is not OpenSpec'
+        $agentsText | Should -Match 'Full-cycle does not by itself\s+start OpenSpec'
         foreach ($text in @($forkUserRulesText, $projectUserRulesText)) {
             $text | Should -Match ([regex]::Escape('executionPath=quick-fix|full-cycle'))
             $text | Should -Match ([regex]::Escape('planningMode=direct|OpenSpec'))
@@ -210,6 +287,61 @@ Describe "controlled ai_rules_1c release overlay" {
         $forkUserRulesText | Should -Match 'Promotion triggers.*never change.*planningMode'
         $projectUserRulesText | Should -Match 'Promotion triggers set only `executionPath=full-cycle`'
         $projectUserRulesText | Should -Not -Match 'classify each code/metadata edit as quick-fix or OpenSpec'
+    }
+
+    It "keeps the conditional scoped-memory core in the always-loaded root appendix" {
+        $agentsText = (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8).Replace("`r`n", "`n")
+        $core = [regex]::Match($agentsText, '(?s)## Scoped project memory\n.*?(?=\n## |\z)')
+        $core.Success | Should -BeTrue
+        # It binds nothing in a project where the memory server is not registered.
+        $core.Value | Should -Match 'Applies only when the `memory_status` tool is available'
+        $core.Value | Should -Match 'Call `memory_status` once at session start and after a `contextChanged`'
+        $core.Value | Should -Match 'Task progress goes to its `checkpoint`, not notes'
+        $core.Value | Should -Match 'Before designing or first editing a 1C topic'
+        $core.Value | Should -Match 'only a reusable\s+decision or confirmed lesson'
+        # The note is knowledge, not a work log (improve-memory-content-quality D1).
+        $core.Value | Should -Match 'Never save what code, OpenSpec, evidence, Git or test results hold:\s+progress, runs, SHAs, line numbers, statuses'
+        $core.Value | Should -Match 'One fact, at most 600 characters'
+        $core.Value | Should -Not -Match 'non-obvious finding'
+        $core.Value | Should -Match 'future obligation in the chosen scope; cite the user'
+        $core.Value | Should -Match 'a prediction needs a check to become a fact'
+        $core.Value | Should -Match 'in\s+place \(`note_id` \+ `data_id`\) or `retire_note` it in the same turn, never\s+under a new ID'
+        $core.Value | Should -Match 'never client/project/configuration data'
+        $core.Value | Should -Match 'organizational `standing` needs explicit user direction'
+        $core.Value | Should -Match "another project's organization note only after the user\s+confirms"
+        $core.Value | Should -Match 'lasting personal practices; host for verified machine facts'
+        # One project choice routes base-product behaviour to its home (D3/D4).
+        $core.Value | Should -Match '`applicability.knowledgeArea` routes base-product behavior to\s+its proven home'
+        $core.Value | Should -Match 'Memory: recall N, saved N, updated N, retired N'
+        # The memory line this core absorbed keeps its trigger, action,
+        # exception and prohibition.
+        $core.Value | Should -Match 'Project corrections stay in project memory'
+        $core.Value | Should -Match 'Shared `1c-templates-mcp`\s+`remember` is only for verified cross-project knowledge'
+        $core.Value | Should -Match '`templatesearch`\s+remains available for code templates'
+        $core.Value | Should -Match 'Do not turn on a new shared-memory\s+provider implicitly'
+        # Provider routing, recovery, budgets and the note format stay on demand.
+        $core.Value | Should -Match '`project-memory`\s+holds the details on demand'
+        $core.Value | Should -Not -Match 'OpenViking|CHUNKS|dataset ID|pending source'
+        $core.Value | Should -Match 'Verify current branch code and test as needed'
+        # Recall is once per topic, not repeated in every turn (D7).
+        $core.Value | Should -Not -Match 'next eligible turn'
+        # R56 adds 497 UTF-8 bytes: core 1,578 -> 2,075 and appendix 4,718 -> 5,215.
+        # improve-memory-content-quality rewrites the core without growth: 2,075 -> 2,058.
+        # Examples and read recovery details stay on demand.
+        # Event-triggered recall (2026-11-20): pitfalls are found by tool, action or
+        # symptom, not by task topic (PM5 probe: topic 2 of 12, symptom 12 of 12).
+        # +116 bytes, about 30 tokens per session: core 2,058 -> 2,174, appendix
+        # 5,198 -> 5,314.
+        # Remote code/graph MCP answer from an hours-old master snapshot, which agents
+        # took for their branch (2026-11-20, accepted limitation): +162 bytes, about
+        # 40 tokens per session outside the memory core: appendix 5,314 -> 5,476.
+        # First-edit recall and decision/expectation boundaries add 157 root bytes.
+        [Text.Encoding]::UTF8.GetByteCount($core.Value.TrimEnd("`n")) | Should -BeLessOrEqual 2337
+        [Text.Encoding]::UTF8.GetByteCount($agentsText) | Should -BeLessOrEqual 5637
+        $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
+        # One qualification call for both rules: the session-start status.
+        $userRules | Should -Match ([regex]::Escape('`itl-scoped-cognee` `memory_status` returns `bindingState=current`'))
+        $userRules | Should -Not -Match ([regex]::Escape('memory_status(local_only=true)'))
     }
 
     It "blocks a workflow lock whose exact fork bytes do not match the overlay result ledger" {

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "component": "clientMcp",
+  "compatibilityVersion": "v0.6.5",
+  "downstreamRevision": "itl-r1",
+  "upstream": {
+    "repository": "1c-neurofish/onec-client-mcp-devkit",
+    "commit": "3f6a066913057c2d6f2d61c0b429fd0707ab271b",
+    "releaseTag": "v0.6.5",
+    "url": "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe",
+    "sha256": "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
+  },
+  "artifact": {
+    "fileName": "client_mcp.v0.6.5-itl-r1.cfe",
+    "releaseTag": "client-mcp-v0.6.5-itl-r1"
+  },
+  "correspondingSource": {
+    "fileName": "client_mcp.v0.6.5-itl-r1.sources.zip"
+  },
+  "patch": {
+    "configurationSha256": "06ba09d2d1b5f5bfcb579289af5851e0da70e6c7b3e9d6963d95f68430abb5f4",
+    "configurationUuid": "d469f924-8720-4ff4-8459-69bfbb65dbe9",
+    "languageUuid": "ad479e70-4f3d-4238-af6a-607a67f0d1b4",
+    "languageName": "Русский",
+    "languageSha256": "0c27ca3972df7b6a75579a7ce9d96e0c880b04e9186722db4a704331e3bbc1a2",
+    "expectedChangedPaths": [
+      "Configuration.xml",
+      "Languages/Русский.xml"
+    ]
+  },
+  "build": {
+    "platformVersion": "8.3.27.2130",
+    "platformSha256": "bce653192be5d31d583dd698f78579d21d555413bcf208e9881f03b3adceb556",
+    "serviceTemplateSha256": "4329197edb639b1da65f594d392a71abcd959df4f22a42c1201f4fecc8f47a74"
+  },
+  "notices": {
+    "LICENSE.upstream": "f831e7eed577481687a9bc0b48024e5e40b6f655fcde073ede964b50be5d55d9",
+    "LICENSE.GPL3": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "ITL-NOTICE.txt": "f32992494ac4689dbcc51fc4e0ff69c55f0aec3034c011ffc08aa72cf87e8c40"
+  }
+}

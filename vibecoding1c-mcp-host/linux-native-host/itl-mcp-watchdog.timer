@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the ITL MCP host every two minutes
+
+[Timer]
+OnBootSec=60
+OnUnitInactiveSec=120
+AccuracySec=5
+Unit=itl-mcp-watchdog.service
+
+[Install]
+WantedBy=timers.target

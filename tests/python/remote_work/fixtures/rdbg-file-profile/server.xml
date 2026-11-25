@@ -1,0 +1,55 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ns0:response xmlns:ns0="http://v8.1c.ru/8.3/debugger/debugBaseData" xmlns:ns1="http://v8.1c.ru/8.3/debugger/debugRDBGRequestResponse" xmlns:ns3="http://v8.1c.ru/8.3/debugger/debugDBGUICommands" xmlns:ns4="http://v8.1c.ru/8.3/debugger/debugMeasure" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:debugDBGUICommands="http://v8.1c.ru/8.3/debugger/debugDBGUICommands">
+  <ns1:result xsi:type="debugDBGUICommands:DBGUIExtCmdInfoMeasure">
+    <ns3:cmdIDNum>6</ns3:cmdIDNum>
+    <ns3:cmdID>measureResultProcessing</ns3:cmdID>
+    <ns3:targetID>
+      <ns0:id>efdcb67d-ad8b-4981-8157-eaed6cff46cc</ns0:id>
+      <ns0:seanceId>e414e9db-bfc8-4daf-ba41-ac0a8eac7398</ns0:seanceId>
+      <ns0:seanceNo>1</ns0:seanceNo>
+      <ns0:infoBaseInstanceID>352c4287-ee32-4ad8-9a65-6dc4882b1b0e</ns0:infoBaseInstanceID>
+      <ns0:infoBaseAlias>DefAlias</ns0:infoBaseAlias>
+      <ns0:isServerInfoBase>undefined</ns0:isServerInfoBase>
+      <ns0:configVersion>e90e19e711d4e449940709b1a7b0df4500000000</ns0:configVersion>
+      <ns0:targetType>ServerEmulation</ns0:targetType>
+    </ns3:targetID>
+    <ns3:measure>
+      <ns4:targetID>
+        <ns0:id>efdcb67d-ad8b-4981-8157-eaed6cff46cc</ns0:id>
+        <ns0:seanceId>e414e9db-bfc8-4daf-ba41-ac0a8eac7398</ns0:seanceId>
+        <ns0:seanceNo>1</ns0:seanceNo>
+        <ns0:infoBaseInstanceID>352c4287-ee32-4ad8-9a65-6dc4882b1b0e</ns0:infoBaseInstanceID>
+        <ns0:infoBaseAlias>DefAlias</ns0:infoBaseAlias>
+        <ns0:isServerInfoBase>false</ns0:isServerInfoBase>
+        <ns0:configVersion>e90e19e711d4e449940709b1a7b0df4500000000</ns0:configVersion>
+        <ns0:targetType>ServerEmulation</ns0:targetType>
+      </ns4:targetID>
+      <ns4:totalDurability>5320542</ns4:totalDurability>
+      <ns4:totalIndepServerWorkTime>0</ns4:totalIndepServerWorkTime>
+      <ns4:performanceFrequency>10000000</ns4:performanceFrequency>
+      <ns4:moduleData>
+        <ns4:moduleID>
+          <ns0:objectID>fe635e09-8400-4b8c-9aac-bca4ebf1e9ca</ns0:objectID>
+          <ns0:propertyID>32e087ab-1491-49b6-aba7-43571b41ac2b</ns0:propertyID>
+          <ns0:extId>2</ns0:extId>
+          <ns0:version>2c5a80a2ab9bf14eb60bd6c70f4bef9e00000000</ns0:version>
+        </ns4:moduleID>
+        <ns4:lineInfo>
+          <ns4:lineNo>4563</ns4:lineNo>
+          <ns4:frequency>3</ns4:frequency>
+          <ns4:durability>186627</ns4:durability>
+          <ns4:pureDurability>1228</ns4:pureDurability>
+          <ns4:serverCallSignal>0</ns4:serverCallSignal>
+        </ns4:lineInfo>
+        <ns4:lineInfo>
+          <ns4:lineNo>4565</ns4:lineNo>
+          <ns4:frequency>3</ns4:frequency>
+          <ns4:durability>15</ns4:durability>
+          <ns4:pureDurability>15</ns4:pureDurability>
+          <ns4:serverCallSignal>0</ns4:serverCallSignal>
+        </ns4:lineInfo>
+      </ns4:moduleData>
+      <ns4:sessionID>7572971d-4a65-4a43-ab0b-32e3e15bb286</ns4:sessionID>
+    </ns3:measure>
+  </ns1:result>
+</ns0:response>

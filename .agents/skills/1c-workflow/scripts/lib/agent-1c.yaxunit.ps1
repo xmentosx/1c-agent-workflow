@@ -1,4 +1,4 @@
-function Get-YAxUnitInstallRoot {
+﻿function Get-YAxUnitInstallRoot {
     $value = Get-Setting -EnvName "YAXUNIT_INSTALL_ROOT" -ConfigName "yaxunit.installRoot" -Default ".agent-1c/tools/yaxunit"
     return (Resolve-ProjectPath ([string]$value))
 }
@@ -23,6 +23,47 @@ function Get-YAxUnitExtensionName {
 
 function Get-YAxUnitTestsExtensionName {
     return [string](Get-Setting -EnvName "YAXUNIT_TESTS_EXTENSION_NAME" -ConfigName "yaxunit.testsExtensionName" -Default "tests")
+}
+
+function Get-YAxUnitProjectTestsSafeModeOptIn {
+    # A task-scoped helper switch carries the agent's authorized intent.
+    # Project JSON remains a reusable opt-in; ambient environment is not authority.
+    $yaxunit = Get-StateValue -State $script:Config -Name 'yaxunit' -Default $null
+    $requested = [bool]$script:ProjectTestsSafeModeRequested
+    if ($null -eq $yaxunit) { return $requested }
+    $option = $yaxunit.PSObject.Properties['testsDisableSafeMode']
+    if ($null -eq $option) { return $requested }
+    if ($option.Value -isnot [bool]) {
+        throw 'ITL_PROJECT_TESTS_OPTION_INVALID: yaxunit.testsDisableSafeMode must be a JSON boolean. Correct the project setting, then repeat the original command.'
+    }
+    return ($requested -or [bool]$option.Value)
+}
+
+function Assert-YAxUnitProjectTestsName {
+    param([string]$Name)
+    if ($Name -cnotmatch '^[\p{L}_][\p{L}\p{M}\p{Nd}_]*$' -or $Name -in @('client_mcp','VAExtension','YAXUNIT')) {
+        throw "ITL_PROJECT_TESTS_EXTENSION_NAME_INVALID: '$Name' must be the exact registered test-extension identifier, separate from the three tooling roles. Correct yaxunit.testsExtensionName and Configuration.xml, then repeat the original command."
+    }
+}
+
+function Assert-YAxUnitProjectTestsLoadContext {
+    param([string]$ExtensionName, [string]$SourceFingerprint, [string[]]$DesignerArgs)
+    $name = Get-YAxUnitTestsExtensionName
+    Assert-YAxUnitProjectTestsName -Name $name
+    $path = Resolve-ProjectPath (Get-YAxUnitTestsPath)
+    if ($ExtensionName -cne $name -or $DesignerArgs.Count -ne 7 -or
+        $DesignerArgs[0] -cne '/LoadConfigFromFiles' -or
+        -not [string]::Equals([IO.Path]::GetFullPath($DesignerArgs[1]), [IO.Path]::GetFullPath($path), [StringComparison]::OrdinalIgnoreCase) -or
+        $DesignerArgs[2] -cne '-Extension' -or $DesignerArgs[3] -cne $name -or
+        $DesignerArgs[4] -cne '-Format' -or $DesignerArgs[5] -cne 'Hierarchical' -or $DesignerArgs[6] -cne '/UpdateDBCfg') {
+        throw 'GATE6_PROJECT_TESTS_CONTEXT_INVALID: use the registered project-test source and exact load through Ensure-YAxUnitExtensions.'
+    }
+    [xml]$metadata = Read-Utf8Text -Path (Join-Path $path 'Configuration.xml')
+    $node = $metadata.SelectSingleNode("/*[local-name()='MetaDataObject']/*[local-name()='Configuration']/*[local-name()='Properties']/*[local-name()='Name']")
+    $source = Get-ConfigSourceFingerprint -ExportPath (Get-YAxUnitTestsPath)
+    if ($null -eq $node -or $node.InnerText -cne $name -or $source.fingerprint -cne $SourceFingerprint) {
+        throw 'GATE6_PROJECT_TESTS_CONTEXT_INVALID: registered name or source fingerprint changed; repeat the original helper operation.'
+    }
 }
 
 function Get-YAxUnitSuiteCatalogPaths {
@@ -60,6 +101,49 @@ function Get-YAxUnitModuleNameFromPath {
     return $match.Groups[1].Value
 }
 
+function Test-YAxUnitExecutableScenariosExport {
+    param([string]$ModulePath)
+
+    $text = Read-Utf8Text -Path (Resolve-ProjectPath $ModulePath)
+    return [regex]::IsMatch($text, '(?im)^\s*Процедура\s+ИсполняемыеСценарии\s*\(\s*\)\s*Экспорт\b')
+}
+
+function Test-YAxUnitSelfRegisteredModule {
+    param([string]$ModulePath)
+
+    if (-not (Test-YAxUnitExecutableScenariosExport -ModulePath $ModulePath)) { return $false }
+    $normalized = ($ModulePath -replace '\\', '/').TrimStart('/')
+    $match = [regex]::Match($normalized, '(?i)^(.+)/CommonModules/([^/]+)/Ext/Module\.bsl$')
+    if (-not $match.Success) { return $false }
+    $metadataPath = Resolve-ProjectPath "$($match.Groups[1].Value)/CommonModules/$($match.Groups[2].Value).xml"
+    if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) { return $false }
+    try {
+        $metadata = [xml](Read-Utf8Text -Path $metadataPath)
+        $properties = $metadata.SelectSingleNode("/*[local-name()='MetaDataObject']/*[local-name()='CommonModule']/*[local-name()='Properties']")
+        if ($null -eq $properties) { return $false }
+        $serverCall = $properties.SelectSingleNode("*[local-name()='ServerCall']")
+        if ($null -eq $serverCall -or $serverCall.InnerText.Trim() -ine 'false') { return $false }
+        foreach ($context in @('Server', 'ClientManagedApplication', 'ClientOrdinaryApplication')) {
+            $node = $properties.SelectSingleNode("*[local-name()='$context']")
+            if ($null -ne $node -and $node.InnerText.Trim() -ieq 'true') { return $true }
+        }
+    } catch { return $false }
+    return $false
+}
+
+function Test-YAxUnitRegistrationReference {
+    param([string]$ModulePath, [string[]]$RegistrationTexts)
+
+    $moduleName = Get-YAxUnitModuleNameFromPath -Path $ModulePath
+    if (-not $moduleName) { return $false }
+    $pattern = '(?i)(?<![\p{L}\p{N}_])' + [regex]::Escape($moduleName) + '\s*\.'
+    foreach ($registrationText in @($RegistrationTexts)) {
+        $withoutComments = [regex]::Replace([string]$registrationText, '(?m)//[^\r\n]*', '')
+        if ([regex]::IsMatch($withoutComments, $pattern)) { return $true }
+    }
+    return $false
+}
+
 function Read-YAxUnitSuiteCatalog {
     param([string[]]$ModuleFiles = @())
 
@@ -80,20 +164,44 @@ function Read-YAxUnitSuiteCatalog {
             classificationComplete = ($issues.Count -eq 0)
             issues = $issues
             groups = @()
+            obligations = @()
             assignments = $assignments
             registrationPaths = @()
+            notApplicable = @()
             catalogPaths = @()
         }
     }
 
     $groupIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    $obligationIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     $groups = New-Object System.Collections.Generic.List[object]
+    $obligations = New-Object System.Collections.Generic.List[object]
     $registrationPaths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    $notApplicable = New-Object System.Collections.Generic.List[object]
+    $notApplicablePaths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     try {
         foreach ($catalogPath in $catalogPaths) {
             $catalog = (Read-Utf8Text -Path $catalogPath) | ConvertFrom-Json
-            if ([int](Get-YAxUnitCatalogValue -Value $catalog -Name "schemaVersion" -Default 0) -ne 1) {
-                throw "YAXUNIT_SUITE_SCHEMA_UNSUPPORTED: '$catalogPath' must use schemaVersion=1."
+            $schemaVersion = [int](Get-YAxUnitCatalogValue -Value $catalog -Name "schemaVersion" -Default 0)
+            if ($schemaVersion -notin @(1, 2)) {
+                throw "YAXUNIT_SUITE_SCHEMA_UNSUPPORTED: '$catalogPath' must use schemaVersion=1 or 2."
+            }
+            $catalogGroups = New-Object System.Collections.Generic.List[object]
+            foreach ($decision in @(Get-YAxUnitCatalogValue -Value $catalog -Name "notApplicable" -Default @())) {
+                $path = ([string](Get-YAxUnitCatalogValue -Value $decision -Name "path" -Default "") -replace "\\", "/").TrimStart("/")
+                $sourceOid = [string](Get-YAxUnitCatalogValue -Value $decision -Name "sourceOid" -Default "")
+                $reason = [string](Get-YAxUnitCatalogValue -Value $decision -Name "reason" -Default "")
+                if (-not $path -or [IO.Path]::IsPathRooted([string](Get-YAxUnitCatalogValue -Value $decision -Name "path" -Default "")) -or
+                    $path -match '(^|/)\.\.(/|$)|[\*\?\[]' -or $path -notmatch '(?i)\.bsl$') {
+                    throw "YAXUNIT_APPLICABILITY_PATH_INVALID: '$path' must be one exact repository-relative BSL path."
+                }
+                if ($sourceOid -notmatch '^[a-f0-9]{40}$' -or [string]::IsNullOrWhiteSpace($reason)) {
+                    throw "YAXUNIT_APPLICABILITY_DECISION_INVALID: '$path' needs a sourceOid and a reason."
+                }
+                if (-not $notApplicablePaths.Add($path)) {
+                    throw "YAXUNIT_APPLICABILITY_DUPLICATE: '$path' is declared more than once."
+                }
+                $notApplicable.Add([pscustomobject]@{ path = $path; sourceOid = $sourceOid; reason = $reason.Trim() })
             }
             foreach ($registrationPath in @(Get-YAxUnitCatalogValue -Value $catalog -Name "registrationPaths" -Default @())) {
                 $normalizedRegistrationPath = ([string]$registrationPath -replace "\\", "/").TrimStart("/")
@@ -123,18 +231,35 @@ function Read-YAxUnitSuiteCatalog {
                 if ($ownerPatterns.Count -eq 0) {
                     throw "YAXUNIT_SUITE_OWNERS_MISSING: group '$id' has no ownerPaths."
                 }
-                $groups.Add([pscustomobject][ordered]@{
+                $normalizedGroup = [pscustomobject][ordered]@{
                     id = $id
                     purpose = $purpose
                     modulePaths = $modulePatterns
                     ownerPaths = $ownerPatterns
                     source = Get-VerificationRepoRelativePath -Path $catalogPath
-                })
+                }
+                $groups.Add($normalizedGroup)
+                $catalogGroups.Add($normalizedGroup)
+            }
+            foreach ($obligation in @(Read-VerificationObligationDecisions -Catalog $catalog -CatalogPath $catalogPath -Runner yaxunit -RetainedEntries @($catalogGroups.ToArray()))) {
+                if (-not $obligationIds.Add([string]$obligation.id)) {
+                    throw "VERIFICATION_OBLIGATION_ID_DUPLICATE: '$($obligation.id)' appears in more than one catalog."
+                }
+                $obligations.Add($obligation)
             }
         }
 
         $assignments = New-Object System.Collections.Generic.List[object]
         $issues = New-Object System.Collections.Generic.List[string]
+        # One-off proof is checked by the common readiness assessor after
+        # classification. A pending receipt must not prevent retained tests.
+        foreach ($obligation in @($obligations.ToArray() | Where-Object { $_.retention -eq 'retained' -and -not $_.migratedFromSchema1 })) {
+            $group = @($groups.ToArray() | Where-Object id -eq $obligation.groupId)[0]
+            if (($obligation.cadence -eq 'explicit' -and $group.purpose -ne 'explicit-benchmark') -or
+                ($obligation.cadence -in @('affected', 'handoff') -and $group.purpose -ne 'default-fast')) {
+                $issues.Add("VERIFICATION_CADENCE_SELECTION_PENDING: obligation '$($obligation.id)' has cadence '$($obligation.cadence)' that the current YAxUnit selector cannot execute without changing its purpose. Preserve the group and choose a supported invocation route.")
+            }
+        }
         foreach ($moduleFile in @($ModuleFiles)) {
             $repoPath = Get-VerificationRepoRelativePath -Path $moduleFile
             if ($registrationPaths.Contains($repoPath)) {
@@ -152,7 +277,15 @@ function Read-YAxUnitSuiteCatalog {
                 $assignments.Add([pscustomobject]@{ path = $repoPath; groupId = "__unclassified__"; purpose = ""; fullPath = $moduleFile })
                 $issues.Add("Unclassified YAxUnit module: $repoPath")
             } else {
-                $assignments.Add([pscustomobject]@{ path = $repoPath; groupId = [string]$matches[0].id; purpose = [string]$matches[0].purpose; fullPath = $moduleFile })
+                $obligation = @($obligations.ToArray() | Where-Object groupId -eq $matches[0].id)[0]
+                $assignments.Add([pscustomobject]@{
+                    path = $repoPath
+                    groupId = [string]$matches[0].id
+                    purpose = [string]$matches[0].purpose
+                    obligationId = [string]$obligation.id
+                    cadence = [string]$obligation.cadence
+                    fullPath = $moduleFile
+                })
             }
         }
         foreach ($group in @($groups.ToArray())) {
@@ -162,8 +295,10 @@ function Read-YAxUnitSuiteCatalog {
         }
 
         $explicitAssignments = @($assignments.ToArray() | Where-Object purpose -eq "explicit-benchmark")
-        if ($explicitAssignments.Count -gt 0 -and $registrationPaths.Count -eq 0) {
-            $issues.Add("Explicit benchmark groups require registrationPaths so ordinary YAxUnit registration can be checked.")
+        foreach ($assignment in $explicitAssignments) {
+            if (Test-YAxUnitExecutableScenariosExport -ModulePath ([string]$assignment.path)) {
+                $issues.Add("Explicit benchmark module '$($assignment.path)' exports ИсполняемыеСценарии and would join ordinary YAxUnit execution.")
+            }
         }
         foreach ($registrationRepoPath in @($registrationPaths)) {
             $registrationFullPath = Resolve-ProjectPath $registrationRepoPath
@@ -178,7 +313,7 @@ function Read-YAxUnitSuiteCatalog {
                     $issues.Add("Explicit benchmark module must use CommonModules/<name>/Ext/Module.bsl: $($assignment.path)")
                     continue
                 }
-                if ($moduleName -and $registrationText.IndexOf($moduleName, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                if (Test-YAxUnitRegistrationReference -ModulePath ([string]$assignment.path) -RegistrationTexts @($registrationText)) {
                     $issues.Add("Explicit benchmark module '$moduleName' is referenced by ordinary registration '$registrationRepoPath'.")
                 }
             }
@@ -190,8 +325,10 @@ function Read-YAxUnitSuiteCatalog {
             classificationComplete = ($issues.Count -eq 0)
             issues = @($issues.ToArray())
             groups = @($groups.ToArray())
+            obligations = @($obligations.ToArray())
             assignments = @($assignments.ToArray())
             registrationPaths = @($registrationPaths)
+            notApplicable = @($notApplicable.ToArray())
             catalogPaths = @($catalogPaths)
         }
     } catch {
@@ -201,15 +338,17 @@ function Read-YAxUnitSuiteCatalog {
             classificationComplete = $false
             issues = @($_.Exception.Message)
             groups = @()
+            obligations = @()
             assignments = @()
             registrationPaths = @($registrationPaths)
+            notApplicable = @($notApplicable.ToArray())
             catalogPaths = @($catalogPaths)
         }
     }
 }
 
 function Get-YAxUnitPinnedEntry {
-    $entry = Get-DependencyLockEntry -Name "yaxunit"
+    $entry = Get-WorkflowDependencyEntry -Name "yaxunit"
     if ($null -eq $entry) {
         throw "ITL_YAXUNIT_WORKFLOW_PIN_INCOMPLETE: yaxunit is missing from .agent-1c/dependency-lock.json."
     }
@@ -227,6 +366,141 @@ function Get-YAxUnitPinnedEntry {
     return $entry
 }
 
+function Get-YAxUnitArtifactDiagnosticBaseline {
+    param([object]$PinnedEntry, [string]$ExtensionName)
+
+    if ($ExtensionName -cne 'YAXUNIT') { return $null }
+    $pin = [pscustomobject][ordered]@{
+        version = '25.12'
+        releaseTag = '25.12'
+        assetName = 'YAxUnit-25.12.cfe'
+        url = 'https://github.com/bia-technologies/yaxunit/releases/download/25.12/YAxUnit-25.12.cfe'
+        sha256 = '805a2277c997a3c24be0b0d080696479e91e4a15ed7e27aaf3991a7346522d70'
+        upstreamCommit = '15f7ae557d17b59bd80daad503efd8a3114690e5'
+        source = 'upstream release asset'
+    }
+    foreach ($field in $pin.PSObject.Properties.Name) {
+        $value = Get-StateValue -State $PinnedEntry -Name $field -Default $null
+        if ($value -isnot [string] -or $value -cne $pin.$field) { return $null }
+    }
+    return [pscustomobject][ordered]@{
+        id = 'yaxunit-25.12-vendor-diagnostics'
+        version = 1
+        extensionName = 'YAXUNIT'
+        pin = $pin
+    }
+}
+
+function Read-YAxUnitArtifactDiagnosticRaw {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $sha256 = [BitConverter]::ToString($hasher.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant() }
+    finally { $hasher.Dispose() }
+    $original = ([Text.UTF8Encoding]::new($false, $true)).GetString($bytes)
+    if ($original.Length -gt 0 -and $original[0] -eq [char]0xFEFF) { $original = $original.Substring(1) }
+    if ($original.IndexOf([char]0xFEFF) -ge 0) { throw 'raw output contains an additional BOM' }
+    $text = Read-DesignerBatchStrictUtf8Text -Path $Path
+    $afterSha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($sha256 -cne $afterSha256 -or $original -cne $text) { throw 'raw output changed while reading' }
+    return [pscustomobject]@{ text = $text; sha256 = $sha256 }
+}
+
+function Get-YAxUnitArtifactDiagnosticMultiset {
+    param([string[]]$Lines)
+    $counts = [Collections.Generic.Dictionary[string, int]]::new([StringComparer]::Ordinal)
+    foreach ($line in $Lines) {
+        if ($counts.ContainsKey($line)) { $counts[$line]++ } else { $counts.Add($line, 1) }
+    }
+    return @($counts.GetEnumerator() | ForEach-Object { [pscustomobject]@{ text = $_.Key; count = $_.Value } })
+}
+
+function Get-YAxUnitArtifactDiagnosticAssessment {
+    param([object]$Baseline, [string]$Step, [object]$Verdict, [string]$SourceFingerprint, [string]$ExtensionName)
+
+    $assessment = [pscustomobject][ordered]@{
+        status = 'rejected'; applyAllowed = $false; cleanPassed = $false
+        baseline = $null; step = $Step; sourceFingerprint = $SourceFingerprint; extensionName = $ExtensionName
+        nativePassed = (Get-StateValue -State $Verdict -Name 'passed' -Default $null)
+        exitCode = (Get-StateValue -State $Verdict -Name 'exitCode' -Default $null)
+        resultCode = (Get-StateValue -State $Verdict -Name 'resultCode' -Default $null)
+        raw = [pscustomobject]@{
+            logPath = [string](Get-StateValue -State $Verdict -Name 'logPath' -Default '')
+            logSha256 = ''; resultPath = [string](Get-StateValue -State $Verdict -Name 'resultPath' -Default '')
+            resultSha256 = ''; lines = @(); multiset = @()
+        }
+        expected = $null; rejectionReason = ''
+    }
+    try {
+        $canonical = Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry (Get-StateValue -State $Baseline -Name 'pin' -Default $null) -ExtensionName $ExtensionName
+        if ($null -eq $canonical) { throw 'unsupported artifact pin or extension name' }
+        $assessment.baseline = $canonical
+        $baselineVersion = Get-StateValue -State $Baseline -Name 'version' -Default $null
+        if ([string](Get-StateValue -State $Baseline -Name 'id' -Default '') -cne $canonical.id -or
+            ($baselineVersion -isnot [int] -and $baselineVersion -isnot [long]) -or
+            $baselineVersion -ne $canonical.version -or
+            [string](Get-StateValue -State $Baseline -Name 'extensionName' -Default '') -cne $canonical.extensionName) {
+            throw 'baseline identity was changed'
+        }
+        if ($SourceFingerprint -cne ('sha256:' + $canonical.pin.sha256)) { throw 'artifact source fingerprint does not match the pin' }
+        $expectedExitCode = 0
+        if ($Step -ceq 'applicability') {
+            $expectedLines = @(
+                'YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+                'YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+                'YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+                'YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+            )
+        } elseif ($Step -ceq 'configuration') {
+            $expectedExitCode = 101
+            $expectedLines = @(
+                'YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  СнятьВсеФлажки "СнятьВсеФлажки"'
+                'YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  УстановитьВсеФлажки "УстановитьВсеФлажки"'
+            )
+        } else { throw 'check step has no vendor diagnostic baseline' }
+        $assessment.expected = [pscustomobject]@{
+            exitCode = $expectedExitCode; resultCode = $expectedExitCode
+            multiset = @(Get-YAxUnitArtifactDiagnosticMultiset -Lines $expectedLines)
+        }
+        if ($assessment.nativePassed -isnot [bool] -or $assessment.nativePassed) { throw 'vendor diagnostics cannot be a clean native verdict' }
+        foreach ($field in @('exitCode', 'resultCode')) {
+            $code = $assessment.$field
+            if (($code -isnot [int] -and $code -isnot [long]) -or $code -ne $expectedExitCode) { throw "unexpected $field" }
+        }
+        $assessment.raw.logSha256 = (Get-FileHash -LiteralPath $assessment.raw.logPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        $log = Read-YAxUnitArtifactDiagnosticRaw -Path $assessment.raw.logPath
+        $assessment.raw.logSha256 = $log.sha256
+        $rawLog = [regex]::Replace($log.text, '\r\n|\r', "`n")
+        if ($rawLog.EndsWith("`n")) { $rawLog = $rawLog.Substring(0, $rawLog.Length - 1) }
+        $assessment.raw.lines = @($rawLog -split "`n")
+        $assessment.raw.multiset = @(Get-YAxUnitArtifactDiagnosticMultiset -Lines $assessment.raw.lines)
+        # The pinned CFE also emits this complete applicability profile with
+        # its native extension version label. Keep raw bytes and reject mixed
+        # labels; this is not diagnostic text normalization or a version regex.
+        if ($Step -ceq 'applicability' -and $assessment.raw.lines[0].StartsWith('YAXUNIT (25.12): ', [StringComparison]::Ordinal)) {
+            $expectedLines = @($expectedLines | ForEach-Object { 'YAXUNIT (25.12)' + $_.Substring('YAXUNIT'.Length) })
+            $assessment.expected.multiset = @(Get-YAxUnitArtifactDiagnosticMultiset -Lines $expectedLines)
+        }
+        $assessment.raw.resultSha256 = (Get-FileHash -LiteralPath $assessment.raw.resultPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        $result = Read-YAxUnitArtifactDiagnosticRaw -Path $assessment.raw.resultPath
+        $assessment.raw.resultSha256 = $result.sha256
+        $rawResult = [regex]::Replace($result.text, '\r\n|\r', "`n")
+        if ($rawResult.EndsWith("`n")) { $rawResult = $rawResult.Substring(0, $rawResult.Length - 1) }
+        if ($rawResult -cne [string]$expectedExitCode) { throw 'raw /DumpResult differs from the required code' }
+        if ($assessment.raw.lines.Count -ne $expectedLines.Count -or $assessment.raw.multiset.Count -ne $assessment.expected.multiset.Count) {
+            throw 'raw /Out diagnostic multiplicities differ from the baseline'
+        }
+        foreach ($expected in $assessment.expected.multiset) {
+            $matches = @($assessment.raw.multiset | Where-Object { $_.text -ceq $expected.text -and $_.count -eq $expected.count })
+            if ($matches.Count -ne 1) { throw 'raw /Out contains changed or unknown diagnostics' }
+        }
+        $assessment.status = 'vendor-warn'
+        $assessment.applyAllowed = $true
+    } catch { $assessment.rejectionReason = $_.Exception.Message }
+    return $assessment
+}
+
 function Get-YAxUnitCfePath {
     $entry = Get-YAxUnitPinnedEntry
     return (Join-Path (Get-YAxUnitInstallRoot) ([string]$entry.assetName))
@@ -235,12 +509,16 @@ function Get-YAxUnitCfePath {
 function Install-YAxUnit {
     $entry = Get-YAxUnitPinnedEntry
     $targetPath = Get-YAxUnitCfePath
+    $expected = ([string]$entry.sha256).ToLowerInvariant()
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
-    [void](Invoke-ItlImmutableFileAcquire `
-        -Source (ConvertFrom-FileUri -Value ([string]$entry.url)) `
-        -DestinationPath $targetPath `
-        -ExpectedSha256 ([string]$entry.sha256).ToLowerInvariant() `
-        -Label "YAxUnit CFE")
+    if ((Get-ItlImmutableFileSha256 -Path $targetPath) -cne $expected) {
+        # The machine cache serves every project; the project path stays the bound location.
+        $cachePath = Get-ItlSharedArtifactPath -Family "yaxunit" -Version ([string]$entry.version) -Sha256 $expected -AssetName ([string]$entry.assetName)
+        if ((Get-ItlImmutableFileSha256 -Path $cachePath) -cne $expected) {
+            [void](Invoke-ItlImmutableFileAcquire -Source (ConvertFrom-FileUri -Value ([string]$entry.url)) -DestinationPath $cachePath -ExpectedSha256 $expected -Label "YAxUnit CFE")
+        }
+        [void](Invoke-ItlImmutableFileAcquire -Source $cachePath -DestinationPath $targetPath -ExpectedSha256 $expected -Label "YAxUnit CFE")
+    }
     Write-Host "YAxUnit $($entry.version) is ready: $targetPath"
     return $targetPath
 }
@@ -299,11 +577,199 @@ function Get-YAxUnitJunitSummary {
     }
 }
 
+function Get-YAxUnitRunCoverage {
+    param([object]$Summary, [string]$LogPath, [string]$ExtensionName, [Nullable[int]]$ExpectedTests)
+
+    # YAxUnit can omit a module from JUnit after logging a load failure.
+    # The classified inventory names modules; dynamic registrations can hide the case count.
+    $missing = [Collections.Generic.List[object]]::new()
+    if ($LogPath -and $ExtensionName -and (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+        $pattern = '(?i)^(?:Ошибка инициализации модуля|Error initializing module):\s+' +
+            [regex]::Escape($ExtensionName) + '\s+(?:ОбщийМодуль|CommonModule)\.([\p{L}\p{N}_]+)\.'
+        $module = $null
+        $reader = $null
+        try {
+            $reader = [IO.StreamReader]::new($LogPath, [Text.Encoding]::UTF8)
+            for ($lineCount = 0; $lineCount -lt 4096; $lineCount++) {
+                $line = $reader.ReadLine()
+                if ($null -eq $line -or $line -match '\[INF\]:\s*(?:Выполнение тестовых сценариев|Executing test scenarios)') { break }
+                if ($line -match $pattern) {
+                    $module = [pscustomobject]@{ name = $Matches[1]; reason = 'initialization'; diagnostic = '' }
+                    $missing.Add($module)
+                } elseif ($null -ne $module) {
+                    if ($line -match '^\{[^}]+\}:\s*(.+)$' -and -not $module.diagnostic) { $module.diagnostic = $line.Trim() }
+                    elseif ($line -match '^\[(?:ОшибкаКомпиляцииВстроенногоЯзыка|ScriptCompilationError)\]') { $module.reason = 'compilation' }
+                    elseif ($line -match '^\d{2}:\d{2}:\d{2}') { $module = $null }
+                }
+            }
+        } catch {
+            Write-Warning 'YAxUnit loader diagnostics could not be read. Inspect the original log.' -WarningAction Continue
+        } finally {
+            if ($null -ne $reader) { $reader.Dispose() }
+        }
+    }
+    $reported = Get-StateValue $Summary 'tests' $null
+    $skipped = Get-StateValue $Summary 'skipped' $null
+    $executed = if ($null -ne $reported) { [int]$reported - [int]$skipped } else { $null }
+    $status = if ($missing.Count -gt 0 -or ($null -ne $ExpectedTests -and $null -ne $executed -and $executed -lt $ExpectedTests)) {
+        'partial'
+    } elseif ($null -ne $ExpectedTests -and $null -ne $executed -and $executed -eq $ExpectedTests) { 'complete' }
+    else { 'unknown' }
+    return [pscustomobject]@{
+        status = $status
+        expectedTests = $ExpectedTests
+        executedTests = $executed
+        skippedTests = $skipped
+        missingTests = $(if ($null -ne $ExpectedTests -and $null -ne $executed) { [Math]::Max(0, $ExpectedTests - $executed) } else { $null })
+        missingModules = $missing.ToArray()
+    }
+}
+
+function Test-ProjectTestsAdoptedObjects {
+    # Adoption belongs to the test source snapshot; the proof stores it with testsFingerprint.
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $false }
+    foreach ($file in [IO.Directory]::EnumerateFiles($Path, '*.xml', [IO.SearchOption]::AllDirectories)) {
+        if ([regex]::IsMatch((Read-Utf8Text -Path $file), '<(?:[\w.-]+:)?ObjectBelonging>\s*Adopted\s*</')) { return $true }
+    }
+    return $false
+}
+
+function ConvertTo-ProjectTestsBslCodeLines {
+    # Removes comments, string contents (including multi-line '|' literals) and
+    # preprocessor lines, preserving line numbers for diagnostics.
+    param([string]$Text)
+    $code = [regex]::Replace(($Text -replace "`r", ''), '//[^\n]*|"(?:""|[^"])*(?:"|$)', {
+        param($match)
+        if ($match.Value.StartsWith('/')) { return '' }
+        return '"' + ("`n" * ([regex]::Matches($match.Value, "`n").Count)) + '"'
+    })
+    return @($code -split "`n" | ForEach-Object { if ($_.TrimStart().StartsWith('#')) { '' } else { $_ } })
+}
+
+function Get-ProjectTestsInsteadWithoutProceed {
+    # Static diagnostic only: textual ПродолжитьВызов does not prove the
+    # interceptor is free of a copied algorithm, and absence never blocks.
+    param([string]$Path)
+    $findings = [Collections.Generic.List[object]]::new()
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return @() }
+    $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/')
+    $proceed = '(?i)(?<![\p{L}\p{N}_.])(?:ПродолжитьВызов|ProceedWithCall)\s*\('
+    foreach ($file in @([IO.Directory]::EnumerateFiles($Path, '*.bsl', [IO.SearchOption]::AllDirectories) | Sort-Object)) {
+        $text = Read-Utf8Text -Path $file
+        $raw = @(($text -replace "`r", '') -split "`n")
+        $lines = @(ConvertTo-ProjectTestsBslCodeLines -Text $text)
+        $relative = $file
+        if ($file.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { $relative = $file.Substring($root.Length + 1) }
+        $relative = $relative.Replace('\', '/')
+        $pending = $null
+        $current = $null
+        for ($n = 0; $n -lt $lines.Count; $n++) {
+            $code = $lines[$n].Trim()
+            if (-not $code) { continue }
+            if ($null -ne $current) {
+                if ($code -match $proceed) { $current.proceeds = $true }
+                if ($code -match '(?i)^(?:КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)(?![\p{L}\p{N}_])') {
+                    if (-not $current.proceeds) { $findings.Add([pscustomobject]@{ file = $relative; line = $current.line; method = $current.method; target = $current.target }) }
+                    $current = $null
+                }
+                continue
+            }
+            if ($code.StartsWith('&')) {
+                if ($code -match '(?i)^&\s*(?:Вместо|Around)\s*\(') {
+                    $target = [regex]::Match([string]$raw[$n], '(?i)&\s*(?:Вместо|Around)\s*\(\s*"([^"]*)"').Groups[1].Value
+                    $pending = [pscustomobject]@{ line = $n + 1; target = $target }
+                }
+                continue
+            }
+            $declaration = [regex]::Match($code, '(?i)^(?:(?:Асинх|Async)\s+)?(?:Процедура|Функция|Procedure|Function)\s+([\p{L}_][\p{L}\p{N}_]*)')
+            if ($declaration.Success -and $null -ne $pending) {
+                $current = [pscustomobject]@{ line = $pending.line; method = $declaration.Groups[1].Value; target = $pending.target; proceeds = $false }
+            }
+            $pending = $null
+        }
+    }
+    return @($findings.ToArray())
+}
+
+function Write-ProjectTestsInterceptorWarnings {
+    param([string]$Path)
+    try {
+        foreach ($finding in @(Get-ProjectTestsInsteadWithoutProceed -Path $Path)) {
+            Write-Host "[WARN] ITL_PROJECT_TESTS_INSTEAD_WITHOUT_PROCEED: file=$($finding.file); line=$($finding.line); method=$($finding.method); target=$($finding.target). This &Вместо does not call ПродолжитьВызов; check the interceptor preference order in references/yaxunit-tests.md (Test seam). Loading continues."
+        }
+    } catch {
+        Write-Host "[WARN] ITL_PROJECT_TESTS_INTERCEPTOR_SCAN_FAILED: $($_.Exception.Message) Loading continues."
+    }
+}
+
+function Assert-ProjectTestsApplicable {
+    # Read-only check of the already loaded test extension against the changed
+    # main configuration; it never reloads or rolls back the infobase.
+    param([Parameter(Mandatory = $true)][object]$State, [Parameter(Mandatory = $true)][string]$ExtensionName)
+    $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
+    New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
+    $resultPath = New-TimestampedFilePath -Directory $logsPath -Prefix '1c-project-tests-applicability-' -Extension '.result'
+    Set-RunStage -Stage 'yaxunit.project-tests-applicability' -Detail "Checking that '$ExtensionName' applies to the changed configuration."
+    $exitCode = 0
+    $logPath = ''
+    try {
+        Invoke-Designer -InfoBasePath ([string]$State.devBranchInfoBasePath) -InfoBaseKind ([string]$State.infoBaseKind) `
+            -DesignerArgs @('/CheckCanApplyConfigurationExtensions', '-Extension', $ExtensionName, '/DumpResult', $resultPath) | Out-Null
+        $logPath = [string]$script:LastLogPath
+    } catch {
+        $native = $_.Exception.Data['ItlDesignerBatchResult']
+        if ($null -eq $native -or [string]$native.operation -cne '/CheckCanApplyConfigurationExtensions' -or -not [bool]$native.ownedProcessesReleased) { throw }
+        $exitCode = [int]$native.exitCode
+        $logPath = [string]$native.logPath
+    }
+    $verdict = Get-DesignerBatchCheckVerdict -ExitCode $exitCode -ResultPath $resultPath -LogPath $logPath
+    if ($verdict.resultCode -eq 0 -and $exitCode -eq 0) { return $verdict }
+    if ($null -eq $verdict.resultCode -or $verdict.resultCode -eq 0) {
+        throw "ITL_PROJECT_TESTS_APPLICABILITY_UNKNOWN: extension='$ExtensionName'; $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath. Tests were not started; restore the native check through repair-dev-branch-tooling, then repeat the original command."
+    }
+    $lines = @()
+    if ($logPath -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+        $lines = @((Read-Utf8Text -Path $logPath) -split '\r?\n' | ForEach-Object { $_.Trim([char]0xFEFF, ' ', "`t") } | Where-Object { $_ })
+    }
+    $methods = @($lines | ForEach-Object { [regex]::Match($_, '"([^"]+)"').Groups[1].Value } | Where-Object { $_ } | Select-Object -Unique)
+    $diagnostics = @($lines | Select-Object -First 20 | ForEach-Object { $_.Substring(0, [Math]::Min(300, $_.Length)) }) -join ' | '
+    throw "ITL_PROJECT_TESTS_NOT_APPLICABLE: extension='$ExtensionName' does not apply to the changed loaded configuration; methods=$($methods -join ', '); diagnostics=$diagnostics; result=$resultPath; log=$logPath. YAxUnit and Vanessa were not started. Correct these interceptors in $(Get-YAxUnitTestsPath) to the current configuration methods (references/yaxunit-tests.md, Test seam), then repeat the original command; changed test sources reload with full applicability."
+}
+
+function New-YAxUnitInstallationProof {
+    param([object]$State, [object]$Identity, [object]$Entry, [object]$Source, [object]$Engine, [object]$Tests,
+        [switch]$TrackProjectSettings, [bool]$RequireProjectSafeModeOff = $false,
+        [bool]$ProjectSettingsPending = $false, [AllowNull()][object]$ProtectionBefore = $null,
+        [AllowNull()][object]$CapabilityEvidence = $null,
+        [string]$ConfigurationFingerprint = '', [bool]$AdoptedObjects = $false)
+
+    $proof = [ordered]@{
+        schemaVersion=1;generation=[string]$State.toolingInfoBaseGeneration;infoBaseKey=[string]$Identity.key
+        engineName=[string]$Engine.name;testsName=[string]$Tests.name
+        engineSha256=[string]$Entry.sha256;engineRuntimeHash=[string]$Engine.contentHash
+        testsFingerprint=[string]$Source.fingerprint;testsRuntimeHash=[string]$Tests.contentHash;verifiedAt=(Get-Date).ToString('o')
+        testsAdoptedObjects=$AdoptedObjects;configurationFingerprint=$ConfigurationFingerprint
+    }
+    if ($TrackProjectSettings) {
+        $proof['testsSafeModeRequired']=$RequireProjectSafeModeOff
+        $proof['testsSafeMode']=[bool]$Tests.safeMode
+        $proof['testsUnsafeActionProtection']=[bool]$Tests.unsafeActionProtection
+        $proof['projectTestsSettingsPending']=$ProjectSettingsPending
+        $proof['testsUnsafeActionProtectionBefore']=$ProtectionBefore
+        $proof['projectTestsCapabilityEvidence']=$CapabilityEvidence
+        $proof['projectTestsHelperSha256']=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    return [pscustomobject]$proof
+}
+
 function Ensure-YAxUnitExtensions {
     param([object]$State)
+    $projectSafeModeOff = Get-YAxUnitProjectTestsSafeModeOptIn
     $State = Ensure-DevBranchToolingGeneration -State $State
     $extensionName = Get-YAxUnitExtensionName
     $testsExtensionName = Get-YAxUnitTestsExtensionName
+    if ($projectSafeModeOff) { Assert-YAxUnitProjectTestsName -Name $testsExtensionName }
     $testsPath = Resolve-ProjectPath (Get-YAxUnitTestsPath)
     [xml]$metadata = Read-Utf8Text -Path (Join-Path $testsPath "Configuration.xml")
     $nameNode = $metadata.SelectSingleNode("/*[local-name()='MetaDataObject']/*[local-name()='Configuration']/*[local-name()='Properties']/*[local-name()='Name']")
@@ -327,21 +793,62 @@ function Ensure-YAxUnitExtensions {
         (Test-ToolingRuntimeExtensionReady -Runtime $engine -Name $extensionName -ExpectedHash ([string](Get-StateValue $proof "engineRuntimeHash" "")) -RequireUnsafeMode -RequireUnsafeActionProtectionDisabled)
     $testsMatch = $scopeMatches -and [string](Get-StateValue $proof "testsFingerprint" "") -ceq [string]$source.fingerprint -and
         (Test-ToolingRuntimeExtensionReady -Runtime $tests -Name $testsExtensionName -ExpectedHash ([string](Get-StateValue $proof "testsRuntimeHash" "")))
-    if ($engineMatches -and $testsMatch) { return $State }
+    $pending = Get-StateValue $proof 'projectTestsSettingsPending' $false
+    if ($pending -isnot [bool]) { throw 'ITL_PROJECT_TESTS_CONTENT_PROOF_INVALID: pending settings marker is not a boolean; reconcile it through the tooling/lifecycle owner before the original command.' }
+    if ($pending -and -not $scopeMatches) { throw 'ITL_PROJECT_TESTS_CONTENT_PROOF_INVALID: pending settings proof belongs to another generation/target; use its lifecycle owner, preserving the unresolved operation.' }
+    $settingsEvidenceComplete = $scopeMatches -and -not $pending -and
+        [bool](Get-StateValue $proof 'testsSafeModeRequired' $false) -and
+        ((Get-StateValue $proof 'testsUnsafeActionProtection' $null) -is [bool])
+    $settingsReady = -not $projectSafeModeOff -or ($testsMatch -and $settingsEvidenceComplete -and
+        $tests.safeMode -is [bool] -and $tests.unsafeActionProtection -is [bool] -and -not $tests.safeMode)
+    # An unchanged extension that adopts configuration objects is rechecked,
+    # without reload, after the loaded main configuration changed. An empty
+    # current fingerprint is not evidence of an unchanged configuration.
+    $configurationFingerprint = [string](Get-StateValue $State 'lastConfigDesignerFingerprint' '')
+    $proofAdopted = Get-StateValue $proof 'testsAdoptedObjects' $null
+    $adoptedObjects = if ($testsMatch -and $proofAdopted -is [bool]) { [bool]$proofAdopted } else { Test-ProjectTestsAdoptedObjects -Path $testsPath }
+    $proofConfiguration = Get-StateValue $proof 'configurationFingerprint' $null
+    $applicabilityRequired = $testsMatch -and $adoptedObjects -and (-not $configurationFingerprint -or [string]$proofConfiguration -cne $configurationFingerprint)
+    if ($applicabilityRequired) { Assert-ProjectTestsApplicable -State $State -ExtensionName $testsExtensionName | Out-Null }
+    if ($engineMatches -and $testsMatch -and $settingsReady -and -not $pending) {
+        if ($applicabilityRequired -or $proofAdopted -isnot [bool] -or $null -eq $proofConfiguration) {
+            $current = [ordered]@{}
+            foreach ($property in $proof.PSObject.Properties) { $current[$property.Name] = $property.Value }
+            $current['testsAdoptedObjects'] = $adoptedObjects
+            $current['configurationFingerprint'] = $configurationFingerprint
+            Update-DevBranchState -State $State -Updates @{ yaxunitInstallationProof = [pscustomobject]$current }
+            $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue ([pscustomobject]$current) -Force
+        }
+        return $State
+    }
 
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "YAxUnit extension synchronization"
-    Update-DevBranchState -State $State -Updates @{ yaxunitInstallationProof = $null }
-    $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $null -Force
+    $synchronize = {
+    $contentChanged = -not $engineMatches -or -not $testsMatch
+    if ($contentChanged) {
+        Update-DevBranchState -State $State -Updates @{ yaxunitInstallationProof = $null }
+        $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $null -Force
+    }
     if (-not $engineMatches) {
-        Invoke-Designer -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
-            -DesignerArgs @("/LoadCfg", $cfePath, "-Extension", $extensionName, "/UpdateDBCfg") | Out-Null
+        Invoke-GuardedCfeExtensionApply -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+            -CfePath $cfePath -ExtensionName $extensionName `
+            -ExtensionPresence $(if ($null -ne $engine -and $engine.present) { 'present' } else { 'absent' }) `
+            -ArtifactDiagnosticBaseline (Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $entry -ExtensionName $extensionName) | Out-Null
         Install-ItlOnDemandMcp | Out-Null
         [void](Set-VanessaMcpExtensionUnsafeMode -State $State -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath `
             -ExtensionName $extensionName -Artifact ([pscustomobject]@{ sha256 = [string]$entry.sha256 }) `
             -User ([string](Get-EnvValue -Name "IB_USER")) -Password ([string](Get-EnvValue -Name "IB_PASSWORD")) -Scope "yaxunit" -ReconcileYAxUnitProtections)
     }
     if (-not $testsMatch) {
-        Invoke-Designer -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+        Write-ProjectTestsInterceptorWarnings -Path $testsPath
+        Invoke-ConfigLoadDesignerAttempt -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+            -ExtensionName $testsExtensionName -SourceFingerprint $source.fingerprint -ValidationPurpose 'project-tests' `
+            -ExtensionPresence $(if ($null -ne $tests -and $tests.present) { 'present' } else { 'absent' }) `
+            -AfterApply {
+                $fresh = @(Get-ToolingRuntimeExtensions -State $State -Names @($testsExtensionName))
+                $installed = @($fresh | Where-Object { $_.name -ceq $testsExtensionName }) | Select-Object -First 1
+                Assert-ToolingRuntimeExtensionReady -Runtime $installed -Name $testsExtensionName
+            } `
             -DesignerArgs @("/LoadConfigFromFiles", $testsPath, "-Extension", $testsExtensionName, "-Format", "Hierarchical", "/UpdateDBCfg") | Out-Null
     }
     $runtime = @(Get-ToolingRuntimeExtensions -State $State -Names @($extensionName, $testsExtensionName))
@@ -349,29 +856,272 @@ function Ensure-YAxUnitExtensions {
     $tests = @($runtime | Where-Object { $_.name -ceq $testsExtensionName }) | Select-Object -First 1
     Assert-ToolingRuntimeExtensionReady -Runtime $engine -Name $extensionName -RequireUnsafeMode -RequireUnsafeActionProtectionDisabled
     Assert-ToolingRuntimeExtensionReady -Runtime $tests -Name $testsExtensionName
-    Update-DevBranchState -State $State -Updates @{
-        yaxunitInstallationProof = [pscustomobject]@{
-            schemaVersion = 1; generation = [string]$State.toolingInfoBaseGeneration; infoBaseKey = [string]$identity.key
-            engineName = $extensionName; testsName = $testsExtensionName
-            engineSha256 = [string]$entry.sha256; engineRuntimeHash = [string]$engine.contentHash
-            testsFingerprint = [string]$source.fingerprint; testsRuntimeHash = [string]$tests.contentHash; verifiedAt = (Get-Date).ToString("o")
+    $capabilityEvidence = $null
+    $protectionBefore = $null
+    $settingsChanged = $false
+    if ($projectSafeModeOff -or $pending) {
+        if ($tests.safeMode -isnot [bool] -or $tests.unsafeActionProtection -isnot [bool]) {
+            throw 'ITL_PROJECT_TESTS_SECURITY_PROOF_INVALID: fresh runtime settings are incomplete; restore the tooling probe through its owner, then repeat the original command.'
         }
-        toolingMutationId = [guid]::NewGuid().ToString("N")
-        toolingMutationAt = (Get-Date).ToString("o")
+        $protectionBefore = [bool]$tests.unsafeActionProtection
+        if ($pending -and $testsMatch) {
+            $expectedProtection = Get-StateValue $proof 'testsUnsafeActionProtectionBefore' $null
+            if ($expectedProtection -isnot [bool] -or $expectedProtection -ne $protectionBefore) {
+                throw 'ITL_PROJECT_TESTS_PROTECTION_CHANGED: unresolved settings operation no longer matches its protection baseline; preserve evidence and resolve through the tooling owner before the original command.'
+            }
+        }
+        if ($projectSafeModeOff -and $tests.safeMode) {
+            # Old fields retain their content-only meaning. This additive marker
+            # prevents the new owner from treating an unknown setter as completed.
+            $contentProof = New-YAxUnitInstallationProof -State $State -Identity $identity -Entry $entry -Source $source -Engine $engine -Tests $tests `
+                -TrackProjectSettings -RequireProjectSafeModeOff $true -ProjectSettingsPending $true -ProtectionBefore $protectionBefore `
+                -ConfigurationFingerprint $configurationFingerprint -AdoptedObjects $adoptedObjects
+            Update-DevBranchState -State $State -Updates @{yaxunitInstallationProof=$contentProof}
+            $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $contentProof -Force
+            $guardContext = [string][Environment]::GetEnvironmentVariable('ITL_EXECUTION_CONTEXT','Process')
+            if (-not $guardContext) { throw 'ITL_PROJECT_TESTS_EXECUTION_CONTEXT_REQUIRED: synchronization must retain its exact-base guard.' }
+            $beforeHash = [string]$tests.contentHash
+            $contentEvidence = [pscustomobject]@{sourceFingerprint=[string]$source.fingerprint;runtimeContentHash=$beforeHash;unsafeActionProtection=$protectionBefore;executionContextSha256=(Get-StringSha256 $guardContext)}
+            Install-ItlOnDemandMcp | Out-Null
+            $capabilityEvidence = Set-VanessaMcpExtensionUnsafeMode -State $State -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath `
+                -ExtensionName $testsExtensionName -Artifact ([pscustomobject]@{sha256=[string]$source.fingerprint}) `
+                -User ([string](Get-EnvValue -Name 'IB_USER')) -Password ([string](Get-EnvValue -Name 'IB_PASSWORD')) -Scope 'project-tests' -ProjectTestsContentProof $contentEvidence
+            $runtime = @(Get-ToolingRuntimeExtensions -State $State -Names @($extensionName,$testsExtensionName))
+            $engine = @($runtime | Where-Object { $_.name -ceq $extensionName }) | Select-Object -First 1
+            $tests = @($runtime | Where-Object { $_.name -ceq $testsExtensionName }) | Select-Object -First 1
+            Assert-ToolingRuntimeExtensionReady -Runtime $engine -Name $extensionName -RequireUnsafeMode -RequireUnsafeActionProtectionDisabled
+            Assert-ToolingRuntimeExtensionReady -Runtime $tests -Name $testsExtensionName -RequireUnsafeMode
+            if ([string]$tests.contentHash -cne $beforeHash -or $tests.unsafeActionProtection -isnot [bool] -or [bool]$tests.unsafeActionProtection -ne $protectionBefore) {
+                throw 'ITL_PROJECT_TESTS_CONTENT_OR_PROTECTION_CHANGED: SafeMode reconciliation did not preserve the original content/protection. Keep the failed receipt and native evidence; do not reload it to manufacture a pass.'
+            }
+            $settingsChanged = $true
+        } elseif ($pending -and -not $tests.safeMode) {
+            # The existing drain above proved quiescence. Fresh state resolves
+            # the old result without replaying its modifying command.
+            $settingsChanged = $true
+        }
+        $currentSource = Get-ConfigSourceFingerprint -ExportPath (Get-YAxUnitTestsPath)
+        if ([string]$currentSource.fingerprint -cne [string]$source.fingerprint) { throw 'ITL_PROJECT_TESTS_SOURCE_CHANGED: source changed during synchronization; repeat the original owner operation on one stable snapshot.' }
     }
+    $updates = @{ yaxunitInstallationProof = (New-YAxUnitInstallationProof -State $State -Identity $identity -Entry $entry -Source $source -Engine $engine -Tests $tests `
+        -TrackProjectSettings:($projectSafeModeOff -or $pending) -RequireProjectSafeModeOff $projectSafeModeOff -ProtectionBefore $protectionBefore -CapabilityEvidence $capabilityEvidence `
+        -ConfigurationFingerprint $configurationFingerprint -AdoptedObjects $adoptedObjects) }
+    if ($contentChanged -or $settingsChanged) {
+        $updates['toolingMutationId']=[guid]::NewGuid().ToString('N')
+        $updates['toolingMutationAt']=(Get-Date).ToString('o')
+    }
+    Update-DevBranchState -State $State -Updates $updates
     return Read-DevBranchState -Name ([string]$State.devBranchName)
+    }
+    if ($projectSafeModeOff -or $pending) {
+        $admission = [pscustomobject]@{infoBaseKind=[string]$State.infoBaseKind;infoBasePath=[string]$State.devBranchInfoBasePath}
+        return Invoke-WithOneCExecutionGuard -Admissions @($admission) -Purpose 'project-tests-safe-mode' -ScriptBlock $synchronize
+    }
+    return & $synchronize
+}
+
+function Get-ProjectTestsReadinessKey {
+    param([object]$State, [string]$SourceFingerprint)
+    $proof = Get-StateValue $State 'yaxunitInstallationProof' $null
+    return (@(
+        [string](Get-StateValue $State 'devBranchName' ''), [string](Get-StateValue $State 'infoBaseKind' ''),
+        ([string](Get-StateValue $State 'devBranchInfoBasePath' '')).ToLowerInvariant(),
+        [string](Get-StateValue $State 'toolingInfoBaseGeneration' ''), [string](Get-StateValue $State 'lastConfigDesignerFingerprint' ''),
+        $SourceFingerprint, [string](Get-StateValue $proof 'testsFingerprint' ''), [string](Get-StateValue $proof 'testsRuntimeHash' ''),
+        [string](Get-YAxUnitProjectTestsSafeModeOptIn)
+    ) -join '|')
+}
+
+function Test-ProjectTestsProofCurrent {
+    # Recorded-proof trust for diagnostic runs and Vanessa UI MCP: every input
+    # that selects reload, applicability or settings must still match.
+    param([object]$State, [string]$SourceFingerprint)
+    $proof = Get-StateValue $State 'yaxunitInstallationProof' $null
+    if ($null -eq $proof -or (Get-StateValue $proof 'schemaVersion' 0) -ne 1) { return $false }
+    $generation = [string](Get-StateValue $State 'toolingInfoBaseGeneration' '')
+    if (-not $generation -or [string](Get-StateValue $proof 'generation' '') -cne $generation) { return $false }
+    $identity = Get-OneCInfoBaseIdentity -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath
+    if ([string](Get-StateValue $proof 'infoBaseKey' '') -cne [string]$identity.key -or
+        [string](Get-StateValue $proof 'engineName' '') -cne (Get-YAxUnitExtensionName) -or
+        [string](Get-StateValue $proof 'testsName' '') -cne (Get-YAxUnitTestsExtensionName) -or
+        [string](Get-StateValue $proof 'engineSha256' '') -cne [string](Get-YAxUnitPinnedEntry).sha256 -or
+        -not [string](Get-StateValue $proof 'engineRuntimeHash' '') -or -not [string](Get-StateValue $proof 'testsRuntimeHash' '') -or
+        [string](Get-StateValue $proof 'testsFingerprint' '') -cne $SourceFingerprint -or
+        (Get-StateValue $proof 'projectTestsSettingsPending' $false) -ne $false) { return $false }
+    if ((Get-YAxUnitProjectTestsSafeModeOptIn) -and -not ([bool](Get-StateValue $proof 'testsSafeModeRequired' $false) -and (Get-StateValue $proof 'testsSafeMode' $true) -eq $false)) { return $false }
+    $adopted = Get-StateValue $proof 'testsAdoptedObjects' $null
+    if ($adopted -isnot [bool]) { return $false }
+    if ($adopted) {
+        $configuration = [string](Get-StateValue $State 'lastConfigDesignerFingerprint' '')
+        if (-not $configuration -or [string](Get-StateValue $proof 'configurationFingerprint' '') -cne $configuration) { return $false }
+    }
+    return $true
+}
+
+function Ensure-ProjectTestsReady {
+    # Single owner of project test-extension readiness for every run that
+    # executes its code: YAxUnit, Vanessa verification/diagnostics and the
+    # Vanessa UI MCP TestClient target. A second call in one check is a no-op.
+    param([Parameter(Mandatory = $true)][object]$State, [switch]$TrustCurrentProof)
+    if (-not (Test-YAxUnitSuitePresent)) { return $State }
+    $source = [string](Get-ConfigSourceFingerprint -ExportPath (Get-YAxUnitTestsPath)).fingerprint
+    $prepared = Get-Variable -Name ProjectTestsReadinessKey -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($prepared -and $prepared -ceq (Get-ProjectTestsReadinessKey -State $State -SourceFingerprint $source)) {
+        Write-Host 'Project tests readiness: already prepared in this check.'
+        return $State
+    }
+    if ($TrustCurrentProof -and (Test-ProjectTestsProofCurrent -State $State -SourceFingerprint $source)) {
+        Write-Host 'Project tests readiness: sources and configuration match the recorded installation proof; no reload or fresh probe for this run.'
+        return $State
+    }
+    $State = Ensure-YAxUnitExtensions -State $State
+    $script:ProjectTestsReadinessKey = Get-ProjectTestsReadinessKey -State $State -SourceFingerprint $source
+    return $State
+}
+
+function Get-YAxUnitModuleFilter {
+    # Diagnostic-only -YAxUnitModule: comma-separated test module names, resolved
+    # to their exact source names before any 1C process starts.
+    $raw = [string](Get-Variable -Name YAxUnitModule -ValueOnly -ErrorAction SilentlyContinue)
+    $requested = @($raw -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($requested.Count -eq 0) { return @() }
+    $known = @(Get-YAxUnitModuleFiles | ForEach-Object { [pscustomobject]@{ name = Get-YAxUnitModuleNameFromPath -Path $_; path = $_ } } | Where-Object name)
+    $selected = [Collections.Generic.List[object]]::new()
+    foreach ($name in $requested) {
+        $match = @($known | Where-Object { $_.name -ieq $name })
+        if ($match.Count -ne 1) {
+            $sample = @($known | Select-Object -First 20 | ForEach-Object name) -join ', '
+            throw "ITL_YAXUNIT_MODULE_FILTER_UNKNOWN: '$name' is not a test module under '$(Get-YAxUnitTestsPath)'. Known modules: $(if ($sample) { $sample } else { '<none>' }). Correct -YAxUnitModule and repeat the original command."
+        }
+        if (@($selected | Where-Object { $_.name -ceq $match[0].name }).Count -eq 0) { $selected.Add($match[0]) }
+    }
+    return @($selected.ToArray())
+}
+
+function Write-YAxUnitDiagnosticInputManifest {
+    # Same receipt contract as a named Vanessa run: the filtered modules, their
+    # sources, the whole test-extension source and the loaded target.
+    param([string]$RunDirectory, [object[]]$Modules, [object]$State)
+    $manifest = [ordered]@{
+        schemaVersion = 1; kind = 'yaxunit-diagnostic-inputs'; modules = @($Modules | ForEach-Object { [string]$_.name })
+        files = @($Modules | ForEach-Object { [ordered]@{ path = Get-VerificationRepoRelativePath -Path $_.path; sha256 = (Get-FileHash -LiteralPath $_.path -Algorithm SHA256).Hash.ToLowerInvariant() } })
+        testsSourceFingerprint = [string](Get-ConfigSourceFingerprint -ExportPath (Get-YAxUnitTestsPath)).fingerprint
+        loadedBaseIdentity = Get-VerificationLoadedBaseIdentity -State $State
+    }
+    $path = Join-Path $RunDirectory 'diagnostic-inputs.json'
+    Write-Utf8TextAtomic -Path $path -Value (($manifest | ConvertTo-Json -Depth 6) + "`n")
+    return $path
+}
+
+function Get-YAxUnitTimeoutMessage {
+    param([int]$TimeoutSeconds, [double]$ElapsedSeconds, [string]$ReportPath, [string]$NativeMessage)
+    # A report interrupted by the timeout is usually truncated XML; count its
+    # written cases as text instead of rejecting it.
+    $completed = 'unknown (no partial JUnit report)'
+    if (Test-Path -LiteralPath $ReportPath -PathType Leaf) {
+        $completed = [string][regex]::Matches((Read-Utf8Text -Path $ReportPath), '<(?:[\w.-]+:)?testcase\b').Count
+    }
+    $configured = Get-EnvValue -Name 'YAXUNIT_TEST_TIMEOUT_SECONDS' -Default ''
+    $source = if ($configured) { 'configured' } else { 'default' }
+    return "ITL_YAXUNIT_TIMEOUT: YAxUnit stopped at YAXUNIT_TEST_TIMEOUT_SECONDS=$TimeoutSeconds ($source) after $([int][Math]::Round($ElapsedSeconds)) s; completed tests: $completed. For a larger suite set YAXUNIT_TEST_TIMEOUT_SECONDS in the project .dev.env above the full run duration, then repeat the original command. Report: $ReportPath. $NativeMessage"
+}
+
+function Get-YAxUnitTestDurations {
+    param([string]$Path)
+    $document = New-Object System.Xml.XmlDocument
+    $document.Load($Path)
+    $durations = @{}
+    foreach ($case in @($document.SelectNodes("//*[local-name()='testcase']"))) {
+        $seconds = 0.0
+        if ([double]::TryParse($case.GetAttribute('time'), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$seconds)) {
+            $durations[$case.GetAttribute('classname') + '|' + $case.GetAttribute('context')] = $seconds
+        }
+    }
+    return $durations
+}
+
+function Get-YAxUnitSlowdownWarning {
+    param(
+        [string]$ReportPath,
+        [string]$BaselineReportPath,
+        [double]$Factor = 2.0,
+        [double]$MinSeconds = 0.5,
+        [int]$MinTests = 5
+    )
+    # Accumulated test data slows the same tests down run after run. Compare
+    # tests present in both reports that take measurable time; the median ratio
+    # ignores a few individually slow cases.
+    if (-not $BaselineReportPath) { return '' }
+    $current = Get-YAxUnitTestDurations -Path $ReportPath
+    $baseline = Get-YAxUnitTestDurations -Path $BaselineReportPath
+    $ratios = [Collections.Generic.List[double]]::new()
+    $currentTotal = 0.0
+    $baselineTotal = 0.0
+    foreach ($key in $current.Keys) {
+        if (-not $baseline.ContainsKey($key)) { continue }
+        $before = [double]$baseline[$key]
+        $after = [double]$current[$key]
+        if ($before -le 0 -or [Math]::Max($before, $after) -lt $MinSeconds) { continue }
+        $ratios.Add($after / $before)
+        $currentTotal += $after
+        $baselineTotal += $before
+    }
+    if ($ratios.Count -lt $MinTests) { return '' }
+    $sorted = @($ratios | Sort-Object)
+    $middle = [int][Math]::Floor($sorted.Count / 2)
+    $median = $(if ($sorted.Count % 2) { $sorted[$middle] } else { ($sorted[$middle - 1] + $sorted[$middle]) / 2 })
+    if ($median -lt $Factor) { return '' }
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $times = "$([Math]::Round($currentTotal).ToString($culture)) s vs $([Math]::Round($baselineTotal).ToString($culture)) s"
+    return "[WARN] YAxUnit slowdown: $($ratios.Count) tests present in both runs are $($median.ToString('0.0', $culture))x slower (median), $times, than in $BaselineReportPath. The branch infobase may hold test data that tests did not remove (references/yaxunit-tests.md, Test seam). Verification status is unchanged."
+}
+
+function Write-YAxUnitSlowdownWarning {
+    param([string]$RunDirectory, [string]$ReportPath)
+    # Diagnostic only: it never changes the result and never fails the run.
+    try {
+        $root = Split-Path -Parent $RunDirectory
+        $name = Split-Path -Leaf $RunDirectory
+        $baseline = ''
+        # Run directories are named by start time; take the latest earlier run
+        # whose JUnit report passed.
+        foreach ($directory in @(Get-ChildItem -LiteralPath $root -Directory -Filter 'run-*' -ErrorAction SilentlyContinue |
+                Where-Object { [string]::CompareOrdinal($_.Name, $name) -lt 0 } | Sort-Object Name -Descending | Select-Object -First 20)) {
+            $candidate = Join-Path $directory.FullName 'junit.xml'
+            if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+            try { if ((Get-YAxUnitJunitSummary -Path $candidate).passed) { $baseline = $candidate; break } } catch { continue }
+        }
+        $warning = Get-YAxUnitSlowdownWarning -ReportPath $ReportPath -BaselineReportPath $baseline
+        if ($warning) { Write-Host $warning }
+    } catch {
+        Write-Verbose "YAxUnit slowdown comparison skipped: $($_.Exception.Message)"
+    }
 }
 
 function Invoke-YAxUnitVerification {
     param([Parameter(Mandatory = $true)][object]$State)
 
+    # A module filter makes this run diagnostic: it records no YAxUnit evidence;
+    # a one-off JUnit receipt is the only way its result can close a criterion.
+    $moduleFilter = @(Get-YAxUnitModuleFilter)
+    $diagnostic = $moduleFilter.Count -gt 0
     if (-not (Test-YAxUnitSuitePresent)) {
+        $baseline = Get-StateValue -State $State -Name "yaxunitApplicabilityBaseline" -Default $null
+        $legacy = [bool](Get-StateValue -State $baseline -Name "legacy" -Default $false)
+        $reason = if ($legacy) {
+            "The pre-upgrade branch state has no YAxUnit coverage; the managed legacy baseline is preserved. No new branch-owned BSL lacks an applicability decision."
+        } else {
+            "No YAxUnit suite is required by the classified branch-owned BSL changes."
+        }
         Update-DevBranchState -State $State -Updates @{
             lastYAxUnitStatus = "not-applicable"
-            lastYAxUnitReason = "No hierarchical test extension exists at $(Get-YAxUnitTestsPath)."
+            lastYAxUnitCoverage = $null
+            lastYAxUnitReportPath = ''
+            lastYAxUnitLogPath = ''
+            lastYAxUnitReason = $reason
             lastYAxUnitTestAt = (Get-Date).ToString("o")
         }
-        Write-Host "YAxUnit verification: not applicable; $(Get-YAxUnitTestsPath) is absent."
+        Write-Host "YAxUnit verification: not applicable; $(Get-YAxUnitTestsPath) is absent. $reason"
         return [pscustomobject]@{ status = "not-applicable"; tests = 0 }
     }
 
@@ -386,11 +1136,16 @@ function Invoke-YAxUnitVerification {
     $testsExtensionName = Get-YAxUnitTestsExtensionName
     $entry = Get-YAxUnitPinnedEntry
 
-    try {
-        $State = Ensure-YAxUnitExtensions -State $State
+    $summary = $null
 
+    try {
+        $State = Ensure-ProjectTestsReady -State $State -TrustCurrentProof:$diagnostic
+        $diagnosticInputManifest = if ($diagnostic) { Write-YAxUnitDiagnosticInputManifest -RunDirectory $runDirectory -Modules $moduleFilter -State $State } else { '' }
+
+        $filter = [ordered]@{ extensions = @($testsExtensionName) }
+        if ($diagnostic) { $filter.modules = @($moduleFilter | ForEach-Object { [string]$_.name }) }
         $config = [ordered]@{
-            filter = [ordered]@{ extensions = @($testsExtensionName) }
+            filter = $filter
             reportFormat = "jUnit"
             reportPath = $reportPath
             closeAfterTests = $true
@@ -402,13 +1157,22 @@ function Invoke-YAxUnitVerification {
         }
         Write-Utf8TextAtomic -Path $configPath -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
         $timeoutSeconds = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "YAXUNIT_TEST_TIMEOUT_SECONDS" -Default 1800) -Default 1800
-        Invoke-Enterprise `
-            -InfoBasePath ([string]$State.devBranchInfoBasePath) `
-            -InfoBaseKind ([string]$State.infoBaseKind) `
-            -EnterpriseArgs @("/C", "RunUnitTests=$configPath") `
-            -TimeoutSeconds $timeoutSeconds | Out-Null
+        Set-RunStage -Stage "yaxunit.run" -Detail $(if ($diagnostic) { "Running diagnostic YAxUnit modules: $(@($filter.modules) -join ', ')." } else { "Running YAxUnit verification." })
+        $runClock = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            Invoke-Enterprise `
+                -InfoBasePath ([string]$State.devBranchInfoBasePath) `
+                -InfoBaseKind ([string]$State.infoBaseKind) `
+                -EnterpriseArgs @("/C", "RunUnitTests=$configPath") `
+                -TimeoutSeconds $timeoutSeconds | Out-Null
+        } catch {
+            if ($_.Exception.Message -notmatch '^1C Enterprise timed out after ') { throw }
+            throw (Get-YAxUnitTimeoutMessage -TimeoutSeconds $timeoutSeconds -ElapsedSeconds $runClock.Elapsed.TotalSeconds -ReportPath $reportPath -NativeMessage $_.Exception.Message)
+        }
 
+        Set-RunStage -Stage "yaxunit.postprocess" -Detail "Reading YAxUnit verification evidence."
         $summary = Get-YAxUnitJunitSummary -Path $reportPath
+        Write-YAxUnitSlowdownWarning -RunDirectory $runDirectory -ReportPath $reportPath
         if (-not $summary.passed) {
             throw "ITL_YAXUNIT_TESTS_FAILED: tests=$($summary.tests), failures=$($summary.failures), errors=$($summary.errors). Report: $reportPath"
         }
@@ -419,9 +1183,16 @@ function Invoke-YAxUnitVerification {
                 Write-Host "[WARN] YAxUnit exit-code file says '$runnerExitCode', while the authoritative JUnit report passed."
             }
         }
-        Update-DevBranchState -State $State -Updates @{
-            lastYAxUnitStatus = "passed"
-            lastYAxUnitReason = "JUnit report passed."
+        if ($diagnostic) {
+            Write-Host "YAxUnit diagnostic run passed for modules $(@($filter.modules) -join ', '): tests=$($summary.tests), skipped=$($summary.skipped). It is not verification evidence. Report: $reportPath; inputs: $diagnosticInputManifest"
+            return [pscustomobject]@{ status = "diagnostic-passed"; tests = $summary.tests; reportPath = $reportPath; diagnosticInputsPath = $diagnosticInputManifest }
+        }
+        $coverage = Get-YAxUnitRunCoverage -Summary $summary -LogPath $yaxunitLogPath -ExtensionName $testsExtensionName
+        $yaxunitStatus = if ($coverage.status -eq 'partial') { 'partial' } else { 'passed' }
+        $passedUpdates = @{
+            lastYAxUnitStatus = $yaxunitStatus
+            lastYAxUnitReason = $(if ($yaxunitStatus -eq 'partial') { 'The test loader reported a module initialization failure.' } else { 'JUnit report passed.' })
+            lastYAxUnitCoverage = $coverage
             lastYAxUnitTestAt = (Get-Date).ToString("o")
             lastYAxUnitReportPath = $reportPath
             lastYAxUnitLogPath = $yaxunitLogPath
@@ -433,19 +1204,27 @@ function Invoke-YAxUnitVerification {
             lastYAxUnitVersion = [string]$entry.version
             lastYAxUnitArtifactSha256 = ([string]$entry.sha256).ToLowerInvariant()
         }
-        Write-Host "YAxUnit verification passed: tests=$($summary.tests), skipped=$($summary.skipped). Report: $reportPath"
-        return [pscustomobject]@{ status = "passed"; tests = $summary.tests; reportPath = $reportPath }
+        Add-VerificationComponentEvidenceUpdates -Updates $passedUpdates -State $State -Component 'yaxunit' -Status $yaxunitStatus -ArtifactPaths @($reportPath)
+        Update-DevBranchState -State $State -Updates $passedUpdates
+        Write-Host "YAxUnit verification ${yaxunitStatus}: tests=$($summary.tests), skipped=$($summary.skipped). Report: $reportPath"
+        return [pscustomobject]@{ status = $yaxunitStatus; tests = $summary.tests; reportPath = $reportPath }
     } catch {
         $failure = $_
-        try { Update-DevBranchState -State $State -Updates @{
+        if (-not $diagnostic) { try { $failedUpdates = @{
             lastYAxUnitStatus = "failed"
+            lastYAxUnitCoverage = Get-YAxUnitRunCoverage -Summary $summary -LogPath $yaxunitLogPath -ExtensionName $testsExtensionName
             lastYAxUnitReason = $failure.Exception.Message
             lastYAxUnitTestAt = (Get-Date).ToString("o")
             lastYAxUnitReportPath = $reportPath
             lastYAxUnitLogPath = $yaxunitLogPath
-        } } catch { Write-Warning "Could not persist YAxUnit failure state: $($_.Exception.Message)" }
+        }
+        Add-VerificationComponentEvidenceUpdates -Updates $failedUpdates -State $State -Component 'yaxunit' -Status 'failed'
+        Update-DevBranchState -State $State -Updates $failedUpdates
+        } catch { Write-Warning "Could not persist YAxUnit failure state: $($_.Exception.Message)" } }
         Set-RunFailureContextFromMessage -Message $failure.Exception.Message -RequestedAction "check-dev-branch"
         if (-not $script:RunRequiredAction) { Set-RunFailureContext -RequiredAction "/itl-verify-fix" }
+        # A filtered failure is fixed and repeated in the same scope, not repaired.
+        if ($diagnostic -and $script:RunRequiredAction -ceq '/itl-verify-fix') { $script:RunRequiredAction = 'fix-and-repeat-original-check' }
         throw $failure
     }
 }

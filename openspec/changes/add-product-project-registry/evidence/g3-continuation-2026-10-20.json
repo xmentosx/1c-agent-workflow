@@ -1,0 +1,1340 @@
+{
+  "schemaVersion": 1,
+  "sourceRuntimeCommit": "d17f29da9e61388615ccad104b18328504b4b12b",
+  "qualificationWorkingPatch": [
+    {
+      "path": "scripts/source-e2e-fixture.ps1",
+      "sha256": "6b6ff4bbe6065ffbedd5e6e977753c7add336920a96277723c0c8759a94b8a53"
+    },
+    {
+      "path": "tests/pester/SourceQualificationFixture.Tests.ps1",
+      "sha256": "5541aaf3357bd1ab9e703e863363cdc29592eea53363f0f5ae49c46a2342445d"
+    }
+  ],
+  "outcome": "G3_OPEN_PM5_UNATTENDED_UPDATE_FAILED_AFTER_PACKAGE_COMMITS",
+  "scope": "Qualification plus source-only fixture repair; no G4, working-project migration, workflow/registry publication, server deployment or business registry population",
+  "codeGraph": {
+    "sources": [
+      {
+        "family": "pm5corp",
+        "kind": "code",
+        "endpoint": "http://dev-ermakov.itland.local:22100/mcp",
+        "completeHandshake": true,
+        "toolListSha256": "658c64a36df8e95ee04334fd0629c97d45791d5b838f74977874d97e1c29d98a",
+        "nativeProjectId": "code-20d3eae87f48",
+        "apiRelease": {
+          "version": "1.0.0",
+          "build_digest": null,
+          "index_layout": {
+            "min": 3,
+            "max": 3
+          },
+          "source": "manifest_file",
+          "pinned": false
+        },
+        "publishedGeneration": {
+          "generation_id": "20261019T230814Z-aca520f1",
+          "manifest_digest": "031d35463df620070d2e6554299091db6e6c275b064bfb6ba5e2db7df03e2327",
+          "created_at": "2026-10-19T23:08:14+00:00",
+          "fingerprint": {
+            "composite": "f076b4f8feb9de0a1e7fb360999f0d9e82569220e6460fecd71227f1da0d1a28",
+            "config": "ac949108a64d260513ddd1f21ec0ca72eb8f5f847660ce46d283f8c444c11f3c",
+            "embedding_model": "98b63509c5819ed2da4e1bb03c83fc73244dbb78782f44049e74ff3833f80472",
+            "parser": "ed8fea73df8ebd4d0e5bffab5dcefa32b93a2d210d2b4e4d87241dd1a787dd70",
+            "project": "c692cb8004ca4b7c292f1aaf197c30eef03a47b0cca9f9cce446b8649deb1303",
+            "source": "aca520f173e162588d63c9e33dfc9bb8e461c1f4cf8a5da89a1f837a446ff1dd"
+          },
+          "state": "published"
+        },
+        "functionalRead": {
+          "tool": "compact_search",
+          "status": "success",
+          "itemsReturned": 1,
+          "provenance": {
+            "index_identity": "gen:20261019T230814Z-aca520f1",
+            "endpoint": "search",
+            "item_schema": "search",
+            "routes": [
+              "lexical",
+              "vector"
+            ],
+            "lanes": [
+              "metadata_details",
+              "structural_index",
+              "vector_metadata"
+            ],
+            "lanes_unavailable": []
+          }
+        }
+      },
+      {
+        "family": "pm4corp",
+        "kind": "code",
+        "endpoint": "http://dev-ermakov.itland.local:22200/mcp",
+        "completeHandshake": true,
+        "toolListSha256": "658c64a36df8e95ee04334fd0629c97d45791d5b838f74977874d97e1c29d98a",
+        "nativeProjectId": "code-20d3eae87f48",
+        "apiRelease": {
+          "version": "1.0.0",
+          "build_digest": null,
+          "index_layout": {
+            "min": 3,
+            "max": 3
+          },
+          "source": "manifest_file",
+          "pinned": false
+        },
+        "publishedGeneration": {
+          "generation_id": "20261017T235843Z-d972befd",
+          "manifest_digest": "708ef9fa26443549dabf1e6a77f13b78d957cd1e73c3edaceac34861201147ae",
+          "created_at": "2026-10-17T23:58:43+00:00",
+          "fingerprint": {
+            "composite": "82a6a4b8d835f378e0e7521ab0321480f01222d41f6dd00adc9d86ac1a765487",
+            "config": "ac949108a64d260513ddd1f21ec0ca72eb8f5f847660ce46d283f8c444c11f3c",
+            "embedding_model": "98b63509c5819ed2da4e1bb03c83fc73244dbb78782f44049e74ff3833f80472",
+            "parser": "26defbb4cd87ffe1c5ebdbb31a0e20f14201ce87c139749081d466935a7168de",
+            "project": "c692cb8004ca4b7c292f1aaf197c30eef03a47b0cca9f9cce446b8649deb1303",
+            "source": "d972befdaeb82eedb3eae267b5d1a109548fb6411a9d11ee47d0dbc43a2f4241"
+          },
+          "state": "published"
+        },
+        "functionalRead": {
+          "tool": "compact_search",
+          "status": "success",
+          "itemsReturned": 1,
+          "provenance": {
+            "index_identity": "gen:20261017T235843Z-d972befd",
+            "endpoint": "search",
+            "item_schema": "search",
+            "routes": [
+              "lexical",
+              "vector"
+            ],
+            "lanes": [
+              "metadata_details",
+              "structural_index",
+              "vector_metadata"
+            ],
+            "lanes_unavailable": []
+          }
+        }
+      },
+      {
+        "family": "pm5corp",
+        "kind": "graph",
+        "endpoint": "http://dev-ermakov.itland.local:22101/mcp/",
+        "completeHandshake": true,
+        "toolListSha256": "662d168070891ccbff14467ea7b6fcdf2c2c870451a748ca4474235978627fcb",
+        "nativeIdentity": {
+          "mcp_namespace": "default",
+          "project_id": "pm5corp",
+          "status": "ready",
+          "configuration_root_valid": true,
+          "active_generation": null,
+          "ingestion_state": "inherited"
+        },
+        "scopeControls": [
+          {
+            "project": "pm5corp",
+            "total": 1,
+            "returned": 1,
+            "context": {
+              "tool": "search_code",
+              "mcp_namespace": "default",
+              "project_id": "pm5corp",
+              "correlation_id": "8cf46898fd4344c6"
+            },
+            "error": null
+          },
+          {
+            "project": "g3-unregistered-project",
+            "total": 0,
+            "returned": 0,
+            "context": {
+              "tool": "search_code",
+              "mcp_namespace": null,
+              "project_id": null,
+              "correlation_id": "109be794de384a62"
+            },
+            "error": {
+              "code": "project_not_accessible",
+              "message": "Project is not registered or not accessible in this scope. Call list_graph_projects to see the projects available in this MCP installation."
+            }
+          }
+        ]
+      },
+      {
+        "family": "pm4corp",
+        "kind": "graph",
+        "endpoint": "http://dev-ermakov.itland.local:22201/mcp/",
+        "completeHandshake": true,
+        "toolListSha256": "662d168070891ccbff14467ea7b6fcdf2c2c870451a748ca4474235978627fcb",
+        "nativeIdentity": {
+          "mcp_namespace": "default",
+          "project_id": "pm4corp",
+          "status": "ready",
+          "configuration_root_valid": true,
+          "active_generation": null,
+          "ingestion_state": "inherited"
+        },
+        "scopeControls": [
+          {
+            "project": "pm4corp",
+            "total": 1,
+            "returned": 1,
+            "context": {
+              "tool": "search_code",
+              "mcp_namespace": "default",
+              "project_id": "pm4corp",
+              "correlation_id": "c708d278c0694641"
+            },
+            "error": null
+          },
+          {
+            "project": "g3-unregistered-project",
+            "total": 0,
+            "returned": 0,
+            "context": {
+              "tool": "search_code",
+              "mcp_namespace": null,
+              "project_id": null,
+              "correlation_id": "b2642f05f5644dbe"
+            },
+            "error": {
+              "code": "project_not_accessible",
+              "message": "Project is not registered or not accessible in this scope. Call list_graph_projects to see the projects available in this MCP installation."
+            }
+          }
+        ]
+      }
+    ],
+    "containerProofs": [
+      {
+        "hostId": "dev-ermakov",
+        "configId": "pm4corp",
+        "serverId": "code",
+        "proof": {
+          "container_id": "dd7b5a34c4b8dda9bf641f04e4c71700ddb3b1369a3d1649eda66dc35ea96da2",
+          "expected_server": "FastMCP-b4ed",
+          "observed_servers": [
+            "FastMCP-b4ed",
+            "FastMCP-b4ed"
+          ],
+          "original_url": "http://dev-ermakov.itland.local:22200/mcp",
+          "qualified_url": "http://dev-ermakov.itland.local:22200/mcp",
+          "status": "matched",
+          "indexing": false,
+          "health_passed": true,
+          "health_error": null,
+          "elapsedSeconds": 0.568
+        }
+      },
+      {
+        "hostId": "dev-ermakov",
+        "configId": "pm4corp",
+        "serverId": "graph",
+        "proof": {
+          "container_id": "3ca74b1a1d4c079af7b62d2a2ea86b0739633b39500695bf4344014275b99037",
+          "expected_server": "FastMCP-4993",
+          "observed_servers": [
+            "FastMCP-4993",
+            "FastMCP-4993"
+          ],
+          "original_url": "http://dev-ermakov.itland.local:22201/mcp/",
+          "qualified_url": "http://dev-ermakov.itland.local:22201/mcp/",
+          "status": "matched",
+          "indexing": true,
+          "health_passed": true,
+          "health_error": null,
+          "elapsedSeconds": 0.514
+        }
+      },
+      {
+        "hostId": "dev-ermakov",
+        "configId": "pm5corp",
+        "serverId": "code",
+        "proof": {
+          "container_id": "6510e8fc9662c35f74955e2b551befe0e1b1c765c220020bb9376039424ad686",
+          "expected_server": "FastMCP-118d",
+          "observed_servers": [
+            "FastMCP-118d",
+            "FastMCP-118d"
+          ],
+          "original_url": "http://dev-ermakov.itland.local:22100/mcp",
+          "qualified_url": "http://dev-ermakov.itland.local:22100/mcp",
+          "status": "matched",
+          "indexing": false,
+          "health_passed": true,
+          "health_error": null,
+          "elapsedSeconds": 0.531
+        }
+      },
+      {
+        "hostId": "dev-ermakov",
+        "configId": "pm5corp",
+        "serverId": "graph",
+        "proof": {
+          "container_id": "c33cd59dc2ea743646dce1132d45129f9eafbe27381cddc802ee20fd58cd9303",
+          "expected_server": "FastMCP-f4ee",
+          "observed_servers": [
+            "FastMCP-f4ee",
+            "FastMCP-f4ee"
+          ],
+          "original_url": "http://dev-ermakov.itland.local:22101/mcp/",
+          "qualified_url": "http://dev-ermakov.itland.local:22101/mcp/",
+          "status": "matched",
+          "indexing": true,
+          "health_passed": true,
+          "health_error": null,
+          "elapsedSeconds": 0.563
+        }
+      }
+    ],
+    "images": [
+      {
+        "name": "itl-pm5corp-code-stable-20261002",
+        "id": "6510e8fc9662c35f74955e2b551befe0e1b1c765c220020bb9376039424ad686",
+        "imageId": "sha256:1c8dc6a5f25384cf0eda025bed4be73238aa62713168aff1e9ee36620994635b",
+        "imageReference": "comol/1c_code_metadata_mcp@sha256:1c8dc6a5f25384cf0eda025bed4be73238aa62713168aff1e9ee36620994635b",
+        "repoDigests": "comol/1c_code_metadata_mcp@sha256:1c8dc6a5f25384cf0eda025bed4be73238aa62713168aff1e9ee36620994635b",
+        "imageRevision": "e3a88737eb030a84a652e40b966d8e5dbc3016e1"
+      },
+      {
+        "name": "itl-pm4corp-code-stable-20261002",
+        "id": "dd7b5a34c4b8dda9bf641f04e4c71700ddb3b1369a3d1649eda66dc35ea96da2",
+        "imageId": "sha256:1c8dc6a5f25384cf0eda025bed4be73238aa62713168aff1e9ee36620994635b",
+        "imageReference": "comol/1c_code_metadata_mcp@sha256:1c8dc6a5f25384cf0eda025bed4be73238aa62713168aff1e9ee36620994635b",
+        "repoDigests": "comol/1c_code_metadata_mcp@sha256:1c8dc6a5f25384cf0eda025bed4be73238aa62713168aff1e9ee36620994635b",
+        "imageRevision": "e3a88737eb030a84a652e40b966d8e5dbc3016e1"
+      },
+      {
+        "name": "itl-pm5corp-graph-stable-20261002",
+        "id": "c33cd59dc2ea743646dce1132d45129f9eafbe27381cddc802ee20fd58cd9303",
+        "imageId": "sha256:d0db0ad72ba2461beaa70112428a1ee52ea84f9344a7c63b88c6498c1070a7bc",
+        "imageReference": "comol/1c_graph_metadata@sha256:d0db0ad72ba2461beaa70112428a1ee52ea84f9344a7c63b88c6498c1070a7bc",
+        "repoDigests": "comol/1c_graph_metadata@sha256:d0db0ad72ba2461beaa70112428a1ee52ea84f9344a7c63b88c6498c1070a7bc",
+        "imageRevision": "831436bc8894596454d70b228c811da2aa817bc6"
+      },
+      {
+        "name": "itl-pm4corp-graph-stable-20261002",
+        "id": "3ca74b1a1d4c079af7b62d2a2ea86b0739633b39500695bf4344014275b99037",
+        "imageId": "sha256:d0db0ad72ba2461beaa70112428a1ee52ea84f9344a7c63b88c6498c1070a7bc",
+        "imageReference": "comol/1c_graph_metadata@sha256:d0db0ad72ba2461beaa70112428a1ee52ea84f9344a7c63b88c6498c1070a7bc",
+        "repoDigests": "comol/1c_graph_metadata@sha256:d0db0ad72ba2461beaa70112428a1ee52ea84f9344a7c63b88c6498c1070a7bc",
+        "imageRevision": "831436bc8894596454d70b228c811da2aa817bc6"
+      }
+    ],
+    "mountedXmlVersions": [
+      {
+        "family": "pm4corp",
+        "sourceRoot": "E:\\!1c-agent-workflow-mcp-conf\\pm4corp",
+        "configurationXmlSha256": "0c8ee6e5cb6042f790de8fae9d1aa5303299d3f2a5e4353e12ece823263e87ed",
+        "name": "УправлениеПроектамиКОРП",
+        "version": "4.2.40.2",
+        "gitCommit": null,
+        "gitProbeExit": 128,
+        "trackedDiffProbeExit": 129
+      },
+      {
+        "family": "pm5corp",
+        "sourceRoot": "E:\\!1c-agent-workflow-mcp-conf\\pm5corp",
+        "configurationXmlSha256": "4813aa41edff7bd8c67b096a25d4a6a8bdf3e9a444e82a80a27c032f624104fd",
+        "name": "УправлениеПроектамиКОРП",
+        "version": "5.0.3.66",
+        "gitCommit": null,
+        "gitProbeExit": 128,
+        "trackedDiffProbeExit": 129
+      }
+    ],
+    "crossProductControls": [
+      {
+        "own": "pm4corp",
+        "foreign": "pm5corp",
+        "passed": true,
+        "actual": {
+          "contract_version": "2.0",
+          "context": {
+            "tool": "search_code",
+            "mcp_namespace": null,
+            "project_id": null,
+            "correlation_id": "d0e1d4a9c6574840"
+          },
+          "total": 0,
+          "returned": 0,
+          "error": {
+            "code": "project_not_accessible",
+            "message": "Project is not registered or not accessible in this scope. Call list_graph_projects to see the projects available in this MCP installation."
+          }
+        }
+      },
+      {
+        "own": "pm5corp",
+        "foreign": "pm4corp",
+        "passed": true,
+        "actual": {
+          "contract_version": "2.0",
+          "context": {
+            "tool": "search_code",
+            "mcp_namespace": null,
+            "project_id": null,
+            "correlation_id": "4e58a26a71864510"
+          },
+          "total": 0,
+          "returned": 0,
+          "error": {
+            "code": "project_not_accessible",
+            "message": "Project is not registered or not accessible in this scope. Call list_graph_projects to see the projects available in this MCP installation."
+          }
+        }
+      }
+    ],
+    "limits": [
+      "Expected native namespace admission through selected registry binding is not established by transport or current unverified intents",
+      "Graph data is inherited without active generation; mounted XML version is not an attested indexed product version",
+      "Dump roots are not Git repositories; upstream source revision is not established",
+      "No Code/Graph server upgrade or reindex was performed"
+    ]
+  },
+  "startup": {
+    "profiles": [
+      {
+        "family": "PM4",
+        "powerShell": "5.1.26100.9711",
+        "clients": [
+          "codex",
+          "claude-code",
+          "opencode",
+          "kilocode",
+          "cursor",
+          "kimi",
+          "qwen",
+          "command-code",
+          "cline",
+          "zcode",
+          "mimocode",
+          "pi"
+        ],
+        "instrumentation": "Pass-through Git owner counter, real Git file transport, physical file hashes and timestamps; no mocked source functions",
+        "summary": [
+          {
+            "scenario": "unchanged",
+            "samples": 20,
+            "medianSeconds": 0.7519522000000001,
+            "p95Seconds": 0.8665391,
+            "maxSeconds": 0.8671567,
+            "fetches": 20,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12202
+          },
+          {
+            "scenario": "publisher-only",
+            "samples": 1,
+            "medianSeconds": 2.3875375,
+            "p95Seconds": null,
+            "maxSeconds": 2.3875375,
+            "fetches": 1,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12202
+          },
+          {
+            "scenario": "changed",
+            "samples": 1,
+            "medianSeconds": 5.505848299999999,
+            "p95Seconds": null,
+            "maxSeconds": 5.505848299999999,
+            "fetches": 1,
+            "clientFilesWritten": 11,
+            "clientSurfaceBytes": 12345
+          },
+          {
+            "scenario": "offline",
+            "samples": 1,
+            "medianSeconds": 2.9958103,
+            "p95Seconds": null,
+            "maxSeconds": 2.9958103,
+            "fetches": 1,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12345
+          }
+        ],
+        "limits": [
+          "Warm startup hook, not whole 1C command/init/update/branch journey",
+          "MCP tools were not activated by actual clients; catalog endpoint readiness remains unverified",
+          "Local file transport and immediate offline connection refusal; real stalled Git deadline measured separately",
+          "Synthetic test-only product/project mapping, no business registry population"
+        ]
+      },
+      {
+        "family": "PM5",
+        "powerShell": "5.1.26100.9711",
+        "clients": [
+          "codex",
+          "claude-code",
+          "opencode",
+          "kilocode",
+          "cursor",
+          "kimi",
+          "qwen",
+          "command-code",
+          "cline",
+          "zcode",
+          "mimocode",
+          "pi"
+        ],
+        "instrumentation": "Pass-through Git owner counter, real Git file transport, physical file hashes and timestamps; no mocked source functions",
+        "summary": [
+          {
+            "scenario": "unchanged",
+            "samples": 20,
+            "medianSeconds": 0.6989843,
+            "p95Seconds": 0.7568012,
+            "maxSeconds": 0.8461042,
+            "fetches": 20,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12202
+          },
+          {
+            "scenario": "publisher-only",
+            "samples": 1,
+            "medianSeconds": 2.0012832,
+            "p95Seconds": null,
+            "maxSeconds": 2.0012832,
+            "fetches": 1,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12202
+          },
+          {
+            "scenario": "changed",
+            "samples": 1,
+            "medianSeconds": 5.3981201,
+            "p95Seconds": null,
+            "maxSeconds": 5.3981201,
+            "fetches": 1,
+            "clientFilesWritten": 11,
+            "clientSurfaceBytes": 12345
+          },
+          {
+            "scenario": "offline",
+            "samples": 1,
+            "medianSeconds": 2.9691232,
+            "p95Seconds": null,
+            "maxSeconds": 2.9691232,
+            "fetches": 1,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12345
+          }
+        ],
+        "limits": [
+          "Warm startup hook, not whole 1C command/init/update/branch journey",
+          "MCP tools were not activated by actual clients; catalog endpoint readiness remains unverified",
+          "Local file transport and immediate offline connection refusal; real stalled Git deadline measured separately",
+          "Synthetic test-only product/project mapping, no business registry population"
+        ]
+      }
+    ],
+    "warmOriginalCli": {
+      "observedUtc": "2026-10-20T06:24:58.9553827Z",
+      "attempt": "warm",
+      "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\continuation-20261020\\Матрица startup PM5 d749132a83a74d91b2ef754226568ec9\\Локальный проект",
+      "action": "vibecoding1c-mcp-write-client-config",
+      "exitCode": 0,
+      "wholeCliSeconds": 24.9764068,
+      "metadataDeadlineSeconds": 10,
+      "requestAccepted": true,
+      "fetches": 1,
+      "mainPhaseReached": true,
+      "offlineWarning": true,
+      "protectedFilesChanged": [],
+      "passed": true,
+      "limits": "Original catalog CLI on synthetic Git/config fixture; no 1C init/update/branch journey or actual client tool activation"
+    },
+    "warmFetchToPinnedReadSeconds": 9.976518,
+    "firstExplicitCliObservation": {
+      "observedUtc": "2026-10-20T06:19:50.0299226Z",
+      "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\continuation-20261020\\Матрица startup PM5 d749132a83a74d91b2ef754226568ec9\\Локальный проект",
+      "action": "vibecoding1c-mcp-write-client-config",
+      "exitCode": 0,
+      "wholeCliSeconds": 24.9507972,
+      "metadataDeadlineSeconds": 10,
+      "requestAccepted": true,
+      "fetches": 1,
+      "mainPhaseReached": true,
+      "offlineWarning": true,
+      "protectedFilesChanged": [
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\continuation-20261020\\Матрица startup PM5 d749132a83a74d91b2ef754226568ec9\\Локальный проект\\.agent-1c\\mcp\\product-context-applied.json",
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\continuation-20261020\\Матрица startup PM5 d749132a83a74d91b2ef754226568ec9\\Локальный проект\\.agent-1c\\mcp\\product-context-operation.json"
+      ],
+      "passed": false,
+      "limits": "Original catalog CLI on synthetic Git/config fixture; no 1C init/update/branch journey or actual client tool activation"
+    },
+    "firstCliLimit": "First explicit sync changed only two context/operation records, so it is not no-op proof. Preserved separately; warm repeat on the same root/action passed without protected-file changes. Whole CLI latency is not added startup overhead.",
+    "limits": [
+      "Warm hook on Win11 / real Git file transport; other three scenarios have one observation each, not p95 distributions",
+      "No native corrupt/no-cache/init/branch/platform matrix or whole prompt-token comparison is claimed"
+    ]
+  },
+  "clients": {
+    "fileFormatRoleChecks": [
+      {
+        "family": "PM4",
+        "client": "codex",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "codex",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "claude-code",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "claude-code",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "opencode",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "opencode",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "kilocode",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "kilocode",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "cursor",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "cursor",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "kimi",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "kimi",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "qwen",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "qwen",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "command-code",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "command-code",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "cline",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "cline",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "zcode",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "zcode",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "mimocode",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "mimocode",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "pi",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22200/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM4",
+        "client": "pi",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22201/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "codex",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "codex",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "claude-code",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "claude-code",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "opencode",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "opencode",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "kilocode",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "kilocode",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "cursor",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "cursor",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "kimi",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "kimi",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "qwen",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "qwen",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "command-code",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "command-code",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "cline",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "cline",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "zcode",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "zcode",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "mimocode",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "mimocode",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "pi",
+        "role": "code",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "passed": true
+      },
+      {
+        "family": "PM5",
+        "client": "pi",
+        "role": "graph",
+        "present": true,
+        "expectedUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+        "passed": true
+      }
+    ],
+    "codexEffectiveConfigProbe": {
+      "observedUtc": "2026-10-20T06:13:35.5484945Z",
+      "codexVersion": "codex-cli 0.163.0-alpha.10.2",
+      "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\continuation-20261020\\Матрица startup PM5 d749132a83a74d91b2ef754226568ec9\\Локальный проект",
+      "postProfilePrivateGitInitialization": true,
+      "serverName": "1c-code-metadata-mcp",
+      "getExitCode": 1,
+      "effectiveUrl": "",
+      "expectedUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+      "effectiveConfigMatches": false,
+      "configHashUnchanged": true,
+      "stderr": "Error: No MCP server named '1c-code-metadata-mcp' found.",
+      "nativeMcpToolCall": false,
+      "globalConfigChanged": false,
+      "limitation": "CLI effective configuration read only; actual selected-project client tool activation/reload not established"
+    },
+    "currentCodexGlobalBookStack": {
+      "observedUtc": "2026-10-20 05:53:10 UTC",
+      "client": "current Codex MCP attachment",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "BookStack source completed."
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "source": "https://kb.itland.ru",
+          "viewId": "",
+          "binding": "global",
+          "selectors": {},
+          "capabilities": [
+            "product-docs-view-v1",
+            "stable-id-selectors"
+          ]
+        },
+        "isError": false
+      },
+      "limitation": "Global BookStack attachment; not actual activation of an isolated selected registry project"
+    },
+    "limits": [
+      "48 parsed file checks do not prove active client tool catalogs",
+      "Codex mcp get did not find the test server; CLI project-layer/trust behavior and actual activation remain unverified; global trust/settings not changed"
+    ]
+  },
+  "pm5Native": {
+    "factoryCapsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "factoryStatus": "ready",
+    "update": {
+      "observedUtc": "2026-10-20T06:10:54.4398762Z",
+      "copyRoot": "C:\\itlj\\g3-20261020\\q Проект\\develop-c2c570fe1ec5-d17f29da9e61-1bd85973\\project",
+      "exitCode": 1,
+      "durationMs": 1342781,
+      "seedHeadAndDescriptorUnchanged": true,
+      "sourceHead": "d17f29da9e61388615ccad104b18328504b4b12b",
+      "qualificationOwnerPatchSha256": "6b6ff4bbe6065ffbedd5e6e977753c7add336920a96277723c0c8759a94b8a53"
+    },
+    "terminal": {
+      "status": "failed",
+      "stage": "reexec",
+      "error": "WORKFLOW_UPDATE_POST_COPY_TERMINAL_UNCONFIRMED: the fresh process failed after the update snapshot disappeared. Preserve master and branch files and inspect the rollout report before repeating update-workflow. Original error: Fresh workflow post-copy process failed with exit code 1; its original terminal operation evidence is retained. Rollout check: ",
+      "errorCategory": "runner",
+      "requiredAction": "",
+      "logPath": "C:\\itlj\\g3-20261020\\q Проект\\develop-c2c570fe1ec5-d17f29da9e61-1bd85973\\project\\.agent-1c\\runs\\compact-20261020-084832-016-b747294a\\console.log",
+      "statusPath": "C:\\itlj\\g3-20261020\\q Проект\\develop-c2c570fe1ec5-d17f29da9e61-1bd85973\\project\\.agent-1c\\runs\\compact-20261020-084832-016-b747294a\\status.json"
+    },
+    "consoleCtrlC": {
+      "observedUtc": "2026-10-20T06:09:04.1840725Z",
+      "copyRoot": "C:\\itlj\\g3-20261020\\q Проект\\develop-c2c570fe1ec5-d17f29da9e61-1bd85973\\project",
+      "runId": "compact-20261020-084832-016-b747294a",
+      "stageBefore": "workflow-update.complete",
+      "statusBefore": "running",
+      "runnerPid": 5804,
+      "runnerStartedUtc": "2026-10-20T05:48:31.5922330Z",
+      "consoleMembers": [
+        46296,
+        25008
+      ],
+      "signal": "CTRL_C_EVENT",
+      "foreignConsoleMembers": 0,
+      "rawPidTermination": false,
+      "limitation": "Cancels the failed unattended test; does not turn it into accepted G3 evidence"
+    },
+    "consoleEmptyAnswer": {
+      "observedUtc": "2026-10-20T06:10:51.8051694Z",
+      "copyRoot": "C:\\itlj\\g3-20261020\\q Проект\\develop-c2c570fe1ec5-d17f29da9e61-1bd85973\\project",
+      "runId": "compact-20261020-084832-016-b747294a",
+      "stageBefore": "workflow-update.complete",
+      "statusBefore": "running",
+      "runnerPid": 5804,
+      "runnerStartedUtc": "2026-10-20T05:48:31.5922330Z",
+      "consoleMembers": [
+        76440,
+        25008
+      ],
+      "signal": "blank Enter at exact catalog prompt",
+      "foreignConsoleMembers": 0,
+      "rawPidTermination": false,
+      "limitation": "Operator continuation of failed unattended test; not accepted unattended G3 evidence; blank answer grants no association or saved defer"
+    },
+    "seedValidation": {
+      "observedUtc": "2026-10-20T06:13:30.0401319Z",
+      "copyRoot": "C:\\itlj\\g3-20261020\\q Проект\\develop-c2c570fe1ec5-d17f29da9e61-1bd85973\\project",
+      "statusAction": {
+        "exitCode": 1,
+        "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\continuation-20261020\\pm5-status-native\\status-5b4f6a0603c2487cba84883808059fe1.stdout.log",
+        "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\continuation-20261020\\pm5-status-native\\status-5b4f6a0603c2487cba84883808059fe1.stderr.log",
+        "durationMs": 439
+      },
+      "sourceCapsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+      "sourceSeedFullOwnerValidationPassed": true,
+      "associationAbsent": true,
+      "retainedForDiagnosis": true,
+      "remainingOwnedHelperProcesses": 0
+    },
+    "directStatus": {
+      "observedUtc": "2026-10-20T06:17:22.3283806Z",
+      "copyRoot": "C:\\itlj\\g3-20261020\\q Проект\\develop-c2c570fe1ec5-d17f29da9e61-1bd85973\\project",
+      "exitCode": 0,
+      "owner": "direct agent-1c diagnostic entrypoint, not compact lifecycle wrapper",
+      "priorWrongAdapter": "compact runner does not accept status",
+      "remainingOwnedHelpers": 0
+    },
+    "finalStand": {
+      "observedUtc": "2026-10-20T06:29:17.1711009Z",
+      "os": {
+        "Caption": "Майкрософт Windows 11 Домашняя",
+        "Version": "10.0.26300",
+        "BuildNumber": "26300"
+      },
+      "isElevated": false,
+      "copies": [
+        {
+          "scope": "project",
+          "root": "C:\\itlj\\g3-20261020\\q Проект\\develop-c2c570fe1ec5-d17f29da9e61-1bd85973\\project",
+          "head": "b0b8294409c5c0ff9f4bd9e0f9df701c82c27a69",
+          "clean": true,
+          "porcelainRecords": 0
+        },
+        {
+          "scope": "branch",
+          "root": "C:\\itlj\\g3-20261020\\q Проект\\develop-c2c570fe1ec5-d17f29da9e61-1bd85973\\branch",
+          "head": "ceba5cbe29ec61c0909208e6ab87ec831374d846",
+          "clean": true,
+          "porcelainRecords": 0
+        }
+      ],
+      "workflowCommit": "d17f29da9e61388615ccad104b18328504b4b12b",
+      "aiRules1c": {
+        "ref": "itl-main-5700f54-r43",
+        "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+        "compatibilityStatus": "passed",
+        "commit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f"
+      },
+      "remainingOwnedHelperProcesses": 0,
+      "unavailableStands": "User confirmed no ready PM4 / Windows 10 / Windows Server terminal stands on 2026-10-20"
+    },
+    "assessment": "Package master/branch commits are retained clean; full unattended update failed. Hidden-console catalog prompt was confirmed before operator empty Enter, which grants no association/defer. No init/branch/downgrade journey follows this failed acceptance."
+  },
+  "fixtureRepair": {
+    "owner": "Get-SourceE2EFixtureCapsule normalizes the supplied path before sealed admission comparison",
+    "originalObservedInput": "D:/Git/itl-workflow-e2e-pm5",
+    "unchangedAdmission": {
+      "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+      "workflowOnlyReceiptsValid": true,
+      "master": {
+        "currentHead": "9ee1073525eae722222b9696bfa623e757f1bd09",
+        "stableEnvUnchanged": true,
+        "currentRoot": "D:/Git/itl-workflow-e2e-pm5",
+        "oldHead": "9ee1073525eae722222b9696bfa623e757f1bd09",
+        "oldReceipts": 5,
+        "receiptsUnchanged": true,
+        "currentReceipts": 5,
+        "oldRoot": "D:\\Git\\itl-workflow-e2e-pm5"
+      },
+      "branch": {
+        "currentHead": "ac9943bacb2d228298e58c0e619a80dc05ca38a6",
+        "stableEnvUnchanged": true,
+        "currentRoot": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight",
+        "oldHead": "ac9943bacb2d228298e58c0e619a80dc05ca38a6",
+        "oldReceipts": 5,
+        "receiptsUnchanged": true,
+        "currentReceipts": 5,
+        "oldRoot": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight"
+      }
+    },
+    "regression": {
+      "failedBeforeFix": true,
+      "passedAfterFix": 59,
+      "failedAfterFix": 0,
+      "skippedAfterFix": 0,
+      "junitAttributes": {
+        "{http://www.w3.org/2001/XMLSchema-instance}noNamespaceSchemaLocation": "nunit_schema_2.5.xsd",
+        "name": "Pester",
+        "total": "59",
+        "errors": "0",
+        "failures": "0",
+        "not-run": "0",
+        "inconclusive": "0",
+        "ignored": "0",
+        "skipped": "0",
+        "invalid": "0",
+        "date": "2026-10-20",
+        "time": "08:49:30"
+      }
+    },
+    "fixturePublishedAncestor": {
+      "reader": "d17f29da9e61388615ccad104b18328504b4b12b",
+      "published": "c9cfecfec5240380cb28c1480f0e45a57c0489f7",
+      "publishedIsReaderAncestorExit": 1,
+      "commonPublishedAncestor": "dc901f9ed7310842bc52f24af8701c5d2025f4d5"
+    },
+    "testFixtureCorrection": "A reader predating origin/develop must use the common published ancestor as its legal N-1 seed. Recovery ancestry assertion and original clone-failure topology unchanged."
+  },
+  "harnessNotes": [
+    "Old Invoke-TestPowerShellFile leaked bundled PowerShell 7 module roots into PS5; Get-FileHash was absent. Existing shared native owner normalizes the module path; qualified runs use it. No fork/installed copy patched.",
+    "UTF-8 BOM/explicit JSON decoding, task-local MCP home and per-fixture Git longpaths were established; original rejected/invalid runs retained.",
+    "Client-native entry formats differ; custom preservation uses the existing semantic signature owner, not flat .url assumptions.",
+    "Status uses the direct diagnostic helper; the compact lifecycle wrapper correctly rejects status. Original wrong-adapter/path-decode attempts are not product failures.",
+    "First console Ctrl+C did not finish the run. Exact owned console membership was fenced, then blank Enter was sent only after the expected optional catalog prompt was observed. No raw PID termination, status editing or manual lifecycle completion."
+  ],
+  "blockersAndNext": [
+    {
+      "id": "G3-PROMPT",
+      "status": "failed",
+      "owner": "Existing post-update offer / compact-runner interaction boundary",
+      "needed": "Preserve package terminal completion and no-consent behavior; hidden Windows console must not imply interactive input. Fix owning path, retain native reproducer and repeat original unattended update before init/branch/recovery acceptance."
+    },
+    {
+      "id": "G3-BINDING",
+      "status": "unverified",
+      "owner": "Registry task 2.1 / AC-08",
+      "needed": "Qualify full selected source binding and wrong expected namespace; API framework version or mounted XML version is insufficient."
+    },
+    {
+      "id": "G3-CLIENTS",
+      "status": "unverified",
+      "owner": "Registry 5.4/5.6",
+      "needed": "Actual affected-client activation/reload and selected-root tool calls; serializer or CLI config lookup alone is insufficient."
+    },
+    {
+      "id": "G3-STANDS",
+      "status": "unavailable",
+      "owner": "Registry 5.2/5.4",
+      "needed": "User confirmed no ready native PM4 / Win10 / Server terminal stands. Preserve support claims, do not substitute family-labeled synthetic roots for full native acceptance."
+    },
+    {
+      "id": "G3-CANARY",
+      "status": "not-run",
+      "owner": "Registry 5.2/5.5/5.6 and AC-39",
+      "needed": "After prompt repair, run original isolated init/update/branch/fault/recovery/offline/client journey and complete cost/walkthrough scope."
+    }
+  ],
+  "unchangedDependencies": [
+    "Cognee G1/Q1-Q7/D9/G2, six memory scopes and ai_rules_1c ownership",
+    "Memory installed AC-43 remains open; registry AC-36-38 and memory AC-44 population is still mandatory before first release",
+    "Memory G4, working-project migration and workflow publication remain prohibited"
+  ],
+  "rawEvidence": [
+    {
+      "path": "build/test-results/g3/continuation-20261020/code-graph-native.json",
+      "sha256": "4091f5f56f5dc56af19fc990e75c18d7f46fcd1ffc87ae1bfd17ff25ef788437"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/code-graph-inventory-r2.json",
+      "sha256": "9bf506eafcd69dfeba64012be6dc204048f2a5b7dacd6b1a57eee9de9456fcba"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/code-graph-owner-proof-clean.json",
+      "sha256": "e1a1dd19d4bbd19484a5f9678521ddc298bdc3b04bc2367aac58a913951c1110"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/source-versions.json",
+      "sha256": "ca297db3cb8fc7a61fe58669c632059d9dedd24593c69e0256f730a38eba1e64"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/code-functional-read.json",
+      "sha256": "af6ac3aa5c0cbf2f3bbf6ab280c710ba671a96e6383ae5407f165264479f929f"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/graph-cross-scope.json",
+      "sha256": "8598a5752293bd341aa220d9cea296904a4f12fa4d057914dd5c20dbe3348b7e"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/startup-matrix-PM4.json",
+      "sha256": "eba63b38d6f63778827a64024c01b1279fbba1cf4379553bf1a3f37afe0c5e09"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/startup-matrix-PM5.json",
+      "sha256": "c9550cf0a994a58cebec00ccc23f650ee00f6db49908b6325d75d3795e553c85"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/startup-deadline-cli.json",
+      "sha256": "f56a24f5652fad02162d3315bc64ca099ea1db9bbbd47264251db3a8fd6d92d2"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/startup-deadline-cli-warm.json",
+      "sha256": "1449266d7981a8a32db629ed4cc4de5180e75347d37267e177b488580096c726"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/startup-deadline-cli-warm-git-trace.jsonl",
+      "sha256": "bfe24d1633d4327b9f2137a7eece935e7967a4815e5ed744306403c31edf0817"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/client-formats-final.json",
+      "sha256": "2400550152a6243a213aca634662b48ba0c3693c37c714219d0faaf056429b3e"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/client-discovery.json",
+      "sha256": "6a449918c10d4dcb3d0614ddf4eda41a71d233cfa47fb7c44c8785df5ab12a5f"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/current-codex-bookstack.json",
+      "sha256": "c1eccae28387226f80a656704746d48220ec66e062f20f64ec7ba5d37eb81d7c"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/pm5-copy-receipt-r2.json",
+      "sha256": "892395fcd84a9d016cb8fbe684206b41909e8145c4dc7a72b44942fb56fedc92"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/pm5-update-result.json",
+      "sha256": "f6abacdc2994efb8710dd6007b75b07a8a178a25bb9208671c812375bf831fef"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/pm5-update-terminal.json",
+      "sha256": "28d3873f457615a9783974537acb41229f3371c4a07c564a8f3bed69669f1a67"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/pm5-owned-console-cancel.json",
+      "sha256": "e440d9ed36acb96ee92f010c511a6ccec46145df326db88d81411ff3be482817"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/pm5-owned-console-empty-answer.json",
+      "sha256": "1668bc3d218d9b26793bb2f4245c805395ed1e779d19351e753d5479cb1e1c9b"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/pm5-final-readonly.json",
+      "sha256": "31e7a0dbd10f89359fa1c9613b451ca7945b79ab6bf4beb70a5bc74ada3eb5b3"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/pm5-status-direct.json",
+      "sha256": "b772afe1dcf824b392e835291d3e32cd86e71f47db666cbcdc8607f06c1ecf3d"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/stand-final.json",
+      "sha256": "30a3d61ccc9a10a3aa31150eb701c6d987f7293a1062346fd680e0bbfc75a837"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/fixture-red.log",
+      "sha256": "314c551f38df50290d3089a3c9634acde4dc50750ff973a1a8f64651026a2b2a"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/fixture-normalized-green.stdout",
+      "sha256": "b761b8de2afb7f83588c4d5a9cd45be5e5a41e7c1ea7b9fab8a5a510b66e8f03"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/fixture-normalized-green.result.json",
+      "sha256": "a22f2cd6cf52c8e1bbf78c8ed90c1f84573700385440dd9ca00046522d91744c"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/fixture-green.xml",
+      "sha256": "2c9bca45a1d1ec3651309228918a85b239295ebca09f7d1a6026c977e78d58c5"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/fixture-source-ancestry.json",
+      "sha256": "4b5d3974b6cf883a01baaa1907b1a33405abc1b461597d358d4fa6a81e169891"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/diagnose-ps51.json",
+      "sha256": "ca70d8817c7ff8ca7c9d90a4068910cf5dfb11af5e5a332efc4490aadedd24c7"
+    },
+    {
+      "path": "build/test-results/g3/continuation-20261020/diagnose-ps51-old-launcher.json",
+      "sha256": "856b1025d04a12f18dbf686509260eb7f0f4f4e0acc39aaf2994628cb4b16095"
+    }
+  ]
+}

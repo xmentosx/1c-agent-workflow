@@ -1,4 +1,4 @@
-function Get-AuxiliaryContourBranchKey {
+﻿function Get-AuxiliaryContourBranchKey {
     $branch = (Get-GitOutput @("branch", "--show-current")).Trim()
     if ([string]::IsNullOrWhiteSpace($branch)) { $branch = "detached" }
     return (ConvertTo-SafeName $branch)
@@ -87,8 +87,8 @@ function Configure-AuxiliaryContour {
     if ($baseMode -eq "attached-readonly" -and ([bool]$AuxiliaryIncludePrimaryTests -or $AuxiliaryTestsPath -or $AuxiliaryExtension.Count -gt 0)) {
         throw "ITL_AUXILIARY_SETUP_READONLY_AUTOMATION_INVALID: attached-readonly accepts no automated tests or extension loads."
     }
-    if ($baseMode -eq "managed-file" -and ($AuxiliaryInfoBaseKind -or $AuxiliaryInfoBasePath -or $AuxiliaryInfoBaseUser -or $AuxiliaryPasswordMode -ne "keep")) {
-        throw "ITL_AUXILIARY_SETUP_MANAGED_CONNECTION_INVALID: managed-file creates its own connection and accepts no external connection settings."
+    if ($baseMode -eq "managed-file" -and ($AuxiliaryInfoBaseKind -or $AuxiliaryInfoBasePath)) {
+        throw "ITL_AUXILIARY_SETUP_MANAGED_CONNECTION_INVALID: managed-file creates its own connection and accepts no external infobase kind or path."
     }
     if ($baseMode -ne "managed-file" -and ($AuxiliaryInfoBaseKind -notin @("file", "server") -or [string]::IsNullOrWhiteSpace($AuxiliaryInfoBasePath))) {
         throw "ITL_AUXILIARY_SETUP_CONNECTION_INCOMPLETE: an attached contour requires infobase kind and path."
@@ -126,12 +126,12 @@ function Configure-AuxiliaryContour {
     $dotEnvExisted = Test-Path -LiteralPath $dotEnvPath -PathType Leaf
     $originalDotEnv = if ($dotEnvExisted) { Read-Utf8Text -Path $dotEnvPath } else { "" }
     try {
-        if ($baseMode -ne "managed-file") {
+        if ($baseMode -ne "managed-file" -or $AuxiliaryInfoBaseUser -or $AuxiliaryPasswordMode -ne "keep") {
             $prefix = "ITL_AUX_${connectionRef}_"
-            $envValues = @{
-                ($prefix + "INFOBASE_KIND") = $AuxiliaryInfoBaseKind
-                ($prefix + "INFOBASE_PATH") = $AuxiliaryInfoBasePath
-                ($prefix + "USER") = $AuxiliaryInfoBaseUser
+            $envValues = @{ ($prefix + "USER") = $AuxiliaryInfoBaseUser }
+            if ($baseMode -ne "managed-file") {
+                $envValues[$prefix + "INFOBASE_KIND"] = $AuxiliaryInfoBaseKind
+                $envValues[$prefix + "INFOBASE_PATH"] = $AuxiliaryInfoBasePath
             }
             if ($AuxiliaryPasswordMode -eq "empty") {
                 $envValues[$prefix + "PASSWORD"] = ""
@@ -204,7 +204,9 @@ function Get-AuxiliaryContourDefinitions {
         $tests = Get-StateValue -State $raw -Name "tests" -Default ([pscustomobject]@{})
         $mcp = Get-StateValue -State $raw -Name "mcp" -Default ([pscustomobject]@{})
         $extensions = @()
-        foreach ($extension in @(Get-StateValue -State $raw -Name "extensions" -Default @())) {
+        $extensionProperty = $raw.PSObject.Properties["extensions"]
+        $declaredExtensions = if ($null -ne $extensionProperty -and $null -ne $extensionProperty.Value) { @($extensionProperty.Value) } else { @() }
+        foreach ($extension in $declaredExtensions) {
             $extensionName = [string](Get-StateValue -State $extension -Name "name" -Default "")
             $extensionPath = [string](Get-StateValue -State $extension -Name "path" -Default "")
             if (-not $extensionName -or -not $extensionPath) {
@@ -299,8 +301,9 @@ function Get-AuxiliaryContourConnection {
         $branchKey = Get-AuxiliaryContourBranchKey
         $kind = "file"
         $path = Join-Path $script:ProjectRoot ".agent-1c\infobases\auxiliary\$branchKey\$($Contour.name)"
-        $user = ""
-        $password = ""
+        $prefix = "ITL_AUX_$($Contour.connectionRef)_"
+        $user = [string](Get-EnvValue -Name ($prefix + "USER") -Default "")
+        $password = [string](Get-EnvValue -Name ($prefix + "PASSWORD") -Default "")
     } else {
         $prefix = "ITL_AUX_$($Contour.connectionRef)_"
         $kind = ([string](Get-EnvValue -Name ($prefix + "INFOBASE_KIND") -Default "")).Trim().ToLowerInvariant()
@@ -317,6 +320,68 @@ function Get-AuxiliaryContourConnection {
     try { $identityHash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($identityText)))).Replace('-', '').ToLowerInvariant() }
     finally { $sha.Dispose() }
     return [pscustomobject][ordered]@{ kind = $kind; path = $path; user = $user; password = $password; identityHash = $identityHash }
+}
+
+function Get-AuxiliaryContourUserIdentityHash {
+    param([AllowEmptyString()][string]$User)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$User)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
+function Ensure-AuxiliaryContourUnsafeActionProtection {
+    param(
+        [Parameter(Mandatory = $true)][object]$Contour,
+        [Parameter(Mandatory = $true)][object]$Connection
+    )
+    if ($Contour.baseMode -ne "managed-file") { return }
+    Assert-AuxiliaryContourMutationAllowed -Contour $Contour -Operation "unsafe-action protection confirmation"
+    if ([string]::IsNullOrWhiteSpace([string]$Connection.user)) {
+        Throw-AuxiliaryContourBootstrapUserRequired -Contour $Contour -Connection $Connection
+    }
+
+    $userIdentityHash = Get-AuxiliaryContourUserIdentityHash -User ([string]$Connection.user)
+    $state = Read-AuxiliaryContourState -Contour $Contour
+    $proof = Get-StateValue -State $state -Name "unsafeActionProtectionProof" -Default $null
+    if ($proof -and
+        [int](Get-StateValue -State $proof -Name "schemaVersion" -Default 0) -eq 1 -and
+        [bool](Get-StateValue -State $proof -Name "confirmed" -Default $false) -and
+        [string](Get-StateValue -State $proof -Name "connectionIdentityHash" -Default "") -ceq [string]$Connection.identityHash -and
+        [string](Get-StateValue -State $proof -Name "userIdentityHash" -Default "") -ceq $userIdentityHash) {
+        return
+    }
+
+    if (-not (Test-InteractiveInputAvailable)) {
+        throw "ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED: contour='$($Contour.name)' infoBaseKey='$($Connection.identityHash)' requiredAction=rerun-update-auxiliary-contour-interactively."
+    }
+    $confirmation = Confirm-DevBranchUnsafeActionProtection `
+        -InfoBaseKind $Connection.kind `
+        -InfoBasePath $Connection.path `
+        -DevBranchName "aux-$($Contour.name)" `
+        -SetupModeOverride "manual-confirm" `
+        -InfoBaseUserOverride ([string]$Connection.user) `
+        -InfoBasePasswordOverride ([string]$Connection.password)
+    if (-not [bool](Get-StateValue -State $confirmation -Name "confirmed" -Default $false)) {
+        throw "ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED: contour='$($Contour.name)' infoBaseKey='$($Connection.identityHash)' requiredAction=confirm-unsafe-action-protection."
+    }
+    Save-AuxiliaryContourState -Contour $Contour -Updates @{
+        unsafeActionProtectionProof = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            connectionIdentityHash = [string]$Connection.identityHash
+            userIdentityHash = $userIdentityHash
+            confirmed = $true
+            mode = [string](Get-StateValue -State $confirmation -Name "mode" -Default "manual-confirm")
+            confirmedAt = [string](Get-StateValue -State $confirmation -Name "confirmedAt" -Default (Get-Date).ToString("o"))
+        }
+    } | Out-Null
+}
+
+function Throw-AuxiliaryContourBootstrapUserRequired {
+    param(
+        [Parameter(Mandatory = $true)][object]$Contour,
+        [Parameter(Mandatory = $true)][object]$Connection
+    )
+    throw "ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED: contour='$($Contour.name)' infoBase='$($Connection.path)' infoBaseKey='$($Connection.identityHash)' requiredAction=create-user-in-auxiliary-configurator-then-configure-auxiliary-contour-user-and-rerun-update-auxiliary-contour-interactively. The user list is separate from the loaded configuration; create a dedicated user with the required administrative role in this infobase, disable unsafe-action protection for that user, then configure its credentials through the contour setup action before confirming. If this base still has no configuration after an earlier blocked update, run reset-auxiliary-contour and repeat update to load the configuration first."
 }
 
 function Assert-AuxiliaryContourMutationAllowed {
@@ -350,13 +415,58 @@ function Ensure-AuxiliaryManagedInfoBase {
     }
 }
 
+function Get-ItlAuxiliaryDatabasePlan {
+    param([object]$State,
+        [ValidateSet('update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')][string]$Operation,
+        [string]$ServiceGeneration = '')
+    $contour = Get-AuxiliaryContour
+    $connection = Get-AuxiliaryContourConnection -Contour $contour
+    $target = [pscustomobject]@{kind=$connection.kind;path=$connection.path}
+    $bases = @($target)
+    $servicePlan = $null; $serviceTarget = $null
+    if ($Operation -eq 'check-auxiliary-contour') {
+        # Run-DevBranchTests prepares the primary branch tooling and manager,
+        # then maps primary TestClient profiles onto the selected auxiliary base.
+        $primaryPlan = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation update-dev-branch-base
+        $bases += @($primaryPlan.bases)
+        $serviceTarget = $primaryPlan.target
+        $servicePlan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $ServiceGeneration
+        $bases += [pscustomobject]@{kind=$servicePlan.kind;path=$servicePlan.path}
+        $manifest = Read-VanessaTestClientManifest
+        if ($null -ne $manifest) {
+            $bases += @(Get-VanessaTestClientDatabaseResources -Topology $manifest -DefaultState $State -ForAdmission -PrimaryContourName $contour.name)
+        }
+    }
+    foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $target.path
+    })) {
+        $bases += @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtime -Family ([string]$runtime.family) -FallbackTarget $target)
+    }
+    $unique = @{}
+    foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
+    return [pscustomobject]@{target=$target;bases=@($unique.Keys | Sort-Object | ForEach-Object {$unique[$_]});servicePlan=$servicePlan;serviceTarget=$serviceTarget;auxiliaryContour=$contour.name}
+}
+
 function Stop-AuxiliaryContourRuntimeBeforeMutation {
     param([Parameter(Mandatory = $true)][object]$Contour, [Parameter(Mandatory = $true)][object]$Connection, [string]$Reason)
-    Set-RunStage -Stage "auxiliary.stop-runtime" -Detail "Stopping exact auxiliary infobase runtime before $Reason."
-    Stop-ItlOnDemandBackends -InfoBasePath $Connection.path -Strict
-    Stop-OneCInfoBaseSessionProcesses -InfoBaseKind $Connection.kind -InfoBasePath $Connection.path -Reason $Reason | Out-Null
-    $remaining = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $Connection.kind -InfoBasePath $Connection.path)
-    if ($remaining.Count -gt 0) { throw "ITL_AUXILIARY_RUNTIME_DRAIN_FAILED: contour='$($Contour.name)' remaining=$($remaining.Count)." }
+    $script:OneCExecutionDrainRequest = [pscustomobject]@{
+        drainKind='auxiliary';contour=$Contour;infoBaseKind=$Connection.kind;infoBasePath=$Connection.path;reason=$Reason
+    }
+    Set-RunStage -Stage 'auxiliary.drain-planned' -Detail "Owned auxiliary runtime drain will run after execution guard admission for $Reason."
+}
+
+function Invoke-AuxiliaryOwnedRuntimeDrainUnderExecutionGuard {
+    param([Parameter(Mandatory = $true)][object]$Request)
+    Set-RunStage -Stage 'auxiliary.stop-runtime' -Detail "Stopping owned auxiliary runtime before $($Request.reason); foreign sessions are preserved."
+    Stop-ItlOnDemandBackends -InfoBasePath $Request.infoBasePath -Strict
+    $remainingOwned = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $Request.infoBasePath
+    })
+    if ($remainingOwned.Count -gt 0) { throw 'ITL_AUXILIARY_RUNTIME_DRAIN_FAILED: owned backend remains after cleanup.' }
+    $external = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $Request.infoBaseKind -InfoBasePath $Request.infoBasePath)
+    if ($external.Count -gt 0) {
+        throw "EXECUTION_GUARD_EXTERNAL_CONFLICT: auxiliary='$($Request.contour.name)' pids='$(@($external.pid) -join ',')'"
+    }
 }
 
 function Get-AuxiliaryContourFingerprint {
@@ -381,7 +491,8 @@ function Assert-AuxiliaryContourReady {
     $source = Get-AuxiliaryContourFingerprint -Contour $Contour
     if (-not $state -or [string](Get-StateValue -State $state -Name "readinessStatus" -Default "") -ne "ready" -or
         [string](Get-StateValue -State $state -Name "connectionIdentityHash" -Default "") -cne $connection.identityHash -or
-        [string](Get-StateValue -State $state -Name "sourceFingerprint" -Default "") -cne $source.combined) {
+        [string](Get-StateValue -State $state -Name "sourceFingerprint" -Default "") -cne $source.combined -or
+        ($Contour.baseMode -ne "attached-readonly" -and -not (Test-DevBranchEnterpriseNormalizationProved -State $state))) {
         throw "ITL_AUXILIARY_INFOBASE_NOT_READY: contour='$($Contour.name)' operation='$Operation' requiredAction=update-auxiliary-contour."
     }
     return [pscustomobject]@{ contour = $Contour; connection = $connection; state = $state; source = $source }
@@ -398,39 +509,78 @@ function Update-AuxiliaryContour {
     $contour = Get-AuxiliaryContour
     Assert-AuxiliaryContourMutationAllowed -Contour $contour -Operation "update"
     $connection = Get-AuxiliaryContourConnection -Contour $contour
+    $newManagedInfoBase = $contour.baseMode -eq "managed-file" -and
+        -not (Test-Path -LiteralPath (Join-Path $connection.path "1Cv8.1CD") -PathType Leaf -ErrorAction SilentlyContinue)
     Ensure-AuxiliaryManagedInfoBase -Contour $contour -Connection $connection
     $source = Get-AuxiliaryContourFingerprint -Contour $contour
     $state = Read-AuxiliaryContourState -Contour $contour
+    if ($state -and [string](Get-StateValue -State $state -Name "enterpriseNormalizationStatus" -Default "") -eq "failed" -and
+        $Action -ne "update-auxiliary-contour") {
+        throw "ITL_AUXILIARY_NORMALIZATION_RETRY_REQUIRED: contour='$($contour.name)' has a failed Enterprise normalization; requiredAction=update-auxiliary-contour. No automatic Enterprise replay was started."
+    }
     if ($state -and [string](Get-StateValue -State $state -Name "readinessStatus" -Default "") -eq "ready" -and
         [string](Get-StateValue -State $state -Name "connectionIdentityHash" -Default "") -ceq $connection.identityHash -and
-        [string](Get-StateValue -State $state -Name "sourceFingerprint" -Default "") -ceq $source.combined) {
+        [string](Get-StateValue -State $state -Name "sourceFingerprint" -Default "") -ceq $source.combined -and
+        -not (Test-DevBranchEnterpriseNormalizationProved -State $state) -and $Action -ne "update-auxiliary-contour") {
+        throw "ITL_AUXILIARY_NORMALIZATION_PROOF_UNVERIFIED: contour='$($contour.name)' has no run result; requiredAction=update-auxiliary-contour. No automatic Enterprise replay was started."
+    }
+    if ($state -and [string](Get-StateValue -State $state -Name "readinessStatus" -Default "") -eq "ready" -and
+        [string](Get-StateValue -State $state -Name "connectionIdentityHash" -Default "") -ceq $connection.identityHash -and
+        [string](Get-StateValue -State $state -Name "sourceFingerprint" -Default "") -ceq $source.combined -and
+        (Test-DevBranchEnterpriseNormalizationProved -State $state)) {
+        Ensure-AuxiliaryContourUnsafeActionProtection -Contour $contour -Connection $connection
         Sync-AuxiliaryContourMcpClientConfig -Contour $contour
         Write-Host "Auxiliary contour '$($contour.name)' is already current."
         return
     }
-    Save-AuxiliaryContourState -Contour $contour -Updates @{
-        readinessStatus = "pending"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = ""
-        lastVerificationStatus = "stale"; lastVerificationFingerprint = ""; lastError = ""
-    } | Out-Null
-    Stop-AuxiliaryContourRuntimeBeforeMutation -Contour $contour -Connection $connection -Reason "auxiliary configuration load"
+    $normalizationStarted = $false
     try {
-        $configLoad = Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $contour.absoluteConfigurationPath -ListFilePath "" -FileCount $source.configuration.fileCount -Mode "Full" -User $connection.user -Password $connection.password
+        if ($contour.baseMode -eq "managed-file" -and -not $newManagedInfoBase) {
+            Ensure-AuxiliaryContourUnsafeActionProtection -Contour $contour -Connection $connection
+        }
+        Save-AuxiliaryContourState -Contour $contour -Updates @{
+            readinessStatus = "pending"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = ""
+            lastVerificationStatus = "stale"; lastVerificationFingerprint = ""; lastError = ""
+            lastLoadStatus = ""; lastLoadMode = ""; enterpriseNormalizationStatus = "not-run"
+            enterpriseNormalizationProofVersion = 0; lastEnterpriseAutoUpdateResultPath = ""
+        } | Out-Null
+        Stop-AuxiliaryContourRuntimeBeforeMutation -Contour $contour -Connection $connection -Reason "auxiliary configuration load"
+        $loadUser = if ($newManagedInfoBase) { "" } else { $connection.user }
+        $loadPassword = if ($newManagedInfoBase) { "" } else { $connection.password }
+        $configLoad = Invoke-ConfigLoadWithFallback -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $contour.absoluteConfigurationPath -ListFilePath "" -FileCount $source.configuration.fileCount -SourceFingerprint $source.configuration.fingerprint -ContentKind configuration -RequireGate6 -Mode "Full" -User $loadUser -Password $loadPassword
+        if ($newManagedInfoBase) {
+            Save-AuxiliaryContourState -Contour $contour -Updates @{
+                lastLoadStatus = $configLoad.configLoadStatus; lastLoadMode = $configLoad.loadModeUsed
+            } | Out-Null
+            Throw-AuxiliaryContourBootstrapUserRequired -Contour $contour -Connection $connection
+        }
         foreach ($extension in @($contour.extensions)) {
             $absoluteExtensionPath = Assert-ExportPathInsideProject -ExportPath $extension.path
             $extensionSource = Get-ConfigSourceFingerprint -ExportPath $extension.path
-            Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $absoluteExtensionPath -ListFilePath "" -FileCount $extensionSource.fileCount -ExtensionName $extension.name -Mode "Full" -User $connection.user -Password $connection.password | Out-Null
+            Invoke-ConfigLoadWithFallback -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $absoluteExtensionPath -ListFilePath "" -FileCount $extensionSource.fileCount -SourceFingerprint $extensionSource.fingerprint -ContentKind extension -ExtensionName $extension.name -Mode "Full" -User $loadUser -Password $loadPassword | Out-Null
         }
-        $epfPath = Ensure-DevBranchAutoUpdateEpfs
-        $normalization = Invoke-Enterprise -InfoBasePath $connection.path -InfoBaseKind $connection.kind -User $connection.user -Password $connection.password -EnterpriseArgs @("/Execute", $epfPath) -TimeoutSeconds (Get-DevBranchAutoUpdateTimeoutSeconds)
+        Save-AuxiliaryContourState -Contour $contour -Updates @{
+            lastLoadStatus = $configLoad.configLoadStatus; lastLoadMode = $configLoad.loadModeUsed
+        } | Out-Null
+        Ensure-AuxiliaryContourUnsafeActionProtection -Contour $contour -Connection $connection
+        $normalizationStarted = $true
+        $normalization = Invoke-DevBranchEnterpriseAutoUpdate -State ([pscustomobject]@{ devBranchInfoBasePath = $connection.path; infoBaseKind = $connection.kind }) -User $connection.user -Password $connection.password -RecoveryAction update-auxiliary-contour
         Save-AuxiliaryContourState -Contour $contour -Updates @{
             readinessStatus = "ready"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = $source.combined
             configurationFingerprint = $source.configuration.fingerprint; extensionFingerprints = @($source.extensions)
             lastLoadStatus = $configLoad.configLoadStatus; lastLoadMode = $configLoad.loadModeUsed
-            enterpriseNormalizationStatus = "passed"; enterpriseNormalizedAt = (Get-Date).ToString("o")
-            lastLogPath = $normalization; lastUpdatedAt = (Get-Date).ToString("o"); lastError = ""
+            enterpriseNormalizationStatus = "passed"; enterpriseNormalizationProofVersion = 1; enterpriseNormalizedAt = $normalization.updatedAt
+            lastEnterpriseAutoUpdateResultPath = $normalization.resultPath; lastLogPath = $normalization.logPath; lastUpdatedAt = (Get-Date).ToString("o"); lastError = ""
         } | Out-Null
     } catch {
-        Save-AuxiliaryContourState -Contour $contour -Updates @{ readinessStatus = "failed"; enterpriseNormalizationStatus = "failed"; lastError = $_.Exception.Message; lastLogPath = $script:LastLogPath } | Out-Null
+        $confirmationRequired = $_.Exception.Message -match '^ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED:'
+        Save-AuxiliaryContourState -Contour $contour -Updates @{
+            readinessStatus = if ($confirmationRequired) { "confirmation-required" } else { "failed" }
+            enterpriseNormalizationStatus = if ($normalizationStarted) { "failed" } else { "not-run" }
+            enterpriseNormalizationProofVersion = 0
+            lastEnterpriseAutoUpdateResultPath = if ($normalizationStarted) { [string]$script:LastEnterpriseAutoUpdateResultPath } else { "" }
+            lastError = $_.Exception.Message; lastLogPath = $script:LastLogPath
+        } | Out-Null
         throw
     }
     Sync-AuxiliaryContourMcpClientConfig -Contour $contour
@@ -524,17 +674,43 @@ function Export-AuxiliaryContourResult {
     if (($verificationStatus -ne "passed" -or -not $currentVerificationFingerprint -or $verificationFingerprint -cne $currentVerificationFingerprint) -and -not $AllowUnverifiedResult) {
         throw "ITL_AUXILIARY_RESULT_UNVERIFIED: contour='$($contour.name)' requiredAction=check-auxiliary-contour or pass -AllowUnverifiedResult."
     }
+    $preparation = [ordered]@{purpose='development';status='not-required-development';components=@()}
+    if ((Get-PlatformCheckProfile) -eq 'production') {
+        $ready = Assert-AuxiliaryContourReady -Contour $contour -Operation 'production preparation'
+        $components = @([pscustomobject]@{path=$contour.configurationPath;fingerprint=$ready.source.configuration.fingerprint;name=''}) + @($ready.source.extensions)
+        $proofs = @(foreach ($component in $components) {
+            $proof = Confirm-ProductionPlatformCheck -ExportPath $component.path -SourceFingerprint $component.fingerprint `
+                -InfoBaseKind $ready.connection.kind -InfoBasePath $ready.connection.path -ExtensionName $component.name `
+                -LoadedBaseIdentity ($ready.source.combined + '|' + $ready.connection.identityHash) -User $ready.connection.user -Password $ready.connection.password
+            $proof | Select-Object purpose,status,receiptPath,receiptSha256
+        })
+        $preparation = [ordered]@{purpose='production';status='passed';components=$proofs}
+    }
     $artifactDir = Resolve-ProjectPath ((Get-ConfigValue -Path "artifactsPath" -Default "build/result") + "/auxiliary/$($contour.name)")
     New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
     $resultPath = Join-Path $artifactDir ("$($contour.name)-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".cf")
     Invoke-Designer -InfoBasePath $ready.connection.path -InfoBaseKind $ready.connection.kind -User $ready.connection.user -Password $ready.connection.password -DesignerArgs @("/DumpCfg", $resultPath) | Out-Null
+    if ($preparation.purpose -eq 'production' -and (Get-AuxiliaryContourFingerprint -Contour $contour).combined -cne $ready.source.combined) {
+        throw 'PRODUCTION_PLATFORM_SOURCE_CHANGED: auxiliary preparation stopped; repeat for the current candidate.'
+    }
     $manifestPath = $resultPath + ".manifest.json"
     $manifest = [ordered]@{ schemaVersion = 1; kind = "auxiliary-cf"; contour = $contour.name; resultPath = $resultPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $resultPath).Hash.ToLowerInvariant(); sourceFingerprint = $ready.source.combined; connectionIdentityHash = $ready.connection.identityHash; verificationStatus = $verificationStatus; verificationFingerprint = $verificationFingerprint; currentVerificationFingerprint = $currentVerificationFingerprint; unverifiedOverride = [bool]$AllowUnverifiedResult; commit = Get-CurrentCommit; createdAt = (Get-Date).ToString("o") }
+    $manifest.platformPreparation = $preparation
     Write-Utf8TextAtomic -Path $manifestPath -Value (($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     Save-AuxiliaryContourState -Contour $contour -Updates @{ lastResultPath = $resultPath; lastResultManifestPath = $manifestPath; lastResultAt = (Get-Date).ToString("o"); lastLogPath = $script:LastLogPath } | Out-Null
     Set-RunResultArtifacts -ResultPath $resultPath -ResultManifestPath $manifestPath
     Write-Host "Auxiliary CF saved: $resultPath"
     Write-Host "Auxiliary CF manifest: $manifestPath"
+    Write-Host "Result purpose: $($preparation.purpose); CheckConfig: $($preparation.status)"
+}
+
+function Write-AuxiliaryContourArchiveMarker {
+    param([string]$Path, [string]$Name)
+    $manifest = [ordered]@{
+        schemaVersion = 1; kind = 'auxiliary-reset'; status = 'ready'
+        branchKey = (Get-AuxiliaryContourBranchKey); contour = $Name; archivedAt = (Get-Date).ToString('o')
+    }
+    Write-Utf8TextAtomic -Path (Join-Path $Path 'itl-archive.json') -Value (($manifest | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
 }
 
 function Reset-AuxiliaryContour {
@@ -552,6 +728,8 @@ function Reset-AuxiliaryContour {
         New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
         $archivePath = Join-Path $archiveRoot ("$($contour.name)-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
         Move-Item -LiteralPath $resolved -Destination $archivePath
+        try { Write-AuxiliaryContourArchiveMarker -Path $archivePath -Name $contour.name }
+        catch { Write-Warning "Auxiliary archive retention marker unavailable; archive will be retained: $archivePath. $($_.Exception.Message)" }
     }
     $statePath = Get-AuxiliaryContourStatePath -Contour $contour
     if (Test-Path -LiteralPath $statePath -PathType Leaf) { Remove-Item -LiteralPath $statePath -Force }
@@ -565,6 +743,10 @@ function Show-AuxiliaryContoursStatus {
     foreach ($contour in $definitions) {
         $state = Read-AuxiliaryContourState -Contour $contour
         $status = [string](Get-StateValue -State $state -Name "readinessStatus" -Default "not-updated")
+        if ($status -eq "ready" -and $contour.baseMode -ne "attached-readonly" -and
+            -not (Test-DevBranchEnterpriseNormalizationProved -State $state)) {
+            $status = "unverified"
+        }
         $verification = [string](Get-StateValue -State $state -Name "lastVerificationStatus" -Default "not-run")
         $connectionText = "unresolved"
         try { $connection = Get-AuxiliaryContourConnection -Contour $contour; $connectionText = "$($connection.kind):$($connection.path)" }
@@ -572,6 +754,65 @@ function Show-AuxiliaryContoursStatus {
         Write-Host "  $($contour.name): base=$($contour.baseMode) source=$($contour.sourceMode) ready=$status tests=$verification mcp(roctup=$($contour.mcpRoctup),vanessa=$($contour.mcpVanessaUi))"
         Write-Host "    connection=$connectionText source=$($contour.configurationPath)"
     }
+}
+
+function Ensure-AuxiliaryContourVanessaExtension {
+    param([Parameter(Mandatory = $true)][object]$ReadyContext)
+    $contour = $ReadyContext.contour
+    $connection = $ReadyContext.connection
+    Assert-AuxiliaryContourMutationAllowed -Contour $contour -Operation "Vanessa tooling preparation"
+
+    $runtimeState = [pscustomobject][ordered]@{
+        safeDevBranchName = "aux-$($contour.name)"
+        worktreePath = $script:ProjectRoot
+        stateProjectRoot = $script:ProjectRoot
+        infoBaseKind = $connection.kind
+        devBranchInfoBasePath = $connection.path
+    }
+    $artifact = @(Install-VanessaMcpArtifacts | Where-Object { [string]$_.key -ceq "vaExtension" })[0]
+    if ($null -eq $artifact) { throw "ITL_AUXILIARY_VA_EXTENSION_ARTIFACT_MISSING: contour='$($contour.name)'." }
+
+    $state = Read-AuxiliaryContourState -Contour $contour
+    $proof = Get-StateValue -State $state -Name "vanessaExtensionProof" -Default $null
+    $runtime = @(Get-ToolingRuntimeExtensions -State $runtimeState -Names @("VAExtension") -User $connection.user -Password $connection.password)[0]
+    if ($proof -and
+        [int](Get-StateValue -State $proof -Name "schemaVersion" -Default 0) -eq 1 -and
+        [string](Get-StateValue -State $proof -Name "connectionIdentityHash" -Default "") -ceq [string]$connection.identityHash -and
+        [string](Get-StateValue -State $proof -Name "artifactSha256" -Default "") -ceq [string]$artifact.sha256 -and
+        (Test-ToolingRuntimeExtensionReady -Runtime $runtime -Name "VAExtension" -ExpectedHash ([string](Get-StateValue -State $proof -Name "runtimeHash" -Default "")) -RequireUnsafeMode)) {
+        return
+    }
+
+    Stop-AuxiliaryContourRuntimeBeforeMutation -Contour $contour -Connection $connection -Reason "auxiliary Vanessa extension installation"
+    Install-VanessaMcpExtensionCfe `
+        -State $runtimeState `
+        -CfePath $artifact.path `
+        -ExtensionName "VAExtension" `
+        -InfoBaseKind $connection.kind `
+        -InfoBasePath $connection.path `
+        -User $connection.user `
+        -Password $connection.password | Out-Null
+    $safeModeProof = Set-VanessaMcpExtensionUnsafeMode `
+        -State $runtimeState `
+        -InfoBaseKind $connection.kind `
+        -InfoBasePath $connection.path `
+        -ExtensionName "VAExtension" `
+        -Artifact $artifact `
+        -User $connection.user `
+        -Password $connection.password `
+        -Scope "aux-$($contour.name)"
+    $runtime = @(Get-ToolingRuntimeExtensions -State $runtimeState -Names @("VAExtension") -User $connection.user -Password $connection.password)[0]
+    Assert-ToolingRuntimeExtensionReady -Runtime $runtime -Name "VAExtension" -RequireUnsafeMode
+    Save-AuxiliaryContourState -Contour $contour -Updates @{
+        vanessaExtensionProof = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            connectionIdentityHash = [string]$connection.identityHash
+            artifactSha256 = [string]$artifact.sha256
+            runtimeHash = [string]$runtime.contentHash
+            safeMode = $safeModeProof
+            verifiedAt = (Get-Date).ToString("o")
+        }
+    } | Out-Null
 }
 
 function Invoke-AuxiliaryContourVanessaTests {
@@ -588,6 +829,7 @@ function Invoke-AuxiliaryContourVanessaTests {
     if ($suites.Count -eq 0) {
         throw "ITL_AUXILIARY_TEST_SET_EMPTY: contour='$($ReadyContext.contour.name)' set='$normalizedSet'."
     }
+    Ensure-AuxiliaryContourVanessaExtension -ReadyContext $ReadyContext
     $requiredSuites = @()
     if ($ReadyContext.contour.testsIncludePrimary) { $requiredSuites += "primary" }
     if ($ReadyContext.contour.testsPath) { $requiredSuites += "contour" }

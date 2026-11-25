@@ -4,7 +4,16 @@
 
 New scenarios live in `tests/performance/<name>/scenario.json` with their scripts/features. Private profiles and spool normally live under `%LOCALAPPDATA%/ITL/remote-work/<host>/`; installed projects may instead use ignored `.agent-1c/remote-work`. Never commit connection profiles, runtime proofs, infobases, CF/CFE/DT, logs or secrets. Keep originals byte-preserving.
 
-The authenticated controller and scenario authors are trusted. A worker executes their scripts under the Windows user's permissions. `allowedOperations` prevents accidental scope expansion; it is not a hostile-code sandbox. Restrict SSH/exchange writes to that controller; use existing SSH host-key verification and credential storage. Do not accept arbitrary shared-folder writers or expose agent/debugger listeners publicly.
+The paired controller and scenario authors are trusted. A worker executes their scripts under the Windows user's permissions. `allowedOperations` prevents accidental scope expansion; it is not a hostile-code sandbox. Keep controller/worker pairing files private. Pull requires TLS except on loopback; an optional shared folder contains only hash-addressed immutable blobs and never queue/control state. Restrict SSH/exchange compatibility access to the same controller and do not expose agent/debugger listeners publicly.
+
+An explicitly enabled `hostCommands: {"enabled": true}` profile grants the paired controller arbitrary noninteractive commands under that same Windows user, without a preconfigured 1C target. It is broad host access comparable to SSH and cannot enforce the 1C infobase guard against arbitrary code. Use normal exact-target ITL operations for 1C launches and mutations. `onboard` may put the worker pairing half in a transfer folder only with `--trusted-transfer`; that folder must be restricted to the intended controller and worker user. Its `bootstrap-status.json` contains only startup/connection diagnostics and is not a control channel. Closing the user-started launcher stops the session; the supervisor renews bounded worker generations while that launcher remains open.
+
+## Connection and execution dimensions
+
+New packages declare `runner: local | worker` and `agentPolicy: off | requested | diagnosis-on-failure`. Runner identifies and enforces the deterministic runtime owner; agent policy independently controls AI orchestration. Legacy `route` packages remain valid and normalize as follows: `local` to local/off, `ssh` to worker/off, `auto` to worker/diagnosis-on-failure, and `agent` to worker/requested. A package never selects its transport.
+
+A pull connection contains a private endpoint, worker id and bearer token. The broker is started with the controller halves it authorizes and rejects identities outside that set; the worker initiates every request from its interactive user session. Optional `bulkFolders` entries use matching ids and endpoint-local absolute paths; `thresholdBytes` only selects when to try the folder. A failed/missing folder transfer falls back to pull. Every adopted or exported blob is verified by size and SHA-256 before commit, so changing channels cannot create or replay a job.
+Preparation binds the private profile to the current Windows SID, and every heartbeat records that SID plus the current terminal-session id. A later session for the same user remains valid; another terminal-server user cannot start that spool even if filesystem permissions were accidentally broadened.
 
 ## Worker profile (schemaVersion 1)
 
@@ -12,15 +21,40 @@ Create a private JSON object with `targets` keyed by short aliases. Each target 
 
 - `workspace`: absolute directory on the execution host; must exist.
 - `allowedOperations`: explicit list, normally `measure`; include `write-data` for modifying scenarios and `update` only for authorized configuration updates.
-- `infoBase`: `{ "kind": "file" | "server", "path": "..." }`, using the same `/F` path or `/S` server/reference identity as ITL.
+- `infoBase`: required for every product measurement as `{ "kind": "file" | "server", "path": "..." }`, using the same `/F` path or `/S` server/reference identity as ITL. The result exposes only a hash of this declaration plus its topology. A legacy/calibration target without it is unbound and cannot be compared.
 - `platform`: absolute `1cv8.exe`/`1cv8c.exe` selected on this host.
 - `sourceIdentity`: exact CF/CFE hashes or a saved source manifest, including uncommitted inputs; never substitute a commit for a dirty export.
 - `environmentIdentity`: comparable platform/build, machine/base/data-copy settings. `dataIdentity` belongs to the scenario; update it when the dataset changes.
+- `executionGuard`: optional `{ "root": "<host-local-guard-directory>", "waitTimeoutSeconds": 3600, "additionalBases": [] }`. The guard is execution-host scoped; a server base must use its configured execution host. See [execution ownership](execution-ownership.md) for exact identities, signed nesting, waiting and cleanup.
 - `rdbg`: server bases use `{ "mode": "shared", "url": "http://server:1550", "infoBaseAlias": "ref" }`. File bases use `{ "mode": "local", "infoBaseAlias": "DefAlias" }`; `executable` optionally overrides the sibling `dbgs.exe` beside `platform`. Local `dbgs` binds loopback on the execution host and is owned by the job, including for remote file-base jobs. Shared server `dbgs` is never stopped by the worker. Missing profiling capability yields incomplete profile evidence, not a failed time-only capability check.
 
-Optional profile-level `agentFallback: true` enables diagnosis after `auto` failure. `agent` selects a harness adapter; read the agent reference only for that route. The prepared `profilePath` is passed to the remote agent. Store secrets in existing environment/credential references, never plaintext fields.
+Optional profile-level `agentFallback: true` enables diagnosis when the package selects `agentPolicy: diagnosis-on-failure` (or legacy `route: auto`). `agent` selects a harness adapter; read the agent reference only for that policy. The prepared `profilePath` is passed to the remote agent. Store secrets in existing environment/credential references, never plaintext fields.
 
-## Scenario (schemaVersion 1)
+Each target may define `resourceLimits` with numeric `pollIntervalSeconds`, `maxWorkerMemoryMb`,
+`maxProcessMemoryMb`, `maxJobMemoryMb`, `minAvailableMemoryMb`, `maxCommittedPercent`, `maxGrowthMb`, and
+`growthWindowSeconds`. `byOperation` may override those fields for `measure`, `write-data`, or `update`; when a job
+declares several operations, the worker applies the most restrictive combined policy. The runtime supplies bounded
+defaults when a legacy profile omits the section. On Windows, process and job memory are also installed as Job
+Object hard limits. Host/process/job samples are flushed to `resource-telemetry.jsonl` and summarized in
+`result.json.resourceEvidence`. One immutable resource context identifies the policy and telemetry shared by
+the job's command and profiler processes. Process evidence binds a PID to its OS creation identity and records
+its parent PID, executable identity, peak private bytes and peak working set. A threshold breach terminates only the owned Job Object and records
+`RESOURCE_LIMIT_EXCEEDED`; external 1C server processes remain outside this boundary.
+
+Optional profile-level `workerLimits` contains `allowPersistent`, `maxJobs`, and `maxLifetimeSeconds`. Generated
+launchers are one-shot and process at most one queued job. Persistent polling requires both the explicit
+`--persistent` switch and `allowPersistent: true`; it still rotates at the configured job/lifetime limit.
+`worker.json` is refreshed during a running job and binds the worker PID to its OS creation identity. Probe treats
+a missing/mismatched identity or an expired heartbeat as stale; PID presence alone never proves worker ownership.
+
+A pull-paired launcher is a separate explicit persistent opt-in: its private connection must contain
+`pull.persistent: true`, and existing job/lifetime bounds still apply. Profile-level
+`workerUpdatePolicy: compatible` authorizes later same-major worker updates from the paired controller. Updates are
+staged into a new user-local generation, never over a live runtime or private profile. The supervisor confirms the
+trial generation before making it current and retains rollback evidence on failure. `disabled` or an omitted policy
+rejects remote update staging.
+
+## Scenario (schemaVersion 1 or diagnostic v2)
 
 Required: `id`, `readyDescription`, `dataIdentity`, `repeatable` and `mutates` booleans, `commands.action`, `commands.verify`. `files` lists all relative dependency paths to include. The package rejects traversal, absolute dependency paths and content changes. `parameters` maps arbitrary names to `type` (`string`, `integer`, `number`, `boolean`, `object`, `array`), optional `default`, `enum`, `required` (default true).
 
@@ -28,14 +62,52 @@ Required: `id`, `readyDescription`, `dataIdentity`, `repeatable` and `mutates` b
 
 `adapter: command` measures action plus any ready command, including subprocess dispatch; it is suitable for complete script/server calls. `adapter: handshake` starts the workload before timing. It publishes `ready.json` with this `jobId` and `ready: true`, waits for `go.json`, then writes `done.json` only after actual operation readiness. Files are written atomically inside `{iteration}`. `itl_measure.py` supplies this protocol for Python; the Vanessa recipe supplies it for TestClient. Timing is execution-host monotonic time, never SSH latency or chat completion.
 
-The verify phase writes `{iteration}/verification.json` with the matching `jobId`, `passed: true` and a nonempty list of named checks; assertions must inspect real outputs, not merely write true. `itl_measure.verify` emits the contract and fails on false checks. `timeoutSeconds` bounds each phase (default 300, max 86400).
+The verify phase writes `{iteration}/verification.json` with the matching `jobId`, `passed: true` and a nonempty list of named checks; assertions must inspect real outputs, not merely write true. `itl_measure.verify` emits the contract and fails on false checks. `timeoutSeconds` supplies each phase's default (300, maximum 86400); `phaseTimeoutSeconds` may override `update`, `prepare`, `action`, `ready`, `verify`, `reset`, and `cleanup` individually. Values must be finite positive numbers. Guard waiting has a separate bounded timeout and never consumes the action budget. Child processes inherit the execution-host monotonic phase deadline through the signed execution context; handshake `go.json` starts the action phase after readiness. Python waits and MCP requests consume the remaining budget, including sequential calls within the phase, rather than restarting a 300-second clock. See [phase deadlines](phase-deadlines.md).
 
 `prepare` runs once before iterations; `reset` runs between iterations. A repeatable mutating scenario requires reset. Updates require both job and target permission and happen outside the timer. Non-repeatable operations get one permitted run: default additional timings/profile remain explicitly missing. Cleanup executes even on failure/cancel; owned subprocess trees are contained in Windows jobs and closed afterward.
 
+Schema v2 is reserved for an opt-in `diagnostics` contract whose raw evidence path is private and iteration-relative. A v2 request carries the same schema version, so a v1 worker rejects it during package validation before `action`. New workers continue to accept v1 without diagnostics. See the performance [operation evidence](../../itl-performance/references/operation-evidence.md) reference; it does not define product readiness or an automatic D0-D3 policy.
+
+The removed generic `recovery` scenario object is rejected. Product-specific
+repair remains a separately selected operation and is never a prerequisite for a
+later independent dev/test job.
+
 ## Jobs and results
 
-`pack` creates immutable `request.json`, `scenario.json`, input files, SHA256 and sizes. Job fields include ID, parent ID, target alias, route, mode, resolved parameters, operations and repetition counts. A controller requests a new experiment with a new ID; resend the same package after uncertain delivery. Same ID/different inputs is an error.
+`pack` creates immutable `request.json`, `scenario.json`, input files, SHA256 and sizes. Job fields include ID, parent ID, target alias, runner/agent policy (or a legacy route), mode, resolved parameters, operations and repetition counts. A controller requests a new experiment with a new ID; resend the same package after uncertain delivery. Same ID/different inputs is an error.
 
-Queue states are `queued`, `running`, `agent-running`, `completed`, `partial`, `cancelled`, `needs-attention`. Publication is atomic after full-file verification. The OS owns worker/target locks; never delete locks as recovery. A recorded running state with no current owner becomes `needs-attention`, not a restarted update. During engine execution, all changing work uses the same exclusive owner. Agent diagnosis after failure does not authorize rerunning it.
+Queue states are `queued`, `waiting-for-base`, `running`, `agent-running`, `completed`, `partial`, `cancelled`, `failed`, `interrupted`, and adapter-level `needs-attention`. Publication is atomic after full-file verification. The OS handle owns the guard; diagnostic JSON never acts as a lock. A recorded running state with no current owner becomes `interrupted`, not a restarted update. During bounded engine execution the job holds its exact resource set; descendants validate and borrow the signed execution context. Agent diagnosis after failure does not authorize rerunning the old job, but stale historical state does not block a new independent job.
 
-`result.json` contains unprofiled samples, phase costs, summary, raw-profile references, source/data/environment identity, limitations and cleanup errors. `report.md` is rebuilt from that data. `context.json` is private and excluded from result transfer. Raw packets are separate from native PFF; no file renaming or synthetic native export is permitted. A profile's partial source mapping must remain visible.
+Before guard waiting, the execution host writes `provenance.json` with the request/scenario/input hashes, input file inventory, resolved parameters, repetition counts, requested operations, runner/agent policy or legacy route, executor, host, readiness criterion and phase budgets. It retains declared data/source/environment identities separately from runtime proof. The file contains no target profile, credential configuration or signed execution context. `collect --allow-partial` can retrieve it during waiting and after cancellation or an engine crash, without a result or automatic replay. The same bytes are referenced by SHA256 in the eventual result. Keep the immutable input package for reproduction; hashes identify its files but do not replace their contents.
+
+During execution, `progress.json` atomically retains each iteration's kind and
+status, confirmed timing samples, command and handshake phase boundaries, phase
+errors, cleanup errors and the original provenance reference. It stays `running`
+until the final result is written; a verified sample does not mean the whole job
+or cleanup succeeded. Warmups and failed verification never become timing samples.
+Handshake progress writes remain outside the measured interval. Collected
+profiles are persisted before workload verification and linked by path and SHA256
+with separate coverage and workload-verification flags, without repeating packet
+rows in progress. Source mapping refreshes those artifact references and retains
+its manifest/resolution evidence. A crash leaves the last durable snapshot;
+`collect --allow-partial` retrieves it without inventing completion or replaying
+the interrupted iteration. Use observed job status and `resultAvailable` to
+distinguish partial evidence from a finished result.
+
+For profile runs, `loadedState` and `loaded-state-evidence.json` bind the actual
+runtime proof, packet target IDs, session/base instance, native configuration
+versions and versioned module IDs to the retained profile hashes. Declared
+`sourceIdentity`, `dataIdentity` and `environmentIdentity` remain declarations in
+that evidence and never become proof of what the 1C session loaded. A time-only
+run reports loaded state as unavailable because it has no runtime profile.
+
+`sourceAnalysis: none` records the observed runtime/module versions without
+exporting configuration source. `optional` or `required` binds the requested
+executed modules to copied source bytes by SHA256. When an exact existing binding
+is unavailable, the source adapter may capture the target database after workload
+verification under the same database lease; the resulting artifact inventory is
+verified and retained inside the run. Selection applies only to requested modules.
+Profiler packets prove executed modules, not the source of the whole configuration
+or its data state, so both claims remain explicitly false.
+
+`result.json` contains unprofiled samples, iteration and phase outcomes, summary, raw-profile references, loaded-state evidence, source/data/environment identity, credential-free `databaseIdentity`, `databaseTopology`, resource evidence, limitations and cleanup errors. Comparison requires the same nonempty database identity and topology in addition to the existing scenario/data/environment contract; therefore a local file base and a remote server base are never accepted as an A/B pair. New results also contain additive `operationEvidence`: `notRequested` for v1 or normalized per-iteration refs/status for v2. Every valid diagnostic iteration has public `operation-evidence.json` and a detailed `operation-evidence.md`; the main `report.md` links the latter. Local and remote routes use the same execution-host renderer. `context.json` and every `private` subtree are excluded from result transfer. Raw packets are separate from native PFF; no file renaming or synthetic native export is permitted. A profile's partial source mapping must remain visible.

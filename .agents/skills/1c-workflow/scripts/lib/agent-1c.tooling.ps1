@@ -101,9 +101,30 @@ function Assert-ToolingRuntimeExtensionReady {
     }
 }
 
+# First repair phase, before any admission wait: stop this worktree's own
+# guard holders (a facade left in unconfirmed cleanup, an abandoned helper) and
+# name every holder it must preserve. Native drain stays under the guard.
+function Invoke-DevBranchToolingHolderRelease {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    Set-RunStage -Stage 'tooling-recovery.release-holders' -Detail 'Releasing this worktree''s own execution-guard holders before admission.'
+    try {
+        $bases = @((Get-ItlDevBranchMutationDatabasePlan -State $State -Operation 'repair-dev-branch-tooling').bases)
+    } catch {
+        # A broken service or runtime plan must not hide the branch database
+        # itself; admission revalidates the complete plan afterwards.
+        Write-Host "Holder release planning fell back to the branch database: $($_.Exception.Message)"
+        $bases = @([pscustomobject]@{kind=[string](Get-StateValue -State $State -Name 'infoBaseKind' -Default 'file');path=[string]$State.devBranchInfoBasePath})
+    }
+    $release = Invoke-ItlBranchHolderRelease -Bases $bases -Mode repair
+    foreach ($holder in @($release.preserved)) { Write-Host "ITL_BRANCH_HOLDER_PRESERVED: $(Format-ItlExecutionGuardHolder -Holder $holder)" }
+    return $release
+}
+
 function Repair-DevBranchTooling {
     $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "repair-dev-branch-tooling"
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "repair-dev-branch-tooling"
+    Invoke-DevBranchToolingHolderRelease -State $state | Out-Null
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "tooling recovery"
     $state = Ensure-VanessaMcpInstalled -State $state
     if (Test-YAxUnitSuitePresent) { Ensure-YAxUnitExtensions -State $state | Out-Null }

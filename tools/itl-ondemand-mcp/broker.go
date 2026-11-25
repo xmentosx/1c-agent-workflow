@@ -4,33 +4,101 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os/exec"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/xmentosx/1c-agent-workflow/tools/itl-ondemand-mcp/internal/childprocess"
 )
 
 const brokerMarker = "ITL_ONDEMAND_RESULT="
 
 type backendInfo struct {
-	SchemaVersion           int    `json:"schemaVersion"`
-	Status                  string `json:"status"`
-	Family                  string `json:"family"`
-	InstanceID              string `json:"instanceId"`
-	PID                     int    `json:"pid"`
-	ProcessStartedAt        string `json:"processStartTime"`
-	Port                    int    `json:"port"`
-	URL                     string `json:"url"`
-	BackendVersion          string `json:"backendVersion"`
-	CatalogSHA256           string `json:"catalogSha256"`
-	LogPath                 string `json:"logPath"`
-	TestClientProfile       string `json:"testClientProfile"`
-	TestClientPID           int    `json:"testClientPid"`
-	TestClientPort          int    `json:"testClientPort"`
-	TestClientState         string `json:"testClientState"`
-	TestClientReused        bool   `json:"testClientReused"`
-	PreviousTestClientPID   int    `json:"previousTestClientPid"`
-	PreviousTestClientState string `json:"previousTestClientState"`
+	NativeLaunchProof       json.RawMessage      `json:"nativeLaunchProof,omitempty"`
+	ExecutionGuard          *facadeExecutionPlan `json:"executionGuard,omitempty"`
+	SchemaVersion           int                  `json:"schemaVersion"`
+	Status                  string               `json:"status"`
+	Family                  string               `json:"family"`
+	InstanceID              string               `json:"instanceId"`
+	PID                     int                  `json:"pid"`
+	ProcessStartedAt        string               `json:"processStartTime"`
+	Port                    int                  `json:"port"`
+	URL                     string               `json:"url"`
+	BackendVersion          string               `json:"backendVersion"`
+	CatalogSHA256           string               `json:"catalogSha256"`
+	LogPath                 string               `json:"logPath"`
+	TestClientProfile       string               `json:"testClientProfile"`
+	TestClientPID           int                  `json:"testClientPid"`
+	TestClientPort          int                  `json:"testClientPort"`
+	TestClientState         string               `json:"testClientState"`
+	TestClientReused        bool                 `json:"testClientReused"`
+	PreviousTestClientPID   int                  `json:"previousTestClientPid"`
+	PreviousTestClientState string               `json:"previousTestClientState"`
+}
+
+type facadeExecutionPlan struct {
+	SchemaVersion      int                  `json:"schemaVersion"`
+	Family             string               `json:"family"`
+	ProjectRoot        string               `json:"projectRoot"`
+	InstanceID         string               `json:"instanceId"`
+	GuardRoot          string               `json:"guardRoot"`
+	ExecutionHost      string               `json:"executionHost"`
+	WaitTimeoutSeconds float64              `json:"waitTimeoutSeconds"`
+	Python             string               `json:"python"`
+	Bases              []databaseConnection `json:"bases"`
+	PrimaryBase        *databaseConnection  `json:"primaryBase"`
+	TargetBase         databaseConnection   `json:"targetBase"`
+	ServicePlan        json.RawMessage      `json:"servicePlan"`
+	AuxiliaryContour   string               `json:"auxiliaryContour"`
+	RuntimePresent     bool                 `json:"runtimePresent"`
+}
+
+type executionInvocationKey struct{}
+type executionInvocation struct {
+	SchemaVersion   int                   `json:"schemaVersion"`
+	Context         executionContextProof `json:"context"`
+	Plan            *facadeExecutionPlan  `json:"plan"`
+	ExpectedBackend *backendInfo          `json:"expectedBackend,omitempty"`
+}
+
+func withExecutionInvocation(ctx context.Context, proof executionContextProof, plan *facadeExecutionPlan) context.Context {
+	return context.WithValue(ctx, executionInvocationKey{}, &executionInvocation{SchemaVersion: 2, Context: proof, Plan: plan})
+}
+
+func preserveExecutionInvocation(from, to context.Context) context.Context {
+	if value, ok := from.Value(executionInvocationKey{}).(*executionInvocation); ok {
+		return context.WithValue(to, executionInvocationKey{}, value)
+	}
+	return to
+}
+
+func executionBrokerEnvironment(ctx context.Context) ([]string, error) {
+	result := []string{}
+	for _, value := range os.Environ() {
+		key, _, _ := strings.Cut(value, "=")
+		if !strings.EqualFold(key, "ITL_EXECUTION_INVOCATION") && !strings.EqualFold(key, "ITL_EXECUTION_CONTEXT") &&
+			!strings.EqualFold(key, "ITL_EXECUTION_CONTEXT_KEY") {
+			result = append(result, value)
+		}
+	}
+	if value, ok := ctx.Value(executionInvocationKey{}).(*executionInvocation); ok {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("ITL_ONDEMAND_EXECUTION_CONTEXT_INVALID")
+		}
+		result = append(result, "ITL_EXECUTION_INVOCATION="+string(encoded),
+			"ITL_EXECUTION_CONTEXT="+value.Context.Encoded,
+			"ITL_EXECUTION_CONTEXT_KEY="+value.Context.Key)
+	}
+	if raw, err := ownedIdleEnvironment(ctx); err != nil {
+		return nil, err
+	} else if raw != "" {
+		result = append(result, "ITL_EXECUTION_INVOCATION="+raw)
+	}
+	return result, nil
 }
 
 type backendBroker interface {
@@ -42,16 +110,20 @@ type backendBroker interface {
 }
 
 type powershellBroker struct {
-	PowerShell  string
-	HelperPath  string
-	ProjectRoot string
-	Family      string
-	InstanceID  string
-	CatalogHash string
-	Timeout     time.Duration
+	privateRuntime   bool
+	PowerShell       string
+	HelperPath       string
+	ProjectRoot      string
+	Family           string
+	InstanceID       string
+	CatalogHash      string
+	Timeout          time.Duration
+	lastBackend      *backendInfo
+	cleanupConfirmed bool
 }
 
 func (b *powershellBroker) Ensure(ctx context.Context) (*backendInfo, error) {
+	b.cleanupConfirmed = false
 	info, err := b.invoke(ctx, "ensure", nil)
 	if err == nil && ((info.Status != "readiness" && info.Status != "running") || info.PID <= 0 || info.Port <= 0 || info.URL == "" || info.InstanceID != b.InstanceID || info.Family != b.Family) {
 		err = fmt.Errorf("backend broker returned an invalid running instance")
@@ -59,13 +131,34 @@ func (b *powershellBroker) Ensure(ctx context.Context) (*backendInfo, error) {
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		_, _ = b.invoke(cleanupCtx, "stop", nil)
+		if stopErr := b.Stop(preserveExecutionInvocation(ctx, cleanupCtx)); stopErr != nil {
+			err = errors.Join(err, fmt.Errorf("cleanup after failed backend start: %w", stopErr))
+		}
 		return nil, err
 	}
+	b.lastBackend = info
 	return info, nil
 }
 
+func (b *powershellBroker) ExecutionRuntimeRoot() string {
+	return filepath.Clean(filepath.Join(filepath.Dir(b.HelperPath), "..", "..", "itl-remote-runner", "scripts"))
+}
+
+func (b *powershellBroker) ExecutionPlan(ctx context.Context) (*facadeExecutionPlan, error) {
+	info, err := b.invoke(ctx, "execution-plan", nil)
+	if err != nil {
+		return nil, err
+	}
+	if info.ExecutionGuard == nil || info.Status != "planned" || info.ExecutionGuard.SchemaVersion != 2 ||
+		info.ExecutionGuard.Family != b.Family || info.ExecutionGuard.InstanceID != b.InstanceID ||
+		info.ExecutionGuard.GuardRoot == "" || len(info.ExecutionGuard.Bases) == 0 {
+		return nil, fmt.Errorf("ITL_ONDEMAND_EXECUTION_PLAN_INVALID")
+	}
+	return info.ExecutionGuard, nil
+}
+
 func (b *powershellBroker) EnsureTestClient(ctx context.Context) (*backendInfo, error) {
+	b.cleanupConfirmed = false
 	info, err := b.invoke(ctx, "ensure-test-client", nil)
 	if err == nil && (info.Status != "running" || info.PID <= 0 || info.URL == "" ||
 		info.InstanceID != b.InstanceID || info.Family != "vanessa-ui" ||
@@ -75,12 +168,23 @@ func (b *powershellBroker) EnsureTestClient(ctx context.Context) (*backendInfo, 
 	if err != nil {
 		return nil, err
 	}
+	b.lastBackend = info
 	return info, nil
 }
 
 func (b *powershellBroker) Recover(ctx context.Context, previous *backendInfo, replacementInstanceID string) (*backendInfo, error) {
 	if previous == nil || previous.InstanceID != b.InstanceID || previous.PID <= 0 || previous.Port <= 0 {
 		return nil, fmt.Errorf("backend recovery requires the registered instance PID and port")
+	}
+	b.cleanupConfirmed = false
+	// The facade's own launch snapshot of the original instance lets the helper
+	// stop exactly the processes this facade started when their registration
+	// is gone. A failed replacement start is cleaned up by the helper itself;
+	// the facade never tracks a second candidate instance.
+	if invocation, coordinated := ctx.Value(executionInvocationKey{}).(*executionInvocation); coordinated {
+		copy := *invocation
+		copy.ExpectedBackend = previous
+		ctx = context.WithValue(ctx, executionInvocationKey{}, &copy)
 	}
 	info, err := b.invoke(ctx, "recover", []string{
 		"-InternalOnDemandReplacementInstanceId", replacementInstanceID,
@@ -94,6 +198,7 @@ func (b *powershellBroker) Recover(ctx context.Context, previous *backendInfo, r
 		return nil, err
 	}
 	b.InstanceID = replacementInstanceID
+	b.lastBackend = info
 	return info, nil
 }
 
@@ -111,19 +216,39 @@ func (b *powershellBroker) MarkRunning(ctx context.Context, previous *backendInf
 	if err != nil {
 		return nil, err
 	}
+	b.lastBackend = info
 	return info, nil
 }
 
 func (b *powershellBroker) Stop(ctx context.Context) error {
-	_, err := b.invoke(ctx, "stop", nil)
-	return err
+	if b.cleanupConfirmed {
+		return nil
+	}
+	extra := []string{}
+	stopCtx := ctx
+	if invocation, coordinated := ctx.Value(executionInvocationKey{}).(*executionInvocation); coordinated {
+		pid, port := -1, 0
+		if b.lastBackend != nil && b.lastBackend.InstanceID == b.InstanceID {
+			pid, port = b.lastBackend.PID, b.lastBackend.Port
+			copy := *invocation
+			copy.ExpectedBackend = b.lastBackend
+			stopCtx = context.WithValue(ctx, executionInvocationKey{}, &copy)
+		}
+		extra = append(extra, "-InternalOnDemandExpectedPid", fmt.Sprint(pid), "-InternalOnDemandExpectedPort", fmt.Sprint(port))
+	}
+	info, err := b.invoke(stopCtx, "stop", extra)
+	if err != nil {
+		return err
+	}
+	if info.Status != "stopped" {
+		return fmt.Errorf("ITL_ONDEMAND_STOP_UNCONFIRMED")
+	}
+	b.cleanupConfirmed, b.lastBackend = true, nil
+	return nil
 }
 
 func (b *powershellBroker) invoke(ctx context.Context, operation string, extra []string) (*backendInfo, error) {
-	timeout := b.Timeout
-	if timeout == 0 {
-		timeout = 5 * time.Minute
-	}
+	timeout := brokerCallTimeout(ctx, b.Timeout)
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	command := b.PowerShell
@@ -139,17 +264,27 @@ func (b *powershellBroker) invoke(ctx context.Context, operation string, extra [
 		"-InternalOnDemandCatalogSha256", b.CatalogHash,
 	}
 	args = append(args, extra...)
-	cmd := exec.CommandContext(callCtx, command, args...)
+	cmd := childprocess.CommandContext(callCtx, command, args...)
+	environment, environmentErr := executionBrokerEnvironment(ctx)
+	if environmentErr != nil {
+		return nil, environmentErr
+	}
+	cmd.Env = environment
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
+	started, budget := time.Now(), remainingPhaseMilliseconds(callCtx)
 	err := cmd.Run()
 	info, parseErr := parseBrokerOutput(output.String())
 	if err != nil {
+		// CommandContext may terminate Windows PowerShell before it emits a
+		// result marker. Preserve cancellation independently of exit status.
+		reason := errors.Join(err, callCtx.Err())
+		diagnostic := resultEvidenceMessage(nil, fmt.Errorf("%s", strings.TrimSpace(output.String())))
 		if parseErr == nil && info != nil && info.Status == "failed" {
-			return nil, fmt.Errorf("backend broker failed; log=%s", info.LogPath)
+			diagnostic = "backend reported failure; log=" + info.LogPath
 		}
-		return nil, fmt.Errorf("backend broker %s failed: %w: %s", operation, err, strings.TrimSpace(output.String()))
+		return nil, fmt.Errorf("backend broker %s failed: elapsedMs=%d budgetMs=%d remainingMs=%d: %w: %s", operation, time.Since(started).Milliseconds(), budget, remainingPhaseMilliseconds(callCtx), reason, diagnostic)
 	}
 	if parseErr != nil {
 		return nil, parseErr

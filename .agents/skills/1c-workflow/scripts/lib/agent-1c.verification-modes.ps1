@@ -1,4 +1,4 @@
-function Get-ItlVerificationMode {
+﻿function Get-ItlVerificationMode {
     param([ValidateSet("yaxunit", "vanessa", "event-log")][string]$Component)
 
     $key = switch ($Component) {
@@ -27,8 +27,31 @@ function Get-ItlVerificationExecutionDecision {
     )
 
     $mode = Get-ItlVerificationMode -Component $Component
-    $isExplicit = $Trigger -eq "explicit" -and ($ExplicitComponents -contains $Component -or $ExplicitComponents -contains "all")
-    $run = if ($isExplicit) {
+    $namedComponent = $ExplicitComponents -contains $Component -or $ExplicitComponents -contains "all"
+    $isScenarioRepair = $Trigger -eq 'repair' -and $namedComponent -and $RepairSessionId -and
+        [string](Get-StateValue (Get-ItlMatchingVerificationRepairSession) 'kind' 'canonical-repair') -eq 'scenario-loop'
+    $isExplicit = $namedComponent -and ($Trigger -eq 'explicit' -or $isScenarioRepair)
+    # Saved Vanessa is a TOOL_BROWSER provider; UI_TESTING only selects the
+    # separate interactive UI workflow. A named request is invocation-local.
+    $providerKey = if ($Component -eq 'vanessa') { 'TOOL_BROWSER' } else { '' }
+    $providerRaw = if ($providerKey) { [string](Get-EnvValue -Name $providerKey -Default '') } else { '' }
+    $providerPolicy = $providerRaw.Trim().ToLowerInvariant()
+    $providerValid = -not $providerPolicy -or $providerPolicy -in @('auto', 'off', 'required')
+    if (-not $providerPolicy) { $providerPolicy = 'auto' }
+    $providerOverride = $providerKey -and $providerPolicy -eq 'off' -and $isExplicit
+    $outsideNamedScope = $Trigger -eq 'explicit' -and -not $namedComponent
+    # A runner filter is diagnostic-only and proves nothing for the other runner;
+    # its unnamed full suite would only cost time. Naming it runs it as before.
+    $diagnosticFilter = if ($Component -eq 'yaxunit' -and (Test-ItlVanessaDiagnosticScope) -and -not (Test-ItlYAxUnitDiagnosticScope)) { 'Vanessa feature/tag' }
+        elseif ($Component -eq 'vanessa' -and (Test-ItlYAxUnitDiagnosticScope) -and -not (Test-ItlVanessaDiagnosticScope)) { 'YAxUnit module' } else { '' }
+    $outsideDiagnosticScope = $diagnosticFilter -and -not $namedComponent
+    $run = if ($outsideNamedScope -or $outsideDiagnosticScope) {
+        $false
+    } elseif (-not $mode.valid) {
+        $false
+    } elseif (-not $providerValid -or ($providerPolicy -eq 'off' -and -not $providerOverride)) {
+        $false
+    } elseif ($isExplicit) {
         $true
     } elseif ($mode.effective -eq "auto") {
         $true
@@ -37,8 +60,20 @@ function Get-ItlVerificationExecutionDecision {
     } else {
         $false
     }
-    $reason = if ($run) {
-        $(if ($isExplicit) { "explicit user request for $Component" } else { "$($mode.effective) mode permits $Trigger verification" })
+    $reason = if ($outsideNamedScope) {
+        "$Component is outside the named invocation scope"
+    } elseif ($outsideDiagnosticScope) {
+        "diagnostic $diagnosticFilter filter run; name -ExplicitVerificationComponent $Component or all to include $Component"
+    } elseif (-not $mode.valid) {
+        "invalid $($mode.key)='$($mode.raw)'; set auto, manual, or off before running $Component"
+    } elseif (-not $providerValid) {
+        "invalid $providerKey='$providerRaw'; set auto, off, or required before running $Component"
+    } elseif ($providerPolicy -eq 'off' -and -not $providerOverride) {
+        "$providerKey=off skips $Component; only a named invocation may override this provider"
+    } elseif ($run) {
+        $(if ($providerOverride) { "explicit user request for $Component overrides $providerKey=off for this invocation" }
+          elseif ($isExplicit) { "explicit user request for $Component" }
+          else { "$($mode.effective) mode permits $Trigger verification" })
     } else {
         "$($mode.key)=$($mode.effective) skips $Component for trigger=$Trigger"
     }
@@ -48,6 +83,11 @@ function Get-ItlVerificationExecutionDecision {
         rawMode = $mode.raw
         valid = $mode.valid
         trigger = $Trigger
+        providerKey = $providerKey
+        rawProviderPolicy = $providerRaw
+        providerPolicy = $providerPolicy
+        providerValid = [bool]$providerValid
+        providerOverride = [bool]$providerOverride
         run = [bool]$run
         reason = $reason
     }
@@ -56,7 +96,7 @@ function Get-ItlVerificationExecutionDecision {
 function Write-ItlVerificationModeStatus {
     foreach ($component in @("yaxunit", "vanessa", "event-log")) {
         $mode = Get-ItlVerificationMode -Component $component
-        $suffix = $(if ($mode.valid) { "" } else { " (invalid '$($mode.raw)'; effective safe default auto)" })
+        $suffix = $(if ($mode.valid) { "" } else { " (invalid '$($mode.raw)'; execution skipped until set to auto, manual, or off)" })
         Write-Host "$($mode.key)=$($mode.effective)$suffix"
     }
 }
@@ -88,8 +128,18 @@ function Set-ItlPartialVerificationEvidence {
         [string]$Trigger
     )
 
-    $skipped = @($Decisions | Where-Object { -not $_.run })
+    $skipped = @($Decisions | Where-Object { -not $_.run -and -not [bool](Get-StateValue -State $_ -Name 'reused' -Default $false) })
     if ($skipped.Count -eq 0) { return }
+    # An explicit, complete run can satisfy the same current input even when
+    # persistent auto-run switches remain off. A later ordinary check must not
+    # destroy that proof merely because it had no permission to rerun a tool.
+    if ([string](Get-StateValue -State $State -Name 'lastVerificationStatus' -Default '') -eq 'passed') {
+        $existing = Get-VerificationState -State $State
+        if ($existing.isFreshPassed) {
+            Write-Host 'Executable verification reused: fresh passed proof already covers this input; skipped components were not rerun.'
+            return
+        }
+    }
     $reason = "Executable verification skipped: " + (($skipped | ForEach-Object { $_.reason }) -join "; ")
     Update-DevBranchState -State $State -Updates @{
         lastVerificationStatus = "partial"
@@ -100,6 +150,7 @@ function Set-ItlPartialVerificationEvidence {
         lastVerifiedAt = (Get-Date).ToString("o")
         lastVerifiedCommit = ""
         lastVerifiedFingerprint = ""
+        lastVerifiedLoadedBaseIdentity = ""
     }
     Write-Host "[WARN] $reason"
     Write-Host "Result wording: implemented; executable verification skipped. Do not report verified/done."
@@ -150,10 +201,11 @@ function Test-ItlEventLogCurrent {
         $boundaryUpdates = Complete-DevBranchEventLogObservation -State $stateWithBaseline -Status $verification.status -Fingerprint $fingerprint -ReportPath $verification.reportPath
         foreach ($key in $boundaryUpdates.Keys) { $updates[$key] = $boundaryUpdates[$key] }
     }
+    Add-VerificationComponentEvidenceUpdates -Updates $updates -State $stateWithBaseline -Component 'event-log' -Status $verification.status -EventLogObservation $verification -RunDirectory $runDirectory
     Update-DevBranchState -State $stateWithBaseline -Updates $updates
     Write-Host "Event-log verification: $($verification.status). $($verification.reason)"
     if ($verification.status -ne "passed") {
-        Set-RunFailureContext -Category "event-log" -RequiredAction "/itl-verify-fix"
+        Set-RunFailureContext -Category "event-log" -RequiredAction "fix-or-acknowledge-event-log-errors"
         throw $verification.reason
     }
 }
@@ -163,7 +215,8 @@ function Get-ItlVerificationRepairStatePath {
 }
 
 function Get-ItlVerificationRepairMaximumAttempts {
-    $rawValue = Get-EnvValue -Name "ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS" -Default 5
+    $rawValue = Get-EnvValue -Name "ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS"
+    if ($null -eq $rawValue) { return $null }
     $text = ([string]$rawValue).Trim()
     $parsed = 0
     if ($text -notmatch '^\d+$' -or
@@ -178,8 +231,13 @@ function Get-ItlVerificationRepairMaximumAttempts {
 function Get-ItlVerificationRepairRecordMaximumAttempts {
     param([Parameter(Mandatory = $true)][object]$Record)
 
+    $limit = $Record.PSObject.Properties['maximumAttempts']
+    if ($null -ne $limit -and $null -eq $limit.Value -and
+        (Get-StateValue $Record 'schemaVersion' 1) -eq 2 -and
+        (Get-StateValue $Record 'kind' '') -ceq 'canonical-repair') { return $null }
+
     $maximumAttempts = 0
-    if ($null -eq $Record.PSObject.Properties["maximumAttempts"] -or
+    if ($null -eq $limit -or
         -not [int]::TryParse(([string]$Record.maximumAttempts), [ref]$maximumAttempts) -or
         $maximumAttempts -lt 1 -or
         $maximumAttempts -gt 100) {
@@ -189,29 +247,252 @@ function Get-ItlVerificationRepairRecordMaximumAttempts {
     return $maximumAttempts
 }
 
+function Write-ItlVerificationRepairRecord {
+    param([object]$Record)
+
+    Write-Utf8TextAtomic -Path (Get-ItlVerificationRepairStatePath) -Value (($Record | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+}
+
+function Format-ItlVerificationRepairAttempts {
+    param([object]$Record, [AllowNull()][object]$Maximum)
+
+    if ($null -eq $Maximum) { return "$($Record.attempts) (no overall limit)" }
+    return "$($Record.attempts)/$Maximum"
+}
+
+function Write-ItlVerificationRepairStatus {
+    param([object]$Record, [AllowNull()][object]$Maximum, [string]$Label, [string]$Admission = '')
+
+    $report = "${Label}: $($Record.sessionId). Repair attempts: $(Format-ItlVerificationRepairAttempts -Record $Record -Maximum $Maximum)."
+    if ((Get-StateValue $Record 'kind' 'canonical-repair') -eq 'canonical-repair') {
+        if ($Admission) { $report += " Admission: $Admission." }
+        if ($Record.status -eq 'exhausted') {
+            $report += ' Preserve this ID and use extend-verification-repair with an explicit user grant for a greater limit.'
+        }
+        if ($null -eq $Maximum -and $Record.status -eq 'active' -and [int]$Record.attempts -ge 5) {
+            $report += ' Assessment required before the next full run. See references/verification-result.md.'
+        }
+        $report += " Repair report: $(Get-ItlVerificationRepairStatePath)"
+    }
+    $existing = if ($Admission) { [string](Get-Variable -Name RunUserReport -Scope Script -ValueOnly -ErrorAction SilentlyContinue) } else { '' }
+    Write-Host $report
+    Set-RunUserReport -Report ((@($report, $existing) | Where-Object { $_ }) -join "`n`n")
+}
+
+function New-ItlVerificationRepairRun {
+    param([object]$Record, [string]$Outcome)
+
+    $statusPath = [string](Get-Variable -Name RunStatusPath -ValueOnly -ErrorAction SilentlyContinue)
+    return [pscustomobject][ordered]@{
+        id = [guid]::NewGuid().ToString('N')
+        attempt = [int]$Record.attempts
+        outcome = $Outcome
+        startedAt = (Get-Date).ToString('o')
+        inputFingerprint = ''
+        finishedAt = $null
+        durationMs = $null
+        basis = $null
+        statusPath = $(if ($statusPath) { Resolve-RunFilePath -Path $statusPath } else { '' })
+        result = $null
+    }
+}
+
+function Get-ItlVerificationRepairRuns {
+    param([object]$Record)
+
+    $property = $Record.PSObject.Properties['runs']
+    if ($null -ne $property) { $property.Value }
+}
+
+function Add-ItlVerificationRepairRun {
+    param([object]$Record, [object]$Run)
+
+    $runs = @(Get-ItlVerificationRepairRuns -Record $Record)
+    if ($runs.Count -gt 0 -and $runs[-1].outcome -eq 'admitted') {
+        # A different invocation reached this point under the same lifecycle lock.
+        # A lost process keeps its charged admission and any existing run evidence.
+        $interrupted = $runs[-1]
+        $interrupted.outcome = 'interrupted'
+        if ($interrupted.statusPath) {
+            try {
+                $status = Read-Utf8Text -Path $interrupted.statusPath | ConvertFrom-Json -ErrorAction Stop
+                $lastSeen = [datetimeoffset]$status.updatedAt
+                if ($lastSeen -ge [datetimeoffset]$interrupted.startedAt) {
+                    $interrupted.durationMs = [int64]($lastSeen - [datetimeoffset]$interrupted.startedAt).TotalMilliseconds
+                }
+            } catch {
+                # The wrapper can be interrupted before persisting any status.
+            }
+        }
+    }
+    Set-ItlVerificationRepairRecordValue -Record $Record -Name 'runs' -Value ($runs + @($Run))
+}
+
+function Set-ItlVerificationRepairRunOutcome {
+    param([object]$Record, [AllowNull()][object]$Ticket, [string]$Outcome, [AllowNull()][object]$Result, [switch]$PassThru)
+
+    $runId = [string](Get-StateValue $Ticket 'runId' '')
+    $runs = @(Get-ItlVerificationRepairRuns -Record $Record)
+    $changed = $runId -and $runs.Count -gt 0 -and $runs[-1].id -ceq $runId -and $runs[-1].outcome -eq 'admitted'
+    if ($changed) {
+        $run = $runs[-1]
+        $now = Get-Date
+        $run.outcome = $Outcome
+        $run.result = $Result
+        $run.finishedAt = $now.ToString('o')
+        $run.durationMs = [int64]([datetimeoffset]$now - [datetimeoffset]$run.startedAt).TotalMilliseconds
+    }
+    if ($PassThru) { return [bool]$changed }
+}
+
+function Get-ItlVerificationRepairBasis {
+    param([object[]]$Runs, [string]$Path)
+
+    $result = [ordered]@{ present = [bool]$Path; linked = $false; evidenceCurrent = $false; status = 'missing'; details = $null }
+    if (-not $Path) { return [pscustomobject]$result }
+    $result.status = 'incomplete'
+    try {
+        $full = Resolve-ProjectPath $Path
+        [void](Get-VerificationRepoRelativePath -Path $full)
+        $file = Get-Item -LiteralPath $full -ErrorAction Stop
+        if ($file.PSIsContainer -or $file.Length -gt 8192) { return [pscustomobject]$result }
+        $basis = Read-Utf8Text -Path $full | ConvertFrom-Json -ErrorAction Stop
+        $result.details = [pscustomobject][ordered]@{}
+        foreach ($name in @('previousRunId', 'evidencePath', 'progress', 'change', 'expected')) {
+            $value = Get-StateValue $basis $name $null
+            if ($value -is [string] -and $value.Length -le 1024) {
+                $result.details | Add-Member -NotePropertyName $name -NotePropertyValue $value.Trim()
+            }
+        }
+        $previous = $Runs | Where-Object outcome -in @('completed', 'failed') | Select-Object -Last 1
+        $previousId = [string](Get-StateValue $result.details 'previousRunId' '')
+        $evidencePath = [string](Get-StateValue $result.details 'evidencePath' '')
+        if ($previousId -and $null -ne $previous) { $result.linked = $previousId -ceq $previous.id }
+        if ($previousId -and -not $result.linked) {
+            $result.status = if (@($Runs | Where-Object id -CEQ $previousId).Count) { 'stale' } else { 'unrelated-result' }
+        } elseif ($result.linked -and $evidencePath) {
+            $evidencePath = Resolve-ProjectPath $evidencePath
+            $expected = @(if ($null -ne $previous.result -and $previous.result.PSObject.Properties['evidence']) {
+                $previous.result.evidence | Where-Object path -EQ $evidencePath
+            })
+            if ($expected.Count -eq 1) {
+                $item = Get-Item -LiteralPath $evidencePath -ErrorAction SilentlyContinue
+                $result.evidenceCurrent = $null -ne $item -and -not $item.PSIsContainer -and
+                    $item.Length -eq $expected[0].length -and $item.LastWriteTimeUtc.Ticks -eq $expected[0].modifiedTicks
+                if (-not $result.evidenceCurrent) { $result.status = 'stale-evidence' }
+            } elseif ($evidencePath -and $evidencePath -ieq $previous.statusPath) {
+                # The compact runner updates its status after the helper releases.
+                $status = Read-Utf8Text -Path $evidencePath | ConvertFrom-Json -ErrorAction Stop
+                $result.evidenceCurrent = $status.status -in @('succeeded', 'failed') -and
+                    $status.action -in @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test') -and
+                    $status.projectRoot -ieq $script:ProjectRoot -and
+                    [datetimeoffset]$status.startedAt -le [datetimeoffset]$previous.startedAt -and
+                    [datetimeoffset]$status.finishedAt -ge [datetimeoffset]$previous.startedAt
+                if (-not $result.evidenceCurrent) { $result.status = 'stale-status' }
+            } else { $result.status = 'unrelated-evidence' }
+        }
+        if ($result.evidenceCurrent -and
+            (Get-StateValue $result.details 'progress' '') -and
+            (Get-StateValue $result.details 'change' '') -and
+            (Get-StateValue $result.details 'expected' '')) {
+            $result.status = 'linked'
+        }
+    } catch {
+        $result.status = 'unreadable'
+    }
+    return [pscustomobject]$result
+}
+
 function Start-ItlVerificationRepairSession {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "begin-verification-repair"
+    $kind = if ($VerificationRepairKind) { $VerificationRepairKind } else { 'canonical-repair' }
+    $scenarioFeature = if ($VanessaFeaturePath) { Resolve-ProjectPath $VanessaFeaturePath } else { '' }
+    $scenarioTags = ([string]$VanessaFilterTags).Trim()
+    if ($scenarioFeature) {
+        [void](Get-VerificationRepoRelativePath -Path $scenarioFeature)
+        if (-not $scenarioFeature.EndsWith('.feature', [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $scenarioFeature -PathType Leaf)) {
+            throw "ITL_VERIFICATION_SCENARIO_FEATURE_INVALID: '$scenarioFeature' must be an existing project .feature file."
+        }
+    }
+    if ($kind -eq 'scenario-loop' -and -not $scenarioFeature -and -not $scenarioTags) {
+        throw 'ITL_VERIFICATION_SCENARIO_SCOPE_REQUIRED: scenario-loop needs VanessaFeaturePath or VanessaFilterTags before starting its bounded session.'
+    }
+    if ($kind -eq 'canonical-repair' -and ($scenarioFeature -or $scenarioTags)) {
+        throw 'ITL_VERIFICATION_REPAIR_SCOPE_INVALID: canonical-repair is unfiltered; use scenario-loop for a named diagnostic scope.'
+    }
+    if ($VerificationRepairMaxAttempts -lt 0 -or $VerificationRepairMaxAttempts -gt 100) {
+        throw 'ITL_VERIFICATION_REPAIR_LIMIT_INVALID: explicit attempt limit must be between 1 and 100.'
+    }
     $path = Get-ItlVerificationRepairStatePath
     $recoveryId = [string](Get-StateValue $state "toolingRecoveryId" "")
     if (Test-Path -LiteralPath $path -PathType Leaf) {
         $previous = Read-Utf8Text -Path $path | ConvertFrom-Json
+        if ([string]$previous.status -in @('active', 'workflow-blocked')) {
+            if ([string]$previous.branch -cne (Get-CurrentBranch) -or
+                -not [string]::Equals((Get-FullPathNormalized ([string]$previous.projectRoot)),
+                    (Get-FullPathNormalized $script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase)) {
+                throw "ITL_VERIFICATION_REPAIR_ACTIVE_ELSEWHERE: session $($previous.sessionId) belongs to another branch or worktree. Preserve its record and resume it in that scope."
+            }
+            $maximumAttempts = Get-ItlVerificationRepairRecordMaximumAttempts -Record $previous
+            $previousKind = [string](Get-StateValue $previous 'kind' 'canonical-repair')
+            if ($previousKind -cne $kind -or
+                [string](Get-StateValue $previous 'scenarioFeature' '') -cne $scenarioFeature -or
+                [string](Get-StateValue $previous 'scenarioTags' '') -cne $scenarioTags) {
+                throw "ITL_VERIFICATION_REPAIR_SCOPE_CHANGED: active session $($previous.sessionId) owns kind=$previousKind and its original scenario scope. Resume that exact session or report its blocker; do not reset the budget."
+            }
+            if ([string]$previous.status -eq 'workflow-blocked') {
+                # Workflow refusals never consumed the product budget, so the
+                # same session resumes with its attempts. The last blocked code
+                # is retained: an unchanged refusal stops again after one run.
+                $previous.status = 'active'
+                $previous.updatedAt = (Get-Date).ToString('o')
+                Write-ItlVerificationRepairRecord -Record $previous
+            }
+            $assessment = ''
+            $basisPath = [string](Get-Variable -Name VerificationRepairBasisPath -ValueOnly -ErrorAction SilentlyContinue)
+            if ($null -eq $maximumAttempts -and [int]$previous.attempts -ge 5 -and $basisPath) {
+                $basis = Get-ItlVerificationRepairBasis -Runs @(Get-ItlVerificationRepairRuns -Record $previous) -Path $basisPath
+                $assessment = if ($basis.status -eq 'linked') { 'basis linked; assess the reason before running' }
+                    else { "WARN $($basis.status), diagnose before repeating" }
+            }
+            Write-ItlVerificationRepairStatus -Record $previous -Maximum $maximumAttempts -Label 'Repair session resumed' -Admission $assessment
+            return
+        }
         if ([string]$previous.status -eq "exhausted") {
+            # ConvertFrom-Json returns UTC DateTime for a trailing Z, whereas
+            # casting the state string to DateTime yields local time. Compare
+            # absolute instants so a stale recovery cannot reset the budget.
+            $exhaustedAt = [datetimeoffset]$previous.updatedAt
+            $mutationAt = [datetimeoffset](Get-StateValue $state "toolingRecoveredMutationAt" "0001-01-01T00:00:00Z")
+            $recoveredAt = [datetimeoffset](Get-StateValue $state "toolingRecoveredAt" "0001-01-01T00:00:00Z")
             if (-not $recoveryId -or $recoveryId -ceq [string](Get-StateValue $previous "toolingRecoveryId" "") -or
-                [datetime](Get-StateValue $state "toolingRecoveredMutationAt" "0001-01-01") -le [datetime]$previous.updatedAt -or
-                [datetime](Get-StateValue $state "toolingRecoveredAt" "0001-01-01") -le [datetime]$previous.updatedAt) {
+                $mutationAt -le $exhaustedAt -or $recoveredAt -le $exhaustedAt) {
                 Set-RunFailureContext -Category "runner" -RequiredAction "report-blocker"
                 throw "ITL_VERIFICATION_REPAIR_EXHAUSTED: repair the diagnosed tooling prerequisite through repair-dev-branch-tooling before starting a new bounded session."
             }
+        }
+        if ([string]$previous.status -eq 'exhausted' -or
+            ([string]$previous.status -eq 'passed' -and $previous.PSObject.Properties['runs'])) {
             $archive = Join-Path (Split-Path -Parent $path) ("history/" + [string]$previous.sessionId + ".json")
             New-Item -ItemType Directory -Path (Split-Path -Parent $archive) -Force | Out-Null
             Copy-Item -LiteralPath $path -Destination $archive -ErrorAction Stop
         }
     }
-    $maximumAttempts = Get-ItlVerificationRepairMaximumAttempts
+    $maximumAttempts = if ($VerificationRepairMaxAttempts -gt 0) {
+        $VerificationRepairMaxAttempts
+    } elseif ($kind -eq 'scenario-loop') {
+        3
+    } else {
+        Get-ItlVerificationRepairMaximumAttempts
+    }
     $record = [pscustomobject][ordered]@{
-        schemaVersion = 1
+        schemaVersion = $(if ($null -eq $maximumAttempts) { 2 } else { 1 })
         sessionId = [guid]::NewGuid().ToString("N")
+        kind = $kind
+        scenarioFeature = $scenarioFeature
+        scenarioTags = $scenarioTags
         projectRoot = $script:ProjectRoot
         branch = Get-CurrentBranch
         attempts = 0
@@ -223,10 +504,78 @@ function Start-ItlVerificationRepairSession {
     }
     $path = Get-ItlVerificationRepairStatePath
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
-    Write-Utf8TextAtomic -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
-    Write-Host "Repair session: $($record.sessionId)"
-    Write-Host "Repair attempts: 0/$maximumAttempts"
-    Set-RunUserReport -Report "Repair session: $($record.sessionId). Repair attempts: 0/$maximumAttempts."
+    Write-ItlVerificationRepairRecord -Record $record
+    Write-ItlVerificationRepairStatus -Record $record -Maximum $maximumAttempts -Label 'Repair session'
+}
+
+function Extend-ItlVerificationRepairSession {
+    $source = ([string]$VerificationRepairGrantSource).Trim()
+    if (-not $source -or $source.Length -gt 1024) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_GRANT_REQUIRED: provide the source reference of an explicit user grant for this session; preserve the session and resume this operation after obtaining that grant.'
+    }
+    if (-not $RepairSessionId -or $VerificationRepairMaxAttempts -lt 1 -or $VerificationRepairMaxAttempts -gt 100) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_ARGUMENTS_INVALID: pass the existing RepairSessionId and an authorized maximum between 1 and 100; do not replace the session to bypass its limit.'
+    }
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'extend-verification-repair'
+    $path = Get-ItlVerificationRepairStatePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_STATE_MISSING: restore the original session through its owner; extension does not create a new session.'
+    }
+    $record = Read-Utf8Text -Path $path | ConvertFrom-Json
+    $recordRoot = [string](Get-StateValue $record 'projectRoot' '')
+    if ([string](Get-StateValue $record 'sessionId' '') -cne $RepairSessionId -or
+        [string](Get-StateValue $record 'branch' '') -cne (Get-CurrentBranch) -or
+        -not $recordRoot -or
+        -not [string]::Equals((Get-FullPathNormalized $recordRoot), (Get-FullPathNormalized $script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_SCOPE_MISMATCH: run the explicit extension in the original session branch/worktree with its exact RepairSessionId; the record was retained.'
+    }
+    $kind = [string](Get-StateValue $record 'kind' 'canonical-repair')
+    if (($VerificationRepairKind -and $VerificationRepairKind -cne $kind) -or
+        ($VanessaFeaturePath -and (Resolve-ProjectPath $VanessaFeaturePath) -cne [string](Get-StateValue $record 'scenarioFeature' '')) -or
+        ($VanessaFilterTags -and $VanessaFilterTags.Trim() -cne [string](Get-StateValue $record 'scenarioTags' ''))) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_SCOPE_CHANGED: preserve the original kind/feature/tags; extension changes only the existing session limit.'
+    }
+    $status = [string](Get-StateValue $record 'status' '')
+    if ($status -notin @('active', 'exhausted')) {
+        throw "ITL_VERIFICATION_REPAIR_EXTENSION_TERMINAL: session '$RepairSessionId' has status '$status'; resume the original task, do not revive a completed session."
+    }
+    $maximum = Get-ItlVerificationRepairRecordMaximumAttempts -Record $record
+    if ($null -eq $maximum) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_NOT_NEEDED: this session has no overall limit; continue the original command with its existing ID.'
+    }
+    [int]$attempts = 0
+    if (-not [int]::TryParse([string](Get-StateValue $record 'attempts' ''), [ref]$attempts) -or
+        $attempts -lt 0 -or $attempts -gt $maximum -or ($status -eq 'exhausted' -and $attempts -lt $maximum)) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_STATE_INVALID: attempts/status contradict the existing limit; retain the record and diagnose it through the repair-session owner.'
+    }
+    if ($VerificationRepairMaxAttempts -lt $maximum) {
+        throw "ITL_VERIFICATION_REPAIR_EXTENSION_NOT_MONOTONIC: current maximum is $maximum; pass the authorized greater maximum without resetting attempts."
+    }
+    if ($VerificationRepairMaxAttempts -eq $maximum) {
+        Set-RunUserReport -Report "Repair limit unchanged: $RepairSessionId; attempts=$attempts/$maximum; status=$status. An exhausted session still requires an authorized greater maximum."
+        return
+    }
+    $historyProperty = $record.PSObject.Properties['limitExtensions']
+    $history = @()
+    if ($null -ne $historyProperty -and $null -ne $historyProperty.Value) {
+        if ($historyProperty.Value -isnot [Array]) {
+            throw 'ITL_VERIFICATION_REPAIR_EXTENSION_HISTORY_INVALID: retain the existing extension history and diagnose its format; do not discard or replace it.'
+        }
+        $history = @($historyProperty.Value)
+    }
+    $now = (Get-Date).ToString('o')
+    $event = [pscustomobject]@{
+        id = [guid]::NewGuid().ToString('N'); at = $now; source = $source
+        previousMaximum = $maximum; maximum = $VerificationRepairMaxAttempts
+        attempts = $attempts; previousStatus = $status
+    }
+    $record.maximumAttempts = $VerificationRepairMaxAttempts
+    $record.status = 'active'
+    $record.updatedAt = $now
+    $record | Add-Member -NotePropertyName limitExtensions -NotePropertyValue (@($history) + @($event)) -Force
+    Write-ItlVerificationRepairRecord -Record $record
+    Set-RunUserReport -Report "Repair session extended: $RepairSessionId; attempts=$attempts/$VerificationRepairMaxAttempts; previous maximum=$maximum. Continue the original repair command with this RepairSessionId; prior failures and evidence were retained."
 }
 
 function Get-ItlMatchingVerificationRepairSession {
@@ -249,6 +598,10 @@ function Get-ItlMatchingVerificationRepairSession {
             Set-RunFailureContext -Category "runner" -RequiredAction "stop-repair-and-resume-original-task"
             throw "Repair session $($record.sessionId) already passed. Do not start another repair run; resume the original task and use an ordinary check for later verification."
         }
+        if ([string]$record.status -eq "workflow-blocked") {
+            Set-RunFailureContext -Category "runner" -RequiredAction "report-workflow-incident"
+            throw "ITL_VERIFICATION_REPAIR_WORKFLOW_BLOCKED: repair session $($record.sessionId) stopped after workflow refusal $(Get-StateValue $record 'lastWorkflowBlockedCode' '') repeated consecutively; product attempts $(Format-ItlVerificationRepairAttempts -Record $record -Maximum $record.maximumAttempts) were preserved. Follow references/workflow-incidents.md, then resume this session with begin-verification-repair."
+        }
         Set-RunFailureContext -Category "runner" -RequiredAction "report-blocker"
         throw "Repair session $($record.sessionId) is terminal (status=$($record.status)). Return its blocker diagnostics; another full run is forbidden."
     }
@@ -259,8 +612,25 @@ function Assert-ItlVerificationRepairScope {
     param([ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger)
 
     if ($Trigger -ne "repair" -or -not (Test-ItlDiagnosticVerificationScope)) { return }
+    if (Test-ItlYAxUnitDiagnosticScope) {
+        Set-RunFailureContext -Category "runner" -RequiredAction "repeat-original-diagnostic-without-repair-session"
+        throw "VerificationTrigger=repair cannot be combined with YAxUnitModule. A filtered YAxUnit run is diagnostic only; repeat it without a repair session."
+    }
+    if (-not $RepairSessionId -and -not $VerificationRepairKind) {
+        Set-RunFailureContext -Category "runner" -RequiredAction "repeat-original-diagnostic-without-repair-session"
+        throw "VerificationTrigger=repair cannot be combined with VanessaFeaturePath or VanessaFilterTags for canonical-repair. A filtered run is diagnostic only; use an explicitly scoped scenario-loop session."
+    }
+    $record = Get-ItlMatchingVerificationRepairSession
+    if ([string](Get-StateValue $record 'kind' 'canonical-repair') -eq 'scenario-loop') {
+        $feature = if ($VanessaFeaturePath) { Resolve-ProjectPath $VanessaFeaturePath } else { '' }
+        $tags = ([string]$VanessaFilterTags).Trim()
+        if ($feature -ceq [string](Get-StateValue $record 'scenarioFeature' '') -and
+            $tags -ceq [string](Get-StateValue $record 'scenarioTags' '')) { return }
+        Set-RunFailureContext -Category 'runner' -RequiredAction 'repeat-original-scenario-scope'
+        throw "ITL_VERIFICATION_REPAIR_SCOPE_CHANGED: scenario-loop $($record.sessionId) permits only its recorded feature and tag filter."
+    }
     Set-RunFailureContext -Category "runner" -RequiredAction "repeat-original-diagnostic-without-repair-session"
-    throw "VerificationTrigger=repair cannot be combined with VanessaFeaturePath or VanessaFilterTags. A filtered run is diagnostic only; repeat the original diagnostic check without a repair session."
+    throw "VerificationTrigger=repair cannot be combined with VanessaFeaturePath or VanessaFilterTags for canonical-repair. A filtered run is diagnostic only; use an explicitly scoped scenario-loop session."
 }
 
 function Test-ItlFullVerificationProofEligible {
@@ -279,50 +649,349 @@ function Test-ItlFullVerificationProofEligible {
 }
 
 function Use-ItlVerificationRepairAttempt {
+    param([string]$InputFingerprint = '')
+
     if ($VerificationTrigger -ne "repair") { return }
     $record = Get-ItlMatchingVerificationRepairSession
-    $path = Get-ItlVerificationRepairStatePath
     $maximumAttempts = Get-ItlVerificationRepairRecordMaximumAttempts -Record $record
-    if ([int]$record.attempts -ge $maximumAttempts) {
+    if ($null -ne $maximumAttempts -and [int]$record.attempts -ge $maximumAttempts) {
         $record.status = "exhausted"
         $record.updatedAt = (Get-Date).ToString("o")
-        Write-Utf8TextAtomic -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+        Write-ItlVerificationRepairRecord -Record $record
         Set-RunFailureContext -Category "runner" -RequiredAction "report-blocker"
         throw "Repair session $($record.sessionId) exhausted its $maximumAttempts full verification runs. Return blocker diagnostics; another full run is forbidden."
     }
+    # A workflow-blocked outcome refunds this attempt; the ticket lets the
+    # failure owner restore the pre-attempt scenario-loop input identity.
+    $identityProperty = $record.PSObject.Properties['lastAttemptInputIdentity']
+    $ticket = [pscustomobject]@{
+        sessionId = [string]$record.sessionId
+        hadInputIdentity = $null -ne $identityProperty
+        inputIdentity = $(if ($null -ne $identityProperty) { [string]$identityProperty.Value } else { '' })
+    }
+    if ([string](Get-StateValue $record 'kind' 'canonical-repair') -eq 'scenario-loop') {
+        $state = Read-DevBranchState -Name $DevBranchName
+        $featurePath = [string](Get-StateValue $record 'scenarioFeature' '')
+        $featureIdentity = ''
+        if ($featurePath) {
+            [void](Get-VerificationRepoRelativePath -Path $featurePath)
+            if (-not (Test-Path -LiteralPath $featurePath -PathType Leaf)) {
+                throw "ITL_VERIFICATION_SCENARIO_FEATURE_MISSING: '$featurePath' was removed from the active scenario-loop scope. Restore the named feature before consuming another attempt."
+            }
+            $featureIdentity = (Get-FileHash -LiteralPath $featurePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        $modeIdentity = @(@('yaxunit', 'vanessa', 'event-log') | ForEach-Object {
+            $decision = Get-ItlVerificationExecutionDecision -Component $_ -Trigger command
+            "$($_)=$($decision.mode):$($decision.valid);$($decision.providerKey)=$($decision.providerPolicy):$($decision.providerValid)"
+        }) -join ','
+        $inputIdentity = (Get-VerificationFingerprint) + '|toolingRecoveryId=' +
+            [string](Get-StateValue $state 'toolingRecoveryId' '') + '|modes=' + $modeIdentity +
+            '|named=' + ([string]$ExplicitVerificationComponent).Trim().ToLowerInvariant() + '|feature=' + $featureIdentity
+        if ([int]$record.attempts -gt 0 -and
+            [string](Get-StateValue $record 'lastAttemptInputIdentity' '') -ceq $inputIdentity) {
+            Set-RunFailureContext -Category 'runner' -RequiredAction 'diagnose-and-change-before-retry'
+            throw "ITL_VERIFICATION_REPAIR_NO_CHANGE: scenario-loop $($record.sessionId) already checked this source and tooling state. Diagnose the failure and change the relevant input before another round."
+        }
+        if ($record.PSObject.Properties['lastAttemptInputIdentity']) {
+            $record.lastAttemptInputIdentity = $inputIdentity
+        } else {
+            $record | Add-Member -NotePropertyName lastAttemptInputIdentity -NotePropertyValue $inputIdentity
+        }
+    }
     $record.attempts = [int]$record.attempts + 1
     $record.updatedAt = (Get-Date).ToString("o")
-    Write-Utf8TextAtomic -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+    if ((Get-StateValue $record 'kind' 'canonical-repair') -eq 'canonical-repair') {
+        $run = New-ItlVerificationRepairRun -Record $record -Outcome 'admitted'
+        $run.inputFingerprint = $InputFingerprint
+        $ticket | Add-Member -NotePropertyName runId -NotePropertyValue $run.id
+        if ($null -eq $maximumAttempts -and [int]$record.attempts -gt 5) {
+            $basisPath = [string](Get-Variable -Name VerificationRepairBasisPath -ValueOnly -ErrorAction SilentlyContinue)
+            $run.basis = Get-ItlVerificationRepairBasis -Runs @(Get-ItlVerificationRepairRuns -Record $record) -Path $basisPath
+            if ($run.basis.status -ne 'linked') {
+                Write-Warning "ITL_VERIFICATION_REPAIR_BASIS: $($run.basis.status). Diagnose the last result and record a current reason before repeating. See references/verification-result.md." -WarningAction Continue
+            }
+        }
+        Add-ItlVerificationRepairRun -Record $record -Run $run
+    }
+    Write-ItlVerificationRepairRecord -Record $record
     Write-Host "Repair session: $($record.sessionId)"
-    Write-Host "Repair attempt: $($record.attempts)/$maximumAttempts"
+    Write-Host "Repair attempt: $(Format-ItlVerificationRepairAttempts -Record $record -Maximum $maximumAttempts)"
+    return $ticket
+}
+
+function Get-ItlVerificationRepairWorkflowBlockCode {
+    param(
+        [AllowEmptyString()][string]$Message,
+        [AllowEmptyString()][string]$Category = ''
+    )
+
+    # Only a workflow/runner refusal before a product verdict is refunded. A
+    # product, fixture, suite, update or event-log owner always counts.
+    if ($Category -and $Category -notin @('runner', 'session-capacity', 'execution-conflict')) { return '' }
+    if ([string]$Message -cmatch '(?<![A-Z0-9_])((?:ITL_TESTCLIENT|EXECUTION_GUARD|ITL_ONDEMAND)_[A-Z0-9_]+|ITL_ONEC_SESSION_LIMIT|ITL_VANESSA_LICENSE_LIMIT)(?![A-Z0-9_])') {
+        return [string]$Matches[1]
+    }
+    return ''
+}
+
+function Set-ItlVerificationRepairRecordValue {
+    param([object]$Record, [string]$Name, [AllowNull()][object]$Value)
+
+    if ($Record.PSObject.Properties[$Name]) { $Record.$Name = $Value }
+    else { $Record | Add-Member -NotePropertyName $Name -NotePropertyValue $Value }
 }
 
 function Complete-ItlVerificationRepairSession {
+    param([AllowNull()][object]$AttemptTicket, [AllowNull()][object]$Result)
+
     if ($VerificationTrigger -ne "repair") { return }
-    $path = Get-ItlVerificationRepairStatePath
     $record = Get-ItlMatchingVerificationRepairSession
     $record.status = "passed"
     $record.updatedAt = (Get-Date).ToString("o")
-    Write-Utf8TextAtomic -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+    Set-ItlVerificationRepairRunOutcome -Record $record -Ticket $AttemptTicket -Outcome 'completed' -Result $Result
+    Write-ItlVerificationRepairRecord -Record $record
 }
 
 function Complete-ItlVerificationRepairFailure {
+    param(
+        [AllowNull()][object]$Failure = $null,
+        [AllowNull()][object]$AttemptTicket = $null,
+        [AllowNull()][object]$Result = $null
+    )
+
     if ($VerificationTrigger -ne "repair") { return }
-    $path = Get-ItlVerificationRepairStatePath
     $record = Get-ItlMatchingVerificationRepairSession
     $maximumAttempts = Get-ItlVerificationRepairRecordMaximumAttempts -Record $record
-    if ([int]$record.attempts -lt $maximumAttempts) { return }
+    $message = if ($Failure -is [System.Management.Automation.ErrorRecord]) { [string]$Failure.Exception.Message }
+        elseif ($Failure -is [Exception]) { [string]$Failure.Message } elseif ($null -ne $Failure) { [string]$Failure } else { '' }
+    $category = [string](Get-Variable -Name RunErrorCategory -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    $blockCode = if ($message) { Get-ItlVerificationRepairWorkflowBlockCode -Message $message -Category $category } else { '' }
+    $previousBlockCode = [string](Get-StateValue $record 'lastWorkflowBlockedCode' '')
+    $AttemptTicket = @(@($AttemptTicket) | Where-Object { $null -ne $_ -and $null -ne $_.PSObject.Properties['sessionId'] }) | Select-Object -Last 1
+    $outcome = if ($blockCode) { 'workflow-refunded' } else { 'failed' }
+    $changed = Set-ItlVerificationRepairRunOutcome -Record $record -Ticket $AttemptTicket -Outcome $outcome -Result $Result -PassThru
 
-    $record.status = "exhausted"
-    $record.updatedAt = (Get-Date).ToString("o")
-    Write-Utf8TextAtomic -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
-    Set-RunFailureContext -RequiredAction "report-blocker"
+    if ($blockCode) {
+        # The refusal happened before a product verdict: refund the attempt
+        # instead of spending the user's product repair budget on workflow.
+        $record.attempts = [Math]::Max(0, [int]$record.attempts - 1)
+        if ($null -ne $AttemptTicket -and [string]$AttemptTicket.sessionId -ceq [string]$record.sessionId) {
+            if ([bool]$AttemptTicket.hadInputIdentity) {
+                Set-ItlVerificationRepairRecordValue -Record $record -Name 'lastAttemptInputIdentity' -Value ([string]$AttemptTicket.inputIdentity)
+            } elseif ($record.PSObject.Properties['lastAttemptInputIdentity']) {
+                $record.PSObject.Properties.Remove('lastAttemptInputIdentity')
+            }
+        }
+        $now = (Get-Date).ToString('o')
+        $history = @(@(Get-StateValue $record 'workflowBlocked' @()) + @([pscustomobject][ordered]@{ code = $blockCode; at = $now; category = $category }))
+        if ($history.Count -gt 20) { $history = @($history | Select-Object -Last 20) }
+        Set-ItlVerificationRepairRecordValue -Record $record -Name 'workflowBlocked' -Value $history
+        Set-ItlVerificationRepairRecordValue -Record $record -Name 'workflowBlockedCount' -Value ([int](Get-StateValue $record 'workflowBlockedCount' 0) + 1)
+        Set-ItlVerificationRepairRecordValue -Record $record -Name 'lastWorkflowBlockedCode' -Value $blockCode
+        $repeated = $previousBlockCode -ceq $blockCode
+        if ($repeated) { $record.status = 'workflow-blocked' }
+        $record.updatedAt = $now
+        Write-ItlVerificationRepairRecord -Record $record
+        $attemptText = Format-ItlVerificationRepairAttempts -Record $record -Maximum $maximumAttempts
+        if ($repeated) {
+            Set-RunFailureContext -Category 'runner' -RequiredAction 'report-workflow-incident'
+            Write-Host "Repair session $($record.sessionId) stopped: workflowBlocked code $blockCode repeated consecutively. Product attempts: $attemptText. Follow references/workflow-incidents.md."
+        } else {
+            Write-Host "Repair attempt not counted: workflowBlocked code=$blockCode. Product attempts: $attemptText. A consecutive repeat of the same code stops the session."
+        }
+        return
+    }
+
+    if ($previousBlockCode) {
+        # A counted product attempt ends the consecutive workflow-block run.
+        $record.lastWorkflowBlockedCode = ''
+        $changed = $true
+    }
+    $exhausted = $null -ne $maximumAttempts -and [int]$record.attempts -ge $maximumAttempts
+    if ($exhausted) {
+        $record.status = "exhausted"
+        $changed = $true
+    }
+    if ($changed) {
+        $record.updatedAt = (Get-Date).ToString("o")
+        Write-ItlVerificationRepairRecord -Record $record
+    }
+    if ($exhausted) { Set-RunFailureContext -RequiredAction "report-blocker" }
+}
+
+function Get-ItlVerificationRepairRunResult {
+    param([string]$Phase, [object]$State, [AllowNull()][object]$Verification, [AllowNull()][object]$Failure, [datetime]$StartedAt)
+
+    $yaxunit = $null
+    $eventLog = $null
+    $observedAt = [datetimeoffset]::MinValue
+    $timestamp = [string](Get-StateValue $State 'lastYAxUnitTestAt' '')
+    if ([datetimeoffset]::TryParse($timestamp, [ref]$observedAt) -and $observedAt -ge $StartedAt) {
+        $yaxunit = [pscustomobject]@{
+            status = Get-StateValue $State 'lastYAxUnitStatus' 'unknown'
+            coverage = Get-StateValue $State 'lastYAxUnitCoverage' $null
+            junitPath = Get-StateValue $State 'lastYAxUnitReportPath' ''
+            logPath = Get-StateValue $State 'lastYAxUnitLogPath' ''
+        }
+    }
+    $timestamp = [string](Get-StateValue $State 'lastEventLogOnlyCheckedAt' '')
+    if ([datetimeoffset]::TryParse($timestamp, [ref]$observedAt) -and $observedAt -ge $StartedAt) {
+        $eventLog = [pscustomobject]@{
+            status = Get-StateValue $State 'lastEventLogOnlyStatus' 'unknown'
+            reportPath = Get-StateValue $State 'lastEventLogOnlyReportPath' ''
+        }
+    } else {
+        $timestamp = [string](Get-StateValue $State 'lastVanessaEventLogCheckedUntil' '')
+        $path = [string](Get-StateValue $State 'lastVanessaEventLogNewErrorsPath' '')
+        if ($path -and [datetimeoffset]::TryParse($timestamp, [ref]$observedAt) -and $observedAt -ge $StartedAt) {
+            $status = if ((Get-StateValue $State 'lastVanessaEventLogScanMode' '') -in @('', 'failed', 'skipped')) { 'unknown' }
+                elseif ((Get-StateValue $State 'lastVanessaEventLogNewErrorCount' 0) -gt 0) { 'failed' } else { 'observed' }
+            $eventLog = [pscustomobject]@{ status = $status; reportPath = $path }
+        }
+    }
+    $vanessa = $null
+    $timestamp = [string](Get-StateValue $State 'lastVanessaStartedAt' '')
+    if ([datetimeoffset]::TryParse($timestamp, [ref]$observedAt) -and $observedAt -ge $StartedAt) {
+        $vanessa = [pscustomobject]@{
+            reportPath = Get-StateValue $State 'lastVanessaReportPath' ''
+            logPath = Get-StateValue $State 'lastVanessaLogPath' ''
+            statusPath = Get-StateValue $State 'lastVanessaStatusPath' ''
+        }
+    }
+    $stage = [string](Get-Variable RunStage -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    $nativeLog = [string](Get-Variable LastLogPath -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    return [pscustomobject]@{
+        phase = $Phase
+        stage = $stage
+        category = [string](Get-Variable RunErrorCategory -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+        reason = $(if ($null -ne $Failure) { ([string]$Failure.Exception.Message -split '
+?
+', 2)[0] | ForEach-Object { $_.Substring(0, [Math]::Min($_.Length, 512)) } } else { '' })
+        verification = Get-StateValue $Verification 'effectiveStatus' 'unknown'
+        freshPassed = [bool](Get-StateValue $Verification 'isFreshPassed' $false)
+        taskAccepted = [bool](Get-StateValue $Verification 'isFreshPassed' $false) -and [bool](Get-StateValue $Verification 'taskAccepted' $true)
+        acceptanceRemaining = @(if ($null -ne $Verification -and $Verification.PSObject.Properties['acceptanceRemaining']) { $Verification.acceptanceRemaining })
+        yaxunit = $yaxunit
+        eventLog = $eventLog
+        vanessa = $vanessa
+        evidence = @(@((Get-StateValue $yaxunit 'junitPath' ''), (Get-StateValue $yaxunit 'logPath' ''),
+            (Get-StateValue $eventLog 'reportPath' ''), (Get-StateValue $vanessa 'statusPath' ''), (Get-StateValue $vanessa 'logPath' ''), $nativeLog) |
+            Where-Object { $_ } | Select-Object -Unique | ForEach-Object {
+                $item = Get-Item -LiteralPath $_ -ErrorAction SilentlyContinue
+                if ($null -ne $item -and -not $item.PSIsContainer) {
+                    [pscustomobject]@{ path = $item.FullName; length = $item.Length; modifiedTicks = $item.LastWriteTimeUtc.Ticks }
+                }
+            })
+    }
+}
+
+function Publish-ItlVerificationRepairRun {
+    param(
+        [AllowNull()][object]$Ticket, [AllowNull()][object]$Result,
+        [AllowNull()][object]$Failure, [bool]$SessionPassed, [datetime]$StartedAt
+    )
+
+    $record = if ($null -eq $Failure -or $null -ne $Ticket) { Get-ItlMatchingVerificationRepairSession } else {
+        $path = Get-ItlVerificationRepairStatePath
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+        $saved = Read-Utf8Text -Path $path | ConvertFrom-Json
+        if ($saved.sessionId -cne $RepairSessionId -or $saved.branch -cne (Get-CurrentBranch) -or
+            (Get-FullPathNormalized ([string]$saved.projectRoot)) -ine (Get-FullPathNormalized $script:ProjectRoot) -or (Get-StateValue $saved 'kind' 'canonical-repair') -ne 'canonical-repair') { return }
+        $saved
+    }
+    if ((Get-StateValue $record 'kind' 'canonical-repair') -ne 'canonical-repair') { return }
+    $maximum = Get-ItlVerificationRepairRecordMaximumAttempts -Record $record
+    if ($null -ne $Failure -and $null -ne $Ticket) {
+        Complete-ItlVerificationRepairFailure -Failure $Failure -AttemptTicket $Ticket -Result $Result
+        $record = Read-Utf8Text -Path (Get-ItlVerificationRepairStatePath) | ConvertFrom-Json
+    } elseif ($SessionPassed) {
+        Complete-ItlVerificationRepairSession -AttemptTicket $Ticket -Result $Result
+        $record.status = 'passed'
+    } elseif ($null -ne $Ticket) {
+        Set-ItlVerificationRepairRunOutcome -Record $record -Ticket $Ticket -Outcome 'completed' -Result $Result
+        Write-ItlVerificationRepairRecord -Record $record
+    } else {
+        $run = New-ItlVerificationRepairRun -Record $record -Outcome 'admitted'
+        $run.attempt = $null
+        $run.startedAt = $StartedAt.ToString('o')
+        Add-ItlVerificationRepairRun -Record $record -Run $run
+        $outcome = if ($null -eq $Failure) { 'partial-unaccounted' }
+            elseif ($record.status -eq 'exhausted') { 'limit-refused' }
+            elseif ($record.status -eq 'active') { 'preflight-refused' } else { 'session-refused' }
+        Set-ItlVerificationRepairRunOutcome -Record $record -Ticket ([pscustomobject]@{runId=$run.id}) -Outcome $outcome -Result $Result
+        Write-ItlVerificationRepairRecord -Record $record
+    }
+    $runs = @(Get-ItlVerificationRepairRuns -Record $record)
+    $admission = if ($null -eq $Ticket) { "$($runs[-1].outcome), no attempt charged" }
+        elseif ($runs.Count -gt 0 -and $runs[-1].outcome -eq 'workflow-refunded') { 'workflow refusal, attempt returned' }
+        elseif ($runs.Count -gt 0 -and $null -ne $runs[-1].basis -and $runs[-1].basis.status -ne 'linked') { "WARN $($runs[-1].basis.status), diagnose before repeating" }
+        else { 'admitted' }
+    Write-ItlVerificationRepairStatus -Record $record -Maximum $maximum -Label 'Repair session' -Admission $admission
+}
+
+function Get-ItlVanessaVerificationSelectionPlan {
+    param([switch]$YAxUnitVerificationPlanned)
+
+    if ($script:ActiveAuxiliaryVanessaContext -or (Test-ItlDiagnosticVerificationScope)) { return $null }
+    $featuresPath = Get-VanessaFeaturesPath
+    $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
+    $oneOffObligations = @(Get-VerificationOneOffObligations)
+    $currentChange = if ((Get-VerificationModel) -eq 'change') { Read-VerificationChange } else { $null }
+    if ($applicationFeatureFiles.Count -eq 0 -and $oneOffObligations.Count -eq 0 -and ($null -eq $currentChange -or @($currentChange.checks).Count -eq 0)) { return $null }
+    $plan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles -YAxUnitVerificationPlanned:$YAxUnitVerificationPlanned -RequireObservedReceipts
+    if ($plan.mode -eq 'classification-required') {
+        Set-RunFailureContext -Category 'missing-suite' -RequiredAction 'classify-tests-and-repeat-original-itl-command'
+        throw "ITL_TEST_CLASSIFICATION_REQUIRED: $($plan.reason) Inventory: $(Get-VerificationClassificationInventoryPath)"
+    }
+    return $plan
+}
+
+function Invoke-VanessaSelectionBatches {
+    param([AllowNull()][object]$Plan, [scriptblock]$RunBatch)
+
+    $batch = $Plan
+    $messages = [Collections.Generic.List[string]]::new()
+    do {
+        $script:ActiveVerificationSelectionPlan = $batch
+        $continuing = $messages.Count -gt 0
+        try {
+            & $RunBatch $continuing
+            if ($continuing) {
+                $batchState = Read-DevBranchState -Name $DevBranchName
+                $messages.Add("Продолжение Vanessa прошло: $($batch.selectedSuiteIds -join ', '). JUnit: $($batchState.lastVanessaReportPath)")
+            }
+            break
+        } catch {
+            $exception = $_.Exception
+            $messages.Add($exception.Message)
+            if ($exception.Data['vanessaRunDirectory']) { $messages.Add("JUnit: $($exception.Data['vanessaRunDirectory'])") }
+            $next = $null
+            try {
+                $suites = $exception.Data['vanessaFeatureSuites']
+                if ($null -ne $suites -and $batch.currentTree -ceq (Get-VerificationSelectionEffectiveTree)) {
+                    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+                    $next = Get-IndependentVanessaRemainderPlan -Plan $batch -Suites $suites -Catalog $catalog
+                }
+            } catch {
+                $messages.Add("Не удалось определить оставшиеся независимые наборы: $($_.Exception.Message)")
+                break
+            }
+            if ($null -eq $next -and -not $continuing) { throw }
+            if ($next) { Write-Host "Continuing Vanessa in a new TestManager: $($next.selectedSuiteIds -join ', ')." }
+            $batch = $next
+        }
+    } while ($null -ne $batch)
+    if ($messages.Count) {
+        Set-RunStage -Stage 'vanessa.failed' -Detail 'Vanessa finished with a failed scenario.'
+        throw ($messages -join [Environment]::NewLine)
+    }
 }
 
 function Invoke-ItlVerificationCycle {
     param(
         [ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger = "command",
         [string[]]$ExplicitComponents = @(),
+        [switch]$ScenarioDiagnosticOnly,
         [string]$EventLogCursorPath = "",
         [Nullable[datetime]]$EventLogBoundaryAt = $null,
         [string]$EventLogCursorScope = "vanessa-only"
@@ -332,6 +1001,15 @@ function Invoke-ItlVerificationCycle {
     $yaxunit = Get-ItlVerificationExecutionDecision -Component "yaxunit" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
     $vanessa = Get-ItlVerificationExecutionDecision -Component "vanessa" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
     $eventLog = Get-ItlVerificationExecutionDecision -Component "event-log" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
+    if ($ScenarioDiagnosticOnly) {
+        if (-not (Test-ItlDiagnosticVerificationScope) -or -not $vanessa.run) {
+            throw 'ITL_VERIFICATION_SCENARIO_DIAGNOSTIC_INVALID: a named Vanessa scenario and permitted runner are required before the unfiltered phase.'
+        }
+        foreach ($deferred in @($yaxunit, $eventLog)) {
+            $deferred.run = $false
+            $deferred.reason = 'deferred to the unfiltered phase of the same scenario-loop attempt'
+        }
+    }
     $decisions = @($yaxunit, $vanessa, $eventLog)
     foreach ($decision in $decisions) { Write-Host "Verification component $($decision.component): $(if ($decision.run) { 'RUN' } else { 'SKIP' }) ($($decision.reason))" }
 
@@ -339,26 +1017,35 @@ function Invoke-ItlVerificationCycle {
     $selectionPlan = $null
     if (-not $script:ActiveAuxiliaryVanessaContext -and ($vanessa.run -or $yaxunit.run)) {
         Assert-VerificationClassificationReady -Reason "check-dev-branch preflight" -RequireVanessa:$vanessa.run -RequireYAxUnit:$yaxunit.run | Out-Null
+        $state = Read-DevBranchState -Name $DevBranchName
     }
-    if ($recordFullProof -and -not $script:ActiveAuxiliaryVanessaContext -and -not (Test-ItlDiagnosticVerificationScope)) {
-        if ($vanessa.run) {
-            $featuresPath = Get-VanessaFeaturesPath
-            $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
-            if ($applicationFeatureFiles.Count -gt 0) {
-                $selectionPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles -YAxUnitVerificationPlanned:$yaxunit.run
-                if ($selectionPlan.mode -eq "classification-required") {
-                    Set-RunFailureContext -Category "missing-suite" -RequiredAction "classify-tests-and-repeat-original-itl-command"
-                    throw "ITL_TEST_CLASSIFICATION_REQUIRED: $($selectionPlan.reason) Inventory: $(Get-VerificationClassificationInventoryPath)"
-                }
-            }
-        }
+    if ($vanessa.run) {
+        $selectionPlan = Get-ItlVanessaVerificationSelectionPlan -YAxUnitVerificationPlanned:$yaxunit.run
+        Set-ItlCheckTimingValue -Name selectionMode -Value ([string](Get-StateValue -State $selectionPlan -Name mode -Default ''))
+        Set-ItlCheckTimingValue -Name selectionReason -Value ([string](Get-StateValue -State $selectionPlan -Name reason -Default ''))
     }
 
+    # Unchanged inputs and loaded target make a passed YAxUnit result current;
+    # a named or filtered request still runs it. The assessment below accepts
+    # the same receipt, so a reused component is not a skipped one.
+    $yaxunitNamed = $ExplicitComponents -contains 'yaxunit' -or $ExplicitComponents -contains 'all'
+    if ($yaxunit.run -and -not $yaxunitNamed -and -not (Test-ItlYAxUnitDiagnosticScope) -and
+        (Test-VerificationComponentEvidenceReusable -State $state -Component 'yaxunit')) {
+        $yaxunit.run = $false
+        $yaxunit | Add-Member -NotePropertyName reused -NotePropertyValue $true -Force
+        $yaxunit.reason = 'the passed YAxUnit result covers the same inputs, loaded infobase and checker'
+        Set-ItlCheckTimingValue -Name yaxunitReused -Value $true
+        Write-Host "Verification component yaxunit: REUSE ($($yaxunit.reason)); YAxUnit was not started."
+    }
     if ($yaxunit.run) {
-        Invoke-YAxUnitVerification -State $state | Out-Null
+        $componentStarted = Get-Date
+        try { Invoke-YAxUnitVerification -State $state | Out-Null }
+        finally { Set-ItlCheckTimingValue -Name yaxunitMs -Value ([int64]((Get-Date) - $componentStarted).TotalMilliseconds) }
         $state = Read-DevBranchState -Name $DevBranchName
     }
 
+    $vanessaStarted = Get-Date
+    try {
     if ($vanessa.run) {
         $script:ItlSkipEventLogForVerification = -not $eventLog.run
         if ($null -ne $selectionPlan -and $selectionPlan.mode -eq "reuse") {
@@ -377,27 +1064,31 @@ function Invoke-ItlVerificationCycle {
                 }
                 Add-VanessaVerificationEvidenceUpdates `
                     -Updates $updates `
+                    -State $state `
                     -Status "passed" `
                     -Reason "$($selectionPlan.reason) Event-log verification passed." `
                     -Commit (Get-CurrentCommit) `
                     -Fingerprint (Get-VerificationFingerprint) `
                     -ReportPath ([string](Get-StateValue -State $state -Name "lastVerifiedReportPath" -Default "")) `
                     -LogPath ([string](Get-StateValue -State $state -Name "lastVerificationLogPath" -Default "")) `
-                    -RecordFullVerificationEvidence
+                    -RecordFullVerificationEvidence:$recordFullProof
                 Complete-VerificationSelectionProof -Plan $selectionPlan
                 Update-DevBranchState -State $state -Updates $updates
-                Write-Host "Vanessa verification selection: reuse; no acceptance feature was affected, so Vanessa was not started."
+                Write-Host "Vanessa verification selection: $($selectionPlan.reason) Vanessa was not started."
             } finally {
                 $script:ItlSkipEventLogForVerification = $false
             }
         } else {
-            $script:ActiveVerificationSelectionPlan = $selectionPlan
             try {
-                Run-DevBranchTests `
-                    -RecordFullVerificationEvidence:$recordFullProof `
-                    -EventLogCursorPath $EventLogCursorPath `
-                    -EventLogBoundaryAt $EventLogBoundaryAt `
-                    -EventLogCursorScope $EventLogCursorScope
+                Invoke-VanessaSelectionBatches -Plan $selectionPlan -RunBatch {
+                    param($continuing)
+                    Run-DevBranchTests `
+                        -RecordFullVerificationEvidence:$recordFullProof `
+                        -IndependentContinuation:$continuing `
+                        -EventLogCursorPath $EventLogCursorPath `
+                        -EventLogBoundaryAt $EventLogBoundaryAt `
+                        -EventLogCursorScope $EventLogCursorScope
+                }
             } finally {
                 $script:ItlSkipEventLogForVerification = $false
                 $script:ActiveVerificationSelectionPlan = $null
@@ -406,21 +1097,213 @@ function Invoke-ItlVerificationCycle {
     } elseif ($eventLog.run) {
         Test-ItlEventLogCurrent -State $state -CursorPath $EventLogCursorPath -BoundaryAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope -Trigger $Trigger
     }
+    } finally {
+        if ($vanessa.run) { Set-ItlCheckTimingValue -Name vanessaMs -Value ([int64]((Get-Date) - $vanessaStarted).TotalMilliseconds) }
+    }
     $state = Read-DevBranchState -Name $DevBranchName
     if (Test-ItlDiagnosticVerificationScope) {
         return
     }
-    $skipped = @($decisions | Where-Object { -not $_.run })
-    if ($skipped.Count -gt 0) {
-        Set-ItlPartialVerificationEvidence -State $state -Decisions $decisions -Trigger $Trigger
-    } else {
+    $skipped = @($decisions | Where-Object { -not $_.run -and -not [bool](Get-StateValue -State $_ -Name 'reused' -Default $false) })
+    # The assessment reads every retained and one-off receipt after the runners
+    # finished; on a large branch it can stay silent longer than the runner
+    # watchdog (PM5 2026-11-16/17: killed as RUNNER_STATUS_STALE after passed
+    # tests). The block ends this function, so its locals need not escape.
+    Set-RunStage -Stage 'verification.assess' -Detail 'Assessing verification obligations and evidence.'
+    Invoke-WithRunStatusHeartbeat {
         $verification = Get-VerificationState -State $state
-        if ($verification.status -eq "passed") {
+        if ($verification.isFreshPassed) {
             Update-DevBranchState -State $state -Updates @{
-                lastVerificationEvidenceKind = "full"
+                lastVerificationEvidenceKind = $(if ([string](Get-StateValue -State $verification -Name 'assessmentKind' -Default '') -eq 'current-obligations') { 'complete/current-obligations' } elseif ((Get-VerificationModel) -eq 'change') { 'complete/current-change' } else { 'full' })
                 lastVerificationTrigger = $Trigger
-                lastVerificationSkippedComponents = @()
+                lastVerificationSkippedComponents = @($skipped | ForEach-Object component)
+            }
+            Write-Host 'Canonical verification passed: current observed obligations and exact loaded target are complete; skipped runners were not started.'
+        } elseif ((Get-VerificationModel) -eq 'change' -and [bool](Get-StateValue -State $verification -Name 'changeFreshPassed' -Default $false)) {
+            Update-DevBranchState -State $state -Updates @{
+                lastVerificationEvidenceKind = 'change/task-pending'
+                lastVerificationTrigger = $Trigger
+                lastVerificationSkippedComponents = @($skipped | ForEach-Object component)
+            }
+            Write-Host "Current change checks passed; whole-task acceptance remains pending: $(@(Get-StateValue -State $verification -Name 'acceptanceRemaining' -Default @()) -join ', '). Complete the change record without repeating successful observations; keep the remaining criteria open."
+        } elseif ($skipped.Count -gt 0) {
+            Set-ItlPartialVerificationEvidence -State $state -Decisions $decisions -Trigger $Trigger
+        } else {
+            $assessmentIssues = @(Get-StateValue -State $verification -Name 'assessmentIssues' -Default @())
+            if ($assessmentIssues.Count -gt 0) {
+                Write-Host "[WARN] Current observed verification remains partial: $($assessmentIssues -join '; '). Preserve the reports and satisfy only the missing obligation through its existing owner."
+            } elseif ($verification.status -eq "passed") {
+                Update-DevBranchState -State $state -Updates @{
+                    lastVerificationEvidenceKind = "full"
+                    lastVerificationTrigger = $Trigger
+                    lastVerificationSkippedComponents = @()
+                }
+                $oneOffIssues = @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
+                if ($oneOffIssues.Count -gt 0) {
+                    Write-Host "[WARN] Retained verification completed, but one-off proof is still pending: $($oneOffIssues -join '; '). Result readiness remains partial until the agent performs each named one-off check on this loaded infobase; it is the next step, not a final result."
+                }
             }
         }
+    }
+}
+
+# Check duration diagnostics. A bounded project journal keeps the cost of
+# check-dev-branch visible across branches; it never blocks a check. Since the
+# 2026-11-19 checkpoint its per-feature Vanessa durations also set the default
+# budget of the next Vanessa run (Get-VanessaRunTimeoutBudget).
+function Start-ItlCheckTiming {
+    $script:ItlCheckTiming = [ordered]@{
+        startedAt = Get-Date; platformMs = $null; yaxunitMs = $null; vanessaMs = $null
+        selectionMode = ''; selectionReason = ''; yaxunitReused = $false
+    }
+}
+
+function Set-ItlCheckTimingValue {
+    param([string]$Name, [AllowNull()][object]$Value)
+    if ((Test-Path Variable:script:ItlCheckTiming) -and $null -ne $script:ItlCheckTiming) { $script:ItlCheckTiming[$Name] = $Value }
+}
+
+function Get-ItlCheckTimingSnapshot {
+    # Current totals for the user report; the report owner formats the text.
+    if (-not (Test-Path Variable:script:ItlCheckTiming) -or $null -eq $script:ItlCheckTiming) { return $null }
+    $timing = $script:ItlCheckTiming
+    return [pscustomobject]@{
+        totalMs = [int64]((Get-Date) - [datetime]$timing.startedAt).TotalMilliseconds
+        platformMs = $timing.platformMs; yaxunitMs = $timing.yaxunitMs; vanessaMs = $timing.vanessaMs
+        selectionMode = [string]$timing.selectionMode; selectionReason = [string]$timing.selectionReason
+        yaxunitReused = [bool]$timing['yaxunitReused']
+    }
+}
+
+function Get-ItlCheckHistoryPath {
+    param([AllowNull()][object]$State)
+    # One journal per project: the main worktree's ignored verification state.
+    $root = [string](Get-StateValue -State $State -Name 'mainWorktreePath' -Default '')
+    if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { $root = $script:ProjectRoot }
+    return (Join-Path $root '.agent-1c\verification-selection\check-history.jsonl')
+}
+
+function Add-ItlCheckHistoryRecord {
+    param([AllowNull()][object]$State, [string]$Status, [string]$Trigger)
+    try {
+        if (-not (Test-Path Variable:script:ItlCheckTiming) -or $null -eq $script:ItlCheckTiming) { return }
+        $timing = $script:ItlCheckTiming
+        $reason = [string]$timing.selectionReason
+        $record = [ordered]@{
+            at = (Get-Date).ToUniversalTime().ToString('o')
+            branch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
+            status = $Status; trigger = $Trigger
+            totalMs = [int64]((Get-Date) - [datetime]$timing.startedAt).TotalMilliseconds
+            platformMs = $timing.platformMs; yaxunitMs = $timing.yaxunitMs; vanessaMs = $timing.vanessaMs
+            selectionMode = [string]$timing.selectionMode
+            selectionReason = $reason.Substring(0, [Math]::Min(240, $reason.Length))
+        }
+        if ([bool]$timing['yaxunitReused']) { $record['yaxunitReused'] = $true }
+        $vanessaRun = [string]$timing['vanessaRunDirectory']
+        if ($vanessaRun) {
+            $features = Get-VanessaJUnitFeatureSeconds -Path (Join-Path $vanessaRun 'junit.xml')
+            if ($features.Count -gt 0) { $record['vanessaFeatureSeconds'] = $features }
+        }
+        $line = ($record | ConvertTo-Json -Compress -Depth 4)
+        $path = Get-ItlCheckHistoryPath -State $State
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        for ($attempt = 1; $attempt -le 20; $attempt++) {
+            try {
+                # The exclusive handle serializes concurrent branches.
+                $stream = [IO.File]::Open($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+                try {
+                    $reader = [IO.StreamReader]::new($stream, $utf8, $false, 4096, $true)
+                    $lines = @(($reader.ReadToEnd() -split "`n") | Where-Object { $_.Trim() })
+                    $reader.Dispose()
+                    $lines = @(@($lines) + @($line) | Select-Object -Last 500)
+                    $bytes = $utf8.GetBytes((($lines -join "`n") + "`n"))
+                    $stream.SetLength(0); $stream.Write($bytes, 0, $bytes.Length)
+                } finally { $stream.Dispose() }
+                return
+            } catch [IO.IOException] { Start-Sleep -Milliseconds 100 }
+        }
+        Write-Warning "Check duration journal is busy; this run was not recorded: $path" -WarningAction Continue
+    } catch {
+        Write-Warning "Could not record the check duration: $($_.Exception.Message)" -WarningAction Continue
+    }
+}
+
+# Recorded seconds per Vanessa feature title across the project, newest last,
+# at most the last 10 runs of each feature. Unreadable lines are skipped.
+function Get-ItlCheckFeatureDurations {
+    param([AllowNull()][object]$State)
+    $durations = @{}
+    try {
+        $path = Get-ItlCheckHistoryPath -State $State
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $durations }
+        foreach ($line in @(Get-Content -LiteralPath $path -Encoding UTF8 | Where-Object { $_.Trim() })) {
+            $record = $null
+            try { $record = $line | ConvertFrom-Json } catch { continue }
+            $features = if ($null -ne $record) { $record.PSObject.Properties['vanessaFeatureSeconds'] } else { $null }
+            if ($null -eq $features -or $null -eq $features.Value) { continue }
+            foreach ($feature in $features.Value.PSObject.Properties) {
+                $seconds = 0.0
+                if (-not [double]::TryParse([string]$feature.Value, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$seconds) -or $seconds -le 0) { continue }
+                if (-not $durations.ContainsKey($feature.Name)) { $durations[$feature.Name] = [Collections.Generic.List[double]]::new() }
+                $durations[$feature.Name].Add($seconds)
+                if ($durations[$feature.Name].Count -gt 10) { $durations[$feature.Name].RemoveAt(0) }
+            }
+        }
+    } catch { }
+    return $durations
+}
+
+function Get-ItlBranchSuiteCoverageSummary {
+    # Information only: acceptance suites with no passed receipt in this branch
+    # and the last passed full selection of this branch from the journal.
+    param([AllowNull()][object]$State)
+    $summary = [ordered]@{ neverRan = @(); lastFullAt = '' }
+    try {
+        $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+        $acceptance = @($catalog.assignments | Where-Object purpose -eq 'acceptance' | Select-Object -ExpandProperty suiteId -Unique)
+        $passed = @(Get-VerificationCatalogValue -Value (Read-VerificationSelectionProof) -Name 'suiteEvidence' -Default @() | Where-Object { [string]$_.status -ceq 'passed' } | ForEach-Object { [string]$_.id })
+        $summary.neverRan = @($acceptance | Where-Object { $_ -cnotin $passed })
+    } catch { }
+    try {
+        $path = Get-ItlCheckHistoryPath -State $State
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $branch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
+            $full = @(Get-Content -LiteralPath $path -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } |
+                Where-Object { $null -ne $_ -and [string]$_.branch -ceq $branch -and [string]$_.status -ceq 'passed' -and [string]$_.selectionMode -ceq 'full' })
+            if ($full.Count -gt 0) { $summary.lastFullAt = [string]$full[-1].at }
+        }
+    } catch { }
+    return [pscustomobject]$summary
+}
+
+function Write-ItlCheckHistoryStatusLines {
+    param([AllowNull()][object]$State, [string]$Indent = '')
+    try {
+        $path = Get-ItlCheckHistoryPath -State $State
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Write-Host "${Indent}Check durations: no recorded check-dev-branch runs"; return }
+        $records = @(Get-Content -LiteralPath $path -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object {
+            try { $_ | ConvertFrom-Json } catch { }
+        } | Where-Object { $null -ne $_ })
+        $branch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
+        foreach ($item in @($records | Where-Object { [string]$_.branch -ceq $branch } | Select-Object -Last 3)) {
+            $detail = @()
+            foreach ($part in @(@('load', 'platformMs'), @('YAxUnit', 'yaxunitMs'), @('Vanessa', 'vanessaMs'))) {
+                $value = $item.PSObject.Properties[$part[1]].Value
+                if ($null -ne $value) { $detail += "$($part[0]) $([int][Math]::Round([double]$value / 1000))s" }
+            }
+            if ($null -ne $item.PSObject.Properties['yaxunitReused'] -and [bool]$item.yaxunitReused) { $detail += 'YAxUnit reused' }
+            $mode = if ($item.selectionMode) { "; Vanessa suites $($item.selectionMode)" } else { '' }
+            Write-Host "${Indent}Check $($item.at): $($item.status), $([int][Math]::Round([double]$item.totalMs / 1000))s ($($detail -join ', '))$mode"
+        }
+        $passed = @($records | Where-Object { [string]$_.status -ceq 'passed' } | ForEach-Object { [double]$_.totalMs } | Sort-Object)
+        if ($passed.Count -gt 0) {
+            $middle = [int][Math]::Floor($passed.Count / 2)
+            $median = if ($passed.Count % 2) { $passed[$middle] } else { ($passed[$middle - 1] + $passed[$middle]) / 2 }
+            $full = @($records | Where-Object { [string]$_.selectionMode -ceq 'full' }).Count
+            Write-Host "${Indent}Project check median: $([int][Math]::Round($median / 1000))s over $($passed.Count) passed runs; full Vanessa selections: $full of $($records.Count)"
+        }
+    } catch {
+        Write-Host "${Indent}Check durations: unavailable ($($_.Exception.Message))"
     }
 }

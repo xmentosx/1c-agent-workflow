@@ -10,6 +10,223 @@ function Test-SourceDeliveryPathInUse {
     }).Count -gt 0
 }
 
+function Get-SourceDeliverySupervisorLeasePath {
+    param([Parameter(Mandatory = $true)][string]$SupervisorRoot)
+
+    # The lease lives in the worktree's private gitdir: it never dirties the
+    # pinned checkout and disappears with the worktree registration.
+    # A pointer that names no valid gitdir cannot hold a lease.
+    $dotGit = Join-Path $SupervisorRoot '.git'
+    if (-not (Test-Path -LiteralPath $dotGit -PathType Leaf)) { return '' }
+    try {
+        $pointer = [IO.File]::ReadAllText($dotGit, [Text.UTF8Encoding]::new($false)).Trim()
+        if ($pointer -notmatch '^gitdir:\s*(.+)$') { return '' }
+        $gitDirectory = $matches[1].Trim()
+        if (-not [IO.Path]::IsPathRooted($gitDirectory)) { $gitDirectory = Join-Path $SupervisorRoot $gitDirectory }
+        return Join-Path ([IO.Path]::GetFullPath($gitDirectory)) 'itl-supervisor-owner.json'
+    } catch { return '' }
+}
+
+function Write-SourceDeliverySupervisorLease {
+    param([Parameter(Mandatory = $true)][string]$SupervisorRoot, [int]$ProcessId = $PID)
+
+    # A waiting operation runs its pinned supervisor in-process, so no command
+    # line names this copy; the lease is what keeps cleanup away from it.
+    $root = [IO.Path]::GetFullPath($SupervisorRoot).TrimEnd('\')
+    if ((Split-Path -Leaf $root) -notmatch '^itl-source-supervisor-[0-9a-f]{32}$') { return $false }
+    $leasePath = Get-SourceDeliverySupervisorLeasePath -SupervisorRoot $root
+    if (-not $leasePath -or -not (Test-Path -LiteralPath (Split-Path -Parent $leasePath) -PathType Container)) { return $false }
+    $started = (Get-Process -Id $ProcessId -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')
+    $lease = [ordered]@{ schemaVersion = 1; supervisorRoot = $root; ownerPid = $ProcessId; ownerProcessStartedAt = $started }
+    $temp = $leasePath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    [IO.File]::WriteAllText($temp, (($lease | ConvertTo-Json) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $temp -Destination $leasePath -Force
+    return $true
+}
+
+function Test-SourceDeliverySupervisorLeaseLive {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Only the exact supervisor copy shape is leased. Fail closed: an
+    # unreadable lease or an owner whose identity cannot be read keeps the
+    # copy; only a proven exited or reused owner PID releases it.
+    if ((Split-Path -Leaf ([IO.Path]::GetFullPath($Path).TrimEnd('\'))) -notmatch '^itl-source-supervisor-[0-9a-f]{32}$') { return $false }
+    $leasePath = Get-SourceDeliverySupervisorLeasePath -SupervisorRoot $Path
+    if (-not $leasePath -or -not (Test-Path -LiteralPath $leasePath -PathType Leaf)) { return $false }
+    try {
+        $lease = [IO.File]::ReadAllText($leasePath, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+        $ownerPid = [int]$lease.ownerPid
+        $expected = [DateTime]::Parse([string]$lease.ownerProcessStartedAt, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+    } catch { return $true }
+    if ($ownerPid -le 0) { return $true }
+    $process = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
+    if (-not $process) { return $false }
+    try { return [Math]::Abs(($process.StartTime.ToUniversalTime() - $expected).TotalSeconds) -lt 2 } catch { return $true }
+}
+
+function Get-SourceDeliveryTreeBytes {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # An empty tree has no Sum under strict mode; count explicitly.
+    $bytes = [int64]0
+    if (-not (Test-Path -LiteralPath $Path)) { return $bytes }
+    foreach ($file in @(Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction Stop)) { $bytes += [int64]$file.Length }
+    return $bytes
+}
+
+function Test-SourceDeliveryTreeHasReparsePoint {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $true }
+    return $null -ne (Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction Stop |
+        Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } |
+        Select-Object -First 1)
+}
+
+function Test-SourceDeliveryArtifactExpired {
+    param([Parameter(Mandatory = $true)][object]$Item, [int]$MinimumAgeHours = 168)
+
+    return $Item.LastWriteTimeUtc -le [DateTime]::UtcNow.AddHours(-1 * [Math]::Max(0, $MinimumAgeHours))
+}
+
+function Remove-SourceDeliveryStaleVanessaBuildWork {
+    param([string]$WorkRoot = 'C:\itlvabld', [int]$MinimumAgeHours = 168)
+
+    $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
+    if (-not (Test-Path -LiteralPath $WorkRoot -PathType Container)) {
+        return [pscustomobject]@{ removedDirectories = 0; retained = 0; freedBytes = 0; entries = @() }
+    }
+    $root = [IO.Path]::GetFullPath($WorkRoot).TrimEnd('\')
+    if ((Get-Item -LiteralPath $root -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw "Vanessa build work root is a reparse point: $root"
+    }
+    foreach ($directory in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction Stop)) {
+        $path = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
+        if (-not [string]::Equals((Split-Path -Parent $path), $root, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe Vanessa build work path: $path" }
+        if ((Test-Path -LiteralPath (Join-Path $path '.git')) -or
+            -not (Test-SourceDeliveryArtifactExpired -Item $directory -MinimumAgeHours $MinimumAgeHours) -or
+            (Test-SourceDeliveryPathInUse -Path $path) -or
+            (Test-SourceDeliveryTreeHasReparsePoint -Path $path)) { $retained++; continue }
+        $bytes = Get-SourceDeliveryTreeBytes -Path $path
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+        $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $path; bytes = $bytes }) | Out-Null
+    }
+    return [pscustomobject]@{ removedDirectories = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
+}
+
+function Remove-SourceDeliveryStaleReleaseRecoveryArtifacts {
+    param([string]$TempRoot = ([IO.Path]::GetTempPath()), [int]$MinimumAgeHours = 168)
+
+    $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
+    $temp = [IO.Path]::GetFullPath($TempRoot).TrimEnd('\')
+    $quarantineRoot = Join-Path $temp 'itl-quarantine'
+    if (Test-Path -LiteralPath $quarantineRoot -PathType Container) {
+        foreach ($directory in @(Get-ChildItem -LiteralPath $quarantineRoot -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -match '^workflow-release-e2e-snapshots-[0-9]{8}$' })) {
+            $files = @(Get-ChildItem -LiteralPath $directory.FullName -Recurse -File -Force -ErrorAction Stop)
+            $ownedShape = @($files | Where-Object { $_.Name -notmatch '^release-e2e-' -or $_.Extension -notin @('.dt', '.json', '.env') }).Count -eq 0 -and
+                @($files | Where-Object Extension -eq '.dt').Count -gt 0
+            if (-not $ownedShape -or -not (Test-SourceDeliveryArtifactExpired -Item $directory -MinimumAgeHours $MinimumAgeHours) -or
+                (Test-SourceDeliveryPathInUse -Path $directory.FullName) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $directory.FullName)) { $retained++; continue }
+            $bytes = Get-SourceDeliveryTreeBytes -Path $directory.FullName
+            Remove-Item -LiteralPath $directory.FullName -Recurse -Force -ErrorAction Stop
+            $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $directory.FullName; bytes = $bytes }) | Out-Null
+        }
+    }
+
+    foreach ($preservedRoot in @(Get-ChildItem -LiteralPath $temp -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^itl-release-e2e-preserved-[0-9]{8}-[0-9]{6}$' })) {
+        $manifestPath = Join-Path $preservedRoot.FullName 'manifest.json'
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf) -or
+            -not (Test-SourceDeliveryArtifactExpired -Item $preservedRoot -MinimumAgeHours $MinimumAgeHours) -or
+            (Test-SourceDeliveryPathInUse -Path $preservedRoot.FullName)) { $retained++; continue }
+        try { $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $retained++; continue }
+        if (-not $manifest.PSObject.Properties['moved']) { $retained++; continue }
+        foreach ($child in @(Get-ChildItem -LiteralPath $preservedRoot.FullName -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -in @('.agent-1c', 'build') -or $_.Name -match '^broken-ai-rules-cache-[0-9]{8}-[0-9]{4}$' })) {
+            $childPath = [IO.Path]::GetFullPath($child.FullName).TrimEnd('\')
+            $protectedByJunction = @($manifest.moved | Where-Object {
+                $junctionProperty = $_.PSObject.Properties['junction']
+                $destinationProperty = $_.PSObject.Properties['destination']
+                $junctionProperty -and [bool]$junctionProperty.Value -and $destinationProperty -and [string]$destinationProperty.Value -and
+                ([IO.Path]::GetFullPath([string]$destinationProperty.Value).TrimEnd('\') + '\').StartsWith($childPath + '\', [StringComparison]::OrdinalIgnoreCase)
+            }).Count -gt 0
+            if ($protectedByJunction -or (Test-SourceDeliveryTreeHasReparsePoint -Path $childPath)) { $retained++; continue }
+            $bytes = Get-SourceDeliveryTreeBytes -Path $childPath
+            Remove-Item -LiteralPath $childPath -Recurse -Force -ErrorAction Stop
+            $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $childPath; bytes = $bytes }) | Out-Null
+        }
+    }
+    return [pscustomobject]@{ removedDirectories = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
+}
+
+function Remove-SourceDeliveryOldAiRulesMigrationSnapshots {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot, [int]$MinimumAgeHours = 168, [int]$Keep = 1)
+
+    $runsRoot = Join-Path ([IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\')) '.agent-1c\runs'
+    $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0
+    if (-not (Test-Path -LiteralPath $runsRoot -PathType Container)) { return [pscustomobject]@{ removedDirectories = 0; retained = 0; freedBytes = 0; entries = @() } }
+    $passed = [Collections.Generic.List[object]]::new(); $retained = 0
+    foreach ($directory in @(Get-ChildItem -LiteralPath $runsRoot -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -match '^ai-rules-migration-[0-9]{8}-[0-9]{6}-[0-9]{3}$' })) {
+        $reportPath = Join-Path $directory.FullName 'migration-report.json'
+        try { $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $retained++; continue }
+        if ([string]$report.status -cne 'passed') { $retained++; continue }
+        $passed.Add($directory) | Out-Null
+    }
+    $ordered = @($passed | Sort-Object Name -Descending)
+    $retained += [Math]::Min([Math]::Max(0, $Keep), $ordered.Count)
+    foreach ($directory in @($ordered | Select-Object -Skip ([Math]::Max(0, $Keep)))) {
+        if (-not (Test-SourceDeliveryArtifactExpired -Item $directory -MinimumAgeHours $MinimumAgeHours) -or
+            (Test-SourceDeliveryPathInUse -Path $directory.FullName) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $directory.FullName)) { $retained++; continue }
+        $bytes = Get-SourceDeliveryTreeBytes -Path $directory.FullName
+        Remove-Item -LiteralPath $directory.FullName -Recurse -Force -ErrorAction Stop
+        $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $directory.FullName; bytes = $bytes }) | Out-Null
+    }
+    return [pscustomobject]@{ removedDirectories = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
+}
+
+function Remove-SourceDeliveryExpiredArtifactHolds {
+    param([Parameter(Mandatory = $true)][string]$SearchRoot, [int]$MinimumAgeHours = 168)
+
+    $root = [IO.Path]::GetFullPath($SearchRoot).TrimEnd('\'); $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return [pscustomobject]@{ removedDirectories = 0; retained = 0; freedBytes = 0; entries = @() } }
+    foreach ($hold in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -match '-artifact-hold-[0-9]{8}-[0-9]{4}$' })) {
+        $build = Join-Path $hold.FullName 'build'; $testResults = Join-Path $build 'test-results'
+        if (-not (Test-Path -LiteralPath $build -PathType Container)) { continue }
+        if (-not (Test-Path -LiteralPath $testResults -PathType Container) -or
+            -not (Test-SourceDeliveryArtifactExpired -Item (Get-Item -LiteralPath $build) -MinimumAgeHours $MinimumAgeHours) -or
+            (Test-SourceDeliveryPathInUse -Path $hold.FullName) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $build)) { $retained++; continue }
+        $bytes = Get-SourceDeliveryTreeBytes -Path $build
+        Remove-Item -LiteralPath $build -Recurse -Force -ErrorAction Stop
+        $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $build; bytes = $bytes }) | Out-Null
+    }
+    return [pscustomobject]@{ removedDirectories = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
+}
+
+function Test-SourceDeliveryCandidateHeldByStandUpdate {
+    # Stand preparation fails before a plan registers its candidate in the
+    # ledger. A pending lifecycle update on a root of the candidate's own
+    # recorded scope then resumes only from that recorded source, so the
+    # candidate stays until the update owner completes or abandons it.
+    # Read-only; an unreadable scope or receipt cannot prove release.
+    param([Parameter(Mandatory = $true)][string]$CandidatePath)
+
+    $scopePath = Join-Path $CandidatePath 'build/test-results/delivery/stand-update-roots.json'
+    if (-not (Test-Path -LiteralPath $scopePath -PathType Leaf)) { return $false }
+    try { $scope = [IO.File]::ReadAllText($scopePath, [Text.Encoding]::UTF8) | ConvertFrom-Json -ErrorAction Stop } catch { return $true }
+    $candidate = [IO.Path]::GetFullPath($CandidatePath).TrimEnd('\', '/')
+    foreach ($root in @(@($scope.projectRoot) + @($scope.roots) | Where-Object { $_ } | Select-Object -Unique)) {
+        $snapshots = Join-Path ([string]$root) '.agent-1c/snapshots/workflow-update'
+        foreach ($snapshot in @(Get-ChildItem -LiteralPath $snapshots -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue)) {
+            $receiptPath = Join-Path $snapshot.FullName 'transaction.json'
+            try {
+                $receipt = [IO.File]::ReadAllText($receiptPath, [Text.Encoding]::UTF8) | ConvertFrom-Json -ErrorAction Stop
+                $source = [string]$receipt.sourceRoot
+                if ($source -and [string]::Equals([IO.Path]::GetFullPath($source).TrimEnd('\', '/'), $candidate, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+            } catch { return $true }
+        }
+    }
+    return $false
+}
+
 function Remove-SourceDeliveryStaleCandidateWorktrees {
     param([string[]]$PreservePaths = @())
 
@@ -22,9 +239,10 @@ function Remove-SourceDeliveryStaleCandidateWorktrees {
         $leaf = Split-Path -Leaf $path
         $branch = [string]$worktree.branch
         if (-not $path.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or
-            $leaf -notmatch '^itl-source-(publish-develop|release-master)-([0-9a-f]{32})$' -or
+            $leaf -notmatch '^itl-source-(publish-develop|release-master|cleanup-executor)-([0-9a-f]{32})$' -or
             $branch -cne "refs/heads/itl/$($matches[1])-$($matches[2])" -or $preserved.Contains($path) -or
-            (Test-SourceDeliveryPathInUse -Path $path)) { continue }
+            (Test-SourceDeliveryPathInUse -Path $path) -or
+            (Test-SourceDeliveryCandidateHeldByStandUpdate -CandidatePath $path)) { continue }
         $trackedStatus = Invoke-RepositoryGit -RepositoryRoot $path -Arguments @('status', '--porcelain', '--untracked-files=no') -AllowFailure
         if ($trackedStatus.exitCode -ne 0 -or [string]$trackedStatus.stdout) { continue }
         $shortBranch = $branch.Substring('refs/heads/'.Length)
@@ -35,6 +253,150 @@ function Remove-SourceDeliveryStaleCandidateWorktrees {
         $removed.Add([pscustomobject]@{ path = $path; branch = $shortBranch }) | Out-Null
     }
     return [pscustomobject]@{ removedWorktrees = $removed.Count; entries = @($removed) }
+}
+
+function Remove-SourceDeliveryStaleOperationWorktrees {
+    param([string]$TempRoot = ([IO.Path]::GetTempPath()), [int]$MinimumAgeHours = 168, [int]$KeepRegistrations = 2, [int]$InterruptedAgeHours = 1)
+
+    # A failed RegisterChange keeps its candidate only for diagnosis; a repeated
+    # registration always creates a new one, so only the newest unexpired ones
+    # stay. A stable supervisor worktree is removed by its own operation; one
+    # whose lease names a live owner (it may be waiting for the delivery lock)
+    # stays, one left by an interrupted operation has no diagnostic value and
+    # goes once it is idle past the creation window. Removal takes the exact branch (a
+    # supervisor is detached), or a leftover directory no repository owns.
+    # A publication, plan or attribution candidate that is still registered
+    # belongs to the resource ledger; only its unregistered remnant (an
+    # interrupted or partly failed worktree removal) is handled here.
+    $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
+    $temp = [IO.Path]::GetFullPath($TempRoot).TrimEnd('\')
+    $registered = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($worktree in @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $script:Root)) {
+        $registered[[IO.Path]::GetFullPath([string]$worktree.path).TrimEnd('\')] = [string]$worktree.branch
+    }
+    $owned = [Collections.Generic.List[object]]::new()
+    foreach ($directory in @(Get-ChildItem -LiteralPath $temp -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -match '^itl-source-(register|supervisor|publish-develop|release-master|plan-develop|attribute)-[0-9a-f]{32}$' })) {
+        $path = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
+        $shortBranch = if ($directory.Name -like 'itl-source-register-*') { 'itl/register-' + $directory.Name.Substring('itl-source-register-'.Length) } else { '' }
+        $remnantOnly = $directory.Name -notmatch '^itl-source-(register|supervisor)-'
+        if ((Test-SourceDeliveryPathInUse -Path $path) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $path) -or
+            (Test-SourceDeliverySupervisorLeaseLive -Path $path)) { $retained++; continue }
+        $isRegistered = $registered.ContainsKey($path)
+        if ($isRegistered) {
+            if ($remnantOnly -or $registered[$path] -cne $(if ($shortBranch) { "refs/heads/$shortBranch" } else { '' })) { $retained++; continue }
+        } else {
+            # Another clone's worktree points its .git file at a live gitdir;
+            # a directory .git is a repository. Neither belongs to this cleanup.
+            $dotGit = Join-Path $path '.git'
+            if (Test-Path -LiteralPath $dotGit -PathType Container) { $retained++; continue }
+            if (Test-Path -LiteralPath $dotGit -PathType Leaf) {
+                $pointer = [IO.File]::ReadAllText($dotGit).Trim()
+                if ($pointer -notmatch '^gitdir:\s*(.+)$' -or (Test-Path -LiteralPath $matches[1].Trim())) { $retained++; continue }
+            }
+        }
+        $owned.Add([pscustomobject]@{ directory = $directory; path = $path; shortBranch = $shortBranch; registered = $isRegistered }) | Out-Null
+    }
+    # A remnant its repository no longer registers cannot serve a retry.
+    $keptRegistrations = @($owned | Where-Object { $_.shortBranch -and $_.registered -and (-not (Test-SourceDeliveryArtifactExpired -Item $_.directory -MinimumAgeHours $MinimumAgeHours)) } |
+        Sort-Object { $_.directory.LastWriteTimeUtc } -Descending | Select-Object -First ([Math]::Max(0, $KeepRegistrations)) | ForEach-Object { $_.path })
+    foreach ($entry in $owned) {
+        if ($entry.shortBranch -and $entry.registered) { if ($keptRegistrations -contains $entry.path) { $retained++; continue } }
+        elseif (-not (Test-SourceDeliveryArtifactExpired -Item $entry.directory -MinimumAgeHours ([Math]::Max(1, $InterruptedAgeHours)))) { $retained++; continue }
+        $path = $entry.path; $shortBranch = $entry.shortBranch
+        $bytes = Get-SourceDeliveryTreeBytes -Path $path
+        if ($entry.registered) {
+            $remove = Invoke-DeliveryGit -Arguments @('worktree', 'remove', '--force', '--force', '--', $path) -AllowFailure
+            if ($remove.exitCode -ne 0) { throw "Unable to remove expired operation worktree '$path': $($remove.stderr.Trim())" }
+            if ($shortBranch) {
+                $delete = Invoke-DeliveryGit -Arguments @('branch', '-D', '--', $shortBranch) -AllowFailure
+                if ($delete.exitCode -ne 0) { throw "Removed expired operation worktree '$path', but could not delete '$shortBranch': $($delete.stderr.Trim())" }
+            }
+        } else {
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+        }
+        $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $path; bytes = $bytes }) | Out-Null
+    }
+    return [pscustomobject]@{ removedDirectories = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
+}
+
+function Remove-SourceDeliveryExpiredOperationLogs {
+    param([string]$TempRoot = ([IO.Path]::GetTempPath()), [int]$MinimumAgeHours = 168)
+
+    # Failing-entry attribution and a gate stand build keep step logs in temp;
+    # only a failed operation's diagnostic names them. Another clone may be
+    # writing its own directory now, so even a manual sweep waits a day.
+    $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
+    $temp = [IO.Path]::GetFullPath($TempRoot).TrimEnd('\')
+    foreach ($directory in @(Get-ChildItem -LiteralPath $temp -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -match '^itl-(source-attribution|gate-stand-logs)-[0-9a-f]{32}$' })) {
+        $path = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
+        if (-not (Test-SourceDeliveryArtifactExpired -Item $directory -MinimumAgeHours ([Math]::Max(24, $MinimumAgeHours))) -or
+            (Test-Path -LiteralPath (Join-Path $path '.git')) -or (Test-SourceDeliveryPathInUse -Path $path) -or
+            (Test-SourceDeliveryTreeHasReparsePoint -Path $path)) { $retained++; continue }
+        $bytes = Get-SourceDeliveryTreeBytes -Path $path
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+        $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $path; bytes = $bytes }) | Out-Null
+    }
+    return [pscustomobject]@{ removedDirectories = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
+}
+
+function Remove-SourceDeliverySupersededGateStands {
+    param([int]$MinimumAgeHours = 168, [int]$KeepSuperseded = 1)
+
+    # A fixture or preparation-recipe change derives a new stand and keeps the
+    # old one for diagnosis. Keep only this clone's newest unexpired superseded
+    # stand; remove the rest with their sibling worktrees and lock. Another
+    # clone's or an unowned stand stays.
+    $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
+    $builder = Join-Path $PSScriptRoot 'new-gate-stand.ps1'
+    $common = [IO.Path]::GetFullPath((Get-DeliveryCommonGitDirectory)).TrimEnd('\', '/')
+    $fixtureId = & { param($path, $repository) . $path; Get-GateStandFixtureId -Repository $repository } $builder (Split-Path -Parent $PSScriptRoot)
+    $current = Get-DeliveryGateStandRoot -CommonGitDirectory $common -FixtureId $fixtureId
+    $parent = Split-Path -Parent $current
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { return [pscustomobject]@{ removedStands = 0; retained = 0; freedBytes = 0; entries = @() } }
+    $directories = @(Get-ChildItem -LiteralPath $parent -Directory -Force -ErrorAction Stop)
+    $superseded = @($directories | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.git/itl/gate-stand-owner.json') -PathType Leaf } | Where-Object {
+        $candidate = [IO.Path]::GetFullPath($_.FullName).TrimEnd('\')
+        $candidate -ine $current -and (Get-DeliveryGateStandOwner -StandRoot $candidate) -ieq $common
+    })
+    $kept = @($superseded | Where-Object { -not (Test-SourceDeliveryArtifactExpired -Item $_ -MinimumAgeHours $MinimumAgeHours) } |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ([Math]::Max(0, $KeepSuperseded)) | ForEach-Object { $_.FullName })
+    $retained += @($directories | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.git/itl/gate-stand-owner.json') -PathType Leaf }).Count - $superseded.Count
+    foreach ($directory in $superseded) {
+        $root = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
+        $paths = @($root) + @($directories | Where-Object { $_.FullName.StartsWith($root + '-', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [IO.Path]::GetFullPath($_.FullName).TrimEnd('\') })
+        if ($kept -contains $directory.FullName -or
+            @($paths | Where-Object { (Test-SourceDeliveryPathInUse -Path $_) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $_) }).Count -gt 0) { $retained++; continue }
+        $bytes = [int64]0
+        foreach ($path in $paths) { $bytes += Get-SourceDeliveryTreeBytes -Path $path }
+        # Siblings are worktrees of the stand's own repository: remove them first.
+        foreach ($path in @($paths | Sort-Object Length -Descending)) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+        Remove-Item -LiteralPath ($root + '.lock') -Force -ErrorAction SilentlyContinue
+        $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $root; directories = $paths.Count; bytes = $bytes }) | Out-Null
+    }
+    return [pscustomobject]@{ removedStands = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
+}
+
+function Remove-SourceDeliveryInterruptedTestArtifacts {
+    param([string]$TempRoot = ([IO.Path]::GetTempPath()), [int]$MinimumAgeHours = 1)
+
+    # Tests remove these in finally; only a killed shard leaves them behind.
+    # A running test's directory is not visible in any command line, so the
+    # age window, longer than any shard, is what protects it.
+    $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
+    $temp = [IO.Path]::GetFullPath($TempRoot).TrimEnd('\')
+    $directoryPattern = '^(itl-(ondemand-(vanessa-profile|owner|shared-binary)|resume-old-status|merge-resume)-[0-9a-f]{32}|itl deadline .+ [0-9a-f]{32})$'
+    $filePattern = '^itl-test-powershell-(stdout|stderr|stdin)-[0-9a-f]{32}\.(log|txt)$'
+    foreach ($item in @(Get-ChildItem -LiteralPath $temp -Force -ErrorAction Stop | Where-Object {
+        ($_.PSIsContainer -and $_.Name -match $directoryPattern) -or (-not $_.PSIsContainer -and $_.Name -match $filePattern)
+    })) {
+        $path = [IO.Path]::GetFullPath($item.FullName).TrimEnd('\')
+        if (-not (Test-SourceDeliveryArtifactExpired -Item $item -MinimumAgeHours $MinimumAgeHours) -or (Test-SourceDeliveryPathInUse -Path $path) -or
+            ($item.PSIsContainer -and (Test-SourceDeliveryTreeHasReparsePoint -Path $path))) { $retained++; continue }
+        $bytes = if ($item.PSIsContainer) { Get-SourceDeliveryTreeBytes -Path $path } else { [int64]$item.Length }
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+        $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $path; bytes = $bytes }) | Out-Null
+    }
+    return [pscustomobject]@{ removedItems = $removed.Count; retained = $retained; freedBytes = $freedBytes; entries = @($removed) }
 }
 
 function Remove-SourceDeliveryStaleTestFixtures {
@@ -65,9 +427,12 @@ function Remove-SourceDeliveryStaleTestFixtures {
             $path = [IO.Path]::GetFullPath([string]$_.path).TrimEnd('\')
             if ([string]::Equals($path, $fixtureRoot, [StringComparison]::OrdinalIgnoreCase)) { return $false }
             $leaf = Split-Path -Leaf $path; $branch = [string]$_.branch
-            $generatedCandidate = [string]::Equals((Split-Path -Parent $path), $root, [StringComparison]::OrdinalIgnoreCase) -and
-                $leaf -match '^itl-source-(publish-develop|release-master)-([0-9a-f]{32})$' -and
-                $branch -ceq "refs/heads/itl/$($matches[1])-$($matches[2])"
+            # Every delivery operation the fixture ran created its own exact
+            # worktree shape here; a supervisor is detached.
+            $generatedCandidate = [string]::Equals((Split-Path -Parent $path), $root, [StringComparison]::OrdinalIgnoreCase) -and (
+                ($leaf -match '^itl-source-(publish-develop|release-master|cleanup-executor|register|plan-develop|attribute)-([0-9a-f]{32})$' -and
+                    $branch -ceq "refs/heads/itl/$($matches[1])-$($matches[2])") -or
+                ($leaf -match '^itl-source-supervisor-[0-9a-f]{32}$' -and $branch -ceq ''))
             $parallelFixture = [string]::Equals((Split-Path -Parent $path), $root, [StringComparison]::OrdinalIgnoreCase) -and
                 $leaf -match '^itl parallel worktree [0-9a-f]{32}$' -and $branch -ceq 'refs/heads/topic-two'
             return -not ($generatedCandidate -or $parallelFixture)
@@ -76,7 +441,7 @@ function Remove-SourceDeliveryStaleTestFixtures {
         $bytes = [int64](@(Get-ChildItem -LiteralPath $fixtureRoot -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)
         foreach ($worktree in @($worktrees | Where-Object { -not [string]::Equals(([IO.Path]::GetFullPath([string]$_.path).TrimEnd('\')), $fixtureRoot, [StringComparison]::OrdinalIgnoreCase) })) {
             $path = [IO.Path]::GetFullPath([string]$worktree.path).TrimEnd('\')
-            if (Test-SourceDeliveryPathInUse -Path $path) { $unexpected = @($worktree); break }
+            if ((Test-SourceDeliveryPathInUse -Path $path) -or (Test-SourceDeliverySupervisorLeaseLive -Path $path)) { $unexpected = @($worktree); break }
             $bytes += [int64](@(Get-ChildItem -LiteralPath $path -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)
         }
         if ($unexpected.Count -gt 0) { continue }
@@ -140,13 +505,39 @@ function Remove-SourceDeliveryStaleReleaseSeedArchives {
     return [pscustomobject]@{ removedArchives = $removed.Count; freedBytes = $freedBytes; entries = @($removed) }
 }
 
+function Remove-SourceDeliveryCompletedFixtureCopies {
+    param([string]$FreshProjectsRoot,[string[]]$PreservePaths=@(),[string[]]$SupersededCopies=@())
+    # The same copy owner plans retention and archives inactive owned copies.
+    # Its lease, reader, ledger, checkpoint, archive and infobase guards still bind.
+    & {
+        param($ownerRoot,$copyRoot,$preserved,$superseded)
+        . (Join-Path $ownerRoot 'scripts/source-e2e-fixture.ps1')
+        $diagnostics=Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $ownerRoot) 'itl/evidence/fixture-cleanup'
+        $settings=Get-SourceE2ECopyRetentionSettings -CandidateRoot $ownerRoot
+        $plan=@{archivePaths=@();inactiveBeforeUtc=[datetime]::MinValue}
+        if($settings.enabled){$plan=Get-SourceE2ECopyRetentionPlan -ProjectsRoots @(Get-SourceE2EProjectsRoots -ProjectsRoot $copyRoot -IncludeNestedRoots) -CandidateRoot $ownerRoot -RetentionDays $settings.days -KeepCount $settings.keep}
+        # The count caps archives per sweep; the five-minute start window keeps a
+        # backlog of large copies (615 s for 5.2 GiB) inside the executor budget.
+        $budget=@{remaining=$settings.batch;notAfterUtc=[datetime]::UtcNow.AddSeconds(300)}
+        Remove-CompletedSourceE2ECopies -ProjectsRoot $copyRoot -CandidateRoot $ownerRoot -DiagnosticRoot $diagnostics -IncludeLegacy -PreservePaths $preserved -IncludeNestedRoots -ArchiveReadyPaths $plan.archivePaths -InactiveBeforeUtc $plan.inactiveBeforeUtc -ArchiveBudget $budget -SupersededPaths $superseded
+    } $script:Root $FreshProjectsRoot $PreservePaths $SupersededCopies
+}
+
 function Invoke-SourceDeliveryPostSuccessCleanup {
-    param([string]$FreshProjectsRoot = 'C:\itlj', [string]$E2EProjectRoot = '', [string[]]$PreservePaths = @())
+    param([string]$FreshProjectsRoot = 'C:\itlj', [string]$E2EProjectRoot = '', [string[]]$PreservePaths = @(), [string[]]$SupersededCopies = @(), [ValidateSet('manual', 'pre-operation', 'post-operation')][string]$Phase = 'post-operation')
 
     $report = [ordered]@{ status = 'completed'; warnings = @() }
+    $minimumAgeHours = if ($Phase -eq 'manual') { 0 } else { 168 }
     foreach ($step in @(
         [pscustomobject]@{ name = 'sourceCandidates'; action = { Remove-SourceDeliveryStaleCandidateWorktrees -PreservePaths $PreservePaths } },
+        [pscustomobject]@{ name = 'operationWorktrees'; action = { Remove-SourceDeliveryStaleOperationWorktrees -MinimumAgeHours $minimumAgeHours } },
+        [pscustomobject]@{ name = 'operationLogs'; action = { Remove-SourceDeliveryExpiredOperationLogs -MinimumAgeHours $minimumAgeHours } },
+        [pscustomobject]@{ name = 'supersededGateStands'; action = { Remove-SourceDeliverySupersededGateStands -MinimumAgeHours $minimumAgeHours } },
+        [pscustomobject]@{ name = 'interruptedTestArtifacts'; action = { Remove-SourceDeliveryInterruptedTestArtifacts -MinimumAgeHours 1 } },
         [pscustomobject]@{ name = 'sourceTestFixtures'; action = { Remove-SourceDeliveryStaleTestFixtures } },
+        [pscustomobject]@{ name = 'vanessaBuildWork'; action = { Remove-SourceDeliveryStaleVanessaBuildWork -MinimumAgeHours $minimumAgeHours } },
+        [pscustomobject]@{ name = 'releaseRecoveryArtifacts'; action = { Remove-SourceDeliveryStaleReleaseRecoveryArtifacts -MinimumAgeHours $minimumAgeHours } },
+        [pscustomobject]@{ name = 'completedFixtureCopies'; action = { Remove-SourceDeliveryCompletedFixtureCopies -FreshProjectsRoot $FreshProjectsRoot -PreservePaths $PreservePaths -SupersededCopies $SupersededCopies } },
         [pscustomobject]@{ name = 'freshProjects'; action = { Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $FreshProjectsRoot -PreservePaths $PreservePaths } },
         [pscustomobject]@{ name = 'freshLauncherEntries'; action = { Remove-DevelopE2EStaleLauncherRegistrations -FreshProjectsRoot $FreshProjectsRoot } }
     )) {
@@ -155,9 +546,11 @@ function Invoke-SourceDeliveryPostSuccessCleanup {
     }
     if ($E2EProjectRoot) {
         foreach ($step in @(
-            [pscustomobject]@{ name = 'developStandWorktrees'; action = { Remove-DevelopE2EStaleStandWorktrees -ProjectRoot $E2EProjectRoot } },
+            [pscustomobject]@{ name = 'developStandWorktrees'; action = { Remove-DevelopE2EStaleStandWorktrees -ProjectRoot $E2EProjectRoot -MinimumAgeHours $minimumAgeHours } },
             [pscustomobject]@{ name = 'releaseSeedWorktrees'; action = { Remove-SourceDeliveryStaleReleaseSeeds -ProjectRoot $E2EProjectRoot } },
-            [pscustomobject]@{ name = 'releaseSeedArchives'; action = { Remove-SourceDeliveryStaleReleaseSeedArchives -ProjectRoot $E2EProjectRoot } }
+            [pscustomobject]@{ name = 'releaseSeedArchives'; action = { Remove-SourceDeliveryStaleReleaseSeedArchives -ProjectRoot $E2EProjectRoot } },
+            [pscustomobject]@{ name = 'aiRulesMigrationSnapshots'; action = { Remove-SourceDeliveryOldAiRulesMigrationSnapshots -ProjectRoot $E2EProjectRoot -MinimumAgeHours $minimumAgeHours } },
+            [pscustomobject]@{ name = 'artifactHolds'; action = { Remove-SourceDeliveryExpiredArtifactHolds -SearchRoot (Split-Path -Parent ([IO.Path]::GetFullPath($E2EProjectRoot))) -MinimumAgeHours $minimumAgeHours } }
         )) {
             try { $report[$step.name] = & $step.action }
             catch { $report.warnings += "$($step.name): $($_.Exception.Message)"; Write-Warning "Post-success cleanup $($step.name) failed: $($_.Exception.Message)" }
@@ -169,4 +562,329 @@ function Invoke-SourceDeliveryPostSuccessCleanup {
     catch { $report.warnings += "launcherBackups: $($_.Exception.Message)"; Write-Warning "Post-success cleanup launcherBackups failed: $($_.Exception.Message)" }
     if ($report.warnings.Count -gt 0) { $report.status = 'completed-with-warnings' }
     return [pscustomobject]$report
+}
+
+# Cleanup mutation is selected from the exact published channel commit while
+# the stable master supervisor retains the operation lock and publication
+# authority. The child validates a short-lived capability in operation.json;
+# it never acquires a second delivery-operation lease.
+
+function Get-DeliveryCleanupTokenSha256 {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($algorithm.ComputeHash([Text.Encoding]::UTF8.GetBytes($Value)))).Replace('-', '').ToLowerInvariant()
+    } finally { $algorithm.Dispose() }
+}
+
+function Resolve-DeliveryCleanupChannelCommit {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('Develop', 'Master')][string]$Channel,
+        [string]$ExpectedCommit = ''
+    )
+
+    $branch = $Channel.ToLowerInvariant()
+    [void](Invoke-DeliveryGit -Arguments @('fetch', $script:Remote, $branch))
+    $trackingRef = "$script:Remote/$branch"
+    $commit = (Invoke-DeliveryGit -Arguments @('rev-parse', $trackingRef)).stdout.Trim()
+    $tree = (Invoke-DeliveryGit -Arguments @('rev-parse', "$commit`^{tree}")).stdout.Trim()
+    if ($commit -notmatch '^[a-f0-9]{40}$' -or $tree -notmatch '^[a-f0-9]{40}$') {
+        throw "DELIVERY_CLEANUP_EXECUTOR_INVALID: unable to resolve $trackingRef."
+    }
+    if ($ExpectedCommit -and $commit -cne $ExpectedCommit) {
+        throw "DELIVERY_CLEANUP_EXECUTOR_MOVED: expected $branch $ExpectedCommit, tracking ref is $commit."
+    }
+    return [pscustomobject][ordered]@{ channel=$Channel; branch=$branch; ref=$trackingRef; commit=$commit; tree=$tree }
+}
+
+function New-DeliveryCleanupExecutorWorktree {
+    param([Parameter(Mandatory = $true)][string]$Commit)
+
+    $path = Join-Path ([IO.Path]::GetTempPath()) ('itl-source-cleanup-executor-' + [guid]::NewGuid().ToString('N'))
+    [void](Invoke-DeliveryGit -Arguments @('worktree', 'add', '--quiet', '--detach', $path, $Commit))
+    return [IO.Path]::GetFullPath($path)
+}
+
+function Remove-DeliveryCleanupExecutorWorktree {
+    param([string]$Path)
+
+    if (-not $Path) { return }
+    $resolved = [IO.Path]::GetFullPath($Path)
+    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    if (-not $resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        (Split-Path -Leaf $resolved) -notmatch '^itl-source-cleanup-executor-[0-9a-f]{32}$') {
+        throw "Refusing to remove unexpected cleanup executor worktree: $resolved"
+    }
+    $removed = Invoke-DeliveryGit -Arguments @('worktree', 'remove', '--force', '--force', '--', $resolved) -AllowFailure
+    if ($removed.exitCode -ne 0) { throw "Cleanup executor worktree could not be removed: $resolved" }
+}
+
+function Assert-DeliveryCleanupDelegation {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('Develop', 'Master')][string]$Channel,
+        [Parameter(Mandatory = $true)][ValidateSet('manual', 'pre-operation', 'post-operation')][string]$Phase,
+        [Parameter(Mandatory = $true)][string]$ExecutorCommit,
+        [Parameter(Mandatory = $true)][string]$AuthorityCommit,
+        [Parameter(Mandatory = $true)][string]$OperationId,
+        [Parameter(Mandatory = $true)][string]$DelegationToken
+    )
+
+    $operation = Read-DeliveryOperation
+    if (-not $operation -or [int]$operation.schemaVersion -ne 1 -or [string]$operation.id -cne $OperationId) {
+        throw 'DELIVERY_CLEANUP_DELEGATION_INVALID: active operation identity does not match.'
+    }
+    if ([string]$operation.action -notin @('Cleanup', 'PublishDevelop', 'PromoteRelease', 'ReleaseMaster') -or
+        -not (Test-DeliveryProcessIdentity -ProcessId ([int]$operation.ownerPid) -StartedAt $operation.ownerProcessStartedAt)) {
+        throw 'DELIVERY_CLEANUP_DELEGATION_INVALID: authority operation is not live or does not permit cleanup.'
+    }
+    $delegationProperty = $operation.PSObject.Properties['cleanupDelegation']
+    $delegation = if ($delegationProperty) { $delegationProperty.Value } else { $null }
+    if (-not $delegation -or [int]$delegation.schemaVersion -ne 1 -or
+        [string]$delegation.operationId -cne $OperationId -or
+        [string]$delegation.channel -cne $Channel -or
+        [string]$delegation.phase -cne $Phase -or
+        [string]$delegation.commit -cne $ExecutorCommit -or
+        [string]$delegation.authorityCommit -cne $AuthorityCommit -or
+        [string]$delegation.tokenSha256 -cne (Get-DeliveryCleanupTokenSha256 -Value $DelegationToken) -or
+        (ConvertTo-DeliveryUtcDateTime -Value $delegation.expiresAt) -le [DateTime]::UtcNow) {
+        throw 'DELIVERY_CLEANUP_DELEGATION_INVALID: cleanup capability is missing, expired, or does not match the executor.'
+    }
+    $actualCommit = (Invoke-DeliveryGit -Arguments @('rev-parse', 'HEAD')).stdout.Trim()
+    if ($actualCommit -cne $ExecutorCommit) {
+        throw "DELIVERY_CLEANUP_EXECUTOR_MISMATCH: expected $ExecutorCommit, actual $actualCommit."
+    }
+    return $operation
+}
+
+function Invoke-DeliveryDelegatedCleanupExecutor {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('Develop', 'Master')][string]$Channel,
+        [Parameter(Mandatory = $true)][ValidateSet('manual', 'pre-operation', 'post-operation')][string]$Phase,
+        [Parameter(Mandatory = $true)][string]$ExecutorCommit,
+        [Parameter(Mandatory = $true)][string]$AuthorityCommit,
+        [Parameter(Mandatory = $true)][string]$OperationId,
+        [Parameter(Mandatory = $true)][string]$DelegationToken,
+        [Parameter(Mandatory = $true)][string]$ResultPath,
+        [string]$FreshProjectsRoot = 'C:\itlj',
+        [string]$E2EProjectRoot = '',
+        [switch]$CompactState
+    )
+
+    $resolvedResult = [IO.Path]::GetFullPath($ResultPath)
+    New-Item -ItemType Directory -Path (Split-Path -Parent $resolvedResult) -Force | Out-Null
+    $temporaryResult = "$resolvedResult.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [void](Assert-DeliveryCleanupDelegation -Channel $Channel -Phase $Phase -ExecutorCommit $ExecutorCommit -AuthorityCommit $AuthorityCommit -OperationId $OperationId -DelegationToken $DelegationToken)
+        $cleanup = Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase $Phase
+        $stateCompaction = if ($CompactState) {
+            [pscustomobject][ordered]@{
+                runIndex = (Repair-DeliveryRunHotIndex)
+                resourceLedger = (Compact-DeliveryResourceLedger)
+            }
+        } else { $null }
+        $result = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            contract = 'source-delivery-cleanup-v1'
+            status = [string]$cleanup.status
+            executor = [pscustomobject][ordered]@{
+                channel = $Channel.ToLowerInvariant()
+                commit = $ExecutorCommit
+                tree = (Invoke-DeliveryGit -Arguments @('rev-parse', 'HEAD^{tree}')).stdout.Trim()
+                phase = $Phase
+                authoritySupervisorCommit = $AuthorityCommit
+            }
+            cleanup = $cleanup
+            stateCompaction = $stateCompaction
+        }
+        [IO.File]::WriteAllText($temporaryResult, (($result | ConvertTo-Json -Depth 18) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporaryResult -Destination $resolvedResult -Force
+    } finally {
+        Remove-Item -LiteralPath $temporaryResult -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-DeliveryChannelCleanup {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('Develop', 'Master')][string]$Channel,
+        [Parameter(Mandatory = $true)][ValidateSet('manual', 'pre-operation', 'post-operation')][string]$Phase,
+        [string]$ExpectedCommit = '',
+        [switch]$CompactState
+    )
+
+    if (-not $script:ActiveOperation) { throw 'Channel cleanup requires an active delivery-operation lease.' }
+    $source = Resolve-DeliveryCleanupChannelCommit -Channel $Channel -ExpectedCommit $ExpectedCommit
+    $executorRoot = ''
+    $process = $null
+    $processJob = [IntPtr]::Zero
+    $token = [guid]::NewGuid().ToString('N')
+    $runId = [guid]::NewGuid().ToString('N')
+    $logRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\cleanup-runs\v1\$([string]$script:ActiveOperation.id)\$runId"
+    New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+    $resultPath = Join-Path $logRoot 'result.json'
+    $stdoutPath = Join-Path $logRoot 'stdout.log'
+    $stderrPath = Join-Path $logRoot 'stderr.log'
+    try {
+        $executorRoot = New-DeliveryCleanupExecutorWorktree -Commit ([string]$source.commit)
+        $executorPath = Join-Path $executorRoot 'scripts\source-delivery-supervisor.ps1'
+        if (-not (Test-Path -LiteralPath $executorPath -PathType Leaf)) {
+            throw "DELIVERY_CLEANUP_EXECUTOR_UNAVAILABLE: $($source.ref) at $($source.commit) does not contain the cleanup executor contract."
+        }
+        $delegation = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            operationId = [string]$script:ActiveOperation.id
+            channel = $Channel
+            phase = $Phase
+            commit = [string]$source.commit
+            tree = [string]$source.tree
+            authorityCommit = [string]$script:DeliverySupervisorCommit
+            tokenSha256 = Get-DeliveryCleanupTokenSha256 -Value $token
+            createdAt = [DateTime]::UtcNow.ToString('o')
+            expiresAt = [DateTime]::UtcNow.AddMinutes(30).ToString('o')
+            status = 'starting'
+        }
+        Update-DeliveryOperation -Values @{ cleanupDelegation=$delegation; cleanupExecutorPid=0; cleanupExecutorStatus='starting' }
+        $arguments = @(
+            '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $executorPath,
+            '-Action', 'Cleanup', '-RepositoryRoot', $executorRoot, '-Remote', $script:Remote,
+            '-CleanupExecutor', '-CleanupExecutorChannel', $Channel, '-CleanupExecutorPhase', $Phase,
+            '-CleanupExecutorCommit', [string]$source.commit, '-CleanupAuthorityCommit', [string]$script:DeliverySupervisorCommit,
+            '-CleanupOperationId', [string]$script:ActiveOperation.id, '-CleanupDelegationToken', $token,
+            '-CleanupResultPath', $resultPath, '-FreshProjectsRoot', $FreshProjectsRoot
+        )
+        if ($E2EProjectRoot) { $arguments += @('-E2EProjectRoot', [IO.Path]::GetFullPath($E2EProjectRoot)) }
+        if ($CompactState) { $arguments += '-CleanupCompactState' }
+        $argumentLine = @($arguments | ForEach-Object { ConvertTo-DeliveryNativeArgument -Value ([string]$_) }) -join ' '
+        $started = Start-DeliveryProcess -ArgumentList $argumentLine -WorkingDirectory $executorRoot -StandardOutputPath $stdoutPath -StandardErrorPath $stderrPath
+        $process = $started.process
+        $processJob = [IntPtr]$started.jobHandle
+        $delegation.status = 'running'
+        $delegation | Add-Member -NotePropertyName childPid -NotePropertyValue ([int]$process.Id) -Force
+        $delegation | Add-Member -NotePropertyName childProcessStartedAt -NotePropertyValue ($process.StartTime.ToUniversalTime().ToString('o')) -Force
+        Update-DeliveryOperation -Values @{ cleanupDelegation=$delegation; cleanupExecutorPid=[int]$process.Id; cleanupExecutorStatus='running' }
+        if (-not $process.WaitForExit(1800000)) {
+            Stop-DeliveryProcessTree -Process $process
+            throw "DELIVERY_CLEANUP_TIMEOUT: $Channel $Phase cleanup exceeded 30 minutes."
+        }
+        $process.WaitForExit(); $process.Refresh()
+        if ([int]$process.ExitCode -ne 0) {
+            $stderr = if (Test-Path -LiteralPath $stderrPath) { (Get-Content -LiteralPath $stderrPath -Raw -Encoding UTF8).Trim() } else { '' }
+            throw "DELIVERY_CLEANUP_EXECUTOR_FAILED: $Channel $Phase cleanup exited with $($process.ExitCode). $stderr"
+        }
+        if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) { throw 'DELIVERY_CLEANUP_RESULT_MISSING: cleanup executor did not write result.json.' }
+        $result = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([int]$result.schemaVersion -ne 1 -or [string]$result.contract -cne 'source-delivery-cleanup-v1' -or
+            [string]$result.executor.channel -cne $Channel.ToLowerInvariant() -or
+            [string]$result.executor.commit -cne [string]$source.commit -or
+            [string]$result.executor.tree -cne [string]$source.tree -or
+            [string]$result.executor.phase -cne $Phase) {
+            throw 'DELIVERY_CLEANUP_RESULT_INVALID: cleanup executor identity or contract does not match the delegated source.'
+        }
+        Update-DeliveryOperation -Values @{ cleanupExecutorPid=0; cleanupExecutorStatus=[string]$result.status }
+        return $result
+    } finally {
+        $closeError = $null
+        try { Close-DeliveryProcessJob -JobHandle $processJob -Process $process } catch { $closeError = $_ }
+        Stop-DeliveryProcessTree -Process $process
+        try { Remove-DeliveryCleanupExecutorWorktree -Path $executorRoot } catch { if (-not $closeError) { $closeError = $_ } }
+        if ($script:ActiveOperation) { Update-DeliveryOperation -Values @{ cleanupDelegation=$null; cleanupExecutorPid=0 } }
+        if ($closeError) { throw $closeError }
+    }
+}
+
+function New-DeliveryCleanupFailureResult {
+    param(
+        [Parameter(Mandatory = $true)][string]$Channel,
+        [Parameter(Mandatory = $true)][string]$Phase,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    return [pscustomobject][ordered]@{
+        schemaVersion = 1
+        contract = 'source-delivery-cleanup-v1'
+        status = 'completed-with-warnings'
+        executor = [pscustomobject][ordered]@{
+            channel = $Channel.ToLowerInvariant(); commit=''; tree=''; phase=$Phase
+            authoritySupervisorCommit=[string]$script:DeliverySupervisorCommit; status='unavailable'
+        }
+        cleanup = [pscustomobject][ordered]@{ status='completed-with-warnings'; phase=$Phase; warnings=@($Message); debt=(Get-DeliveryResourceLedgerSummary) }
+        stateCompaction = $null
+    }
+}
+
+function Invoke-DeliveryChannelCleanupSafely {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('Develop', 'Master')][string]$Channel,
+        [Parameter(Mandatory = $true)][ValidateSet('manual', 'pre-operation', 'post-operation')][string]$Phase,
+        [string]$ExpectedCommit = '',
+        [switch]$CompactState
+    )
+
+    try { return Invoke-DeliveryChannelCleanup -Channel $Channel -Phase $Phase -ExpectedCommit $ExpectedCommit -CompactState:$CompactState }
+    catch {
+        $message = "$Channel cleanup executor failed closed: $($_.Exception.Message)"
+        Write-Warning $message
+        return New-DeliveryCleanupFailureResult -Channel $Channel -Phase $Phase -Message $message
+    }
+}
+
+function Add-DeliveryCleanupResults {
+    param([Parameter(Mandatory = $true)][object]$Result, [Parameter(Mandatory = $true)][object[]]$Runs)
+
+    $allRuns = @($Runs | Where-Object { $_ })
+    $Result | Add-Member -NotePropertyName cleanupRuns -NotePropertyValue $allRuns -Force
+    if ($allRuns.Count -gt 0) { $Result | Add-Member -NotePropertyName cleanup -NotePropertyValue $allRuns[-1] -Force }
+    if (@($allRuns | Where-Object { [string]$_.status -eq 'completed-with-warnings' }).Count -gt 0) {
+        $Result | Add-Member -NotePropertyName deliveryStatus -NotePropertyValue 'completed-with-cleanup-warnings' -Force
+    }
+    return $Result
+}
+
+function Invoke-PublishDevelopWithCleanup {
+    $cleanupResumePlanId = [string](Get-Variable -Name ResumePlan -ValueOnly -ErrorAction SilentlyContinue)
+    $checkpoint = if ($cleanupResumePlanId) { Read-DevelopPublicationAttempt } else { $null }
+    $previous = if ($checkpoint -and $checkpoint.PSObject.Properties['preOperationCleanup']) { $checkpoint.preOperationCleanup } else { $null }
+    if ($checkpoint -and $checkpoint.PSObject.Properties['planId'] -and [string]$checkpoint.planId -ceq $cleanupResumePlanId -and
+        $previous -and [string]$previous.status -ceq 'completed') {
+        # Best-effort garbage collection is not qualification or lock admission.
+        # Resume retains current process/lease guards and the full post cleanup.
+        $pre = [pscustomobject]@{status='reused';phase='pre-operation';planId=$cleanupResumePlanId;reason='completed-for-this-frozen-checkpoint'}
+    } else { $pre = Invoke-DeliveryChannelCleanupSafely -Channel Develop -Phase pre-operation }
+    $script:DeliveryPreOperationCleanup = $pre
+    try { $published = Publish-DevelopDeferringFailingEntries }
+    finally { Remove-Variable -Name DeliveryPreOperationCleanup -Scope Script -ErrorAction SilentlyContinue }
+    $post = Invoke-DeliveryChannelCleanupSafely -Channel Develop -Phase post-operation -ExpectedCommit ([string]$published.commit)
+    $result = Add-DeliveryCleanupResults -Result $published -Runs @($pre, $post)
+    # Success closed the attempt; apply the recovery-archive retention that
+    # otherwise ran only in manual Cleanup. Best effort, like the sweep above.
+    try { $recovery = Invoke-DeliveryRecoveryCleanup -OperationAction PublishDevelop }
+    catch { $recovery = [pscustomobject]@{ status='completed-with-warnings'; removedFiles=0; freedBytes=0L; warnings=@($_.Exception.Message); entries=@() } }
+    $result | Add-Member -NotePropertyName recoveryArchives -NotePropertyValue $recovery -Force
+    if ([string]$recovery.status -eq 'completed-with-warnings') {
+        Write-Warning "Recovery archive retention: $(@($recovery.warnings) -join '; ')"
+        $result | Add-Member -NotePropertyName deliveryStatus -NotePropertyValue 'completed-with-cleanup-warnings' -Force
+    }
+    # The registration audit store and shard cache expire under the same lease.
+    try { $stores = Invoke-DeliveryStoreRetention -OperationAction PublishDevelop }
+    catch { $stores = [pscustomobject]@{ status='completed-with-warnings'; removedEntries=0; removedFiles=0; warnings=@($_.Exception.Message) } }
+    $result | Add-Member -NotePropertyName sourceStores -NotePropertyValue $stores -Force
+    if ([string]$stores.status -eq 'completed-with-warnings') {
+        Write-Warning "Source store retention: $(@($stores.warnings) -join '; ')"
+        $result | Add-Member -NotePropertyName deliveryStatus -NotePropertyValue 'completed-with-cleanup-warnings' -Force
+    }
+    return $result
+}
+
+function Invoke-ReleaseMasterWithCleanup {
+    param(
+        [string]$PrequalifiedCommit = '',
+        [string]$PrequalifiedTree = '',
+        [DateTime]$PrequalifiedNotBefore = [DateTime]::MinValue,
+        [switch]$ReusePrequalifiedGates
+    )
+
+    $pre = Invoke-DeliveryChannelCleanupSafely -Channel Master -Phase pre-operation
+    $released = Release-DevelopToMaster @PSBoundParameters
+    $post = Invoke-DeliveryChannelCleanupSafely -Channel Master -Phase post-operation -ExpectedCommit ([string]$released.masterCommit)
+    return Add-DeliveryCleanupResults -Result $released -Runs @($pre, $post)
 }

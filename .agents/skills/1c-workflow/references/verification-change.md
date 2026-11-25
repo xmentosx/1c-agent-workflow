@@ -1,0 +1,208 @@
+﻿# Current change verification
+
+`ITL_VERIFICATION_MODEL=change` is the default for new and updated projects.
+`cumulative` selects the previous catalog-wide assessment. Set it in the existing
+project `.dev.env`; status reports the effective model. Switching starts no
+runner and neither discards failures nor accepts pending task criteria.
+`VERIFICATION_POLICY`, verification depth, UI/provider switches, named invocation
+permission and repair budgets remain independent.
+
+## Prepare one current plan
+
+Short path:
+
+1. Run `begin-verification-change` without a path. It returns the unaccepted delta and writes `draftPlanPath`: retained suites/groups whose obligations already cover a changed path are proposed with a `DRAFT:` reason, and `draftUncoveredPaths` lists the rest.
+2. Edit the draft: replace every `DRAFT:` reason with your impact decision (keep, change or drop the proposed check), give each uncovered path a sufficient check, and add the task description and source (or `requirementPaths`) and every criterion. The helper refuses a remaining `DRAFT:` reason.
+3. Run `begin-verification-change -VerificationEvidencePath <draft>`, then the normal `/itl-check`, then `complete-verification-change`.
+
+You choose the proof; the helper runs exactly what the plan selects. Helper proposals are candidates, not requirements: keep a suite only when this change needs its observation in the base, never "just in case". Each decision is yours and is shown in the check report.
+
+- A retained acceptance suite whose obligation covers a changed branch path must be decided: keep it as a check, or declare it in `retainedDispositions` as `unaffected` with your reason. A plan that does neither is refused (`VERIFICATION_CHANGE_SUITE_UNDECIDED`). Explicit diagnostic suites are never selected by a check and need no decision; `retainedDispositions` naming one is refused (`VERIFICATION_CHANGE_SUITE_INVALID`).
+- The base is the last accepted increment, else the last successful check, else the last observed run that recorded a receipt for every suite of its plan (even a failed one), else the branch start. Suites without a passed receipt there (`unsettledSuiteIds` in the preview) are required until they pass or the user attests them (`attest-verification-suites`, `verification-suite-selection.md`) and cannot be declared `unaffected` (`VERIFICATION_CHANGE_UNSETTLED_REQUIRED`); the same holds for a suite that failed in this change.
+- The branch start and master input are the accepted base and run nothing by themselves. The draft marks branch paths master also changed (`draftMasterOverlapPaths`) and proposes, as `DRAFT:` dispositions, suites whose area both master and the branch changed (`draftOverlapSuiteIds`); `systemCoveredPaths.importedPaths` lists all master input for implicit dependencies such as shared modules. You decide.
+- A changed branch feature file selects its suite. The goal is working configuration behavior, not a working test: when this change does not need that suite's observation, declare it `unaffected` with your reason. Only an `always` suite cannot be excluded. A changed shared Vanessa support file, verification owner or pinned runtime is only reported in the check's selection reason: earlier accepted results stay valid, and the suites you select exercise the changed support. The catalog `always` policy is kept.
+- When no runtime observation is needed (a comment, a message text), give the path a one-off check with `admissibleProof: ["loaded-target"]` and say why. The check's own load, Enterprise update and event-log evidence prove it; `begin-one-off-proof` is not used for it.
+- A full acceptance run on request: list every acceptance suite as `run`.
+
+The rest of this section and the next one explain the record and how to choose checks for uncovered paths.
+
+Use the existing helper action `begin-verification-change` without an evidence
+path to inspect its accepted base, full unaccepted source delta and prior task
+criteria. A new commit does not advance that base. Prepare the compact JSON in
+the current ignored run directory, then invoke the same action with
+`-VerificationEvidencePath <plan.json>`. This is a runtime record, not a new
+planning document or a new user approval round.
+
+For OpenSpec, reference the existing proposal/spec; include every AC, including
+pending criteria. For a direct task, record its description and user-request
+source in this same runtime record. Do not invent an OpenSpec change.
+
+```json
+{
+  "taskId": "desktop-file-transfer",
+  "requirementPaths": ["openspec/changes/desktop-file-transfer/proposal.md"],
+  "checks": [{
+    "id": "folder-result",
+    "expectedResult": "The chosen folder contains the complete exported file",
+    "inputPaths": ["src/cf/DataProcessors/Example/Forms/Export/Ext/**"],
+    "admissibleProof": ["runtime-observation"]
+  }],
+  "paths": [{
+    "path": "src/cf/DataProcessors/Example/Forms/Export/Ext/Module.bsl",
+    "checkIds": ["folder-result"],
+    "reason": "Check the changed folder selection, delivery and cancellation"
+  }],
+  "criteria": [
+    {"id":"AC-01","expectedResult":"Files reach the chosen folder","decision":"check","checkIds":["folder-result"]},
+    {"id":"AC-02","expectedResult":"Web delivery works","decision":"pending"}
+  ],
+  "retainedDispositions": []
+}
+```
+
+Use actual project paths and the helper's exact path list, including deletions
+and uncommitted edits. Each path needs a reason and sufficient current checks.
+Paths the helper reports under `systemCoveredPaths` (unchanged imports from the
+accepted master ancestor, workflow-owned verification code and a changed pinned
+verification runtime in `.agent-1c/dependency-lock.json`) need no entry: the
+normal check runs the complete existing acceptance set for them. A retained
+group or suite also covers its own test modules or features.
+Instead of creating a new observation, `checks` may reference an existing
+acceptance `suiteId` or default-fast `groupId`; use its existing obligation id in `checkIds`. A named explicit diagnostic run can supply a current one-off JUnit receipt; diagnostic status alone does not close acceptance.
+
+After an edit within the recorded plan, `check-dev-branch` repeats this same
+registration itself, line-ending repair included, only when the tree alone
+changed: the plan, requirements, assessor and target are unchanged, the
+unaccepted delta has exactly the plan's `paths`, and the change is still
+`pending`. It prints the rebound tree and the repaired files. A new or vanished
+path, an edited plan or requirement, a changed assessor or an accepted change
+still stops with `VERIFICATION_CHANGE_STALE`; update the plan and repeat
+`begin-verification-change` as before.
+
+The agent owns semantic sufficiency and impact analysis. In this same plan,
+choose the least costly sufficient combination of existing or new checks for
+the changed decisions, invariants and material interaction risks. Each added
+check must close an identified gap; do not duplicate a boundary matrix within
+or across unit, integration and UI layers without a distinct risk. Cost includes
+fixture preparation, tool interaction, execution and result analysis. It selects
+the method and informs test retention; it never makes incomplete proof sufficient
+or waives approved criteria and independently required checks.
+
+Group cases by an established shared processing path. Exercise its common
+mechanism with representative cases; check the remaining cases for differing
+transformations, constraints and side effects. Repeat a full cycle for a distinct
+risk or requirement, not automatically for each field or variant. Account for
+every required case; sharing one internal handler alone does not establish
+equivalent paths.
+
+Derive expected results from the agreed outcome and domain contract, not from
+the chosen implementation. Preserve the material preconditions of the reported
+defect or criterion. Observing an internal method proves only its contract,
+unless the remaining path to the required outcome is also established. Separate
+successes do not prove a combination of conditions whose interaction matters.
+Cover combinations required by the defect, criterion or an identified dependency;
+do not invent an exhaustive cross-product. Technical invariants remain useful
+checks, but cannot alone establish the whole user outcome.
+
+Missing controls need inspection of the actual form, not blind scenario rewrites.
+Changing the interaction method must preserve those material conditions. A
+product failure remains a failure; do not change the expected outcome to make
+it pass. Unknown mutation outcomes and foreign sessions retain their existing
+recovery rules. Decide whether to retain a test separately under
+`verification-suite-selection.md`; no additional planning document is required.
+
+## Execute and accept
+
+Run the normal unfiltered `/itl-check` against the current branch copy. The
+existing runner, applicability, event-log and load checks stay authoritative.
+For a selected one-off observation, use `begin-one-off-proof`, perform the
+authorized check, retain expected/actual evidence, then `complete-one-off-proof`.
+No `.feature` is required for an admissible runtime observation; do not convert
+and rerun a sufficient observation merely to obtain a saved test file.
+Declare a one-off check only with a concrete way to perform it in this session;
+for managed-form UI that is the attached `itl-vanessa-ui` form actions (observe,
+act, verify). Do not offer an unconfigured or unattached client as the route. A
+`partial` result whose pending one-off checks the agent can perform is the next
+step of the same task, not its final answer.
+
+Before expanding a large runtime matrix, use the smallest suitable end-to-end
+case to establish the required path, material preconditions and observability
+of the result. If a test hook is needed, establish that it actually fires before
+building further checks around it. Reuse adequate existing evidence; a successful
+early check contributes to acceptance under the same evidence rules, rather than
+becoming an additional mandatory run. Repeated setup or tool failures call for
+reassessing the method, preserving the requirement and material conditions;
+they do not justify weaker assertions or bypassing existing recovery rules.
+
+Complete independent proofs as they become available. Failure of another check
+does not discard them; reuse still requires the existing input, target and
+artifact assessment. Preserve observations from an unfinished connected
+scenario, but do not mark that scenario passed until its required outcome is
+observed under consistent material conditions. After a repair, obtain the
+missing or affected proof rather than manually repeating unaffected observations.
+
+Finish with `complete-verification-change`. It validates current receipts and
+records an immutable accepted increment. A changed input after planning stops
+completion and keeps the previous accepted base. Update the same plan and
+continue; successful unchanged observations need not be repeated.
+
+Task acceptance is separate. A criterion is `check`, `pending`, or `unaffected`.
+`unaffected` requires a passed criterion from an accepted increment and an impact
+rationale; it cannot excuse missing or failed proof. Retained suite dispositions
+likewise require existing passed evidence. Shared/runtime full-coverage reasons
+and an existing `always` policy cannot be narrowed this way. General load readiness always checks the current
+whole source; it does not turn every historical observation into a new run.
+
+Status distinguishes current-change checks from whole-task acceptance. Pending
+criteria prevent an ordinary complete-result claim; warn/block and explicit
+unverified-result handling keep their original policy. Switching to cumulative
+does not erase a task remainder recorded in change mode.
+
+The updater writes the default once using its existing transaction and rollback.
+An explicit cumulative choice survives subsequent updates. Historical raw
+evidence is retained; migration neither reruns it nor declares it newly passed.
+
+At first adoption, a valid catalog one-off may be `unaffected` with its exact
+expected result and impact reason. Prepare the plan before loading the new
+source: the old receipt must still pass the existing input/loaded-target/checker
+and artifact assessment. Missing or stale historical proof stays pending. The
+accepted snapshot carries that history; it does not become a current runner.
+
+Check inputs must belong to the existing 1C/test envelope or bounded catalog
+input scopes. Declare an external source scope through the existing catalog
+before planning; an ignored/unsnapshotted file cannot establish current proof.
+The helper pins the latest accepted tree locally, even before a commit. An
+explicit branch reset retires the active task into history through its existing
+owner; ordinary commits and task labels cannot do so.
+
+## Portable identities and diagnostic runs
+
+Proof input identities use the ordinal-v2 algorithm on Windows PowerShell 5.1
+and PowerShell 7. Canonical string order is ordinal and culture independent.
+Input-file identity deduplicates only exact normalized path strings; case-distinct
+Git paths remain distinct. Obligation hashes retain declared duplicate entries.
+Path matching, suite-id equality and scenario execution order retain their own
+existing contracts; identity sorting does not redefine them.
+
+Older receipts are not automatically accepted under the new algorithm/checker.
+Keep their observations and artifacts. `begin-one-off-proof` preserves the exact
+replaced receipt under `one-off/history/<id>-<sha256>.json`; it then creates a
+current pending proof. Reassess the original observations against current inputs,
+loaded target, checker and artifact bytes before completing it. Repeat only
+observations whose material conditions cannot be established. A draft created
+before the update must be begun again. Retained suites and component receipts
+use their existing normal-check continuation when their checker is incompatible.
+Current impact plans are renewed through `begin-verification-change`, preserving
+pending criteria and the prior accepted base. Historical accepted records keep
+their existing serialization and integrity checks.
+
+A named feature or tag filter selects execution, while the configured feature
+root defines the canonical verification scope and retained catalog. An auxiliary
+contour keeps its own root. Diagnostic runs save `diagnostic-inputs.json` with
+feature SHA-256, tag filter and loaded target; changing a feature during the run
+prevents a passed result. Include this manifest alongside the JUnit file in a
+one-off diagnostic proof's `artifactPaths`. Its bytes and referenced feature
+content are checked during assessment. Diagnostic success alone cannot complete
+ordinary retained coverage or pending task criteria.
+A `-YAxUnitModule` diagnostic run saves the same manifest for its modules and
+test-extension source; see `yaxunit-tests.md`.

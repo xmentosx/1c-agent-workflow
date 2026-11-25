@@ -1,0 +1,1261 @@
+﻿BeforeAll {
+    $script:WhRepo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+    $script:WhLib = Join-Path $script:WhRepo '.agents/skills/1c-workflow/scripts/lib'
+    $script:WhAssets = Join-Path $script:WhRepo '.agents/skills/1c-workflow/assets/window-helper'
+    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18'
+    foreach ($module in 'agent-1c.runtime-values.ps1', 'agent-1c.core.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1', 'agent-1c.window-helper.ps1') {
+        . (Join-Path $script:WhLib $module)
+    }
+    $script:ProjectRoot = Join-Path $TestDrive 'Проект окон с пробелом'
+    [void][IO.Directory]::CreateDirectory($script:ProjectRoot)
+    $env:ITL_WINDOW_HELPER_CACHE_ROOT = Join-Path $TestDrive 'Кеш помощника с пробелом'
+    # Launch tests resolve logsPath through the project config; strict mode requires it to exist.
+    $script:Config = [pscustomobject]@{ logsPath = (Join-Path $script:ProjectRoot 'логи 1С') }
+    $script:WhGroups = [Collections.Generic.List[object]]::new()
+
+    function New-WhGroup([string]$Name, [int]$Countdown = 0, [int[]]$Roots = @()) {
+        $dir = Join-Path $TestDrive ('Группа окон ' + $Name)
+        [void][IO.Directory]::CreateDirectory($dir)
+        $exe = Get-ItlWindowHelperExecutable
+        $config = [ordered]@{ protocol = 1; mode = 'hidden'; countdownSeconds = $Countdown; pauseLimitSeconds = 30; roots = @($Roots); executable = $exe }
+        Write-Utf8Text -Path (Join-Path $dir 'group.json') -Value ($config | ConvertTo-Json)
+        $group = [pscustomobject]@{ directory = $dir; executable = $exe; ready = $true; mode = 'hidden'; warning = '' }
+        $script:WhGroups.Add($group)
+        return $group
+    }
+
+    # Pester removes a Describe block's TestDrive files when that block ends, so each block
+    # that starts helpers stops them in its own AfterAll, through the executable it started
+    # them with (the cache record is a TestDrive file, too). A helper that keeps its
+    # helper.lock is a leak, not a cleanup detail.
+    function Stop-WhGroups {
+        foreach ($group in @($script:WhGroups)) {
+            & $group.executable stop $group.directory | Out-Null
+            $LASTEXITCODE | Should -Be 0 -Because "the helper of $($group.directory) must stop"
+            $lock = Join-Path $group.directory 'helper.lock'
+            if (Test-Path -LiteralPath $lock) { Test-ItlWindowHelperLockHeld -Directory $group.directory | Should -BeFalse -Because $lock }
+        }
+        $script:WhGroups.Clear()
+    }
+
+    # The helper counts an adopted process with its live descendants (a child starts after its
+    # parent). The test host may own children of its own, such as its console host or a
+    # process left by an earlier file in the same Pester worker, so the expected count is the
+    # same tree read from the system process table.
+    function Get-WhTreeCount([int]$Root) {
+        $processes = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate)
+        $byId = @{}
+        foreach ($process in $processes) { $byId[[int]$process.ProcessId] = $process }
+        if (-not $byId.ContainsKey($Root)) { return 0 }
+        $tree = [Collections.Generic.HashSet[int]]::new(); [void]$tree.Add($Root)
+        do {
+            $grew = $false
+            foreach ($process in $processes) {
+                $id = [int]$process.ProcessId; $parentId = [int]$process.ParentProcessId
+                if ($tree.Contains($id) -or -not $tree.Contains($parentId) -or $id -eq $parentId) { continue }
+                if ($process.CreationDate -lt $byId[$parentId].CreationDate) { continue }
+                [void]$tree.Add($id); $grew = $true
+            }
+        } while ($grew)
+        return $tree.Count
+    }
+
+    function Get-WhHelperPid([string]$Directory) {
+        return [int]((Get-Content -LiteralPath (Join-Path $Directory 'helper.json') -Raw -Encoding UTF8 | ConvertFrom-Json).pid)
+    }
+}
+
+AfterAll {
+    Remove-Item Env:\ITL_WINDOW_HELPER_CACHE_ROOT -ErrorAction SilentlyContinue
+}
+
+Describe 'Agent 1C window mode and settings' {
+    AfterEach { Remove-Item Env:\ONEC_WINDOW_MODE, Env:\ONEC_UI_LEASE_COUNTDOWN_SECONDS, Env:\ONEC_UI_LEASE_PAUSE_LIMIT_SECONDS -ErrorAction SilentlyContinue }
+
+    It 'passes optional project and run dropdown settings as booleans' {
+        Mock Get-EnvValue { param($Name, $Default) $Default }
+        $saved = $env:ITL_RUN_DROPDOWN_PROMPT
+        try {
+            $env:ITL_RUN_DROPDOWN_PROMPT = $null
+            $params = @{}
+            Add-OneCDropdownPromptSettings $params
+            $params.Count | Should -Be 0
+            Mock Get-EnvValue { 'true' }
+            $env:ITL_RUN_DROPDOWN_PROMPT = 'off'
+            Add-OneCDropdownPromptSettings $params
+            $params.ITLDropdownPrompt | Should -BeTrue
+            $params.ITLDropdownRunPrompt | Should -BeFalse
+            Mock Get-EnvValue { 'false' }
+            $env:ITL_RUN_DROPDOWN_PROMPT = 'on'
+            Add-OneCDropdownPromptSettings $params
+            $params.ITLDropdownPrompt | Should -BeFalse
+            $params.ITLDropdownRunPrompt | Should -BeTrue
+            Mock Get-EnvValue { 'invalid' }
+            { Add-OneCDropdownPromptSettings $params } | Should -Throw '*ONEC_DROPDOWN_PROMPT*'
+        } finally { $env:ITL_RUN_DROPDOWN_PROMPT = $saved }
+    }
+
+    It 'defaults to hidden with a 10-second countdown and a 600-second pause limit' {
+        Mock Get-EnvValue { param($Name, $Default) $Default }
+        Get-OneCWindowMode | Should -Be 'hidden'
+        Get-OneCUiLeaseCountdownSeconds | Should -Be 10
+        Get-OneCUiLeasePauseLimitSeconds | Should -Be 600
+    }
+
+    It 'accepts visible and 0 and rejects other values with guidance' {
+        Mock Get-EnvValue { param($Name, $Default) switch ($Name) { 'ONEC_WINDOW_MODE' { ' Visible ' } 'ONEC_UI_LEASE_COUNTDOWN_SECONDS' { '0' } default { $Default } } }
+        Get-OneCWindowMode | Should -Be 'visible'
+        Get-OneCUiLeaseCountdownSeconds | Should -Be 0
+        Mock Get-EnvValue { param($Name, $Default) switch ($Name) { 'ONEC_WINDOW_MODE' { 'minimized' } 'ONEC_UI_LEASE_COUNTDOWN_SECONDS' { '-1' } 'ONEC_UI_LEASE_PAUSE_LIMIT_SECONDS' { '0' } default { $Default } } }
+        { Get-OneCWindowMode } | Should -Throw "*ONEC_WINDOW_MODE must be 'hidden' or 'visible'*Use visible*"
+        { Get-OneCUiLeaseCountdownSeconds } | Should -Throw '*ONEC_UI_LEASE_COUNTDOWN_SECONDS must be an integer between 0 and 600*'
+        { Get-OneCUiLeasePauseLimitSeconds } | Should -Throw '*ONEC_UI_LEASE_PAUSE_LIMIT_SECONDS must be an integer between 1 and 86400*'
+    }
+}
+
+Describe 'Window helper pause panel' {
+    It 'cycles the four working-area corners and reopens in the last selected corner' {
+        Add-Type -AssemblyName System.Windows.Forms
+        $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes((Get-ItlWindowHelperExecutable)))
+        $constructor = $assembly.GetType('Itl.WindowHelper.PanelForm').GetConstructors()[0]
+        $work = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+        $subKey = 'Software\ITL.WindowHelper.Test.' + [guid]::NewGuid().ToString('N')
+        $key = 'HKEY_CURRENT_USER\' + $subKey
+        $argsForPanel = [object[]]@($work, [Drawing.Rectangle]::Empty, [float]1, 'Пауза',
+            [string[]]@('Сейчас', 'Отмена'), [EventHandler[]]@({ throw 'Unexpected resume' }, { throw 'Unexpected cancel' }), $key)
+        $panel = $null
+        try {
+            $panel = $constructor.Invoke($argsForPanel)
+            $left = $work.Left + 12
+            $right = $work.Right - $panel.Width - 12
+            $top = $work.Top + 12
+            $bottom = $work.Bottom - $panel.Height - 12
+            $corners = @([Drawing.Point]::new($right, $bottom), [Drawing.Point]::new($left, $bottom),
+                [Drawing.Point]::new($left, $top), [Drawing.Point]::new($right, $top))
+            $panel.Location | Should -Be $corners[0]
+            $click = [Windows.Forms.Button].GetMethod('OnClick', [Reflection.BindingFlags]'NonPublic,Instance')
+            foreach ($index in 1, 2, 3, 0) {
+                $button = $panel.Controls | Where-Object Text -eq 'Другой угол'
+                $click.Invoke($button, @([EventArgs]::Empty))
+                $panel.Location | Should -Be $corners[$index]
+                $panel.Dispose()
+                $panel = $constructor.Invoke($argsForPanel)
+                $panel.Location | Should -Be $corners[$index]
+            }
+        } finally {
+            if ($panel) { $panel.Dispose() }
+            [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey($subKey, $false)
+        }
+    }
+}
+
+Describe 'Agent 1C window mode for one run' {
+    AfterEach { [Environment]::SetEnvironmentVariable('ITL_RUN_WINDOW_MODE', $null, 'Process') }
+
+    It 'overrides the project mode for this run only and survives a .dev.env re-import' {
+        Mock Get-EnvValue { param($Name, $Default) if ($Name -eq 'ONEC_WINDOW_MODE') { 'hidden' } else { $Default } }
+        Get-OneCWindowModeSource | Should -Be 'project'
+        Set-OneCRunWindowMode -Mode ' Visible '
+        Get-OneCWindowMode | Should -Be 'visible'
+        Get-OneCWindowModeSource | Should -Be 'run'
+        # .dev.env imports overwrite process settings; the run variable is not one of them.
+        $envFile = Join-Path $TestDrive 'Проект с пробелом\.dev.env'
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $envFile))
+        [IO.File]::WriteAllText($envFile, "ONEC_WINDOW_MODE=hidden`r`n", [Text.UTF8Encoding]::new($false))
+        $before = [Environment]::GetEnvironmentVariable('ONEC_WINDOW_MODE', 'Process')
+        try {
+            Import-DotEnv -Path $envFile -Overwrite
+            Get-OneCWindowMode | Should -Be 'visible'
+        } finally { [Environment]::SetEnvironmentVariable('ONEC_WINDOW_MODE', $before, 'Process') }
+        $group = Start-ItlWindowHelperGroup -Directory (Join-Path $TestDrive 'Группа видимого прогона')
+        $group.ready | Should -BeFalse
+        $group.reason | Should -Be 'mode-visible'
+        Format-ItlWindowHelperLeaseSummary -Summary (Get-ItlWindowHelperLeaseSummary -Group $group) | Should -BeLike 'Agent UI control: mode=visible modeSource=run leases=0 *'
+        # A child process inherits the run mode; the next run without -WindowMode does not.
+        [Environment]::SetEnvironmentVariable('ITL_RUN_WINDOW_MODE', $null, 'Process')
+        Get-OneCWindowMode | Should -Be 'hidden'
+        Get-OneCWindowModeSource | Should -Be 'project'
+    }
+
+    It 'rejects an invalid mode before anything starts and leaves the project mode' {
+        { Set-OneCRunWindowMode -Mode 'minimized' } | Should -Throw "*-WindowMode must be 'hidden' or 'visible'*project ONEC_WINDOW_MODE stays unchanged*"
+        [Environment]::GetEnvironmentVariable('ITL_RUN_WINDOW_MODE', 'Process') | Should -BeNullOrEmpty
+        Set-OneCRunWindowMode -Mode ''
+        [Environment]::GetEnvironmentVariable('ITL_RUN_WINDOW_MODE', 'Process') | Should -BeNullOrEmpty
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $script:WhRepo '.agents/skills/1c-workflow/scripts/agent-1c.ps1'), [ref]$null, [ref]$null)
+        $parameter = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'WindowMode' }
+        @($parameter.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments.Value }) | Should -Be @('', 'hidden', 'visible')
+        $ast.Extent.Text | Should -Match '(?s)\. \$modulePath\s*\}\s*# Before any launch[^\n]*\n\s*Set-OneCRunWindowMode -Mode \$WindowMode'
+    }
+}
+Describe 'Agent 1C launch path' {
+    BeforeEach {
+        $script:Launched = $null
+        Mock Resolve-EnterpriseClientExecutablePath { 'C:\Program Files\1cv8\bin\1cv8c.exe' }
+        Mock Assert-InfoBaseAvailable { }
+        Mock Get-OneCLaunchUserWindow { [int64]4242 }
+        Mock Start-OneCProcessBackground { $script:Launched = [pscustomobject]@{ arguments = @($Arguments); visible = [bool]$Visible }; [pscustomobject]@{ Id = 777 } }
+    }
+
+    It 'starts TestManager, ROCTUP and a helper-served TestClient hidden with /DisableSplash in hidden mode' {
+        Mock Get-OneCWindowMode { 'hidden' }
+        $manager = Start-EnterpriseBackground -InfoBasePath 'C:\База с пробелом' -InfoBaseKind file -UseTestManager -TestClientPort 48100 -EnterpriseArgs @('/Execute', 'x.epf') -User '' -Password ''
+        $script:Launched.arguments | Should -Contain '/DisableSplash'
+        $script:Launched.visible | Should -BeFalse
+        $manager.focusGuard.userWindow | Should -Be 4242
+        $manager.focusGuard.processId | Should -Be 777
+        Start-EnterpriseBackground -InfoBasePath 'C:\База с пробелом' -InfoBaseKind file -UseTestClient -HiddenTestClient -TestClientPort 48101 -User '' -Password '' | Out-Null
+        $script:Launched.arguments | Should -Contain '/DisableSplash'
+        $script:Launched.visible | Should -BeFalse
+        # Without a ready helper group the client keeps the visible start.
+        Start-EnterpriseBackground -InfoBasePath 'C:\База с пробелом' -InfoBaseKind file -UseTestClient -TestClientPort 48101 -User '' -Password '' | Out-Null
+        $script:Launched.visible | Should -BeTrue
+    }
+
+    It 'keeps the prior launch in visible mode' {
+        Mock Get-OneCWindowMode { 'visible' }
+        $client = Start-EnterpriseBackground -InfoBasePath 'C:\База' -InfoBaseKind file -UseTestClient -HiddenTestClient -TestClientPort 48101 -User '' -Password ''
+        $script:Launched.arguments | Should -Not -Contain '/DisableSplash'
+        $script:Launched.visible | Should -BeTrue
+        $client.focusGuard | Should -BeNullOrEmpty
+        Should -Invoke Get-OneCLaunchUserWindow -Times 0
+    }
+
+    It 'adds /DisableSplash and the focus return to the runner TestManager monitor' {
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $script:WhLib 'agent-1c.core.ps1'), [ref]$null, [ref]$null)
+        $invoke = [string]($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-Enterprise' }, $true)[0].Extent.Text)
+        $invoke | Should -Match '(?s)\$args \+= "/TESTMANAGER"\s*if \(\$hiddenEnterprise\) \{\s*\$launchFocusGuard = New-OneCLaunchFocusGuard -UserWindow \(Get-OneCLaunchUserWindow\)'
+        $invoke | Should -Match '(?s)Invoke-OneCLaunchFocusReturn -Guard \$launchFocusGuard -ProcessId \(\[int\]\$probeContext\.processId\).*?& \$focusedCompletionProbe \$probeContext'
+    }
+
+    It 'returns the focus only for the launched process and only during the first 60 seconds' {
+        Invoke-OneCLaunchFocusReturn -Guard $null | Should -Be 'no-user-window'
+        $guard = New-OneCLaunchFocusGuard -UserWindow 1 -ProcessId 4
+        Invoke-OneCLaunchFocusReturn -Guard $guard | Should -Be 'user'
+        $guard.untilUtc = [DateTime]::UtcNow.AddSeconds(-1)
+        Invoke-OneCLaunchFocusReturn -Guard $guard | Should -Be 'expired'
+    }
+
+    It 'routes <Phase> through main-frame-only hiding in hidden mode' -ForEach @(
+        @{ Phase = 'normalization'; Extra = @('/Execute', 'ДляАвтоматическогоОбновленияИБ.epf') }
+        @{ Phase = 'tooling'; Extra = @('/Execute', 'ToolingProbe.epf', '/CToolingProbe;Params=запрос.json') }
+        @{ Phase = 'yaxunit'; Extra = @('/C', 'RunUnitTests=тесты.json') }
+    ) {
+        Mock Get-OneCWindowMode { 'hidden' }
+        Mock Invoke-WithOneCSessionAdmissionContext { & $ScriptBlock }
+        Mock Confirm-OneCNativeOperationRelease { }
+        Mock Invoke-NativeProcessAndWaitResult {
+            $script:Launched = @{ arguments = $Arguments; hide = [bool]$HideOneCMainFrame }
+            @{ exitCode = 0; timedOut = $false }
+        }
+        Invoke-Enterprise -InfoBasePath 'C:\База с пробелом' -InfoBaseKind file -EnterpriseArgs $Extra -User '' -Password '' | Out-Null
+        $script:Launched.arguments | Should -Contain '/DisableSplash'
+        $script:Launched.hide | Should -BeTrue
+        foreach ($arg in $Extra) { $script:Launched.arguments | Should -Contain $arg }
+        Should -Invoke Get-OneCLaunchUserWindow -Times 0 -Because 'service launches do not acquire or restore user focus'
+    }
+
+    It 'leaves visible service launches and TestManager ownership unchanged' -ForEach @(
+        @{ Mode = 'visible'; Port = 0; Splash = $false }
+        @{ Mode = 'hidden'; Port = 48100; Splash = $true }
+    ) {
+        Mock Get-OneCWindowMode { $Mode }
+        Mock Invoke-WithOneCSessionAdmissionContext { & $ScriptBlock }
+        Mock Confirm-OneCNativeOperationRelease { }
+        Mock Invoke-NativeProcessAndWaitResult {
+            $script:Launched = @{ arguments = $Arguments; hide = [bool]$HideOneCMainFrame }
+            @{ exitCode = 0; timedOut = $false }
+        }
+        Invoke-Enterprise -InfoBasePath 'C:\База с пробелом' -InfoBaseKind file -TestClientPort $Port -User '' -Password '' | Out-Null
+        ($script:Launched.arguments -contains '/DisableSplash') | Should -Be $Splash
+        $script:Launched.hide | Should -BeFalse
+    }
+}
+
+Describe 'Service Enterprise main-frame launch' {
+    BeforeAll {
+        $script:ServiceDir = Join-Path $TestDrive 'Служебный клиент с пробелом'
+        [void][IO.Directory]::CreateDirectory($script:ServiceDir)
+        $source = Join-Path $script:ServiceDir 'client.cs'
+        # Real off-screen Win32 windows, no 1C installation, input or activation.
+        [IO.File]::WriteAllText($source, @'
+using System; using System.IO; using System.Runtime.InteropServices; using System.Threading;
+static class ServiceClient {
+    delegate IntPtr WndProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    struct WC { public uint style; public WndProc proc; public int a,b; public IntPtr inst,icon,cursor,brush; public string menu,name; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w,l; public uint t; public int x,y; }
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern ushort RegisterClass(ref WC c);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex,string cls,string title,uint style,int x,int y,int w,int h,IntPtr p,IntPtr menu,IntPtr inst,IntPtr param);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h,int cmd);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr DefWindowProc(IntPtr h,uint m,IntPtr w,IntPtr l);
+    [DllImport("user32.dll")] static extern bool PeekMessage(out MSG m,IntPtr h,uint min,uint max,uint remove);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
+    static WndProc proc=DefWindowProc;
+    static IntPtr Open(string cls,string title) {
+        var c=new WC {proc=proc,name=cls,inst=GetModuleHandle(null)}; RegisterClass(ref c);
+        IntPtr h=CreateWindowEx(0,cls,title,0x00CF0000,-32000,-32000,160,120,IntPtr.Zero,IntPtr.Zero,c.inst,IntPtr.Zero);
+        ShowWindow(h,4); return h;
+    }
+    [STAThread] static int Main(string[] args) {
+        string root=args[Array.IndexOf(args,"/C")+1];
+        if (root=="quick") return 0;
+        Thread.Sleep(300); // The main frame does not exist at process creation.
+        IntPtr main=Open("V8TopLevelFrameSDI","ITL service main");
+        Open("V8TopLevelFrameSDIsec","ITL service diagnostic");
+        File.WriteAllText(root+".shown","yes");
+        var until=DateTime.UtcNow.AddSeconds(12); bool reshown=false;
+        while(DateTime.UtcNow<until) {
+            MSG m; while(PeekMessage(out m,IntPtr.Zero,0,0,1)) { TranslateMessage(ref m); DispatchMessage(ref m); }
+            if(!reshown && File.Exists(root+".reshow")) { ShowWindow(main,4); reshown=true; File.WriteAllText(root+".reshown","yes"); }
+            if(File.Exists(root+".stop")) return 0;
+            Thread.Sleep(20);
+        }
+        return 7;
+    }
+}
+'@, [Text.UTF8Encoding]::new($false))
+        $script:ServiceExe = Join-Path $script:ServiceDir '1cv8c.exe'
+        $build = Invoke-ItlNativeProcessCapture -FilePath (Get-ItlWindowHelperCompilerPath) -WorkingDirectory $script:ServiceDir -TimeoutSeconds 120 -Arguments @('/nologo', '/target:winexe', "/out:$script:ServiceExe", $source)
+        $build.exitCode | Should -Be 0 -Because ([string]$build.stdout)
+        Add-Type -Namespace WhServiceTest -Name User -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+'@
+    }
+    BeforeEach {
+        Mock Resolve-EnterpriseClientExecutablePath { $script:ServiceExe }
+        Mock Assert-InfoBaseAvailable { }
+        Mock Get-OneCWindowMode { 'hidden' }
+        Mock Invoke-WithOneCSessionAdmissionContext { & $ScriptBlock }
+        Mock Invoke-OneCSessionProcessStart { & $StartProcess }
+        Mock Publish-Agent1cLifecycleOperationProcessEvidence { }
+        Mock Publish-NativeWaitRunStatus { }
+        Mock Confirm-OneCNativeOperationRelease { }
+    }
+    It 'hides late and reshown main frames, preserves diagnostics and ends its watcher with the exact client' {
+        $script:ServiceFlag = Join-Path $script:ServiceDir 'готовность'
+        $script:ServiceObserved = $false
+        $script:ServiceWatch = $null
+        $script:ServiceClient = $null
+        $script:StartWatchImpl = ${function:Start-ItlOneCMainFrameWatch}
+        Mock Start-ItlOneCMainFrameWatch {
+            $script:ServiceClient = $Process
+            $watch = & $script:StartWatchImpl -Process $Process -Executable $Executable
+            $script:ServiceWatch = [Diagnostics.Process]::GetProcessById($watch.Id)
+            $null = $script:ServiceWatch.Handle
+            return $watch
+        }
+        try {
+            Invoke-Enterprise -InfoBasePath $script:ServiceDir -InfoBaseKind file -User '' -Password '' -EnterpriseArgs @('/C', $script:ServiceFlag) -TimeoutSeconds 20 -CompletionGraceSeconds 0 -CompletionProbe {
+                param($context)
+                if (Test-Path -LiteralPath ($script:ServiceFlag + '.shown')) {
+                    $main = [WhServiceTest.User]::FindWindow('V8TopLevelFrameSDI', 'ITL service main')
+                    $dialog = [WhServiceTest.User]::FindWindow('V8TopLevelFrameSDIsec', 'ITL service diagnostic')
+                    if ($main -ne [IntPtr]::Zero -and $dialog -ne [IntPtr]::Zero -and
+                        -not [WhServiceTest.User]::IsWindowVisible($main) -and [WhServiceTest.User]::IsWindowVisible($dialog)) {
+                        [uint32]$windowPid = 0
+                        [void][WhServiceTest.User]::GetWindowThreadProcessId($main, [ref]$windowPid)
+                        if ($windowPid -ne $context.processId) { throw 'wrong main-frame owner' }
+                        if ([WhServiceTest.User]::GetForegroundWindow() -in @($main, $dialog)) { throw 'fixture stole focus' }
+                        if (Test-Path -LiteralPath ($script:ServiceFlag + '.reshown')) {
+                            $script:ServiceObserved = $true
+                            [IO.File]::WriteAllText($script:ServiceFlag + '.stop', 'done')
+                        } else { [IO.File]::WriteAllText($script:ServiceFlag + '.reshow', 'again') }
+                    }
+                }
+                return ($script:ServiceObserved -and $context.launcherExited)
+            } | Out-Null
+            $script:ServiceObserved | Should -BeTrue
+            # The watcher may already have exited with the client. Never pipe the Process into
+            # Should: Pester stringifies it, and Process.ToString reads ProcessName, which throws
+            # for an exited process.
+            ($script:ServiceWatch -is [Diagnostics.Process]) | Should -BeTrue
+            $script:ServiceWatch.WaitForExit(5000) | Should -BeTrue
+            $script:ServiceWatch.HasExited | Should -BeTrue
+            $script:ServiceWatch.ExitCode | Should -Be 0
+        } finally {
+            # Only these two exact test process handles; never enumerate user 1C.
+            foreach ($owned in @($script:ServiceClient, $script:ServiceWatch)) {
+                if ($null -ne $owned) {
+                    if (-not $owned.HasExited) { $owned.Kill(); [void]$owned.WaitForExit(5000) }
+                    $owned.Dispose()
+                }
+            }
+        }
+    }
+    It 'continues the original Enterprise operation when helper preparation fails' {
+        Mock Get-ItlWindowHelperExecutable { throw 'fixture compiler unavailable' }
+        $output = Invoke-Enterprise -InfoBasePath $script:ServiceDir -InfoBaseKind file -User '' -Password '' -EnterpriseArgs @('/C', 'quick') -TimeoutSeconds 10 6>&1
+        ($output -join "`n") | Should -Match 'ITL_WINDOW_HELPER_UNAVAILABLE: Enterprise main window may become visible.*fixture compiler unavailable'
+        $script:LastProcessTimedOut | Should -BeFalse
+        Get-Process -Id $script:LastProcessId -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Window helper build, group and channel' {
+    AfterAll { Stop-WhGroups }
+
+    It 'builds once into the user cache with a recorded hash and rebuilds a replaced executable' {
+        $exe = Get-ItlWindowHelperExecutable
+        $exe | Should -BeLike ((Join-Path $env:ITL_WINDOW_HELPER_CACHE_ROOT '*') + '\itl-window-helper.exe')
+        (Get-Content -LiteralPath "$exe.sha256" -Raw).Trim() | Should -Be (Get-ItlFileSha256 -Path $exe)
+        Split-Path -Leaf (Split-Path -Parent $exe) | Should -Be (Get-ItlFileSha256 -Path (Join-Path $script:WhAssets 'ItlWindowHelper.cs'))
+        [IO.File]::AppendAllText($exe, 'tampered')
+        $rebuilt = Get-ItlWindowHelperExecutable
+        $rebuilt | Should -Be $exe
+        (Get-Content -LiteralPath "$rebuilt.sha256" -Raw).Trim() | Should -Be (Get-ItlFileSha256 -Path $rebuilt)
+    }
+
+    It 'lets two concurrent first builds end with one usable directory' {
+        $cache = Join-Path $TestDrive 'Параллельный кеш'
+        $jobs = 1..2 | ForEach-Object {
+            Start-Job -ArgumentList $script:WhLib, $cache -ScriptBlock {
+                param($lib, $cache)
+                foreach ($module in 'agent-1c.core.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1', 'agent-1c.window-helper.ps1') { . (Join-Path $lib $module) }
+                $env:ITL_WINDOW_HELPER_CACHE_ROOT = $cache
+                Get-ItlWindowHelperExecutable
+            }
+        }
+        $paths = @($jobs | Wait-Job -Timeout 300 | Receive-Job)
+        $jobs | Remove-Job -Force
+        @($paths | Select-Object -Unique) | Should -HaveCount 1
+        @(Get-ChildItem -LiteralPath $cache -Directory) | Should -HaveCount 1
+        (Get-Content -LiteralPath "$($paths[0]).sha256" -Raw).Trim() | Should -Be (Get-ItlFileSha256 -Path $paths[0])
+    }
+
+    It 'keeps the TestClient visible with a warning when the helper is unavailable' {
+        Mock Get-OneCWindowMode { 'hidden' }
+        Mock Test-ItlVanessaWindowChannelCapability { $true }
+        Mock Get-ItlWindowHelperCompilerPath { Join-Path $TestDrive 'нет компилятора\csc.exe' }
+        $env:ITL_WINDOW_HELPER_CACHE_ROOT = Join-Path $TestDrive 'Пустой кеш'
+        try {
+            $output = Start-ItlWindowHelperGroup -Directory (Join-Path $TestDrive 'Группа без помощника') 6>&1
+        } finally { $env:ITL_WINDOW_HELPER_CACHE_ROOT = Join-Path $TestDrive 'Кеш помощника с пробелом' }
+        $group = @($output | Where-Object { $_ -isnot [Management.Automation.InformationRecord] })[0]
+        $group.ready | Should -BeFalse
+        $group.warning | Should -Match '^ITL_WINDOW_HELPER_UNAVAILABLE: .*compiler was not found'
+        ($output | Where-Object { $_ -is [Management.Automation.InformationRecord] }) -join "`n" | Should -Match '\[WARN\] ITL_WINDOW_HELPER_UNAVAILABLE: .*starts visible and the run continues'
+        $params = [ordered]@{}
+        Add-VanessaAgentLaunchParams -Params $params -ClientCodeChannelRoot (Join-Path $TestDrive 'cc') -WindowGroup $group | Out-Null
+        $params.dopparams.Contains('ITLWindowChannelRoot') | Should -BeFalse
+    }
+
+    It 'warns for an old Vanessa revision and a group root beyond MAX_PATH, and stays silent in visible mode' {
+        Mock Get-OneCWindowMode { 'hidden' }
+        Mock Test-ItlVanessaWindowChannelCapability { $false }
+        (Start-ItlWindowHelperGroup -Directory (Join-Path $TestDrive 'старая') 6>$null).reason | Should -Be 'vanessa-revision-without-window-channel'
+        Mock Test-ItlVanessaWindowChannelCapability { $true }
+        (Start-ItlWindowHelperGroup -Directory (Join-Path $TestDrive ('x' * 220)) 6>$null).reason | Should -Match '^max-path'
+        Mock Get-OneCWindowMode { 'visible' }
+        $visible = Start-ItlWindowHelperGroup -Directory (Join-Path $TestDrive 'видимая') 6>&1
+        @($visible | Where-Object { $_ -is [Management.Automation.InformationRecord] }) | Should -HaveCount 0
+        @($visible)[0].reason | Should -Be 'mode-visible'
+    }
+
+    It 'declares the window channel in the r13 recipe and reads it from the dependency entry' {
+        $manifest = Get-Content -LiteralPath (Join-Path $script:WhRevision 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($manifest.capabilities) | Should -Contain 'itl-window-channel-1'
+        Test-ItlVanessaWindowChannelCapability -VanessaEntry ([pscustomobject]@{ capabilities = @('itl-window-channel-1') }) | Should -BeTrue
+        Test-ItlVanessaWindowChannelCapability -VanessaEntry ([pscustomobject]@{ downstreamRevision = 'itl-r12' }) | Should -BeFalse
+    }
+
+    It 'passes the channel root and countdown only for a ready group' {
+        Mock Get-OneCUiLeaseCountdownSeconds { 0 }
+        $group = [pscustomobject]@{ ready = $true; directory = Join-Path $TestDrive 'Группа wh' }
+        $params = [ordered]@{}
+        Add-VanessaAgentLaunchParams -Params $params -ClientCodeChannelRoot (Join-Path $TestDrive 'cc') -WindowGroup $group | Out-Null
+        $params.dopparams.ITLAgentLaunch | Should -BeTrue
+        $params.dopparams.ITLWindowChannelRoot | Should -Be $group.directory
+        $params.dopparams.ITLUiLeaseCountdownSeconds | Should -Be 0
+        $manual = [ordered]@{}
+        Add-VanessaAgentLaunchParams -Params $manual -ClientCodeChannelRoot (Join-Path $TestDrive 'cc') | Out-Null
+        $manual.dopparams.Contains('ITLWindowChannelRoot') | Should -BeFalse
+    }
+
+    It 'journals the interactive desktop state once when the helper starts and not again while it stays the same' {
+        $group = New-WhGroup 'рабочий стол'
+        Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+        $log = Join-Path $group.directory 'journal\desktop.jsonl'
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        while (-not (Test-Path -LiteralPath $log) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        # Two more reconcile periods with an unchanged desktop add no entry.
+        Start-Sleep -Seconds 5
+        $entries = @(Read-ItlWindowHelperJournal -Path $log)
+        $entries | Should -HaveCount 1
+        # The run may execute with the screen locked; either state is a valid first record.
+        [string]$entries[0].event | Should -BeIn @('desktop-unlocked', 'desktop-locked')
+    }
+
+    It 'answers status, adopt, lease and lease-end through the file channel and rejects a foreign protocol' {
+        $group = New-WhGroup 'протокол'
+        # A request written before the helper starts is picked up by its first scan.
+        $early = [guid]::NewGuid().ToString()
+        [void][IO.Directory]::CreateDirectory((Join-Path $group.directory 'requests'))
+        [IO.File]::WriteAllText((Join-Path $group.directory "requests\$early.json"), (@{ protocol = 1; op = 'status'; id = $early } | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($true))
+        Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while (-not (Test-Path -LiteralPath (Join-Path $group.directory "responses\$early.json")) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+        (Get-Content -LiteralPath (Join-Path $group.directory "responses\$early.json") -Raw | ConvertFrom-Json).status | Should -Be 'ok'
+
+        $status = Send-ItlWindowHelperRequest -Directory $group.directory -Operation status -Executable $group.executable
+        $status.status | Should -Be 'ok'
+        $status.mode | Should -Be 'hidden'
+        $status.protocol | Should -Be 1
+        $status.dropdownLease | Should -BeTrue
+        $bad = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease -Fields @{scope='dropdown'; dropdownPrompt='false'; promptSource='project'}
+        $bad.code | Should -Be 'ITL_DROPDOWN_POLICY_INVALID'
+        $lost = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease-end -Fields @{scope='dropdown'; dropdownResult='completed'}
+        $lost.code | Should -Be 'ITL_DROPDOWN_LEASE_LOST'
+        $before = Get-WhTreeCount $PID
+        $adopted = Send-ItlWindowHelperRequest -Directory $group.directory -Operation adopt -Fields @{ pid = $PID } -Executable $group.executable
+        $adopted.members | Should -BeIn @($before, (Get-WhTreeCount $PID))
+        $lease = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease -Fields @{ scope = 'сценарий 1' } -Executable $group.executable -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(5))
+        $lease.status | Should -Be 'declined'
+        $lease.code | Should -Be 'ITL_UI_CONTROL_DECLINED'
+        $lease.reason | Should -Be 'no-client'
+        $end = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease-end -Fields @{ scope = 'сценарий 1'; endScope = $true } -Executable $group.executable
+        $end.leases | Should -Be 0
+
+        $foreign = [guid]::NewGuid().ToString()
+        [IO.File]::WriteAllText((Join-Path $group.directory "requests\$foreign.json"), (@{ protocol = 99; op = 'status'; id = $foreign } | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while (-not (Test-Path -LiteralPath (Join-Path $group.directory "responses\$foreign.json")) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+        (Get-Content -LiteralPath (Join-Path $group.directory "responses\$foreign.json") -Raw | ConvertFrom-Json).status | Should -Be 'protocol-mismatch'
+    }
+
+    It 'gives a restarted helper until the request deadline to answer, beyond the first ack timeout' {
+        # Targeted 2026-11-11: under parallel shard load a freshly started helper answered
+        # after the 3 s ack window, and the request returned nothing.
+        $script:WhSlowDir = Join-Path $TestDrive 'Медленный помощник с пробелом'
+        [void][IO.Directory]::CreateDirectory((Join-Path $script:WhSlowDir 'requests'))
+        $script:WhSlowJob = $null
+        Mock Invoke-ItlWindowHelperVerb {
+            $script:WhSlowJob = Start-Job -ArgumentList $script:WhSlowDir -ScriptBlock {
+                param($Directory)
+                $requests = Join-Path $Directory 'requests'
+                $deadline = [DateTime]::UtcNow.AddSeconds(20)
+                $file = $null
+                while ($null -eq $file -and [DateTime]::UtcNow -lt $deadline) {
+                    $file = Get-ChildItem -LiteralPath $requests -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if ($null -eq $file) { Start-Sleep -Milliseconds 50 }
+                }
+                $id = ((Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8) | ConvertFrom-Json).id
+                Start-Sleep -Milliseconds 4500
+                $responses = Join-Path $Directory 'responses'
+                [void][IO.Directory]::CreateDirectory($responses)
+                [IO.File]::WriteAllText((Join-Path $responses "$id.json.tmp"), (@{ protocol = 1; id = $id; op = 'status'; status = 'ok' } | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+                Move-Item -LiteralPath (Join-Path $responses "$id.json.tmp") -Destination (Join-Path $responses "$id.json")
+            }
+            return 0
+        }
+        try {
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $answer = Send-ItlWindowHelperRequest -Directory $script:WhSlowDir -Operation status -Executable 'fake helper.exe' -AckTimeoutMilliseconds 1000 -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(15))
+            $answer.status | Should -Be 'ok'
+            $watch.ElapsedMilliseconds | Should -BeGreaterThan 5000
+            Should -Invoke Invoke-ItlWindowHelperVerb -Times 1 -Exactly
+        } finally {
+            if ($null -ne $script:WhSlowJob) { $script:WhSlowJob | Wait-Job -Timeout 20 | Out-Null; $script:WhSlowJob | Remove-Job -Force }
+        }
+    }
+
+    It 'is disposable: a killed helper restarts on the next request and keeps its adopted roots, a hung one is replaced' {
+        $group = New-WhGroup 'перезапуск'
+        Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+        (Send-ItlWindowHelperRequest -Directory $group.directory -Operation adopt -Fields @{ pid = $PID } -Executable $group.executable).status | Should -Be 'ok'
+        $first = Get-WhHelperPid $group.directory
+        Stop-Process -Id $first -Force
+        $before = Get-WhTreeCount $PID
+        $status = Send-ItlWindowHelperRequest -Directory $group.directory -Operation status -Executable $group.executable
+        $status.status | Should -Be 'ok'
+        $status.helperPid | Should -Not -Be $first
+        $status.members | Should -BeIn @($before, (Get-WhTreeCount $PID))
+        # ensure --hung replaces the recorded helper after checking its image and start time.
+        Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory, '--hung') | Should -Be 0
+        Get-WhHelperPid $group.directory | Should -Not -Be $status.helperPid
+        Get-Process -Id $status.helperPid -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        # A second daemon of the same group exits at once: helper.lock admits one.
+        $second = Start-Process -FilePath $group.executable -ArgumentList ('run "' + $group.directory + '"') -PassThru
+        $second.WaitForExit(5000) | Should -BeTrue
+        $second.ExitCode | Should -Be 5
+    }
+
+    It 'reports status and stops the helpers of this project only' {
+        $group = New-WhGroup 'команды'
+        Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+        $helper = Get-WhHelperPid $group.directory
+        $saved = $script:ProjectRoot
+        $script:ProjectRoot = $TestDrive
+        try {
+            Mock Get-OneCWindowMode { 'hidden' }
+            (Show-ItlWindowHelperStatus 6>&1) -join "`n" | Should -Match ("Window helper PID $helper" + ': group=.*mode=hidden state=idle')
+            $script:ProjectRoot = Join-Path $TestDrive 'другой проект'
+            (Stop-ItlWindowHelper 6>&1) -join "`n" | Should -Match 'No running window helper to stop'
+            Get-Process -Id $helper -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+            $script:ProjectRoot = $TestDrive
+            (Stop-ItlWindowHelper 6>&1) -join "`n" | Should -Match "Window helper PID $helper stopped: exit=0"
+            Get-Process -Id $helper -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        } finally { $script:ProjectRoot = $saved }
+    }
+
+    It 'supports TestClient reveal and keeps only the ROCTUP main frame hidden' {
+        # A stand-in TestClient: a 1cv8c image with /TESTCLIENT whose V8-class windows sit
+        # off screen, so nothing appears for the user while the helper shows them.
+        $fakeDir = Join-Path $TestDrive 'Платформа клиента с пробелом'
+        [void][IO.Directory]::CreateDirectory($fakeDir)
+        $fakeSource = Join-Path $fakeDir 'fake client.cs'
+        [IO.File]::WriteAllText($fakeSource, @'
+using System; using System.IO; using System.Runtime.InteropServices;
+static class FakeClient {
+    delegate IntPtr WndProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct WNDCLASS { public uint style; public WndProc proc; public int a; public int b; public IntPtr inst; public IntPtr icon; public IntPtr cursor; public IntPtr brush; public string menu; public string name; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w; public IntPtr l; public uint t; public int x; public int y; }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern ushort RegisterClass(ref WNDCLASS c);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string title, uint style, int x, int y, int w, int h, IntPtr p, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr h, uint a, uint b);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr SetTimer(IntPtr h, IntPtr id, uint ms, IntPtr proc);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
+    static WndProc proc = Proc; static string flag; static bool second;
+    static IntPtr Proc(IntPtr h, uint m, IntPtr w, IntPtr l) {
+        if (m == 0x0113 && !second && File.Exists(flag)) { second = true; Open("V8TopLevelFrameSDIsec", "ITL fake dialog"); }
+        return DefWindowProc(h, m, w, l);
+    }
+    static IntPtr Open(string cls, string title) {
+        var c = new WNDCLASS { proc = proc, name = cls, inst = GetModuleHandle(null) };
+        RegisterClass(ref c);
+        IntPtr h = CreateWindowEx(0, cls, title, 0x00CF0000, -32000, -32000, 160, 120, IntPtr.Zero, IntPtr.Zero, c.inst, IntPtr.Zero);
+        ShowWindow(h, 4);
+        return h;
+    }
+    [STAThread] static void Main(string[] args) {
+        flag = args[0];
+        IntPtr main = Open("V8TopLevelFrameSDI", "ITL fake TestClient");
+        SetTimer(main, new IntPtr(1), 50, IntPtr.Zero);
+        MSG m; while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref m); DispatchMessage(ref m); }
+    }
+}
+'@, [Text.UTF8Encoding]::new($false))
+        $fakeExe = Join-Path $fakeDir '1cv8c.exe'
+        $build = Invoke-ItlNativeProcessCapture -FilePath (Get-ItlWindowHelperCompilerPath) -WorkingDirectory $fakeDir -TimeoutSeconds 120 -Arguments @('/nologo', '/target:winexe', "/out:$fakeExe", $fakeSource)
+        $build.exitCode | Should -Be 0 -Because ([string]$build.stdout)
+        $flag = Join-Path $fakeDir 'второе окно.flag'
+        $start = [Diagnostics.ProcessStartInfo]::new($fakeExe, ('"' + $flag + '" ENTERPRISE /TESTCLIENT -TPort 48177'))
+        $start.UseShellExecute = $false
+        $client = [Diagnostics.Process]::Start($start)
+        Add-Type -Namespace WhTest -Name User -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int cmd);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+'@ -ErrorAction SilentlyContinue
+        function Wait-Wh([scriptblock]$Condition) {
+            $deadline = [DateTime]::UtcNow.AddSeconds(5)
+            while (-not (& $Condition) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+            return [bool](& $Condition)
+        }
+        $saved = $script:ProjectRoot
+        $mainFrameWatch = $null
+        try {
+            $main = [IntPtr]::Zero
+            (Wait-Wh { $script:main = [WhTest.User]::FindWindow('V8TopLevelFrameSDI', 'ITL fake TestClient'); $script:main -ne [IntPtr]::Zero }) | Should -BeTrue
+            $main = $script:main
+            $group = New-WhGroup 'показ по запросу' -Roots @($client.Id)
+            Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+            (Wait-Wh { -not [WhTest.User]::IsWindowVisible($main) }) | Should -BeTrue -Because 'the helper hides a member TestClient'
+
+            $shown = Send-ItlWindowHelperRequest -Directory $group.directory -Operation show -Fields @{ pid = $client.Id } -Executable $group.executable
+            $shown.status | Should -Be 'ok'
+            $shown.pid | Should -Be $client.Id
+            [WhTest.User]::IsWindowVisible($main) | Should -BeTrue
+            [WhTest.User]::GetForegroundWindow() | Should -Not -Be $main -Because 'a show on request never takes the foreground'
+            [IO.File]::WriteAllText($flag, 'open')
+            (Wait-Wh { [WhTest.User]::FindWindow('V8TopLevelFrameSDIsec', 'ITL fake dialog') -ne [IntPtr]::Zero }) | Should -BeTrue
+            $dialog = [WhTest.User]::FindWindow('V8TopLevelFrameSDIsec', 'ITL fake dialog')
+            Start-Sleep -Milliseconds 700
+            [WhTest.User]::IsWindowVisible($dialog) | Should -BeTrue -Because 'new windows of a shown client stay visible'
+            $revealed = @((Send-ItlWindowHelperRequest -Directory $group.directory -Operation status -Executable $group.executable).revealed)
+            $revealed | Should -HaveCount 1
+            [int]$revealed[0] | Should -Be $client.Id
+
+            $hidden = Send-ItlWindowHelperRequest -Directory $group.directory -Operation hide -Fields @{ pid = $client.Id } -Executable $group.executable
+            $hidden.status | Should -Be 'ok'
+            (Wait-Wh { -not [WhTest.User]::IsWindowVisible($main) -and -not [WhTest.User]::IsWindowVisible($dialog) }) | Should -BeTrue
+
+            $foreign = Send-ItlWindowHelperRequest -Directory $group.directory -Operation show -Fields @{ pid = $PID } -Executable $group.executable
+            $foreign.status | Should -Be 'error'
+            $foreign.code | Should -Be 'not-member'
+
+            # The agent action finds the group by the client's port and refuses an outsider.
+            $script:ProjectRoot = $TestDrive
+            Mock Get-OneCWindowMode { 'hidden' }
+            (Set-ItlWindowHelperClientVisibility -Operation show -Port 48177 6>&1) -join "`n" | Should -Match "TestClient PID $($client.Id) port 48177 shown below the active window without focus"
+            [WhTest.User]::IsWindowVisible($main) | Should -BeTrue
+            (Show-ItlWindowHelperStatus 6>&1) -join "`n" | Should -Match ("Shown on request \(window-hide returns hiding\): " + $client.Id)
+            (Set-ItlWindowHelperClientVisibility -Operation hide -ProcessId $client.Id 6>&1) -join "`n" | Should -Match "TestClient PID $($client.Id) port 48177 hidden"
+            { Set-ItlWindowHelperClientVisibility -Operation show -ProcessId $PID } | Should -Throw '*ITL_WINDOW_NOT_MEMBER*were not changed*'
+            { Set-ItlWindowHelperClientVisibility -Operation show } | Should -Throw '*ITL_WINDOW_TARGET_REQUIRED*'
+
+            # The shown state lives only as long as its helper: a replaced helper hides again.
+            Set-ItlWindowHelperClientVisibility -Operation show -ProcessId $client.Id 6>$null
+            Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory, '--hung') | Should -Be 0
+            (Wait-Wh { -not [WhTest.User]::IsWindowVisible($main) }) | Should -BeTrue
+            @((Send-ItlWindowHelperRequest -Directory $group.directory -Operation status -Executable $group.executable).revealed) | Should -HaveCount 0
+
+            # Reuse the same Win32 fixture without the TestClient group's policy.
+            Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('stop', $group.directory) | Should -Be 0
+            [WhTest.User]::ShowWindowAsync($main, 8) | Should -BeTrue
+            [WhTest.User]::ShowWindowAsync($dialog, 8) | Should -BeTrue
+            (Wait-Wh { [WhTest.User]::IsWindowVisible($main) -and [WhTest.User]::IsWindowVisible($dialog) }) | Should -BeTrue
+            (Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('watch-main', [string]$client.Id, '1')) | Should -Be 2
+            [WhTest.User]::IsWindowVisible($main) | Should -BeTrue -Because 'an unverified PID must not be touched'
+
+            $mainFrameWatch = Start-ItlOneCMainFrameWatch -Process $client
+            (Wait-Wh { -not [WhTest.User]::IsWindowVisible($main) }) | Should -BeTrue
+            [WhTest.User]::IsWindowVisible($dialog) | Should -BeTrue
+            # Post a new show without activation and let the watcher hide it again.
+            [WhTest.User]::ShowWindowAsync($main, 8) | Should -BeTrue
+            Start-Sleep -Milliseconds 700
+            [WhTest.User]::IsWindowVisible($main) | Should -BeFalse
+            [WhTest.User]::IsWindowVisible($dialog) | Should -BeTrue -Because 'the user must be able to answer a ROCTUP dialog'
+        } finally {
+            $script:ProjectRoot = $saved
+            if (-not $client.HasExited) { $client.Kill(); $client.WaitForExit(5000) | Out-Null }
+            $client.Dispose()
+            if ($mainFrameWatch) {
+                $exited = $mainFrameWatch.WaitForExit(5000)
+                if (-not $exited) { $mainFrameWatch.Kill(); $mainFrameWatch.WaitForExit(5000) | Out-Null }
+                $mainFrameWatch.Dispose()
+                $exited | Should -BeTrue -Because 'the watcher lives only as long as its ROCTUP process'
+            }
+        }
+    }
+
+    It 'returns the foreground from a hidden client form before it captures the form for the journal' {
+        # PM5 itldev/branch4, 2026-11-17: a 1C form took the foreground while it was shown,
+        # the helper first waited for its capture, and a letter typed by the user reached the
+        # form. A stand-in TestClient opens an off-screen form, takes the foreground the way
+        # 1C does and keeps its UI thread busy on WM_PRINT.
+        Add-Type -Namespace WhTest -Name Desk -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+[DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+[DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr desk);
+'@ -ErrorAction SilentlyContinue
+        $desk = [WhTest.Desk]::OpenInputDesktop(0, $false, 1)
+        if ($desk -eq [IntPtr]::Zero -or [WhTest.Desk]::GetForegroundWindow() -eq [IntPtr]::Zero) {
+            if ($desk -ne [IntPtr]::Zero) { [void][WhTest.Desk]::CloseDesktop($desk) }
+            Set-ItResult -Skipped -Because 'a foreground return needs an interactive desktop with a foreground window'
+            return
+        }
+        [void][WhTest.Desk]::CloseDesktop($desk)
+        $fakeDir = Join-Path $TestDrive 'Клиент с формой и пробелом'
+        [void][IO.Directory]::CreateDirectory($fakeDir)
+        $fakeSource = Join-Path $fakeDir 'fake form client.cs'
+        [IO.File]::WriteAllText($fakeSource, @'
+using System; using System.IO; using System.Runtime.InteropServices; using System.Threading;
+static class FakeFormClient {
+    delegate IntPtr WndProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct WNDCLASS { public uint style; public WndProc proc; public int a; public int b; public IntPtr inst; public IntPtr icon; public IntPtr cursor; public IntPtr brush; public string menu; public string name; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w; public IntPtr l; public uint t; public int x; public int y; }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern ushort RegisterClass(ref WNDCLASS c);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string title, uint style, int x, int y, int w, int h, IntPtr p, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr h, uint a, uint b);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr SetTimer(IntPtr h, IntPtr id, uint ms, IntPtr proc);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
+    static WndProc proc = Proc; static string flag; static bool opened;
+    static IntPtr Proc(IntPtr h, uint m, IntPtr w, IntPtr l) {
+        // A null key event gives this process the last input, so Windows lets the
+        // form take the foreground inside ShowWindow, the way 1C activates a form it
+        // shows; without it the foreground lock decides the order (2026-11-20).
+        if (m == 0x0113 && !opened && File.Exists(flag)) { opened = true; keybd_event(0, 0, 0, UIntPtr.Zero); Activate(Open("V8TopLevelFrameSDIsec", "ITL fake settings form")); }
+        // A busy 1C thread answers WM_PRINT late.
+        if (m == 0x0317 || m == 0x0318) Thread.Sleep(400);
+        return DefWindowProc(h, m, w, l);
+    }
+    static IntPtr Open(string cls, string title) {
+        var c = new WNDCLASS { proc = proc, name = cls, inst = GetModuleHandle(null) };
+        RegisterClass(ref c);
+        IntPtr h = CreateWindowEx(0, cls, title, 0x00CF0000, -32000, -32000, 320, 240, IntPtr.Zero, IntPtr.Zero, c.inst, IntPtr.Zero);
+        ShowWindow(h, 5);
+        return h;
+    }
+    static void Activate(IntPtr h) {
+        uint fg = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero), me = GetCurrentThreadId();
+        bool attached = fg != 0 && fg != me && AttachThreadInput(me, fg, true);
+        BringWindowToTop(h);
+        SetForegroundWindow(h);
+        if (attached) AttachThreadInput(me, fg, false);
+    }
+    [STAThread] static void Main(string[] args) {
+        flag = args[0];
+        IntPtr main = Open("V8TopLevelFrameSDI", "ITL fake form TestClient");
+        SetTimer(main, new IntPtr(1), 50, IntPtr.Zero);
+        MSG m; while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref m); DispatchMessage(ref m); }
+    }
+}
+'@, [Text.UTF8Encoding]::new($false))
+        $fakeExe = Join-Path $fakeDir '1cv8c.exe'
+        $build = Invoke-ItlNativeProcessCapture -FilePath (Get-ItlWindowHelperCompilerPath) -WorkingDirectory $fakeDir -TimeoutSeconds 120 -Arguments @('/nologo', '/target:winexe', "/out:$fakeExe", $fakeSource)
+        $build.exitCode | Should -Be 0 -Because ([string]$build.stdout)
+        $flag = Join-Path $fakeDir 'открыть форму.flag'
+        $start = [Diagnostics.ProcessStartInfo]::new($fakeExe, ('"' + $flag + '" ENTERPRISE /TESTCLIENT -TPort 48178'))
+        $start.UseShellExecute = $false
+        $client = [Diagnostics.Process]::Start($start)
+        try {
+            $group = New-WhGroup 'возврат фокуса до снимка' -Roots @($client.Id)
+            Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+            $log = Join-Path $group.directory 'journal\hidden.jsonl'
+            # The helper may hold the journal open for an append while it is polled.
+            $read = { try { @(Read-ItlWindowHelperJournal -Path $log) } catch [IO.IOException] { @() } }
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            while ([DateTime]::UtcNow -lt $deadline -and -not (@(& $read | Where-Object { $_.title -eq 'ITL fake form TestClient' }).Count)) { Start-Sleep -Milliseconds 100 }
+            [IO.File]::WriteAllText($flag, 'open')
+            $form = { @(& $read | Where-Object { [string]$_.title -eq 'ITL fake settings form' }) }
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            while ([DateTime]::UtcNow -lt $deadline -and -not (@(& $form | Where-Object { $_.event -eq 'hidden' }).Count -and @(& $form | Where-Object { $_.event -eq 'foreground-returned' }).Count)) { Start-Sleep -Milliseconds 100 }
+            $entries = @(& $form)
+            $events = @($entries | ForEach-Object { [string]$_.event })
+            $events | Should -Contain 'foreground-returned' -Because 'the stand-in form takes the foreground the way 1C does'
+            $events | Should -Contain 'hidden'
+            [array]::IndexOf($events, 'foreground-returned') | Should -BeLessThan ([array]::IndexOf($events, 'hidden')) -Because 'the focus returns before the capture of the form'
+            $returned = $entries[[array]::IndexOf($events, 'foreground-returned')]
+            [string]$returned.role | Should -Be 'testclient'
+            [int64]$returned.exposureMs | Should -BeLessThan 400 -Because 'the return does not wait for the busy WM_PRINT'
+            $foreground = [WhTest.Desk]::GetForegroundWindow()
+            $foreground | Should -Not -Be ([WhTest.Desk]::FindWindow('V8TopLevelFrameSDIsec', 'ITL fake settings form'))
+        } finally {
+            if (-not $client.HasExited) { $client.Kill(); $client.WaitForExit(5000) | Out-Null }
+            $client.Dispose()
+        }
+    }
+
+    It 'hides a list outside a selection lease, keeps it inside one and fails the selection when another process takes the foreground' {
+        # wm22, 2026-11-23: 1C closes an open list when the foreground leaves its client, and
+        # Vanessa still reported the selection done. A stand-in TestClient shows owned
+        # V8DropWindowExWnd lists; a second process plays the user who clicks elsewhere.
+        Add-Type -Namespace WhTest -Name DropDesk -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+[DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+[DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr desk);
+[DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr h);
+[DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+public static int ZIndex(IntPtr target) {
+    int i = 0;
+    for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero; h = GetWindow(h, 2), i++) if (h == target) return i;
+    return -1;
+}
+'@ -ErrorAction SilentlyContinue
+        $desk = [WhTest.DropDesk]::OpenInputDesktop(0, $false, 1)
+        if ($desk -eq [IntPtr]::Zero -or [WhTest.DropDesk]::GetForegroundWindow() -eq [IntPtr]::Zero) {
+            if ($desk -ne [IntPtr]::Zero) { [void][WhTest.DropDesk]::CloseDesktop($desk) }
+            Set-ItResult -Skipped -Because 'a selection lease needs an interactive desktop with a foreground window'
+            return
+        }
+        [void][WhTest.DropDesk]::CloseDesktop($desk)
+        $fakeDir = Join-Path $TestDrive 'Клиент со списком и пробелом'
+        [void][IO.Directory]::CreateDirectory($fakeDir)
+        $fakeSource = Join-Path $fakeDir 'fake list client.cs'
+        [IO.File]::WriteAllText($fakeSource, @'
+using System; using System.IO; using System.Runtime.InteropServices;
+static class FakeListClient {
+    delegate IntPtr WndProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct WNDCLASS { public uint style; public WndProc proc; public int a; public int b; public IntPtr inst; public IntPtr icon; public IntPtr cursor; public IntPtr brush; public string menu; public string name; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w; public IntPtr l; public uint t; public int x; public int y; }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern ushort RegisterClass(ref WNDCLASS c);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string title, uint style, int x, int y, int w, int h, IntPtr p, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr h, uint a, uint b);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr SetTimer(IntPtr h, IntPtr id, uint ms, IntPtr proc);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
+    static WndProc proc = Proc; static string dir, role; static IntPtr main, original; static int lists; static bool activated, restored;
+    static IntPtr Proc(IntPtr h, uint m, IntPtr w, IntPtr l) {
+        if (m == 0x0113 && role == "client" && File.Exists(Path.Combine(dir, "list " + (lists + 1) + ".flag"))) {
+            lists++;
+            // 1C shows its list as an owned popup without activating it.
+            ShowWindow(Open("V8DropWindowExWnd", "ITL fake list " + lists, 0x80000000, main, 100, 100), 4);
+        }
+        if (m == 0x0113 && role == "user" && !activated && File.Exists(Path.Combine(dir, "user.flag"))) {
+            activated = true;
+            keybd_event(0, 0, 0, UIntPtr.Zero);
+            uint fg = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero), me = GetCurrentThreadId();
+            bool attached = fg != 0 && fg != me && AttachThreadInput(me, fg, true);
+            BringWindowToTop(main); SetForegroundWindow(main);
+            if (attached) AttachThreadInput(me, fg, false);
+        }
+        // The stand-in user owns the foreground at the end and hands it back to the window
+        // that had it before the test, so no later test starts without a foreground.
+        if (m == 0x0113 && role == "user" && !restored && File.Exists(Path.Combine(dir, "restore.flag"))) { restored = true; SetForegroundWindow(original); }
+        return DefWindowProc(h, m, w, l);
+    }
+    static IntPtr Open(string cls, string title, uint style, IntPtr owner, int x, int y) {
+        var c = new WNDCLASS { proc = proc, name = cls, inst = GetModuleHandle(null) };
+        RegisterClass(ref c);
+        return CreateWindowEx(0, cls, title, style, x, y, 320, 240, owner, IntPtr.Zero, c.inst, IntPtr.Zero);
+    }
+    [STAThread] static void Main(string[] args) {
+        dir = args[0]; role = args[1]; original = role == "user" ? new IntPtr(long.Parse(args[2])) : IntPtr.Zero;
+        main = role == "client"
+            ? Open("V8TopLevelFrameSDI", "ITL fake list TestClient", 0x00CF0000, IntPtr.Zero, -32000, -32000)
+            : Open("ITLFakeUserWindow", "ITL fake user window", 0x00CF0000, IntPtr.Zero, 40, 40);
+        ShowWindow(main, role == "client" ? 5 : 4);
+        SetTimer(main, new IntPtr(1), 50, IntPtr.Zero);
+        MSG m; while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref m); DispatchMessage(ref m); }
+    }
+}
+'@, [Text.UTF8Encoding]::new($false))
+        $fakeExe = Join-Path $fakeDir '1cv8c.exe'
+        $build = Invoke-ItlNativeProcessCapture -FilePath (Get-ItlWindowHelperCompilerPath) -WorkingDirectory $fakeDir -TimeoutSeconds 120 -Arguments @('/nologo', '/target:winexe', "/out:$fakeExe", $fakeSource)
+        $build.exitCode | Should -Be 0 -Because ([string]$build.stdout)
+        $clientStart = [Diagnostics.ProcessStartInfo]::new($fakeExe, ('"' + $fakeDir + '" client ENTERPRISE /TESTCLIENT -TPort 48179'))
+        $clientStart.UseShellExecute = $false
+        $originalForeground = [WhTest.DropDesk]::GetForegroundWindow()
+        $userStart = [Diagnostics.ProcessStartInfo]::new($fakeExe, ('"' + $fakeDir + '" user ' + $originalForeground.ToInt64()))
+        $userStart.UseShellExecute = $false
+        $client = [Diagnostics.Process]::Start($clientStart)
+        $user = [Diagnostics.Process]::Start($userStart)
+        $list = { param([int]$Number) [WhTest.DropDesk]::FindWindow('V8DropWindowExWnd', "ITL fake list $Number") }
+        $waitFor = { param([scriptblock]$Condition) $deadline = [DateTime]::UtcNow.AddSeconds(10); while ([DateTime]::UtcNow -lt $deadline -and -not (& $Condition)) { Start-Sleep -Milliseconds 100 }; & $Condition }
+        try {
+            $group = New-WhGroup 'выбор из списка' -Roots @($client.Id)
+            Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+            & $waitFor { -not [WhTest.DropDesk]::IsWindowVisible([WhTest.DropDesk]::FindWindow('V8TopLevelFrameSDI', 'ITL fake list TestClient')) } | Should -BeTrue -Because 'the helper hides the stand-in client'
+
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'list 1.flag'), 'open')
+            & $waitFor { (& $list 1) -ne [IntPtr]::Zero -and -not [WhTest.DropDesk]::IsWindowVisible((& $list 1)) } | Should -BeTrue -Because 'a list opened outside a lease stays off the user desktop'
+
+            # wm22 facade run, 2026-11-23: after an MCP open_dropdown Vanessa shows the client for
+            # its screenshot, and the list it opened stayed above every user window for 3 s.
+            $userWindow = [WhTest.DropDesk]::FindWindow('ITLFakeUserWindow', 'ITL fake user window')
+            $capture = Send-ItlWindowHelperRequest -Directory $group.directory -Operation capture-show -Fields @{ pid = $client.Id }
+            $capture.status | Should -Be 'ok' -Because ($capture | ConvertTo-Json -Compress)
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'list 2.flag'), 'open')
+            & $waitFor { (& $list 2) -ne [IntPtr]::Zero -and [WhTest.DropDesk]::IsWindowVisible((& $list 2)) } | Should -BeTrue -Because 'a capture keeps the client visible for its screenshot'
+            Start-Sleep -Milliseconds 300
+            [WhTest.DropDesk]::ZIndex((& $list 2)) | Should -BeGreaterThan ([WhTest.DropDesk]::ZIndex($userWindow)) -Because 'a list opened during a capture stays under the user windows'
+            (Send-ItlWindowHelperRequest -Directory $group.directory -Operation capture-end -Fields @{ pid = $client.Id }).status | Should -Be 'ok'
+            & $waitFor { -not [WhTest.DropDesk]::IsWindowVisible((& $list 2)) } | Should -BeTrue -Because 'the capture end hides the list again'
+
+            $policy = @{ scope = 'сценарий списка'; pid = $client.Id; dropdownPrompt = $false; promptSource = 'default' }
+            $lease = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease -Fields $policy -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(15))
+            $lease.status | Should -Be 'ok' -Because ($lease | ConvertTo-Json -Compress)
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'list 3.flag'), 'open')
+            & $waitFor { (& $list 3) -ne [IntPtr]::Zero } | Should -BeTrue
+            Start-Sleep -Milliseconds 600
+            [WhTest.DropDesk]::IsWindowVisible((& $list 3)) | Should -BeTrue -Because 'the list of the selection stays visible inside its lease'
+
+            $osInput = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease -Fields @{ scope = 'сценарий списка'; pid = $client.Id } -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(15))
+            $osInput.status | Should -Be 'ok' -Because 'OS input of the same step joins the pending selection'
+            $osInput.activation | Should -Be 'kept'
+
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'user.flag'), 'click')
+            & $waitFor { [WhTest.DropDesk]::GetForegroundWindow() -eq $userWindow } | Should -BeTrue -Because 'the stand-in user takes the foreground'
+            Start-Sleep -Milliseconds 300
+            $done = Send-ItlWindowHelperRequest -Directory $group.directory -Operation lease-end -Fields @{ scope = 'сценарий списка'; dropdownResult = 'completed' }
+            $done.status | Should -Be 'error'
+            $done.code | Should -Be 'ITL_DROPDOWN_FOCUS_LOST'
+            $done.foregroundTitle | Should -Be 'ITL fake user window'
+            $leases = @(Read-ItlWindowHelperJournal -Path (Join-Path $group.directory 'journal\leases.jsonl'))
+            [string]$leases[-1].outcome | Should -Be 'dropdown-focus-lost'
+            [int]$leases[-1].requests | Should -Be 2
+            $hidden = @(Read-ItlWindowHelperJournal -Path (Join-Path $group.directory 'journal\hidden.jsonl') | Where-Object { $_.event -eq 'dropdown-focus-lost' })
+            $hidden | Should -HaveCount 1
+            [string]$hidden[0].title | Should -Be 'ITL fake user window'
+        } finally {
+            [IO.File]::WriteAllText((Join-Path $fakeDir 'restore.flag'), 'restore')
+            & $waitFor { [WhTest.DropDesk]::GetForegroundWindow() -eq $originalForeground } | Out-Null
+            foreach ($process in $client, $user) {
+                if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit(5000) | Out-Null }
+                $process.Dispose()
+            }
+        }
+    }
+
+    It 'answers window-show and window-hide in visible mode without a helper' {
+        $saved = $script:ProjectRoot
+        $script:ProjectRoot = Join-Path $TestDrive 'проект без помощника'
+        try {
+            Mock Get-OneCWindowMode { 'visible' }
+            (Set-ItlWindowHelperClientVisibility -Operation show -Port 48178 6>&1) -join "`n" | Should -Match 'already visible: ONEC_WINDOW_MODE=visible'
+            { Set-ItlWindowHelperClientVisibility -Operation hide -Port 48178 } | Should -Throw '*ITL_WINDOW_HIDE_UNAVAILABLE*-WindowMode hidden*'
+        } finally { $script:ProjectRoot = $saved }
+    }
+
+    It 'sums the lease journal into the run summary and lists hidden windows for a failure' {
+        $dir = Join-Path $TestDrive 'Журнал аренд'
+        [void][IO.Directory]::CreateDirectory((Join-Path $dir 'journal'))
+        @(
+            '{"scope":"scenario:1","durationMs":1500,"consentWaitMs":10000,"queueWaitMs":200,"outcome":"idle-end"}',
+            '{"scope":"scenario:1","durationMs":700,"consentWaitMs":0,"queueWaitMs":0,"outcome":"lease-end"}',
+            '{"scope":"scenario:2","durationMs":0,"consentWaitMs":4000,"queueWaitMs":0,"outcome":"declined:user-cancel"}'
+        ) | Set-Content -LiteralPath (Join-Path $dir 'journal\leases.jsonl') -Encoding UTF8
+        '{"t":"2026-11-10T10:00:00Z","event":"hidden","title":"Предупреждение","class":"V8TopLevelFrameSDIsec","image":"C:\\img.png"}' | Set-Content -LiteralPath (Join-Path $dir 'journal\hidden.jsonl') -Encoding UTF8
+        $group = [pscustomobject]@{ ready = $true; directory = $dir; mode = 'hidden'; warning = '' }
+        $summary = Get-ItlWindowHelperLeaseSummary -Group $group
+        $summary.leases | Should -Be 2
+        $summary.leaseMs | Should -Be 2200
+        $summary.consentWaitMs | Should -Be 14000
+        $summary.queueWaitMs | Should -Be 200
+        $summary.declined | Should -Be 1
+        Format-ItlWindowHelperLeaseSummary -Summary $summary | Should -Be 'Agent UI control: mode=hidden modeSource=project leases=2 leaseSeconds=2.2 consentWaitSeconds=14.0 queueWaitSeconds=0.2 declined=1'
+        (Write-ItlWindowHelperFailureDiagnostics -Group $group 6>&1) -join "`n" | Should -Match "Hidden TestClient window: .*title='Предупреждение'.*image='C:\\img.png'"
+        (Get-ItlWindowHelperLeaseSummary -Group ([pscustomobject]@{ ready = $false; mode = 'hidden'; warning = 'ITL_WINDOW_HELPER_UNAVAILABLE: x' })).warning | Should -Be 'ITL_WINDOW_HELPER_UNAVAILABLE: x'
+    }
+
+    It 'names the process role of a hidden window and reads desktop lock intervals' {
+        # PM5 2026-11-17: an agent read the test client's own windows in this
+        # journal as a user session, and a locked screen failed UI steps.
+        $dir = Join-Path $TestDrive 'Журнал рабочего стола'
+        [void][IO.Directory]::CreateDirectory((Join-Path $dir 'journal'))
+        '{"t":"2026-11-17T20:14:48Z","event":"hidden","pid":5096,"role":"testclient","title":"Настройки канбана","class":"V8TopLevelFrameSDIsec","image":""}' | Set-Content -LiteralPath (Join-Path $dir 'journal\hidden.jsonl') -Encoding UTF8
+        @(
+            '{"t":"2026-11-17T02:00:00.0000000Z","event":"desktop-unlocked"}',
+            '{"t":"2026-11-17T02:10:00.0000000Z","event":"desktop-locked"}',
+            'not json',
+            '{"t":"2026-11-17T02:40:00.0000000Z","event":"desktop-unlocked"}',
+            '{"t":"2026-11-17T03:00:00.0000000Z","event":"desktop-locked"}'
+        ) | Set-Content -LiteralPath (Join-Path $dir 'journal\desktop.jsonl') -Encoding UTF8
+        $group = [pscustomobject]@{ ready = $true; directory = $dir; mode = 'hidden'; warning = '' }
+        $diagnostics = (Write-ItlWindowHelperFailureDiagnostics -Group $group 6>&1) -join "`n"
+        $diagnostics.Contains("role=testclient title='Настройки канбана'") | Should -BeTrue
+        $until = [datetime]::new(2026, 11, 17, 3, 30, 0, [DateTimeKind]::Utc)
+        $intervals = @(Get-ItlWindowHelperDesktopLockIntervals -Group $group -UntilUtc $until)
+        $intervals | Should -HaveCount 2
+        $intervals[0].fromUtc | Should -Be ([datetime]::new(2026, 11, 17, 2, 10, 0, [DateTimeKind]::Utc))
+        $intervals[0].toUtc | Should -Be ([datetime]::new(2026, 11, 17, 2, 40, 0, [DateTimeKind]::Utc))
+        $intervals[1].toUtc | Should -Be $until
+        @(Get-ItlWindowHelperDesktopLockIntervals -Group ([pscustomobject]@{ ready = $false })) | Should -HaveCount 0
+    }
+}
+
+Describe 'Window channel operation contract' {
+    AfterAll { Stop-WhGroups }
+
+    It 'names the same operations in protocol.json, the helper, the PowerShell client and the Vanessa patch' {
+        $protocol = Get-Content -LiteralPath (Join-Path $script:WhAssets 'protocol.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $operations = @($protocol.operations.PSObject.Properties.Name)
+        $operations | Should -HaveCount 8
+        $source = [IO.File]::ReadAllText((Join-Path $script:WhAssets 'ItlWindowHelper.cs'))
+        $declared = [regex]::Match($source, 'Operations = \{ (?<list>[^}]+) \}').Groups['list'].Value -split ',\s*' | ForEach-Object { $_.Trim().Trim('"') }
+        @(Compare-Object $operations $declared) | Should -HaveCount 0
+        @(Compare-Object $operations $script:ItlWindowHelperOperations) | Should -HaveCount 0
+        $validate = (Get-Command Send-ItlWindowHelperRequest).Parameters['Operation'].Attributes | Where-Object { $_ -is [Management.Automation.ValidateSetAttribute] }
+        @(Compare-Object $operations @($validate.ValidValues)) | Should -HaveCount 0
+        foreach ($field in $protocol.requestFields) { $source | Should -Match ('"' + [regex]::Escape($field) + '"') }
+        $patch = [IO.File]::ReadAllText((Join-Path $script:WhRevision 'file-operations.patch'), [Text.Encoding]::UTF8)
+        $used = @([regex]::Matches($patch, '(?m)^\+.*ITLЗапросПомощникуОкон\("(?<op>[a-z-]+)"') | ForEach-Object { $_.Groups['op'].Value } | Select-Object -Unique)
+        $used | Should -Not -BeNullOrEmpty
+        @($used | Where-Object { $operations -notcontains $_ }) | Should -HaveCount 0
+        foreach ($field in $protocol.requestFields) { $patch | Should -Match ('Запрос\.Вставить\("' + [regex]::Escape($field) + '"') }
+        foreach ($field in $protocol.operations.lease) {
+            $source | Should -Match ('"' + [regex]::Escape($field) + '"') -Because "the helper reads lease field $field"
+            if ($field -in 'dropdownPrompt', 'promptSource') {
+                # The OneScript policy test exercises the values of both wire fields.
+                $patch | Should -Match '"dropdownPrompt,promptSource"'
+            } else {
+                $patch | Should -Match ('Вставить\("' + [regex]::Escape($field) + '"') -Because "Vanessa sends lease field $field"
+            }
+        }
+        $patch | Should -Match ([regex]::Escape('Запрос.Вставить("protocol", 1);'))
+        $protocol.protocol | Should -Be 1
+    }
+
+    It 'runs the r13 Vanessa channel client against the real helper: status, decline, restart and a missing channel' {
+        $patch = [IO.File]::ReadAllText((Join-Path $script:WhRevision 'file-operations.patch'), [Text.Encoding]::UTF8)
+        $section = @($patch -split '(?m)(?=^diff --git )' | Where-Object { $_.StartsWith('diff --git a/VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl') })[0]
+        $builder = New-Object Text.StringBuilder
+        $inHunk = $false
+        foreach ($line in ($section -split "`n")) {
+            if ($line.StartsWith('@@ ')) { $inHunk = $true; [void]$builder.Append("`n"); continue }
+            if (-not $inHunk -or $line.Length -eq 0) { continue }
+            if ($line[0] -eq '+' -or $line[0] -eq ' ') { [void]$builder.Append($line.Substring(1) + "`n") }
+        }
+        $form = $builder.ToString()
+        $methods = 'ITLУдалитьФайлПомощникаОкон', 'ITLПрочитатьJSONПомощникаОкон', 'ITLПомощникОконЖив', 'ITLОтправитьЗапросПомощникуОкон', 'ITLПерезапуститьПомощникОкон', 'ITLЗапросПомощникуОкон', 'ITLПроверитьОтветПомощникаОкон', 'ITLОбластьУправления', 'ITLДобавитьШагЗапросаУправления' | ForEach-Object {
+            $match = [regex]::Match($form, '(?ms)^(?:Функция|Процедура) ' + [regex]::Escape($_) + '\(.*?^Конец(?:Функции|Процедуры)[^\n]*')
+            $match.Success | Should -BeTrue -Because $_
+            $match.Value
+        }
+        # OneScript accepts member access on a parenthesized expression such as (Новый Файл(П)).Имя;
+        # the 1C platform rejects the whole form module and Vanessa never opens (itl-r16 build, 2026-11-16).
+        foreach ($method in $methods) {
+            $method | Should -Not -Match '(?<![\p{L}\p{N}_])\((?:[^()\n]|\([^()\n]*\))*\)\.\p{L}' -Because 'only a call result, not a parenthesized expression, can be dereferenced in 1C'
+        }
+        $group = New-WhGroup 'OneScript клиент'
+        Invoke-ItlWindowHelperVerb -Executable $group.executable -Arguments @('ensure', $group.directory) | Should -Be 0
+        $stubs = @'
+Перем Каталог;
+Перем Ответ;
+Перем ITLСеансУправления;
+Перем ИдЗадачиMCP;
+Перем МассивСценариевДляВыполнения;
+Перем ТекИД_СценарияВМассиве;
+Перем ТекИД_ШагаВМассиве;
+Функция ITLКаталогКаналаОкон() Возврат Каталог; КонецФункции
+Функция ИдентификаторЗадачиMCP() Возврат ИдЗадачиMCP; КонецФункции
+Функция ИдетВыполнениеСценариев() Возврат Истина; КонецФункции
+Функция ФайлСуществуетКомандаСистемы(Имя) Возврат (Новый Файл(Имя)).Существует(); КонецФункции
+Процедура УдалитьФайлыКомандаСистемы(Имя) УдалитьФайлы(Имя); КонецПроцедуры
+Процедура ЗаписатьЛогВЖРОшибка(Где, Текст) Сообщить("LOG " + Где + ": " + Текст); КонецПроцедуры
+Процедура ITLПаузаМс(Мс) Приостановить(Мс); КонецПроцедуры
+Функция ВыполнитьКомандуОСБезПоказаЧерногоОкна(Команда)
+	Код = 0;
+	ЗапуститьПриложение(Команда, , Истина, Код);
+	Возврат Код;
+КонецФункции
+Функция Ошибка(Действие)
+	Попытка
+		Выполнить(Действие);
+	Исключение
+		Возврат ОписаниеОшибки();
+	КонецПопытки;
+	Возврат "";
+КонецФункции
+'@
+        $body = @'
+Каталог = АргументыКоманднойСтроки[0];
+ПИД = Число(АргументыКоманднойСтроки[1]);
+Ответ = ITLЗапросПомощникуОкон("status", Новый Структура("port", 1), 5);
+Сообщить("STATUS " + Ответ.status + " clients=" + Ответ.clients.Количество());
+Ответ = ITLЗапросПомощникуОкон("lease", Новый Структура("scope", "scenario:1"), 5);
+Сообщить("LEASE " + Ответ.status + " " + Ответ.reason);
+Сообщить("DECLINED " + Ошибка("ITLПроверитьОтветПомощникаОкон(Ответ, ""ввод ОС"")"));
+// PM5 2026-11-16: the lease journal could not name the step that took the user's input.
+Шаги = Новый Массив;
+Шаги.Добавить(Новый Структура("Имя,НомерСтрокиВФиче", "И я нажимаю сочетание клавиш 'ENTER'", 42));
+МассивСценариевДляВыполнения = Новый Массив;
+МассивСценариевДляВыполнения.Добавить(Новый Структура("Шаги,ПолныйПутьКФиче", Шаги, Каталог + "\Ввод в ячейку.feature"));
+ТекИД_СценарияВМассиве = 0;
+ТекИД_ШагаВМассиве = 0;
+ИдЗадачиMCP = 142;
+Поля = Новый Структура("scope", ITLОбластьУправления());
+ITLДобавитьШагЗапросаУправления(Поля);
+Сообщить("SCOPE " + Поля.scope);
+Ответ = ITLЗапросПомощникуОкон("lease", Поля, 5);
+Сообщить("STEP LEASE " + Ответ.status + " " + Ответ.reason);
+// The helper answers in order: this reply follows the journal row of the declined lease.
+ITLЗапросПомощникуОкон("status", Новый Структура("port", 1), 5);
+// The helper dies: the next request restarts it through ensure --hung and repeats once.
+ЗапуститьПриложение("taskkill /F /PID " + Формат(ПИД, "ЧГ="), , Истина);
+Ответ = ITLЗапросПомощникуОкон("status", Новый Структура, 5);
+Сообщить("RESTARTED " + Ответ.status + " pid=" + Формат(Ответ.helperPid, "ЧГ="));
+Каталог = "";
+Сообщить("UNAVAILABLE " + Ошибка("ITLПроверитьОтветПомощникаОкон(ITLЗапросПомощникуОкон(""lease"", Новый Структура, 5), ""ввод ОС"")"));
+'@
+        $probePath = Join-Path $TestDrive 'Проба канала окон.os'
+        [IO.File]::WriteAllText($probePath, ($stubs + "`n" + ($methods -join "`n") + "`n" + $body), [Text.UTF8Encoding]::new($true))
+        $start = [Diagnostics.ProcessStartInfo]::new()
+        $start.FileName = (Get-Command oscript -ErrorAction Stop).Source
+        $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-encoding=utf-8', $probePath, $group.directory, [string](Get-WhHelperPid $group.directory))
+        $start.UseShellExecute = $false; $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
+        $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false); $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+        $process = [Diagnostics.Process]::Start($start)
+        $stdout = $process.StandardOutput.ReadToEndAsync(); $stderr = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit(90000) | Should -BeTrue
+        $output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
+        $process.ExitCode | Should -Be 0 -Because $output
+        $output | Should -Match 'STATUS ok clients=0'
+        $output | Should -Match 'LEASE declined no-client'
+        $output | Should -Match 'DECLINED .*ITL_UI_CONTROL_DECLINED: .*\(no-client\)'
+        # The scope carries a session id, so a restarted Vanessa never reuses mcp:142 consent.
+        $scope = [regex]::Match($output, 'SCOPE (?<scope>mcp:142@[0-9a-f]{8})\r?\n').Groups['scope'].Value
+        $scope | Should -Not -BeNullOrEmpty -Because $output
+        $output | Should -Match 'STEP LEASE declined no-client'
+        $row = @(Read-ItlWindowHelperJournal -Path (Join-Path $group.directory 'journal\leases.jsonl') | Where-Object { $_.scope -ceq $scope })
+        $row | Should -HaveCount 1
+        $row[0].outcome | Should -Be 'declined:no-client'
+        $row[0].step | Should -BeExactly "И я нажимаю сочетание клавиш 'ENTER'"
+        $row[0].line | Should -Be 42
+        $row[0].feature | Should -BeExactly 'Ввод в ячейку.feature'
+        $output | Should -Match 'RESTARTED ok pid=\d+'
+        $output | Should -Match 'UNAVAILABLE .*ITL_WINDOW_HELPER_UNAVAILABLE: .*ONEC_WINDOW_MODE=visible'
+    }
+
+    It 'starts the agent TestClient hidden and guards OS input in the r13 patch' {
+        $patch = [IO.File]::ReadAllText((Join-Path $script:WhRevision 'file-operations.patch'), [Text.Encoding]::UTF8)
+        $patch | Should -Match ([regex]::Escape('+		КомандаЗапуска = """" + СтрокаЗапуска1с + """ " + СтрокаЗапуска + " /DisableSplash";'))
+        $patch | Should -Match ([regex]::Escape('+		ПолучитьWshShell().Run(КомандаЗапуска, 0, Ложь);'))
+        $patch | Should -Match '(?s)\+Процедура ITLАрендоватьУправлениеДляВводаОС\(ПараметрыСписка = Неопределено\) Экспорт.*?ITLПроверитьОтветПомощникаОкон\(Ответ, "ввод ОС"\);.*?Если НЕ ЗначениеЗаполнено\(PIDКлиента\) Или PIDАктивного <> PIDКлиента Тогда\n\+\t\tЕсли ПараметрыСписка <> Неопределено Тогда\n\+\t\t\tITLЗавершитьВыборИзСписка\(Истина\);\n\+\t\tКонецЕсли;\n\+\t\tВызватьИсключение "ITL_WINDOW_ACTIVATION_FAILED'
+        $patch | Should -Match '(?s)\+\t\tИначеЕсли ITLПоказатьКлиентДляСнимка\(\) Тогда\n\+\t\t\tСпособСнятияСкриншотовВнешнейКомпонентой = 1;'
+        $patch | Should -Match ([regex]::Escape('+			Если ДвоичныеДанные = Неопределено И НЕ ЗначениеЗаполнено(ITLКаталогКаналаОкон()) Тогда'))
+    }
+
+    It 'declares every added ITL form-module variable on the client' {
+        # A form-module variable without &НаКлиенте is server-side; the single build then failed
+        # in GetStepsCache with "Переменная не определена (ITLИтогУправления)".
+        $lines = [IO.File]::ReadAllText((Join-Path $script:WhRevision 'file-operations.patch'), [Text.Encoding]::UTF8) -split "\r?\n"
+        $declarations = @()
+        for ($index = 1; $index -lt $lines.Count; $index++) {
+            if ($lines[$index] -match '^\+Перем ITL') {
+                $declarations += [pscustomobject]@{ Line = $lines[$index]; Directive = $lines[$index - 1].Substring(1) }
+            }
+        }
+        $declarations.Count | Should -BeGreaterThan 0
+        foreach ($declaration in $declarations) {
+            $declaration.Directive | Should -Be '&НаКлиенте' -Because $declaration.Line
+        }
+    }
+
+    It 'opens every VAExtension service form without a top-level window of its own' {
+        # Live probe 2026-11-11 (docs/hidden-testclient-probe.md): a LockOwnerWindow form opened by an
+        # e1cib/app link shows a V8TopLevelFrameSDIsec window even in a hidden TestClient; the
+        # independent mode keeps it out of sight while the testing API still finds the form.
+        $patch = [IO.File]::ReadAllText((Join-Path $script:WhRevision 'file-operations.patch'), [Text.Encoding]::UTF8)
+        $forms = 'VAExtension_ВыполнитьПроизвольныйКод', 'VAExtension_ДанныеТекущегоОкна', 'VAExtension_НажатьГиперссылкуHTMLДокумента',
+            'VAExtension_НажатьКнопкуHTMLДокумента', 'VAExtension_ОткрытьВнешнююОбработкуИлиОтчет', 'VAExtension_ПолучениеМакета'
+        foreach ($form in $forms) {
+            $section = @($patch -split '(?m)(?=^diff --git )' | Where-Object { $_.StartsWith("diff --git a/lib/VAExtension/DataProcessors/$form/Forms/Форма/Ext/Form.xml") })
+            $section | Should -HaveCount 1 -Because $form
+            $section[0] | Should -Match '(?m)^-\t<WindowOpeningMode>LockOwnerWindow</WindowOpeningMode>\r?$' -Because $form
+        }
+        $patch | Should -Not -Match '(?m)^\+.*<WindowOpeningMode>(LockOwnerWindow|LockWholeInterface)</WindowOpeningMode>'
+        $manifest = Get-Content -LiteralPath (Join-Path $script:WhRevision 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.downstreamRevision | Should -Be 'itl-r18'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r18.cfe'
+        foreach ($form in $forms) { $manifest.patch.expectedChangedPaths | Should -Contain "lib/VAExtension/DataProcessors/$form/Forms/Форма/Ext/Form.xml" }
+    }
+    It 'calls no server-only date function from the added thin-client channel code' {
+        # The thin-client check of the single build failed with
+        # "Процедура или функция с указанным именем не определена (ТекущаяУниверсальнаяДата)".
+        $added = @([IO.File]::ReadAllText((Join-Path $script:WhRevision 'file-operations.patch'), [Text.Encoding]::UTF8) -split "\r?\n" |
+            Where-Object { $_ -match '^\+' -and $_ -match 'ITL|deadlineUtc|ОжидатьСекунд' })
+        $added.Count | Should -BeGreaterThan 0
+        $added | Where-Object { $_ -match '(ТекущаяУниверсальнаяДата|ТекущаяДатаСеанса)\s*\(' } | Should -BeNullOrEmpty
+        $added -join "`n" | Should -Match ([regex]::Escape('XMLСтрока(УниверсальноеВремя(ТекущаяДата()) + ОжидатьСекунд)'))
+    }
+}

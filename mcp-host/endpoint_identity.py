@@ -1,0 +1,484 @@
+"""Read-only MCP identity proof shared by the existing Windows/Linux host owners.
+
+Only a twice-observed foreign public endpoint with a healthy, idle internal
+endpoint is repairable. Timeouts, tool failures and indexing never authorize a
+restart. This module has no recovery, lock, configuration or persistent state.
+"""
+import argparse
+import base64
+import hashlib
+import http.client
+import queue
+import socket
+import threading
+import json
+from pathlib import Path
+import re
+import subprocess
+import time
+import urllib.parse
+import urllib.request
+
+SAFE_TOOLS = {'syntaxcheck', 'vector_store_state', 'list_templates', 'fetch_its',
+              'index_status', 'health', 'sppr_index_status', 'stats', 'get_indexing_status'}
+HEALTH_TIMEOUT_SECONDS = 30
+
+
+class ProbeError(RuntimeError):
+    def __init__(self, error, method, timeout, elapsed):
+        super().__init__(type(error).__name__)
+        self.reason, self.method = type(error).__name__, method
+        self.timeout, self.elapsed = timeout, elapsed
+        self.endpoint = {field: getattr(error, field) for field in
+                         ('originalUrl', 'httpStatus', 'location') if hasattr(error, field)}
+
+
+def failure(error, stage, started):
+    result = {'status': 'unverified', 'reason': getattr(error, 'reason', type(error).__name__),
+              'stage': stage, 'elapsedSeconds': round(time.monotonic() - started, 3)}
+    if isinstance(error, ProbeError):
+        result.update(method=error.method, timeoutSeconds=error.timeout,
+                      requestElapsedSeconds=round(error.elapsed, 3))
+        result.update(error.endpoint)
+    return result
+
+
+class EndpointRedirectError(RuntimeError):
+    def __init__(self, url, status, location):
+        super().__init__('Exact MCP endpoint redirected')
+        self.originalUrl, self.httpStatus, self.location = url, status, location
+
+
+class Redirect(urllib.request.HTTPRedirectHandler):
+    def __init__(self, allow_redirects=True):
+        super().__init__()
+        self.allow_redirects = allow_redirects
+
+    def redirect_request(self, request, fp, code, msg, headers, url):
+        if not self.allow_redirects:
+            try:
+                fp.close()
+            finally:
+                raise EndpointRedirectError(request.full_url, code, headers.get('Location', ''))
+        if (code in (307, 308) and urllib.parse.urlsplit(request.full_url).netloc
+                == urllib.parse.urlsplit(url).netloc):
+            return urllib.request.Request(url, data=request.data, headers=dict(request.headers),
+                                          method=request.get_method())
+        raise RuntimeError('MCP redirect changed origin or POST semantics')
+
+
+class _RequestWorker:
+    """Reuse a daemon thread for consecutive requests of one client."""
+
+    def __init__(self):
+        self.pending = queue.SimpleQueue()
+        self.started = False
+
+    def submit(self, operation):
+        self.pending.put(operation)
+        if not self.started:
+            threading.Thread(target=self._serve, daemon=True).start()
+            self.started = True
+
+    def _serve(self):
+        while (operation := self.pending.get()) is not None:
+            operation()
+
+    def close(self):
+        self.pending.put(None)
+
+
+class DeadlineTransport:
+    """Invocation-local transport; bound DNS, headers, redirects and body alike.
+
+    The caller never waits beyond its budget. A cancelled connection closes its
+    socket, including a socket created after a delayed DNS lookup. Worker threads
+    are daemonized so a platform resolver cannot hold the probe process open.
+    """
+    def __init__(self, allow_redirects=True):
+        self.cancelled = threading.Event()
+        self.connections = []
+        self.lock = threading.Lock()
+        owner = self
+
+        class Connection(http.client.HTTPConnection):
+            def connect(self):
+                super().connect()
+                if owner.cancelled.is_set():
+                    self.close()
+                    raise TimeoutError('MCP elapsed deadline exceeded')
+
+        class SecureConnection(http.client.HTTPSConnection):
+            def connect(self):
+                super().connect()
+                if owner.cancelled.is_set():
+                    self.close()
+                    raise TimeoutError('MCP elapsed deadline exceeded')
+
+        def factory(kind, *args, **kwargs):
+            connection = kind(*args, **kwargs)
+            with owner.lock:
+                owner.connections.append(connection)
+            return connection
+
+        class HTTP(urllib.request.HTTPHandler):
+            def http_open(self, request):
+                return self.do_open(lambda *a, **k: factory(Connection, *a, **k), request)
+
+        class HTTPS(urllib.request.HTTPSHandler):
+            def __init__(self):
+                # The standard handler can load the platform trust store eagerly.
+                # Plain HTTP probes never need that work.
+                self.initialized = False
+
+            def https_open(self, request):
+                if not self.initialized:
+                    super().__init__()
+                    self.initialized = True
+                return self.do_open(lambda *a, **k: factory(SecureConnection, *a, **k), request,
+                                    context=self._context)
+
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), HTTP(), HTTPS(),
+                                                  Redirect(allow_redirects))
+
+    def abort(self):
+        self.cancelled.set()
+        with self.lock:
+            for connection in self.connections:
+                if connection.sock:
+                    try:
+                        connection.sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                    connection.close()
+
+    def run(self, operation, timeout, request_worker=None):
+        results = queue.Queue(maxsize=1)
+
+        def worker():
+            try:
+                results.put((True, operation(self.opener)))
+            except Exception as error:
+                results.put((False, error))
+
+        if request_worker is None:
+            threading.Thread(target=worker, daemon=True).start()
+        else:
+            request_worker.submit(worker)
+        try:
+            success, value = results.get(timeout=max(0, timeout))
+            if not success:
+                raise value
+            return value
+        except queue.Empty:
+            raise TimeoutError('MCP elapsed deadline exceeded') from None
+        finally:
+            self.abort()
+
+
+class Client:
+    def __init__(self, url, timeout, exact_endpoint=False):
+        self.url, self.timeout, self.session, self.sequence = url, timeout, None, 0
+        self.exact_endpoint = exact_endpoint
+        self._worker = None
+        self.protocol = '2025-03-26'
+        try:
+            self.initialized = self.request('initialize', {
+                'protocolVersion': self.protocol, 'capabilities': {},
+                'clientInfo': {'name': 'itl-endpoint-identity', 'version': '1'}})
+            self.protocol = self.initialized['protocolVersion']
+            self.request('notifications/initialized', notification=True)
+        except Exception:
+            self.close()
+            raise
+
+    def headers(self):
+        result = {'Content-Type': 'application/json; charset=utf-8',
+                  'Accept': 'application/json, text/event-stream',
+                  'MCP-Protocol-Version': self.protocol}
+        if self.session:
+            result['Mcp-Session-Id'] = self.session
+        return result
+
+    def request(self, method, params=None, notification=False, timeout=None):
+        started = time.monotonic()
+        budget = self.timeout if timeout is None else timeout
+        try:
+            if self._worker is None:
+                self._worker = _RequestWorker()
+            return DeadlineTransport(allow_redirects=not self.exact_endpoint).run(
+                lambda opener: self._request(method, params, notification, budget, opener),
+                budget, self._worker)
+        except Exception as error:
+            # Cleanup must run independently of a worker still blocked in I/O.
+            self._retire_worker()
+            raise ProbeError(error, method, budget, time.monotonic() - started) from None
+
+    def _retire_worker(self):
+        if self._worker is not None:
+            self._worker.close()
+            self._worker = None
+
+    def _request(self, method, params, notification, timeout, opener):
+        self.sequence += 1
+        body = {'jsonrpc': '2.0', 'method': method}
+        if not notification:
+            body['id'] = self.sequence
+        if params is not None:
+            body['params'] = params
+        request = urllib.request.Request(self.url, json.dumps(body, ensure_ascii=False).encode('utf-8'),
+                                         self.headers())
+        deadline = time.monotonic() + timeout
+        with opener.open(request, timeout=timeout) as response:
+            self.url = response.url
+            self.session = response.headers.get('Mcp-Session-Id', self.session)
+            chunks = bytearray()
+            while True:
+                if response.fp is None:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError('MCP elapsed deadline exceeded')
+                # HTTPResponse.read() waits for EOF; SSE heartbeats can extend a
+                # socket timeout forever. read1 returns available bytes so the
+                # elapsed budget is re-applied, including heartbeat-only streams.
+                response.fp.raw._sock.settimeout(remaining)
+                chunk = response.read1(65536)
+                if not chunk:
+                    break
+                chunks.extend(chunk)
+                if len(chunks) > 8 * 1024 * 1024:
+                    raise RuntimeError('MCP response exceeds probe budget')
+                if not notification:
+                    text = chunks.decode('utf-8', errors='replace').replace('\r\n', '\n')
+                    for block in text.split('\n\n')[:-1]:
+                        data = '\n'.join(line[5:].strip() for line in block.splitlines() if line.startswith('data:'))
+                        if data:
+                            value = json.loads(data)
+                            if value.get('id') == self.sequence:
+                                if value.get('error') or 'result' not in value:
+                                    raise RuntimeError('MCP request failed: ' + method)
+                                return value['result']
+            text = chunks.decode('utf-8')
+        if notification:
+            return {}
+        if text.lstrip().startswith('{'):
+            value = json.loads(text)
+        else:
+            values = [json.loads(line[5:].strip()) for line in text.splitlines() if line.startswith('data:')]
+            value = next(item for item in values if item.get('id') == self.sequence)
+        if value.get('error') or 'result' not in value:
+            raise RuntimeError('MCP request failed: ' + method)
+        return value['result']
+
+    def close(self):
+        try:
+            if self.session:
+                request = urllib.request.Request(self.url, headers=self.headers(), method='DELETE')
+                def cleanup(opener):
+                    with opener.open(request, timeout=self.timeout):
+                        pass
+                DeadlineTransport(allow_redirects=not self.exact_endpoint).run(
+                    cleanup, self.timeout, self._worker)
+        except Exception:
+            pass
+        finally:
+            self.session = None
+            self._retire_worker()
+
+
+def structural(value, properties=False):
+    if isinstance(value, dict):
+        return {key: structural(item, key in ('properties', 'patternProperties'))
+                for key, item in value.items() if properties or key != 'description'}
+    if isinstance(value, list):
+        return [structural(item) for item in value]
+    return value
+
+
+def payload(result):
+    if result.get('isError'):
+        raise RuntimeError('Safe MCP health tool reported an error')
+    if 'structuredContent' in result:
+        value = result['structuredContent']
+    else:
+        texts = [item['text'] for item in result.get('content', []) if item.get('type') == 'text']
+        if len(texts) != 1:
+            raise RuntimeError('Safe health tool returned no single status payload')
+        value = json.loads(texts[0])
+    if isinstance(value, dict) and isinstance(value.get('result'), str):
+        value = json.loads(value['result'])
+    if not isinstance(value, dict) or value.get('ok') is False or value.get('error') or value.get('status') == 'error':
+        raise RuntimeError('Safe MCP health status failed')
+    return value
+
+
+def indexing(value):
+    if not isinstance(value, dict):
+        return False
+    if value.get('index_in_progress') is True or value.get('is_indexing') is True:
+        return True
+    if isinstance(value.get('indexing'), dict) and value['indexing'].get('running') is True:
+        return True
+    if value.get('running') is True:
+        return True
+    return any(indexing(item) for item in value.values() if isinstance(item, dict))
+
+
+def read_endpoint(url, timeout=5, health_tool='', health_arguments=None, expected_signature=None,
+                  health_timeout=HEALTH_TIMEOUT_SECONDS, exact_endpoint=False):
+    client = Client(url, timeout, exact_endpoint=exact_endpoint)
+    try:
+        name = client.initialized.get('serverInfo', {}).get('name', '')
+        tools = client.request('tools/list').get('tools', [])
+        names = sorted(item['name'] for item in tools)
+        if not name or not names or len(names) != len(set(names)):
+            raise RuntimeError('MCP identity or tool catalog is empty/invalid')
+        document = {'server': name, 'tools': sorted(structural(tools), key=lambda item: item['name'])}
+        digest = hashlib.sha256(json.dumps(document, sort_keys=True, ensure_ascii=False,
+                                          separators=(',', ':')).encode('utf-8')).hexdigest()
+        busy = False
+        health_error = None
+        if expected_signature and digest != expected_signature:
+            raise RuntimeError('Public identity changed before safe call')
+        if health_tool:
+            health_started = time.monotonic()
+            try:
+                if health_tool not in SAFE_TOOLS or health_tool not in names:
+                    raise RuntimeError('Required safe health tool is missing')
+                busy = indexing(payload(client.request('tools/call', {
+                    'name': health_tool, 'arguments': health_arguments or {}}, timeout=health_timeout)))
+            except ProbeError as error:
+                health_error = failure(error, 'safe health', health_started)
+            except Exception as error:
+                health_error = failure(ProbeError(error, 'tools/call', health_timeout, time.monotonic() - health_started),
+                                       'safe health', health_started)
+        return {'signature': digest, 'server_name': name, 'tool_count': len(names), 'url': client.url,
+                'indexing': busy, 'health_passed': bool(health_tool) and health_error is None,
+                'health_error': health_error}
+    finally:
+        client.close()
+
+
+def command(arguments, timeout=30):
+    result = subprocess.run(arguments, capture_output=True, text=True, encoding='utf-8',
+                            errors='strict', timeout=timeout)
+    if result.returncode:
+        raise RuntimeError('Endpoint probe child process failed')
+    return result.stdout
+
+
+def canonical_endpoint(original, resolved):
+    """Preserve the configured public origin; only the service supplies its path."""
+    source, target = urllib.parse.urlsplit(original), urllib.parse.urlsplit(resolved)
+    if (source.scheme not in ('http', 'https') or source.scheme != target.scheme
+            or source.netloc != target.netloc or target.username or target.fragment
+            or source.query != target.query):
+        raise ValueError('MCP canonical endpoint changed public origin or query')
+    return resolved
+
+
+def check_endpoint(container, url, host_port, health_tool='', health_arguments=None, timeout=5, run=command,
+                   health_timeout=HEALTH_TIMEOUT_SECONDS, qualify_url=False):
+    started = time.monotonic()
+    stage = 'container binding'
+    try:
+        address = urllib.parse.urlsplit(url)
+        if address.scheme not in ('http', 'https') or address.port != host_port or address.username:
+            raise ValueError('Invalid tracked public endpoint')
+        item = json.loads(run(['docker', 'inspect', container], timeout=10))[0]
+        identity = item['Id']
+        if (item['Name'] != '/' + container or item['State']['Status'] != 'running'
+                or not re.fullmatch(r'[0-9a-f]{64}', identity)):
+            raise ValueError('Tracked container identity/state changed')
+        ports = [key.split('/')[0] for key, bindings in item['NetworkSettings']['Ports'].items()
+                 if key.endswith('/tcp') and any(int(binding['HostPort']) == host_port for binding in bindings or [])]
+        if len(ports) != 1:
+            raise ValueError('Tracked public port has no unique container binding')
+        internal_url = 'http://127.0.0.1:' + ports[0] + (address.path or '/mcp')
+        encoded = base64.b64encode(Path(__file__).read_bytes()).decode('ascii')
+        code = "import base64;exec(compile(base64.b64decode('" + encoded + "'),'<itl-endpoint-probe>','exec'))"
+        arguments = ['--local', '--url', internal_url, '--timeout', str(timeout),
+                     '--health-timeout', str(health_timeout), '--health-tool', health_tool,
+                     '--health-arguments-base64', base64.b64encode(json.dumps(
+                         health_arguments or {}, ensure_ascii=False).encode('utf-8')).decode('ascii')]
+        # The script works without files or third-party libraries inside the container.
+        stage = 'internal MCP'
+        internal = json.loads(run(['docker', 'exec', identity, 'python', '-X', 'utf8', '-c', code] + arguments,
+                                  timeout=timeout * 4 + health_timeout + 5))
+        if internal.get('status') != 'matched':
+            return dict(internal, status='unverified', stage='internal ' + internal.get('stage', 'MCP'),
+                        elapsedSeconds=round(time.monotonic() - started, 3))
+        expected = internal['proof']
+        public = []
+        qualified_url = url
+        for number in range(2):
+            stage = 'public identity ' + str(number + 1)
+            public.append(read_endpoint(qualified_url, timeout,
+                                        exact_endpoint=qualify_url and number > 0))
+            if qualify_url and number == 0:
+                # Discovery may follow a supported redirect. Qualification and
+                # the safe call below use its exact same-origin candidate URL.
+                qualified_url = canonical_endpoint(url, public[0]['url'])
+        matches = [proof['signature'] == expected['signature'] for proof in public]
+        result = {'container_id': identity, 'expected_server': expected['server_name'],
+                  'observed_servers': [proof['server_name'] for proof in public]}
+        if qualify_url:
+            result.update(original_url=url, qualified_url=qualified_url)
+        if all(matches):
+            stage = 'public safe health'
+            health = read_endpoint(qualified_url, timeout, health_tool, health_arguments, expected['signature'],
+                                   health_timeout=health_timeout, exact_endpoint=qualify_url)
+            if health['signature'] != expected['signature']:
+                return dict(result, status='unverified', reason='identity changed before safe call')
+            return dict(result, status='matched', indexing=expected['indexing'] or health['indexing'],
+                        health_passed=expected['health_passed'] and health['health_passed'],
+                        health_error=expected.get('health_error') or health.get('health_error'),
+                        elapsedSeconds=round(time.monotonic() - started, 3))
+        if any(matches):
+            return dict(result, status='unverified', reason='public identity is unstable')
+        if expected['indexing']:
+            return dict(result, status='indexing', reason='foreign endpoint; internal indexing is active')
+        if not expected['health_passed']:
+            return dict(result, status='unverified', health_error=expected.get('health_error'),
+                        reason='foreign endpoint; no safe internal health proof')
+        return dict(result, status='mismatch', reason='foreign public identity confirmed twice')
+    except Exception as error:
+        # Never persist response bodies, environment, credentials or child command lines.
+        return failure(error, stage, started)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--local', action='store_true')
+    parser.add_argument('--container')
+    parser.add_argument('--url', required=True)
+    parser.add_argument('--host-port', type=int)
+    parser.add_argument('--health-tool', default='')
+    parser.add_argument('--health-arguments', default='{}')
+    parser.add_argument('--health-arguments-base64')
+    parser.add_argument('--timeout', type=int, default=5)
+    parser.add_argument('--health-timeout', type=int, default=HEALTH_TIMEOUT_SECONDS)
+    parser.add_argument('--qualify-url', action='store_true',
+                        help='Resolve and qualify the exact same-origin public URL after container binding')
+    args = parser.parse_args()
+    started = time.monotonic()
+    try:
+        if args.local and args.qualify_url:
+            raise ValueError('--qualify-url requires the container-bound public probe')
+        health_arguments = json.loads(base64.b64decode(args.health_arguments_base64).decode('utf-8')
+                                      if args.health_arguments_base64 else args.health_arguments)
+        if args.local:
+            result = {'status': 'matched', 'proof': read_endpoint(args.url, args.timeout,
+                       args.health_tool, health_arguments, health_timeout=args.health_timeout)}
+        else:
+            result = check_endpoint(args.container, args.url, args.host_port, args.health_tool,
+                                    health_arguments, args.timeout, health_timeout=args.health_timeout,
+                                    qualify_url=args.qualify_url)
+    except Exception as error:
+        result = failure(error, 'safe health' if getattr(error, 'method', '') == 'tools/call' else 'identity', started)
+    print(json.dumps(result, ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    main()

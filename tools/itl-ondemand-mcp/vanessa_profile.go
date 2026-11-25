@@ -17,17 +17,20 @@ import (
 const vanessaProfileResultMarker = "ITL_VANESSA_PROFILE_RESULT="
 
 type vanessaProfileResult struct {
-	SchemaVersion      int    `json:"schemaVersion"`
-	Status             string `json:"status"`
-	InstanceID         string `json:"instanceId"`
-	ManagerPID         int    `json:"managerPid"`
-	ManagerPort        int    `json:"managerPort"`
-	TestClientPID      int    `json:"testClientPid"`
-	TestClientPort     int    `json:"testClientPort"`
-	TestClientState    string `json:"testClientState"`
-	TestClientReused   bool   `json:"testClientReused"`
-	FeaturePath        string `json:"featurePath"`
-	ScenarioWasStarted bool   `json:"scenarioWasStarted"`
+	SchemaVersion      int                     `json:"schemaVersion"`
+	Status             string                  `json:"status"`
+	InstanceID         string                  `json:"instanceId"`
+	ManagerPID         int                     `json:"managerPid"`
+	ManagerPort        int                     `json:"managerPort"`
+	TestClientPID      int                     `json:"testClientPid"`
+	TestClientPort     int                     `json:"testClientPort"`
+	TestClientState    string                  `json:"testClientState"`
+	TestClientReused   bool                    `json:"testClientReused"`
+	FeaturePath        string                  `json:"featurePath"`
+	ScenarioWasStarted bool                    `json:"scenarioWasStarted"`
+	OwnerGeneration    string                  `json:"ownerGeneration,omitempty"`
+	OwnerID            string                  `json:"ownerId,omitempty"`
+	OwnerProcess       *profileProcessIdentity `json:"ownerProcess,omitempty"`
 }
 
 func runVanessaProfileStart(args []string) error {
@@ -37,6 +40,7 @@ func runVanessaProfileStart(args []string) error {
 	helperPath := flags.String("helper", "", "agent-1c.ps1 path")
 	instanceID := flags.String("instance-id", "", "stable branch-local runtime instance id")
 	featurePath := flags.String("feature", "", "absolute .feature path to open without running")
+	callerID := flags.String("caller-id", "", "interactive session owner; defaults to the current Codex thread")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -57,25 +61,64 @@ func runVanessaProfileStart(args []string) error {
 	if info, statErr := os.Stat(feature); statErr != nil || info.IsDir() {
 		return fmt.Errorf("--feature was not found: %s", feature)
 	}
-	catalog, err := loadCatalog(*catalogPath, "vanessa-ui")
+	config := profileOwnerConfig{ProjectRoot: root, InstanceID: *instanceID}
+	config.CatalogPath, err = filepath.Abs(*catalogPath)
 	if err != nil {
 		return err
 	}
-	rt := &runtime{
-		catalog: catalog,
-		broker: &powershellBroker{
-			HelperPath: *helperPath, ProjectRoot: root, Family: "vanessa-ui",
-			InstanceID: *instanceID, CatalogHash: catalog.SHA256,
-		},
-		projectRoot: root, family: "vanessa-ui", instanceID: *instanceID,
-		idle: time.Hour, catalogWait: 30 * time.Second,
-		logger:             slog.New(slog.NewJSONHandler(os.Stderr, nil)),
-		progress:           make(map[string]*progressRoute),
-		vanessaConnectWait: time.Minute,
-		suppressEvidence:   true,
+	config.HelperPath, err = filepath.Abs(*helperPath)
+	if err != nil {
+		return err
+	}
+	if os.Getenv("ITL_EXECUTION_CONTEXT") == "" {
+		config.CallerID, err = resolveProfileCaller(*callerID, true)
+		if err != nil {
+			return err
+		}
+		config.Generation, err = randomID()
+		if err != nil {
+			return err
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+		defer cancel()
+		owner, err := ensureProfileOwner(ctx, config, func(config profileOwnerConfig) (profileProcessIdentity, error) {
+			return launchProfileOwner(executable, profileOwnerArguments(config), root)
+		})
+		if err != nil {
+			return err
+		}
+		response, err := requestProfileOwner(ctx, owner, "open", feature, config.CallerID)
+		if err != nil {
+			return err
+		}
+		if response.Status != "running" || response.Result == nil {
+			return fmt.Errorf("ITL_VANESSA_PROFILE_START_FAILED: %s", response.Error)
+		}
+		response.Result.OwnerGeneration = owner.Generation
+		response.Result.OwnerID = owner.CallerID
+		response.Result.OwnerProcess = &owner.Process
+		encoded, err := json.Marshal(response.Result)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s%s\n", vanessaProfileResultMarker, encoded)
+		return nil
+	}
+	rt, err := newProfileOwnerRuntime(config, true)
+	if err != nil {
+		return err
 	}
 	result, err := startInteractiveVanessaProfile(context.Background(), rt, feature)
 	if err != nil {
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if cleanupErr := rt.close(cleanup); cleanupErr != nil {
+			return fmt.Errorf("%v; profile cleanup: %w", err, cleanupErr)
+		}
 		return err
 	}
 	encoded, err := json.Marshal(result)
@@ -86,11 +129,25 @@ func runVanessaProfileStart(args []string) error {
 	return nil
 }
 
+func newProfileOwnerRuntime(config profileOwnerConfig, _ bool) (*runtime, error) {
+	catalog, err := loadCatalog(config.CatalogPath, "vanessa-ui")
+	if err != nil {
+		return nil, err
+	}
+	return &runtime{
+		catalog: catalog, broker: &powershellBroker{HelperPath: config.HelperPath, ProjectRoot: config.ProjectRoot, Family: "vanessa-ui", InstanceID: config.InstanceID, CatalogHash: catalog.SHA256},
+		projectRoot: config.ProjectRoot, family: "vanessa-ui", instanceID: config.InstanceID,
+		// A manual profile has no idle expiry. Its owner observes actual process
+		// exit or an explicit stop; outer-owned profiles inherit caller cleanup.
+		idle: 0, catalogWait: 30 * time.Second, vanessaConnectWait: time.Minute,
+		logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)), progress: make(map[string]*progressRoute), suppressEvidence: true,
+	}, nil
+}
+
 func startInteractiveVanessaProfile(ctx context.Context, rt *runtime, featurePath string) (*vanessaProfileResult, error) {
 	request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}}
-	connectResult, err := rt.callNamed(ctx, request, "connect_test_client", map[string]any{
-		"profileName": "itl-ondemand",
-	})
+	connect := rt.managedTestClientConnectParams("itl-ondemand")
+	connectResult, err := rt.callNamed(ctx, request, connect.Name, connect.Arguments)
 	if err != nil {
 		return nil, fmt.Errorf("connect managed TestClient: %w", err)
 	}

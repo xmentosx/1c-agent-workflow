@@ -1,0 +1,20 @@
+Vanessa Automation 1.2.043.42-itl-r1
+
+This binary distribution is built from Pr-Mex/vanessa-automation
+tag 1.2.043.42, commit a0ce2ee9803dd69be52f682e5cf49e0938fd33f1,
+with source-controlled ITL patches.
+
+The upstream compatibility version remains 1.2.043.42. The downstream
+revision itl-r1 identifies the patch and is not an upstream release.
+
+Vanessa Automation is distributed under the BSD 3-Clause License. The
+complete upstream copyright notice, license conditions, and disclaimer are
+included in LICENSE at the root of the binary distribution.
+
+The patch preserves the ITL MCP callbacks, selected-feature tree, row navigation,
+TestClient port ownership, and the paired file-code channel with VAExtension.
+It also backports progress-token and independent If/Else fixes and replaces
+ping-based wait fallbacks with local sleep commands.
+
+The patched VAExtension must be built and qualified with this EPF before
+installation.

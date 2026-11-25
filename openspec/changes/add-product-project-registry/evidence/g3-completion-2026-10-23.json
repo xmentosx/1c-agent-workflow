@@ -1,0 +1,841 @@
+{
+  "schemaVersion": 1,
+  "status": "blocked-full-G3-local-qualification-complete",
+  "qualifiedSourceCandidate": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+  "sourceTests": {
+    "applyContextSetup": {
+      "stage": "defer-restore-green",
+      "durationMs": 143431,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1",
+        "tests/pester/ProductProjectContext.Tests.ps1",
+        "tests/pester/ProductProjectSetup.Tests.ps1"
+      ],
+      "allOwners": true,
+      "skipped": 0,
+      "passed": 132,
+      "notRun": 0,
+      "failed": 0
+    },
+    "gitSave": {
+      "stage": "git-tree-reserve3-green",
+      "durationMs": 60007,
+      "files": [
+        "tests/pester/ProductProjectGitSave.Tests.ps1"
+      ],
+      "allOwners": true,
+      "skipped": 0,
+      "passed": 12,
+      "notRun": 0,
+      "failed": 0
+    }
+  },
+  "fixes": [
+    {
+      "id": "G3-DEFER-RESTORE-STALE-PREVIEW",
+      "status": "closed-source-and-current-native",
+      "owner": "existing product project apply/recovery",
+      "originalFailure": "CLIENT_MCP_PREVIEW_CHANGED after completed zero-client-write defer",
+      "guards": "forward preview on resume; saved setting/client proofs and fresh writer preflight on restore; foreign changes still rejected"
+    },
+    {
+      "id": "G3-GIT-TRANSPORT-CHILD-CLEANUP",
+      "status": "closed-in-current-bound-no-cache-subset",
+      "owner": "existing native capture + existing opened-process tree cleanup",
+      "originalTransportSeconds": [
+        20.981725,
+        22.466711
+      ],
+      "transportSeconds": [
+        [
+          7.932588
+        ],
+        [
+          7.835951
+        ]
+      ],
+      "absoluteMetadataDeadlineSeconds": 10,
+      "cleanupReserveInsideOriginalBudgetSeconds": 3,
+      "saveBudgetSeconds": 60,
+      "newCoordinatorOrPersistentState": false
+    }
+  ],
+  "installed": {
+    "update": {
+      "exitCode": 0,
+      "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-logs\\update-workflow-56fbcf0b66bc42c4a6d6d34ae2c78947.stdout.log",
+      "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-logs\\update-workflow-56fbcf0b66bc42c4a6d6d34ae2c78947.stderr.log",
+      "durationMs": 366086
+    },
+    "snapshots": [
+      {
+        "phase": "post-copy-complete",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "sourceCommit": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+        "receiptSha": "9aa6b225068ed6c3b8b93d6e238d3ae5d45a7ab580eb2a1aad889bc62121cd36",
+        "snapshot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-completed-48a6151f959e4b0e954a1a1d650e92d0",
+        "records": 680
+      },
+      {
+        "phase": "post-copy-complete",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "sourceCommit": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+        "receiptSha": "6f5b6ceddb0aa05a42a10f7fa00630c39d3ed82991e87b5255c752f849070f41",
+        "snapshot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-completed-d8c757e185d54537adb3b318635b0cd3",
+        "records": 359
+      }
+    ],
+    "dialogs": [
+      {
+        "choice": "keep-local",
+        "priorRevision": "fc4e34f18ac8bf9f33dc2f9b66b72f31990e4b41",
+        "mainExit": 0,
+        "appliedRevision": "ba57bdc511e1cc2d93bd441acd840da38e513979",
+        "passed": true,
+        "desiredRevision": "ba57bdc511e1cc2d93bd441acd840da38e513979",
+        "manualPreserved": true,
+        "foreignPreserved": true,
+        "repeatNoQuestion": true,
+        "realConsole": true
+      },
+      {
+        "choice": "defer",
+        "priorRevision": "fc4e34f18ac8bf9f33dc2f9b66b72f31990e4b41",
+        "mainExit": 0,
+        "appliedRevision": "fc4e34f18ac8bf9f33dc2f9b66b72f31990e4b41",
+        "passed": true,
+        "desiredRevision": "96eeced423f9752d8bb7ead4b5bafe520464114a",
+        "manualPreserved": true,
+        "foreignPreserved": true,
+        "repeatNoQuestion": true,
+        "realConsole": true
+      },
+      {
+        "choice": "registry",
+        "priorRevision": "fc4e34f18ac8bf9f33dc2f9b66b72f31990e4b41",
+        "mainExit": 0,
+        "appliedRevision": "e8547b4b3c74e6443e3484614f1fa1b21dd9dd40",
+        "passed": true,
+        "desiredRevision": "e8547b4b3c74e6443e3484614f1fa1b21dd9dd40",
+        "manualPreserved": false,
+        "foreignPreserved": true,
+        "repeatNoQuestion": true,
+        "realConsole": true
+      },
+      {
+        "choice": "empty",
+        "priorRevision": "fc4e34f18ac8bf9f33dc2f9b66b72f31990e4b41",
+        "mainExit": 1,
+        "appliedRevision": "fc4e34f18ac8bf9f33dc2f9b66b72f31990e4b41",
+        "passed": true,
+        "desiredRevision": "ba9608e248f5699f8003fbc87474669d428c4ba2",
+        "manualPreserved": true,
+        "foreignPreserved": true,
+        "repeatNoQuestion": false,
+        "realConsole": true
+      }
+    ],
+    "offline": [
+      {
+        "transportSeconds": [
+          7.932588
+        ],
+        "offlineWarning": true,
+        "exitCode": 0,
+        "metadataDeadlineSeconds": 10,
+        "protectedCount": 8,
+        "transportCount": 1,
+        "requestAccepted": true,
+        "kind": "applied-cache",
+        "wholeCliMs": 13376,
+        "protectedStable": true,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "passed": true,
+        "mainPhaseReached": true
+      },
+      {
+        "transportSeconds": [
+          7.835951
+        ],
+        "offlineWarning": false,
+        "exitCode": 1,
+        "metadataDeadlineSeconds": 10,
+        "protectedCount": 8,
+        "transportCount": 1,
+        "requestAccepted": true,
+        "kind": "no-cache",
+        "wholeCliMs": 10606,
+        "protectedStable": true,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "passed": true,
+        "mainPhaseReached": false
+      }
+    ],
+    "pendingPublication": {
+      "actualMcpOrBusinessWrites": 0,
+      "externalPublication": false,
+      "confirmedExactlyOnce": true,
+      "passed": true,
+      "remote": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\origin.git",
+      "memoryOptIn": false,
+      "deniedRetainedId": true,
+      "selectedSameId": true,
+      "projectId": "qualification-pm5-custom",
+      "confirmedRevision": "fa9a605b3e0c66f015323bc1b753ea5090d1f048"
+    },
+    "ctrlC": {
+      "beforeAnswerNoWrites": true,
+      "realConsoleInterrupt": true,
+      "cooperativeWriterCancelIsSeparate": true,
+      "statusAvailable": true,
+      "passed": true
+    },
+    "damagedApplied": {
+      "ordinaryBlocked": true,
+      "validJsonContextHashDamage": true,
+      "completedResumeRefusedWithoutWrites": true,
+      "scope": "completed owned operation; arbitrary corruption without such a plan is not claimed",
+      "passed": true,
+      "operationId": "17de840119d94652bd5d804570b56414",
+      "sourceRuntime": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+      "markerRewrittenByTestActor": false,
+      "originalCommandExit": 0,
+      "statusAvailable": true,
+      "ownedRestoreToPriorValidContext": true
+    },
+    "identity": {
+      "isElevated": false,
+      "sourceCandidate": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+      "contextTokenProxy": 495,
+      "memoryOptIn": false,
+      "roots": [
+        {
+          "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+          "workflow": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+          "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+          "untracked": [],
+          "dirty": [],
+          "lockSha": "3ef2f0785516e52bf8b46d74dbbea9fc1f4750ff471f1b828739ba6f55f3248d",
+          "bindingPresent": true,
+          "head": "565cfade88413715297ede2bb55591a8431cab6e"
+        },
+        {
+          "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+          "workflow": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+          "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+          "untracked": [],
+          "dirty": [],
+          "lockSha": "a8fb77b5134ada4ce356096567795b34f6db05fd9cee272fd31962dd89390ed7",
+          "bindingPresent": false,
+          "head": "b8f35248cc8c8c3709564d5b4e8e75b1e4af8aca"
+        }
+      ],
+      "passed": true,
+      "os": "Microsoft Windows NT 10.0.26300.0",
+      "mainDescriptorAndBothClientFilesByteEqual": true,
+      "tokenProxyIsNotActualUsage": true,
+      "contextUtf8Bytes": 1980,
+      "business": [
+        {
+          "changedBusinessPaths": 0,
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project"
+        },
+        {
+          "changedBusinessPaths": 0,
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch"
+        }
+      ],
+      "database": {
+        "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+        "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+        "unchanged": true,
+        "bytes": 3295928320
+      }
+    }
+  },
+  "nativeCounts": {
+    "currentInstalledConfigCalls": 90,
+    "packageUpdates": 1,
+    "foregroundConflictAnswers": 4,
+    "liveStatusWhileWaiting": 4,
+    "ordinaryRepeats": 3,
+    "ownedDialogRestores": 3,
+    "deadlineCases": 2,
+    "pendingPublicationAndSelection": 4,
+    "damagedMarkerRecovery": 6,
+    "ctrlCAndStatus": 2,
+    "startupPrimeAndSamples": 61,
+    "olderFailedAndSourceAssistedAttemptsExcluded": true,
+    "finalContextDiagnostic": 1
+  },
+  "cost": {
+    "warm": {
+      "fullMedianMs": 1006.3140000000001,
+      "fullCount": 20,
+      "legacyFeatureDeltaQualified": false,
+      "actualLlmTokensMeasured": false,
+      "costPassed": false,
+      "samples": 60,
+      "boundaryCount": 20,
+      "p95TargetMs": 2000,
+      "boundaryMedianMs": 956.77415,
+      "offCount": 20,
+      "medianTargetMs": 1000,
+      "fullP95Ms": 1353.585,
+      "boundaryP95Ms": 1361.6818,
+      "observerCostNotSubtracted": true,
+      "protectedNoOpChecks": 60
+    },
+    "selectedContextUtf8Bytes": 1980,
+    "selectedContextBytesOver4Proxy": 495,
+    "actualTokensMeasured": false,
+    "additionalLlmCogneeOpenVikingCalls": 0,
+    "alwaysOnOrToolSchemaDeltaThisRepairBytes": 0,
+    "surfacesAgainstG2Base": [
+      {
+        "path": ".agents/skills/1c-workflow/SKILL.md",
+        "beforeUtf8Bytes": 6828,
+        "afterUtf8Bytes": 6828,
+        "deltaBytes": 0,
+        "loadingBoundary": "router-or-managed-rules",
+        "currentPhysicalUtf8Bytes": 6896,
+        "comparison": "canonical Git UTF-8 blobs on both sides; current physical CRLF size separate"
+      },
+      {
+        "path": ".agents/skills/1c-workflow-fast/SKILL.md",
+        "beforeUtf8Bytes": 6306,
+        "afterUtf8Bytes": 6306,
+        "deltaBytes": 0,
+        "loadingBoundary": "router-or-managed-rules",
+        "currentPhysicalUtf8Bytes": 6385,
+        "comparison": "canonical Git UTF-8 blobs on both sides; current physical CRLF size separate"
+      },
+      {
+        "path": "templates/ai-rules-overlay/AGENTS.md",
+        "beforeUtf8Bytes": 2339,
+        "afterUtf8Bytes": 2339,
+        "deltaBytes": 0,
+        "loadingBoundary": "router-or-managed-rules",
+        "currentPhysicalUtf8Bytes": 2373,
+        "comparison": "canonical Git UTF-8 blobs on both sides; current physical CRLF size separate"
+      },
+      {
+        "path": ".agents/skills/1c-workflow/references/mcp.md",
+        "beforeUtf8Bytes": 23187,
+        "afterUtf8Bytes": 26511,
+        "deltaBytes": 3324,
+        "loadingBoundary": "on-demand",
+        "currentPhysicalUtf8Bytes": 26782,
+        "comparison": "canonical Git UTF-8 blobs on both sides; current physical CRLF size separate"
+      }
+    ],
+    "fullFeatureBaselineQualified": false
+  },
+  "matrix": [
+    {
+      "id": "AC-01",
+      "status": "qualified-contract",
+      "evidence": "Прежний G2 reader/resolver/publisher/consumer proof сохранён; data/ID/home/roles interface не менялся.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-02",
+      "status": "qualified-contract",
+      "evidence": "Прежний G2 reader/resolver/publisher/consumer proof сохранён; data/ID/home/roles interface не менялся.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-03",
+      "status": "qualified-contract",
+      "evidence": "Прежний G2 reader/resolver/publisher/consumer proof сохранён; data/ID/home/roles interface не менялся.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-04",
+      "status": "qualified-source-and-private-native",
+      "evidence": "12 Git-save tests; native denied → prepared request → exact local read-back → тот же ID выбран в branch. Внешняя публикация не нужна для этого критерия.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-05",
+      "status": "qualified-contract",
+      "evidence": "Прежний G2 reader/resolver/publisher/consumer proof сохранён; data/ID/home/roles interface не менялся.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-06",
+      "status": "qualified-contract",
+      "evidence": "Прежний G2 reader/resolver/publisher/consumer proof сохранён; data/ID/home/roles interface не менялся.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-07",
+      "status": "qualified-contract",
+      "evidence": "Прежний G2 reader/resolver/publisher/consumer proof сохранён; data/ID/home/roles interface не менялся.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-08",
+      "status": "partial-native-matrix",
+      "evidence": "Registry/source model, explicit custom/typical и ПРОФ/КОРП; source tests и прежние native scoped reads/reload. Нет mandatory indexed revision/server patches.",
+      "remaining": "G3-B4; не превращать registry metadata в свежую активацию всех клиентов."
+    },
+    {
+      "id": "AC-09",
+      "status": "qualified-server-contract-subset",
+      "evidence": "Прежние attested BookStack/СППР/Mantis server/source и 29 live controls; соответствующие backend owners в этой задаче не менялись.",
+      "remaining": "Прежний live proof сохраняет свои версии/область; полный selected-client journey относится к G3-B4/AC-21, реальные выпускные связи — AC-37."
+    },
+    {
+      "id": "AC-10",
+      "status": "qualified-server-contract-subset",
+      "evidence": "Прежние attested BookStack/СППР/Mantis server/source и 29 live controls; соответствующие backend owners в этой задаче не менялись.",
+      "remaining": "Прежний live proof сохраняет свои версии/область; полный selected-client journey относится к G3-B4/AC-21, реальные выпускные связи — AC-37."
+    },
+    {
+      "id": "AC-11",
+      "status": "qualified-server-contract-subset",
+      "evidence": "Прежние attested BookStack/СППР/Mantis server/source и 29 live controls; соответствующие backend owners в этой задаче не менялись.",
+      "remaining": "Прежний live proof сохраняет свои версии/область; полный selected-client journey относится к G3-B4/AC-21, реальные выпускные связи — AC-37."
+    },
+    {
+      "id": "AC-12",
+      "status": "qualified-contract",
+      "evidence": "Purpose routing и existing writer operation ID fixtures, включая current context suite.",
+      "remaining": "Live Mantis create не требуется test-plan и не выполнялся; это не blocker маршрутизации."
+    },
+    {
+      "id": "AC-13",
+      "status": "partial-installed",
+      "evidence": "132 source tests и PM5 package/select/association subsets.",
+      "remaining": "G3-B2/B3: полный bootstrap canary не заменён source fixtures или обычным update."
+    },
+    {
+      "id": "AC-14",
+      "status": "qualified-source-and-private-native",
+      "evidence": "Tracked binding/ignored preferences и native stable pending ID после denied/confirmed publication в отдельном локальном origin.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-15",
+      "status": "qualified-PM5-subset",
+      "evidence": "Source 132; прежние partial/cancel/race/pinned recovery и byte-preservation; current interactive ordinary command/restore, other-worktree guards, installed update.",
+      "remaining": "Другие обязательные platform/client/lifecycle клетки — G3-B1/B3/B4; прежние отдельные failures сохранены."
+    },
+    {
+      "id": "AC-16",
+      "status": "qualified-PM5-subset",
+      "evidence": "Source 132; прежние partial/cancel/race/pinned recovery и byte-preservation; current interactive ordinary command/restore, other-worktree guards, installed update.",
+      "remaining": "Другие обязательные platform/client/lifecycle клетки — G3-B1/B3/B4; прежние отдельные failures сохранены."
+    },
+    {
+      "id": "AC-17",
+      "status": "qualified-PM5-subset",
+      "evidence": "Corrupt/schema cases сохранены; новый stalled bound/no-cache transport 7.933/7.836 с, proof закрытия HTTP-потомка внутри 10 с, valid applied/no writes/refusal.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-18",
+      "status": "partial-installed",
+      "evidence": "Legacy/source compatibility и branch rematerialization fixtures, actual PM5 association/owned restore, update обоих roots.",
+      "remaining": "G3-B2/B3: полная native branch/managed downgrade матрица не принята."
+    },
+    {
+      "id": "AC-19",
+      "status": "partial-platform",
+      "evidence": "Windows 11 build 26300, обычный токен; реальные Unicode paths, same-user concurrency и Ctrl+C.",
+      "remaining": "G3-B1/B2: Win10/Server/terminal multi-user/PM4 не проверены."
+    },
+    {
+      "id": "AC-20",
+      "status": "partial-native-matrix",
+      "evidence": "12 adapters в current apply suite; bounded on-demand context 1980 UTF-8 bytes / 495 bytes/4 proxy; measured routing surfaces ниже.",
+      "remaining": "G3-B4; actual tokens/billing не измерены и не подменены proxy."
+    },
+    {
+      "id": "AC-21",
+      "status": "not-accepted-full-journey",
+      "evidence": "Current PM5 native subsets и точные receipts сведены; source, installed, fixture, registration и release различимы.",
+      "remaining": "Полная original journey зависит от G3-B1–B4; изолированные успехи не суммируются в full pass."
+    },
+    {
+      "id": "AC-22",
+      "status": "partial-installed",
+      "evidence": "132 source tests и PM5 package/select/association subsets.",
+      "remaining": "G3-B2/B3: полный bootstrap canary не заменён source fixtures или обычным update."
+    },
+    {
+      "id": "AC-23",
+      "status": "qualified-PM5-subset",
+      "evidence": "Source 132; прежние partial/cancel/race/pinned recovery и byte-preservation; current interactive ordinary command/restore, other-worktree guards, installed update.",
+      "remaining": "Другие обязательные platform/client/lifecycle клетки — G3-B1/B3/B4; прежние отдельные failures сохранены."
+    },
+    {
+      "id": "AC-24",
+      "status": "qualified-PM5-console-subset",
+      "evidence": "Настоящий Read-Host: keep-local/registry/defer/empty, 4 live before-answer guards/status, повтор без вопроса; отдельный настоящий Ctrl+C до решения без writes.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-25",
+      "status": "measured-partial",
+      "evidence": "One transport/check per invocation, nested/source fixture proof, current 20 alternating pairs + independent boundary observer и 60 SHA/mtime guards.",
+      "remaining": "G3-B5; 1006.314/1353.585 мс, goals 1000/2000 мс, costPassed=false."
+    },
+    {
+      "id": "AC-26",
+      "status": "qualified-PM5-subset",
+      "evidence": "Source 132; прежние partial/cancel/race/pinned recovery и byte-preservation; current interactive ordinary command/restore, other-worktree guards, installed update.",
+      "remaining": "Другие обязательные platform/client/lifecycle клетки — G3-B1/B3/B4; прежние отдельные failures сохранены."
+    },
+    {
+      "id": "AC-27",
+      "status": "qualified-contract",
+      "evidence": "Прежний G2 reader/resolver/publisher/consumer proof сохранён; data/ID/home/roles interface не менялся.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-28",
+      "status": "qualified-contract",
+      "evidence": "Прежний G2 reader/resolver/publisher/consumer proof сохранён; data/ID/home/roles interface не менялся.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-29",
+      "status": "qualified-contract",
+      "evidence": "Прежний G2 reader/resolver/publisher/consumer proof сохранён; data/ID/home/roles interface не менялся.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-30",
+      "status": "qualified-G3-boundary-only",
+      "evidence": "Memory remains off through native catalog association; six scopes/canonical home interface и G1/D9 boundary прежние.",
+      "remaining": "G4/native memory/G5 не разрешены; этот статус не принимает memory consumer или Q currentness."
+    },
+    {
+      "id": "AC-31",
+      "status": "partial-installed",
+      "evidence": "Actual modern package update → explicit association/private publication/recovery на PM5; прежний approved capsule replay сохранён.",
+      "remaining": "G3-B2/B3/B4; отсутствие полного foreground first legacy matrix не скрыто новым successful modern update."
+    },
+    {
+      "id": "AC-32",
+      "status": "partial-installed",
+      "evidence": "Actual modern package update → explicit association/private publication/recovery на PM5; прежний approved capsule replay сохранён.",
+      "remaining": "G3-B2/B3/B4; отсутствие полного foreground first legacy matrix не скрыто новым successful modern update."
+    },
+    {
+      "id": "AC-33",
+      "status": "partial-installed",
+      "evidence": "Actual modern package update → explicit association/private publication/recovery на PM5; прежний approved capsule replay сохранён.",
+      "remaining": "G3-B2/B3/B4; отсутствие полного foreground first legacy matrix не скрыто новым successful modern update."
+    },
+    {
+      "id": "AC-34",
+      "status": "qualified-G3-boundary-only",
+      "evidence": "Memory remains off through native catalog association; six scopes/canonical home interface и G1/D9 boundary прежние.",
+      "remaining": "G4/native memory/G5 не разрешены; этот статус не принимает memory consumer или Q currentness."
+    },
+    {
+      "id": "AC-35",
+      "status": "qualified-contract",
+      "evidence": "Прежний G2 reader/resolver/publisher/consumer proof сохранён; data/ID/home/roles interface не менялся.",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-36",
+      "status": "release-pending-not-G3-prerequisite",
+      "evidence": "Только согласованный PM5 КОРП pilot; реальное выпускное наполнение в этом прогоне не выполнялось.",
+      "remaining": "Обязательны products/projects/settings/functionality map и подтверждённый опубликованный snapshot до первого выпуска; memory AC-44 потребляет тот же результат."
+    },
+    {
+      "id": "AC-37",
+      "status": "release-pending-not-G3-prerequisite",
+      "evidence": "Только согласованный PM5 КОРП pilot; реальное выпускное наполнение в этом прогоне не выполнялось.",
+      "remaining": "Обязательны products/projects/settings/functionality map и подтверждённый опубликованный snapshot до первого выпуска; memory AC-44 потребляет тот же результат."
+    },
+    {
+      "id": "AC-38",
+      "status": "release-pending-not-G3-prerequisite",
+      "evidence": "Только согласованный PM5 КОРП pilot; реальное выпускное наполнение в этом прогоне не выполнялось.",
+      "remaining": "Обязательны products/projects/settings/functionality map и подтверждённый опубликованный snapshot до первого выпуска; memory AC-44 потребляет тот же результат."
+    },
+    {
+      "id": "AC-39",
+      "status": "blocked-full-acceptance",
+      "evidence": "G3.0–6 source и доступный current PM5 subset квалифицированы; ниже точные blockers.",
+      "remaining": "G3-B1–B5; G4/рабочая миграция/публикация не следуют из локального успеха."
+    }
+  ],
+  "blockers": [
+    {
+      "id": "G3-B1",
+      "scope": "AC-19/39: Windows 10 и Windows Server 2019+, local/terminal и независимые пользователи",
+      "status": "unverified-no-stand",
+      "reason": "Подготовленных стендов и независимых terminal sessions нет по последнему ответу пользователя.",
+      "closure": "Выделенные тестовые установки на соответствующих ОС и повтор platform/isolation matrix без elevation; поддержка не сокращается."
+    },
+    {
+      "id": "G3-B2",
+      "scope": "AC-13/18/21/22/31–33/39: PM4 installed и полная legacy/new-install матрица",
+      "status": "unverified-no-PM4-stand",
+      "reason": "Выделенного PM4-стенда нет. PM4 metadata/file/source fixtures не заменяют настоящую установку.",
+      "closure": "Изолированная PM4 база/legacy установка и original init/update/association/restore; рабочие проекты не использовать."
+    },
+    {
+      "id": "G3-B3",
+      "scope": "AC-18/21/22/31–33/39: полные init/branch/refresh/managed downgrade и choose/new/later после первого legacy update",
+      "status": "unverified-scope-or-fixture",
+      "reason": "Gate 6 явно исключён. Полные lifecycle journeys, native managed downgrade на подготовленной старой версии и все foreground old-caller варианты не выполнены; исходный live raw seed отсутствует, capsule подтверждает только согласованный snapshot route.",
+      "closure": "Отдельно подготовить подходящий legacy/canary и согласовать разрешённые lifecycle проверки. Capsule/recovery и modern update не выдавать за uninterrupted first legacy command/current live seed."
+    },
+    {
+      "id": "G3-B4",
+      "scope": "AC-08/20/26/39: полный native frontend/client matrix",
+      "status": "unverified-client-matrix",
+      "reason": "12 adapters проверены source/file contracts. Прежние native Codex core/API, Kilo, Cursor и OpenCode остаются с собственными версиями/roots; свежая активация всех frontend/остальных клиентов на этом пакете не доказана.",
+      "closure": "Нативные connect/read/reload на выделенных профилях оставшихся клиентов; file parsing не объявлять активацией. Backend stamps/patches не требуются."
+    },
+    {
+      "id": "G3-B5",
+      "scope": "AC-25/39, задача 5.5: полная стоимость функции",
+      "status": "measurement-incomplete-goal-observation",
+      "reason": "20 пар/60 no-op checks выполнены. Full-window median 1006.314 мс выше цели 1000 мс на 6.314 мс; p95 1353.585 мс проходит. Exact legacy/no-registry feature delta не измерен; off означает profiler-off, а не выключенную функцию.",
+      "closure": "Оценить наблюдение по существующему performance checkpoint и получить сопоставимый feature baseline, если он нужен для полной приёмки. Не округлять в pass, не вычитать observer и не повторять неизменённый прогон ради зелёного результата."
+    }
+  ],
+  "releasePopulation": {
+    "status": "pending",
+    "registryCriteria": [
+      "AC-36",
+      "AC-37",
+      "AC-38"
+    ],
+    "memoryCriterion": "AC-44",
+    "isPrerequisiteForFirstRelease": true,
+    "isPrerequisiteForG3Development": false
+  },
+  "preservation": {
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "unchanged": true,
+      "bytes": 3295928320
+    },
+    "businessSourcesUnchanged": true,
+    "mainDescriptorAndBothClientFilesByteEqual": true,
+    "noOpAndBeforeAnswerSHAAndMtimeGuarded": true,
+    "branchClientWhitespaceRoundtripScope": "Existing foreign bytes and native semantics retained; introduced property trivia may remain, whole-file byte identity is not claimed.",
+    "oldFiles": 21,
+    "oldRoots": 4,
+    "gate6Artifacts": 7,
+    "capsuleArtifacts": 11,
+    "retainedSnapshotFiles": 12864,
+    "previousRawFiles": 2620,
+    "priorBaselineOrigin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\preserved-after.json"
+  },
+  "harnessIncidents": [
+    "Initial full-file Kilo roundtrip assertion failed; exact original SHA reconstructed independently, 72 inserted whitespace bytes only and every original byte retained. Failure kept; native semantic/foreign-byte contract audited separately.",
+    "First timeout fixture omitted runtime-values; bootstrap corrected to match actual entrypoint; original failure kept.",
+    "Reserve=2 attempt retained as failed; reserve=3 remains inside original 10/60 budgets. Native timing separated from Pester assertion overhead; peer-close deadline is independently asserted.",
+    "Test-actor fixture resets are recorded after native restore and are not claimed as product recovery. Damaged applied native recovery did not manually rewrite the marker."
+  ],
+  "forbiddenNotPerformed": [
+    "Gate 6 execution/repair",
+    "G4/native memory",
+    "working-project migration",
+    "workflow/catalog external publication",
+    "server replacement/reindex"
+  ],
+  "historicalNativeScope": "Earlier native Code/Graph/frontend results retain their tested versions and roots; they are not re-labelled as fresh activation on this installed package.",
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-result.json",
+      "bytes": 504,
+      "sha256": "7cfaa4e77433d386d8553e6267d24cc8c82e9748fd2954eeaf98315a2280425f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-snapshots.json",
+      "bytes": 1197,
+      "sha256": "651559a01c7243e3110d83d038a247d3e7163eedb973e7c10217c854088a2831"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-roots-after.json",
+      "bytes": 1297,
+      "sha256": "c6f4928a8046e3f4cb2327f45f4f72354654d6712c95c1f44080fec60bf08e4d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\defer-restore-red.json",
+      "bytes": 268,
+      "sha256": "3965990cddb6e8ef886ec86deee4d2a0a29c71b8e321045cceb7e72316cb845b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\defer-restore-red.xml",
+      "bytes": 9392,
+      "sha256": "a4242b50e310ed689c082f547fd52777a90c65087e2f7055ec876360364cf38f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\defer-restore-green.json",
+      "bytes": 404,
+      "sha256": "17bb20e1ec8946782f66d34fdd05e406fcda517c942f14b34357081a7cd77780"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\defer-restore-green.xml",
+      "bytes": 56744,
+      "sha256": "c81631bddf510f31dadd80616662e4fad6c09fc533a1fd550f9c2a3f020a54f7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\git-tree-red.json",
+      "bytes": 266,
+      "sha256": "81f44093e291bed57c18631b5711221175ad3dd8f83dec7c8110f73d2bdf3550"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\git-tree-red-contract.json",
+      "bytes": 275,
+      "sha256": "d3aeb27d13f54610ed30c872441e3e9185f5f931828980bbd2908d258e5493e8"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\git-tree-green.json",
+      "bytes": 267,
+      "sha256": "ae28416f0da58e4a971add20970ce5fa7ea3cf7978a02d7bee59401dc40d801d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\git-tree-reserve3-green.json",
+      "bytes": 276,
+      "sha256": "3450f45927a42cae036bd606d1f24496f45999ab1554fbc735e5f57fed24e658"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\git-tree-reserve3-green.xml",
+      "bytes": 6168,
+      "sha256": "39db891ffd31a3e60f528e965b0317b6873206c69104c0f6fa3add64361fc49f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\source-defer-recovery.json",
+      "bytes": 299,
+      "sha256": "77170331533eb563f64e5ff9bd07d9057a61eea8b62f04eb1278a451efd27ad4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\interactive-select-contract-audit.json",
+      "bytes": 578,
+      "sha256": "edb90c802b69c548345b45f6896ba5c3fc5444b2f0597f4286a38f37d1d07dee"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\preserved-before.json",
+      "bytes": 9482,
+      "sha256": "bd1e04c514353e07d47c10c7b5bdf300d0b37cb3f23a3912135323eaffe2be98"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\preserved-after.json",
+      "bytes": 9482,
+      "sha256": "254dc6b9973c2d87af5c01a123d2cd21bcf27957c384db3a32496ae2a61ecb8a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\capsule-final-validation.json",
+      "bytes": 3486,
+      "sha256": "97d9a0c3c7634bbad8799cc592c8b5471f32c49f6fd719aef66b61d7c091008a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\previous-preservation.json",
+      "bytes": 831023,
+      "sha256": "9464becda4923bd73ac66f8ffffdcf204aba48143faab9d930db61c9d462985d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\interactive-conflict-matrix.json",
+      "bytes": 1809,
+      "sha256": "7f29c18bd7ff6412db2741b495fedc2d919cbe87c44588cdd74344b77525afe8"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\interactive-conflict-native-steps.json",
+      "bytes": 3407,
+      "sha256": "1ba4d65bf49f432673c61c857cfcd194adfc372373407a57eaac2e002172475d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\offline-matrix.json",
+      "bytes": 1211,
+      "sha256": "829731c71146cc9c641961a21075905eeb963efe7f877f39ea78c042519563e0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\offline-native-steps.json",
+      "bytes": 1206,
+      "sha256": "87c8d22471fd32a6226146edcca44d810dd52d67f54381d64157072353b52164"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\pending-publication-result.json",
+      "bytes": 504,
+      "sha256": "c8a26d8ad84441810ec7ba399e62cab918e91797fc1f0eb31de2f04f0d46d3ae"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\pending-publication-native-steps.json",
+      "bytes": 2467,
+      "sha256": "a7b59ce4b9c34f5c94cb8b57e904657ede349b7c95f92237702149fd6e5e4f42"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\ctrl-result.json",
+      "bytes": 177,
+      "sha256": "d47b4f7fe8f8a944e9c814029345d171a70a417edbb1073be075b5f5d344b682"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\ctrl-native-steps.json",
+      "bytes": 529,
+      "sha256": "84af2b61be5f8aeae0ce4c90d04950a26418fd41c77dfeba4987781ef825740b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\damaged-applied-recovery-result.json",
+      "bytes": 527,
+      "sha256": "cd8f1a3c14df6a33f7d03b80f5704bdd41263c90b9669eb413379c4085335947"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\damaged-applied-native-steps.json",
+      "bytes": 3448,
+      "sha256": "73bb27bf653182a337cfcc2892e702203b7cfb7c3186f195541eacd5d5eb3095"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\final-current-identity.json",
+      "bytes": 3019,
+      "sha256": "962390f9d11d23391ae92402d5e908b7a5ee67d7c93d2869fcd2120b46e19ea2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\final-selected-context.stdout.log",
+      "bytes": 1982,
+      "sha256": "f852b7c0406930175b89d72c0cf699569aeff3d793e8e7fc979a2e8ac3be6ee0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\startup\\warm-result.json",
+      "bytes": 480,
+      "sha256": "9d437c6587bd013fea50ef3f27c6b4a253a8ae683646e34c9acb660c2eb408c5"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\startup\\warm-samples.json",
+      "bytes": 26924,
+      "sha256": "e8f177e65bcec90fa6f82374319592e994e0d23a4f86a3c3b6bc7f68d61a5208"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\installed-repeat\\startup\\warm-native-steps.json",
+      "bytes": 27176,
+      "sha256": "cc4606bd2257dca6e6b0911adfeaebcf8ad3768ab42ce0239627f726be022dda"
+    }
+  ],
+  "qualifiedRuntimeInputHashes": {
+    ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1": "7959c8fb846516305a2a43d39bcd46f98d5ed265e5c1ef50c75cb16ed34d66fc",
+    ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1": "5cf5a7a2d337fa40cf36e0220c326e29a100b838325bc7b3bf85f6434e59f818",
+    ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1": "763c64f128c00da8dd34b14cee9a46cfc34c29f3fe448a5348ea10447992c2e7",
+    ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4",
+    ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1": "29c95bc0e2495fa56e81f3301e264c7916c443d0f6bb1b6765345ee6dec4f8dd",
+    ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1": "5413a3442d5fc92e60460eda5550737574f609d429b20a15f26bbfaa49db9a67",
+    ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+    ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1": "0a089f5ca678e072b9aa6d414138eeba02e960ba930d2ae792e83e37fb924d61",
+    "templates/dependency-lock.json": "10b619c681ca514ad765335f03b6555e7e065ebeb208d33ba43d964264db3ef8"
+  },
+  "rawManifest": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\raw-evidence-manifest.json",
+    "bytes": 225277,
+    "sha256": "34af1dc8c747868742d6a330b3a7e57d770f08eaa86740e5171206d4b4e34df4"
+  },
+  "strictValidation": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\strict-validation.json",
+    "bytes": 911,
+    "sha256": "890e4c49905a61640f72caf8195313a5c932632a99945f8847fd43c89215cbba"
+  }
+}

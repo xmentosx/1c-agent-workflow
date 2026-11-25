@@ -1,0 +1,1861 @@
+{
+  "schemaVersion": 1,
+  "observedUtc": "2026-10-22T15:33:10.704214+00:00",
+  "sourceBefore": "97ded24499fea546ca86f94402c4d5ad6c208ca8",
+  "runtimeSource": "d109a95dc1db95199bb3b2d4114b6cafddd05adb",
+  "aiRulesSource": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+  "scope": "Current isolated installed PM5; public native helpers; Kilo+Cursor project-local config, private Git origin; no native tool activation or 1C lifecycle this turn",
+  "fixtureClientSetup": {
+    "oldHead": "5c0665bc90615edbf227761c0128e73a30f6fdcd",
+    "multiClientHead": "fd9a31f734b4eac86a603dc989dac70d8df74b6c",
+    "paths": [
+      ".agent-1c/project.json",
+      ".ai-rules.json",
+      ".kilo/agents/analytic.md",
+      ".kilo/agents/arch-reviewer.md",
+      ".kilo/agents/architect.md",
+      ".kilo/agents/code-reviewer.md",
+      ".kilo/agents/developer.md",
+      ".kilo/agents/doc-writer.md",
+      ".kilo/agents/error-fixer.md",
+      ".kilo/agents/explorer.md",
+      ".kilo/agents/metadata-manager.md",
+      ".kilo/agents/performance-optimizer.md",
+      ".kilo/agents/planner.md",
+      ".kilo/agents/refactoring.md",
+      ".kilo/agents/tester.md",
+      ".kilo/commands/build-release.md",
+      ".kilo/commands/caveman.md",
+      ".kilo/commands/check-uuid.md",
+      ".kilo/commands/deploy-and-test.md",
+      ".kilo/commands/doctor.md",
+      ".kilo/commands/economymode.md",
+      ".kilo/commands/evolve.md",
+      ".kilo/commands/getconfigfiles.md",
+      ".kilo/commands/initproject.md",
+      ".kilo/commands/install-agent-browser.md",
+      ".kilo/commands/install-atlassian-mcp.md",
+      ".kilo/commands/install-cognee.md",
+      ".kilo/commands/install-edt-mcp.md",
+      ".kilo/commands/install-officecli.md",
+      ".kilo/commands/install-openviking.md",
+      ".kilo/commands/install-windows-mcp.md",
+      ".kilo/commands/installfilesupdatescript.md",
+      ".kilo/commands/installtools.md",
+      ".kilo/commands/litemode.md",
+      ".kilo/commands/loadfrom1cbase.md",
+      ".kilo/commands/ponytail-review.md",
+      ".kilo/commands/previewmode.md",
+      ".kilo/commands/restore-testbase.md",
+      ".kilo/commands/resume.md",
+      ".kilo/commands/rulesmodel.md",
+      ".kilo/commands/sdlc.md",
+      ".kilo/commands/support.md",
+      ".kilo/commands/supportstatus.md",
+      ".kilo/commands/test-fix-loop.md",
+      ".kilo/commands/uitests.md",
+      ".kilo/commands/update1cbase.md",
+      ".kilo/rules-1c/anti-patterns.md",
+      ".kilo/rules-1c/async-methods.md",
+      ".kilo/rules-1c/bsp-access-rights.md",
+      ".kilo/rules-1c/dcs-advanced-composition.md",
+      ".kilo/rules-1c/dcs-design.md",
+      ".kilo/rules-1c/designer-batch-checks.md",
+      ".kilo/rules-1c/dev-standards-architecture.md",
+      ".kilo/rules-1c/dev-standards-code-style.md",
+      ".kilo/rules-1c/dev-standards-env.md",
+      ".kilo/rules-1c/edt-workflow.md",
+      ".kilo/rules-1c/extension-patterns.md",
+      ".kilo/rules-1c/extension-workspace.md",
+      ".kilo/rules-1c/form-patterns.md",
+      ".kilo/rules-1c/forms-add.md",
+      ".kilo/rules-1c/forms.md",
+      ".kilo/rules-1c/getconfigfiles.md",
+      ".kilo/rules-1c/help-corpus-retrieval.md",
+      ".kilo/rules-1c/integrations-add.md",
+      ".kilo/rules-1c/locks-and-transactions.md",
+      ".kilo/rules-1c/logging-strategy.md",
+      ".kilo/rules-1c/mcp-deployment.md",
+      ".kilo/rules-1c/mcp-first-search.md",
+      ".kilo/rules-1c/mcp-policy.md",
+      ".kilo/rules-1c/memory-setup.md",
+      ".kilo/rules-1c/metadata-xml-workarounds.md",
+      ".kilo/rules-1c/model-adaptation.md",
+      ".kilo/rules-1c/model-fable5.md",
+      ".kilo/rules-1c/model-gpt56.md",
+      ".kilo/rules-1c/model-gpt6.md",
+      ".kilo/rules-1c/model-opus5.md",
+      ".kilo/rules-1c/model-sonnet5.md",
+      ".kilo/rules-1c/multi-contour-search.md",
+      ".kilo/rules-1c/platform-solutions.md",
+      ".kilo/rules-1c/project-memory.md",
+      ".kilo/rules-1c/qa-testclient.md",
+      ".kilo/rules-1c/query-design.md",
+      ".kilo/rules-1c/registers-design.md",
+      ".kilo/rules-1c/sdd-integrations.md",
+      ".kilo/rules-1c/subagent-core.md",
+      ".kilo/rules-1c/subagents.md",
+      ".kilo/rules-1c/support-feedback.md",
+      ".kilo/rules-1c/systematic-debugging.md",
+      ".kilo/rules-1c/tool-policy.md",
+      ".kilo/rules-1c/tooling-playbooks.md",
+      ".kilo/rules-1c/ui-testing-tools.md",
+      ".kilo/rules-1c/verification-delivery.md",
+      ".kilo/rules-1c/verification-gates.md",
+      ".kilo/rules-1c/verification-policy.md",
+      ".kilo/rules-1c/web-client-driving.md",
+      ".kilo/skills/1c-business-tests/SKILL.md",
+      ".kilo/skills/1c-change-package/SKILL.md",
+      ".kilo/skills/1c-change-package/references/manual-implementation.md",
+      ".kilo/skills/1c-code-search/SKILL.md",
+      ".kilo/skills/1c-form-inspect/SKILL.md",
+      ".kilo/skills/1c-impact/SKILL.md",
+      ".kilo/skills/1c-live-ib/SKILL.md",
+      ".kilo/skills/1c-meta-info/SKILL.md",
+      ".kilo/skills/1c-metadata-manage/SKILL.md",
+      ".kilo/skills/1c-metadata-manage/docs/cfe-manage.md",
+      ".kilo/skills/1c-metadata-manage/docs/db-manage.md",
+      ".kilo/skills/1c-metadata-manage/docs/form-compile-dsl.md",
+      ".kilo/skills/1c-metadata-manage/docs/form-manage.md",
+      ".kilo/skills/1c-metadata-manage/docs/meta-manage.md",
+      ".kilo/skills/1c-metadata-manage/docs/mxl-manage.md",
+      ".kilo/skills/1c-metadata-manage/docs/query-optimization.md",
+      ".kilo/skills/1c-metadata-manage/docs/query-writing.md",
+      ".kilo/skills/1c-metadata-manage/docs/role-manage.md",
+      ".kilo/skills/1c-metadata-manage/docs/skd-manage.md",
+      ".kilo/skills/1c-metadata-manage/docs/uuid-check.md",
+      ".kilo/skills/1c-metadata-manage/docs/v8unpack-cf.md",
+      ".kilo/skills/1c-metadata-manage/docs/web-manage.md",
+      ".kilo/skills/1c-metadata-manage/docs/xdto-manage.md",
+      ".kilo/skills/1c-platform-help/SKILL.md",
+      ".kilo/skills/1c-qa-testing/SKILL.md",
+      ".kilo/skills/1c-qa-testing/docs/context-sources.md",
+      ".kilo/skills/1c-repository-manage/SKILL.md",
+      ".kilo/skills/1c-repository-manage/docs/repo-ops.md",
+      ".kilo/skills/1c-repository-manage/docs/repo-sdlc.md",
+      ".kilo/skills/1c-templates-memory/SKILL.md",
+      ".kilo/skills/1c-ui-regression/SKILL.md",
+      ".kilo/skills/1c-validate/SKILL.md",
+      ".kilo/skills/caveman/NOTES.md",
+      ".kilo/skills/handoff/SKILL.md",
+      ".kilo/skills/img-grid-analysis/SKILL.md",
+      ".kilo/skills/mcp-1c-tools/SKILL.md",
+      ".kilo/skills/mcp-1c-tools/docs/1C-docs-mcp.md",
+      ".kilo/skills/mcp-1c-tools/docs/1c-code-check-mcp.md",
+      ".kilo/skills/mcp-1c-tools/docs/1c-code-metadata-mcp.md",
+      ".kilo/skills/mcp-1c-tools/docs/1c-data-mcp.md",
+      ".kilo/skills/mcp-1c-tools/docs/1c-graph-metadata-mcp.md",
+      ".kilo/skills/mcp-1c-tools/docs/1c-syntax-checker-mcp.md",
+      ".kilo/skills/mcp-1c-tools/docs/1c-templates-mcp.md",
+      ".kilo/skills/mcp-1c-tools/docs/edt-mcp.md",
+      ".kilo/skills/mcp-1c-tools/docs/memory-providers.md",
+      ".kilo/skills/mcp-1c-tools/docs/server-catalog.md",
+      ".kilo/skills/md-to-docx/SKILL.md",
+      ".kilo/skills/prompt-enhancer/SKILL.md",
+      "AGENTS.md",
+      ".cursor/agents/analytic.md",
+      ".cursor/agents/arch-reviewer.md",
+      ".cursor/agents/architect.md",
+      ".cursor/agents/code-reviewer.md",
+      ".cursor/agents/developer.md",
+      ".cursor/agents/doc-writer.md",
+      ".cursor/agents/error-fixer.md",
+      ".cursor/agents/explorer.md",
+      ".cursor/agents/metadata-manager.md",
+      ".cursor/agents/performance-optimizer.md",
+      ".cursor/agents/planner.md",
+      ".cursor/agents/refactoring.md",
+      ".cursor/agents/tester.md",
+      ".cursor/commands/build-release.md",
+      ".cursor/commands/caveman.md",
+      ".cursor/commands/check-uuid.md",
+      ".cursor/commands/deploy-and-test.md",
+      ".cursor/commands/doctor.md",
+      ".cursor/commands/economymode.md",
+      ".cursor/commands/evolve.md",
+      ".cursor/commands/getconfigfiles.md",
+      ".cursor/commands/grill-me.md",
+      ".cursor/commands/grill-with-docs.md",
+      ".cursor/commands/initproject.md",
+      ".cursor/commands/install-agent-browser.md",
+      ".cursor/commands/install-atlassian-mcp.md",
+      ".cursor/commands/install-cognee.md",
+      ".cursor/commands/install-edt-mcp.md",
+      ".cursor/commands/install-officecli.md",
+      ".cursor/commands/install-openviking.md",
+      ".cursor/commands/install-rtk.md",
+      ".cursor/commands/install-windows-mcp.md",
+      ".cursor/commands/installfilesupdatescript.md",
+      ".cursor/commands/installtools.md",
+      ".cursor/commands/litemode.md",
+      ".cursor/commands/loadfrom1cbase.md",
+      ".cursor/commands/opsx-apply.md",
+      ".cursor/commands/opsx-archive.md",
+      ".cursor/commands/opsx-explore.md",
+      ".cursor/commands/opsx-propose.md",
+      ".cursor/commands/opsx-sync.md",
+      ".cursor/commands/opsx-update.md",
+      ".cursor/commands/ponytail-review.md",
+      ".cursor/commands/previewmode.md",
+      ".cursor/commands/restore-testbase.md",
+      ".cursor/commands/resume.md",
+      ".cursor/commands/rulesmodel.md",
+      ".cursor/commands/sdlc.md",
+      ".cursor/commands/support.md",
+      ".cursor/commands/supportstatus.md",
+      ".cursor/commands/test-fix-loop.md",
+      ".cursor/commands/uitests.md",
+      ".cursor/commands/update1cbase.md",
+      ".cursor/rules/anti-patterns.mdc",
+      ".cursor/rules/async-methods.mdc",
+      ".cursor/rules/bsp-access-rights.mdc",
+      ".cursor/rules/coding-standards.mdc",
+      ".cursor/rules/dcs-advanced-composition.mdc",
+      ".cursor/rules/dcs-design.mdc",
+      ".cursor/rules/designer-batch-checks.mdc",
+      ".cursor/rules/dev-standards-architecture.mdc",
+      ".cursor/rules/dev-standards-change-markers.mdc",
+      ".cursor/rules/dev-standards-code-style.mdc",
+      ".cursor/rules/dev-standards-env.mdc",
+      ".cursor/rules/edt-workflow.mdc",
+      ".cursor/rules/extension-patterns.mdc",
+      ".cursor/rules/extension-workspace.mdc",
+      ".cursor/rules/form-module.mdc",
+      ".cursor/rules/form-patterns.mdc",
+      ".cursor/rules/forms-add.mdc",
+      ".cursor/rules/forms.mdc",
+      ".cursor/rules/getconfigfiles.mdc",
+      ".cursor/rules/help-corpus-retrieval.mdc",
+      ".cursor/rules/integrations-add.mdc",
+      ".cursor/rules/itl-managed-form-context.mdc",
+      ".cursor/rules/locks-and-transactions.mdc",
+      ".cursor/rules/logging-strategy.mdc",
+      ".cursor/rules/mcp-deployment.mdc",
+      ".cursor/rules/mcp-first-search.mdc",
+      ".cursor/rules/mcp-policy.mdc",
+      ".cursor/rules/memory-setup.mdc",
+      ".cursor/rules/metadata-xml-workarounds.mdc",
+      ".cursor/rules/model-adaptation.mdc",
+      ".cursor/rules/model-fable5.mdc",
+      ".cursor/rules/model-gpt56.mdc",
+      ".cursor/rules/model-gpt6.mdc",
+      ".cursor/rules/model-opus5.mdc",
+      ".cursor/rules/model-sonnet5.mdc",
+      ".cursor/rules/module-structure.mdc",
+      ".cursor/rules/multi-contour-search.mdc",
+      ".cursor/rules/orchestrator-economy.mdc",
+      ".cursor/rules/platform-solutions.mdc",
+      ".cursor/rules/project-memory.mdc",
+      ".cursor/rules/qa-testclient.mdc",
+      ".cursor/rules/query-design.mdc",
+      ".cursor/rules/registers-design.mdc",
+      ".cursor/rules/sdd-integrations.mdc",
+      ".cursor/rules/subagent-core.mdc",
+      ".cursor/rules/subagent-pipeline.mdc",
+      ".cursor/rules/subagents.mdc",
+      ".cursor/rules/support-feedback.mdc",
+      ".cursor/rules/systematic-debugging.mdc",
+      ".cursor/rules/tool-policy.mdc",
+      ".cursor/rules/tooling-playbooks.mdc",
+      ".cursor/rules/ui-testing-tools.mdc",
+      ".cursor/rules/verification-ai-evidence.mdc",
+      ".cursor/rules/verification-delivery.mdc",
+      ".cursor/rules/verification-gates.mdc",
+      ".cursor/rules/verification-policy.mdc",
+      ".cursor/rules/web-client-driving.mdc",
+      ".cursor/skills/1c-business-tests/SKILL.md",
+      ".cursor/skills/1c-change-package/SKILL.md",
+      ".cursor/skills/1c-change-package/references/manual-implementation.md",
+      ".cursor/skills/1c-change-package/references/review.md",
+      ".cursor/skills/1c-code-search/SKILL.md",
+      ".cursor/skills/1c-form-inspect/SKILL.md",
+      ".cursor/skills/1c-impact/SKILL.md",
+      ".cursor/skills/1c-live-ib/SKILL.md",
+      ".cursor/skills/1c-meta-info/SKILL.md",
+      ".cursor/skills/1c-metadata-manage/NOTICE.md",
+      ".cursor/skills/1c-metadata-manage/SKILL.md",
+      ".cursor/skills/1c-metadata-manage/docs/CHANGELOG.md",
+      ".cursor/skills/1c-metadata-manage/docs/bsp-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/cf-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/cfe-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/db-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/edit-preview.md",
+      ".cursor/skills/1c-metadata-manage/docs/epf-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/form-compile-dsl.md",
+      ".cursor/skills/1c-metadata-manage/docs/form-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/help-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/interface-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/meta-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/mxl-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/query-optimization.md",
+      ".cursor/skills/1c-metadata-manage/docs/query-writing.md",
+      ".cursor/skills/1c-metadata-manage/docs/role-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/runtime-selection.md",
+      ".cursor/skills/1c-metadata-manage/docs/skd-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/subsystem-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/support-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/template-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/uuid-check.md",
+      ".cursor/skills/1c-metadata-manage/docs/v8unpack-cf.md",
+      ".cursor/skills/1c-metadata-manage/docs/web-manage.md",
+      ".cursor/skills/1c-metadata-manage/docs/xdto-manage.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cf-manage/cf-edit-reference.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-edit.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-info.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-init.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/dump-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-borrow.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-diff.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-init.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-patch-method.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-create.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-cf.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-dt.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-cf.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-dt.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-git.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-xml.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-run.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-update.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-db-ops/scripts/install-files-update.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-epf-build/scripts/epf-build.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-epf-build/scripts/stub-db-create.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-epf-dump/scripts/epf-dump.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-epf-scaffold/scripts/init.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-epf-validate/scripts/epf-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-erf-scaffold/scripts/init.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-compile/form-dsl-spec.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-compile/presets/README.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-compile/presets/erp-standard.json",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-compile/scripts/form-compile.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-compile/scripts/form-compile.py",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-edit/scripts/form-edit.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-info/scripts/form-info.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.py",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/remove-form.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/remove-form.py",
+      ".cursor/skills/1c-metadata-manage/tools/1c-form-validate/scripts/form-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-help-manage/scripts/add-help.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-interface-manage/reference.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-interface-manage/scripts/interface-edit.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-interface-manage/scripts/interface-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-compile/meta-dsl-spec.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-compile/scripts/meta-compile.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-edit/child-operations.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-edit/json-dsl.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-edit/properties-reference.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-edit/scripts/meta-edit.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-edit/scripts/meta-edit.py",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-info/scripts/meta-info.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-remove/scripts/meta-remove.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-validate/scripts/meta-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-meta-validate/scripts/meta-validate.py",
+      ".cursor/skills/1c-metadata-manage/tools/1c-mxl-compile/scripts/mxl-compile.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-mxl-decompile/scripts/mxl-decompile.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-mxl-info/scripts/mxl-info.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-mxl-validate/scripts/mxl-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-role-compile/dsl-reference.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-role-compile/scripts/role-compile.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-role-info/scripts/role-info.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-role-validate/scripts/role-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-skd-compile/scripts/skd-compile.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-skd-compile/skd-dsl-spec.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-skd-decompile/scripts/skd-decompile.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-skd-edit/scripts/skd-edit.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-skd-info/modes-reference.md",
+      ".cursor/skills/1c-metadata-manage/tools/1c-skd-info/scripts/skd-info.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-skd-validate/scripts/skd-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-compile.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-edit.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-info.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-support-manage/scripts/support-edit.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-template-manage/scripts/remove-template.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-uuid-check/scripts/uuid-check.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-info.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-info.py",
+      ".cursor/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-publish.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-publish.py",
+      ".cursor/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-stop.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-stop.py",
+      ".cursor/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.py",
+      ".cursor/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web_common.py",
+      ".cursor/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-compile.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-decompile.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-edit.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-info.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-validate.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/1c-xdto-manage/xsd-reference.md",
+      ".cursor/skills/1c-metadata-manage/tools/_common/Assert-ItlLifecycleOwnership.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/_common/DevEnv.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/_common/Invoke-1CEdit.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/_common/MetadataAddress.ps1",
+      ".cursor/skills/1c-metadata-manage/tools/_common/dev_env.py",
+      ".cursor/skills/1c-platform-help/SKILL.md",
+      ".cursor/skills/1c-qa-testing/SKILL.md",
+      ".cursor/skills/1c-qa-testing/docs/context-sources.md",
+      ".cursor/skills/1c-qa-testing/docs/interaction-recipes.md",
+      ".cursor/skills/1c-qa-testing/docs/platform-behaviour.md",
+      ".cursor/skills/1c-qa-testing/scripts/qa-testclient.ps1",
+      ".cursor/skills/1c-repository-manage/SKILL.md",
+      ".cursor/skills/1c-repository-manage/docs/repo-ops.md",
+      ".cursor/skills/1c-repository-manage/docs/repo-sdlc.md",
+      ".cursor/skills/1c-repository-manage/tools/1c-repo-ops/scripts/repo-ops.ps1",
+      ".cursor/skills/1c-templates-memory/SKILL.md",
+      ".cursor/skills/1c-ui-regression/SKILL.md",
+      ".cursor/skills/1c-validate/SKILL.md",
+      ".cursor/skills/caveman/NOTES.md",
+      ".cursor/skills/caveman/SKILL.md",
+      ".cursor/skills/domain-modeling/ADR-FORMAT.md",
+      ".cursor/skills/domain-modeling/CONTEXT-FORMAT.md",
+      ".cursor/skills/domain-modeling/SKILL.md",
+      ".cursor/skills/domain-modeling/agents/openai.yaml",
+      ".cursor/skills/grill-me/SKILL.md",
+      ".cursor/skills/grill-me/agents/openai.yaml",
+      ".cursor/skills/grill-with-docs/SKILL.md",
+      ".cursor/skills/grill-with-docs/agents/openai.yaml",
+      ".cursor/skills/grilling/SKILL.md",
+      ".cursor/skills/grilling/agents/openai.yaml",
+      ".cursor/skills/handoff/SKILL.md",
+      ".cursor/skills/img-grid-analysis/SKILL.md",
+      ".cursor/skills/img-grid-analysis/scripts/overlay-grid.py",
+      ".cursor/skills/mcp-1c-tools/SKILL.md",
+      ".cursor/skills/mcp-1c-tools/docs/1C-docs-mcp.md",
+      ".cursor/skills/mcp-1c-tools/docs/1c-code-check-mcp.md",
+      ".cursor/skills/mcp-1c-tools/docs/1c-code-metadata-mcp.md",
+      ".cursor/skills/mcp-1c-tools/docs/1c-data-mcp.md",
+      ".cursor/skills/mcp-1c-tools/docs/1c-graph-metadata-mcp.md",
+      ".cursor/skills/mcp-1c-tools/docs/1c-ssl-mcp.md",
+      ".cursor/skills/mcp-1c-tools/docs/1c-syntax-checker-mcp.md",
+      ".cursor/skills/mcp-1c-tools/docs/1c-templates-mcp.md",
+      ".cursor/skills/mcp-1c-tools/docs/edt-mcp.md",
+      ".cursor/skills/mcp-1c-tools/docs/mcp-conversion-data20.md",
+      ".cursor/skills/mcp-1c-tools/docs/mcp-test.md",
+      ".cursor/skills/mcp-1c-tools/docs/memory-providers.md",
+      ".cursor/skills/mcp-1c-tools/docs/server-catalog.md",
+      ".cursor/skills/md-to-docx/SKILL.md",
+      ".cursor/skills/md-to-docx/package-lock.json",
+      ".cursor/skills/md-to-docx/package.json",
+      ".cursor/skills/md-to-docx/scripts/md_to_docx.js",
+      ".cursor/skills/mermaid-diagrams/SKILL.md",
+      ".cursor/skills/openspec-apply-change/SKILL.md",
+      ".cursor/skills/openspec-archive-change/SKILL.md",
+      ".cursor/skills/openspec-explore/SKILL.md",
+      ".cursor/skills/openspec-propose/SKILL.md",
+      ".cursor/skills/openspec-sync-specs/SKILL.md",
+      ".cursor/skills/openspec-update-change/SKILL.md",
+      ".cursor/skills/powershell-windows/SKILL.md",
+      ".cursor/skills/prompt-enhancer/SKILL.md",
+      ".cursor/skills/prompt-enhancer/examples/before-after-1.md",
+      ".cursor/skills/transcribe/SKILL.md",
+      ".cursor/skills/transcribe/scripts/transcribe.py",
+      ".cursor/skills/v8unpack-cf/SKILL.md",
+      ".cursor/skills/v8unpack-cf/docs/ordinary-forms.md",
+      ".cursor/skills/v8unpack-cf/docs/whole-binaries.md"
+    ],
+    "cache": "C:\\itlj\\g3-pm5-current-20261022\\mcp-home\\registry",
+    "origin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\multi-client-offline-20261022\\origin.git",
+    "workflowRuntime": "d109a95dc1db95199bb3b2d4114b6cafddd05adb",
+    "fixtureOnly": true
+  },
+  "firstBind": {
+    "exitCode": 0,
+    "reportedStage": "configured",
+    "requests": [
+      {
+        "client": "kilocode",
+        "owner": "vibecoding1c",
+        "endpoints": []
+      },
+      {
+        "client": "cursor",
+        "owner": "vibecoding1c",
+        "endpoints": [
+          "1c-code-metadata-mcp",
+          "1c-graph-metadata-mcp"
+        ]
+      }
+    ],
+    "actualKiloCodeGraphAbsent": true,
+    "actualCursorCodeGraphPresent": true,
+    "suggestedExplicitWriterExit": 0,
+    "explicitCatalogSyncExit": 0,
+    "kiloStillMissing": true,
+    "fullMultiClientAccepted": false
+  },
+  "conflictResults": [
+    {
+      "priorRevision": "96ae1e8d982d908cbf8f8c904c168a16c16ddb72",
+      "foreignPreserved": true,
+      "ordinaryRepeatExit": 0,
+      "desiredRevision": "f844c8b98620782bfca4730efdb5f4c77732c9cc",
+      "repeatProtectedStable": true,
+      "passed": true,
+      "decision": "keep-local",
+      "appliedRevision": "f844c8b98620782bfca4730efdb5f4c77732c9cc",
+      "noAnswerExit": 1,
+      "manualGraphPreserved": true,
+      "noAnswerProtectedStable": true
+    },
+    {
+      "priorRevision": "8267848961382f2afeb38143b90d3822d2cc1ff3",
+      "foreignPreserved": true,
+      "ordinaryRepeatExit": 0,
+      "desiredRevision": "6cc92b33b0a038809e4bec2d7e8017b8ee997b5e",
+      "repeatProtectedStable": true,
+      "passed": true,
+      "decision": "registry",
+      "appliedRevision": "6cc92b33b0a038809e4bec2d7e8017b8ee997b5e",
+      "noAnswerExit": 1,
+      "manualGraphPreserved": false,
+      "noAnswerProtectedStable": true
+    }
+  ],
+  "defer": {
+    "decisionExit": 0,
+    "localGraphPreserved": true,
+    "appliedRevisionPreserved": true,
+    "nonInteractiveNoAnswerProtectedStable": true,
+    "followingOriginalAction": "vibecoding1c-mcp-write-client-config",
+    "followingActionExit": 0,
+    "beforePreference": {
+      "knowledgeHash": "e26aa303bdeabe8dc8d8aae54fd228c0fecc4c8eb6f05f3ee437a0476ee349d9",
+      "catalogRevision": "6008d006150669fd210a5f88ef07f965891102b9",
+      "settingsIntentHash": "64addba94bd09c66f084f22d12c455954d253f1cc1b7eeec907fc1962bb1493b"
+    },
+    "afterPreference": null,
+    "beforeRevision": "6008d006150669fd210a5f88ef07f965891102b9",
+    "afterRevision": "6008d006150669fd210a5f88ef07f965891102b9",
+    "lostDefer": true,
+    "fullDeferAcceptance": false,
+    "limit": "Initial harness did not save every before-repeat receipt hash; defer preference loss is independently proven by exact saved selection files"
+  },
+  "reenable": {
+    "desiredRevision": "4ce71e33c6ab9b962c1aff8d3ff86fde4efff15d",
+    "endpointIntentRoles": [
+      "code",
+      "graph"
+    ],
+    "actualCursorKeys": [
+      "1c-code-metadata-mcp",
+      "agent-browser",
+      "g3-foreign-preserve",
+      "itl-roctup-data",
+      "itl-vanessa-ui"
+    ],
+    "actualKiloKeys": [
+      "agent-browser",
+      "itl-roctup-data",
+      "itl-vanessa-ui",
+      "qualification-foreign"
+    ],
+    "explicitSyncExit": 0,
+    "stdout": "Catalog context updated; client MCP settings unchanged.",
+    "graphRestored": false,
+    "manualFileRepairAttempted": false
+  },
+  "offline": [
+    {
+      "transportSeconds": [
+        22.17209
+      ],
+      "offlineWarning": true,
+      "exitCode": 0,
+      "metadataDeadlineSeconds": 10,
+      "protectedCount": 8,
+      "transportCount": 1,
+      "requestAccepted": true,
+      "kind": "applied-cache",
+      "wholeCliMs": 24942,
+      "protectedStable": true,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "passed": true,
+      "mainPhaseReached": true,
+      "deadlineTraceAnalysis": {
+        "transportCount": 1,
+        "start": "2026-10-22T15:28:13.896143Z",
+        "firstFallbackRead": "2026-10-22T15:28:24.048775Z",
+        "fetchOrCloneToFirstFallbackReadSeconds": 10.152632,
+        "wholeCliIsNotMetadataDeadline": true,
+        "childLifetimeIsNotHookLatency": true
+      },
+      "acceptanceLimit": "passed means offline continuation/no guessed association and preservation only; not whole CLI <=10 s, exact child cleanup, native MCP readiness or full AC-39"
+    },
+    {
+      "transportSeconds": [
+        21.24117
+      ],
+      "offlineWarning": false,
+      "exitCode": 1,
+      "metadataDeadlineSeconds": 10,
+      "protectedCount": 8,
+      "transportCount": 1,
+      "requestAccepted": true,
+      "kind": "no-cache",
+      "wholeCliMs": 24985,
+      "protectedStable": true,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "passed": true,
+      "mainPhaseReached": false,
+      "deadlineTraceAnalysis": {
+        "transportCount": 1,
+        "start": "2026-10-22T15:28:40.196976Z",
+        "firstFallbackRead": "2026-10-22T15:28:50.476081Z",
+        "fetchOrCloneToFirstFallbackReadSeconds": 10.279105,
+        "wholeCliIsNotMetadataDeadline": true,
+        "childLifetimeIsNotHookLatency": true
+      },
+      "acceptanceLimit": "passed means offline continuation/no guessed association and preservation only; not whole CLI <=10 s, exact child cleanup, native MCP readiness or full AC-39"
+    }
+  ],
+  "finalState": {
+    "memoryImplementationStarted": false,
+    "diagnostics": [
+      {
+        "durationMs": 2816,
+        "stderrBytes": 0,
+        "stdoutBytes": 344,
+        "arguments": [
+          "-CatalogAction",
+          "status"
+        ],
+        "name": "no-cache-diagnostic-status",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 9793,
+        "stderrBytes": 0,
+        "stdoutBytes": 4805,
+        "arguments": [],
+        "name": "no-cache-help",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "action": "help"
+      }
+    ],
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "unchanged": true,
+      "bytes": 3295928320
+    },
+    "fixtureKept": true,
+    "roots": [
+      {
+        "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+        "workflow": "d109a95dc1db95199bb3b2d4114b6cafddd05adb",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "untracked": [],
+        "dirty": [
+          ".agent-1c/project.json"
+        ],
+        "lockSha": "da9888c5b076af6590e39d282440c82cdb8cab19de0a6af4bce1dad4dcf7a298",
+        "bindingPresent": true,
+        "head": "fd9a31f734b4eac86a603dc989dac70d8df74b6c"
+      },
+      {
+        "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "workflow": "d109a95dc1db95199bb3b2d4114b6cafddd05adb",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "b92a24ce2864c092ab79635dc321b00bf0c23eeb42f9b448bf173fa22c29ce3d",
+        "bindingPresent": false,
+        "head": "b17b380ff17e64a49063eb6f77407a32ea2ac922"
+      }
+    ]
+  },
+  "preservation": {
+    "files": [
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5\\.agent-1c\\release-e2e.json",
+        "sha256": "c801f456323309cf009e392e3652dd3d78930ddc6e19a8eafe196745aa0f769b",
+        "bytes": 32342
+      },
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight\\.agent-1c\\dev-branches\\workflow-release-e2e-preflight.json",
+        "sha256": "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456",
+        "bytes": 21228
+      },
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+        "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+        "bytes": 8643
+      },
+      {
+        "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\project.json",
+        "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format.diff",
+        "sha256": "0e9f8753905740798c313a587628e5375e912603b1684eefd4f77e7121c4dc38",
+        "bytes": 5277
+      },
+      {
+        "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+        "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+        "bytes": 3295928320
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl",
+        "sha256": "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782",
+        "bytes": 844555
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml",
+        "sha256": "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa",
+        "bytes": 525269
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml",
+        "sha256": "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d",
+        "bytes": 13917
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+        "sha256": "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+        "bytes": 2739
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result",
+        "sha256": "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+        "bytes": 6
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log",
+        "sha256": "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+        "bytes": 141700
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log",
+        "sha256": "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+        "bytes": 93
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\dependency-lock.json",
+        "sha256": "8ec8af0a98f4a91b11f97942841feb0f1afa223732621a18ee55c0e69c546a4c",
+        "bytes": 16521
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\dependency-lock.json",
+        "sha256": "6e3c249ea46e1451489e39e0489c890c6d69fc772c0d623603fdb8ccd95cd796",
+        "bytes": 16521
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\project.json",
+        "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\dependency-lock.json",
+        "sha256": "b4b97e15b003ced4a2d176705e859de6ee0dbff615b8d397cedf4702f61cf541",
+        "bytes": 16521
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\dependency-lock.json",
+        "sha256": "5c06d4e1ba1c6dbb542746e62d1a9a040eaaef0ff40b1dedde8da981eb526beb",
+        "bytes": 16521
+      }
+    ],
+    "missingOriginalRawSeed": false,
+    "allPreserved": true,
+    "observedUtc": "2026-10-22T15:30:06.3914275Z",
+    "gate6Artifacts": 7,
+    "roots": [
+      {
+        "changed": [],
+        "root": "D:\\Git\\itl-workflow-e2e-pm5",
+        "head": "4e540b3cada85eb6d711c383d22ee368c306e045",
+        "untracked": []
+      },
+      {
+        "changed": [],
+        "root": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight",
+        "head": "cc49bc30bda0223877eda0287bf810cf8329c60c",
+        "untracked": []
+      },
+      {
+        "changed": [
+          ".agent-1c/project.json"
+        ],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+        "head": "308ac59380112deb797e3eaeafbfa115bd605f4a",
+        "untracked": []
+      },
+      {
+        "changed": [],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch",
+        "head": "1db160699bc69643e5d7f926139846b009f2f754",
+        "untracked": []
+      }
+    ]
+  },
+  "capsuleValidation": {
+    "artifactHashes": [
+      {
+        "path": "branch.env",
+        "sha256": "b1d10c2976413c7141aef4e75ddfb9f5c9d40496aca57893aa57af887bf8d703"
+      },
+      {
+        "path": "infobase.dt",
+        "sha256": "faefe7b1ce594dae2d18fe3f7b7f0697ace80eaba4e4ff9e432ad672cb97179c"
+      },
+      {
+        "path": "master.env",
+        "sha256": "aa9e8198b55cfb1a11c10773c570e1d238a0714f2dfda5dec8d37703dcf3d976"
+      },
+      {
+        "path": "release-e2e.json",
+        "sha256": "7ec92eaa9244c8556c2be46d32e4c65d3da28ad8f8dc7f4c6d5ff7d07402d788"
+      },
+      {
+        "path": "source.bundle",
+        "sha256": "997cb11daa09dddb29f0e6549624976ec0cba9c518af733b55bd35e41132d6d7"
+      },
+      {
+        "path": "state.json",
+        "sha256": "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456"
+      },
+      {
+        "path": "context/branch/.agent-1c/event-log-baselines/workflow-release-e2e-preflight.json",
+        "sha256": "e4d05b00b678997db7628c03b63a3adb909b7097ddc97d70542c94c8dee73eda"
+      },
+      {
+        "path": "context/branch/.agent-1c/event-log-cursors/workflow-release-e2e-preflight.pending.json",
+        "sha256": "a2c3ac883aaeb9ca64cb8e59a2037c467fe1aacb699aabe93a958a42d8227c5d"
+      },
+      {
+        "path": "context/branch/.agent-1c/runs/auto-update/5260e8441e3e48a783bb5466740139f7.result.json",
+        "sha256": "56e6e2efc950169946c7315e73817c532ad1d84e3dc4f6bec5658afef67ad090"
+      },
+      {
+        "path": "context/master/.agent-1c/branch-seed/d36790cc833a54009c15b29614df6fce67f9ab2ad0e89758b54c739541b40692/event-log-baseline.json",
+        "sha256": "85c9dbd8d4ee398fa71b151abc7988b544dbd3c9605de018e9e252c5093ba614"
+      },
+      {
+        "path": "context/master/.agent-1c/event-log-signature-cache/6313c6efc6c4ba7874c0d0e4c78c3aba397f7695b8e99fe4bb266f679a925b19.json",
+        "sha256": "115820bab388c127818eaf131dd73ad033202797c85ed57b5430fff6851e36e7"
+      }
+    ],
+    "approvedExplicitSnapshotAdmission": true,
+    "artifactsVerified": 11,
+    "originalRawSeedCurrentness": "unavailable",
+    "capsuleUnchanged": true,
+    "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "liveSeedAdmissionBypassed": false,
+    "observedUtc": "2026-10-22T15:31:24.9413376Z",
+    "manifestPath": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json"
+  },
+  "blockers": [
+    {
+      "id": "G3-CATALOG-OWNED-MCP-REENABLE",
+      "status": "open",
+      "symptom": "Kilo re-association retains owner-removed Code/Graph as local differences; suggested writer+registry continuation does not recover. Cursor Graph own->disabled->own likewise remains absent while marker advances.",
+      "owner": "existing catalog preview / managed MCP baseline-retirement and apply owner; exact cause not established",
+      "acceptance": "Retain original Kilo+Cursor root, order, history and foreign entries; public re-association and own->disabled->own must restore owned endpoints; then actual A write -> B fault -> foreign edit -> pinned resume/restore. No deleted receipts, manual settings repair, no-op A substitute or backend patches."
+    },
+    {
+      "id": "G3-DEFER-MCP-WRITER-PREFERENCE-LOSS",
+      "status": "open",
+      "symptom": "After explicit defer, original MCP writer returns0 and removes saved defer preference without a new registry decision, while keeping prior revision.",
+      "owner": "existing pinned context / catalog-aware public MCP writer decision path",
+      "acceptance": "Repeat original manual Graph edit + registry removal + defer + ordinary writer; retain defer/local edit/revision and no-op file proof until explicit decision, including subsequent ordinary command."
+    }
+  ],
+  "failedHarnessAttempts": [
+    {
+      "script": "conflicts.ps1",
+      "failure": "Repeated ordinary command changed protected files during defer; stopped before registry case; no assertion weakened"
+    },
+    {
+      "script": "conflict-registry.ps1",
+      "failure": "Registry removal/decision/repeat passed; later explicit graph re-enable failed because Graph remained absent; original assertion retained"
+    }
+  ],
+  "remaining": [
+    "Real two-client partial write / external owned and unrelated edits / pinned resume and restore blocked by re-enable defect",
+    "Interactive conflict cancel/invalid/no-answer, corrupt cache and invalid-applied variants not run in this installed slice",
+    "Full fresh init/branch/refresh/downgrade/live seed/platform/terminal/native client/paired startup/token cost criteria and release population remain open"
+  ],
+  "counts": {
+    "nativePublicResults": 20,
+    "llmTurns": 0,
+    "nativeCodeGraphToolCalls": 0,
+    "cogneeCalls": 0
+  },
+  "unchangedBoundaries": [
+    "Gate 6",
+    "G4 / memory implementation and opt-in",
+    "working project migration",
+    "workflow publication",
+    "shared production registry publication",
+    "Code/Graph server patches",
+    "ai_rules_1c"
+  ],
+  "fullG3Accepted": false,
+  "rawEvidence": [
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/after-attach.json",
+      "sha256": "bf0cec3dc18b692df1a38bb830890bc3906e2f66cdfb7171bd3767b1be355d90",
+      "bytes": 35374
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/after-defer-registry-reconcile-result.json",
+      "sha256": "5ca572567abc3bf65b6602a5a6c002dc690e91d499938d6d61ee898b7a56d74b",
+      "bytes": 504
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/after-defer-registry-reconcile.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/after-defer-registry-reconcile.stdout.log",
+      "sha256": "ad6999dc2b585084b0b391e8c2542c177bc949183b81ca3dde2269b0c70eb820",
+      "bytes": 1991
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/after-offline-roots.json",
+      "sha256": "bfbc9202cf4e2d91684d06004a860bc81f6fc87419e62633b0424b66ed96cd28",
+      "bytes": 1343
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/applied-cache-after.json",
+      "sha256": "d752a3daadcce58fd6f8a67c2717f3e9145dfc402f41f7008481b8255c06f323",
+      "bytes": 1758
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/applied-cache-before.json",
+      "sha256": "d752a3daadcce58fd6f8a67c2717f3e9145dfc402f41f7008481b8255c06f323",
+      "bytes": 1758
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/applied-cache-git-trace.jsonl",
+      "sha256": "6d713e0d253ed117b60bf6843f8baaf8e04de4e3a52952e1beff46a772c071c4",
+      "bytes": 49012
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/attach-client.ps1",
+      "sha256": "5b07687950c7e79d1eb0658cbc9a45b85f03e6944aecc2f76f1052a713a194e3",
+      "bytes": 311
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/attach-console.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/attach-cursor-result.json",
+      "sha256": "67516a1aa99756a968334d0c1d51b29e64cd5937e28f8be93479c40b1ad12fba",
+      "bytes": 464
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/attach-cursor.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/attach-cursor.stdout.log",
+      "sha256": "5c7890e8e38425bffbb76f7e994d69b56f0b13fb78872a2d8e1e35b962263125",
+      "bytes": 7231
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/bind-console.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/bind-two.ps1",
+      "sha256": "a8e73a3419267b9ed236b25fa1776a86fcebcc8640e04022aafcd9edd1b9af48",
+      "bytes": 303
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/capsule-final-validation.json",
+      "sha256": "14eb6e49bb40a0dc4f918e0bcaeda48377f44e876ad8b140e834594d830405b1",
+      "bytes": 3486
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/common.ps1",
+      "sha256": "f4fd223b8c98f9ab793d1c378ecbe395acdf270a742e08a0e426ba7fb6378cda",
+      "bytes": 1859
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/conflict-matrix.json",
+      "sha256": "06b3f5f54226beb4082eba72199f058814aca30a71eb0023481b8f539f31f8f5",
+      "bytes": 462
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/conflict-native-steps.json",
+      "sha256": "f2c723f5aee2d142032c85ab3c86e9543e82c53ef57f49760e974922763880d1",
+      "bytes": 3433
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/conflict-registry.ps1",
+      "sha256": "da5c093e4e7357d5eef8a728c36e7fb98e5641c8d62d0818359e44b9987a251b",
+      "bytes": 5177
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/conflicts.ps1",
+      "sha256": "c0febfeef525ccdd4b3a36089bedf9a7f9e1cb0dfd2aab760871ae0a065a9e42",
+      "bytes": 4902
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-after-no-answer.json",
+      "sha256": "d38e0c1f1f86395f731a2de628eb8d46e314cb2f03facdd254570394e0bb9793",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-after-repeat.json",
+      "sha256": "50735c5d11b8fc95bbdf2a2c2fbf77b2fb7f7c6e4480288346f553cd181aacb7",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-before.json",
+      "sha256": "d38e0c1f1f86395f731a2de628eb8d46e314cb2f03facdd254570394e0bb9793",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-decision-result.json",
+      "sha256": "fbf12c8101e04df447bd09565857e34d4200208ee5058521840ad672b649efd8",
+      "bytes": 484
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-decision.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-decision.stdout.log",
+      "sha256": "aca93c166984abf5a03de7329bbc1b53375c19c74f631118d0d8a15c23741c84",
+      "bytes": 550
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-first-observation/client-managed.json",
+      "sha256": "55bdce79e4e82fb30da04286b3e62021322dad84c5812c567efc4b6d48f9c031",
+      "bytes": 3588
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-first-observation/mcp.json",
+      "sha256": "26b214e64e21634692a9b28aed5904fdeed3d85c7b7e8fe6830346306ddc215c",
+      "bytes": 5542
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-first-observation/product-context-applied.json",
+      "sha256": "d33363615f1b226655ba16e58aee9b4dcfad80a68008e19d204c31dbe138db73",
+      "bytes": 32875
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-first-observation/product-context-operation.json",
+      "sha256": "26a8376cb22cf783957facce2af8108be32969a91a1d9d2d0e77867db90600e6",
+      "bytes": 79116
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-first-observation/vibecoding1c-selection.json",
+      "sha256": "8aa4ad3f4e84c7745cf92bf8938bccd08489552f8d9fb4a72c91e1be4852eafc",
+      "bytes": 2013
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-manual-cursor.json",
+      "sha256": "26b214e64e21634692a9b28aed5904fdeed3d85c7b7e8fe6830346306ddc215c",
+      "bytes": 5542
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-no-answer-result.json",
+      "sha256": "4e14a8efdcb19771ff5799b3d5011821ab1bb01202c8014252533d717a6f524a",
+      "bytes": 412
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-no-answer.stderr.log",
+      "sha256": "370555e46e9b3bf0aec478987aa3f3df7a1ff1e205b2123c5aaf7796fe24ca10",
+      "bytes": 264
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-no-answer.stdout.log",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-ordinary-repeat-result.json",
+      "sha256": "ebf93b00459657e2c14053f919a7c48c0be3e590ea247743422ccf32111fa59d",
+      "bytes": 361
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-ordinary-repeat.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-ordinary-repeat.stdout.log",
+      "sha256": "23b0c936b0ca52c94f9f1d06c6b8a72337983e771a13198fa067b85694fdb500",
+      "bytes": 2584
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/defer-selection.json",
+      "sha256": "c4b96ee7ee4e9557c6b00528adec1177da6c59056ceb5cea2136c7d477f0befd",
+      "bytes": 2458
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/driver-functions.ps1",
+      "sha256": "892052a28cf0a20f9ada401788207a0b299e519486d30658fb88e948d21b6514",
+      "bytes": 2658
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/final-observation/.agent-1c_mcp_client-managed.json",
+      "sha256": "b5e364fdb8d3ab4dac019849f6e0c527052880829bbcb761bb58b3bbec86519c",
+      "bytes": 3515
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/final-observation/.agent-1c_mcp_product-context-applied.json",
+      "sha256": "dc6d998d34c1f84493701c43de8cfdce688e3653a221fb4dfc611a36504e880d",
+      "bytes": 33415
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/final-observation/.agent-1c_mcp_product-context-operation.json",
+      "sha256": "136d2e3cc9f3ba938933dd6af7806e6e4f95d7ac588e9f4c37480c376dc0e18c",
+      "bytes": 72453
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/final-observation/.agent-1c_mcp_vibecoding1c-selection.json",
+      "sha256": "88f7b380e49b9414acd6155dd060d724e06c9a94186f4b39b32d46dfddf94c55",
+      "bytes": 1911
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/final-observation/.agent-1c_project.json",
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "bytes": 3141
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/final-observation/.cursor_mcp.json",
+      "sha256": "b0b678f727f74cdda5f03e95bdf19c87ed18f5be6b045de47f7e4ae2a00fe846",
+      "bytes": 5099
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/final-observation/.kilo_kilo.json",
+      "sha256": "f48b2b6a5fd947415eeda2c484c17073c1cba6ceaf367d6a9ea11a52383256f3",
+      "bytes": 5064
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/final-observation.ps1",
+      "sha256": "538495bbf6c9f47e4c268e66417d08a2fc7980ed8d9262e8b6a159392333e481",
+      "bytes": 1337
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/final-state.json",
+      "sha256": "b1b391bc6adf1a6766ff9463ce0a0d7113cb89602ccb662adea41de3bfd156dd",
+      "bytes": 3637
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/first-bind-observation/.agent-1c/mcp/client-managed.json",
+      "sha256": "55bdce79e4e82fb30da04286b3e62021322dad84c5812c567efc4b6d48f9c031",
+      "bytes": 3588
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/first-bind-observation/.agent-1c/mcp/product-context-applied.json",
+      "sha256": "3e52d7a8801420a968ddccd6371fd1e8eb3bab2b861a1aea3395adcef5065afc",
+      "bytes": 32967
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/first-bind-observation/.agent-1c/mcp/product-context-operation.json",
+      "sha256": "85474dc4ebbfc2a4bfdad3c853d952c0d41b11cc2bc52034e6249541b08b353a",
+      "bytes": 44246
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/first-bind-observation/.cursor/mcp.json",
+      "sha256": "7f72eff5d3a12d2f406fdc934e958e5775802e10f9a2e68224dd80009382a475",
+      "bytes": 5289
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/first-bind-observation/.kilo/kilo.json",
+      "sha256": "f48b2b6a5fd947415eeda2c484c17073c1cba6ceaf367d6a9ea11a52383256f3",
+      "bytes": 5064
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/fixture-client-setup.json",
+      "sha256": "9740aec4968de6cbfb8d50877509725de395ae55c7bae9072b2c8cde943c7e12",
+      "bytes": 25255
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-after-no-answer.json",
+      "sha256": "6a8368e0dd077502e2829a55bc54caf226afc7190c30939e096fa43b63a293e9",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-after-repeat.json",
+      "sha256": "c362ef7839948c2c9a5ed0157eba958c797e00529f0fd889aef6b3f7054551c8",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-before.json",
+      "sha256": "6a8368e0dd077502e2829a55bc54caf226afc7190c30939e096fa43b63a293e9",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-decision-result.json",
+      "sha256": "2d491ed4016ed2df77114024055c7db25495560acb45a872a7f9a26aa179e4f6",
+      "bytes": 495
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-decision.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-decision.stdout.log",
+      "sha256": "203a2d875588fe851911d3425f682506288c7c117e8bfd516ce332df925f73f5",
+      "bytes": 1627
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-manual-cursor.json",
+      "sha256": "edf919821938d3a0ed2c0af25abb6ddbca718658cff54a4369cdd4367fdac355",
+      "bytes": 5547
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-no-answer-result.json",
+      "sha256": "7176bc98355e4d0ac942c91f959e46ae19a756227492ee136e6cedc030a0395d",
+      "bytes": 417
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-no-answer.stderr.log",
+      "sha256": "370555e46e9b3bf0aec478987aa3f3df7a1ff1e205b2123c5aaf7796fe24ca10",
+      "bytes": 264
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-no-answer.stdout.log",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-ordinary-repeat-result.json",
+      "sha256": "1b05104c1799ccc76d9540a3162e868303f9b8af5317e1e497c4faacd98500b6",
+      "bytes": 365
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-ordinary-repeat.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-ordinary-repeat.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-registry-reconcile-result.json",
+      "sha256": "b21a6384b5abb887dd0db2829540e1b0c3a243156ffe8baf5b342f5c07b007c6",
+      "bytes": 503
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-registry-reconcile.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-registry-reconcile.stdout.log",
+      "sha256": "ad6999dc2b585084b0b391e8c2542c177bc949183b81ca3dde2269b0c70eb820",
+      "bytes": 1991
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/keep-local-selection.json",
+      "sha256": "e5faf54427998f97a4a276d1749b0a66688d7181b989d6f51ae81f3feb24ec12",
+      "bytes": 2011
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/kilo-explicit-owner-sync-result.json",
+      "sha256": "22c14276cd61c41a4dc0815322cc1f49093ea5d57f3e5df843204fcf1218600e",
+      "bytes": 429
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/kilo-explicit-owner-sync.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/kilo-explicit-owner-sync.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/no-cache-after.json",
+      "sha256": "8158c5537cf694c56a1b378168e2ecf614738b957ea37b1bd58b1bbdb7a4b10d",
+      "bytes": 1458
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/no-cache-before.json",
+      "sha256": "8158c5537cf694c56a1b378168e2ecf614738b957ea37b1bd58b1bbdb7a4b10d",
+      "bytes": 1458
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/no-cache-diagnostic-status-result.json",
+      "sha256": "c27019e03f9c1b9b81569aa0d4e9c64a62a149d4bf40d22506f575630ec4058c",
+      "bytes": 422
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/no-cache-diagnostic-status.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/no-cache-diagnostic-status.stdout.log",
+      "sha256": "c7d773bb05e1551ee3a0725863f90fc923491e80916bffdaa48adc502698a6d1",
+      "bytes": 344
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/no-cache-git-trace.jsonl",
+      "sha256": "0cbfea78d653596a2ebab0bb6fadba533f6898b22a9da17a7d569db65c1345d9",
+      "bytes": 17298
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/no-cache-help-result.json",
+      "sha256": "ddf57510cda1259137e0f603b52d68fdb7d2412855f4368d81f49916705292af",
+      "bytes": 320
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/no-cache-help.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/no-cache-help.stdout.log",
+      "sha256": "440d52ba1acf0d9283e051857c8abee733b3e72ab467fa582ebe9d766707bb83",
+      "bytes": 4805
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/offline-applied-cache-result.json",
+      "sha256": "0844ec8a0ce4fa0f9e515493ac54ad971ba7ef6b4f366aec9ed2f6172f71ebc1",
+      "bytes": 361
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/offline-applied-cache.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/offline-applied-cache.stdout.log",
+      "sha256": "fde4c2a326252d8a754ad08af8580d65488a10f730812fa3ee1daa583a5acf67",
+      "bytes": 593
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/offline-matrix.json",
+      "sha256": "716d27a2a7cefe700e72ba6a5322ad7858523a4d296ec9863a2e0b685fff3de5",
+      "bytes": 1211
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/offline-native-steps.json",
+      "sha256": "8148423589f52a47ee3a81c660362b69c29e4aa591f6a9df5b7b25beaf2c5817",
+      "bytes": 979
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/offline-no-cache-result.json",
+      "sha256": "1951eafd54137574ccbc08555e31a58d6d6cdf0eede8a1730489d91f192d2e23",
+      "bytes": 505
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/offline-no-cache.stderr.log",
+      "sha256": "6affab844b4886d47f71a2b23eed43b1d845ff0d8ebdcba445459170325b3bdc",
+      "bytes": 255
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/offline-no-cache.stdout.log",
+      "sha256": "9b3fab22fc89a33cf7f4e9d08072e43f29c2999ed2af63b6e8417b2ce9d534b4",
+      "bytes": 32
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/offline.ps1",
+      "sha256": "8634fa99a571388111eceae53cddbf812e6506a2fb61bbaae80a6b89b80bdc35",
+      "bytes": 4596
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/pm5-copy-receipt.json",
+      "sha256": "2eb19aef95b08122d53fb2f1579cdd6f0553db410fd86a4000245e0899c4c69e",
+      "bytes": 2145
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/preserve.ps1",
+      "sha256": "05e32d00fca53c7886dfd9e7a5d4b467f135528e52cc2dc0d82550c842344789",
+      "bytes": 3489
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/preserved-after.json",
+      "sha256": "ae59d3a77122e7a9cbfa2a6f9c0ae6f9d9fe92da424ced0b81363d60beab98fa",
+      "bytes": 9482
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/preserved-before.json",
+      "sha256": "f63dc5e15b3386a80fec365748f7cb55afe10b38253b99bf64f44f3a60655a81",
+      "bytes": 9482
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/reconcile-console.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/reconcile-kilo.ps1",
+      "sha256": "6971906c03e04c31153e0c12f5c3dcea44b03d5ba07d9826c6cbf8d80a6693cf",
+      "bytes": 367
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/record-results.py",
+      "sha256": "4148682bb6e2db075715809eb5ddf3259792538d728f0749e23e67e1e4243473",
+      "bytes": 8066
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-after-no-answer.json",
+      "sha256": "4332210e28bccbff8b0b4befac6ebaae895949a45bc1b92cef371a6b2c77aa5d",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-after-repeat.json",
+      "sha256": "1dcdd1c4890f0d576fba7b3db4378d29069d0e4ebea7dc8bc1020e6206323f01",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-before-repeat.json",
+      "sha256": "1dcdd1c4890f0d576fba7b3db4378d29069d0e4ebea7dc8bc1020e6206323f01",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-before.json",
+      "sha256": "4332210e28bccbff8b0b4befac6ebaae895949a45bc1b92cef371a6b2c77aa5d",
+      "bytes": 1357
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-conflict-matrix.json",
+      "sha256": "85194c9bb4b4a428db1fab9dfd9069cd24f87fe2b01db86a3278f8df4460095f",
+      "bytes": 461
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-conflict-native-steps.json",
+      "sha256": "03d7568c48ac446534646132f0734b77ae4ee99ee7a791920bd9f551da2f9d38",
+      "bytes": 2567
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-decision-result.json",
+      "sha256": "87b26488cb1fc151476c2d52b7e019358c8268dcd7acc59634d82f59e92ca130",
+      "bytes": 491
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-decision.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-decision.stdout.log",
+      "sha256": "86380cb6cb3753f32def8ae2e61c31d9868faee089c18008180b7f4cc90fa982",
+      "bytes": 1273
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-manual-cursor.json",
+      "sha256": "f5a60296e31fa5a4bb1b20b3389bdbacd29c4f6af294cf1a2f75830d41b3a5da",
+      "bytes": 5545
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-no-answer-result.json",
+      "sha256": "5b3cb5e7453d4168e84af8023d84679aac8df19a4979f066ae2c68e38fab6dec",
+      "bytes": 415
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-no-answer.stderr.log",
+      "sha256": "370555e46e9b3bf0aec478987aa3f3df7a1ff1e205b2123c5aaf7796fe24ca10",
+      "bytes": 264
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-no-answer.stdout.log",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-ordinary-repeat-result.json",
+      "sha256": "c058b280383bff2e8f5f877dabd68592174c782b6b284d991deec75c699dd0d8",
+      "bytes": 363
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-ordinary-repeat.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-ordinary-repeat.stdout.log",
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-registry-reconcile-result.json",
+      "sha256": "9493cc388a6031f81cae9566af2108d361607e6e4814b49a7df747c447834e4b",
+      "bytes": 500
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-registry-reconcile.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-registry-reconcile.stdout.log",
+      "sha256": "2d83c0c376cb97a55e1e8432dbe2bf4f887ad73f991a435aa7e864c2611f3e7c",
+      "bytes": 489
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/registry-selection.json",
+      "sha256": "cf14a1e64c8e3d5e15310645e372d72ee6236ffc6096a3936ae1d831224865f2",
+      "bytes": 1909
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/single-client-backup/.agent-1c/mcp/client-managed.json",
+      "sha256": "36ff68157ec60e83397d19f9301414ccd8efc60e9df7ce529a4ca1946ed86d3f",
+      "bytes": 1750
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/single-client-backup/.agent-1c/mcp/vibecoding1c-selection.json",
+      "sha256": "0d9f30b831e2048010497dd4f6d634ea02bdb634d52f5203090396d8678ae54a",
+      "bytes": 1509
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/single-client-backup/.agent-1c/project.json",
+      "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+      "bytes": 2793
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/single-client-backup/.kilo/kilo.json",
+      "sha256": "39f201c47d40472f84ef206d72436af38cc87ee9acb7556c284fee8cdc502ff6",
+      "bytes": 373
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/single-client-before.json",
+      "sha256": "318a7cbe54be4545c94114fb7c0bb227c8d8528b7fef6894230ad8fd4c3343e7",
+      "bytes": 1298
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/two-client-bound-roots.json",
+      "sha256": "bfbc9202cf4e2d91684d06004a860bc81f6fc87419e62633b0424b66ed96cd28",
+      "bytes": 1343
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/two-client-select-result.json",
+      "sha256": "2e4f346845347dd35d38aced183103c46ef5a55d1d03269c4d514f058c289e7e",
+      "bytes": 506
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/two-client-select.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/two-client-select.stdout.log",
+      "sha256": "752d650d1a0534275cd537ba7da1673dbd3a0658ca158fac98ae719335a86aad",
+      "bytes": 2097
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/two-client-sync-after-owner-result.json",
+      "sha256": "4c4a3131735785b1168ed885132fb25afa490cc541fe383fed3e3057da2b6bde",
+      "bytes": 500
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/two-client-sync-after-owner.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/two-client-sync-after-owner.stdout.log",
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70",
+      "bytes": 433
+    },
+    {
+      "path": "build/test-results/g3/multi-client-offline-20261022/verify-capsule.ps1",
+      "sha256": "37d43a6f360f279d4aa5996323027704a65890068fc87b05efde489b4925d70a",
+      "bytes": 769
+    }
+  ],
+  "nativeSteps": [
+    {
+      "durationMs": 6034,
+      "stderrBytes": 0,
+      "stdoutBytes": 1991,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "after-defer-registry-reconcile",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 39630,
+      "stderrBytes": 0,
+      "stdoutBytes": 7231,
+      "arguments": [
+        "-Mode",
+        "attach",
+        "-Client",
+        "cursor"
+      ],
+      "name": "attach-cursor",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "itl-switch-client"
+    },
+    {
+      "durationMs": 5496,
+      "stderrBytes": 0,
+      "stdoutBytes": 550,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "defer"
+      ],
+      "name": "defer-decision",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 5323,
+      "stderrBytes": 264,
+      "stdoutBytes": 433,
+      "arguments": [
+        "-CatalogAction",
+        "sync"
+      ],
+      "name": "defer-no-answer",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 6321,
+      "stderrBytes": 0,
+      "stdoutBytes": 2584,
+      "arguments": [],
+      "name": "defer-ordinary-repeat",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 6199,
+      "stderrBytes": 0,
+      "stdoutBytes": 1627,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "keep-local"
+      ],
+      "name": "keep-local-decision",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 5704,
+      "stderrBytes": 264,
+      "stdoutBytes": 433,
+      "arguments": [
+        "-CatalogAction",
+        "sync"
+      ],
+      "name": "keep-local-no-answer",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4666,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "keep-local-ordinary-repeat",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 7163,
+      "stderrBytes": 0,
+      "stdoutBytes": 1991,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "keep-local-registry-reconcile",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 3814,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [
+        "-Client",
+        "kilocode"
+      ],
+      "name": "kilo-explicit-owner-sync",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 2816,
+      "stderrBytes": 0,
+      "stdoutBytes": 344,
+      "arguments": [
+        "-CatalogAction",
+        "status"
+      ],
+      "name": "no-cache-diagnostic-status",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 9793,
+      "stderrBytes": 0,
+      "stdoutBytes": 4805,
+      "arguments": [],
+      "name": "no-cache-help",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "action": "help"
+    },
+    {
+      "durationMs": 24942,
+      "stderrBytes": 0,
+      "stdoutBytes": 593,
+      "arguments": [],
+      "name": "offline-applied-cache",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 24985,
+      "stderrBytes": 255,
+      "stdoutBytes": 32,
+      "arguments": [
+        "-CatalogAction",
+        "select",
+        "-CatalogProjectId",
+        "pm5-core-development"
+      ],
+      "name": "offline-no-cache",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 6295,
+      "stderrBytes": 0,
+      "stdoutBytes": 1273,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "registry-decision",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4982,
+      "stderrBytes": 264,
+      "stdoutBytes": 433,
+      "arguments": [
+        "-CatalogAction",
+        "sync"
+      ],
+      "name": "registry-no-answer",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4405,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "registry-ordinary-repeat",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 5267,
+      "stderrBytes": 0,
+      "stdoutBytes": 489,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "registry-registry-reconcile",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 5942,
+      "stderrBytes": 0,
+      "stdoutBytes": 2097,
+      "arguments": [
+        "-CatalogAction",
+        "select",
+        "-CatalogProjectId",
+        "pm5-core-development"
+      ],
+      "name": "two-client-select",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 4689,
+      "stderrBytes": 0,
+      "stdoutBytes": 433,
+      "arguments": [
+        "-CatalogAction",
+        "sync",
+        "-CatalogDecision",
+        "registry"
+      ],
+      "name": "two-client-sync-after-owner",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    }
+  ]
+}

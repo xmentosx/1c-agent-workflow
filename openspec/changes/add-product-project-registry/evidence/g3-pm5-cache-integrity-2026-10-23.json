@@ -1,0 +1,473 @@
+{
+  "schemaVersion": 1,
+  "status": "passed-bounded-current-PM5-subset",
+  "qualifiedPackage": "fac4bc513b5cbfe7a1271e23f16267e8ab5d46c6",
+  "scope": [
+    "AC-17 cache/schema fallback or safe refusal",
+    "AC-21/26 diagnostics and ordinary main admission",
+    "AC-24 idle cancel only"
+  ],
+  "installedUpdate": {
+    "exitCode": 0,
+    "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\installed-logs\\update-workflow-584fcac84ea4472cbc1d457c1596dd5b.stdout.log",
+    "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\installed-logs\\update-workflow-584fcac84ea4472cbc1d457c1596dd5b.stderr.log",
+    "durationMs": 376761
+  },
+  "updateSnapshots": [
+    {
+      "phase": "post-copy-complete",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "sourceCommit": "fac4bc513b5cbfe7a1271e23f16267e8ab5d46c6",
+      "receiptSha": "0ef2ece79b5af1a7cd1fd465c8422df750bd45171f79bfe43bf92d65aed07bcc",
+      "snapshot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-completed-a0690bf760e14294af9d585271a626d0",
+      "records": 680
+    },
+    {
+      "phase": "post-copy-complete",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "sourceCommit": "fac4bc513b5cbfe7a1271e23f16267e8ab5d46c6",
+      "receiptSha": "fb5f084330d504f0c13c8ca9162abe2322698fc98a47c0294eb1d0921d727559",
+      "snapshot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-completed-fa46a727a9ef4dd59fd824f0198ad03a",
+      "records": 359
+    }
+  ],
+  "cases": [
+    {
+      "details": {
+        "mainReached": true,
+        "protectedFilesPerRoot": 9,
+        "exit": 0
+      },
+      "name": "healthy-current-package",
+      "passed": true
+    },
+    {
+      "details": {
+        "appliedUnchanged": true,
+        "mainReached": true,
+        "warned": true,
+        "exit": 0
+      },
+      "name": "corrupt-cache-bound",
+      "passed": true
+    },
+    {
+      "details": {
+        "protectedUnchanged": true,
+        "noGuessedAssociation": true,
+        "exit": 1
+      },
+      "name": "corrupt-cache-unbound",
+      "passed": true
+    },
+    {
+      "details": {
+        "mainReached": true,
+        "validatedAppliedFallback": true,
+        "exit": 0
+      },
+      "name": "unsupported-schema-bound",
+      "passed": true
+    },
+    {
+      "details": {
+        "noGuessedAssociation": true,
+        "fieldCauseInSourceValidator": true,
+        "nativeError": "CATALOG_REFRESH_UNAVAILABLE",
+        "exit": 1
+      },
+      "name": "unsupported-schema-unbound",
+      "passed": true
+    },
+    {
+      "details": {
+        "publicError": "CATALOG_PROJECT_UNKNOWN",
+        "originalObservationNotRerun": true,
+        "exactUnknownIdRefused": true,
+        "protectedUnchanged": true,
+        "exit": 1
+      },
+      "name": "unknown-project",
+      "passed": true
+    },
+    {
+      "details": {
+        "protectedUnchanged": true,
+        "mainBlocked": true,
+        "ownedRecoveryNotQualified": true,
+        "diagnosticsAvailable": true,
+        "contextHashZeroed": true,
+        "validJson": true
+      },
+      "name": "invalid-applied",
+      "passed": true
+    },
+    {
+      "details": {
+        "originalCommandExit": 0,
+        "noNewRequest": true,
+        "protectedUnchanged": true
+      },
+      "name": "healthy-continuation-idle-cancel",
+      "passed": true
+    }
+  ],
+  "nativeSteps": [
+    {
+      "durationMs": 2882,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "healthy-baseline",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 4100,
+      "stderrBytes": 0,
+      "stdoutBytes": 593,
+      "arguments": [],
+      "name": "corrupt-cache-bound",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 1871,
+      "stderrBytes": 255,
+      "stdoutBytes": 32,
+      "arguments": [
+        "-CatalogAction",
+        "select",
+        "-CatalogProjectId",
+        "pm5-core-development"
+      ],
+      "name": "corrupt-cache-unbound",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 1188,
+      "stderrBytes": 0,
+      "stdoutBytes": 344,
+      "arguments": [
+        "-CatalogAction",
+        "status"
+      ],
+      "name": "corrupt-cache-status",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "action": "vibecoding1c-mcp-status"
+    },
+    {
+      "durationMs": 3357,
+      "stderrBytes": 0,
+      "stdoutBytes": 674,
+      "arguments": [],
+      "name": "unsupported-schema-bound",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 2017,
+      "stderrBytes": 255,
+      "stdoutBytes": 0,
+      "arguments": [
+        "-CatalogAction",
+        "select",
+        "-CatalogProjectId",
+        "pm5-core-development"
+      ],
+      "name": "unsupported-schema-unbound",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 2010,
+      "stderrBytes": 216,
+      "stdoutBytes": 0,
+      "arguments": [
+        "-CatalogAction",
+        "preview",
+        "-CatalogProjectId",
+        "g3-qualification-unknown-project"
+      ],
+      "name": "unknown-project-preview",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 2142,
+      "stderrBytes": 203,
+      "stdoutBytes": 0,
+      "arguments": [],
+      "name": "invalid-applied-main-blocked",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 1670,
+      "stderrBytes": 0,
+      "stdoutBytes": 424,
+      "arguments": [
+        "-CatalogAction",
+        "status"
+      ],
+      "name": "invalid-applied-status",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-status"
+    },
+    {
+      "durationMs": 4101,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "healthy-after-faults",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 1376,
+      "stderrBytes": 0,
+      "stdoutBytes": 96,
+      "arguments": [
+        "-CatalogAction",
+        "cancel"
+      ],
+      "name": "idle-public-cancel",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    }
+  ],
+  "finalNativeCalls": 11,
+  "earlierRetainedNativeCalls": 2,
+  "totalQualificationNativeCalls": 13,
+  "installedUpdateCalls": 1,
+  "expectedRefusalCodes": [
+    "CATALOG_REFRESH_UNAVAILABLE",
+    "CATALOG_PROJECT_UNKNOWN",
+    "CATALOG_LOCAL_RECORD_INVALID: applied"
+  ],
+  "preservation": {
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "unchanged": true,
+      "bytes": 3295928320
+    },
+    "protectedShaAndMtimeStable": true,
+    "oldRoots": 4,
+    "protectedSeedFiles": 21,
+    "capsuleArtifacts": 11,
+    "gate6Artifacts": 7,
+    "retainedSnapshotFiles": 12864,
+    "previousRawFiles": 2349,
+    "previousCopyStatusReferencesVerified": 161,
+    "previousCopySnapshotReceipts": 4,
+    "sharedAndPriorPrivateCatalogsUnchanged": true,
+    "businessSourcesUnchanged": true,
+    "protectedPathStatesPerRoot": 9
+  },
+  "harness": {
+    "encoding": {
+      "firstAttempt": "PowerShell5.1 parsed UTF8 without BOM as ANSI and failed before execution",
+      "correction": "UTF8 BOM; assertions and workload unchanged",
+      "nativeCalls": 0,
+      "archived": "qualify-first-no-bom.ps1",
+      "runtimeTouched": false
+    },
+    "warningContract": {
+      "firstNativeResult": "exit0, Catalog is offline, main reached; first harness expected validation-error branch wording",
+      "evidence": "agent-1c.product-project-context.ps1:411 versus414 and retained trace reading pinned f00ff92",
+      "semanticContract": "Both branches retain a checked applied context, warn, do not write protected files; distinguish offline from validation failure.",
+      "correction": "Require exact existing offline diagnostic for dangling HEAD; keep validation diagnostic for schema3. Field-specific schema rejection is verified at the existing validator; native wrapper uses CATALOG_REFRESH_UNAVAILABLE.",
+      "sameRootCacheTopologyWorkload": true,
+      "sourceRuntimeChanged": false,
+      "productAssertionsWeakened": false,
+      "historicalFailurePreserved": "first-warning-contract-attempt",
+      "repeat": "Repeat original installed calls with identical dangling HEAD; cached fault bytes and protected preconditions are checked before reuse."
+    },
+    "publicErrorContract": {
+      "observedNativeExit": 1,
+      "observedPublicCode": "CATALOG_PROJECT_UNKNOWN",
+      "expectedInternalCodeWas": "CATALOG_INVALID: unknown projectId",
+      "reason": "Explicit project preview is resolved by the public controller before the internal resolver.",
+      "exactUnknownIdRefused": true,
+      "sourceRuntimeChanged": false,
+      "assertionsWeakened": false,
+      "retainedAttempt": "unknown-public-code-attempt",
+      "continuation": "Verify all original SHA+mtime/root preconditions, retain the observed typed refusal, and execute only remaining independent cases."
+    },
+    "aggregation": {
+      "cause": "PowerShell5.1 Read-Json enumeration retained the earlier cases/steps array as one list item during harness continuation.",
+      "correction": "Flatten only result aggregation, cross-check every step against its individual result file, retain original nested artifacts.",
+      "realNativeCalls": 11,
+      "firstRetainedAttemptCalls": 2,
+      "scenarioGroups": 8,
+      "runtimeChanged": false,
+      "guardsAndAssertionsChanged": false,
+      "scenariosRerun": false
+    },
+    "uninterruptedSingleHarnessPassClaimed": false,
+    "productRuntimeOrPackageTestsChanged": false,
+    "preconditionsAndAllProtectedChecksRetained": true
+  },
+  "costs": {
+    "perCommandDurationMs": [
+      2882,
+      4100,
+      1871,
+      1188,
+      3357,
+      2017,
+      2010,
+      2142,
+      1670,
+      4101,
+      1376
+    ],
+    "alwaysOnContextBytesDelta": 0,
+    "toolSchemaBytesDelta": 0,
+    "memoryProviderLlmCallsAdded": 0,
+    "pairedFeatureCostQualified": false,
+    "strictOfflineDeadlineCleanupQualified": false,
+    "observation": "Healthy/cache/refusal CLI1.188-4.101s on local fixtures; not a stalled-network deadline, Startup delta or 20-sample baseline."
+  },
+  "remaining": [
+    "Full G3/AC-39 and complete original installed/client/platform/interactive matrix",
+    "Owned recovery of this specific damaged-applied variant not qualified; reverting only injected bytes is fixture cleanup",
+    "Absent PM4/Win10/Server2019+/independent terminal sessions remain unverified",
+    "Fresh init/new branch/full refresh/downgrade/live-seed currentness not proved by capsule-only stand; Gate6 excluded",
+    "Other frontend/adapters/native source-readiness journeys; configuration is not native activation",
+    "Strict stalled transport cleanup/deadline and full feature cost/previous whole CLI+1.756s attribution",
+    "Release population5.7/AC36-38 and memory consumer4.2/AC43/G5/44 remain open"
+  ],
+  "forbiddenNotPerformed": [
+    "Gate6 repair/execution",
+    "G4",
+    "working-project migration",
+    "external catalog/workflow publication",
+    "server replacement/reindex"
+  ],
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\installed-input.json",
+      "bytes": 2340,
+      "sha256": "34ace4e07d8a46708011d2b7eaae6de00aaf3e7adcbe79b4e70c36bbccc4abaf"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\installed-result.json",
+      "bytes": 522,
+      "sha256": "48d74caaf280b04a6431911b6499a4b763224d15ddee724e07657c78532683e9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\installed-snapshots.json",
+      "bytes": 1197,
+      "sha256": "4134f144276425df3f0e0091c1a30d3b6e4be01cee474fb14fd5b702c6865b34"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\installed-roots-after.json",
+      "bytes": 1297,
+      "sha256": "935ecc46c0df067cdf67a3306e519ff38ca8a19c79d4a7d346b0ca93e9095d38"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\installed-run\\status.json",
+      "bytes": 3656,
+      "sha256": "f8dff143e3609487f3168d12691ddfeb37f42a64650242d0b2822c6da134ca34"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\installed-run\\console.log",
+      "bytes": 20014,
+      "sha256": "4df05f1d02841aea319427496cbe56a9df0404fa9d0e00daffb8797300826c1c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\result.json",
+      "bytes": 2239,
+      "sha256": "eed46d157987b2dac9b45da6d48d849a34ecd9dcbafa8bdb4d30944a19175fde"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\native-steps.json",
+      "bytes": 4108,
+      "sha256": "436dfc9386012f12e0900b858df5eb25a255bf917bb14dce06dd712f049efac0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\identity-final.json",
+      "bytes": 4823,
+      "sha256": "4781e7d18611f9764c644d39a6a3b7f52481d07c687c76d815790e5dcdc6b760"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\business-inputs.json",
+      "bytes": 1023,
+      "sha256": "14cc6a4b27d19a10400524d0435746ea9832cdd3b6199dcdfebbe83266ddc008"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\preserved-before.json",
+      "bytes": 9482,
+      "sha256": "18e72345c92193dffdd8fc2dc8ab0007b1d0715277370ac6f38db4327f6024fc"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\preserved-after.json",
+      "bytes": 9482,
+      "sha256": "bd1e04c514353e07d47c10c7b5bdf300d0b37cb3f23a3912135323eaffe2be98"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\capsule-final-validation.json",
+      "bytes": 3486,
+      "sha256": "40aa732e2e04e0c85075dd7415dd315832362a565c8376653f7ec04c84c24cd0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\previous-preservation.json",
+      "bytes": 745451,
+      "sha256": "2706f92b051fddf359becda1dd40881d9313c891ebcda25632ca91d09ac27f29"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\corrupt-cache-transport.json",
+      "bytes": 214,
+      "sha256": "c342f0962f03392ae8b911d11778cf1bbba2bdcf21f857ed447ce70673ce13c5"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\unsupported-schema-fault.json",
+      "bytes": 329,
+      "sha256": "c522035696ad43b1190ca54eaebafa48e97609b3982eafaef3c3c374be7ffcf9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\unsupported-schema-validator.json",
+      "bytes": 183,
+      "sha256": "d36201ea6ef40e897f4779c2d563c52c83796b9926758b8d59818c7237bd3cb2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\harness-contract-correction.json",
+      "bytes": 968,
+      "sha256": "a3cdb8e426cb31d441ddfe48f2d03aaea0a6cb401eaeccb06140187779d5b23f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\harness-public-error-correction.json",
+      "bytes": 567,
+      "sha256": "e4761c0ce2cd2b26531c1797a6535e60f02650c18a44ed53bc4c1336938b84e6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\aggregation-correction.json",
+      "bytes": 468,
+      "sha256": "c4c18be5124ca9698a07d6fd00139a40a681de068433dc37b1a30c23e7d5cce1"
+    }
+  ],
+  "rawManifest": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\raw-evidence-manifest.json",
+    "bytes": 46212,
+    "sha256": "4f29abc591e9bbbdb8b013d9f2ebf4b02ff3df488a1373926cc8b96a98a03de6"
+  },
+  "strictValidation": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-cache-integrity-20261023\\strict-validation.json",
+    "bytes": 929,
+    "sha256": "1bc8dad662f8b8769f38168a94527ab99c420571f2593b954ef3a0e03df6c424"
+  }
+}

@@ -3,12 +3,17 @@ param(
     [string]$AiRulesSource = "https://github.com/xmentosx/itl_ai_rules_1c.git",
     [string]$AiRulesRef = "",
     [string]$WorkingDirectory = "",
-    [switch]$KeepArtifacts
+    [switch]$KeepArtifacts,
+    [string]$TransitionProofPath = '',
+    [string]$E2EProjectRoot = '',
+    [string]$AgentTarget = '',
+    [string]$FreshProjectsRoot = 'C:\itlj'
 )
 
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'develop-e2e-qualification.ps1')
 $ErrorActionPreference = "Stop"
-$clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
+$clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi", "zcode", "mimocode")
 
 if ([string]::IsNullOrWhiteSpace($AiRulesRef)) {
     $lockPath = Join-Path (Split-Path -Parent $PSScriptRoot) "templates\dependency-lock.json"
@@ -22,7 +27,9 @@ function Get-ManifestEntries {
     param([object]$Manifest)
     if ($null -eq $Manifest.files) { return @() }
     return @($Manifest.files.PSObject.Properties | ForEach-Object {
-        [pscustomobject]@{ target = [string]$_.Name; source = [string]$_.Value.source; owners = @($_.Value.owners); scope = [string]$_.Value.scope }
+        $scope = if ($_.Value.PSObject.Properties['scope']) { [string]$_.Value.scope } else { '' }
+        $owners = if ($_.Value.PSObject.Properties['owners']) { @($_.Value.owners) } else { @() }
+        [pscustomobject]@{ target = [string]$_.Name; source = [string]$_.Value.source; owners = $owners; scope = $scope }
     })
 }
 
@@ -40,9 +47,36 @@ function Assert-OpenSpecBundle {
         # maps command skills into .agents/skills). The installer manifest is
         # the authoritative source-to-target mapping.
         $matches = @($entries | Where-Object { $_.source.Replace('\', '/') -eq $source })
-        if ($matches.Count -eq 0 -or @($matches | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ProjectRoot $_.target) -PathType Leaf) }).Count -gt 0) { $missing += $relative }
+        if ($matches.Count -eq 0 -or @($matches | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ProjectRoot $_.target) -PathType Leaf) }).Count -gt 0) { $missing += $relative; continue }
+        foreach ($match in $matches) {
+            if ($Tool -eq 'codex' -and $match.target -notlike '.agents/skills/*/*') {
+                throw "Codex OpenSpec bundle must use the canonical .agents/skills directory: $($match.target)"
+            }
+            $installed = Join-Path $ProjectRoot $match.target
+            if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash) {
+                throw "OpenSpec bundle for $Tool contains stale or altered phase bytes: $($match.target)"
+            }
+        }
     }
     if ($missing.Count -gt 0) { throw "OpenSpec bundle for $Tool is incomplete: $($missing -join ', ')" }
+    $bundleVersionProperty = $Manifest.integrations.openspec.PSObject.Properties['artifactsBundleVersion']
+    if ($Tool -eq 'codex' -and $null -ne $bundleVersionProperty -and [string]$bundleVersionProperty.Value -eq '1.13.1') {
+        $legacy = @($entries | Where-Object {
+            $_.source.Replace('\','/') -like 'content/openspec-bundle/codex/*' -and
+            $_.target.Replace('\','/') -match '^\.(?:codex/skills/(?:openspec-|opsx-)|agents/skills/opsx-)'
+        } | ForEach-Object { $_.target })
+        foreach ($phase in @('explore','propose','apply-change','archive-change','update-change','sync-specs')) {
+            $relative = ".codex/skills/openspec-$phase/SKILL.md"
+            if (Test-Path -LiteralPath (Join-Path $ProjectRoot $relative) -PathType Leaf) { $legacy += $relative }
+        }
+        foreach ($phase in @('explore','propose','apply','archive','update','sync')) {
+            foreach ($directory in @('.codex/skills','.agents/skills')) {
+                $relative = "$directory/opsx-$phase/SKILL.md"
+                if (Test-Path -LiteralPath (Join-Path $ProjectRoot $relative) -PathType Leaf) { $legacy += $relative }
+            }
+        }
+        if ($legacy.Count -gt 0) { throw "Codex OpenSpec 1.13.1 retains retired aliases: $(@($legacy | Sort-Object -Unique) -join ', ')" }
+    }
 }
 
 function Assert-WorkflowExtensionTools {
@@ -100,6 +134,22 @@ function Assert-CodexPromptSnapshotUnchanged {
     foreach ($path in @($Before.Keys)) { if (-not $After.Contains($path) -or $After[$path] -ne $Before[$path]) { throw "Compatibility check changed user-scope Codex prompt: $path" } }
 }
 
+function Assert-InstalledMemoryRoute {
+    param([string]$RulesRoot, [string]$ProjectRoot, [string]$Client)
+    $expected = (Get-Content -LiteralPath (Join-Path $RulesRoot 'memory.md') -Raw -Encoding UTF8).Replace("`r`n", "`n")
+    $installed = (Get-Content -LiteralPath (Join-Path $ProjectRoot 'memory.md') -Raw -Encoding UTF8).Replace("`r`n", "`n")
+    if ($installed -cne $expected) { throw "Installed memory route differs from the exact fork source for $Client" }
+    # Global templates are shared. The old project-isolated templates claim was
+    # incorrect; scoped Cognee requires explicit qualification and private pending.
+    foreach ($clause in @('managed ITL project', '\.agent-1c/project\.json',
+        'project-root file under all four strict criteria',
+        'Do not route\s+project facts to Cognee or OpenViking without a separately qualified\s+project-scoped integration',
+        'scoped-cognee-memory-v1', 'private pending outside Git/reset',
+        'global templates memory is\s+shared cross-project knowledge', 'Outside managed ITL projects')) {
+        if ($installed -notmatch $clause) { throw "Installed memory route does not preserve the managed ITL project boundary for ${Client}: $clause" }
+    }
+}
+
 function Get-ProjectFileDigest {
     param([string]$Root)
     $lines = @(Get-ChildItem -LiteralPath $Root -Recurse -File -Force | Sort-Object FullName | ForEach-Object {
@@ -112,13 +162,28 @@ function Get-ProjectFileDigest {
 }
 
 $workRoot = if ($WorkingDirectory) { [IO.Path]::GetFullPath($WorkingDirectory) } else { Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-rules-compat-" + [guid]::NewGuid().ToString("N")) }
+$createdWorkRoot = $false
 try {
-    New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
-    $rulesRoot = if (Test-Path -LiteralPath $AiRulesSource -PathType Container) { (Resolve-Path -LiteralPath $AiRulesSource).Path } else {
-        $clone = Join-Path $workRoot "ai_rules_1c"
-        & git clone --depth 1 --branch $AiRulesRef --single-branch $AiRulesSource $clone
+    if (Test-Path -LiteralPath $workRoot) { throw "Compatibility work directory already exists: $workRoot" }
+    New-Item -ItemType Directory -Path $workRoot | Out-Null
+    $createdWorkRoot = $true
+    $rulesRoot = Join-Path $workRoot "ai_rules_1c"
+    if (Test-Path -LiteralPath $AiRulesSource -PathType Container) {
+        # A local development checkout may contain ignored node_modules or gate output.
+        # Install from an exact Git clone, as publication would, not from those live files.
+        & git clone --quiet --no-hardlinks $AiRulesSource $rulesRoot
+        if ($LASTEXITCODE -ne 0) { throw "Failed to clone local ai_rules_1c source: $AiRulesSource" }
+        & git -C $rulesRoot checkout --quiet --detach $AiRulesRef
+        if ($LASTEXITCODE -ne 0) { throw "Failed to select ai_rules_1c ref '$AiRulesRef' in the clean clone." }
+    } else {
+        & git clone --depth 1 --branch $AiRulesRef --single-branch $AiRulesSource $rulesRoot
         if ($LASTEXITCODE -ne 0) { throw "Failed to clone ai_rules_1c from $AiRulesSource" }
-        $clone
+    }
+    $requestedCommit = ([string](& git -C $rulesRoot rev-parse "$AiRulesRef^{commit}" 2>$null)).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $requestedCommit) { throw "ai_rules_1c reference cannot be resolved in the selected checkout: $AiRulesRef" }
+    $actualCommit = ([string](& git -C $rulesRoot rev-parse HEAD 2>$null)).Trim()
+    if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $requestedCommit) {
+        throw "ai_rules_1c compatibility requires exact checkout HEAD '$requestedCommit', got '$actualCommit'. Select the requested ref in an isolated checkout before retrying."
     }
     $installScript = Join-Path $rulesRoot "install.ps1"
     if (-not (Test-Path -LiteralPath $installScript -PathType Leaf)) { throw "ai_rules_1c install.ps1 was not found: $installScript" }
@@ -127,6 +192,12 @@ try {
     $workflowHelper = Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
     if (-not (Test-Path -LiteralPath $workflowHelper -PathType Leaf)) { throw "Workflow helper was not found: $workflowHelper" }
     $promptBefore = Get-CodexPromptSnapshot -RulesRoot $rulesRoot
+    $transitionRows=@(foreach($request in @(Get-AiRulesTransitionRequests -WorkflowRoot (Split-Path -Parent $PSScriptRoot) -RulesRoot $rulesRoot -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget -FreshProjectsRoot $FreshProjectsRoot)) {
+        $oldRoot=Join-Path $workRoot ('from-'+$request.bridge.fromCommit)
+        [void](Invoke-RepositoryGit $rulesRoot @('clone','--quiet','--no-hardlinks','--no-checkout',$rulesRoot,$oldRoot))
+        [void](Invoke-RepositoryGit $oldRoot @('checkout','--quiet','--detach',$request.bridge.fromCommit))
+        [pscustomobject]@{bridge=$request.bridge;requiredClients=$request.clients;oldRoot=$oldRoot;clients=@()}
+    })
 
     foreach ($client in $clients) {
         $projectRoot = Join-Path $workRoot "project-$client"
@@ -148,6 +219,7 @@ try {
         $manifest = Get-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([string]$manifest.protocol -ne "1.1") { throw "ai_rules_1c manifest protocol must be 1.1 for $client" }
         if (@($manifest.tools).Count -ne 1 -or [string]$manifest.tools[0] -ne $client) { throw "Exact-one-client manifest failed for $client" }
+        Assert-InstalledMemoryRoute -RulesRoot $rulesRoot -ProjectRoot $projectRoot -Client $client
         Assert-OpenSpecBundle -RulesRoot $rulesRoot -ProjectRoot $projectRoot -Manifest $manifest -Tool $client
         Assert-WorkflowExtensionTools -HelperPath $workflowHelper -ProjectRoot $projectRoot -Manifest $manifest -Client $client
         foreach ($itlSkill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-remote-runner", "itl-remote-agent", "itl-performance")) {
@@ -156,7 +228,11 @@ try {
         if ((Get-FileHash -LiteralPath (Join-Path $projectRoot "LLM-RULES.md") -Algorithm SHA256).Hash -ne $llmHash) { throw "LLM-RULES.md changed during init for $client" }
         if ($client -eq "kilocode") {
             $kilo = Get-Content -LiteralPath (Join-Path $projectRoot ".kilo\kilo.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ((@($kilo.instructions) -join ',') -ne 'docs/custom.md,USER-RULES.md' -or [string]$kilo.permission.bash -ne 'ask') { throw "Kilo shared config merge failed" }
+            if ((@($kilo.instructions) -join ',') -ne 'docs/custom.md' -or [string]$kilo.permission.bash -ne 'ask') { throw "Kilo shared config preservation failed" }
+        }
+        foreach($transition in @($transitionRows|Where-Object {$client -in $_.requiredClients})) {
+            $transitionProject=Join-Path $workRoot ('transition-'+$transition.bridge.fromCommit+'-'+$client)
+            $transition.clients+=Invoke-AiRulesTransitionCheck -RulesRoot $rulesRoot -OldRoot $transition.oldRoot -ProjectRoot $transitionProject -CanonicalRoot $projectRoot -Client $client -Bridge $transition.bridge
         }
         $beforeUpdate = Get-ProjectFileDigest -Root $projectRoot
         & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript update -ProjectRoot $projectRoot -Source $rulesRoot -McpMode delegated -NonInteractive -AssumeYes
@@ -167,8 +243,25 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "ai_rules_1c doctor failed for $client with exit code $LASTEXITCODE" }
     }
     Assert-CodexPromptSnapshotUnchanged -Before $promptBefore -After (Get-CodexPromptSnapshot -RulesRoot $rulesRoot)
-    Write-Host "ai_rules_1c compatibility passed for all ten supported clients. Protocol 1.1; McpMode delegated."
+    if($TransitionProofPath) {
+        $receipt=[ordered]@{schemaVersion=1;kind='itl-fork-transition-proof';status='passed';commit=$actualCommit;
+            tree=(Invoke-RepositoryGit $rulesRoot @('rev-parse','HEAD^{tree}')).stdout.Trim();
+            policySha256=Get-DevelopE2EInputFileSha256 (Join-Path $PSScriptRoot 'ai-rules-native-inputs.ps1') 'scripts/ai-rules-native-inputs.ps1';
+            transitions=@($transitionRows|ForEach-Object {[ordered]@{bridge=$_.bridge;clients=@($_.clients)}})}
+        $target=[IO.Path]::GetFullPath($TransitionProofPath);[void][IO.Directory]::CreateDirectory((Split-Path -Parent $target))
+        $temporary=$target+'.'+[guid]::NewGuid().ToString('N')+'.tmp'
+        [IO.File]::WriteAllText($temporary,($receipt|ConvertTo-Json -Depth 16),[Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporary -Destination $target -Force
+    }
+    Write-Host "ai_rules_1c compatibility passed for all twelve supported clients. Protocol 1.1; McpMode delegated."
 } finally {
-    if (-not $KeepArtifacts -and (Test-Path -LiteralPath $workRoot)) { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    elseif ($KeepArtifacts) { Write-Host "Compatibility artifacts retained: $workRoot" }
+    if ($createdWorkRoot -and (Test-Path -LiteralPath $workRoot -PathType Container)) {
+        $actual = [IO.Path]::GetFullPath((Get-Item -LiteralPath $workRoot -Force).FullName)
+        if (-not [string]::Equals($actual, $workRoot, [StringComparison]::OrdinalIgnoreCase) -or
+            ((Get-Item -LiteralPath $workRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Refusing recursive cleanup of changed compatibility work directory: $workRoot"
+        }
+        if (-not $KeepArtifacts) { Remove-Item -LiteralPath $workRoot -Recurse -Force }
+        else { Write-Host "Compatibility artifacts retained: $workRoot" }
+    }
 }

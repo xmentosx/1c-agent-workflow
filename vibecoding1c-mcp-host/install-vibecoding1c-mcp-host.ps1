@@ -1,12 +1,18 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "publish", "proxy", "reconcile", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "bookstack-direct", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "stable-preflight", "stable-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "sppr-prepare", "sppr-collector-install", "sppr-collector-uninstall", "dump-config", "storage-status", "storage-plan", "storage-run")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
     [string]$ConfigId = "",
     [string]$ServerId = "",
-    [switch]$DryRun
+    [string]$ReleaseManifest = "",
+    [switch]$ForwardOnly,
+    [switch]$NativeEndpoint,
+    [ValidateRange(0, 86400)][int]$IndexReadyTimeoutSeconds = 0,
+    [switch]$DryRun,
+    [switch]$RecreateBookStack,
+    [switch]$StorageOnlineOnly
 )
 
 Set-StrictMode -Version Latest
@@ -17,8 +23,18 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 $OutputEncoding = $script:Utf8NoBom
 $script:PythonExecutable = ""
 $script:HostInstallerPath = [System.IO.Path]::GetFullPath($PSCommandPath)
+if (($ForwardOnly -or $IndexReadyTimeoutSeconds) -and ($Action -ne "stable-cutover" -or -not $ReleaseManifest)) {
+    throw "ForwardOnly and IndexReadyTimeoutSeconds require stable-cutover with a versioned ReleaseManifest."
+}
+if ($NativeEndpoint -and ($Action -notin @("stable-cutover", "stable-preflight") -or -not $ReleaseManifest -or ($Action -eq "stable-cutover" -and -not $ForwardOnly))) {
+    throw "NativeEndpoint requires stable-preflight or ForwardOnly stable-cutover with a versioned ReleaseManifest."
+}
 $script:WatchdogDescription = "Managed by 1c-agent-workflow standalone MCP host watchdog."
 $script:NightlyIndexDescription = "Managed by 1c-agent-workflow standalone MCP host nightly configuration indexing."
+if ($RecreateBookStack -and ($Action -ne "start" -or $ServerId -ne "bookstack" -or $ConfigId)) {
+    throw "RecreateBookStack requires -Action start -ServerId bookstack without ConfigId; it preserves the prepared cache."
+}
+if ($StorageOnlineOnly -and $Action -ne 'storage-run') { throw 'StorageOnlineOnly requires storage-run.' }
 $script:WatchdogTaskPath = "\"
 
 function Read-Text {
@@ -40,7 +56,10 @@ function Write-Text {
 
 function Read-JsonFile {
     param([string]$Path)
-    return (Read-Text -Path $Path | ConvertFrom-Json)
+    if ((Microsoft.PowerShell.Core\Get-Command ConvertFrom-Json -CommandType Cmdlet).Parameters.ContainsKey('DateKind')) {
+        return (Read-Text -Path $Path | Microsoft.PowerShell.Utility\ConvertFrom-Json -DateKind String)
+    }
+    return (Read-Text -Path $Path | Microsoft.PowerShell.Utility\ConvertFrom-Json)
 }
 
 function Write-JsonFile {
@@ -314,7 +333,9 @@ function Enter-McpHostMaintenanceLock {
             $stream.SetLength(0)
             $stream.Write($payload, 0, $payload.Length)
             $stream.Flush()
-            return [pscustomobject]@{ acquired = $true; stream = $stream; path = $lockPath }
+            $lease=[pscustomobject]@{ acquired = $true; stream = $stream; path = $lockPath }
+            $script:McpHostMaintenanceLease=$lease
+            return $lease
         } catch [System.IO.IOException] {
             if ((Get-Date) -ge $deadline) {
                 return [pscustomobject]@{ acquired = $false; stream = $null; path = $lockPath }
@@ -412,7 +433,20 @@ function Write-HostState {
     $hash = Convert-ToHash -Object $State
     $hash["schemaVersion"] = 1
     $hash["updatedAt"] = (Get-Date).ToString("o")
-    Write-JsonFile -Path (Get-HostStatePath -Config $Config) -Value $hash
+    $path = Get-HostStatePath -Config $Config
+    $temporary = "$path.$([guid]::NewGuid().ToString('N')).tmp"
+    $backup = "$path.$([guid]::NewGuid().ToString('N')).bak"
+    try {
+        Write-JsonFile -Path $temporary -Value $hash
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            [System.IO.File]::Replace($temporary, $path, $backup)
+        } else {
+            [System.IO.File]::Move($temporary, $path)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) { Remove-Item -LiteralPath $temporary -Force }
+        if (Test-Path -LiteralPath $backup -PathType Leaf) { Remove-Item -LiteralPath $backup -Force }
+    }
 }
 
 function Invoke-DockerCommand {
@@ -618,6 +652,39 @@ function Get-DockerDesktopRuntimeStatus {
     return "unknown"
 }
 
+function Get-RunningMcpHostWslDistributions {
+    # WSL emits UTF-16, independently of the host's UTF-8 console transport.
+    $running = Invoke-ProcessWithTimeout -FilePath "wsl.exe" -Arguments @("--list", "--running", "--quiet") -NativeOutputEncoding ([Text.Encoding]::Unicode) -TimeoutSec 15 -Description "identify Docker-owned WSL backend"
+    if ($running.exitCode -ne 0) { throw "Could not identify running WSL distributions; refusing VM shutdown." }
+    return @($running.lines | ForEach-Object { $_.Trim([char]0, [char]32) } | Where-Object { $_ })
+}
+
+function Repair-DockerDesktopWslBackend {
+    param([object]$Settings)
+
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return $false }
+    $running = @(Get-RunningMcpHostWslDistributions)
+    if ($running.Count -ne 1 -or $running[0] -ne "docker-desktop") {
+        Write-Warning "WSL VM recovery requires docker-desktop to be the only running distribution; retain other WSL work and resolve it before repeating watchdog-run."
+        return $false
+    }
+    Write-Warning "Desktop restart did not restore Engine; recovering the WSL VM used exclusively by docker-desktop."
+    try {
+        Invoke-DockerCommandChecked -Arguments @("desktop", "stop", "--force", "--timeout", [string]$Settings.dockerDesktopCommandTimeoutSeconds) -TimeoutSec ($Settings.dockerDesktopCommandTimeoutSeconds + 30) -Description "stop unresponsive Desktop before Docker-owned WSL recovery"
+    } catch { Write-Warning "Desktop stop did not complete; Engine remains unavailable. $($_.Exception.Message)" }
+    # Desktop stop may leave no running distribution. Recheck immediately before
+    # shutdown so a newly observed independent distribution vetoes the reset.
+    if (@(Get-RunningMcpHostWslDistributions | Where-Object { $_ -ne "docker-desktop" }).Count -gt 0) {
+        throw "Another WSL distribution started before VM recovery; VM shutdown was cancelled. Retain that work and repeat watchdog-run after it finishes."
+    }
+    $terminated = Invoke-ProcessWithTimeout -FilePath "wsl.exe" -Arguments @("--shutdown") -NativeOutputEncoding ([Text.Encoding]::Unicode) -TimeoutSec 45 -Description "recover WSL VM used exclusively by Docker"
+    if ($terminated.exitCode -ne 0) { throw "Docker-only WSL VM shutdown failed; Engine recovery is not verified." }
+    try {
+        Invoke-DockerCommandChecked -Arguments @("desktop", "start", "--timeout", [string]$Settings.dockerDesktopCommandTimeoutSeconds) -TimeoutSec ($Settings.dockerDesktopCommandTimeoutSeconds + 30) -Description "start Desktop after Docker-owned WSL recovery"
+    } catch { Write-Warning "Desktop start did not complete; checking Engine readiness. $($_.Exception.Message)" }
+    return (Wait-DockerDaemonAvailable -TimeoutSec $Settings.dockerDesktopRecoveryTimeoutSeconds -PollSeconds $Settings.dockerDesktopPollSeconds)
+}
+
 function Repair-DockerDesktopAvailability {
     param([object]$Settings)
 
@@ -631,12 +698,14 @@ function Repair-DockerDesktopAvailability {
 
     $desktopStatus = Get-DockerDesktopRuntimeStatus
     if ([string]$initialProbe.failureKind -eq "probe-timeout" -and $desktopStatus -eq "running") {
-        Write-Warning "Docker Engine probe timed out while Docker Desktop reports running; retrying the probe without restarting Docker Desktop. $($initialProbe.message)"
-        $retryProbe = Get-DockerDaemonProbe
-        if ($retryProbe.available) { return "probe-recovered" }
-        throw "Docker Engine probe timed out while Docker Desktop reports running; refusing to restart a reported-running Docker Desktop instance. Initial probe: $($initialProbe.message) Retry: $($retryProbe.message)"
+        Write-Warning "Docker Engine probe timed out while Docker Desktop reports running; allowing 30 seconds for transient recovery before a bounded restart. $($initialProbe.message)"
+        if (Wait-DockerDaemonAvailable -TimeoutSec 30 -PollSeconds $Settings.dockerDesktopPollSeconds) {
+            return "probe-recovered"
+        }
+        Write-Warning "Docker Engine remains unavailable after the grace period; Docker Desktop running status does not prove Engine availability."
     }
     $desktopAction = $(if ($desktopStatus -eq "stopped") { "start" } else { "restart" })
+    Register-McpHostDockerRecoveryAttempt -Settings $Settings -DesktopAction $desktopAction
     Write-Host "Docker Engine is unavailable; running bounded Docker Desktop $desktopAction (reported status: $desktopStatus)."
     $commandFailure = ""
     try {
@@ -651,6 +720,10 @@ function Repair-DockerDesktopAvailability {
     if (Wait-DockerDaemonAvailable -TimeoutSec $Settings.dockerDesktopRecoveryTimeoutSeconds -PollSeconds $Settings.dockerDesktopPollSeconds) {
         Write-Host "Docker Desktop recovery completed; Docker Engine ping is available."
         return $desktopAction
+    }
+    if (Repair-DockerDesktopWslBackend -Settings $Settings) {
+        Write-Host "Docker Desktop recovery completed after resetting its WSL backend; Docker Engine ping is available."
+        return "restart-wsl"
     }
 
     $logTail = ""
@@ -726,32 +799,45 @@ function Invoke-ProcessWithTimeout {
         [string]$FilePath,
         [string[]]$Arguments,
         [int]$TimeoutSec = 300,
-        [string]$Description = ""
+        [string]$Description = "",
+        [Text.Encoding]$NativeOutputEncoding = [Text.Encoding]::UTF8
     )
-    $stdoutPath = [System.IO.Path]::GetTempFileName()
-    $stderrPath = [System.IO.Path]::GetTempFileName()
-    $process = $null
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = Join-HostProcessArguments -Arguments $Arguments
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.StandardOutputEncoding = $NativeOutputEncoding
+    $startInfo.StandardErrorEncoding = $NativeOutputEncoding
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
     try {
-        $process = Start-Process -FilePath $FilePath `
-            -ArgumentList (Join-HostProcessArguments -Arguments $Arguments) `
-            -NoNewWindow `
-            -PassThru `
-            -RedirectStandardOutput $stdoutPath `
-            -RedirectStandardError $stderrPath
+        if (-not $process.Start()) { throw "Could not start process: $FilePath" }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($TimeoutSec * 1000)) {
             Stop-HostProcessTree -Process $process
             $commandText = "$FilePath $($Arguments -join ' ')"
             $descriptionText = $(if ($Description) { "$Description. " } else { "" })
             throw "${descriptionText}Command timed out after $TimeoutSec seconds: $commandText"
         }
-        $stdout = @(Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue | ForEach-Object { [string]$_ })
-        $stderr = @(Get-Content -LiteralPath $stderrPath -ErrorAction SilentlyContinue | ForEach-Object { [string]$_ })
+        $lines = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($output in @($stdoutTask.GetAwaiter().GetResult(), $stderrTask.GetAwaiter().GetResult())) {
+            $reader = [System.IO.StringReader]::new([string]$output)
+            try {
+                while ($null -ne ($line = $reader.ReadLine())) { $lines.Add($line) }
+            } finally {
+                $reader.Dispose()
+            }
+        }
         return [pscustomobject]@{
             exitCode = [int]$process.ExitCode
-            lines = @($stdout + $stderr)
+            lines = @($lines.ToArray())
         }
     } finally {
-        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        $process.Dispose()
     }
 }
 
@@ -873,6 +959,10 @@ function Get-CodeCheckerSourceRoot {
     return (Join-Path $PSScriptRoot "codechecker-overlay")
 }
 
+function Get-CodeCheckerBetaSourceRoot {
+    return (Join-Path $PSScriptRoot "codechecker-beta-overlay")
+}
+
 function Get-BookStackProductDocsSourceRoot {
     return (Join-Path $PSScriptRoot "bookstack-product-docs-mcp")
 }
@@ -881,11 +971,30 @@ function Get-MantisTicketSourceRoot {
     return (Join-Path $PSScriptRoot "mantis-ticket-mcp")
 }
 
+function Test-ModernHostServer {
+    param([object]$Server)
+    return ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta" -or
+        -not [string]::IsNullOrWhiteSpace([string](Get-ObjectValue -Object $Server -Name "manifestPath" -Default "")))
+}
+
 function Ensure-ServerDockerImageAvailable {
     param(
         [object]$Server,
         [string]$Image
     )
+    if ((Test-CodeCheckerServer -Server $Server) -and (Test-ModernHostServer -Server $Server)) {
+        $baseImage = [string](Get-ObjectValue -Object $Server -Name "upstreamImage" -Default "")
+        if ($baseImage -notmatch '^comol/1c-code-checker@sha256:[a-f0-9]{64}$') { throw "Beta CodeChecker requires a pinned upstream image." }
+        $sourceRoot = Get-CodeCheckerBetaSourceRoot
+        if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot "Dockerfile") -PathType Leaf)) {
+            throw "Beta CodeChecker overlay Dockerfile was not found: $sourceRoot"
+        }
+        Ensure-DockerImageAvailable -Image $baseImage
+        Write-Host "Building beta CodeChecker compatibility image: $Image"
+        # The host-root context allowlists only this patch and the shared telemetry owner.
+        Invoke-DockerCommandChecked -Arguments @("build", "--build-arg", "BASE_IMAGE=$baseImage", "-f", (Join-Path $sourceRoot "Dockerfile"), "-t", $Image, $PSScriptRoot) -TimeoutSec 900 -Description "docker build beta CodeChecker compatibility image"
+        return
+    }
     if (Test-CodeCheckerServer -Server $Server) {
         $sourceRoot = Get-CodeCheckerSourceRoot
         if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot "Dockerfile") -PathType Leaf)) {
@@ -893,6 +1002,11 @@ function Ensure-ServerDockerImageAvailable {
         }
         Write-Host "Building codechecker overlay image: $Image"
         Invoke-DockerCommandChecked -Arguments @("build", "-t", $Image, $sourceRoot) -TimeoutSec 900 -Description "docker build codechecker overlay"
+        return
+    }
+    if ([string](Get-ObjectValue -Object $Server -Name 'id' -Default '') -eq 'sppr') {
+        $sourceRoot = Join-Path $PSScriptRoot 'sppr-mcp'
+        Invoke-DockerCommandChecked -Arguments @('build', '-t', $Image, $sourceRoot) -TimeoutSec 900 -Description 'docker build SPPR MCP'
         return
     }
     if (Test-BookStackProductDocsServer -Server $Server) {
@@ -923,12 +1037,80 @@ function Ensure-Distribution {
 }
 
 function Read-DistributionManifest {
-    param([object]$Config)
-    $path = Join-Path (Get-DistributionRoot -Config $Config) "vibecoding1c-mcp.manifest.json"
+    param(
+        [object]$Config,
+        [ValidateSet("stable", "beta")][string]$Channel = "stable",
+        [string]$ManifestPath = ""
+    )
+    $relativePath = $(if ($Channel -eq "beta") { "beta/vibecoding1c-mcp.manifest.json" } else { "vibecoding1c-mcp.manifest.json" })
+    if ($ManifestPath) {
+        if ($Channel -ne "stable" -or $ManifestPath -notmatch '^releases/[a-z0-9][a-z0-9-]*/vibecoding1c-mcp\.manifest\.json$') {
+            throw "A stable release requires a versioned manifest under releases/<release>/vibecoding1c-mcp.manifest.json."
+        }
+        $relativePath = $ManifestPath
+    }
+    $path = Join-Path (Get-DistributionRoot -Config $Config) $relativePath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Distribution manifest was not found: $path"
     }
-    return (Add-HostVirtualServersToManifest -Manifest (Read-JsonFile -Path $path))
+    $manifest = Read-JsonFile -Path $path
+    if ($ManifestPath) {
+        foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
+            if ([string](Get-ObjectValue -Object $server -Name "channel" -Default "") -ne "stable") { throw "Versioned release contains a non-stable server." }
+            $server | Add-Member -NotePropertyName manifestPath -NotePropertyValue $ManifestPath -Force
+        }
+    }
+    return (Add-HostVirtualServersToManifest -Manifest $manifest -Config $Config)
+}
+
+function Get-TrackedHostServerForIdentity {
+    param(
+        [object]$Config,
+        [string]$ServerId,
+        [string]$Scope,
+        [string]$ConfigId = ""
+    )
+    $state = Read-HostState -Config $Config
+    $matches = @(As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @()) | Where-Object {
+        [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $ServerId -and
+        [string](Get-ObjectValue -Object $_ -Name "scope" -Default "") -eq $Scope -and
+        [string](Get-ObjectValue -Object $_ -Name "configId" -Default "") -eq $ConfigId
+    })
+    if ($matches.Count -gt 1) {
+        throw "Host state contains duplicate '$ServerId' runtimes for configId '$ConfigId'."
+    }
+    if ($matches.Count -eq 0) { return $null }
+    return $matches[0]
+}
+
+function Get-SelectedHostServerDefinition {
+    param(
+        [object]$Config,
+        [object]$StableServer,
+        [string]$ConfigId = ""
+    )
+    $id = [string](Get-ObjectValue -Object $StableServer -Name "id" -Default "")
+    $scope = Get-ServerScope -Server $StableServer
+    $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId $id -Scope $scope -ConfigId $ConfigId
+    $channel = [string](Get-ObjectValue -Object $tracked -Name "channel" -Default "stable")
+    $manifestPath = [string](Get-ObjectValue -Object $tracked -Name "manifestPath" -Default "")
+    if ($channel -eq "stable" -and -not $manifestPath) { return $StableServer }
+    if ($channel -notin @("stable", "beta")) { throw "Unknown tracked channel '$channel' for '$id'." }
+    $manifest = Read-DistributionManifest -Config $Config -Channel $channel -ManifestPath $manifestPath
+    $matches = @(As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @()) | Where-Object {
+        [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $id -and
+        (Get-ServerScope -Server $_) -eq $scope
+    })
+    if ($matches.Count -ne 1) { throw "Beta distribution must define exactly one '$id' server for scope '$scope'." }
+    $selected = $matches[0]
+    if ([string](Get-ObjectValue -Object $selected -Name "mcpNameTemplate" -Default "") -ne [string](Get-ObjectValue -Object $StableServer -Name "mcpNameTemplate" -Default "")) {
+        throw "Beta server '$id' would change the public MCP name."
+    }
+    $profile = Get-GlobalEmbeddingIndexSettings -Config $Config -Server $selected
+    if ($null -ne $profile -and [string](Get-ObjectValue -Object $tracked -Name "indexGeneration" -Default "") -eq [string]$profile.indexGeneration) {
+        $selected = Add-GlobalEmbeddingIndexProfile -Config $Config -Server $selected
+    }
+    return $selected
 }
 
 function Get-BookStackProductDocsServerDefinition {
@@ -943,6 +1125,7 @@ function Get-BookStackProductDocsServerDefinition {
         containerNameTemplate = "itl-bookstack-product-docs"
         env = @(
             [ordered]@{ name = "BOOKSTACK_BASE_URL"; from = "BOOKSTACK_BASE_URL"; required = $true },
+            [ordered]@{ name = "BOOKSTACK_VIEWS_JSON"; from = "BOOKSTACK_VIEWS_JSON"; default = "{}"; required = $false },
             [ordered]@{ name = "BOOKSTACK_TOKEN_ID"; from = "BOOKSTACK_TOKEN_ID"; required = $true },
             [ordered]@{ name = "BOOKSTACK_TOKEN_SECRET"; from = "BOOKSTACK_TOKEN_SECRET"; required = $true },
             [ordered]@{ name = "BOOKSTACK_CACHE_PATH"; value = "/data/bookstack-cache.sqlite"; required = $false },
@@ -950,7 +1133,11 @@ function Get-BookStackProductDocsServerDefinition {
             [ordered]@{ name = "BOOKSTACK_REINDEX_INTERVAL_HOURS"; from = "BOOKSTACK_REINDEX_INTERVAL_HOURS"; default = "24"; required = $false },
             [ordered]@{ name = "BOOKSTACK_INDEX_ON_STARTUP"; from = "BOOKSTACK_INDEX_ON_STARTUP"; default = "true"; required = $false },
             [ordered]@{ name = "BOOKSTACK_MAX_INDEX_PAGES"; from = "BOOKSTACK_MAX_INDEX_PAGES"; required = $false },
-            [ordered]@{ name = "BOOKSTACK_SEMANTIC_MIN_SCORE"; from = "BOOKSTACK_SEMANTIC_MIN_SCORE"; default = "0.82"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_SEMANTIC_MIN_SCORE"; from = "BOOKSTACK_SEMANTIC_MIN_SCORE"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_CHUNK_TOKENS"; from = "BOOKSTACK_CHUNK_TOKENS"; default = "1024"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_CHUNK_OVERLAP"; from = "BOOKSTACK_CHUNK_OVERLAP"; default = "64"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_EMBEDDING_PROVIDER_ORDER"; from = "BOOKSTACK_EMBEDDING_PROVIDER_ORDER"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS"; from = "BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS"; default = "86400"; required = $false },
             [ordered]@{ name = "RESET_DATABASE"; from = "BOOKSTACK_RESET_DATABASE"; default = "false"; required = $false },
             [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_BASE"; embedding = "base"; required = $false },
             [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_KEY"; embedding = "key"; required = $false },
@@ -960,11 +1147,12 @@ function Get-BookStackProductDocsServerDefinition {
 }
 
 function Get-MantisTicketServerDefinition {
+    param([object]$Config = $null)
     return [pscustomobject][ordered]@{
         id = "mantis"
         title = "Mantis ticket context"
         scope = "global"
-        image = "itl/mantis-ticket-mcp:local"
+        image = [string](Get-ObjectValue (Get-ObjectValue $Config 'mantisTicketServer' $null) 'image' 'itl/mantis-ticket-mcp:local')
         internalPort = 8000
         mcpNameTemplate = "itl-mantis-ticket-mcp"
         containerNameTemplate = "itl-mantis-ticket-mcp"
@@ -972,6 +1160,17 @@ function Get-MantisTicketServerDefinition {
             [ordered]@{ name = "MANTIS_BASE_URL"; from = "MANTIS_BASE_URL"; required = $true },
             [ordered]@{ name = "MANTIS_API_TOKEN"; from = "MANTIS_API_TOKEN"; required = $true },
             [ordered]@{ name = "MANTIS_ATTACHMENT_CACHE_PATH"; value = "/data/attachments"; required = $false },
+            [ordered]@{ name = "MANTIS_STATE_PATH"; value = "/data/mantis"; required = $false },
+            [ordered]@{ name = "MANTIS_INDEX_ENABLED"; from = "MANTIS_INDEX_ENABLED"; default = "false"; required = $false },
+            [ordered]@{ name = "MANTIS_SYNC_INTERVAL_SECONDS"; from = "MANTIS_SYNC_INTERVAL_SECONDS"; default = "30"; required = $false },
+            [ordered]@{ name = "MANTIS_EMBEDDING_WORKERS"; from = "MANTIS_EMBEDDING_WORKERS"; default = "4"; required = $false },
+            [ordered]@{ name = "MANTIS_EMBEDDING_BATCH_SIZE"; from = "MANTIS_EMBEDDING_BATCH_SIZE"; default = "32"; required = $false },
+            [ordered]@{ name = "MANTIS_EMBEDDING_TIMEOUT_SECONDS"; from = "MANTIS_EMBEDDING_TIMEOUT_SECONDS"; default = "120"; required = $false },
+            [ordered]@{ name = "MANTIS_SYNC_PROJECT_IDS"; from = "MANTIS_SYNC_PROJECT_IDS"; default = ""; required = $false },
+            [ordered]@{ name = "MANTIS_MONTHLY_BUDGET_USD"; from = "MANTIS_MONTHLY_BUDGET_USD"; default = "5"; required = $false },
+            [ordered]@{ name = "MANTIS_WRITE_ENABLED"; from = "MANTIS_WRITE_ENABLED"; default = "false"; required = $false },
+            [ordered]@{ name = "MANTIS_ATTACHMENT_EXTRACT_ENABLED"; from = "MANTIS_ATTACHMENT_EXTRACT_ENABLED"; default = "false"; required = $false },
+            [ordered]@{ name = "MANTIS_OPENROUTER_API_KEY"; from = "MANTIS_OPENROUTER_API_KEY"; default = ""; required = $false },
             [ordered]@{ name = "MANTIS_TIMEOUT_SECONDS"; from = "MANTIS_TIMEOUT_SECONDS"; default = "20"; required = $false },
             [ordered]@{ name = "MANTIS_MAX_ATTACHMENT_BYTES"; from = "MANTIS_MAX_ATTACHMENT_BYTES"; default = "26214400"; required = $false },
             [ordered]@{ name = "MANTIS_MAX_INLINE_TEXT_CHARS"; from = "MANTIS_MAX_INLINE_TEXT_CHARS"; default = "16000"; required = $false },
@@ -982,7 +1181,7 @@ function Get-MantisTicketServerDefinition {
 }
 
 function Add-HostVirtualServersToManifest {
-    param([object]$Manifest)
+    param([object]$Manifest, [object]$Config = $null)
     $manifestHash = Convert-ToHash -Object $Manifest
     $servers = @(As-Array (Get-ObjectValue -Object $manifestHash -Name "servers" -Default @()))
     $hasBookStack = $false
@@ -994,13 +1193,18 @@ function Add-HostVirtualServersToManifest {
         }
         if ($id -eq "mantis") {
             $hasMantis = $true
+            $pinnedImage=[string](Get-ObjectValue (Get-ObjectValue $Config 'mantisTicketServer' $null) 'image' '')
+            if ($pinnedImage) { $server.image=$pinnedImage }
         }
     }
     if (-not $hasBookStack) {
         $servers += Get-BookStackProductDocsServerDefinition
     }
     if (-not $hasMantis) {
-        $servers += Get-MantisTicketServerDefinition
+        $servers += Get-MantisTicketServerDefinition -Config $Config
+    }
+    if (@($servers | Where-Object { [string](Get-ObjectValue -Object $_ -Name 'id' -Default '') -eq 'sppr' }).Count -eq 0) {
+        $servers += Get-SpprServerDefinition
     }
     $manifestHash["servers"] = $servers
     return [pscustomobject]$manifestHash
@@ -1152,10 +1356,46 @@ function Test-HostServerNeedsEmbedding {
 }
 
 function Get-HostEmbeddingSettings {
-    param([object]$Config)
+    param([object]$Config, [object]$Server = $null)
     $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
+    $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+    $settingsKey = switch ($serverId) {
+        "bookstack" { "bookStackProductDocsServer" }
+        "docs" { "helpSearchServer" }
+        "templates" { "templatesSearchServer" }
+        "ssl" { "sslSearchServer" }
+        default { "" }
+    }
+    $serverOverride = $null
+    if ($settingsKey) {
+        $serverSettings = Get-ObjectValue -Object $Config -Name $settingsKey -Default $null
+        $configuredGeneration = [string](Get-ObjectValue -Object $serverSettings -Name "indexGeneration" -Default "")
+        $selectedGeneration = [string](Get-ObjectValue -Object $Server -Name "indexGeneration" -Default "")
+        if ($serverId -in @("docs", "templates", "ssl") -and
+            $null -ne (Get-ObjectValue -Object $serverSettings -Name "embedding" -Default $null) -and -not $configuredGeneration) {
+            throw "$settingsKey.indexGeneration is required with a per-server embedding override; changing the accepted index in place is forbidden."
+        }
+        if (-not $configuredGeneration -or $selectedGeneration -eq $configuredGeneration) {
+            $serverOverride = Get-ObjectValue -Object $serverSettings -Name "embedding" -Default $null
+        }
+        if ($null -ne $serverOverride) { $embedding = $serverOverride }
+    }
+    if ($null -ne $serverOverride) {
+        $credentialFile = [string](Get-ObjectValue -Object $embedding -Name "credentialFile" -Default "")
+        if ($credentialFile) { $embedding = Read-JsonFile -Path $credentialFile }
+    }
+    $betaIndex = Get-BetaProjectIndexSettings -Config $Config -Server $Server
+    if ($null -ne $betaIndex) {
+        $embedding = Get-ObjectValue -Object $betaIndex -Name "embedding" -Default $null
+        if ($null -eq $embedding) { throw "betaProjectIndex.embedding is required for fresh beta indexes." }
+        $credentialFile = [string](Get-ObjectValue -Object $embedding -Name "credentialFile" -Default "")
+        if ($credentialFile) { $embedding = Read-JsonFile -Path $credentialFile }
+    }
     $apiBase = [string](Get-ObjectValue -Object $embedding -Name "apiBase" -Default "")
     $apiKey = [string](Get-ObjectValue -Object $embedding -Name "apiKey" -Default "")
+    if ($null -ne $serverOverride -and $apiBase -and -not $apiKey) {
+        throw "Server '$serverId' remote embedding requires its configured API key; no CPU fallback is allowed."
+    }
     $mode = $(if ([string]::IsNullOrWhiteSpace($apiKey)) { "cpu" } else { "openai" })
     $model = [string](Get-ObjectValue -Object $embedding -Name "model" -Default $(if ($mode -eq "cpu") { "intfloat/multilingual-e5-base" } else { "" }))
     if ([string]::IsNullOrWhiteSpace($model)) {
@@ -1164,12 +1404,55 @@ function Get-HostEmbeddingSettings {
     if ($mode -eq "openai" -and [string]::IsNullOrWhiteSpace($apiBase)) {
         throw "Standalone vibecoding1c MCP host embedding.apiBase is required when embedding.apiKey is set."
     }
+    if ($null -ne $betaIndex -and $mode -ne "openai") { throw "Fresh beta project indexes require explicit remote embedding credentials." }
     return [pscustomobject]@{
         mode = $mode
         apiBase = $apiBase.TrimEnd("/")
         apiKey = $apiKey
         model = $model
     }
+}
+
+function Get-GlobalEmbeddingIndexSettings {
+    param([object]$Config, [object]$Server)
+    $key = switch ([string](Get-ObjectValue -Object $Server -Name "id" -Default "")) {
+        "docs" { "helpSearchServer" }
+        "templates" { "templatesSearchServer" }
+        "ssl" { "sslSearchServer" }
+        default { "" }
+    }
+    if (-not $key) { return $null }
+    $settings = Get-ObjectValue -Object $Config -Name $key -Default $null
+    $generation = [string](Get-ObjectValue -Object $settings -Name "indexGeneration" -Default "")
+    if (-not $generation) { return $null }
+    if ($generation -notmatch '^[a-z0-9][a-z0-9-]{0,31}$') { throw "$key.indexGeneration must be a lowercase slug of at most 32 characters." }
+    if ($null -eq (Get-ObjectValue -Object $settings -Name "embedding" -Default $null)) { throw "$key.embedding is required with indexGeneration." }
+    return $settings
+}
+
+function Add-GlobalEmbeddingIndexProfile {
+    param([object]$Config, [object]$Server)
+    $settings = Get-GlobalEmbeddingIndexSettings -Config $Config -Server $Server
+    if ($null -eq $settings) { return $Server }
+    $generation = [string]$settings.indexGeneration
+    $copy = Convert-ToHash -Object $Server
+    $copy["indexGeneration"] = $generation
+    $copy["containerNameTemplate"] = [string]$Server.containerNameTemplate + "-$generation"
+    $indexPath = switch ([string]$Server.id) { docs { "/app/index" }; templates { "/app/chroma_db" }; ssl { "/app/zvec_db" } }
+    $volumes = @()
+    $found = 0
+    foreach ($entry in As-Array (Get-ObjectValue -Object $Server -Name "volumes" -Default @())) {
+        $volume = Convert-ToHash -Object $entry
+        if ([string]$volume.to -eq $indexPath) {
+            if ([string]$volume.from -ne "PATH_BASES" -or -not [string]$volume.subdir) { throw "Global '$($Server.id)' has no versioned index directory to migrate." }
+            $volume["subdir"] = [string]$volume.subdir + "-$generation"
+            $found++
+        }
+        $volumes += [pscustomobject]$volume
+    }
+    if ($found -ne 1) { throw "Global '$($Server.id)' must have exactly one index mount." }
+    $copy["volumes"] = $volumes
+    return [pscustomobject]$copy
 }
 
 function Get-HostEmbeddingProbeBase {
@@ -1192,7 +1475,9 @@ function Get-HostEmbeddingProbeBase {
 
 function Get-HostEmbeddingModelsUri {
     param([string]$ApiBase)
-    return "$(Get-HostEmbeddingProbeBase -ApiBase $ApiBase)/models"
+    $probeBase = Get-HostEmbeddingProbeBase -ApiBase $ApiBase
+    if (([uri]$probeBase).Host -eq "openrouter.ai") { return "$probeBase/embeddings/models" }
+    return "$probeBase/models"
 }
 
 function Get-HostEmbeddingModelIds {
@@ -1226,10 +1511,13 @@ function Test-HostEmbeddingModelPresent {
 function Test-HostEmbeddingEndpointReady {
     param(
         [string]$ApiBase,
-        [string]$Model
+        [string]$Model,
+        [string]$ApiKey = ""
     )
     try {
-        $response = Invoke-RestMethod -Uri (Get-HostEmbeddingModelsUri -ApiBase $ApiBase) -TimeoutSec 5
+        $headers = @{}
+        if ($ApiKey) { $headers.Authorization = "Bearer $ApiKey" }
+        $response = Invoke-RestMethod -Uri (Get-HostEmbeddingModelsUri -ApiBase $ApiBase) -Headers $headers -TimeoutSec 5
         return (Test-HostEmbeddingModelPresent -Response $response -Model $Model)
     } catch {
         return $false
@@ -1287,13 +1575,17 @@ function Ensure-HostEmbeddingModel {
         [object]$Config,
         [object]$Manifest,
         [string[]]$GlobalServerIds,
-        [string[]]$ProjectServerIds
+        [string[]]$ProjectServerIds,
+        [object]$Server = $null
     )
-    if (-not (Test-HostEnabledServersNeedEmbedding -Manifest $Manifest -GlobalServerIds $GlobalServerIds -ProjectServerIds $ProjectServerIds)) {
+    if ($null -eq $Server -and @($GlobalServerIds).Count -eq 1 -and $GlobalServerIds -contains "bookstack" -and -not $ProjectServerIds) {
+        $Server = Get-BookStackProductDocsServerDefinition
+    }
+    if ($null -eq $Server -and -not (Test-HostEnabledServersNeedEmbedding -Manifest $Manifest -GlobalServerIds $GlobalServerIds -ProjectServerIds $ProjectServerIds)) {
         return
     }
 
-    $settings = Get-HostEmbeddingSettings -Config $Config
+    $settings = Get-HostEmbeddingSettings -Config $Config -Server $Server
     Write-Host "Standalone embedding mode: $($settings.mode)"
     Write-Host "Standalone embedding model: $($settings.model)"
     if ($settings.mode -eq "cpu") {
@@ -1305,13 +1597,13 @@ function Ensure-HostEmbeddingModel {
     $modelsUri = Get-HostEmbeddingModelsUri -ApiBase $settings.apiBase
     Write-Host "Standalone embedding probe: $modelsUri"
 
-    if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model) {
+    if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model -ApiKey $settings.apiKey) {
         Write-Host "Standalone embedding endpoint is ready for model: $($settings.model)"
         return
     }
 
     if (-not (Test-HostEmbeddingApiBaseIsLocal -ApiBase $settings.apiBase)) {
-        throw "Standalone vibecoding1c MCP host embedding endpoint '$($settings.apiBase)' is reachable only when /v1/models includes configured model '$($settings.model)'. Fix host.config.json embedding.model or start the model before starting containers."
+        throw "Standalone embedding catalog '$modelsUri' did not confirm model '$($settings.model)'. Check endpoint credentials/model and retry before starting containers."
     }
 
     $lms = Get-HostLmsCommand
@@ -1329,7 +1621,7 @@ function Ensure-HostEmbeddingModel {
     Invoke-HostLmsRequiredCommand -Arguments @("load", $settings.model) -Description "load embedding model '$($settings.model)'"
     $serverStart = Invoke-HostLmsCommand -Arguments @("server", "start", "--port", ([string]$port))
 
-    if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model) {
+    if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model -ApiKey $settings.apiKey) {
         Write-Host "Standalone embedding endpoint is ready for model: $($settings.model)"
         return
     }
@@ -1714,6 +2006,12 @@ function Update-HostStateConfigurations {
 
 function Get-HostServerStateKey {
     param([object]$ServerState)
+    $scope = [string](Get-ObjectValue -Object $ServerState -Name "scope" -Default "")
+    $configId = [string](Get-ObjectValue -Object $ServerState -Name "configId" -Default "")
+    $id = [string](Get-ObjectValue -Object $ServerState -Name "id" -Default "")
+    if ($scope -and $id) {
+        return "$scope|$configId|$id"
+    }
     $containerName = [string](Get-ObjectValue -Object $ServerState -Name "containerName" -Default "")
     if ($containerName) {
         return "container:$containerName"
@@ -1726,9 +2024,6 @@ function Get-HostServerStateKey {
     if ($name) {
         return "name:$name"
     }
-    $scope = [string](Get-ObjectValue -Object $ServerState -Name "scope" -Default "")
-    $configId = [string](Get-ObjectValue -Object $ServerState -Name "configId" -Default "")
-    $id = [string](Get-ObjectValue -Object $ServerState -Name "id" -Default "")
     return "$scope|$configId|$id"
 }
 
@@ -1832,6 +2127,21 @@ function Get-HostSecretValues {
     return $values
 }
 
+function Get-TemplatesBetaOperatorToken {
+    param([object]$Config, [string]$ServerId, [string]$Channel, [switch]$Modern)
+    if ($ServerId -ne "templates" -or ($Channel -ne "beta" -and -not $Modern)) { return "" }
+    $settings = Get-ObjectValue -Object $Config -Name "templatesSearchServer" -Default $null
+    $enabled = Get-ObjectValue -Object $settings -Name "enableWriteTools" -Default $false
+    if ($enabled -isnot [bool]) { throw "templatesSearchServer.enableWriteTools must be a JSON boolean." }
+    if (-not $enabled) { return "" }
+    $secrets = Get-HostSecretValues -Config $Config
+    $token = [string]$secrets["MCP_OPERATOR_TOKEN"]
+    if ($token.Length -lt 32 -or @($token.ToCharArray() | Select-Object -Unique).Count -lt 8 -or $token -match '[\r\n]') {
+        throw "Beta Templates write tools require a local MCP_OPERATOR_TOKEN with at least 32 characters and 8 distinct characters."
+    }
+    return $token
+}
+
 function Get-HostLocalValues {
     param(
         [object]$Config,
@@ -1849,6 +2159,7 @@ function Get-HostLocalValues {
     $bspVersion = [string](Get-ObjectValue -Object $ssl -Name "bspVersion" -Default "")
     $bookStackCachePath = [string](Get-ObjectValue -Object $bookstack -Name "cachePath" -Default (Join-Path (Get-StateRoot -Config $Config) "bookstack-product-docs"))
     $mantisAttachmentCachePath = [string](Get-ObjectValue -Object $mantis -Name "attachmentCachePath" -Default (Join-Path (Join-Path (Get-StateRoot -Config $Config) "mantis-ticket") "attachments"))
+    $mantisStatePath = [string](Get-ObjectValue -Object $mantis -Name "statePath" -Default (Join-Path (Join-Path (Get-StateRoot -Config $Config) "mantis-ticket") "index"))
     $mantisOcr = Get-ObjectValue -Object $mantis -Name "ocr" -Default $null
     $defaultResetDatabase = "false"
     $codeResetDatabase = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $code -Name "resetDatabase" -Default $false) -Default $false)
@@ -1861,6 +2172,7 @@ function Get-HostLocalValues {
         PATH_MODEL_CACHE = (Join-Path (Get-StateRoot -Config $Config) "model-cache")
         PATH_BOOKSTACK_CACHE = (Get-FullPath $bookStackCachePath)
         PATH_MANTIS_ATTACHMENT_CACHE = (Get-FullPath $mantisAttachmentCachePath)
+        PATH_MANTIS_STATE = (Get-FullPath $mantisStatePath)
         PATH_1C_BIN = $(if ($platformBinPath) { Get-FullPath $platformBinPath } else { "" })
         PLATFORM_VERSION = $platformVersion
         HELP_PLATFORM_VERSION = $platformVersion
@@ -1873,13 +2185,27 @@ function Get-HostLocalValues {
         GRAPH_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $graph -Name "reindexIntervalHours" -Default "")
         GRAPH_AUTO_UPDATE_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "autoUpdateOnStartup" -Default $true) -Default $true)
         BOOKSTACK_BASE_URL = [string](Get-ObjectValue -Object $bookstack -Name "baseUrl" -Default "")
+        BOOKSTACK_VIEWS_JSON = (ConvertTo-Json -InputObject (Get-ObjectValue -Object $bookstack -Name 'views' -Default @{}) -Depth 20 -Compress)
         BOOKSTACK_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $bookstack -Name "timeoutSeconds" -Default "20")
         BOOKSTACK_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $bookstack -Name "reindexIntervalHours" -Default "24")
         BOOKSTACK_INDEX_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $bookstack -Name "indexOnStartup" -Default $true) -Default $true)
         BOOKSTACK_MAX_INDEX_PAGES = [string](Get-ObjectValue -Object $bookstack -Name "maxIndexPages" -Default "")
-        BOOKSTACK_SEMANTIC_MIN_SCORE = [string](Get-ObjectValue -Object $bookstack -Name "semanticMinScore" -Default "0.82")
+        BOOKSTACK_SEMANTIC_MIN_SCORE = [string](Get-ObjectValue -Object $bookstack -Name "semanticMinScore" -Default "")
+        BOOKSTACK_CHUNK_TOKENS = [string](Get-ObjectValue -Object $bookstack -Name "chunkTokens" -Default "1024")
+        BOOKSTACK_CHUNK_OVERLAP = [string](Get-ObjectValue -Object $bookstack -Name "chunkOverlap" -Default "64")
+        BOOKSTACK_EMBEDDING_PROVIDER_ORDER = ((As-Array (Get-ObjectValue -Object $bookstack -Name "embeddingProviderOrder" -Default @())) -join ",")
+        BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS = [string](Get-ObjectValue -Object $bookstack -Name "embeddingQueryCacheTtlSeconds" -Default "86400")
         BOOKSTACK_RESET_DATABASE = $bookStackResetDatabase
         MANTIS_BASE_URL = [string](Get-ObjectValue -Object $mantis -Name "baseUrl" -Default "")
+        MANTIS_INDEX_ENABLED = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $mantis -Name "indexEnabled" -Default $false) -Default $false)
+        MANTIS_SYNC_INTERVAL_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "syncIntervalSeconds" -Default "30")
+        MANTIS_EMBEDDING_WORKERS = [string](Get-ObjectValue -Object $mantis -Name "embeddingWorkers" -Default "4")
+        MANTIS_EMBEDDING_BATCH_SIZE = [string](Get-ObjectValue -Object $mantis -Name "embeddingBatchSize" -Default "32")
+        MANTIS_EMBEDDING_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "embeddingTimeoutSeconds" -Default "120")
+        MANTIS_SYNC_PROJECT_IDS = ((As-Array (Get-ObjectValue -Object $mantis -Name "syncProjectIds" -Default @())) -join ",")
+        MANTIS_MONTHLY_BUDGET_USD = [string](Get-ObjectValue -Object $mantis -Name "monthlyBudgetUsd" -Default "5")
+        MANTIS_WRITE_ENABLED = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $mantis -Name "writeEnabled" -Default $false) -Default $false)
+        MANTIS_ATTACHMENT_EXTRACT_ENABLED = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $mantis -Name "attachmentExtractEnabled" -Default $false) -Default $false)
         MANTIS_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "timeoutSeconds" -Default "20")
         MANTIS_MAX_ATTACHMENT_BYTES = [string](Get-ObjectValue -Object $mantis -Name "maxAttachmentBytes" -Default "26214400")
         MANTIS_MAX_INLINE_TEXT_CHARS = [string](Get-ObjectValue -Object $mantis -Name "maxInlineTextChars" -Default "16000")
@@ -1933,7 +2259,7 @@ function Set-GraphOpenAiFallbackEnv {
     if (-not (Test-HostServerNeedsEmbedding -Server $Server)) {
         return
     }
-    $settings = Get-HostEmbeddingSettings -Config $Config
+    $settings = Get-HostEmbeddingSettings -Config $Config -Server $Server
     if ($settings.mode -eq "cpu") {
         $cpuLocalApiBase = "http://127.0.0.1:65535/v1"
         $placeholderKey = "standalone-cpu-embedding-placeholder"
@@ -1957,7 +2283,9 @@ function Set-GraphOpenAiFallbackEnv {
     if ($settings.mode -ne "openai") {
         return
     }
-    $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
+    # Dedicated beta embeddings must never become a chat-model credential.
+    if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) { return }
+    $embedding = $settings
     $fallbacks = @(
         [pscustomobject]@{ name = "OPENAI_API_KEY"; embeddingName = "apiKey"; default = "" },
         [pscustomobject]@{ name = "OPENAI_API_BASE"; embeddingName = "apiBase"; default = "" },
@@ -2026,7 +2354,10 @@ function Get-HostDefaultVolumeEntries {
         return @([ordered]@{ from = "PATH_BOOKSTACK_CACHE"; to = "/data"; required = $false })
     }
     if ($id -eq "mantis") {
-        return @([ordered]@{ from = "PATH_MANTIS_ATTACHMENT_CACHE"; to = "/data/attachments"; required = $false })
+        return @(
+            [ordered]@{ from = "PATH_MANTIS_ATTACHMENT_CACHE"; to = "/data/attachments"; required = $false },
+            [ordered]@{ from = "PATH_MANTIS_STATE"; to = "/data/mantis"; required = $false }
+        )
     }
     return @()
 }
@@ -2058,7 +2389,7 @@ function Resolve-ServerEnv {
     $serverNeedsEmbedding = Test-HostServerNeedsEmbedding -Server $Server
     $embeddingSettings = $null
     if ($serverNeedsEmbedding) {
-        $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
+        $embeddingSettings = Get-HostEmbeddingSettings -Config $Config -Server $Server
     }
     $values = [ordered]@{}
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
@@ -2071,7 +2402,7 @@ function Resolve-ServerEnv {
         $embeddingKind = [string](Get-ObjectValue -Object $entry -Name "embedding" -Default "")
         if ($embeddingKind) {
             if ($null -eq $embeddingSettings) {
-                $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
+                $embeddingSettings = Get-HostEmbeddingSettings -Config $Config -Server $Server
             }
             if ($embeddingSettings.mode -eq "openai") {
                 switch ($embeddingKind) {
@@ -2107,6 +2438,31 @@ function Resolve-ServerEnv {
         $values["RESET_CACHE"] = "false"
     }
     Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
+    if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "code" -and
+        (Test-ModernHostServer -Server $Server)) {
+        # Beta defaults to text-only replies; keep the stable dict/list transport contract.
+        $values["MCP_STRUCTURED_CONTENT"] = "true"
+    }
+    if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) {
+        $values["EMBEDDING_PROVIDER"] = "remote"
+        $values["EMBEDDING_API_BASE"] = [string]$embeddingSettings.apiBase
+        $values["EMBEDDING_API_KEY"] = [string]$embeddingSettings.apiKey
+        $values["EMBEDDING_MODEL"] = [string]$embeddingSettings.model
+        $values["EMBEDDING_ALLOW_OFFLINE_FALLBACK"] = "false"
+        $values["RESET_CACHE"] = "false"
+        $values["RESET_DATABASE"] = "false"
+        if ([string]$Server.id -eq "graph") { $values["ENABLE_ROUTINE_EMBEDDINGS"] = "true" }
+    }
+    if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "templates" -and
+        (Test-ModernHostServer -Server $Server)) {
+        [void]$values.Remove("MCP_ENABLE_WRITE_TOOLS")
+        [void]$values.Remove("MCP_OPERATOR_TOKEN")
+        $operatorToken = Get-TemplatesBetaOperatorToken -Config $Config -ServerId "templates" -Channel ([string]$Server.channel) -Modern:(Test-ModernHostServer -Server $Server)
+        if ($operatorToken) {
+            $values["MCP_ENABLE_WRITE_TOOLS"] = "true"
+            $values["MCP_OPERATOR_TOKEN"] = $operatorToken
+        }
+    }
     if ($ForceResetDatabase) {
         if ($values.Contains("RESET_CACHE")) {
             $values["RESET_CACHE"] = "false"
@@ -2126,16 +2482,24 @@ function Resolve-ServerVolumes {
         [object]$Server,
         [object]$ConfigState = $null
     )
+    if ([string](Get-ObjectValue -Object $Server -Name 'id' -Default '') -eq 'sppr') {
+        return @(Get-SpprVolumes -Config $Config)
+    }
     $volumes = @()
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
     $volumeEntries = @(As-Array (Get-ObjectValue -Object $Server -Name "volumes" -Default @())) + @(Get-HostDefaultVolumeEntries -Server $Server)
-    if ((Test-HostServerNeedsEmbedding -Server $Server) -and (Get-HostEmbeddingSettings -Config $Config).mode -eq "cpu") {
+    if ((Test-HostServerNeedsEmbedding -Server $Server) -and (Get-HostEmbeddingSettings -Config $Config -Server $Server).mode -eq "cpu") {
         $volumeEntries += [ordered]@{ from = "PATH_MODEL_CACHE"; to = "/app/model_cache"; required = $false }
     }
     foreach ($entry in $volumeEntries) {
         $from = [string](Get-ObjectValue -Object $entry -Name "from" -Default "")
         $to = [string](Get-ObjectValue -Object $entry -Name "to" -Default "")
         if (-not $from -or -not $to) { continue }
+        $betaVolume = @(Get-BetaProjectVolumes -Config $Config -Server $Server -ConfigState $ConfigState | Where-Object container -eq $to)
+        if ($betaVolume.Count -eq 1) {
+            $volumes += [pscustomobject]@{ host = $betaVolume[0].name; container = $to }
+            continue
+        }
         $hostPath = ""
         if ($localValues.Contains($from)) {
             $hostPath = [string]$localValues[$from]
@@ -2164,7 +2528,7 @@ function Resolve-ServerVolumes {
                     $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "<unknown>")
                     throw "Required volume path for '$from' on vibecoding1c MCP server '$serverId' was not found: $hostPath"
                 }
-                if ($from -eq "PATH_BASES" -or $from -eq "PATH_METADATA" -or $from -eq "PATH_MODEL_CACHE" -or $from -eq "PATH_MANTIS_ATTACHMENT_CACHE") {
+                if ($from -eq "PATH_BASES" -or $from -eq "PATH_METADATA" -or $from -eq "PATH_MODEL_CACHE" -or $from -eq "PATH_MANTIS_ATTACHMENT_CACHE" -or $from -eq "PATH_MANTIS_STATE") {
                     New-Item -ItemType Directory -Force -Path $hostPath | Out-Null
                 } else {
                     continue
@@ -2173,6 +2537,7 @@ function Resolve-ServerVolumes {
             $volumes += [pscustomobject]@{ host = $hostPath; container = $to }
         }
     }
+    $volumes += @(Get-QualifiedHostOwnerRepairMounts -Config $Config -Server $Server)
     return $volumes
 }
 
@@ -2183,11 +2548,33 @@ function Start-DockerServer {
         [object]$Runtime,
         [object]$ConfigState = $null,
         [switch]$Recreate,
-        [switch]$ForceResetDatabase
+        [switch]$ForceResetDatabase,
+        [switch]$PreparedBetaImage
     )
     $containerName = [string]$Runtime.containerName
+    if ($ForceResetDatabase -and (Get-McpStorageSettings $Config).enabled -and (Get-HostContainerPublishState $containerName) -ne 'missing') {
+        Assert-McpStorageAdmission -Config $Config -PeakBytes (Get-McpStorageMountedPeak -ContainerName $containerName -Copies 2)
+    }
+    $bookStackPrepared = $false
+    if ($Recreate -and [string]$Server.id -eq "bookstack" -and -not $ForceResetDatabase) {
+        $preparedEnv = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState
+        if ($preparedEnv["RESET_DATABASE"] -ne "false") {
+            throw "BookStack cache-preserving replacement requires resetDatabase=false. Correct it and repeat start -ServerId bookstack -RecreateBookStack."
+        }
+        # Build before stopping the serving image. Other server paths are unchanged.
+        Ensure-ServerDockerImageAvailable -Server $Server -Image ([string]$Runtime.image)
+        $bookStackPrepared = $true
+    }
+    Assert-BetaProjectVolumesReady -Config $Config -Server $Server -ConfigState $ConfigState
     $existing = Invoke-DockerCommandCapture -Arguments @("ps", "-a", "--filter", "name=^/$containerName$", "--format", "{{.Names}}") -TimeoutSec 60 -Description "docker ps for $containerName"
     if ($existing -contains $containerName) {
+        Assert-BetaProjectContainerMounts -Config $Config -Server $Server -ConfigState $ConfigState -Runtime $Runtime
+        if (Test-ModernHostServer -Server $Server) {
+            $configuredImage = @(Invoke-DockerCommandCapture -Arguments @("inspect", "-f", "{{.Config.Image}}", $containerName) -TimeoutSec 60 -Description "docker inspect image for $containerName") | Select-Object -First 1
+            if ([string]$configuredImage -ne [string]$Runtime.image) {
+                throw "Beta container '$containerName' uses '$configuredImage', expected pinned image '$($Runtime.image)'. Refusing implicit replacement."
+            }
+        }
         if ($Recreate) {
             Write-Host "Removing existing container before reindex: $containerName"
             if (-not $DryRun) {
@@ -2206,18 +2593,45 @@ function Start-DockerServer {
     $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
     $volumes = Resolve-ServerVolumes -Config $Config -Server $Server -ConfigState $ConfigState
     $args = @("run", "-d", "--restart", "unless-stopped", "--name", $containerName, "-p", "$($Runtime.hostPort):$($Runtime.internalPort)")
+    $processSecrets = @{}
     foreach ($key in @($envValues.Keys | Sort-Object)) {
-        $args += @("-e", "$key=$($envValues[$key])")
+        if ($key -match '(?i)(KEY|TOKEN|SECRET|PASSWORD)$') {
+            $processSecrets[$key] = [string]$envValues[$key]
+            $args += @("-e", $key)
+        } else {
+            $args += @("-e", "$key=$($envValues[$key])")
+        }
     }
     foreach ($volume in $volumes) {
-        $args += @("-v", "$($volume.host):$($volume.container)")
+        $access = $(if ([bool](Get-ObjectValue -Object $volume -Name 'readOnly' -Default $false)) { ':ro' } else { '' })
+        $args += @("-v", "$($volume.host):$($volume.container)$access")
     }
     $args += $Runtime.image
     Write-Host "Starting container: $containerName -> $($Runtime.url)"
     if (-not $DryRun) {
-        Ensure-ServerDockerImageAvailable -Server $Server -Image ([string]$Runtime.image)
-        Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
+        if ($PreparedBetaImage) {
+            if (-not (Test-ModernHostServer -Server $Server) -or -not (Test-DockerImageAvailable -Image ([string]$Runtime.image))) {
+                throw "Prepared beta image '$($Runtime.image)' is not available for '$containerName'."
+            }
+        } elseif (-not $bookStackPrepared) {
+            Ensure-ServerDockerImageAvailable -Server $Server -Image ([string]$Runtime.image)
+        }
+        $previousSecrets = @{}
+        try {
+            foreach ($key in $processSecrets.Keys) {
+                $previousSecrets[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
+                [Environment]::SetEnvironmentVariable($key, $processSecrets[$key], "Process")
+            }
+            Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
+        } finally {
+            foreach ($key in $previousSecrets.Keys) {
+                $previousValue=$previousSecrets[$key]
+                if ($null -eq $previousValue) { $previousValue=[NullString]::Value }
+                [Environment]::SetEnvironmentVariable($key, $previousValue, "Process")
+            }
+        }
     }
+    if (-not $DryRun) { Assert-BetaProjectContainerMounts -Config $Config -Server $Server -ConfigState $ConfigState -Runtime $Runtime }
     Write-Host "Container ready: $containerName -> $($Runtime.url)"
 }
 
@@ -2260,6 +2674,28 @@ function Add-GraphCpuEmbeddingBootstrapToComposeText {
     return ($ComposeText.Substring(0, $match.Groups["body"].Index) + $commandLine + $body + $ComposeText.Substring($match.Index + $match.Length))
 }
 
+function Set-HostFileAccessControl {
+    param([string]$LiteralPath, [Security.AccessControl.FileSecurity]$AclObject)
+    # Persist only the modified DACL. Windows PowerShell's Set-Acl provider can
+    # request SACL access on a protected existing file, requiring SeSecurityPrivilege.
+    $file = [IO.FileInfo]::new($LiteralPath)
+    if ($PSVersionTable.PSEdition -eq "Core") { [IO.FileSystemAclExtensions]::SetAccessControl($file, $AclObject) }
+    else { $file.SetAccessControl($AclObject) }
+}
+
+function Initialize-HostPrivateFile {
+    param([string]$LiteralPath)
+    # Apply the DACL before the first secret write and on every later write.
+    # A failed ACL update retains existing bytes and prevents the caller's write.
+    if (-not (Test-Path -LiteralPath $LiteralPath)) { Write-Text -Path $LiteralPath -Value "" }
+    $acl = [Security.AccessControl.FileSecurity]::new()
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.Principal.SecurityIdentifier]::new("S-1-5-18"))) {
+        $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, "FullControl", "Allow"))
+    }
+    Set-HostFileAccessControl -LiteralPath $LiteralPath -AclObject $acl
+}
+
 function Start-ComposeServer {
     param(
         [object]$Config,
@@ -2270,28 +2706,74 @@ function Start-ComposeServer {
         [switch]$ForceResetDatabase
     )
     $distributionRoot = Get-DistributionRoot -Config $Config
+    if ($ForceResetDatabase -and (Get-McpStorageSettings $Config).enabled -and (Get-HostContainerPublishState $Runtime.containerName) -ne 'missing') {
+        $helperImage=@(Invoke-DockerCommandCapture -Arguments @('inspect','--format','{{.Image}}',[string]$Runtime.containerName) -TimeoutSec 15 -Description 'bind current Graph allocation estimator')[0]
+        $peak=Get-McpStorageMountedPeak -ContainerName ([string]$Runtime.containerName) -Copies 2
+        $peak+=Get-McpStorageMountedPeak -ContainerName ([string]$Runtime.containerName+'-neo4j') -HelperImage $helperImage -Copies 2
+        Assert-McpStorageAdmission -Config $Config -PeakBytes $peak
+    }
+    Assert-BetaProjectVolumesReady -Config $Config -Server $Server -ConfigState $ConfigState
     $sourceCompose = Join-Path $distributionRoot ([string](Get-ObjectValue -Object $Server -Name "composePath" -Default ""))
     if (-not (Test-Path -LiteralPath $sourceCompose -PathType Leaf)) {
         throw "Compose file was not found: $sourceCompose"
     }
-    $runtimeDir = Join-Path (Join-Path (Get-ConfigWorkRoot -Config $Config -ConfigId $ConfigState.configId) "runtime") $Runtime.name
+    $channel = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable")
+    $modern = Test-ModernHostServer -Server $Server
+    $runtimeIdentity = if ($modern) { [string]$Runtime.containerName } else { [string]$Runtime.name }
+    $runtimeDir = Join-Path (Join-Path (Get-ConfigWorkRoot -Config $Config -ConfigId $ConfigState.configId) "runtime") $runtimeIdentity
     New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+    $Runtime | Add-Member -NotePropertyName runtimePath -NotePropertyValue $runtimeDir -Force
     $targetCompose = Join-Path $runtimeDir "docker-compose.yml"
     $composeText = Read-Text -Path $sourceCompose
-    $composeText = $composeText -replace '(?m)^\s*container_name:\s*neo4j\s*$', "    container_name: $($Runtime.containerName)-neo4j"
-    $composeText = $composeText -replace '(?m)^\s*container_name:\s*1c_graph_metadata\s*$', "    container_name: $($Runtime.containerName)"
-    $composeText = [regex]::Replace($composeText, '(?ms)^    ports:\r?\n      - "7474:7474"\r?\n      - "7687:7687"\r?\n', '')
-    $composeText = $composeText -replace '"8006:8006"', "`"$($Runtime.hostPort):$($Runtime.internalPort)`""
+    if (-not $modern) {
+        $composeText = $composeText -replace '(?m)^\s*container_name:\s*neo4j\s*$', "    container_name: $($Runtime.containerName)-neo4j"
+        $composeText = $composeText -replace '(?m)^\s*container_name:\s*1c_graph_metadata\s*$', "    container_name: $($Runtime.containerName)"
+        $composeText = [regex]::Replace($composeText, '(?ms)^    ports:\r?\n      - "7474:7474"\r?\n      - "7687:7687"\r?\n', '')
+        $composeText = $composeText -replace '"8006:8006"', "`"$($Runtime.hostPort):$($Runtime.internalPort)`""
+    }
     if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "graph") {
         $composeText = Repair-GraphComposeHealthcheckText -ComposeText $composeText
         $composeText = Repair-GraphComposeResourceText -ComposeText $composeText
-        if ((Get-HostEmbeddingSettings -Config $Config).mode -eq "cpu") {
+        if ((Get-HostEmbeddingSettings -Config $Config -Server $Server).mode -eq "cpu") {
             $composeText = Add-GraphCpuEmbeddingBootstrapToComposeText -ComposeText $composeText
         }
     }
-    Write-Text -Path $targetCompose -Value $composeText
     $envFilePath = Join-Path $runtimeDir ".env"
-    Write-DotEnv -Path $envFilePath -Values (Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase)
+    $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
+    if ($modern) {
+        $neo4jImage = [string](Get-ObjectValue -Object $Server -Name "neo4jImage" -Default "")
+        if (-not $neo4jImage -or -not ([string]$Runtime.image).Contains("@sha256:")) {
+            throw "Beta Graph requires pinned MCP and Neo4j images."
+        }
+        $betaDataRoot = Join-Path (Join-Path (Get-StateRoot -Config $Config) "bases") (Join-Path ([string]$ConfigState.configId) "graph-beta")
+        $neo4jDataPath = Join-Path $betaDataRoot "neo4j-data"
+        $graphStatePath = Join-Path $betaDataRoot "mcp-state"
+        $betaVolumes = @(Get-BetaProjectVolumes -Config $Config -Server $Server -ConfigState $ConfigState)
+        if ($betaVolumes.Count -gt 0) {
+            $neo4jVolume = @($betaVolumes | Where-Object role -eq "neo4j")[0].name
+            $stateVolume = @($betaVolumes | Where-Object role -eq "state")[0].name
+            $composeText = Set-BetaGraphVolumeComposeText -ComposeText $composeText -Neo4jVolume $neo4jVolume -StateVolume $stateVolume
+        } elseif (-not (Test-Path -LiteralPath $neo4jDataPath -PathType Container) -or -not (Test-Path -LiteralPath $graphStatePath -PathType Container)) {
+            throw "Beta Graph data snapshots are missing under $betaDataRoot. Refusing an empty-graph start."
+        }
+        $envValues["COMPOSE_PROJECT_NAME"] = [string]$Runtime.composeProject
+        $envValues["MCP_IMAGE"] = [string]$Runtime.image
+        $envValues["NEO4J_IMAGE"] = $neo4jImage
+        $envValues["MCP_CONTAINER_NAME"] = [string]$Runtime.containerName
+        $envValues["NEO4J_CONTAINER_NAME"] = "$($Runtime.containerName)-neo4j"
+        $envValues["MCP_HOST_PORT"] = [string]$Runtime.hostPort
+        $envValues["NEO4J_DATA_PATH"] = $neo4jDataPath
+        $envValues["GRAPH_STATE_PATH"] = $graphStatePath
+        $envValues["EMBEDDING_MODEL"] = [string]$envValues["OPENAI_EMBEDDING_MODEL"]
+        $envValues["EMBEDDING_API_BASE"] = [string]$envValues["OPENAI_EMBEDDING_API_BASE"]
+        $envValues["EMBEDDING_API_KEY"] = [string]$envValues["OPENAI_EMBEDDING_API_KEY"]
+    }
+    $composeText = Set-QualifiedHostOwnerRepairComposeText -Config $Config -Server $Server -ComposeText $composeText
+    Write-Text -Path $targetCompose -Value $composeText
+    if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) {
+        Initialize-HostPrivateFile -LiteralPath $envFilePath
+    }
+    Write-DotEnv -Path $envFilePath -Values $envValues
     Write-Host "Starting compose project: $($Runtime.composeProject) -> $($Runtime.url)"
     if (-not $DryRun) {
         Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "config", "--quiet") -TimeoutSec 60 -Description "docker compose config $($Runtime.composeProject)"
@@ -2301,7 +2783,7 @@ function Start-ComposeServer {
         }
         Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "up", "-d") -TimeoutSec 240 -Description "docker compose up $($Runtime.composeProject)"
     }
-    $Runtime | Add-Member -NotePropertyName runtimePath -NotePropertyValue $runtimeDir -Force
+    if (-not $DryRun) { Assert-BetaProjectContainerMounts -Config $Config -Server $Server -ConfigState $ConfigState -Runtime $Runtime }
     Write-Host "Compose project ready: $($Runtime.composeProject) -> $($Runtime.url)"
 }
 
@@ -2327,6 +2809,7 @@ function Get-AiRules1cMcpClientName {
         "graph" { return "1c-graph-metadata-mcp" }
         "bookstack" { return "BookStack-product-docs-mcp" }
         "mantis" { return "itl-mantis-ticket-mcp" }
+        "sppr" { return "sppr-knowledge" }
         default { return "" }
     }
 }
@@ -2491,15 +2974,65 @@ function Ensure-ToolsListProxyImage {
     $script:ToolsListProxyImageReady = $true
 }
 
+function Set-NativeRuntimeEndpoint {
+    param([object]$Runtime, [string]$Url)
+    foreach ($pair in @{
+        endpointMode = "direct"; url = $Url; directUrl = $Url; toolsContractStatus = "native"
+        proxyUrl = ""; proxyPort = 0; proxyContainerName = ""; proxyContractPath = ""
+    }.GetEnumerator()) {
+        if ($Runtime -is [System.Collections.IDictionary]) { $Runtime[$pair.Key] = $pair.Value }
+        else { $Runtime | Add-Member -NotePropertyName $pair.Key -NotePropertyValue $pair.Value -Force }
+    }
+}
+
+function Get-HostProxyUpstreamUrl {
+    param([object]$Server)
+    $directUrl = [string](Get-ObjectValue -Object $Server -Name 'directUrl' -Default '')
+    if (-not $directUrl) { $directUrl = [string](Get-ObjectValue -Object $Server -Name 'url' -Default '') }
+    $uri = $(if ($directUrl) { [UriBuilder]::new($directUrl) } else { [UriBuilder]::new('http://host.docker.internal/mcp') })
+    $uri.Host = 'host.docker.internal'
+    $uri.Port = [int](Get-ObjectValue -Object $Server -Name 'hostPort' -Default 0)
+    if ($uri.Port -le 0) { throw 'ITL_HOST_MCP_PORT_INVALID: proxy upstream requires the tracked direct host port.' }
+    return $uri.Uri.AbsoluteUri
+}
+
+function Resolve-HostRuntimeMcpUrl {
+    param([object]$Config, [object]$Runtime)
+    $direct = Convert-ToHash -Object $Runtime
+    $directUrl = [string](Get-ObjectValue -Object $Runtime -Name 'directUrl' -Default '')
+    if (-not $directUrl) { $directUrl = [string](Get-ObjectValue -Object $Runtime -Name 'url' -Default '') }
+    $direct['url'] = $directUrl
+    $proof = Get-HostDirectEndpointProof -Config $Config -Server $direct -Refresh
+    $qualifiedUrl = [string](Get-ObjectValue -Object $proof -Name 'qualified_url' -Default '')
+    # The shared probe qualifies identity and the exact URL independently of
+    # optional tools. A tool timeout must not block publishing that proven URL.
+    if ([string]$proof.status -ne 'matched' -or -not $qualifiedUrl) {
+        $failure = $proof
+        $details = @('endpoint identity qualification is incomplete')
+        foreach ($field in @('status', 'stage', 'method', 'reason', 'originalUrl', 'httpStatus', 'location', 'timeoutSeconds')) {
+            $value = Get-ObjectValue -Object $failure -Name $field -Default ''
+            if ([string]$value) { $details += "${field}='$value'" }
+        }
+        throw "ITL_HOST_MCP_ENDPOINT_UNVERIFIED: server='$($direct.id)' originalUrl='$directUrl'; $($details -join '; '). Retain the running server and its state. Inspect this exact server through host status, resolve the reported identity/transport cause, then repeat the original host operation; do not publish a guessed URL or restart it as discovery."
+    }
+    return $qualifiedUrl
+}
+
 function Enable-ToolsListProxyForRuntime {
     param([object]$Config, [object]$Runtime)
+    if ([string](Get-ObjectValue -Object $Runtime -Name "endpointMode" -Default "") -eq "direct") {
+        Set-NativeRuntimeEndpoint -Runtime $Runtime -Url (Resolve-HostRuntimeMcpUrl -Config $Config -Runtime $Runtime)
+        return
+    }
     $id = [string](Get-ObjectValue -Object $Runtime -Name "id" -Default "")
     if (-not (Test-ToolsListProxyTarget -Config $Config -ServerId $id)) { return }
 
     $settings = Get-ToolsListProxySettings -Config $Config
-    $directUrl = [string]$Runtime.url
+    $directUrl = Resolve-HostRuntimeMcpUrl -Config $Config -Runtime $Runtime
     $proxyPort = [int]$Runtime.hostPort + [int]$settings.portOffset
-    $proxyContainerName = "$($Runtime.containerName)-tools-list-proxy"
+    $proxyContainerName = [string](Get-ObjectValue -Object $Runtime -Name "proxyContainerName" -Default "$($Runtime.containerName)-tools-list-proxy")
+    $contractPath = [string](Get-ObjectValue -Object $Runtime -Name "proxyContractPath" -Default $settings.contractPath)
+    if (-not (Test-Path -LiteralPath $contractPath -PathType Leaf)) { throw "Tools-list proxy contract is missing: $contractPath" }
     $baseUrl = ([string](Get-ObjectValue -Object $Config -Name "baseUrl" -Default "http://localhost")).TrimEnd("/")
     $proxyUrl = "$baseUrl`:$proxyPort/mcp"
     $Runtime | Add-Member -NotePropertyName directUrl -NotePropertyValue $directUrl -Force
@@ -2507,24 +3040,53 @@ function Enable-ToolsListProxyForRuntime {
     $Runtime | Add-Member -NotePropertyName proxyPort -NotePropertyValue $proxyPort -Force
     $Runtime | Add-Member -NotePropertyName proxyContainerName -NotePropertyValue $proxyContainerName -Force
     $Runtime | Add-Member -NotePropertyName toolsContractStatus -NotePropertyValue "fallback-direct" -Force
+    $operatorToken = Get-TemplatesBetaOperatorToken -Config $Config -ServerId $id -Channel ([string](Get-ObjectValue -Object $Runtime -Name "channel" -Default "stable")) -Modern:(Test-ModernHostServer -Server $Runtime)
+    $operatorTokenPath = ""
+    if ($operatorToken) {
+        $operatorTokenPath = Join-Path (Join-Path (Get-StateRoot -Config $Config) "beta-proxy-secrets") "templates.operator-token"
+        if (-not $DryRun) {
+            Initialize-HostPrivateFile -LiteralPath $operatorTokenPath
+            Write-Text -Path $operatorTokenPath -Value $operatorToken
+        }
+    }
     if ($DryRun) {
         Write-Host "Would qualify MCP tools-list proxy for '$id': $proxyUrl -> $directUrl"
         return
     }
 
     Ensure-ToolsListProxyImage -Config $Config
-    [void](Invoke-DockerCommand -Arguments @("rm", "-f", $proxyContainerName) -Quiet -TimeoutSec 60)
-    $contractVolume = "$($settings.contractPath):/app/tools-contract.json:ro"
-    $upstreamUrl = "http://host.docker.internal:$($Runtime.hostPort)/mcp"
+    $isBeta = Test-ModernHostServer -Server $Runtime
+    $previousProxyState = "missing"
+    $backupName = ""
+    if ($isBeta) {
+        $previousProxyState = Get-HostContainerPublishState -ContainerName $proxyContainerName
+        if ($previousProxyState -in @("unknown")) { throw "Cannot determine previous proxy state for '$proxyContainerName'." }
+        if ($previousProxyState -ne "missing") {
+            $backupName = "$proxyContainerName-rollback-$([guid]::NewGuid().ToString('N'))"
+            Invoke-DockerCommandChecked -Arguments @("rename", $proxyContainerName, $backupName) -TimeoutSec 60 -Description "backup tools-list proxy $proxyContainerName"
+            if ($previousProxyState -eq "running") {
+                Invoke-DockerCommandChecked -Arguments @("stop", $backupName) -TimeoutSec 60 -Description "stop previous tools-list proxy $backupName"
+            }
+        }
+    } else {
+        [void](Invoke-DockerCommand -Arguments @("rm", "-f", $proxyContainerName) -Quiet -TimeoutSec 60)
+    }
+    $contractVolume = "$contractPath`:/app/tools-contract.json:ro"
+    $upstreamUrl = Get-HostProxyUpstreamUrl -Server $Runtime
     try {
-        Invoke-DockerCommandChecked -Arguments @(
+        $dockerArgs = @(
             "run", "-d", "--restart", "unless-stopped", "--name", $proxyContainerName,
             "--add-host", "host.docker.internal:host-gateway",
-            "-p", "$proxyPort`:8080", "-v", $contractVolume,
+            "-p", "$proxyPort`:8080", "-v", $contractVolume
+        )
+        if ($operatorTokenPath) { $dockerArgs += @("-v", "$operatorTokenPath`:/app/operator-token:ro") }
+        $dockerArgs += @(
             $settings.image,
             "--listen-port", "8080", "--upstream-url", $upstreamUrl,
             "--server-id", $id, "--contract-path", "/app/tools-contract.json"
-        ) -TimeoutSec 180 -Description "docker run $proxyContainerName"
+        )
+        if ($operatorTokenPath) { $dockerArgs += @("--operator-token-file", "/app/operator-token") }
+        Invoke-DockerCommandChecked -Arguments $dockerArgs -TimeoutSec 180 -Description "docker run $proxyContainerName"
         $ready = Wait-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $upstreamUrl
         if (-not $ready) {
             $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "40", $proxyContainerName) -TimeoutSec 60 -Description "docker logs $proxyContainerName")
@@ -2532,8 +3094,25 @@ function Enable-ToolsListProxyForRuntime {
         }
         $Runtime.url = $proxyUrl
         $Runtime.toolsContractStatus = "qualified"
+        if ($backupName) {
+            if ($isBeta) {
+                $Runtime | Add-Member -NotePropertyName proxyBackupName -NotePropertyValue $backupName -Force
+            } else {
+                [void](Invoke-DockerCommand -Arguments @("rm", "-f", $backupName) -Quiet -TimeoutSec 60)
+            }
+        }
         Write-Host "Qualified MCP tools-list proxy for '$id': $proxyUrl (direct fallback: $directUrl)"
     } catch {
+        if ($isBeta) {
+            [void](Invoke-DockerCommand -Arguments @("rm", "-f", $proxyContainerName) -Quiet -TimeoutSec 60)
+            if ($backupName) {
+                Invoke-DockerCommandChecked -Arguments @("rename", $backupName, $proxyContainerName) -TimeoutSec 60 -Description "restore tools-list proxy $proxyContainerName"
+                if ($previousProxyState -eq "running") {
+                    Invoke-DockerCommandChecked -Arguments @("start", $proxyContainerName) -TimeoutSec 60 -Description "restart previous tools-list proxy $proxyContainerName"
+                }
+            }
+            throw
+        }
         $Runtime.url = $directUrl
         $Runtime.toolsContractStatus = "fallback-direct"
         Write-Warning "MCP tools-list proxy for '$id' was not qualified; registry will keep the direct endpoint. $($_.Exception.Message)"
@@ -2544,6 +3123,10 @@ function Enable-ToolsListProxyForRuntime {
 function Update-ToolsListProxyPublishEndpoint {
     param([object]$Server)
     $hash = Convert-ToHash -Object $Server
+    if ([string](Get-ObjectValue -Object $hash -Name "endpointMode" -Default "") -eq "direct") {
+        Set-NativeRuntimeEndpoint -Runtime $hash -Url ([string]$hash.url)
+        return $hash
+    }
     $directUrl = [string](Get-ObjectValue -Object $hash -Name "directUrl" -Default "")
     $proxyUrl = [string](Get-ObjectValue -Object $hash -Name "proxyUrl" -Default "")
     if (-not $directUrl -or -not $proxyUrl) { return $hash }
@@ -2551,7 +3134,7 @@ function Update-ToolsListProxyPublishEndpoint {
     $proxyPort = [int](Get-ObjectValue -Object $hash -Name "proxyPort" -Default 0)
     $id = [string](Get-ObjectValue -Object $hash -Name "id" -Default "")
     $hostPort = [int](Get-ObjectValue -Object $hash -Name "hostPort" -Default 0)
-    $expectedUpstreamUrl = $(if ($hostPort -gt 0) { "http://host.docker.internal:$hostPort/mcp" } else { "" })
+    $expectedUpstreamUrl = $(if ($hostPort -gt 0) { Get-HostProxyUpstreamUrl -Server $hash } else { "" })
     $qualified = (Get-HostContainerPublishState -ContainerName $proxyContainer) -eq "running" -and (Test-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $expectedUpstreamUrl)
     $hash["url"] = $(if ($qualified) { $proxyUrl } else { $directUrl })
     $hash["toolsContractStatus"] = $(if ($qualified) { "qualified" } else { "fallback-direct" })
@@ -2664,6 +3247,8 @@ function Enable-TrackedToolsListProxiesAndPublish {
     $trackedIds = @($targets | ForEach-Object { [string](Get-ObjectValue -Object $_ -Name "id" -Default "") } | Select-Object -Unique)
     $missingIds = @($selectedIds | Where-Object { $_ -notin $trackedIds })
     if ($missingIds.Count -gt 0) { throw "Proxy targets are missing from tracked host state: $($missingIds -join ', ')." }
+    $targets = @($targets | Where-Object { [string](Get-ObjectValue -Object $_ -Name "endpointMode" -Default "") -ne "direct" })
+    if ($targets.Count -eq 0) { Write-Host "Selected deployments use native public MCP endpoints; no proxy activation is required."; return }
 
     if ($DryRun) {
         foreach ($server in $targets) {
@@ -2691,7 +3276,7 @@ function Enable-TrackedToolsListProxiesAndPublish {
         foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
             $serverHash = Convert-ToHash -Object $server
             $id = [string](Get-ObjectValue -Object $serverHash -Name "id" -Default "")
-            if ($id -notin $selectedIds) {
+            if ($id -notin $selectedIds -or [string](Get-ObjectValue -Object $serverHash -Name "endpointMode" -Default "") -eq "direct") {
                 $updatedServers += $serverHash
                 continue
             }
@@ -2702,8 +3287,8 @@ function Enable-TrackedToolsListProxiesAndPublish {
                 throw "Direct MCP runtime for '$id' is not running on tracked port $hostPort."
             }
 
-            $directUrl = [string](Get-ObjectValue -Object $serverHash -Name "directUrl" -Default "")
-            if (-not $directUrl) { $directUrl = [string](Get-ObjectValue -Object $serverHash -Name "url" -Default "") }
+            $directUrl = Resolve-HostRuntimeMcpUrl -Config $Config -Runtime $serverHash
+            $serverHash['directUrl'] = $directUrl
             $proxyPort = $hostPort + [int]$settings.portOffset
             $proxyContainerName = [string](Get-ObjectValue -Object $serverHash -Name "proxyContainerName" -Default "")
             if (-not $proxyContainerName) { $proxyContainerName = "$containerName-tools-list-proxy" }
@@ -2718,8 +3303,10 @@ function Enable-TrackedToolsListProxiesAndPublish {
                 }
             }
 
-            $contractVolume = "$($settings.contractPath):/app/tools-contract.json:ro"
-            $upstreamUrl = "http://host.docker.internal:$hostPort/mcp"
+            $contractPath = [string](Get-ObjectValue -Object $serverHash -Name "proxyContractPath" -Default $settings.contractPath)
+            if (-not (Test-Path -LiteralPath $contractPath -PathType Leaf)) { throw "Tools-list proxy contract is missing: $contractPath" }
+            $contractVolume = "$contractPath`:/app/tools-contract.json:ro"
+            $upstreamUrl = Get-HostProxyUpstreamUrl -Server $serverHash
             Invoke-DockerCommandChecked -Arguments @(
                 "run", "-d", "--restart", "unless-stopped", "--name", $proxyContainerName,
                 "--add-host", "host.docker.internal:host-gateway",
@@ -2841,6 +3428,19 @@ function Repair-TrackedMcpHostAndPublish {
             }
         }
 
+        if ([string](Get-ObjectValue -Object $server -Name "endpointMode" -Default "") -eq "direct") {
+            $proof = Get-HostDirectEndpointProof -Config $Config -Server $server
+            if ($proof.status -eq "mismatch") {
+                Write-Warning "Direct MCP '$id' serves a foreign endpoint; restarting only its qualified idle container once."
+                Invoke-DockerCommandChecked -Arguments @("restart", "--time", "20", ([string]$proof.container_id)) -TimeoutSec 60 -Description "repair direct MCP identity $containerName"
+                if (-not (Wait-HostTcpPortOpen -Port $hostPort)) { throw "Direct MCP '$id' port did not recover. Repeat reconcile -ServerId $id after restoring Docker availability." }
+                $proof = Get-HostDirectEndpointProof -Config $Config -Server $server -Refresh
+                if ($proof.status -ne "matched") { throw "Direct MCP '$id' identity did not recover after one restart. Inspect its published route, then repeat reconcile -ServerId $id. No further restart was attempted." }
+            }
+            if ($proof.status -ne "matched") { Write-Warning "Direct MCP '$id' identity is $($proof.status): $($proof.reason). Container retained; repeat reconcile -ServerId $id when indexing/transport is ready." }
+            continue
+        }
+
         $proxyContainerName = [string](Get-ObjectValue -Object $server -Name "proxyContainerName" -Default "$containerName-tools-list-proxy")
         $proxyPort = [int](Get-ObjectValue -Object $server -Name "proxyPort" -Default ($hostPort + [int]$settings.portOffset))
         $proxyState = Get-HostContainerPublishState -ContainerName $proxyContainerName
@@ -2850,7 +3450,7 @@ function Repair-TrackedMcpHostAndPublish {
                 Invoke-DockerCommandChecked -Arguments @("start", $proxyContainerName) -TimeoutSec 120 -Description "docker start $proxyContainerName"
             }
         }
-        $expectedUpstreamUrl = "http://host.docker.internal:$hostPort/mcp"
+        $expectedUpstreamUrl = (Get-HostProxyUpstreamUrl -Server $Server)
         if ($proxyState -eq "missing" -or $proxyState -eq "unknown" -or -not (Test-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $expectedUpstreamUrl)) {
             if (-not $repairIds.Contains($id)) { [void]$repairIds.Add($id) }
         }
@@ -2861,7 +3461,7 @@ function Repair-TrackedMcpHostAndPublish {
             Enable-TrackedToolsListProxiesAndPublish -Config $Config -TargetServerId $id
         } catch {
             Write-Warning "Initial MCP qualification for '$id' failed; restarting only its tracked direct runtime and retrying once. $($_.Exception.Message)"
-            foreach ($server in @($targets | Where-Object { [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $id })) {
+            foreach ($server in @($targets | Where-Object { [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $id -and [string](Get-ObjectValue -Object $_ -Name "endpointMode" -Default "") -ne "direct" })) {
                 $containerName = [string](Get-ObjectValue -Object $server -Name "containerName" -Default "")
                 $hostPort = [int](Get-ObjectValue -Object $server -Name "hostPort" -Default 0)
                 Invoke-DockerCommandChecked -Arguments @("restart", $containerName) -TimeoutSec 180 -Description "docker restart $containerName"
@@ -2920,10 +3520,12 @@ except Exception:
         if (-not $containerName -or (Get-HostContainerPublishState -ContainerName $containerName) -ne "running") {
             continue
         }
-        $healthProbeLines = @(Invoke-DockerCommandCapture -Arguments @(
+        # Missing curl is an input to this repair, not a failed repair. Keep the
+        # installation and final validation checked, including the success marker.
+        $healthProbe = Invoke-ProcessWithTimeout -FilePath "docker" -Arguments @(
             "exec", $containerName, "curl", "-f", "http://localhost:8006/search"
-        ) -TimeoutSec 20 -Description "probe graph healthcheck compatibility shim in $containerName")
-        if (@($healthProbeLines | ForEach-Object { ([string]$_).Trim() }) -contains "ITL_GRAPH_HEALTH_OK") {
+        ) -TimeoutSec 20 -Description "probe graph healthcheck compatibility shim in $containerName"
+        if ($healthProbe.exitCode -eq 0 -and @($healthProbe.lines | ForEach-Object { ([string]$_).Trim() }) -contains "ITL_GRAPH_HEALTH_OK") {
             continue
         }
 
@@ -3014,12 +3616,52 @@ function Get-McpHostWatchdogSettings {
         dockerDesktopRecoveryTimeoutSeconds = $dockerDesktopRecoveryTimeoutSeconds
         dockerDesktopCommandTimeoutSeconds = $dockerDesktopCommandTimeoutSeconds
         dockerDesktopPollSeconds = $dockerDesktopPollSeconds
+        dockerDesktopRecoveryStatePath = Get-McpHostWatchdogStatePath -Config $Config
     }
 }
 
 function Get-McpHostWatchdogStatePath {
     param([object]$Config)
     return (Join-Path (Get-StateRoot -Config $Config) "watchdog-state.json")
+}
+
+function Read-McpHostDockerRecoveryState {
+    param([string]$Path)
+
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    return (Get-ObjectValue -Object (Read-JsonFile -Path $Path) -Name "dockerDesktopRecovery" -Default $null)
+}
+
+function Register-McpHostDockerRecoveryAttempt {
+    param([object]$Settings, [string]$DesktopAction)
+
+    # The existing locked watchdog owns both recovery and its cooldown receipt.
+    # Persist before the command so interruption cannot create a restart loop.
+    $path = [string](Get-ObjectValue -Object $Settings -Name "dockerDesktopRecoveryStatePath" -Default "")
+    if (-not $path) { return }
+    $previous = Read-McpHostDockerRecoveryState -Path $path
+    $now = [DateTimeOffset]::UtcNow
+    $lastAttempt = [DateTimeOffset]::MinValue
+    $lastAttemptValue = Get-ObjectValue -Object $previous -Name "lastAttemptAt" -Default ""
+    # PowerShell 7 may deserialize ISO timestamps as DateTime; string casting
+    # would discard its UTC kind and move the cooldown by the local UTC offset.
+    $hasLastAttempt = if ($lastAttemptValue -is [DateTime] -or $lastAttemptValue -is [DateTimeOffset]) {
+        $lastAttempt = [DateTimeOffset]$lastAttemptValue
+        $true
+    } else { [DateTimeOffset]::TryParse([string]$lastAttemptValue, [ref]$lastAttempt) }
+    if ($hasLastAttempt) {
+        $remaining = 300 - ($now - $lastAttempt).TotalSeconds
+        if ($remaining -gt 0) {
+            throw "Docker Desktop recovery cooldown is active until $($lastAttempt.AddSeconds(300).ToString('o')); Engine is still unavailable. The next scheduled watchdog run will retry after the cooldown."
+        }
+    }
+    $state = if (Test-Path -LiteralPath $path -PathType Leaf) { Read-JsonFile -Path $path } else { [pscustomobject]@{ schemaVersion = 1 } }
+    $state | Add-Member -NotePropertyName dockerDesktopRecovery -NotePropertyValue ([ordered]@{
+        lastAttemptAt = $now.ToString("o")
+        action = $DesktopAction
+        nextAttemptAt = $now.AddSeconds(300).ToString("o")
+    }) -Force
+    Write-JsonFile -Path $path -Value $state
 }
 
 function Write-McpHostWatchdogRunState {
@@ -3037,6 +3679,12 @@ function Write-McpHostWatchdogRunState {
         completedAt = (Get-Date).ToString("o")
         status = $Status
         message = $Message
+    }
+    $recovery = Read-McpHostDockerRecoveryState -Path (Get-McpHostWatchdogStatePath -Config $Config)
+    if ($null -ne $recovery) { $state["dockerDesktopRecovery"] = $recovery }
+    $proofCache = Get-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $proofCache -and $null -ne $proofCache.Value) {
+        $state["endpointProofs"] = @($proofCache.Value.Values)
     }
     Write-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $Config) -Value $state
 }
@@ -3058,10 +3706,14 @@ function Invoke-McpHostWatchdogRunCore {
         $dockerRecoveryAttemptActive = $true
         [void]$dockerRecoveryEvents.Add((Repair-DockerDesktopAvailability -Settings $settings))
         $dockerRecoveryAttemptActive = $false
+        Invoke-McpHostStorageMaintenance -Config $Config
         $daemonRecoveryRetries = 0
         $graphRepairMessage = ""
         while ($true) {
             try {
+                # Proofs belong only to this locked reconciliation attempt. A
+                # daemon recovery begins a new attempt; owner restarts refresh.
+                $script:DirectEndpointProofCache = @{}
                 try {
                     $graphRepairCount = Repair-TrackedGraphHealthchecks -Config $Config
                     if ($graphRepairCount -gt 0) {
@@ -3088,8 +3740,14 @@ function Invoke-McpHostWatchdogRunCore {
         }
 
         $dockerRecovery = @($dockerRecoveryEvents) -join " -> "
-        $degradedServers = @(As-Array (Get-ObjectValue -Object (Read-HostState -Config $Config) -Name "servers" -Default @()) | Where-Object {
-            [string](Get-ObjectValue -Object $_ -Name "health" -Default "") -eq "degraded"
+        $trackedServers = @(As-Array (Get-ObjectValue -Object (Read-HostState -Config $Config) -Name "servers" -Default @()))
+        $degradedServers = @($trackedServers | Where-Object {
+            $badStates = @("degraded", "stopped", "missing", "unreachable", "unknown", "unavailable", "remote-disconnected")
+            # Legacy records may only have health; a current protocol status is
+            # authoritative when present, even if an optional capability failed.
+            $availability = [string](Get-ObjectValue -Object $_ -Name "status" -Default "")
+            if (-not $availability) { $availability = [string](Get-ObjectValue -Object $_ -Name "health" -Default "") }
+            $availability -in $badStates
         } | ForEach-Object {
             $name = [string](Get-ObjectValue -Object $_ -Name "name" -Default (Get-ObjectValue -Object $_ -Name "id" -Default "unknown"))
             $reason = [string](Get-ObjectValue -Object $_ -Name "functionalMessage" -Default "functional qualification failed")
@@ -3097,6 +3755,13 @@ function Invoke-McpHostWatchdogRunCore {
         })
         if ($degradedServers.Count -gt 0) {
             throw "Tracked MCP reconcile left degraded endpoints: $($degradedServers -join '; ')."
+        }
+        foreach ($server in $trackedServers) {
+            if ([string](Get-ObjectValue -Object $server -Name "functionalStatus" -Default "") -eq "degraded") {
+                $name = [string](Get-ObjectValue -Object $server -Name "name" -Default (Get-ObjectValue -Object $server -Name "id" -Default "unknown"))
+                $reason = [string](Get-ObjectValue -Object $server -Name "functionalMessage" -Default "functional qualification failed")
+                Write-Warning "MCP '$name' is available; optional functional capability is degraded: $reason. Its dependent operation must verify the required tool."
+            }
         }
         $message = "Tracked MCP runtimes, proxies, and registry reconciled. Docker availability: $dockerRecovery.$graphRepairMessage"
         Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "succeeded" -Message $message
@@ -3125,6 +3790,8 @@ function Invoke-McpHostWatchdogRunCore {
             Write-Warning "Could not persist watchdog failure state: $($_.Exception.Message)"
         }
         throw "MCP host watchdog reconcile failed: $message"
+    } finally {
+        Remove-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue
     }
 }
 
@@ -3282,6 +3949,7 @@ function Get-McpHostNightlyIndexSettings {
     $timeoutMinutes = [int](Get-ObjectValue -Object $raw -Name "timeoutMinutes" -Default 480)
     $pollSeconds = [int](Get-ObjectValue -Object $raw -Name "pollSeconds" -Default 15)
     $configIds = @(As-Array (Get-ObjectValue -Object $raw -Name "configIds" -Default @()) | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ } | Select-Object -Unique)
+    $aiGatewayRestart = [System.Convert]::ToBoolean((Get-ObjectValue -Object $raw -Name "aiGatewayRestart" -Default $false))
     if ($at -notmatch '^(?<hour>[01][0-9]|2[0-3]):(?<minute>[0-5][0-9])$') {
         throw "nightlyIndex.at must use 24-hour HH:mm format."
     }
@@ -3305,7 +3973,36 @@ function Get-McpHostNightlyIndexSettings {
         timeoutMinutes = $timeoutMinutes
         pollSeconds = $pollSeconds
         configIds = $configIds
+        aiGatewayRestart = $aiGatewayRestart
     }
+}
+
+function Invoke-McpHostAiGatewayMaintenance {
+    param([string]$HelperPath = (Join-Path $PSScriptRoot "ai-gateway-maintenance.ps1"), [string[]]$HelperArguments = @())
+    # Indexing embeds through the host AI Gateway, whose running engine keeps the
+    # server set it started with. Refresh and restart it first; never block indexing.
+    if ($DryRun) {
+        Write-Host "Would refresh and restart the AI Gateway Client before nightly indexing."
+        return [pscustomobject]@{ status = "dry-run" }
+    }
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $powershell = Join-Path $PSHOME "powershell.exe"
+        $lines = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $HelperPath @HelperArguments 2>&1 | ForEach-Object { [string]$_ })
+        $line = @($lines | Where-Object { $_.TrimStart().StartsWith("{") } | Select-Object -Last 1)
+        $result = if ($line.Count -eq 1) { $line[0] | ConvertFrom-Json } else { [pscustomobject]@{ status = "failed"; message = "AI Gateway maintenance returned no result line (exit code $LASTEXITCODE)." } }
+    } catch {
+        $result = [pscustomobject]@{ status = "failed"; message = $_.Exception.Message }
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ([string]$result.status -in @("restarted", "skipped")) {
+        Write-Host "AI Gateway before nightly indexing: $($result.status)."
+    } else {
+        Write-Warning "AI Gateway before nightly indexing: $($result.status). $([string](Get-ObjectValue -Object $result -Name 'message' -Default '')) Indexing continues."
+    }
+    return $result
 }
 
 function Get-McpHostNightlyIndexStatePath {
@@ -3321,10 +4018,70 @@ function ConvertFrom-HostMcpResponse {
     return ($Text | ConvertFrom-Json)
 }
 
+function Get-HostMcpResponseUtf8Text {
+    param([object]$Response)
+    # MCP JSON/SSE is UTF-8 even when the server omits a charset. PS 5.1's
+    # Content property may already have decoded the bytes with another encoding.
+    $stream = Get-ObjectValue -Object $Response -Name "RawContentStream" -Default $null
+    if ($null -eq $stream) { throw "MCP HTTP response has no raw UTF-8 stream." }
+    return ([Text.UTF8Encoding]::new($false, $true).GetString($stream.ToArray()))
+}
+
+function Invoke-HostMcpHttpRequest {
+    param([string]$Url, [string]$Method, [object]$Headers, [AllowNull()][object]$Body = $null,
+        [string]$ContentType = 'application/json', [int]$TimeoutSec = 60, [switch]$ExactEndpoint)
+
+    $requestArguments = @{ UseBasicParsing=$true; Uri=$Url; Method=$Method; Headers=$Headers; TimeoutSec=$TimeoutSec; ErrorAction='Stop' }
+    if ($null -ne $Body) { $requestArguments.Body=$Body; $requestArguments.ContentType=$ContentType }
+    if ($ExactEndpoint) { $requestArguments.MaximumRedirection=0 }
+    $response = $null
+    $requestFailure = $null
+    try {
+        $response = Invoke-WebRequest @requestArguments
+    } catch {
+        $requestFailure = $_
+        $response = Get-ObjectValue -Object $_.Exception -Name 'Response' -Default $null
+    }
+    $statusCode = [int](Get-ObjectValue -Object $response -Name 'StatusCode' -Default 0)
+    if ($ExactEndpoint -and $statusCode -ge 300 -and $statusCode -lt 400) {
+        # Keep the raw header object: returning HttpResponseHeaders through the
+        # generic getter enumerates it into key/value pairs in PowerShell.
+        $responseHeaders = $response.Headers
+        # HttpResponseHeaders exposes Location as a property in pwsh; Windows
+        # PowerShell's WebHeaderCollection uses its string indexer instead.
+        $locationProperty = $responseHeaders.PSObject.Properties['Location']
+        $location = $(if ($null -ne $locationProperty) { [string]$locationProperty.Value } else { '' })
+        if (-not $location -and $null -ne $responseHeaders) { $location = [string]$responseHeaders['Location'] }
+        throw "ITL_MCP_ENDPOINT_REDIRECT: originalUrl='$Url' httpStatus=$statusCode location='$location'. Reconcile the canonical endpoint through the original host setup/proxy/cutover owner, then repeat the original qualification; do not edit registry URLs directly."
+    }
+    if ($null -ne $requestFailure) { throw $requestFailure }
+    return $response
+}
+
+function Close-HostMcpConnection {
+    param([AllowNull()][object]$Connection)
+
+    # Only Open-HostMcpConnection can grant ownership; never infer it from headers.
+    $sessionId = [string](Get-ObjectValue -Object $Connection -Name "ownedSessionId" -Default "")
+    if ([string]::IsNullOrWhiteSpace($sessionId)) { return }
+    $Connection.ownedSessionId = ""
+    $url = [string]$Connection.url
+    try {
+        $headers = @{}
+        foreach ($key in $Connection.headers.Keys) { $headers[$key] = $Connection.headers[$key] }
+        $headers["mcp-session-id"] = $sessionId
+        Invoke-HostMcpHttpRequest -Url $url -Method Delete -Headers $headers -TimeoutSec 10 -ExactEndpoint:([bool](Get-ObjectValue -Object $Connection -Name 'exactEndpoint' -Default $false)) | Out-Null
+    } catch {
+        # Cleanup must not replace a tool/initialization failure or fail a valid result.
+        Write-Warning "Could not close the owned MCP session at '$url'; server expiry remains responsible. $($_.Exception.Message)" -WarningAction Continue
+    }
+}
+
 function Open-HostMcpConnection {
     param(
         [string]$Url,
-        [int]$TimeoutSec = 60
+        [int]$TimeoutSec = 60,
+        [switch]$ExactEndpoint
     )
     $headers = @{ Accept = "application/json, text/event-stream" }
     $body = [ordered]@{
@@ -3337,12 +4094,31 @@ function Open-HostMcpConnection {
             clientInfo = [ordered]@{ name = "itl-nightly-index"; version = "1" }
         }
     } | ConvertTo-Json -Depth 8 -Compress
-    $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -Method Post -ContentType "application/json" -Headers $headers -Body $body -TimeoutSec $TimeoutSec
+    $response = Invoke-HostMcpHttpRequest -Url $Url -Method Post -ContentType "application/json" -Headers $headers -Body $body -TimeoutSec $TimeoutSec -ExactEndpoint:$ExactEndpoint
     $sessionId = [string]$response.Headers["mcp-session-id"]
     if ($sessionId) { $headers["mcp-session-id"] = $sessionId }
-    $effectiveUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
-    Invoke-WebRequest -UseBasicParsing -Uri $effectiveUrl -Method Post -ContentType "application/json" -Headers $headers -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}' -TimeoutSec $TimeoutSec | Out-Null
-    return [pscustomobject]@{ url = $effectiveUrl; headers = $headers; nextId = 2 }
+    $connection = [pscustomobject]@{ url = $Url; headers = $headers; nextId = 2; ownedSessionId = $sessionId; exactEndpoint = [bool]$ExactEndpoint }
+    try {
+        $baseResponse = Get-ObjectValue -Object $response -Name "BaseResponse" -Default $null
+        $responseUri = Get-ObjectValue -Object $baseResponse -Name "ResponseUri" -Default $null
+        $effectiveUrl = [string](Get-ObjectValue -Object $responseUri -Name "AbsoluteUri" -Default "")
+        if ([string]::IsNullOrWhiteSpace($effectiveUrl)) {
+            $request = Get-ObjectValue -Object $baseResponse -Name "RequestMessage" -Default $null
+            $responseUri = Get-ObjectValue -Object $request -Name "RequestUri" -Default $null
+            $effectiveUrl = [string](Get-ObjectValue -Object $responseUri -Name "AbsoluteUri" -Default "")
+        }
+        # Windows PowerShell and pwsh expose different effective-URI properties.
+        # Keep the known initial URL if neither response shape supplies one.
+        if (-not [string]::IsNullOrWhiteSpace($effectiveUrl)) {
+            if ($ExactEndpoint -and -not ([Uri]$effectiveUrl).Equals([Uri]$Url)) { throw "ITL_MCP_ENDPOINT_CHANGED: originalUrl='$Url' effectiveUrl='$effectiveUrl'. Reconcile through the host owner before qualification." }
+            $connection.url = $effectiveUrl
+        }
+        Invoke-HostMcpHttpRequest -Url $connection.url -Method Post -ContentType "application/json" -Headers $headers -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}' -TimeoutSec $TimeoutSec -ExactEndpoint:$ExactEndpoint | Out-Null
+        return $connection
+    } catch {
+        Close-HostMcpConnection -Connection $connection
+        throw
+    }
 }
 
 function Wait-HostMcpReadyConnection {
@@ -3383,8 +4159,8 @@ function Invoke-HostMcpTool {
         params = [ordered]@{ name = $Name; arguments = $Arguments }
     }
     $Connection.nextId = [int]$Connection.nextId + 1
-    $response = Invoke-WebRequest -UseBasicParsing -Uri $Connection.url -Method Post -ContentType "application/json" -Headers $Connection.headers -Body ($payload | ConvertTo-Json -Depth 20 -Compress) -TimeoutSec $TimeoutSec
-    $result = ConvertFrom-HostMcpResponse -Text $response.Content
+    $response = Invoke-HostMcpHttpRequest -Url $Connection.url -Method Post -ContentType "application/json; charset=utf-8" -Headers $Connection.headers -Body ([Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 20 -Compress))) -TimeoutSec $TimeoutSec -ExactEndpoint:([bool](Get-ObjectValue -Object $Connection -Name 'exactEndpoint' -Default $false))
+    $result = ConvertFrom-HostMcpResponse -Text (Get-HostMcpResponseUtf8Text -Response $response)
     if ($null -ne $result.PSObject.Properties["error"]) {
         throw "MCP tool '$Name' returned a JSON-RPC error: $($result.error | ConvertTo-Json -Depth 10 -Compress)"
     }
@@ -3441,39 +4217,47 @@ function Wait-HostMcpIndexCompletion {
     $successfulPolls = 0
     $lastText = ""
     $lastProbeError = ""
-    while ((Get-Date) -lt $deadline) {
-        try {
-            $result = Invoke-HostMcpTool -Connection $Connection -Name $StatusTool -TimeoutSec 300
-            $lastProbeError = ""
-        } catch {
-            $lastProbeError = $_.Exception.Message
-            $successfulPolls = 0
-            Write-Warning "Index status probe failed transiently: server=$ServerId configId=$ConfigId error=$lastProbeError"
-            if ((Get-Date) -ge $deadline) { break }
-            Start-Sleep -Seconds $PollSeconds
+    # The caller owns the initial connection; this wait owns any replacements.
+    $initialConnection = $Connection
+    try {
+        while ((Get-Date) -lt $deadline) {
             try {
-                $Connection = Open-HostMcpConnection -Url ([string]$Connection.url) -TimeoutSec 60
+                $result = Invoke-HostMcpTool -Connection $Connection -Name $StatusTool -TimeoutSec 300
+                $lastProbeError = ""
             } catch {
                 $lastProbeError = $_.Exception.Message
-                Write-Warning "Index status reconnect pending: server=$ServerId configId=$ConfigId error=$lastProbeError"
+                $successfulPolls = 0
+                Write-Warning "Index status probe failed transiently: server=$ServerId configId=$ConfigId error=$lastProbeError"
+                if ((Get-Date) -ge $deadline) { break }
+                Start-Sleep -Seconds $PollSeconds
+                try {
+                    $reconnectUrl = [string]$Connection.url
+                    Close-HostMcpConnection -Connection $Connection
+                    $Connection = Open-HostMcpConnection -Url $reconnectUrl -TimeoutSec 60
+                } catch {
+                    $lastProbeError = $_.Exception.Message
+                    Write-Warning "Index status reconnect pending: server=$ServerId configId=$ConfigId error=$lastProbeError"
+                }
+                continue
             }
-            continue
+            $lastText = Get-HostMcpToolResultText -Result $result
+            $state = Get-HostMcpIndexState -Text $lastText
+            Write-Host "Index status: server=$ServerId configId=$ConfigId state=$state"
+            if ($state -eq "failed") {
+                throw "Incremental indexing failed for '$ServerId' configId '$ConfigId': $lastText"
+            }
+            if ($state -eq "succeeded") {
+                $successfulPolls++
+                if ($successfulPolls -ge 2) { return }
+            } else {
+                $successfulPolls = 0
+            }
+            Start-Sleep -Seconds $PollSeconds
         }
-        $lastText = Get-HostMcpToolResultText -Result $result
-        $state = Get-HostMcpIndexState -Text $lastText
-        Write-Host "Index status: server=$ServerId configId=$ConfigId state=$state"
-        if ($state -eq "failed") {
-            throw "Incremental indexing failed for '$ServerId' configId '$ConfigId': $lastText"
-        }
-        if ($state -eq "succeeded") {
-            $successfulPolls++
-            if ($successfulPolls -ge 2) { return }
-        } else {
-            $successfulPolls = 0
-        }
-        Start-Sleep -Seconds $PollSeconds
+        throw "Incremental indexing did not reach a stable successful status for '$ServerId' configId '$ConfigId' within $TimeoutMinutes minute(s). Last status: $lastText. Last probe error: $lastProbeError"
+    } finally {
+        if (-not [object]::ReferenceEquals($Connection, $initialConnection)) { Close-HostMcpConnection -Connection $Connection }
     }
-    throw "Incremental indexing did not reach a stable successful status for '$ServerId' configId '$ConfigId' within $TimeoutMinutes minute(s). Last status: $lastText. Last probe error: $lastProbeError"
 }
 
 function Get-TrackedProjectServerForConfig {
@@ -3511,10 +4295,14 @@ function Invoke-CodeIncrementalIndex {
     Write-Host "Starting incremental code indexing for configId '$ConfigId' through $url"
     if ($DryRun) { return }
     $connection = Open-HostMcpConnection -Url $url
-    $accepted = Invoke-HostMcpTool -Connection $connection -Name "reindex" -Arguments ([ordered]@{ force = $false })
-    Write-Host "Code incremental indexing accepted: $(Get-HostMcpToolResultText -Result $accepted)"
-    Start-Sleep -Seconds $Settings.pollSeconds
-    Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "stats" -ServerId "code" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
+    try {
+        $accepted = Invoke-HostMcpTool -Connection $connection -Name "reindex" -Arguments ([ordered]@{ force = $false })
+        Write-Host "Code incremental indexing accepted: $(Get-HostMcpToolResultText -Result $accepted)"
+        Start-Sleep -Seconds $Settings.pollSeconds
+        Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "stats" -ServerId "code" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
+    } finally {
+        Close-HostMcpConnection -Connection $connection
+    }
 }
 
 function Restart-GraphForIncrementalIndex {
@@ -3564,7 +4352,11 @@ function Invoke-GraphIncrementalIndex {
     Restart-GraphForIncrementalIndex -Config $Config -Server $Server -ConfigId $ConfigId
     if ($DryRun) { return }
     $connection = Wait-HostMcpReadyConnection -Url (Get-TrackedServerControlUrl -Server $Server) -ServerId "graph" -ConfigId $ConfigId
-    Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "get_indexing_status" -ServerId "graph" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
+    try {
+        Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "get_indexing_status" -ServerId "graph" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
+    } finally {
+        Close-HostMcpConnection -Connection $connection
+    }
 }
 
 function Get-TrackedConfigurationStateForId {
@@ -3695,11 +4487,13 @@ function Invoke-McpHostNightlyIndexRunCore {
         $selected += $configuration
     }
     if ($selected.Count -eq 0) { throw "No configurations matched nightlyIndex.configIds." }
+    Assert-McpStorageAdmission -Config $Config
     if ($settings.configIds.Count -gt 0) {
         $selectedIds = @($selected | ForEach-Object { [string](Get-ObjectValue -Object $_ -Name "configId" -Default "") })
         $missing = @($settings.configIds | Where-Object { $selectedIds -notcontains $_ })
         if ($missing.Count -gt 0) { throw "nightlyIndex.configIds contains unknown configuration(s): $($missing -join ', ')" }
     }
+    $aiGateway = if ($settings.aiGatewayRestart) { Invoke-McpHostAiGatewayMaintenance } else { $null }
     $results = @()
     try {
         foreach ($configuration in $selected) {
@@ -3707,12 +4501,12 @@ function Invoke-McpHostNightlyIndexRunCore {
             $results += $result
             if (-not $DryRun) { Publish-Registry -Config $Config }
         }
-        $state = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "succeeded"; configurations = $results; message = "Fresh configuration dumps, reports, and incremental indexes completed." }
+        $state = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "succeeded"; configurations = $results; aiGateway = $aiGateway; message = "Fresh configuration dumps, reports, and incremental indexes completed." }
         if (-not $DryRun) { Write-JsonFile -Path (Get-McpHostNightlyIndexStatePath -Config $Config) -Value $state }
         Write-Host "MCP host nightly indexing completed."
     } catch {
         $message = $_.Exception.Message
-        $state = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "failed"; configurations = $results; message = $message }
+        $state = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "failed"; configurations = $results; aiGateway = $aiGateway; message = $message }
         if (-not $DryRun) {
             try { Write-JsonFile -Path (Get-McpHostNightlyIndexStatePath -Config $Config) -Value $state } catch { Write-Warning "Could not persist nightly indexing failure state: $($_.Exception.Message)" }
         }
@@ -3826,13 +4620,16 @@ function Uninstall-McpHostNightlyIndex {
 }
 
 function Get-HostServerSafeHealthTool {
-    param([string]$ServerId)
+    param([string]$ServerId, [switch]$IncludeUpstream)
 
     switch ($ServerId) {
+        "syntax" { return "syntaxcheck" }
+        "ssl" { return "vector_store_state" }
         "templates" { return "list_templates" }
-        "codechecker" { return "fetch_its" }
+        "codechecker" { if ($IncludeUpstream) { return "fetch_its" }; return "" }
         "bookstack" { return "index_status" }
         "mantis" { return "health" }
+        "sppr" { return "sppr_index_status" }
         "code" { return "stats" }
         "graph" { return "get_indexing_status" }
         default { return "" }
@@ -3842,10 +4639,57 @@ function Get-HostServerSafeHealthTool {
 function Get-HostServerSafeHealthArguments {
     param([string]$ServerId)
 
-    if ($ServerId -eq "codechecker") {
-        return [ordered]@{ id = "root" }
-    }
+    if ($ServerId -eq "codechecker") { return [ordered]@{ id = "root" } }
+    if ($ServerId -eq "syntax") { return [ordered]@{ code = "Procedure HealthCheck()`nEndProcedure"; file_name = "HealthCheck.bsl" } }
     return $null
+}
+
+function ConvertFrom-GraphIndexStatus {
+    param([AllowNull()][object]$Result)
+    # One stateless decoder owns legacy and v2 status semantics for health and
+    # cutover. TextContent contains JSON, not a human status string to match.
+    if ($null -eq $Result) { throw "Graph get_indexing_status returned no result." }
+    if (Get-ObjectValue -Object $Result -Name "isError" -Default $false) { throw "Graph get_indexing_status reported an MCP tool error." }
+    $payload = Get-ObjectValue -Object $Result -Name "structuredContent" -Default $null
+    if ($null -eq $payload) {
+        $content = Get-ObjectValue -Object $Result -Name "content" -Default $null
+        if ($null -ne $content) {
+            $parts = @(As-Array $content | Where-Object { [string](Get-ObjectValue -Object $_ -Name "type" -Default "") -eq "text" })
+            if ($parts.Count -ne 1) { throw "Graph status requires exactly one JSON TextContent block." }
+            $payload = [string](Get-ObjectValue -Object $parts[0] -Name "text" -Default "")
+        } else { $payload = $Result }
+    }
+    if ($payload -is [string]) { $payload = ConvertFrom-Json -InputObject $payload -ErrorAction Stop }
+    $nested = Get-ObjectValue -Object $payload -Name "result" -Default $null
+    if ($nested -is [string]) { $payload = ConvertFrom-Json -InputObject $nested -ErrorAction Stop }
+    $envelopeError = Get-ObjectValue -Object $payload -Name "error" -Default $null
+    if ($null -ne $envelopeError) {
+        $code = [string](Get-ObjectValue -Object $envelopeError -Name "code" -Default "unknown")
+        throw "Graph get_indexing_status returned a typed error ($code)."
+    }
+    $version = Get-ObjectValue -Object $payload -Name "contract_version" -Default $null
+    if ($null -ne $version) {
+        $context = Get-ObjectValue -Object $payload -Name "context" -Default $null
+        if ([string]$version -ne "2.0" -or [string](Get-ObjectValue -Object $context -Name "tool" -Default "") -ne "get_indexing_status") {
+            throw "Graph status has an unsupported version or a different tool context."
+        }
+        $payload = Get-ObjectValue -Object $payload -Name "data" -Default $null
+    }
+    $tasks = Get-ObjectValue -Object $payload -Name "background_tasks" -Default $null
+    if ($null -eq $tasks -or $tasks -is [string] -or $tasks -is [array]) { throw "Graph get_indexing_status did not expose a background_tasks object." }
+    $entries = @((Convert-ToHash -Object $tasks).GetEnumerator())
+    if ($entries.Count -eq 0) { throw "Graph get_indexing_status exposed no background tasks." }
+    $anyRunning = Get-ObjectValue -Object $payload -Name "any_running" -Default $null
+    if ($null -ne $anyRunning -and $anyRunning -isnot [bool]) { throw "Graph any_running must be a boolean." }
+    $running = $anyRunning -eq $true
+    foreach ($task in $entries) {
+        $status = [string](Get-ObjectValue -Object $task.Value -Name "status" -Default "")
+        $errorText = [string](Get-ObjectValue -Object $task.Value -Name "error" -Default "")
+        if ($status -match '^(?i:failed|error)$' -or ($errorText -and $status -ne "skipped")) { throw "Graph background task '$($task.Key)' failed: $errorText" }
+        if ($status -match '^(?i:running|pending|in_progress|processing)$') { $running = $true }
+        elseif ($status -notmatch '^(?i:completed|complete|succeeded|idle|skipped)$') { throw "Graph background task '$($task.Key)' has unknown status '$status'." }
+    }
+    return [pscustomobject]@{ running = $running; phase = "background_tasks"; collections = $null; backgroundTasks = $tasks }
 }
 
 function Get-GraphFunctionalHealth {
@@ -3855,20 +4699,8 @@ function Get-GraphFunctionalHealth {
     )
 
     try {
-        $status = $(if ($StatusValue -is [string]) { $StatusValue | ConvertFrom-Json } else { $StatusValue })
-        if ($null -eq $status) { throw "get_indexing_status returned no functional status." }
-        $backgroundTasks = Get-ObjectValue -Object $status -Name "background_tasks" -Default $null
-        $tasks = $(if ($null -eq $backgroundTasks) { @() } else { @($backgroundTasks.PSObject.Properties) })
-        $failedTasks = @($tasks | Where-Object {
-            $taskStatus = [string](Get-ObjectValue -Object $_.Value -Name "status" -Default "")
-            $taskError = [string](Get-ObjectValue -Object $_.Value -Name "error" -Default "")
-            $taskStatus -match '^(?i:failed|error)$' -or ($taskError -and $taskStatus -notmatch '^(?i:skipped)$')
-        })
-        if ($failedTasks.Count -gt 0) {
-            $details = @($failedTasks | ForEach-Object { "$($_.Name): $([string](Get-ObjectValue -Object $_.Value -Name 'error' -Default (Get-ObjectValue -Object $_.Value -Name 'status' -Default 'failed')))" })
-            return [pscustomobject]@{ status = "degraded"; message = "Graph background task failure: $($details -join '; ')" }
-        }
-
+        $activity = ConvertFrom-GraphIndexStatus -Result $StatusValue
+        $tasks = @((Convert-ToHash -Object $activity.backgroundTasks).GetEnumerator())
         $runningVectorTasks = @($tasks | Where-Object {
             $_.Name -in @("vector_indexing", "routine_embedding_indexing") -and
             [string](Get-ObjectValue -Object $_.Value -Name "status" -Default "") -match '^(?i:running|pending|in_progress)$'
@@ -3890,10 +4722,25 @@ function Get-GraphFunctionalHealth {
 }
 
 function Get-HostServerFunctionalHealth {
-    param([object]$Server)
+    param([object]$Server, [switch]$IncludeUpstream)
 
     $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
-    $toolName = Get-HostServerSafeHealthTool -ServerId $id
+    if ($id -eq "codechecker" -and -not $IncludeUpstream) {
+        return [pscustomobject]@{ status = "not-probed"; message = "Upstream CodeChecker tools are not periodic MCP health probes. Verify the required tool in its dependent operation; identity/catalog qualification does not prove upstream readiness." }
+    }
+    if ($id -eq "docs" -and (Test-ModernHostServer -Server $Server)) {
+        try {
+            $direct = [string](Get-ObjectValue -Object $Server -Name "directUrl" -Default (Get-ObjectValue -Object $Server -Name "url" -Default ""))
+            $ready = Invoke-RestMethod -Uri ($direct -replace '/mcp/?$', '/ready') -TimeoutSec 15
+            $activity = ConvertFrom-DocsReadyState -Value $ready
+            if ($activity.running) { return [pscustomobject]@{ status = "indexing"; message = "Docs native index phase: $($activity.phase); serving an older generation is not completed acceptance." } }
+            $nativeDocs = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "stable" -and
+                -not [string]::IsNullOrWhiteSpace([string](Get-ObjectValue -Object $Server -Name "manifestPath" -Default ""))
+            Assert-BetaDocsFunctionalCall -Url $direct -NativeResponse:$nativeDocs -ExpectedGeneration ([string](Get-ObjectValue -Object $ready -Name "generation" -Default "")) -ExactEndpoint
+            return [pscustomobject]@{ status = "qualified"; message = "Docs native index ready and safe MCP lookup passed." }
+        } catch { return [pscustomobject]@{ status = "degraded"; message = "Docs functional qualification failed: $($_.Exception.Message)" } }
+    }
+    $toolName = Get-HostServerSafeHealthTool -ServerId $id -IncludeUpstream:$IncludeUpstream
     if (-not $toolName) {
         return [pscustomobject]@{ status = "not-probed"; message = "No server-specific safe health tool is configured." }
     }
@@ -3901,27 +4748,69 @@ function Get-HostServerFunctionalHealth {
     if (-not $url) {
         return [pscustomobject]@{ status = "degraded"; message = "Tracked MCP server '$id' has no URL for functional qualification." }
     }
+    $connection = $null
     try {
-        $connection = Open-HostMcpConnection -Url $url -TimeoutSec 10
+        $connection = Open-HostMcpConnection -Url $url -TimeoutSec 10 -ExactEndpoint
         $arguments = Get-HostServerSafeHealthArguments -ServerId $id
         $result = Invoke-HostMcpTool -Connection $connection -Name $toolName -Arguments $arguments -TimeoutSec 15
-        $text = Get-HostMcpToolResultText -Result $result
         if ($id -eq "graph") {
-            $structured = Get-ObjectValue -Object $result -Name "structuredContent" -Default $null
-            $statusValue = $(if ($null -ne $structured) { $structured } else { $text })
-            return (Get-GraphFunctionalHealth -Server $Server -StatusValue $statusValue)
+            return (Get-GraphFunctionalHealth -Server $Server -StatusValue $result)
         }
         return [pscustomobject]@{ status = "qualified"; message = "MCP safe health tool '$toolName' passed." }
     } catch {
         return [pscustomobject]@{ status = "degraded"; message = "MCP safe health tool '$toolName' failed: $($_.Exception.Message)" }
+    } finally {
+        Close-HostMcpConnection -Connection $connection
     }
 }
 
+function Get-HostDirectEndpointProof {
+    param([object]$Config, [object]$Server, [switch]$Refresh)
+    $cacheVariable = Get-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue
+    $cache = $(if ($null -ne $cacheVariable) { $cacheVariable.Value } else { $null })
+    $key = "{0}|{1}|{2}|{3}" -f $Server.id, $Server.containerName, $Server.url, $Server.hostPort
+    if ($null -ne $cache -and -not $Refresh -and $cache.ContainsKey($key)) {
+        $cached = $cache[$key].proof
+        if ($cached.status -ne "matched") { return $cached }
+        try {
+            $binding = @(Invoke-DockerCommandCapture -Arguments @("inspect", "-f", "{{.Id}} {{.State.Status}}", ([string]$Server.containerName)) -TimeoutSec 10 -Description "validate cached direct MCP identity") -join ""
+            if ($binding.Trim() -eq "$($cached.container_id) running") { return $cached }
+        } catch { }
+        $cache.Remove($key)
+    }
+    try {
+        $python = Ensure-PythonRuntime -Config $Config
+        $probe = Join-Path $PSScriptRoot "../mcp-host/endpoint_identity.py"
+        $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+        $arguments = @("-B", "-X", "utf8", $probe, "--qualify-url", "--container", ([string]$Server.containerName), "--url", ([string]$Server.url),
+            "--host-port", ([string]$Server.hostPort), "--timeout", "5")
+        $tool = Get-HostServerSafeHealthTool -ServerId $id
+        if ($tool) {
+            $arguments += @("--health-tool", $tool)
+            $healthArguments = Get-HostServerSafeHealthArguments -ServerId $id
+            if ($null -ne $healthArguments) {
+                # Base64 avoids native Windows escaping of serialized Unicode JSON.
+                $encoded = [Convert]::ToBase64String($script:Utf8NoBom.GetBytes(($healthArguments | ConvertTo-Json -Compress)))
+                $arguments += @("--health-arguments-base64", $encoded)
+            }
+        }
+        # Includes bounded internal/public protocol calls, two 30s safe calls,
+        # session cleanup and Docker transport. Typical live proof took 4-15s.
+        $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments $arguments -TimeoutSec 180 -Description "read-only direct MCP identity $id"
+        if ($result.exitCode -ne 0) { throw "Endpoint identity probe failed." }
+        $proof = (($result.lines -join "`n") | ConvertFrom-Json)
+    } catch {
+        $proof = [pscustomobject]@{ status = "unverified"; reason = $_.Exception.GetType().Name; stage = "probe process" }
+    }
+    if ($null -ne $cache) { $cache[$key] = @{ serverId = [string]$Server.id; containerName = [string]$Server.containerName; proof = $proof } }
+    return $proof
+}
+
 function Get-HostServerPublishStatus {
-    param([object]$Server)
+    param([object]$Server, [object]$Config)
 
     $proxyUrl = [string](Get-ObjectValue -Object $Server -Name "proxyUrl" -Default "")
-    if ($proxyUrl) {
+    if ($proxyUrl -and [string](Get-ObjectValue -Object $Server -Name "endpointMode" -Default "") -ne "direct") {
         $proxyContainerName = [string](Get-ObjectValue -Object $Server -Name "proxyContainerName" -Default "")
         $proxyState = Get-HostContainerPublishState -ContainerName $proxyContainerName
         if ($proxyState -eq "missing" -or $proxyState -eq "unknown") {
@@ -3933,7 +4822,7 @@ function Get-HostServerPublishStatus {
         $proxyPort = [int](Get-ObjectValue -Object $Server -Name "proxyPort" -Default 0)
         $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
         $hostPort = [int](Get-ObjectValue -Object $Server -Name "hostPort" -Default 0)
-        $expectedUpstreamUrl = $(if ($hostPort -gt 0) { "http://host.docker.internal:$hostPort/mcp" } else { "" })
+        $expectedUpstreamUrl = $(if ($hostPort -gt 0) { (Get-HostProxyUpstreamUrl -Server $Server) } else { "" })
         $toolsContractStatus = [string](Get-ObjectValue -Object $Server -Name "toolsContractStatus" -Default "")
         if ($toolsContractStatus -eq "qualified" -and (Test-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $expectedUpstreamUrl)) {
             return "running"
@@ -3952,6 +4841,13 @@ function Get-HostServerPublishStatus {
 
     $hostPort = [int](Get-ObjectValue -Object $Server -Name "hostPort" -Default 0)
     if (Test-HostTcpPortOpen -Port $hostPort) {
+        if ([string](Get-ObjectValue -Object $Server -Name "endpointMode" -Default "") -eq "direct") {
+            try {
+                $proof = Get-HostDirectEndpointProof -Config $Config -Server $Server
+                if ($proof.status -eq "mismatch") { return "unreachable" }
+                if ($proof.status -ne "matched") { return "unknown" }
+            } catch { return "unknown" }
+        }
         return "running"
     }
     return "unreachable"
@@ -3980,14 +4876,39 @@ function Update-HostStateForPublish {
             }
         }
 
-        $publishStatus = Get-HostServerPublishStatus -Server $serverHash
+        $publishStatus = Get-HostServerPublishStatus -Server $serverHash -Config $Config
         $currentStatus = [string](Get-ObjectValue -Object $serverHash -Name "status" -Default "")
         if ($currentStatus -ne $publishStatus) {
             $serverHash["status"] = $publishStatus
             $changed = $true
         }
-        $functionalHealth = $(if ($publishStatus -eq "running") { Get-HostServerFunctionalHealth -Server $serverHash } else { [pscustomobject]@{ status = "not-probed"; message = "Transport status is $publishStatus." } })
-        $effectiveHealth = $(if ([string]$functionalHealth.status -eq "degraded") { "degraded" } else { $publishStatus })
+        $directProof = $null
+        if ([string](Get-ObjectValue -Object $serverHash -Name "endpointMode" -Default "") -eq "direct" -and $publishStatus -in @("running", "unknown")) {
+            $directProof = Get-HostDirectEndpointProof -Config $Config -Server $serverHash
+        }
+        if ($null -ne $directProof -and [string]$directProof.status -eq 'matched') {
+            $qualifiedUrl = [string](Get-ObjectValue -Object $directProof -Name 'qualified_url' -Default '')
+            if ($qualifiedUrl -and [string]$serverHash.url -cne $qualifiedUrl) {
+                Set-NativeRuntimeEndpoint -Runtime $serverHash -Url $qualifiedUrl
+                $changed = $true
+            }
+        }
+        if ($null -ne $directProof -and $directProof.status -ne "matched") {
+            $details = @("Direct MCP qualification is $($directProof.status)")
+            foreach ($field in @("stage", "method", "reason", "timeoutSeconds")) {
+                $value = Get-ObjectValue -Object $directProof -Name $field -Default ""
+                if ([string]$value) { $details += "${field}=$value" }
+            }
+            $functionalHealth = [pscustomobject]@{ status = "degraded"; message = ($details -join "; ") }
+        } elseif ($null -ne $directProof -and $null -ne (Get-ObjectValue -Object $directProof -Name "health_error" -Default $null)) {
+            $healthError = Get-ObjectValue -Object $directProof -Name "health_error" -Default $null
+            $functionalHealth = [pscustomobject]@{ status = "degraded"; message = "MCP identity matched; safe tool health failed; method=$($healthError.method); reason=$($healthError.reason); timeoutSeconds=$($healthError.timeoutSeconds)." }
+        } else {
+            $functionalHealth = $(if ($publishStatus -eq "running") { Get-HostServerFunctionalHealth -Server $serverHash } else { [pscustomobject]@{ status = "not-probed"; message = "Transport status is $publishStatus." } })
+        }
+        # Availability has one owner: the container-bound MCP protocol proof.
+        # Functional diagnostics stay visible without reclassifying the server.
+        $effectiveHealth = $publishStatus
         $currentHealth = [string](Get-ObjectValue -Object $serverHash -Name "health" -Default "")
         if ($currentHealth -ne $effectiveHealth) {
             $serverHash["health"] = $effectiveHealth
@@ -4034,11 +4955,23 @@ function New-ServerRuntime {
     $composeProjectTemplate = [string](Get-ObjectValue -Object $Server -Name "composeProjectTemplate" -Default $name)
     $embeddingSettings = $null
     if (Test-HostServerNeedsEmbedding -Server $Server) {
-        $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
+        $embeddingSettings = Get-HostEmbeddingSettings -Config $Config -Server $Server
     }
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
+    $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId $id -Scope $scope -ConfigId $configId
+    $endpointMode = [string](Get-ObjectValue -Object $tracked -Name "endpointMode" -Default "proxy")
+    $reuseNative = $endpointMode -eq "direct"
+    if ($id -in @("bookstack", "sppr")) { $endpointMode = "direct" }
+    $indexGeneration = [string](Get-ObjectValue -Object $Server -Name "indexGeneration" -Default "")
+    if ($reuseNative) {
+        $hostPort = [int]$tracked.hostPort
+        if (-not $indexGeneration -and [string]$tracked.image -ceq $image) { $containerName = [string]$tracked.containerName }
+    }
     return [pscustomobject]@{
         id = $id
+        endpointMode = $endpointMode
+        channel = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable")
+        manifestPath = [string](Get-ObjectValue -Object $Server -Name "manifestPath" -Default "")
         scope = $scope
         family = "vibecoding1c"
         provider = "remote"
@@ -4047,11 +4980,13 @@ function New-ServerRuntime {
         name = $name
         clientNames = (Get-McpClientNames -ServerId $id)
         containerName = $containerName
-        composeProject = (Expand-Template -Template $composeProjectTemplate -ConfigId $configId -ServerId $id)
+        proxyContainerName = $(if ($endpointMode -eq "direct") { "" } else { [string](Get-ObjectValue -Object $tracked -Name "proxyContainerName" -Default "") })
+        proxyContractPath = $(if ($endpointMode -eq "direct") { "" } else { [string](Get-ObjectValue -Object $tracked -Name "proxyContractPath" -Default "") })
+        composeProject = $(if ($reuseNative -and [string]$tracked.image -ceq $image) { [string](Get-ObjectValue -Object $tracked -Name "composeProject" -Default $containerName) } else { Expand-Template -Template $composeProjectTemplate -ConfigId $configId -ServerId $id })
         image = $image
         internalPort = $internalPort
         hostPort = $hostPort
-        url = "$baseUrl`:$hostPort/mcp"
+        url = $(if ($reuseNative) { [string]$tracked.url } else { "$baseUrl`:$hostPort/mcp" })
         health = "unknown"
         platformVersion = $(if ($id -eq "docs") { [string]$localValues["HELP_PLATFORM_VERSION"] } else { "" })
         bspVersion = $(if ($id -eq "ssl") { [string]$localValues["BSP_VERSION"] } else { "" })
@@ -4059,6 +4994,7 @@ function New-ServerRuntime {
         configurationVersion = $(if ($ConfigState) { [string](Get-ObjectValue -Object $ConfigState -Name "configurationVersion" -Default "") } else { "" })
         embeddingMode = $(if ($null -ne $embeddingSettings) { [string]$embeddingSettings.mode } else { "" })
         embeddingModel = $(if ($null -ne $embeddingSettings) { [string]$embeddingSettings.model } else { "" })
+        indexGeneration = $indexGeneration
         sourceCommit = $(if ($ConfigState) { $ConfigState.sourceCommit } else { "" })
         sourceFingerprint = $(if ($ConfigState) { $ConfigState.sourceFingerprint } else { "" })
         reportHash = $(if ($ConfigState) { $ConfigState.reportHash } else { "" })
@@ -4066,11 +5002,82 @@ function New-ServerRuntime {
     }
 }
 
+function Enable-BookStackDirectEndpoint {
+    param([object]$Config)
+    $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "bookstack-direct" -WaitSeconds 0
+    if (-not $lease.acquired) {
+        throw "Host maintenance is active. Wait for its completion, then repeat bookstack-direct; the current BookStack remains available."
+    }
+    try {
+        $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId "bookstack" -Scope "global"
+        if ($null -eq $tracked) { throw "No tracked BookStack runtime. Run setup -ServerId bookstack first." }
+        $native = Convert-ToHash -Object $tracked
+        $containerName = [string](Get-ObjectValue -Object $tracked -Name "containerName" -Default "")
+        $hostPort = [int](Get-ObjectValue -Object $tracked -Name "hostPort" -Default 0)
+        if (-not $containerName -or $hostPort -le 0) { throw "Tracked BookStack has no direct container/port; repair its host state through setup -ServerId bookstack." }
+        $proxyName = [string](Get-ObjectValue -Object $tracked -Name "proxyContainerName" -Default "$containerName-tools-list-proxy")
+        if ($proxyName -eq $containerName) { throw "BookStack proxy and direct container identities must differ." }
+        $baseUrl = ([string](Get-ObjectValue -Object $Config -Name "baseUrl" -Default "http://localhost")).TrimEnd("/")
+        $url = [string](Get-ObjectValue -Object $tracked -Name "directUrl" -Default "$baseUrl`:$hostPort/mcp")
+        Set-NativeRuntimeEndpoint -Runtime $native -Url $url
+        if ($DryRun) {
+            Write-Host "DRY-RUN: qualify and publish BookStack at $url, then remove $proxyName. The direct container and index are retained."
+            return
+        }
+        if ((Get-HostServerPublishStatus -Server $native -Config $Config) -ne "running") {
+            throw "BookStack direct MCP is not ready at $url. Restore its availability and repeat bookstack-direct; the proxy is retained."
+        }
+        $health = Get-HostServerFunctionalHealth -Server $native
+        if ($health.status -ne "qualified") {
+            throw "BookStack direct qualification failed: $($health.message). Restore its availability and repeat bookstack-direct; the proxy is retained."
+        }
+        # Retain the cleanup target until removal succeeds; direct mode ignores proxy routing.
+        $native["proxyContainerName"] = $proxyName
+        Update-HostStateServers -Config $Config -ServerStates @($native)
+        try {
+            Publish-Registry -Config $Config
+        } catch {
+            Update-HostStateServers -Config $Config -ServerStates @($tracked)
+            throw "BookStack registry publication failed; prior host state and proxy are retained. Resolve publication and repeat bookstack-direct. $($_.Exception.Message)"
+        }
+        $proxyState = Get-HostContainerPublishState -ContainerName $proxyName
+        if ($proxyState -eq "unknown") {
+            throw "BookStack is published directly, but proxy inspection failed. Restore Docker access and repeat bookstack-direct to finish removal."
+        }
+        if ($proxyState -ne "missing") {
+            try {
+                Invoke-DockerCommandChecked -Arguments @("rm", "-f", $proxyName)
+            } catch {
+                throw "BookStack is published directly, but proxy removal failed. Restore Docker access and repeat bookstack-direct. $($_.Exception.Message)"
+            }
+        }
+        Set-NativeRuntimeEndpoint -Runtime $native -Url $url
+        Update-HostStateServers -Config $Config -ServerStates @($native)
+        Write-Host "BookStack is published directly at $url; its tools-list proxy is removed."
+    } finally {
+        Exit-McpHostMaintenanceLock -Lease $lease
+    }
+}
+
+function Invoke-BookStackReplacement {
+    param([object]$Config)
+    $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "bookstack-replace" -WaitSeconds 0
+    if (-not $lease.acquired) {
+        throw "Host maintenance is active. Wait for its completion, then repeat start -ServerId bookstack -RecreateBookStack; the current BookStack remains running."
+    }
+    try {
+        Start-HostServers -Config $Config -TargetServerId "bookstack" -RecreateBookStack
+    } finally {
+        Exit-McpHostMaintenanceLock -Lease $lease
+    }
+}
+
 function Start-HostServers {
     param(
         [object]$Config,
         [string]$TargetServerId = "",
-        [string]$TargetConfigId = ""
+        [string]$TargetConfigId = "",
+        [switch]$RecreateBookStack
     )
     Ensure-HostPrerequisites -Config $Config
     Ensure-Distribution -Config $Config
@@ -4095,9 +5102,13 @@ function Start-HostServers {
         $runtimeIndex = $globalIndex
         $globalIndex++
         if ($globalIds -notcontains $id) { continue }
-        $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex
+        $selectedServer = Get-SelectedHostServerDefinition -Config $Config -StableServer $server
+        $runtime = New-ServerRuntime -Config $Config -Server $selectedServer -Index $runtimeIndex
         Write-Host "Global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-        Start-DockerServer -Config $Config -Server $server -Runtime $runtime
+        if ($id -eq "bookstack" -and $TargetServerId -ne "bookstack") {
+            Ensure-HostEmbeddingModel -Config $Config -Manifest $manifest -GlobalServerIds $globalIds -ProjectServerIds $projectIds -Server $selectedServer
+        }
+        Start-DockerServer -Config $Config -Server $selectedServer -Runtime $runtime -Recreate:($RecreateBookStack -and $id -eq "bookstack")
         Enable-ToolsListProxyForRuntime -Config $Config -Runtime $runtime
         $runtime.health = "running"
         $serverStates += $runtime
@@ -4127,12 +5138,13 @@ function Start-HostServers {
                 $runtimeIndex = $projectIndex
                 $projectIndex++
                 if ($projectIds -notcontains $id) { continue }
-                $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex -ConfigState $configState -ConfigIndex $configIndex
+                $selectedServer = Get-SelectedHostServerDefinition -Config $Config -StableServer $server -ConfigId $configurationId
+                $runtime = New-ServerRuntime -Config $Config -Server $selectedServer -Index $runtimeIndex -ConfigState $configState -ConfigIndex $configIndex
                 Write-Host "Project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-                if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
-                    Start-ComposeServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState
+                if ([bool](Get-ObjectValue -Object $selectedServer -Name "compose" -Default $false)) {
+                    Start-ComposeServer -Config $Config -Server $selectedServer -Runtime $runtime -ConfigState $configState
                 } else {
-                    Start-DockerServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState
+                    Start-DockerServer -Config $Config -Server $selectedServer -Runtime $runtime -ConfigState $configState
                 }
                 Enable-ToolsListProxyForRuntime -Config $Config -Runtime $runtime
                 $runtime.health = "running"
@@ -4165,6 +5177,18 @@ function Start-HostServers {
 }
 
 function Invoke-GraphCpuEmbeddingModelMigration {
+    param([object]$Config, [string]$TargetConfigId)
+    if (-not (Get-McpStorageSettings $Config).enabled -or (Test-McpStorageLeaseHeld $Config)) {
+        Invoke-GraphCpuEmbeddingModelMigrationCore -Config $Config -TargetConfigId $TargetConfigId
+        return
+    }
+    $lease=Enter-McpHostMaintenanceLock -Config $Config -Operation 'graph-cpu-migrate-model' -WaitSeconds 0
+    if (-not $lease.acquired) { throw 'Host maintenance is active; repeat graph-cpu-migrate-model after it completes.' }
+    try { Invoke-GraphCpuEmbeddingModelMigrationCore -Config $Config -TargetConfigId $TargetConfigId }
+    finally { Exit-McpHostMaintenanceLock $lease }
+}
+
+function Invoke-GraphCpuEmbeddingModelMigrationCore {
     param(
         [object]$Config,
         [string]$TargetConfigId
@@ -4201,6 +5225,10 @@ function Invoke-GraphCpuEmbeddingModelMigration {
         return
     }
 
+    if ((Get-McpStorageSettings $Config).enabled) {
+        $helperImage=@(Invoke-DockerCommandCapture -Arguments @('inspect','--format','{{.Image}}',$containerName) -TimeoutSec 15 -Description 'bind migration capacity estimator')[0]
+        Assert-McpStorageAdmission -Config $Config -PeakBytes (Get-McpStorageMountedPeak -ContainerName ($containerName+'-neo4j') -HelperImage $helperImage)
+    }
     $migrationScript = @'
 import json
 import os
@@ -4296,6 +5324,18 @@ finally:
 }
 
 function Invoke-HostReindex {
+    param([object]$Config, [string]$TargetConfigId = '', [string]$TargetServerId = '')
+    if (-not (Get-McpStorageSettings $Config).enabled -or (Test-McpStorageLeaseHeld $Config)) {
+        Invoke-HostReindexCore -Config $Config -TargetConfigId $TargetConfigId -TargetServerId $TargetServerId
+        return
+    }
+    $lease=Enter-McpHostMaintenanceLock -Config $Config -Operation 'reindex' -WaitSeconds 0
+    if (-not $lease.acquired) { throw 'Host maintenance is active; repeat reindex after it completes. Serving runtimes remain unchanged.' }
+    try { Invoke-HostReindexCore -Config $Config -TargetConfigId $TargetConfigId -TargetServerId $TargetServerId }
+    finally { Exit-McpHostMaintenanceLock $lease }
+}
+
+function Invoke-HostReindexCore {
     param(
         [object]$Config,
         [string]$TargetConfigId = "",
@@ -4334,10 +5374,11 @@ function Invoke-HostReindex {
             $runtimeIndex = $globalIndex
             $globalIndex++
             if ($globalIds -notcontains $id) { continue }
-            if (Test-HostServerSupportsDatabaseReset -Server $server) {
-                $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex
+            $selectedServer = Get-SelectedHostServerDefinition -Config $Config -StableServer $server
+            if (Test-HostServerSupportsDatabaseReset -Server $selectedServer) {
+                $runtime = New-ServerRuntime -Config $Config -Server $selectedServer -Index $runtimeIndex
                 Write-Host "Reindexing global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-                Start-DockerServer -Config $Config -Server $server -Runtime $runtime -Recreate -ForceResetDatabase
+                Start-DockerServer -Config $Config -Server $selectedServer -Runtime $runtime -Recreate -ForceResetDatabase
                 $runtime.health = "running"
                 $serverStates += $runtime
                 $reindexed++
@@ -4368,13 +5409,14 @@ function Invoke-HostReindex {
                 $runtimeIndex = $projectIndex
                 $projectIndex++
                 if ($projectIds -notcontains $id) { continue }
-                if (Test-HostServerSupportsDatabaseReset -Server $server) {
-                    $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex -ConfigState $configState -ConfigIndex $configIndex
+                $selectedServer = Get-SelectedHostServerDefinition -Config $Config -StableServer $server -ConfigId $configurationId
+                if (Test-HostServerSupportsDatabaseReset -Server $selectedServer) {
+                    $runtime = New-ServerRuntime -Config $Config -Server $selectedServer -Index $runtimeIndex -ConfigState $configState -ConfigIndex $configIndex
                     Write-Host "Reindexing project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-                    if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
-                        Start-ComposeServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
+                    if ([bool](Get-ObjectValue -Object $selectedServer -Name "compose" -Default $false)) {
+                        Start-ComposeServer -Config $Config -Server $selectedServer -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
                     } else {
-                        Start-DockerServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
+                        Start-DockerServer -Config $Config -Server $selectedServer -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
                     }
                     $runtime.health = "running"
                     $serverStates += $runtime
@@ -4522,6 +5564,17 @@ function ConvertTo-RegistryServers {
             reportHash = [string](Get-ObjectValue -Object $server -Name "reportHash" -Default "")
             indexedAt = [string](Get-ObjectValue -Object $server -Name "indexedAt" -Default "")
             indexInputFingerprint = [string](Get-ObjectValue -Object $server -Name "indexInputFingerprint" -Default "")
+            sourceIdentity = [ordered]@{
+                hostId = $HostId
+                serverId = $id
+                configId = [string](Get-ObjectValue -Object $server -Name 'configId' -Default '')
+                nativeProjectId = $(if ($id -eq 'graph') { [string](Get-ObjectValue -Object $server -Name 'configId' -Default '') } else { $null })
+                observedGeneration = $null
+                observedAt = $null
+                declaredSourceFingerprint = [string](Get-ObjectValue -Object $server -Name 'sourceFingerprint' -Default '')
+                declaredConfigurationVersion = [string](Get-ObjectValue -Object $server -Name 'configurationVersion' -Default '')
+                provenance = 'host-working-source; active index identity/version and client activation are separate observations'
+            }
         }
     }
     return @($servers)
@@ -4534,12 +5587,25 @@ function New-CurrentHostRegistryEntry {
         [string]$PublishedAt
     )
     $hostId = Get-HostId -Config $Config
+    $servers = @(ConvertTo-RegistryServers -State $State -HostId $hostId -PublishedAt $PublishedAt)
+    $views = Get-ObjectValue -Object (Get-ObjectValue -Object $Config -Name 'bookStackProductDocsServer' -Default @{}) -Name 'views' -Default @{}
+    foreach ($server in $servers) {
+        if ($server.id -ne 'bookstack' -or -not $server.url) { continue }
+        $bindings = @()
+        $viewIds = if ($views -is [System.Collections.IDictionary]) { @($views.Keys) } else { @($views.PSObject.Properties.Name) }
+        foreach ($viewId in $viewIds) {
+            if ($viewId -notmatch '^[a-z0-9][a-z0-9._-]*$') { throw 'Invalid BookStack view ID in host configuration' }
+            $separator = if ($server.url.Contains('?')) { '&' } else { '?' }
+            $bindings += [ordered]@{viewId=$viewId;url=($server.url+$separator+'view='+$viewId);selectors=(Get-ObjectValue -Object $views -Name $viewId);capability='product-docs-view-v1';readiness='unverified'}
+        }
+        $server['viewBindings']=$bindings
+    }
     return [ordered]@{
         hostId = $hostId
         baseUrl = [string](Get-ObjectValue -Object $Config -Name "baseUrl" -Default "")
         publishedAt = $PublishedAt
         configurations = (ConvertTo-RegistryConfigurations -State $State -HostId $hostId -PublishedAt $PublishedAt)
-        servers = (ConvertTo-RegistryServers -State $State -HostId $hostId -PublishedAt $PublishedAt)
+        servers = $servers
     }
 }
 
@@ -4680,6 +5746,21 @@ function Test-RegistryCurrentHostMatchesState {
     return ($existingJson -ceq $candidateJson)
 }
 
+function Assert-RegistryPublicationWorktree {
+    param([string]$Root)
+    # Boolean Git predicate: no path-list parsing (in particular no newline split).
+    foreach ($scope in @('working', 'cached')) {
+        $arguments = @('-C', $Root, 'diff', '--quiet')
+        if ($scope -eq 'cached') { $arguments += '--cached' }
+        $arguments += @('--', '.', ':(exclude)registry.json')
+        $result = Invoke-ProcessWithTimeout -FilePath 'git' -Arguments $arguments -TimeoutSec 30 -Description 'Check foreign registry changes'
+        if ($result.exitCode -eq 1) {
+            throw "REGISTRY_FOREIGN_CHANGES: preserve and commit or move your catalog/other tracked changes outside this publication, then repeat publish. No foreign files were staged or committed: $Root"
+        }
+        if ($result.exitCode -ne 0) { throw "REGISTRY_STATUS_UNVERIFIED: cannot check $Root; diagnose Git, then repeat publish. No publication attempted." }
+    }
+}
+
 function Publish-Registry {
     param(
         [object]$Config,
@@ -4690,23 +5771,39 @@ function Publish-Registry {
     $registryRoot = Get-RegistryRoot -Config $Config
     Ensure-GitCheckout -Repo $registryRepo -Path $registryRoot
     $registryPath = Join-Path $registryRoot "registry.json"
-    if ($SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath -SkipRuntimeRefresh:$SkipRuntimeRefresh)) {
-        Write-Host "Registry already matches the qualified host state; publish skipped."
-        return
+    $hostUnchanged = $SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath -SkipRuntimeRefresh:$SkipRuntimeRefresh)
+    if ($hostUnchanged) {
+        $pending = Invoke-ProcessWithTimeout -FilePath "git" -Arguments @("-C", $registryRoot, "rev-list", "--count", "@{upstream}..HEAD") -TimeoutSec 30 -Description "Check pending registry publication"
+        $pendingCount = 0
+        if ($pending.exitCode -ne 0 -or -not [int]::TryParse(($pending.lines -join "").Trim(), [ref]$pendingCount)) {
+            throw "Could not determine pending registry commits in $registryRoot; publication is unverified."
+        }
+        if ($pendingCount -eq 0) {
+            Write-Host "Registry already matches the qualified host state and upstream; publish skipped."
+            return
+        }
+        Write-Host "Registry payload unchanged; retrying delivery of $pendingCount pending commit(s)."
     }
     $publishedAt = (Get-Date).ToString("o")
     for ($attempt = 0; $attempt -le 1; $attempt++) {
-        Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt -SkipRuntimeRefresh:$SkipRuntimeRefresh
-        Write-Host "Registry written: $registryPath"
+        Assert-RegistryPublicationWorktree -Root $registryRoot
+        if (-not $hostUnchanged) {
+            Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt -SkipRuntimeRefresh:$SkipRuntimeRefresh
+            Write-Host "Registry written: $registryPath"
+        }
         if ($DryRun) {
             return
         }
-        Invoke-Git -Root $registryRoot -Arguments @("add", "registry.json")
-        $status = ((& git -C $registryRoot status --porcelain) -join "`n")
-        if ($status) {
-            Invoke-Git -Root $registryRoot -Arguments @("commit", "-m", "publish vibecoding1c MCP registry")
-        } else {
-            Write-Host "Registry unchanged."
+        if (-not $hostUnchanged) {
+            Invoke-Git -Root $registryRoot -Arguments @("add", "registry.json")
+            $diff = Invoke-ProcessWithTimeout -FilePath 'git' -Arguments @('-C', $registryRoot, 'diff', '--cached', '--quiet', '--', 'registry.json') -TimeoutSec 30 -Description 'Check endpoint publication diff'
+            if ($diff.exitCode -eq 1) {
+                Invoke-Git -Root $registryRoot -Arguments @("commit", "--only", "-m", "publish vibecoding1c MCP registry", "--", "registry.json")
+            } elseif ($diff.exitCode -ne 0) {
+                throw 'REGISTRY_STATUS_UNVERIFIED: cannot check staged endpoint diff; repeat publish after Git diagnosis.'
+            } else {
+                Write-Host "Registry unchanged."
+            }
         }
         try {
             Invoke-Git -Root $registryRoot -Arguments @("push")
@@ -4717,6 +5814,7 @@ function Publish-Registry {
             }
             Write-Host "Registry push failed; rebasing once and retrying publish."
             Invoke-Git -Root $registryRoot -Arguments @("pull", "--rebase")
+            $hostUnchanged = $SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath -SkipRuntimeRefresh:$SkipRuntimeRefresh)
         }
     }
 }
@@ -4746,15 +5844,56 @@ function Show-HostStatus {
     }
 }
 
+. (Join-Path $PSScriptRoot "owner-repair.ps1")
+. (Join-Path $PSScriptRoot "beta-cutover.ps1")
+. (Join-Path $PSScriptRoot "sppr-host.ps1")
+. (Join-Path $PSScriptRoot "storage-retention.ps1")
 $config = Read-HostConfig
 switch ($Action) {
+    "storage-status" {
+        $record=Get-McpStorageRecord $config
+        @{settings=(Get-McpStorageSettings $config);record=$record;freeBytes=(Get-McpStorageFreeBytes $config);protectedLegacyCount=@(Get-McpStorageLegacySnapshots $config $record).Count}|ConvertTo-Json -Depth 12
+    }
+    "storage-plan" {
+        $settings=Get-McpStorageSettings $config
+        $record=Get-McpStorageRecord $config
+        $legacy=@(Get-McpStorageLegacySnapshots $config $record)
+        @{freeBytes=(Get-McpStorageFreeBytes $config);cache=@(Get-McpStorageCachePlan $settings);retirement=@(Get-McpStorageRetirementPlan $config $settings $record);containers=@(Get-McpStorageContainerRetirementPlan $config $settings $record);volumes=@(Get-McpStorageVolumeRetirementPlan $config $settings $record);images=@(Get-McpStorageImageRetirementPlan $config $settings $record);protectedLegacyCount=$legacy.Count;protectedLegacy=@($legacy|Select-Object -First 256)}|ConvertTo-Json -Depth 12
+    }
+    "storage-run" {
+        if(Test-McpHostNightlyPriorityLockActive $config){throw 'Nightly indexing is active; repeat storage-run after it completes'}
+        $lease=Enter-McpHostMaintenanceLock -Config $config -Operation 'storage-retention' -WaitSeconds 0
+        if(-not $lease.acquired){throw 'Host maintenance is active; repeat storage-run after it completes'}
+        try{Invoke-McpHostStorageMaintenance -Config $config -OnlineOnly:$StorageOnlineOnly -Force}finally{Exit-McpHostMaintenanceLock $lease}
+    }
+    "bookstack-direct" {
+        if ($ConfigId -or ($ServerId -and $ServerId -ne "bookstack")) { throw "bookstack-direct accepts only global BookStack." }
+        Enable-BookStackDirectEndpoint -Config $config
+        Show-HostStatus -Config $config -TargetServerId "bookstack"
+    }
+    "stable-preflight" {
+        if (-not $ReleaseManifest) { throw "stable-preflight requires -ReleaseManifest." }
+        Invoke-BetaPreflight -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest -NativeEndpoint:$NativeEndpoint
+    }
+    "stable-cutover" {
+        if (-not $ReleaseManifest) { throw "stable-cutover requires -ReleaseManifest." }
+        Invoke-BetaCutover -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest -ForwardOnly:$ForwardOnly -NativeEndpoint:$NativeEndpoint -IndexReadyTimeoutSeconds $IndexReadyTimeoutSeconds
+    }
+    "beta-preflight" {
+        Invoke-BetaPreflight -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
+    }
+    "beta-cutover" {
+        Invoke-BetaCutover -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
+    }
     "setup" {
+        if ($ServerId -eq 'sppr') { Initialize-SpprRuntime -Config $config }
         Start-HostServers -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
         Publish-Registry -Config $config
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "start" {
-        Start-HostServers -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
+        if ($RecreateBookStack) { Invoke-BookStackReplacement -Config $config }
+        else { Start-HostServers -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId }
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "stop" {
@@ -4783,7 +5922,10 @@ switch ($Action) {
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "reconcile" {
-        Repair-TrackedMcpHostAndPublish -Config $config -TargetServerId $ServerId
+        $lease = Enter-McpHostMaintenanceLock -Config $config -Operation "reconcile" -WaitSeconds 0
+        if (-not $lease.acquired) { throw "Host maintenance is active. Repeat reconcile after it completes; no runtime was changed." }
+        try { Repair-TrackedMcpHostAndPublish -Config $config -TargetServerId $ServerId }
+        finally { Exit-McpHostMaintenanceLock -Lease $lease }
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "watchdog-install" {
@@ -4814,4 +5956,7 @@ switch ($Action) {
         Invoke-HostConfigDumpHelper -ResolvedConfigPath $ConfigPath -TargetConfigId $ConfigId
         Refresh-HostConfigurations -Config $config -TargetConfigId $ConfigId | Out-Null
     }
+    "sppr-prepare" { Initialize-SpprRuntime -Config $config }
+    "sppr-collector-install" { Install-SpprCollector -Config $config }
+    "sppr-collector-uninstall" { Uninstall-SpprCollector -Config $config }
 }
