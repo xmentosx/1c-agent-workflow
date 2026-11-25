@@ -919,7 +919,7 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            $devRoutineNames = @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-sync-branches", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")
+            $devRoutineNames = @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-sync-branches", "itl-reset-branch", "itl-lock-objects", "itl-repository-commit-review", "itl-repository-commit-auto", "itl-result", "itl-update-workflow")
             $devExpected = @(@($devRoutineNames + @('itl-clean')) | ForEach-Object { ".agents/skills/$_/SKILL.md"; ".agents/skills/$_/agents/openai.yaml" })
             @($devFiles.Keys | Sort-Object) | Should -Be @($devExpected | Sort-Object)
             foreach ($name in $devRoutineNames) {

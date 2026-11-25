@@ -1042,7 +1042,7 @@ function Get-Agent1cLifecycleOperationLockScopes {
             $candidatePaths += Get-StateValue -State $peerState -Name "worktreePath" -Default (Get-StateValue -State $peerState -Name "stateProjectRoot" -Default "")
         }
     }
-    if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
+    if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "lock-config-repository-objects", "repository-transfer", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
         $candidatePaths += Get-MainWorktreePath
     }
 

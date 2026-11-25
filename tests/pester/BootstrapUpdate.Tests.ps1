@@ -2621,7 +2621,8 @@ exit 0
                 $text | Should -Match 'completion notification' -Because $key
                 $text | Should -Not -Match 'timeout_ms' -Because $key
             } else {
-                $minimum = if ($name -eq "itl-sync-master.md") { "14700000" } else { "3900000" }
+                # Repository transfer commands capture the source infobase into master like sync-master.
+                $minimum = if ($name -in @("itl-sync-master.md", "itl-repository-commit-review.md", "itl-repository-commit-auto.md")) { "14700000" } else { "3900000" }
                 $text | Should -Match ("timeout_ms\s*>=\s*" + $minimum) -Because $key
                 $text | Should -Match 'Do not use\s+`?120000 ms' -Because $key
                 $text | Should -Not -Match 'run_in_background' -Because $key

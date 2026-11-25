@@ -14766,6 +14766,8 @@ function Initialize-ProjectCore {
 function Sync-Master {
     param(
         [switch]$NoDelegate,
+        # Repository transfer: the source infobase already holds the committed version.
+        [switch]$SkipRepositoryUpdate,
         [ValidateSet("EnsureCompatible", "Rebuild")]
         [string]$SeedPolicy = "Rebuild"
     )
@@ -14786,7 +14788,7 @@ function Sync-Master {
                 Restart-Agent1cFromMainWorktreeIfNeeded -MainWorktreePath $mainWorktreePath
                 Write-Host "Syncing master in main worktree: $mainWorktreePath"
                 Invoke-InProjectContext -Root $mainWorktreePath -ScriptBlock {
-                    Sync-Master -NoDelegate -SeedPolicy $SeedPolicy
+                    Sync-Master -NoDelegate -SeedPolicy $SeedPolicy -SkipRepositoryUpdate:$SkipRepositoryUpdate
                 }
                 return
             }
@@ -14799,7 +14801,10 @@ function Sync-Master {
     $sourceUsesRepository = Get-SourceUsesRepository
     $sourceRepositoryUpdateMode = Get-SourceRepositoryUpdateMode
     Set-RunStage -Stage "sync-master.repository-update" -Detail "Applying the source repository update policy"
-    $sourceRepositoryUpdated = Invoke-WithRunStatusHeartbeat { Update-BaseFromRepository }
+    $sourceRepositoryUpdated = if ($SkipRepositoryUpdate) {
+        Write-Host "Source repository update skipped: the repository transfer already committed this infobase state."
+        $false
+    } else { Invoke-WithRunStatusHeartbeat { Update-BaseFromRepository } }
     $kind = Get-InfoBaseKind
     $sourceGenerationId = if ($kind -eq "file") { Get-SourceConfigurationGenerationId } else { "" }
     $dumpResult = $null
@@ -14865,7 +14870,7 @@ function Sync-Master {
     $report.Add("## Синхронизация master и seed")
     Add-RunUserReportLine -Lines $report -Label "Результат" -Value "успешно"
     Add-RunUserReportLine -Lines $report -Label "Режим обновления из хранилища" -Value $sourceRepositoryUpdateMode
-    Add-RunUserReportLine -Lines $report -Label "Обновление исходной базы из хранилища" -Value $(if ($sourceRepositoryUpdated) { "выполнено ITL" } elseif ($sourceUsesRepository) { "пропущено; используется текущее состояние исходной базы" } else { "не применяется" })
+    Add-RunUserReportLine -Lines $report -Label "Обновление исходной базы из хранилища" -Value $(if ($sourceRepositoryUpdated) { "выполнено ITL" } elseif ($SkipRepositoryUpdate) { "пропущено; исходная база уже содержит помещённую версию" } elseif ($sourceUsesRepository) { "пропущено; используется текущее состояние исходной базы" } else { "не применяется" })
     Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value (Get-CurrentCommit)
     Add-RunUserReportLine -Lines $report -Label "Seed sync ID" -Value ([string]$seed.syncId)
     Add-RunUserReportLine -Lines $report -Label "Seed" -Value ([string]$seed.artifactPath)
@@ -23423,6 +23428,8 @@ function Show-Help {
         Write-ItlActiveClientCommandText @commandClient "  /itl-sync-branches <name>"
         Write-ItlActiveClientCommandText @commandClient "  /itl-reset-branch"
         Write-ItlActiveClientCommandText @commandClient "  /itl-lock-objects"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-repository-commit-review"
+        Write-ItlActiveClientCommandText @commandClient "  /itl-repository-commit-auto"
         Write-ItlActiveClientCommandText @commandClient "  /itl-result"
         Write-ItlActiveClientCommandText @commandClient "  /itl-update-workflow"
         Write-ItlActiveClientCommandText @commandClient "  /itl-litemode <mode>"

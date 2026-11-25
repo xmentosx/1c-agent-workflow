@@ -73,6 +73,8 @@ __pycache__/
 .agents/skills/itl-repository-mode/
 .agents/skills/itl-reset-branch/
 .agents/skills/itl-lock-objects/
+.agents/skills/itl-repository-commit-review/
+.agents/skills/itl-repository-commit-auto/
 .agents/skills/itl-update-workflow/
 .agents/skills/itl-check/
 .agents/skills/itl-refresh/

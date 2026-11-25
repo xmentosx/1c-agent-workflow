@@ -1,6 +1,6 @@
 ﻿[CmdletBinding(PositionalBinding = $false)]
 param(
-    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "provision-openspec-cli", "openspec-context", "openspec-new-change", "openspec-archive-change", "install-ui-tools", "ui-tools-status", "window-helper-status", "window-helper-stop", "window-helper-restart", "window-show", "window-hide", "begin-verification-repair", "extend-verification-repair", "begin-one-off-proof", "complete-one-off-proof", "begin-verification-change", "complete-verification-change", "attest-verification-suites", "acknowledge-event-log-errors", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-workflow-branch", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "clean-artifacts", "delete-dev-branch", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "remove-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "get-review-scope", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "provision-openspec-cli", "openspec-context", "openspec-new-change", "openspec-archive-change", "install-ui-tools", "ui-tools-status", "window-helper-status", "window-helper-stop", "window-helper-restart", "window-show", "window-hide", "begin-verification-repair", "extend-verification-repair", "begin-one-off-proof", "complete-one-off-proof", "begin-verification-change", "complete-verification-change", "attest-verification-suites", "acknowledge-event-log-errors", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-workflow-branch", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "clean-artifacts", "delete-dev-branch", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "remove-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "get-review-scope", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke", "repository-transfer")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -8,6 +8,17 @@ param(
     [string]$CatalogAction = '',
     [ValidateSet('', 'auto', 'enable', 'disable', 'status', 'checkpoint')]
     [string]$MemoryAction = '',
+    [ValidateSet('', 'status', 'prepare', 'approve', 'reject', 'apply', 'smoke', 'commit', 'update-master', 'complete', 'cancel')]
+    [string]$RepositoryTransferStep = '',
+    [ValidateSet('', 'review', 'auto')]
+    [string]$RepositoryTransferMode = '',
+    [ValidateSet('', 'human', 'agent')]
+    [string]$RepositoryTransferDecidedBy = '',
+    [ValidateSet('', 'passed', 'failed', 'unavailable')]
+    [string]$RepositoryTransferSmoke = '',
+    [ValidateSet('', 'done', 'partial', 'skipped', 'failed')]
+    [string]$RepositoryTransferMantis = '',
+    [string]$RepositoryTransferComment = '',
     [string]$MemorySettingsPath = '',
     [string]$MemoryPolicyPath = '',
     [string]$MemoryCheckpointPath = '',
@@ -520,6 +531,7 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.artifact-retention.ps1",
     "agent-1c.branch-deletion.ps1",
     "agent-1c.review-scope.ps1",
+    "agent-1c.repository-transfer.ps1",
     "agent-1c.verification-modes.ps1",
     "agent-1c.legacy-bridges.ps1",
     "agent-1c.ai-rules-migration.ps1"
@@ -721,6 +733,7 @@ try {
         "refresh-all-dev-branches" { Refresh-AllDevBranches }
         "reset-dev-branch" { Reset-DevBranch }
         "lock-config-repository-objects" { Lock-ConfigRepositoryObjects }
+        "repository-transfer" { Invoke-RepositoryTransfer }
         "export-dev-branch-result" { Export-DevBranchResult }
         "get-review-scope" { Invoke-ReviewScopeAction -ReviewPurpose $ReviewPurpose -ReviewRange $ReviewRange -ReviewSince $ReviewSince }
         "close-dev-branch" { Close-DevBranch }
