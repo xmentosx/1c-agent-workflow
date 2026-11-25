@@ -1097,6 +1097,8 @@ namespace Itl.WindowHelper
         public bool? DropdownPrompt;
         public string PromptSource = "";
         public uint Pid;
+        // A repeated selection asks for a longer pause in the user's input than a first one.
+        public int IdleMs;
         public DateTime DeadlineUtc;
         // Optional diagnostics: the Vanessa step and feature line that asked for OS input.
         public string Step = "";
@@ -1185,7 +1187,7 @@ namespace Itl.WindowHelper
         // an open list when another process takes the foreground, so a foreground change
         // after the activation (leaseActiveTick, the WinEvent clock) fails the selection.
         private bool dropdownPending, dropdownFocusLost, consentShown;
-        private string dropdownLostTitle = "";
+        private Dictionary<string, object> dropdownLostFacts;
         private uint leaseActiveTick;
         private DateTime stateSince, mutexSince, leaseSince, lastLeaseRequest, pauseSince;
         private long queueWaitMs, consentWaitMs, idleWaitMs;
@@ -1294,12 +1296,15 @@ namespace Itl.WindowHelper
                 unchecked((int)(eventTime - leaseActiveTick)) > 0)
             {
                 dropdownFocusLost = true;
-                dropdownLostTitle = Native.TitleOf(hwnd);
-                Journal(paths.HiddenLog, new Dictionary<string, object>
+                dropdownLostFacts = ForegroundFacts(hwnd);
+                var lost = new Dictionary<string, object>
                 {
                     { "t", Now() }, { "event", "dropdown-focus-lost" }, { "pid", pid }, { "role", RoleOf(pid) },
-                    { "title", dropdownLostTitle }, { "leasedPid", leasedPid }
-                });
+                    { "title", dropdownLostFacts["foregroundTitle"] }, { "class", dropdownLostFacts["foregroundClass"] },
+                    { "process", dropdownLostFacts["foregroundProcess"] }, { "userInputAgoMs", dropdownLostFacts["userInputAgoMs"] },
+                    { "leaseMs", unchecked((int)(eventTime - leaseActiveTick)) }, { "leasedPid", leasedPid }
+                };
+                Journal(paths.HiddenLog, lost);
             }
             // A TestClient started since the last reconcile is joined at once.
             if (!members.Clients.Contains(pid) && Foreign(pid).IsTestClient &&
@@ -1650,6 +1655,7 @@ namespace Itl.WindowHelper
                     lease.Step = Clip(Json.Str(request, "step"), 300);
                     lease.Feature = Clip(Json.Str(request, "feature"), 260);
                     lease.Line = Json.Num(request, "line", 0);
+                    lease.IdleMs = (int)Math.Max(0, Math.Min(10000, Json.Num(request, "idleMs", 0)));
                     DateTime deadline;
                     lease.DeadlineUtc = DateTime.TryParse(Json.Str(request, "deadlineUtc"), CultureInfo.InvariantCulture,
                         DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out deadline) ? deadline : DateTime.UtcNow.AddSeconds(60);
@@ -1958,7 +1964,7 @@ namespace Itl.WindowHelper
                 case LeaseState.IdleWait:
                     if (pastDeadline) { DeclineScope("deadline"); return; }
                     if ((now - stateSince).TotalSeconds >= config.PauseLimitSeconds) { DeclineScope("pause-limit"); return; }
-                    if (Native.IdleMilliseconds() >= UserIdleMs) { BeginLease("idle"); return; }
+                    if (Native.IdleMilliseconds() >= Math.Max(UserIdleMs, current.IdleMs)) { BeginLease("idle"); return; }
                     if (!idlePanelShown && (now - stateSince).TotalMilliseconds >= IdlePanelAfterMs)
                     {
                         idlePanelShown = true;
@@ -2033,28 +2039,48 @@ namespace Itl.WindowHelper
 
         private void FailActivation(LeaseRequest r)
         {
-            IntPtr fg = Native.GetForegroundWindow();
-            string title = fg == IntPtr.Zero ? "" : Native.TitleOf(fg);
-            Respond(r.Id, "lease", "error", new Dictionary<string, object>
-            {
-                { "code", Protocol.ActivationFailed }, { "foregroundTitle", title }, { "foregroundPid", Native.PidOf(fg) }
-            });
+            Dictionary<string, object> facts = ForegroundFacts(Native.GetForegroundWindow());
+            var journal = new Dictionary<string, object>(facts);
+            journal["t"] = Now();
+            journal["event"] = "activation-failed";
+            journal["leasedPid"] = r.Pid;
+            Journal(paths.HiddenLog, journal);
+            facts["code"] = Protocol.ActivationFailed;
+            Respond(r.Id, "lease", "error", facts);
             activation = "fail";
             EndLease("activation-failed");
+        }
+
+        // The window that took the foreground, its class and process image, and how long
+        // ago the user last touched the keyboard or mouse: a click on the taskbar during a
+        // selection differs from a window the system or another program brought forward
+        // (PM5 branch4, 2026-11-25).
+        private Dictionary<string, object> ForegroundFacts(IntPtr hwnd)
+        {
+            uint pid = hwnd == IntPtr.Zero ? 0 : Native.PidOf(hwnd);
+            string process = "";
+            if (pid != 0)
+            {
+                try { process = Path.GetFileName(Foreign(pid).ImagePath) ?? ""; } catch (Exception) { process = ""; }
+            }
+            return new Dictionary<string, object>
+            {
+                { "foregroundTitle", hwnd == IntPtr.Zero ? "" : Native.TitleOf(hwnd) },
+                { "foregroundClass", hwnd == IntPtr.Zero ? "" : Native.ClassOf(hwnd) },
+                { "foregroundPid", pid }, { "foregroundProcess", process },
+                { "userInputAgoMs", Native.IdleMilliseconds() }
+            };
         }
 
         // The pending selection lost the foreground to another process; 1C closes its list
         // then, so the selection is not confirmed.
         private void FailDropdownFocus(string id, string op)
         {
-            string title = dropdownLostTitle;
-            if (!dropdownFocusLost)
-            {
-                IntPtr fg = Native.GetForegroundWindow();
-                title = fg == IntPtr.Zero ? "" : Native.TitleOf(fg);
-            }
+            Dictionary<string, object> facts = dropdownFocusLost && dropdownLostFacts != null
+                ? new Dictionary<string, object>(dropdownLostFacts) : ForegroundFacts(Native.GetForegroundWindow());
             EndLease("dropdown-focus-lost");
-            Respond(id, op, "error", new Dictionary<string, object> { { "code", Protocol.DropdownFocusLost }, { "foregroundTitle", title } });
+            facts["code"] = Protocol.DropdownFocusLost;
+            Respond(id, op, "error", facts);
         }
 
         private void CancelLease()
@@ -2118,11 +2144,18 @@ namespace Itl.WindowHelper
                 return;
             }
             if (result == "completed" && dropdownFocusLost) { FailDropdownFocus(id, "lease-end"); return; }
+            // A selection that failed after another window took the foreground failed because
+            // of it: 1C closed the list, so the caller may repeat the selection.
+            var fields = new Dictionary<string, object> { { "focusLost", dropdownFocusLost } };
+            if (dropdownFocusLost && dropdownLostFacts != null)
+            {
+                foreach (var kv in dropdownLostFacts) fields[kv.Key] = kv.Value;
+            }
             dropdownPending = false;
             dropdownFocusLost = false;
             lastLeaseRequest = DateTime.UtcNow;
             if (result == "failed") EndLease("dropdown-failed");
-            Respond(id, "lease-end", "ok", new Dictionary<string, object>());
+            Respond(id, "lease-end", "ok", fields);
         }
 
         private void LeaseEnd(string id, string scope, bool endScope)
