@@ -648,6 +648,11 @@ function Get-WorkflowVerificationFailureContext {
         # code is wrapped by VA frames. It is TestClient capacity, not product.
         $category = 'runner'
         $requiredAction = 'wait-for-testclient-capacity-and-repeat-original-command'
+    } elseif ($messageText -cmatch '(?<![A-Z0-9_])ITL_(?:DROPDOWN_FOCUS_LOST|WINDOW_ACTIVATION_FAILED)\b') {
+        # The window helper of a hidden TestClient: another window took the foreground
+        # during the agent's input (PM5 branch4, 2026-11-25). Not a product or test defect.
+        $category = 'runner'
+        $requiredAction = 'keep-user-input-idle-or-agree-dropdown-prompt-and-repeat-original-command'
     } elseif ($messageText -match '^ITL_YAXUNIT_TIMEOUT\b') {
         # Project setting, not a product or test defect.
         $category = 'runner'

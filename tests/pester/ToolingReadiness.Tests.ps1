@@ -27,7 +27,9 @@ Describe 'Shared verification failure ownership' {
         @{Name='unsupported step'; Message='undefined step'; Category='unsupported-step'; RequiredAction='/itl-verify-fix'}
         @{Name='specific YAxUnit failure before generic missing suite'; Message='ITL_YAXUNIT_TESTS_FAILED: expected missing-suite'; Category='product-assertion'; RequiredAction='/itl-verify-fix'},
         @{Name='explicit fixture before generic assertion'; Message='ITL_VANESSA_TEST_FIXTURE_UNRESOLVED_PROFILE: expected test context'; Category='test-fixture'; RequiredAction='/itl-verify-fix'},
-        @{Name='TestClient port refusal wrapped by a Vanessa step'; Message='{ВнешняяОбработка.VanessaAutomation.Форма.Форма(42)}: ITL_TESTCLIENT_NO_FREE_PORT: profile=B expected range exhausted'; Category='runner'; RequiredAction='wait-for-testclient-capacity-and-repeat-original-command'}
+        @{Name='TestClient port refusal wrapped by a Vanessa step'; Message='{ВнешняяОбработка.VanessaAutomation.Форма.Форма(42)}: ITL_TESTCLIENT_NO_FREE_PORT: profile=B expected range exhausted'; Category='runner'; RequiredAction='wait-for-testclient-capacity-and-repeat-original-command'},
+        @{Name='lost foreground wrapped by a Vanessa step'; Message='{ВнешняяОбработка.VanessaAutomation.Форма.КлиентТестирования(3966)}: Ошибка выбора из списка: ITL_DROPDOWN_FOCUS_LOST: окно '''' (класс Shell_TrayWnd, процесс explorer.exe)'; Category='runner'; RequiredAction='keep-user-input-idle-or-agree-dropdown-prompt-and-repeat-original-command'},
+        @{Name='failed activation wrapped by a Vanessa step'; Message='{ВнешняяОбработка.VanessaAutomation.Форма.Форма(42)}: ITL_WINDOW_ACTIVATION_FAILED: активно окно '''' процесса 14988'; Category='runner'; RequiredAction='keep-user-input-idle-or-agree-dropdown-prompt-and-repeat-original-command'}
     ) {
         param($Message,$Category,$RequiredAction)
         Set-RunFailureContextFromMessage -Message $Message -RequestedAction check-dev-branch
