@@ -344,7 +344,7 @@ Describe 'Ordinary update started by the published r33 helper' {
         $id=$completed[0].Name.Substring('itl-workflow-update-completed-'.Length)
         $receipt=(Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id).receipt
         $receipt.legacyCopyRecovery.scope | Should -BeExactly 'legacy-parent-handoff'
-        $receipt.legacyCopyRecovery.beforeBoundary | Should -Match 'historical pre-copy bytes unavailable'
+        $receipt.legacyCopyRecovery.observedHead | Should -BeExactly $headBefore
         # Restore returns the observed copy, never the pre-incident commit.
         $script:Agent1cScriptRoot=Join-Path $source.root '.agents/skills/1c-workflow/scripts'
         Restore-CompletedWorkflowUpdate -SnapshotId $id
