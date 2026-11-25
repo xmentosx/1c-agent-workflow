@@ -54,6 +54,60 @@ Describe "Source develop queue and delivery" {
             } finally { Remove-DeliveryFixture -Fixture $fixture }
         }
 
+    It "resumes the saved ReleaseMaster merge and rejects the plan after the remote moves" {
+        $fixture = New-DeliveryFixture
+        $oldFailure = $env:ITL_TEST_FAIL_DELIVERY_RELEASE
+        try {
+            & git -C $fixture.root switch --quiet -c master
+            $frozenSupport = Join-Path $PSScriptRoot 'SourceDeliveryFrozen.TestSupport.ps1'
+            if (Test-Path -LiteralPath $frozenSupport -PathType Leaf) {
+                # Newer shims require a published supervisor to resume a plan.
+                . $frozenSupport
+                Copy-FrozenSupervisorClosure -Fixture $fixture
+            }
+            Set-Content -LiteralPath (Join-Path $fixture.root 'master.txt') -Value 'master'
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit --quiet -m 'advance master'
+            & git -C $fixture.root push --quiet origin master
+            & git -C $fixture.root switch --quiet develop
+            Set-Content -LiteralPath (Join-Path $fixture.root 'develop.txt') -Value 'develop'
+            & git -C $fixture.root add develop.txt
+            & git -C $fixture.root commit --quiet -m 'advance develop'
+            & git -C $fixture.root push --quiet origin develop
+            $LASTEXITCODE | Should -Be 0
+            New-Item -ItemType Directory -Path (Join-Path $fixture.root 'build') | Out-Null
+            $arguments = @('-Action', 'ReleaseMaster', '-RepositoryRoot', ('"' + $fixture.root + '"'), '-GateScript', ('"' + $fixture.gate + '"'))
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = 'true'
+            $failed = Invoke-DeliveryTestPowerShell -Arguments $arguments -AllowFailure
+            $failed.exitCode | Should -Not -Be 0
+            $failed.stderr | Should -Match 'Release source gate failed with exit code 14'
+            $saved = @(Get-ChildItem -LiteralPath (Join-Path $fixture.root '.git/itl/plans/v1') -Filter '*.json')
+            $saved.Count | Should -Be 1
+            $plan = Get-Content -LiteralPath $saved[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = 'false'
+            $resumeArguments = $arguments + @('-ResumePlan', $plan.planId)
+            $released = (Invoke-DeliveryTestPowerShell -Arguments $resumeArguments).stdout | ConvertFrom-Json
+            $released.status | Should -Be 'released'
+            $released.planId | Should -Be $plan.planId
+            $released.candidateCommit | Should -Be $plan.candidate.commit
+            $released.tree | Should -Be $plan.candidate.tree
+            @(Get-Content -LiteralPath $fixture.candidateLog -Encoding UTF8) | Should -Be @(
+                "Develop $($plan.candidate.commit)", "Release $($plan.candidate.commit)",
+                "Develop $($plan.candidate.commit)", "Release $($plan.candidate.commit)"
+            )
+
+            & git -C $fixture.root pull --quiet --ff-only origin develop
+            $LASTEXITCODE | Should -Be 0
+            $moved = Invoke-DeliveryTestPowerShell -Arguments $resumeArguments -AllowFailure
+            $moved.exitCode | Should -Not -Be 0
+            $moved.stderr | Should -Match 'DELIVERY_RESUME_PLAN_MISMATCH'
+            @(Get-Content -LiteralPath $fixture.candidateLog -Encoding UTF8).Count | Should -Be 4
+        } finally {
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
+            Remove-DeliveryFixture -Fixture $fixture
+        }
+    }
+
     It "never uses force push for develop or master" {
             $text = $DeliverySourceText; $text | Should -Not -Match 'push[^\r\n]*(--force|-f\b|--force-with-lease)'
             foreach ($marker in @('HEAD:refs/heads/develop', 'push", "--atomic"', 'HEAD:refs/heads/master')) { $text | Should -Match ([regex]::Escape($marker)) }
