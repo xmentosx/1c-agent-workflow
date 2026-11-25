@@ -38,3 +38,4 @@ Workflow для разработки конфигураций и расшире�
 - [Разработка изменения](docs/itl-workflow/FEATURE-DEVELOPMENT.ru.md) — quick-fix, OpenSpec, тестирование и завершение задачи.
 - [Режимы и настройки](docs/itl-workflow/MODES-AND-SETTINGS.ru.md) — пользовательские режимы, команды и значения по умолчанию.
 - [Справочник `.dev.env`](docs/itl-workflow/DEV-ENV-REFERENCE.ru.md) — все локальные параметры проекта.
+- [Что нового](docs/itl-workflow/RELEASE-NOTES.ru.md) — изменения в релизах `master` и порядок перехода.
