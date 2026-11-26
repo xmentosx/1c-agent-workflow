@@ -928,7 +928,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousMcpRegistryRepo = $env:VIBECODING1C_MCP_REGISTRY_REPO
         $artifactCacheRoot = Join-Path $tempRoot "artifact cache"
         $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
-            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.42-itl-r18\vanessa-automation-single.1.2.043.42-itl-r18.zip"
+            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.42-itl-r19\vanessa-automation-single.1.2.043.42-itl-r19.zip"
         } else {
             [System.IO.Path]::GetFullPath($previousVanessaSourceBuild)
         }
@@ -2621,7 +2621,8 @@ exit 0
                 $text | Should -Match 'completion notification' -Because $key
                 $text | Should -Not -Match 'timeout_ms' -Because $key
             } else {
-                $minimum = if ($name -eq "itl-sync-master.md") { "14700000" } else { "3900000" }
+                # Repository transfer commands capture the source infobase into master like sync-master.
+                $minimum = if ($name -in @("itl-sync-master.md", "itl-repository-commit-review.md", "itl-repository-commit-auto.md")) { "14700000" } else { "3900000" }
                 $text | Should -Match ("timeout_ms\s*>=\s*" + $minimum) -Because $key
                 $text | Should -Match 'Do not use\s+`?120000 ms' -Because $key
                 $text | Should -Not -Match 'run_in_background' -Because $key

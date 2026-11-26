@@ -28,7 +28,7 @@ Workflow для разработки конфигураций и расшире�
 
 ## Поддерживаемые клиенты
 
-Поддерживаются Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline и Pi. При инициализации выбирается ровно один активный клиент. Позже выбор можно изменить из чистой ветки `master` через `/itl-switch-client <client>`; созданные ветки разработки обновляются отдельно.
+Поддерживаются Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline, Pi, ZCode и MiMo Code. В проекте можно подключить несколько клиентов: мастер инициализации предлагает клиент, в котором он запущен, и сразу принимает дополнительные. Позже набор меняется из чистой ветки `master` через `/itl-switch-client -Mode attach|detach -Client <client>`; `-Mode switch` выбирает уже подключённого клиента только для текущего вызова. Созданные ветки разработки обновляются отдельно.
 
 ## Документация
 
@@ -38,3 +38,4 @@ Workflow для разработки конфигураций и расшире�
 - [Разработка изменения](docs/itl-workflow/FEATURE-DEVELOPMENT.ru.md) — quick-fix, OpenSpec, тестирование и завершение задачи.
 - [Режимы и настройки](docs/itl-workflow/MODES-AND-SETTINGS.ru.md) — пользовательские режимы, команды и значения по умолчанию.
 - [Справочник `.dev.env`](docs/itl-workflow/DEV-ENV-REFERENCE.ru.md) — все локальные параметры проекта.
+- [Что нового](docs/itl-workflow/RELEASE-NOTES.ru.md) — изменения в релизах `master` и порядок перехода.

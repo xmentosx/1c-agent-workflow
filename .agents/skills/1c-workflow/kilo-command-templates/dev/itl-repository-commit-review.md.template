@@ -1,0 +1,22 @@
+---
+description: Поместить изменения ветки в хранилище после просмотра человеком
+agent: code
+---
+
+Use only in an active ready configuration `itldev/*` worktree whose source infobase uses a configuration repository. A plain request to put changes into the repository selects `/itl-repository-commit-review`; an explicit request to transfer without human review selects `/itl-repository-commit-auto`.
+
+<!-- ITL_LONG_RUN -->
+
+Each step is one helper call with its own `-RepositoryTransferStep`; the first one is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action repository-transfer -RepositoryTransferStep prepare -RepositoryTransferMode review
+```
+
+1. Before `prepare`: `/itl-lock-objects`, `/itl-refresh` (keep both sides' requirements in conflicts; ask the human only about incompatible ones), `/itl-lock-objects` again if the scope grew, `/itl-check`, `/itl-result`.
+2. Show the human the `Итог относительно хранилища` report (properties and code lines). For a detail it hides, name the object: the human opens the standard comparison in Designer and closes Designer before answering. `approve -RepositoryTransferDecidedBy human` only after the human accepts the whole result; otherwise `reject -RepositoryTransferComment "<remarks>"` and fix the branch.
+3. `apply`, then one short user-mode scenario in the updated source infobase that observes the task's effect; state role, data and expected observation first (it may create data). Record `smoke -RepositoryTransferSmoke passed|failed|unavailable -RepositoryTransferComment "<evidence>"`. After `failed` fix the branch and repeat this command; after `unavailable` the human decides.
+4. `commit -RepositoryTransferComment "<issue>: <title>"` (without an issue, a short task description), then `update-master`.
+5. Mantis issue from the task context or branch parameters, otherwise ask; never derive it from the branch name. This command authorizes one `execute_write` with one `operation_id`: a comment listing completed items, and «Решено» only when all items are done. Then `complete -RepositoryTransferMantis done|partial|failed`; without an issue `complete -RepositoryTransferMantis skipped`.
+
+Return the helper `userReport` exactly and follow its `Доступное действие`. After an interruption run `status`; repeating the failed step reconciles from the infobase and repository facts. `cancel` keeps locks and the applied infobase state without rollback. Never edit branch state, run `/itl-refresh` while an applied CF is not committed (use `/itl-refresh-lite`), or retry a step that stopped for a human decision.

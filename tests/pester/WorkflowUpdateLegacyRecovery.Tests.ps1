@@ -1,13 +1,35 @@
-﻿BeforeAll { . (Join-Path $PSScriptRoot 'WorkflowUpdateRollback.TestSupport.ps1') }
-
-Describe 'Legacy raw-copy recovery without receipt or backup' {
-    BeforeAll {
+﻿BeforeAll {
+        . (Join-Path $PSScriptRoot 'WorkflowUpdateRollback.TestSupport.ps1')
         # Cache only immutable historical source/compiled definitions in this
         # worker. Every case still creates its own repositories, commits and
         # incident by executing the real historical updater below.
         $script:legacyUpdaterSource = $null
+        $script:legacyHelperTexts = @{}
+        function Get-LegacyHelperText {
+            param([string]$Commit, [string]$Relative)
+            $key = $Commit + ':' + $Relative
+            if (-not $script:legacyHelperTexts.ContainsKey($key)) {
+                $blob=(& git -C $repoRoot rev-parse ($key)).Trim()
+                $script:legacyHelperTexts[$key]=[Text.Encoding]::UTF8.GetString((Get-GitBlobBytesBatch -Root $repoRoot -ObjectIds @($blob))[$blob])
+            }
+            return $script:legacyHelperTexts[$key]
+        }
+        function Get-LegacyHelperDefinitions {
+            param([string]$Commit, [string]$Relative, [string[]]$Names)
+            $parseErrors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseInput((Get-LegacyHelperText -Commit $Commit -Relative $Relative),[ref]$null,[ref]$parseErrors)
+            @($parseErrors).Count | Should -Be 0
+            foreach($name in $Names) {
+                $matches=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+                $matches.Count | Should -Be 1
+                [scriptblock]::Create($matches[0].Extent.Text)
+            }
+        }
         function New-LegacyRawCopyFixture {
-            param([string]$Root, [string]$Candidate, [string]$Executor)
+            # -PrepareOnly leaves the project at the published old HEAD for a
+            # case that executes its own historical parent.
+            param([string]$Root, [string]$Candidate, [string]$Executor,
+                [string]$LegacyCommit = '6bb6932802f78f8699b06ed49b69eba14dceff09', [switch]$PrepareOnly)
             foreach ($directory in @($Root,$Candidate,$Executor)) {
                 New-Item -ItemType Directory -Force -Path $directory | Out-Null
                 & git -C $directory init -q -b master
@@ -21,21 +43,12 @@ Describe 'Legacy raw-copy recovery without receipt or backup' {
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
                 [IO.File]::WriteAllText($path, 'candidate bytes', [Text.UTF8Encoding]::new($false))
             }
-            if ($null -eq $script:legacyUpdaterSource) {
-                $oldBlob=(& git -C $repoRoot rev-parse '6bb6932802f78f8699b06ed49b69eba14dceff09:.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1').Trim()
-                $oldText=[Text.Encoding]::UTF8.GetString((Get-GitBlobBytesBatch -Root $repoRoot -ObjectIds @($oldBlob))[$oldBlob])
-                $parseErrors=$null
-                $ast=[Management.Automation.Language.Parser]::ParseInput($oldText,[ref]$null,[ref]$parseErrors)
-                @($parseErrors).Count | Should -Be 0
-                $definitions=@(foreach($name in @('Update-WorkflowPackage','New-WorkflowUpdateRollbackSnapshot','Remove-WorkflowUpdateRollbackSnapshot')) {
-                    $matches=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
-                    $matches.Count | Should -Be 1
-                    [scriptblock]::Create($matches[0].Extent.Text)
-                })
-                $script:legacyUpdaterSource=[pscustomobject]@{text=$oldText;definitions=$definitions}
-            }
-            $oldText=$script:legacyUpdaterSource.text
             $relative='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+            if (-not $PrepareOnly -and $null -eq $script:legacyUpdaterSource) {
+                $definitions=@(Get-LegacyHelperDefinitions -Commit $LegacyCommit -Relative $relative -Names @('Update-WorkflowPackage','New-WorkflowUpdateRollbackSnapshot','Remove-WorkflowUpdateRollbackSnapshot'))
+                $script:legacyUpdaterSource=[pscustomobject]@{definitions=$definitions}
+            }
+            $oldText=Get-LegacyHelperText -Commit $LegacyCommit -Relative $relative
             $path=Join-Path $Candidate $relative
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
             [IO.File]::WriteAllText($path, 'function Save-WorkflowUpdateSnapshotReceipt {}', [Text.UTF8Encoding]::new($false))
@@ -71,6 +84,7 @@ Describe 'Legacy raw-copy recovery without receipt or backup' {
             & git -C $Candidate commit -qm 'new managed file'
             $candidateCommit=(& git -C $Candidate rev-parse HEAD).Trim()
             $source=[pscustomobject]@{root=$Candidate;commit=$candidateCommit;repo='fixture';ref='develop';source='git'}
+            if ($PrepareOnly) { return [pscustomobject]@{source=$source;archive=$archive} }
             $currentUpdate=(Get-Item Function:Update-WorkflowPackage).ScriptBlock
             # Execute the REAL pre-transaction updater and its temporary-backup
             # functions. Only dependency provisioning and its child boundary are
@@ -84,20 +98,25 @@ Describe 'Legacy raw-copy recovery without receipt or backup' {
                     & $oldRemove -Snapshot $Snapshot
                 }
                 function Resolve-WorkflowPackageSource { $source }
+                # This parent's cached checkout is gone, so the copied post-copy
+                # owner must keep the reviewed source-side recovery.
+                function Get-WorkflowPackageLegacyTempRoot { Join-Path $TestDrive 'no legacy parent source' }
                 function Assert-WorkflowSourceAiRulesInstallable {}
                 function Invoke-WorkflowLocalPatchStep {}
                 function Invoke-Agent1cFreshProcess {
                     $LifecyclePhase='post-copy'; $OperationContinuation=$true
                     & $currentUpdate
                 }
-                { Update-WorkflowPackage } | Should -Throw '*WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING*'
+                { Update-WorkflowPackage } | Should -Throw '*WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING*Automatic adoption was refused*SOURCE_MISSING*'
             }
             [IO.File]::WriteAllText((Join-Path $Root 'templates/custom.secret'),'current ignored custom bytes',[Text.UTF8Encoding]::new($false))
             New-Item -ItemType Directory -Force -Path (Join-Path $Root 'handoffs') | Out-Null
             [IO.File]::WriteAllText((Join-Path $Root 'handoffs/keep.md'),'unrelated untracked evidence',[Text.UTF8Encoding]::new($false))
             return [pscustomobject]@{source=$source;executor=[pscustomobject]@{root=$Executor;commit=(& git -C $Executor rev-parse HEAD).Trim()};archive=$archive;removedBackup=$script:legacyRemovedBackup}
         }
-    }
+}
+
+Describe 'Legacy raw-copy recovery without receipt or backup' {
     BeforeEach {
         $root=Join-Path $TestDrive ('Legacy проект с пробелом '+[guid]::NewGuid().ToString('N'))
         . $helperPath -ProjectRoot $root -Action help *> $null
@@ -237,5 +256,115 @@ Describe 'Legacy raw-copy recovery without receipt or backup' {
         Test-Path -LiteralPath $pending.snapshot.root | Should -BeTrue
         Start-WorkflowLegacyCopyRecovery | Should -Be 'pending'
         (Get-WorkflowUpdatePendingSnapshot).snapshot.root | Should -BeExactly $pending.snapshot.root
+    }
+}
+
+Describe 'Ordinary update started by the published r33 helper' {
+    BeforeAll {
+        # The published master before the transactional updater. Its own
+        # updater, copy and lock writers run below; only the process boundary
+        # and dependency provisioning are stubbed.
+        $script:r33Commit = '69c0863bfe3bd837543267f122e81a28dcfa5488'
+        . $helperPath -ProjectRoot (Join-Path $TestDrive 'r33 definitions') -Action help *> $null
+        $script:r33Definitions = @(
+            Get-LegacyHelperDefinitions -Commit $script:r33Commit -Relative '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1' -Names @('Update-WorkflowPackage','Copy-WorkflowManagedDirectory','Copy-WorkflowManagedFile')
+            Get-LegacyHelperDefinitions -Commit $script:r33Commit -Relative '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1' -Names @('Ensure-DependencyLockManifest','Write-DependencyLockManifest')
+        )
+        function Invoke-R33ParentUpdate {
+            param([object]$Source, [string]$LegacySourceRoot)
+            $currentDefinitions = @{}
+            foreach ($name in @('Update-WorkflowPackage','Copy-WorkflowManagedDirectory','Copy-WorkflowManagedFile','Ensure-DependencyLockManifest','Write-DependencyLockManifest')) {
+                $currentDefinitions[$name] = (Get-Item "Function:$name").ScriptBlock
+            }
+            & {
+                foreach ($definition in $script:r33Definitions) { . $definition }
+                function Get-WorkflowPackageLegacyTempRoot { $LegacySourceRoot }
+                function Invoke-Agent1cFreshProcess {
+                    param([string]$ScriptPath, [string[]]$AdditionalArguments, [switch]$ReturnExitStatus, [switch]$ResumeParentAfterSuccess)
+                    $script:r33Children.Add([pscustomobject]@{scriptPath=$ScriptPath;returnStatus=[bool]$ReturnExitStatus}) | Out-Null
+                    & {
+                        # The fresh process loads the copied (current) helper.
+                        foreach ($name in $currentDefinitions.Keys) { Set-Item -Path "Function:$name" -Value $currentDefinitions[$name] }
+                        $LifecyclePhase = 'post-copy'; $OperationContinuation = $true
+                        Update-WorkflowPackage
+                    }
+                    if ($ReturnExitStatus) { return [pscustomobject]@{exitCode=0} }
+                    # The r33 parent exits with its child's code.
+                    throw 'R33_PARENT_EXIT:0'
+                }
+                Update-WorkflowPackage
+            }
+        }
+    }
+    BeforeEach {
+        $root=Join-Path $TestDrive ('r33 проект с пробелом '+[guid]::NewGuid().ToString('N'))
+        . $helperPath -ProjectRoot $root -Action help *> $null
+        $script:r33Fixture=New-LegacyRawCopyFixture -Root $root -Candidate ($root+' кэш старого помощника') -Executor ($root+' executor') -LegacyCommit $script:r33Commit -PrepareOnly
+        $script:r33Children=[System.Collections.Generic.List[object]]::new()
+        $LifecyclePhase=''
+        $WorkflowUpdateRecovery=''
+        $SkipAiRules=$true
+        Mock Resolve-WorkflowPackageSource { $script:r33Fixture.source }
+        Mock Get-WorkflowUpdateExpectedClientWritePaths { @() }
+        Mock Assert-WorkflowSourceAiRulesInstallable {}
+        Mock Get-WorkflowDependencyPlan { [pscustomobject]@{} }
+        Mock Assert-WorkflowDependencyPlan {}
+        Mock Add-WorkflowDotEnvPolicySnapshotPaths {}
+        Mock Invoke-WorkflowPackageFilePostCopy {
+            [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'AGENT-INSTALL.md'),'post-copy completed',[Text.UTF8Encoding]::new($false))
+            [pscustomobject]@{aiRulesPathsBefore=@();clientSurfacePathsBefore=@()}
+        }
+        Mock Enable-WorkflowExecutionGuardForCurrentRoot {}
+        Mock Set-ItlOnDemandMcpSemanticReloadRequiredAction {}
+        Mock Write-WorkflowUpdateFollowUp {}
+        Mock Invoke-WorkflowDevelopmentBranchRollout { [pscustomobject]@{roots=@()} }
+        Mock Assert-WorkflowDevelopmentBranchRolloutComplete {}
+    }
+    It 'adopts the exact copy, commits master and rolls out to development worktrees in one command' {
+        $source=$script:r33Fixture.source
+        $headBefore=Get-CurrentCommit
+        { Invoke-R33ParentUpdate -Source $source -LegacySourceRoot $source.root } | Should -Throw 'R33_PARENT_EXIT:0'
+        Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
+        Get-CurrentCommit | Should -Not -Be $headBefore
+        Assert-WorkflowTrackedGitClean
+        # Post-copy runs once more from the parent's exact clean source.
+        $script:r33Children.Count | Should -Be 2
+        $script:r33Children[1].returnStatus | Should -BeTrue
+        $script:r33Children[1].scriptPath | Should -BeExactly (Join-Path $source.root '.agents/skills/1c-workflow/scripts/agent-1c.ps1')
+        Should -Invoke Invoke-WorkflowPackageFilePostCopy -Times 1 -Exactly
+        Should -Invoke Invoke-WorkflowDevelopmentBranchRollout -Times 1 -Exactly -ParameterFilter { [string]$Source.commit -ceq [string]$script:r33Fixture.source.commit }
+        Should -Invoke Assert-WorkflowDevelopmentBranchRolloutComplete -ParameterFilter { $SourceCommit -ceq [string]$script:r33Fixture.source.commit }
+        Read-Utf8Text -Path (Join-Path $root 'templates/new-managed.txt') | Should -BeExactly 'new package file'
+        Read-Utf8Text -Path (Join-Path $root '.dev.env') | Should -BeExactly 'CUSTOM=Сохранить настройки'
+        Read-Utf8Text -Path (Join-Path $root 'src/cf/Продукт.bsl') | Should -BeExactly 'unchanged product'
+        Read-Utf8Text -Path $script:r33Fixture.archive | Should -BeExactly 'retained retirement evidence'
+        (Read-DependencyLockManifest).dependencies.custom.value | Should -Be 'keep'
+        $completed=@(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-completed-*')
+        $completed | Should -HaveCount 1
+        $id=$completed[0].Name.Substring('itl-workflow-update-completed-'.Length)
+        $receipt=(Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id).receipt
+        $receipt.legacyCopyRecovery.scope | Should -BeExactly 'legacy-parent-handoff'
+        $receipt.legacyCopyRecovery.observedHead | Should -BeExactly $headBefore
+        # Restore returns the observed copy, never the pre-incident commit.
+        $script:Agent1cScriptRoot=Join-Path $source.root '.agents/skills/1c-workflow/scripts'
+        Restore-CompletedWorkflowUpdate -SnapshotId $id
+        Read-Utf8Text -Path (Join-Path $root 'AGENT-INSTALL.md') | Should -BeExactly 'candidate bytes'
+        Assert-WorkflowTrackedGitClean
+    }
+    It 'keeps the reviewed recovery when <Kind>' -ForEach @(
+        @{Kind='the parent source moved';ExpectedCategory='SOURCE_MISSING'},
+        @{Kind='the parent source is dirty';ExpectedCategory='SOURCE_CHANGED'}
+    ) {
+        $source=$script:r33Fixture.source
+        $legacyRoot=$source.root
+        if ($Kind -eq 'the parent source moved') { $legacyRoot=$root+' missing source' }
+        if ($Kind -eq 'the parent source is dirty') { [IO.File]::WriteAllText((Join-Path $source.root 'templates/new-managed.txt'),'dirty parent source',[Text.UTF8Encoding]::new($false)) }
+        $headBefore=Get-CurrentCommit
+        { Invoke-R33ParentUpdate -Source $source -LegacySourceRoot $legacyRoot } |
+            Should -Throw "*WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING*legacy-status*Automatic adoption was refused*WORKFLOW_UPDATE_$ExpectedCategory*"
+        Get-CurrentCommit | Should -BeExactly $headBefore
+        Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
+        Test-Path -LiteralPath (Join-Path $root '.agent-1c/snapshots/workflow-update') | Should -BeFalse
+        Should -Invoke Invoke-WorkflowDevelopmentBranchRollout -Times 0 -Exactly
     }
 }

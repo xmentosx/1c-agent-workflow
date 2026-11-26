@@ -682,9 +682,9 @@ Describe 'Vanessa 1.2.043.42-itl-r17 execute_feature_step outcome' {
     }
 }
 
-Describe 'Dropdown policy in Vanessa r18' {
+Describe 'Dropdown policy in Vanessa r19' {
     It 'resolves all four override sources and rejects conflicting scenario tags' {
-        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18/file-operations.patch'))
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19/file-operations.patch'))
         $form = Get-FocusNewSide 'VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl' $patch
         $method = Get-FocusMethod $form 'ITLПараметрыСписка'
         $prefix = @'
@@ -733,7 +733,7 @@ ITLРежимСпискаMCP = Истина;
         # wm22, 2026-11-23: a list opened under its own lease closed while the scenario
         # paused before the selection. Opening, inspecting, closing and input by string
         # run in the background; each selection reopens the list inside one lease.
-        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18/file-operations.patch'))
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19/file-operations.patch'))
         foreach ($name in 'ITLВОткрытойФормеЯОткрываюВыпадающийСписокСЗаголовкомПлатформа', 'ITLВТаблицеЯОткрываюВыпадающийСписокПлатформа',
             'ITLЯЗакрываюВыпадающийСписокПлатформа', 'ITLВТаблицеЯЗакрываюВыпадающийСписокПлатформа', 'ITLСделатьВводПоСтрокеВПолеВВодаПлатформа',
             'ITLОткрытьВыпадающийСписокПлатформа', 'ITLОткрытьСписокДляОперации', 'ITLЗапомнитьОткрытыйСписок') {
@@ -742,11 +742,10 @@ ITLРежимСпискаMCP = Истина;
         $client = Get-FocusNewSide 'VanessaAutomation/Forms/КлиентТестирования/Ext/Form/Module.bsl' $patch
         $steps = Get-FocusNewSide 'features/Libraries/UITestRunner/step_definitions/РаботаСИнтерфейсом/Forms/Форма/Ext/Form/Module.bsl' $patch
         $mcp = Get-FocusNewSide 'VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl' $patch
-        foreach ($wrapper in @(
-                @($client, 'ИзВыпадающегоСпискаЯВыбираюТочноеЗначение'), @($client, 'ВТаблицеИзВыпадающегоСпискаЯВыбираюТочноеЗначение'),
-                @($client, 'ЯНажимаюНаКнопкуСоздатьПоля'))) {
+        # The exact selections repeat a lost selection; their loop is exercised by the retry test.
+        foreach ($wrapper in @(,@($client, 'ЯНажимаюНаКнопкуСоздатьПоля'))) {
             $method = Get-FocusMethod $wrapper[0] $wrapper[1]
-            $method | Should -Match '(?s)^[^\n]+\n\tВанесса\.ITLНачатьВыборИзСписка\(\);\n\tПопытка\n.*ITLЗавершитьВыборИзСписка\(Истина\);.*ITLЗавершитьВыборИзСписка\(\);' -Because $wrapper[1]
+            $method | Should -Match '(?s)^[^\n]+\n\tВанесса\.ITLНачатьВыборИзСписка\(\);\n\tПопытка\n.*ITLЗавершитьВыборИзСписка\(Истина\).*ITLЗавершитьВыборИзСписка\(\);' -Because $wrapper[1]
         }
         $reopen = [regex]::Escape('Ванесса.ITLПереоткрытьСписокВАренде(ПолеРеквизит);')
         $client | Should -Match ('ТипПоля, ДопПараметры\);\n\t\t\t' + $reopen + '\n[ \t]*\n\t\t\tДопПараметрыОткрытьВыпадающийСписок') -Because 'the exact selection closes an earlier list before it opens one'
@@ -757,16 +756,16 @@ ITLРежимСпискаMCP = Истина;
     }
 
     It 'reports a lost foreground as a failed selection and keeps the original error of a failed step' {
-        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18/file-operations.patch'))
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19/file-operations.patch'))
         $form = Get-FocusNewSide 'VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl' $patch
-        $methods = foreach ($name in 'ITLПереоткрытьСписокВАренде', 'ITLЗавершитьВыборИзСписка', 'ITLПроверитьОтветПомощникаОкон', 'ITLЗакрытьСписок', 'ITLСписокОткрыт') { Get-FocusMethod $form $name }
+        $methods = foreach ($name in 'ITLПереоткрытьСписокВАренде', 'ITLЗавершитьВыборИзСписка', 'ITLПроверитьОтветПомощникаОкон', 'ITLОписаниеОкнаПомощника', 'ITLЗакрытьСписок', 'ITLСписокОткрыт') { Get-FocusMethod $form $name }
         $prefix = @'
 Перем ITLАрендаСписка, ОтветПомощника, Запросы, КаналОкон;
 Функция ITLКаталогКаналаОкон() Возврат КаналОкон; КонецФункции
 Функция ITLЗапросПомощникуОкон(Операция, Поля, Таймаут) Запросы.Добавить(Поля); Возврат ОтветПомощника; КонецФункции
 Функция ITLОбластьУправления() Возврат "сценарий 1"; КонецФункции
 Процедура ЗаписатьЛогВЖРОшибка(Имя, Текст) КонецПроцедуры
-Функция Ошибка(Код, Заголовок = "") Возврат Новый Структура("status,code,foregroundTitle", "error", Код, Заголовок); КонецФункции
+Функция Ошибка(Код, Заголовок = "") Возврат Новый Структура("status,code,foregroundTitle,foregroundClass,foregroundProcess", "error", Код, Заголовок, "Shell_TrayWnd", "explorer.exe"); КонецФункции
 Процедура Ожидать(Условие, Текст) Если НЕ Условие Тогда ВызватьИсключение Текст; КонецЕсли; КонецПроцедуры
 '@
         $body = @'
@@ -788,13 +787,22 @@ ITLАрендаСписка = Истина;
     ВызватьИсключение "missing focus loss";
 Исключение
     Текст = ОписаниеОшибки();
-    Ожидать(СтрНайти(Текст, "ITL_DROPDOWN_FOCUS_LOST") > 0 И СтрНайти(Текст, "Блокнот с пробелом") > 0, Текст);
+    Ожидать(СтрНайти(Текст, "ITL_DROPDOWN_FOCUS_LOST") > 0 И СтрНайти(Текст, "Блокнот с пробелом") > 0 И СтрНайти(Текст, "Shell_TrayWnd") > 0 И СтрНайти(Текст, "explorer.exe") > 0, Текст);
 КонецПопытки;
 Ожидать(Запросы[0].dropdownResult = "completed" И ITLАрендаСписка = Ложь, "a completed selection is reported once");
 ITLАрендаСписка = Истина;
 ОтветПомощника = Ошибка("ITL_DROPDOWN_LEASE_LOST");
 ITLЗавершитьВыборИзСписка(Истина);
 Ожидать(Запросы[1].dropdownResult = "failed" И ITLАрендаСписка = Ложь, "a failed step ends the lease without a second error");
+// PM5 branch4, 2026-11-25: 1C answers a list closed by a lost foreground with its own error.
+ITLАрендаСписка = Истина;
+ОтветПомощника = Новый Структура("status,focusLost,foregroundTitle,foregroundClass,foregroundProcess", "ok", Истина, "", "Shell_TrayWnd", "explorer.exe");
+Причина = ITLЗавершитьВыборИзСписка(Истина);
+Ожидать(СтрНайти(Причина, "ITL_DROPDOWN_FOCUS_LOST") > 0 И СтрНайти(Причина, "Shell_TrayWnd") > 0, "a failed selection names the lost foreground: " + Причина);
+ITLАрендаСписка = Истина;
+ОтветПомощника = Новый Структура("status,focusLost", "ok", Ложь);
+Ожидать(ITLЗавершитьВыборИзСписка(Истина) = "", "a failure without a lost foreground adds no cause");
+ОтветПомощника = Ошибка("ITL_DROPDOWN_LEASE_LOST");
 ITLАрендаСписка = Истина;
 Попытка
     ITLЗавершитьВыборИзСписка();
@@ -838,11 +846,104 @@ ITLЗакрытьСписок(Поле);
         $result.output | Should -Match 'SELECTION PASSED'
     }
 
+    It 'repeats a selection that lost the foreground at most twice and accepts one the field already shows' {
+        # PM5 branch4, 2026-11-25: a user working at the computer clicked the taskbar while a
+        # selection held the foreground; 1C closed the list and the regular check failed.
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19/file-operations.patch'))
+        $form = Get-FocusNewSide 'VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl' $patch
+        $client = Get-FocusNewSide 'VanessaAutomation/Forms/КлиентТестирования/Ext/Form/Module.bsl' $patch
+        $vanessa = Join-Path $TestDrive 'Ванесса повтора выбора.os'
+        $shared = foreach ($name in 'ITLПовторитьВыборИзСписка', 'ITLВыборСостоялся', 'ITLОшибкаПослеПовторов', 'ITLПотеряФокусаВыбора', 'ITLТекстПоляСписка') { Get-FocusMethod $form $name }
+        $fakeVanessa = @'
+Перем ITLПаузаВводаПовтора;
+Перем Журнал Экспорт;
+Перем ПотеряФокуса Экспорт;
+Процедура ЗаписатьЛогВЖРИнформация(Имя, Текст) Экспорт Журнал.Добавить(Имя); КонецПроцедуры
+Процедура ITLНачатьВыборИзСписка() Экспорт Журнал.Добавить("аренда " + ITLПаузаВводаПовтора); ITLПаузаВводаПовтора = 0; КонецПроцедуры
+Функция ITLЗавершитьВыборИзСписка(ОшибкаВыбора = Ложь) Экспорт
+    Если ОшибкаВыбора И ПотеряФокуса = Истина Тогда ПотеряФокуса = Ложь; Возврат "ITL_DROPDOWN_FOCUS_LOST: окно ''"; КонецЕсли;
+    Возврат "";
+КонецФункции
+'@
+        [IO.File]::WriteAllText($vanessa, ((@($fakeVanessa) + $shared) -join "`n"), [Text.UTF8Encoding]::new($true))
+        # OneScript has no testing types; the field lookup gets the stand-in field directly.
+        $wrappers = foreach ($name in 'ИзВыпадающегоСпискаЯВыбираюТочноеЗначение', 'ITLЗначениеПоляСписка', 'ЯНажимаюНаКнопкуСоздатьПоля') { (Get-FocusMethod $client $name).Replace('Тип("ТестируемоеПолеФормы")', 'Неопределено') }
+        $prefix = @'
+Перем Ванесса, Поле, Исходы, Номер;
+Функция ПолучитьКорректныйТекстДляВставкиВПоле(Текст) Возврат Текст; КонецФункции
+Функция НайтиРеквизитОткрытойФормыПоЗаголовку(Имя, ПоИмени, Флаг, ТипПоля, Доп) Возврат Поле; КонецФункции
+Функция НайтиТЧПоИмени(Имя, А = Неопределено, Б = Неопределено, В = Неопределено, Доп = Неопределено) Возврат Неопределено; КонецФункции
+Функция НайтиРеквизитТаблицы(ИмяТЧ, Имя, ПоИмени, ТЧ, Доп) Возврат Неопределено; КонецФункции
+Функция ITLИзВыпадающегоСпискаЯВыбираюТочноеЗначениеПлатформа(Имя, Значение, ПоИмени, Доп)
+    Номер = Номер + 1;
+    Исход = Исходы[Номер - 1];
+    Если Исход = "ok" Или Исход = "lost-after" Тогда Поле.Текст = Значение; КонецЕсли;
+    Если Исход = "ok" Тогда Возврат "выбрано"; КонецЕсли;
+    Если Исход = "activation" Тогда ВызватьИсключение "ITL_WINDOW_ACTIVATION_FAILED: активно окно '' (класс Shell_TrayWnd, процесс explorer.exe)"; КонецЕсли;
+    Если Исход = "platform-lost" Тогда Ванесса.ПотеряФокуса = Истина; КонецЕсли;
+    Если Исход = "platform-lost" Или Исход = "platform" Тогда ВызватьИсключение "Неподходящий тип элемента управления для вызванного действия"; КонецЕсли;
+    Если Исход = "declined" Тогда ВызватьИсключение "ITL_UI_CONTROL_DECLINED: пользователь не передал управление агенту (user-cancel)"; КонецЕсли;
+    ВызватьИсключение "ITL_DROPDOWN_FOCUS_LOST: во время выбора активным стало окно '' (класс Shell_TrayWnd, процесс explorer.exe)";
+КонецФункции
+Функция ITLЯНажимаюНаКнопкуСоздатьПоляПлатформа(Имя, ПоИмени)
+    Номер = Номер + 1;
+    Если Исходы[0] = "platform-lost" Тогда Ванесса.ПотеряФокуса = Истина; КонецЕсли;
+    ВызватьИсключение "Неподходящий тип элемента управления для вызванного действия";
+КонецФункции
+Функция Создать(Список)
+    Номер = 0; Исходы = СтрРазделить(Список, ","); Ванесса.Журнал = Новый Массив;
+    Попытка
+        ЯНажимаюНаКнопкуСоздатьПоля("Раздел статусов");
+        Возврат "создано";
+    Исключение
+        Возврат "ОШИБКА " + ОписаниеОшибки();
+    КонецПопытки;
+КонецФункции
+Процедура Ожидать(Условие, Текст) Если НЕ Условие Тогда ВызватьИсключение Текст; КонецЕсли; КонецПроцедуры
+Функция Выбрать(Начало, Список)
+    Поле.Текст = Начало; Номер = 0; Исходы = СтрРазделить(Список, ","); Ванесса.Журнал = Новый Массив;
+    Попытка
+        Возврат ИзВыпадающегоСпискаЯВыбираюТочноеЗначение("Раздел статусов", "Элементы плана");
+    Исключение
+        Возврат "ОШИБКА " + ОписаниеОшибки();
+    КонецПопытки;
+КонецФункции
+'@
+        $body = @'
+Ванесса = ЗагрузитьСценарий(АргументыКоманднойСтроки[0]);
+Поле = ЗагрузитьСценарийИзСтроки("Перем Текст Экспорт;
+|Функция ПолучитьТекстРедактирования() Экспорт Возврат Текст; КонецФункции
+|Функция ПолучитьОтображаемыйТекст() Экспорт Возврат Текст; КонецФункции");
+Ожидать(Выбрать("Задания", "lost,lost,ok") = "выбрано" И Номер = 3, "two lost selections are repeated");
+Ожидать(Ванесса.Журнал[0] = "аренда " И СтрНайти(СтрСоединить(Ванесса.Журнал, ";"), "аренда 1500") > 0, "a repeat waits for a longer pause: " + СтрСоединить(Ванесса.Журнал, ";"));
+Итог = Выбрать("Задания", "lost,lost,lost");
+Ожидать(Номер = 3 И СтрНайти(Итог, "ITL_DROPDOWN_FOCUS_LOST") > 0 И СтрНайти(Итог, "повторён 2") > 0, "a third loss fails the step: " + Итог);
+// PM5 branch4: the agent saw no way on and offered only visible windows.
+Ожидать(СтрНайти(Итог, "-DropdownPrompt on") > 0 И СтрНайти(Итог, "dropdownPrompt: true") > 0, "the final loss names the prompt override: " + Итог);
+Итог = Выбрать("Задания", "declined");
+Ожидать(Номер = 1 И СтрНайти(Итог, "ITL_UI_CONTROL_DECLINED") > 0 И СтрНайти(Итог, "повторён") = 0 И СтрНайти(Итог, "DropdownPrompt") = 0, "the user's refusal is not repeated: " + Итог);
+Ожидать(Выбрать("Задания", "lost-after") = Неопределено И Номер = 1, "a value already selected by this attempt counts as done");
+Ожидать(Выбрать("Элементы плана", "lost-after,ok") = "выбрано" И Номер = 2, "a value that was there before proves nothing");
+Ожидать(Выбрать("Задания", "activation,ok") = "выбрано" И Номер = 2, "a failed activation is repeated");
+Ожидать(Выбрать("Задания", "platform-lost,ok") = "выбрано" И Номер = 2, "a 1C error after a lost foreground is repeated");
+Итог = Выбрать("Задания", "platform");
+Ожидать(Номер = 1 И СтрНайти(Итог, "Неподходящий тип") > 0 И СтрНайти(Итог, "DropdownPrompt") = 0, "a 1C error without a lost foreground is not repeated: " + Итог);
+Итог = Создать("platform-lost");
+Ожидать(Номер = 1 И СтрНайти(Итог, "ITL_DROPDOWN_FOCUS_LOST") > 0 И СтрНайти(Итог, "-DropdownPrompt on") > 0 И СтрНайти(Итог, "повторён") = 0, "the create button is not repeated but names the override: " + Итог);
+Итог = Создать("platform");
+Ожидать(СтрНайти(Итог, "Неподходящий тип") > 0 И СтрНайти(Итог, "DropdownPrompt") = 0, "a create error without a lost foreground stays unchanged: " + Итог);
+Сообщить("RETRY PASSED");
+'@
+        $result = Invoke-FocusProbe -Source ((@($prefix) + $wrappers + @($body)) -join "`n") -Arguments @($vanessa)
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match 'RETRY PASSED'
+    }
+
     It 'ends the lease scope of a synchronous form tool in its own answer' {
         # wm22 facade run, 2026-11-23: the MCP library sends a synchronous answer itself, so the
         # scope of select_from_dropdown ended only with the next call and the completion panel
         # appeared about nine seconds after the selection.
-        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r18/file-operations.patch'))
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19/file-operations.patch'))
         $mcp = Get-FocusNewSide 'VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl' $patch
         $methods = foreach ($name in 'ITLЗавершитьСинхронныйВызов', 'ВыполнитьПоследовательностьДействийФормы') { Get-FocusMethod $mcp $name }
         # The patch hunk starts below the header of the manage_form_elements handler; its body is the changed part.

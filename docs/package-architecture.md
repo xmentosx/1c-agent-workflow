@@ -138,6 +138,26 @@ other sessions registered during the ~30-minute preparation. Per-stage hard
 limits still stop a runaway run, and the plan still reports `timeEstimate`.
 Rollback is to restore the check in `Assert-DeliveryQualityPlanMayRun`.
 
+Architecture checkpoint approved on 2026-11-25: an ordinary `update-workflow`
+started by a pre-transaction installed helper (the published r33 master) is
+completed by the new post-copy owner instead of stopping with
+`WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING`. The old parent cannot be changed:
+it deletes and recopies the managed directories without a snapshot, then hands
+`-LifecyclePhase post-copy` to the copied helper. That owner now runs the same
+evidence as source-side `legacy-status` against the parent's exact clean source
+(the old cached checkout, or `ITL_WORKFLOW_SOURCE_PATH` for a path source) and,
+when every check passes, adopts the observed copy without a decision file. The
+user decided three points: (1) adoption is automatic, because untracked bytes
+inside the managed directories are already lost before new code runs; (2) the
+transaction keeps the ordinary development-branch rollout instead of the manual
+recovery's `master-only` scope; (3) post-copy executes from that recorded clean
+source, as the manual recovery does. Its receipt records
+`legacyCopyRecovery.scope = legacy-parent-handoff` and the observed-copy before
+boundary, so restore returns the observed copy, never the pre-incident commit.
+Any failed check keeps the original refusal and the reviewed source-side
+recovery. No lock, guard, client surface or old-helper contract changes.
+Rollback is to remove `Start-WorkflowLegacyParentHandoff` from post-copy.
+
 Client routine files are generated from `.agents/skills/1c-workflow/kilo-command-templates`. The capability registry maps them to native commands for Kilo, Claude Code, Cursor, OpenCode, Qwen, and Command Code; to skills for Kimi and Cline; and to prompts for Pi. Generated client surfaces are installed-project runtime state, not source files.
 
 The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the managed ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL provisions the exact project-pinned OpenSpec CLI in its local cache separately from the optional global installation. It does not generate client bundles or run `openspec update`; compatible bundle rendering remains with the fork installer. See `ai-rules-fork-upgrades.md` for the release boundary.
@@ -211,7 +231,11 @@ existing per-desktop helper mutex owns activation, consent, cancellation and the
 maximum hold. A completed batch can share its lease until focus returns.
 Permission for a dropdown applies only to that batch. The existing hidden/visible
 switch is the rollback path. The user narrowed the lease to the selection gesture
-on the same day after the review of the first candidate.
+on the same day after the review of the first candidate. On 2026-11-25, after a
+PM5 user clicking another window broke regular checks, the user approved that the
+selection step itself repeats a lost or unactivated selection up to two times,
+each after a 1.5 s input pause, and accepts one only when that attempt changed the
+field to the requested value; a refusal is never repeated.
 
 On 2026-11-02 the user approved [Windows MCP storage retention](mcp-storage-retention.md),
 including conditional Sunday 03:30 detached VHD compaction on dev-ermakov. The
@@ -906,6 +930,23 @@ compact-20261117-013607). The Vanessa run therefore publishes its budget plus
 180 s of its own post-timeout work; its 1C processes still stop at the
 timeout. Rollback: the budget function returns the setting or 1800 s, the
 published budget drops the 180 s, and the extra journal field is ignored.
+
+Architecture checkpoint approved on 2026-11-25 (`add-configuration-repository-transfer`):
+the branch lifecycle owns one transfer of a reviewed configuration CF into the
+repository-connected source infobase. Within the existing per-infobase admission
+it may partially load the task's changed files (with `Configuration.xml` when
+objects are added or removed) into its locked objects, run `/UpdateDBCfg`, commit
+the listed task objects without `-keepLocked`, and then dump that infobase into
+`master` without a repository update. `/MergeCfg` is not used. Before the load the
+latest repository version must equal the main configuration, and after it the
+main configuration must equal the checked CF; either mismatch stops the transfer.
+State is one ignored per-branch stage record; no cross-branch coordinator,
+service, queue or elevation is added, because the user does not run concurrent
+transfers or a transfer alongside a repository refresh in another branch. A
+retry whose repository advanced past the recorded base stops for a human
+decision. Rollback restores the manual CF route; repository versions and Mantis
+records stay. Evidence: the change's `evidence.md` stand on 8.3.27.2130 and
+8.5.4.1878.
 
 ## 1C source byte-preservation policy
 
