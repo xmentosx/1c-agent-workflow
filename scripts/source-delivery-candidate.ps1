@@ -1359,7 +1359,12 @@ function Release-DevelopToMaster {
     $localDevelop = Get-GitValue -Arguments @("rev-parse", "develop")
     $remoteDevelop = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
     $remoteMaster = Get-GitValue -Arguments @("rev-parse", "$script:Remote/master")
-    if ($localDevelop -ne $remoteDevelop) { throw "Local develop must equal origin/develop before ReleaseMaster." }
+    if ($localDevelop -ne $remoteDevelop) {
+        # The release train published develop itself; a detached publication root
+        # leaves the checked-out develop behind, which is safe while it holds no local-only commits.
+        $behindOnly = $ReusePrequalifiedGates -and (Invoke-DeliveryGit -Arguments @("merge-base", "--is-ancestor", $localDevelop, $remoteDevelop) -AllowFailure).exitCode -eq 0
+        if (-not $behindOnly) { throw "Local develop must equal origin/develop before ReleaseMaster." }
+    }
 
     $worktree = $null
     $deliverySucceeded = $false
