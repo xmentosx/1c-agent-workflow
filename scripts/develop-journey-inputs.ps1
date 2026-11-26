@@ -81,7 +81,8 @@ function Get-DevelopJourneyExcludedScope {
             return @{ functions=@('Write-WorkflowUpdateFollowUp','Get-WorkflowUpdateRecoveryStatus',
                 'Restore-CompletedWorkflowUpdate','Assert-WorkflowLegacyRecoveryMasterProof',
                 'Complete-WorkflowUpdatePostCopyFromSnapshot','Get-WorkflowLegacyCopyEvidence',
-                'Start-WorkflowLegacyCopyRecovery','Get-WorkflowUpdateCandidateRulesPaths','Update-WorkflowPackage') }
+                'Start-WorkflowLegacyCopyRecovery','New-WorkflowLegacyCopyTransaction','Get-WorkflowUpdatePostCopyReceiptMissingMessage',
+                'Start-WorkflowLegacyParentHandoff','Get-WorkflowUpdateCandidateRulesPaths','Update-WorkflowPackage') }
         }
         '.agents/skills/1c-workflow/scripts/agent-1c.ps1' {
             return @{ parameters=@('WorkflowUpdateRecovery','WorkflowUpdateLegacySourceRoot');
