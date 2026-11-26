@@ -31,6 +31,60 @@ Describe "Source develop queue and delivery" {
             } finally { Remove-DeliveryFixture -Fixture $fixture }
         }
 
+    It "promotes from a detached worktree while develop stays checked out in the main checkout" {
+            $fixture = $null
+            try {
+                $fixture = New-DeliveryFixture
+                & git -C $fixture.root push --quiet origin "HEAD:refs/heads/master" *> $null
+                & git -C $fixture.root switch --quiet -c feature/detached-train
+                New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+                Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\DetachedTrain.Tests.ps1") -Encoding UTF8 -Value "Describe 'detached train' { It 'works' { `$true | Should -BeTrue } }"
+                Set-Content -LiteralPath (Join-Path $fixture.root "behavior.ps1") -Encoding UTF8 -Value "'detached-train'"
+                & git -C $fixture.root add --all; & git -C $fixture.root commit --quiet -m "feat: detached release train" *> $null
+                Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+                & git -C $fixture.root switch --quiet develop
+                $localDevelop = (& git -C $fixture.root rev-parse develop).Trim()
+                $publisher = Join-Path ([IO.Path]::GetTempPath()) ("itl публикация worktree " + [guid]::NewGuid().ToString("N"))
+                & git -C $fixture.root worktree add --quiet --detach $publisher "origin/develop" *> $null
+                $LASTEXITCODE | Should -Be 0
+
+                $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PromoteRelease", "-RepositoryRoot", ('"' + $publisher + '"'), "-GateScript", ('"' + (Join-Path $publisher 'fake-gate.ps1') + '"'), "-ComponentFinalizerScript", ('"' + (Join-Path $publisher 'fake-component-finalizer.ps1') + '"')) -AllowFailure
+                $result.exitCode | Should -Be 0 -Because $result.stderr
+                $payload = $result.stdout | ConvertFrom-Json
+                $payload.status | Should -Be "released"; $payload.qualificationReused | Should -BeTrue
+                $published = (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim()
+                $published | Should -Not -Be $localDevelop
+                (& git --git-dir=$($fixture.remote) rev-parse refs/heads/master).Trim() | Should -Be $published
+                (& git -C $fixture.root rev-parse develop).Trim() | Should -Be $localDevelop
+                @(& git -C $fixture.root status --porcelain) | Should -BeNullOrEmpty
+            } finally { Remove-DeliveryFixture -Fixture $fixture }
+        }
+
+    It "keeps master unreleased when the checked-out develop holds local-only commits" {
+            $fixture = $null
+            try {
+                $fixture = New-DeliveryFixture
+                & git -C $fixture.root push --quiet origin "HEAD:refs/heads/master" *> $null
+                $master = (& git --git-dir=$($fixture.remote) rev-parse refs/heads/master).Trim()
+                & git -C $fixture.root switch --quiet -c feature/local-only
+                New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+                Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\LocalOnly.Tests.ps1") -Encoding UTF8 -Value "Describe 'local only' { It 'works' { `$true | Should -BeTrue } }"
+                Set-Content -LiteralPath (Join-Path $fixture.root "behavior.ps1") -Encoding UTF8 -Value "'local-only'"
+                & git -C $fixture.root add --all; & git -C $fixture.root commit --quiet -m "feat: queued change" *> $null
+                Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+                & git -C $fixture.root switch --quiet develop
+                Set-Content -LiteralPath (Join-Path $fixture.root "unpublished.txt") -Encoding UTF8 -Value "local"
+                & git -C $fixture.root add unpublished.txt; & git -C $fixture.root commit --quiet -m "local-only develop commit" *> $null
+                $publisher = Join-Path ([IO.Path]::GetTempPath()) ("itl публикация worktree " + [guid]::NewGuid().ToString("N"))
+                & git -C $fixture.root worktree add --quiet --detach $publisher "origin/develop" *> $null
+
+                $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PromoteRelease", "-RepositoryRoot", ('"' + $publisher + '"'), "-GateScript", ('"' + (Join-Path $publisher 'fake-gate.ps1') + '"'), "-ComponentFinalizerScript", ('"' + (Join-Path $publisher 'fake-component-finalizer.ps1') + '"')) -AllowFailure
+                $result.exitCode | Should -Not -Be 0
+                (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Not -Be $master
+                (& git --git-dir=$($fixture.remote) rev-parse refs/heads/master).Trim() | Should -Be $master
+            } finally { Remove-DeliveryFixture -Fixture $fixture }
+        }
+
     It "resumes a durable release train after develop was published by an earlier process" {
             $fixture = $null
             try {

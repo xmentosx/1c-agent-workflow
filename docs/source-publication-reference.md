@@ -30,6 +30,9 @@ attempt. Если reconciliation с `master` меняет candidate, reuse за�
 После публикации в `develop` release-train checkpoint остаётся в общем Git
 каталоге до подтверждённого `master`. Поэтому новый процесс `PromoteRelease`
 возобновляет тот же commit/tree и не повторяет уже прошедшие Develop/Release.
+Запуск из отсоединённого worktree допустим: локальный `develop`, выгруженный в
+другой копии, может отставать от опубликованного кандидата, но коммиты, которых
+нет в `origin/develop`, по-прежнему блокируют перенос в `master`.
 
 Supervisor ведёт `.git/itl/resources/v1/ledger.json`. Он регистрирует candidate и
 fresh worktree/базы/launcher identity, reusable stands, snapshots, current
