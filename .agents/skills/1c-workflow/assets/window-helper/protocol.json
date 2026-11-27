@@ -4,7 +4,7 @@
   "capability": "itl-window-channel-1",
   "requestFields": ["protocol", "op", "id", "scope", "deadlineUtc"],
   "operations": {
-    "lease": ["scope", "deadlineUtc", "pid", "step", "feature", "line", "dropdownPrompt", "promptSource", "idleMs"],
+    "lease": ["scope", "deadlineUtc", "pid", "step", "feature", "line", "dropdownPrompt", "promptSource", "idleMs", "pauseAware"],
     "lease-end": ["scope", "endScope", "dropdownResult"],
     "capture-show": ["pid"],
     "capture-end": ["pid"],
@@ -12,6 +12,10 @@
     "status": ["port"],
     "show": ["pid"],
     "hide": ["pid"]
+  },
+  "pauseState": {
+    "file": "pause.json",
+    "fields": ["requestId", "requestExtensionMs", "totalPausedMs", "startedUtc", "untilUtc"]
   },
   "statuses": ["ok", "declined", "error", "protocol-mismatch"],
   "errors": ["ITL_UI_CONTROL_DECLINED", "ITL_WINDOW_ACTIVATION_FAILED", "ITL_WINDOW_HELPER_UNAVAILABLE", "ITL_DROPDOWN_FOCUS_LOST", "ITL_DROPDOWN_LEASE_LOST", "ITL_DROPDOWN_POLICY_INVALID"]

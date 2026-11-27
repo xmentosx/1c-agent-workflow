@@ -461,11 +461,18 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 $monitor.lastPublishedAtUtc = [DateTime]::UtcNow.AddSeconds(-20)
                 $monitor.stallWarningSeconds = 1
                 $monitor.stallTimeoutSeconds = 2
+                $waiting = [pscustomobject]@{ timeoutRemainingSeconds = 1700; pausedMs = 75000L; pauseRemainingMs = 90000L; pauseRequestId = 'fixture-pause' }
+                $monitor.lastEvidenceAtUtc = [DateTime]::UtcNow.AddSeconds(-76)
+                Update-VanessaRunLiveness -Monitor $monitor -ProbeContext $waiting -State ([pscustomobject]@{}) -TestPorts @(48051) -RunParamsPath (Join-Path $run "VAParams.json")
+                $pause = [pscustomobject]@{ liveness = $script:RunLiveness; phase = $script:RunProbePhase; budget = $script:RunTimeoutRemainingSeconds }
+                $monitor.lastEvidenceAtUtc = [DateTime]::UtcNow.AddSeconds(-3)
+                $monitor.lastProbeAtUtc = [DateTime]::MinValue
+                $probe | Add-Member -NotePropertyName pausedMs -NotePropertyValue 75000L
                 $message = try {
                     Update-VanessaRunLiveness -Monitor $monitor -ProbeContext $probe -State ([pscustomobject]@{}) -TestPorts @(48051) -RunParamsPath (Join-Path $run "VAParams.json")
                     ""
                 } catch { $_.Exception.Message }
-                [pscustomobject]@{active=$active;stalled=$message}
+                [pscustomobject]@{active=$active;pause=$pause;stalled=$message}
             }
             $result.active.liveness | Should -Be "running-active"
             $result.active.growth | Should -BeGreaterThan 0
@@ -477,6 +484,9 @@ Describe "Branch-safe Vanessa runtime cleanup" {
             # still uses Vanessa's own remaining time (1700 s here).
             $result.active.grace | Should -Be 180
             $result.active.published | Should -Be 1880
+            $result.pause.liveness | Should -Be 'waiting-desktop-consent'
+            $result.pause.phase | Should -Be 'fixture-pause'
+            $result.pause.budget | Should -Be 1970
             $result.stalled | Should -Match '^ITL_VANESSA_STALL_TIMEOUT\b'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

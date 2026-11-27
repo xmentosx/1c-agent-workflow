@@ -24,6 +24,10 @@ reconstructed. A modifying call with unknown outcome is never replayed.
 Every MCP tool request owns one phase deadline, including the existing default
 ten-minute phase when metadata is absent. Nested broker calls inherit its
 remaining time without restarting it or extending a shorter parent deadline.
+For a default-budget Vanessa TestClient call, time on the window helper's
+explicit desktop-consent pause is excluded from that phase. The managed client
+transport allows three hours for the pause in addition to the ten-minute phase
+where the client adapter supports a per-server timeout.
 The five-minute fallback still applies to broker calls outside a request phase;
 cleanup retains its separate bounded owner budget. Unknown modifying outcomes
 are never replayed merely because a deadline expired. An expired call keeps

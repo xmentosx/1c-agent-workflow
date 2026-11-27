@@ -5000,6 +5000,7 @@ function New-VanessaRunLivenessMonitor {
         lastProbeAtUtc = [DateTime]::MinValue
         lastPublishedAtUtc = [DateTime]::MinValue
         lastEvidenceAtUtc = [DateTime]::UtcNow
+        lastPausedMs = 0L
         lastLogLength = [int64]-1
         lastProcessSignature = ''
         lastCpuTicks = [int64]0
@@ -5021,6 +5022,12 @@ function Update-VanessaRunLiveness {
     if ($Monitor.lastProbeAtUtc -ne [DateTime]::MinValue -and
         ($now - [DateTime]$Monitor.lastProbeAtUtc).TotalSeconds -lt 2) { return }
     $Monitor.lastProbeAtUtc = $now
+    $pausedMs = [long](Get-StateValue -State $ProbeContext -Name 'pausedMs' -Default 0)
+    $pauseRemainingMs = [long](Get-StateValue -State $ProbeContext -Name 'pauseRemainingMs' -Default 0)
+    if ($pausedMs -gt $Monitor.lastPausedMs) {
+        $Monitor.lastEvidenceAtUtc = ([DateTime]$Monitor.lastEvidenceAtUtc).AddMilliseconds($pausedMs - $Monitor.lastPausedMs)
+        $Monitor.lastPausedMs = $pausedMs
+    }
 
     $logLength = [int64]-1
     try {
@@ -5069,7 +5076,9 @@ function Update-VanessaRunLiveness {
     if ($progressObserved) { $Monitor.lastEvidenceAtUtc = $now }
 
     $noProgressSeconds = [int][Math]::Max(0, [Math]::Floor(($now - [DateTime]$Monitor.lastEvidenceAtUtc).TotalSeconds))
-    $liveness = if ($noProgressSeconds -ge [int]$Monitor.stallTimeoutSeconds) {
+    $liveness = if ($pauseRemainingMs -gt 0) {
+        'waiting-desktop-consent'
+    } elseif ($noProgressSeconds -ge [int]$Monitor.stallTimeoutSeconds) {
         'stalled-timeout'
     } elseif ($noProgressSeconds -ge [int]$Monitor.stallWarningSeconds) {
         'stalled-suspected'
@@ -5078,17 +5087,22 @@ function Update-VanessaRunLiveness {
     }
     $stallRemaining = [int][Math]::Max(0, [int]$Monitor.stallTimeoutSeconds - $noProgressSeconds)
     $timeoutRemaining = [int](Get-StateValue -State $ProbeContext -Name 'timeoutRemainingSeconds' -Default 0)
+    $script:RunProbePhase = if ($pauseRemainingMs -gt 0) { [string]$ProbeContext.pauseRequestId } else { '' }
     $script:RunLiveness = $liveness
     $script:RunNoProgressSeconds = $noProgressSeconds
     $script:RunStallTimeoutRemainingSeconds = $stallRemaining
     $script:RunTimeoutRemainingSeconds = $(if ($timeoutRemaining -gt 0) {
-        $timeoutRemaining + [int](Get-StateValue -State $Monitor -Name 'ownerGraceSeconds' -Default 0)
+        $timeoutRemaining + [int][Math]::Ceiling($pauseRemainingMs / 1000) + [int](Get-StateValue -State $Monitor -Name 'ownerGraceSeconds' -Default 0)
     } else { 0 })
     $script:RunOwnedProcessIds = @($ownedIds)
     $script:RunCpuDeltaMilliseconds = $cpuDeltaMilliseconds
     $script:RunWorkingSetMb = $workingSetMb
     $script:RunLogGrowthBytes = $logGrowthBytes
-    $detail = "liveness=$liveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallRemaining}s; ownedPids=$(if($ownedIds.Count){$ownedIds -join ','}else{'none'}); cpuDelta=${cpuDeltaMilliseconds}ms; workingSet=${workingSetMb}MB; logGrowth=${logGrowthBytes}B; timeoutRemaining=${timeoutRemaining}s; Vanessa TESTMANAGER -> TESTCLIENT is running."
+    $detail = if ($pauseRemainingMs -gt 0) {
+        "Vanessa is waiting for desktop consent. Use the desktop panel to continue or cancel. Pause remaining: $([int][Math]::Ceiling($pauseRemainingMs / 1000))s."
+    } else {
+        "liveness=$liveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallRemaining}s; ownedPids=$(if($ownedIds.Count){$ownedIds -join ','}else{'none'}); cpuDelta=${cpuDeltaMilliseconds}ms; workingSet=${workingSetMb}MB; logGrowth=${logGrowthBytes}B; timeoutRemaining=${timeoutRemaining}s; Vanessa TESTMANAGER -> TESTCLIENT is running."
+    }
     $publishDue = $Monitor.lastPublishedAtUtc -eq [DateTime]::MinValue -or
         ($now - [DateTime]$Monitor.lastPublishedAtUtc).TotalSeconds -ge 10 -or
         $liveness -cne [string]$Monitor.lastLiveness
@@ -6463,6 +6477,20 @@ function Run-DevBranchTests {
         Set-RunStage -Stage "vanessa.run" -Detail "Running TESTMANAGER and TESTCLIENT."
         # A repeated TESTMANAGER is a new process: let the window helper adopt it.
         $logPath = Invoke-VanessaManagerLaunchWithSignatureRetry -InfoBasePath ([string]$serviceInfoBase.path) -BeforeRetry { $windowGroupRoot.adopted = $false } -Launch {
+            $pauseProbe = $null
+            if ($null -ne $windowGroup -and $windowGroup.ready) {
+                $baseline = Get-ItlWindowHelperPause -Directory $windowGroup.directory -NowUtc ([DateTime]::UtcNow)
+                $baselinePausedMs = if ($null -ne $baseline) { [long]$baseline.elapsedMs } else { 0L }
+                $runLivenessMonitor.lastPausedMs = 0L
+                $pauseProbe = {
+                    param($observedAt)
+                    $snapshot = Get-ItlWindowHelperPause -Directory $windowGroup.directory -NowUtc $observedAt
+                    if ($null -ne $snapshot) {
+                        $snapshot.elapsedMs = [Math]::Max(0L, $snapshot.elapsedMs - $baselinePausedMs)
+                        return $snapshot
+                    }
+                }
+            }
             Invoke-Enterprise `
             -InfoBasePath $serviceInfoBase.path `
             -InfoBaseKind $serviceInfoBase.kind `
@@ -6477,6 +6505,7 @@ function Run-DevBranchTests {
             -OwnedProcessCleanup { param($scopes) Stop-OwnVanessaRunScopeProcesses -Scopes $scopes } `
             @sessionWait `
             -TimeoutSeconds $timeoutSeconds `
+            -DeadlinePauseProbe $pauseProbe `
             -CompletionProbe {
                 param($probeContext)
                 if (-not $windowGroupRoot.adopted -and [int]$probeContext.processId -gt 0 -and $null -ne $windowGroup -and $windowGroup.ready) {

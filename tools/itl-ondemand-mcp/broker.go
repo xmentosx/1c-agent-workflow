@@ -30,6 +30,7 @@ type backendInfo struct {
 	BackendVersion          string               `json:"backendVersion"`
 	CatalogSHA256           string               `json:"catalogSha256"`
 	LogPath                 string               `json:"logPath"`
+	WindowGroupDirectory    string               `json:"windowGroupDirectory"`
 	TestClientProfile       string               `json:"testClientProfile"`
 	TestClientPID           int                  `json:"testClientPid"`
 	TestClientPort          int                  `json:"testClientPort"`

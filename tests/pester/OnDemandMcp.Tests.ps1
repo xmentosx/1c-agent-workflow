@@ -166,13 +166,13 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.backendVersions.clientMcp | Should -Be "v0.6.5"
         $manifest.families.'vanessa-ui'.backendVersions.vaExtension | Should -Be "1.2.043.42"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaAutomation | Should -Be "1.2.043.42"
-        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r19"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "e8e20f94fa6e963e0fcd285355062b4e8c6f58aac48fab452c7d440db9bfe98d"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "15dc55f67cca096668f72a79820bca4040f602d4582fbc97dc46e710960314b7"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.manifestSha256 | Should -Be "342b476f04d11657e032b10190a252f07d00c24400316e9c19838b4f82e22797"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.patchSha256 | Should -Be "681ec56dceb2a4f6607b7f49621a86e3cbbd419434923fa410378929599bfce5"
-        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.assetName | Should -Be "VAExtension.1.32-itl-r19.cfe"
-        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.sha256 | Should -Be "c73a3e7ad11a078a6f7325f4c7b1b54fea5f92b6ac9f59f938651eb45b1b4144"
+        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r20"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "9da8c9317a287957be55b6c075729180a93d63ec4b4dc5f8b8f76c5b39373390"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "6ef8fca33c1044188e53f653715206376580b66e4f160590ebf7d17514b680ca"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.manifestSha256 | Should -Be "5bc733ca905486f4ce5e3320ba58054d3889c8779f95aeecd2bd1df51dfa89e4"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.patchSha256 | Should -Be "062ee3aae4a99b9d326474598ec702f50ed4a9eed25f7a723e7f43709ef82d41"
+        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.assetName | Should -Be "VAExtension.1.32-itl-r20.cfe"
+        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.sha256 | Should -Be "3ea3deb6ab9b39f79c59852ca322860386fdfa46d2a890a3964af532512c239f"
         $manifest.families.'vanessa-ui'.pairedExtensionArtifact.protocol | Should -Be "itl-file-code-v1"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaExt | Should -Be "1.3.9.139"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.139"
@@ -689,6 +689,7 @@ Describe "ITL on-demand MCP facade" {
             $codex | Should -Match '\[mcp_servers\."itl-roctup-data"\]'
             $codex | Should -Match ([regex]::Escape($relayExe.Replace('\', '\\')))
             $codex | Should -Match 'tool_timeout_sec = 600'
+            $codex | Should -Match '(?s)\[mcp_servers\."itl-vanessa-ui"\](?:(?!\[mcp_servers\.).)*tool_timeout_sec = 11400'
             $codex | Should -Match '"--server"'
             $codex | Should -Not -Match ([regex]::Escape($fakeExe.Replace('\', '\\')))
             # The facade launch the relay serves keeps the gateway surface.
@@ -717,7 +718,8 @@ Describe "ITL on-demand MCP facade" {
                 if ($case.local) {
                     $entry.type | Should -Be "local"
                     @($entry.command)[0] | Should -Be $relayExe
-                    $entry.timeout | Should -Be 600000
+                    $entry.timeout | Should -Be 11400000
+                    $config.($case.container).'itl-roctup-data'.timeout | Should -Be 600000
                     @($entry.command) | Should -Contain "--server"
                     @($entry.command) | Should -Contain "itl-vanessa-ui"
                 } elseif ($case.PSObject.Properties.Name -contains "pi" -and $case.pi) {

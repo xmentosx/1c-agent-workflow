@@ -137,6 +137,7 @@ namespace Itl.WindowHelper
         public string Config { get { return Path.Combine(Root, "group.json"); } }
         public string Lock { get { return Path.Combine(Root, "helper.lock"); } }
         public string Identity { get { return Path.Combine(Root, "helper.json"); } }
+        public string Pause { get { return Path.Combine(Root, "pause.json"); } }
         public string Adopted { get { return Path.Combine(Root, "adopted.json"); } }
         public string Requests { get { return Path.Combine(Root, "requests"); } }
         public string Responses { get { return Path.Combine(Root, "responses"); } }
@@ -154,6 +155,7 @@ namespace Itl.WindowHelper
         public string Mode = "hidden";
         public int CountdownSeconds = 10;
         public int PauseLimitSeconds = 600;
+        public int ConsentPauseLimitSeconds = 10800;
         public List<uint> Roots = new List<uint>();
 
         public static GroupConfig Load(GroupPaths paths)
@@ -165,6 +167,7 @@ namespace Itl.WindowHelper
             if (mode.Length > 0) c.Mode = mode;
             c.CountdownSeconds = (int)Math.Max(0, Math.Min(600, Json.Num(d, "countdownSeconds", 10)));
             c.PauseLimitSeconds = (int)Math.Max(1, Math.Min(86400, Json.Num(d, "pauseLimitSeconds", 600)));
+            c.ConsentPauseLimitSeconds = (int)Math.Max(1, Math.Min(10800, Json.Num(d, "consentPauseLimitSeconds", 10800)));
             object roots;
             if (d.TryGetValue("roots", out roots) && roots is object[])
             {
@@ -1099,6 +1102,7 @@ namespace Itl.WindowHelper
         public uint Pid;
         // A repeated selection asks for a longer pause in the user's input than a first one.
         public int IdleMs;
+        public bool PauseAware;
         public DateTime DeadlineUtc;
         // Optional diagnostics: the Vanessa step and feature line that asked for OS input.
         public string Step = "";
@@ -1189,7 +1193,9 @@ namespace Itl.WindowHelper
         private bool dropdownPending, dropdownFocusLost, consentShown;
         private Dictionary<string, object> dropdownLostFacts;
         private uint leaseActiveTick;
-        private DateTime stateSince, mutexSince, leaseSince, lastLeaseRequest, pauseSince;
+        private DateTime stateSince, mutexSince, leaseSince, lastLeaseRequest, pauseSince, pauseUntil;
+        private long totalPausedMs;
+        private long? settledPauseMs;
         private long queueWaitMs, consentWaitMs, idleWaitMs;
         private int leaseRequests;
         private bool idlePanelShown;
@@ -1206,6 +1212,21 @@ namespace Itl.WindowHelper
         {
             this.paths = paths;
             this.config = config;
+            try
+            {
+                if (File.Exists(paths.Pause))
+                {
+                    var previous = Json.ReadFile(paths.Pause);
+                    totalPausedMs = Json.Num(previous, "totalPausedMs", 0);
+                    DateTime started, until;
+                    if (DateTime.TryParse(Json.Str(previous, "startedUtc"), null, DateTimeStyles.RoundtripKind, out started) &&
+                        DateTime.TryParse(Json.Str(previous, "untilUtc"), null, DateTimeStyles.RoundtripKind, out until))
+                        totalPausedMs += ElapsedPauseMs(started, until, DateTime.UtcNow);
+                    PublishPause("", 0, false);
+                }
+            }
+            catch (IOException) { }
+            catch (ArgumentException) { }
             invoker = new Control();
             invoker.CreateControl();
             IntPtr ignoredHandle = invoker.Handle;
@@ -1247,6 +1268,7 @@ namespace Itl.WindowHelper
         {
             if (disposing)
             {
+                if (state == LeaseState.Paused) FinishPause(DateTime.UtcNow);
                 foreach (IntPtr hook in clientHooks.Values) Native.UnhookWinEvent(hook);
                 if (foregroundHook != IntPtr.Zero) Native.UnhookWinEvent(foregroundHook);
                 watcher.Dispose();
@@ -1537,6 +1559,7 @@ namespace Itl.WindowHelper
             foreach (var kv in captures) if ((DateTime.UtcNow - kv.Value).TotalMilliseconds > CaptureLimitMs) expired.Add(kv.Key);
             foreach (uint pid in expired) { captures.Remove(pid); }
             if (state == LeaseState.Leased && current.DropdownPrompt.HasValue && !members.Clients.Contains(leasedPid)) EndLease("client-exited");
+            if (state == LeaseState.Paused && !members.Clients.Contains(current.Pid)) DeclineScope("client-exited");
             revealed.RemoveWhere(delegate(uint gone) { return !members.Clients.Contains(gone); });
             HideClientWindows(null, "reconcile");
             IntPtr fg = Native.GetForegroundWindow();
@@ -1656,6 +1679,7 @@ namespace Itl.WindowHelper
                     lease.Feature = Clip(Json.Str(request, "feature"), 260);
                     lease.Line = Json.Num(request, "line", 0);
                     lease.IdleMs = (int)Math.Max(0, Math.Min(10000, Json.Num(request, "idleMs", 0)));
+                    lease.PauseAware = Json.Bool(request, "pauseAware");
                     DateTime deadline;
                     lease.DeadlineUtc = DateTime.TryParse(Json.Str(request, "deadlineUtc"), CultureInfo.InvariantCulture,
                         DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out deadline) ? deadline : DateTime.UtcNow.AddSeconds(60);
@@ -1892,12 +1916,21 @@ namespace Itl.WindowHelper
 
         private void EnterPause()
         {
-            if (current == null) return;
-            consentWaitMs += (long)(DateTime.UtcNow - stateSince).TotalMilliseconds;
+            if (current == null || state != LeaseState.Consent) return;
+            pauseSince = DateTime.UtcNow;
+            if (pauseSince >= current.DeadlineUtc) { DeclineScope("deadline"); return; }
+            int limit = current.PauseAware ? config.ConsentPauseLimitSeconds : config.PauseLimitSeconds;
+            pauseUntil = pauseSince.AddSeconds(limit);
+            settledPauseMs = null;
+            if (current.PauseAware && !PublishPause(current.Id, 1000L * limit, true))
+            {
+                DeclineScope("pause-state-unavailable");
+                return;
+            }
+            consentWaitMs += (long)(pauseSince - stateSince).TotalMilliseconds;
             CloseForms();
             mutex.Release();
             SetState(LeaseState.Paused);
-            pauseSince = DateTime.UtcNow;
             ShowPanel("Агент ждёт: можно продолжить, когда будете готовы", new[] { "Сейчас", "Отмена" },
                 new EventHandler[] { delegate { ResumeFromPause(); }, delegate { DeclineScope("user-cancel"); } });
         }
@@ -1905,9 +1938,60 @@ namespace Itl.WindowHelper
         private void ResumeFromPause()
         {
             if (current == null || state != LeaseState.Paused) return;
-            consentWaitMs += (long)(DateTime.UtcNow - stateSince).TotalMilliseconds;
+            DateTime now = DateTime.UtcNow;
+            if (now >= pauseUntil) { DeclineScope("pause-limit"); return; }
+            if (!current.PauseAware && now >= current.DeadlineUtc) { DeclineScope("deadline"); return; }
+            if (!FinishPause(now)) { DeclineScope("pause-state-unavailable"); return; }
             CloseForms();
             Enqueue(true);
+        }
+
+        private static long ElapsedPauseMs(DateTime started, DateTime until, DateTime now)
+        {
+            return (long)Math.Max(0, ((now < until ? now : until) - started).TotalMilliseconds);
+        }
+
+        private bool FinishPause(DateTime now)
+        {
+            if (!settledPauseMs.HasValue)
+            {
+                long elapsed = ElapsedPauseMs(pauseSince, pauseUntil, now);
+                settledPauseMs = elapsed;
+                consentWaitMs += elapsed;
+                if (current.PauseAware)
+                {
+                    totalPausedMs += elapsed;
+                    current.DeadlineUtc = current.DeadlineUtc.AddMilliseconds(elapsed);
+                }
+            }
+            return !current.PauseAware || PublishPause(current.Id, settledPauseMs.Value, false);
+        }
+
+        private bool PublishPause(string requestId, long extensionMs, bool active)
+        {
+            string temp = paths.Pause + ".tmp";
+            try
+            {
+                File.WriteAllText(temp, Json.Write(new Dictionary<string, object>
+                {
+                    { "requestId", requestId }, { "requestExtensionMs", extensionMs }, { "totalPausedMs", totalPausedMs },
+                    { "startedUtc", active ? pauseSince.ToString("o") : null },
+                    { "untilUtc", active ? pauseUntil.ToString("o") : null }
+                }), new UTF8Encoding(false));
+                for (int attempt = 0; attempt < 4; attempt++)
+                {
+                    try
+                    {
+                        if (File.Exists(paths.Pause)) File.Replace(temp, paths.Pause, null);
+                        else File.Move(temp, paths.Pause);
+                        return true;
+                    }
+                    catch (IOException) { if (attempt < 3) Thread.Sleep(10); }
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return false;
         }
 
         private void EnterIdleWait()
@@ -1958,8 +2042,8 @@ namespace Itl.WindowHelper
                     }
                     break;
                 case LeaseState.Paused:
-                    if (pastDeadline) { DeclineScope("deadline"); return; }
-                    if ((now - pauseSince).TotalSeconds >= config.PauseLimitSeconds) { DeclineScope("pause-limit"); return; }
+                    if (pastDeadline && !current.PauseAware) { DeclineScope("deadline"); return; }
+                    if (now >= pauseUntil) { DeclineScope("pause-limit"); return; }
                     break;
                 case LeaseState.IdleWait:
                     if (pastDeadline) { DeclineScope("deadline"); return; }
@@ -2197,6 +2281,7 @@ namespace Itl.WindowHelper
 
         private void Decline(LeaseRequest r, string reason, bool journal)
         {
+            if (r == current && state == LeaseState.Paused) FinishPause(DateTime.UtcNow);
             Respond(r.Id, "lease", "declined", new Dictionary<string, object> { { "code", Protocol.Declined }, { "reason", reason } });
             if (r != current) return;
             AddScopeStats(r.Scope, 0, 0);

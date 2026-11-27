@@ -106,6 +106,7 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 
 func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolName string, arguments any) (callResult *mcp.CallToolResult, callError error) {
 	defer func() { r.appendFacadeNotes(toolName, callResult) }()
+	callerContext := ctx
 	ctx, cancel, budgetErr := phaseRequestContext(ctx, req.Params.Meta)
 	if budgetErr != nil {
 		return toolError("ITL_ONDEMAND_PHASE_BUDGET_INVALID", budgetErr.Error(), nil), nil
@@ -273,7 +274,15 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	r.noteIdleActivityLocked(toolName, arguments)
 	r.writeEvidenceLocked(toolName, arguments, "started", "ITL_ONDEMAND_CALL_STARTED", "upstream tool call started", callInstanceID, callBackend, progressTokenProvided, 0, progressEvidenceID(route))
 	r.mu.Unlock()
-	result, err := r.callUpstream(ctx, session, params)
+	callContext := ctx
+	stopCallClock := func() {}
+	if _, explicitBudget := req.Params.Meta["itlPhaseRemainingMs"]; !explicitBudget &&
+		r.family == "vanessa-ui" && classifyVanessaTool(toolName, arguments) == vanessaToolRuntime &&
+		callBackend != nil && callBackend.WindowGroupDirectory != "" {
+		callContext, stopCallClock = withDesktopConsentClock(ctx, callerContext, filepath.Join(callBackend.WindowGroupDirectory, "pause.json"))
+	}
+	result, err := r.callUpstream(callContext, session, params)
+	stopCallClock()
 	forwardedProtocolError, forwardedProtocolCode := backendProtocolToolError(err)
 	r.mu.Lock()
 	r.active--
@@ -353,7 +362,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		if r.family == "vanessa-ui" && protocolErrorReportsTestClientDisconnected(err) {
 			return testClientDisconnectedFailure(toolName, err), nil
 		}
-		if phaseDeadlineExceeded(ctx, err) {
+		if phaseDeadlineExceeded(callContext, err) {
 			return phaseDeadlineFailure(toolName, err, route, !isIdempotentTool(r.family, tool)), nil
 		}
 		return backendCallFailure(toolName, err, !isIdempotentTool(r.family, tool)), nil
