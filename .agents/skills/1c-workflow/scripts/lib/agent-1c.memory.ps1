@@ -1411,12 +1411,13 @@ function Get-ItlMemoryStatusOverview {
     $output['indexUse']='standing: rules in force. index: titles only, verified unless marked; read content with recall. more: further notes, find them with recall.'
     $stale=Get-ItlMemoryFixedDefectNotes @($overview.index)
     if(@($stale).Count){$output['fixedDefectNotes']=@($stale);$output['fixedDefectUse']='The installed ITL fixed these defects: recall each title for its data_id, then retire_note it.'}
-    # 3000 tokens for the whole answer: standing notes first, then the local
+    # 4500 tokens for the whole answer: standing notes first, then the local
     # receipt list, then index rows, in level order. Receipts are a local
     # convenience that local_only=true returns in full; a rule in force is not.
-    # Whatever does not fit is counted in more.
+    # Whatever does not fit is counted in more. PM5 2026-11-27: 31 project
+    # titles filled 3000 tokens and no organization or product title was shown.
     $receipts=@($output.receipts);$output.receipts=@()
-    $budget=3000;$used=(Measure-ItlMemoryStatusTokens $output)+40
+    $budget=4500;$used=(Measure-ItlMemoryStatusTokens $output)+40
     $moreOf={param($kind) $entry=@($output.index|Where-Object {$_.level -eq $kind});if(-not $entry.Count){$entry=@([ordered]@{level=$kind;notes=@();more=0});$output.index=@($output.index)+$entry};$entry[0]}
     foreach($note in @($overview.standing)){
         $cost=(Measure-ItlMemoryStatusTokens $note)+2
