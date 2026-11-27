@@ -13,6 +13,15 @@
       "regression": "tests/pester/OnDemandMcp.Tests.ps1, tests/pester/OnDemandMissingStateRecovery.Tests.ps1, tools/itl-ondemand-mcp/facade_self_reset_test.go"
     },
     {
+      "incidentKey": "VANESSA_STOP_ON_FIRST_FAILURE@vanessa-run-params",
+      "codes": [
+        "VANESSA_STOP_ON_FIRST_FAILURE"
+      ],
+      "symptom": "With configured TestClients the first failed scenario stops the whole Vanessa run; the other selected suites stay in JUnit with tests=0 and each check shows only one failure.",
+      "fixedIn": "develop 8b753da8 (after a product assertion and client cleanup, unstarted suites declared independentAfterFailure=true run in a new TestManager; a project marks its independent suites in its verification suite catalog)",
+      "regression": "tests/pester/VanessaVerificationDiagnostics.Tests.ps1, tests/pester/VanessaRunnerTopology.Tests.ps1"
+    },
+    {
       "incidentKey": "LAUNCH_PROOF_REQUIRED@ondemand-facade",
       "codes": [
         "LAUNCH_PROOF_REQUIRED",
