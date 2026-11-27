@@ -612,6 +612,9 @@
         $script:BodyLoss=$false
         $receipt=Get-ItlMemoryPath receipt (Get-ItlMemoryRecordKey $b (Get-ProjectDataset $b).datasetId 'kept-draft')
         Write-Utf8TextAtomic $receipt (ConvertTo-Json -Compress -InputObject @{schemaVersion=1;noteId='kept-draft';datasetId=(Get-ProjectDataset $b).datasetId;dataId=[guid]::NewGuid().ToString();state='retired'})
+        # That retirement also rewrote the draft file after its receipt.
+        $draft=Join-Path (Join-Path (Join-Path (Get-ItlMemoryHome) 'pending') $b.identity.workspaceId) ((Get-ItlCatalogHash 'kept-draft')+'.json')
+        [IO.File]::SetLastWriteTimeUtc($draft,[DateTime]::UtcNow.AddMinutes(1))
         @((Invoke-ItlMemoryStatus $b -LocalOnly).pending).Count | Should -Be 0
         (Read-ItlMemoryJson (Join-Path $sourceRoot ((Get-ItlCatalogHash 'kept-draft')+'.retired.json'))).state | Should -Be retired
     }

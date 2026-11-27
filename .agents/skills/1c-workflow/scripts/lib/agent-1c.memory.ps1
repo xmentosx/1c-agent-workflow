@@ -1163,13 +1163,15 @@ function Get-ItlMemoryLocalContext {
             if($record.state -eq 'durable' -or $record.projectId -cne $project -or ($NoteId -and $record.noteId -cne $NoteId)){continue}
             # PM5 2026-11-27: two sent drafts stayed pending for days after
             # retire_note had retired their notes, because the retirement only
-            # discarded unsent drafts. A later retirement receipt settles them.
+            # discarded unsent drafts. A retirement receipt written after the
+            # draft settles it; that retirement also rewrote the draft file, so
+            # the draft's own time is the one in its intent.
             $attempt=Get-ItlCatalogField $record 'attempt'
             if($attempt){
                 $retirement=Get-ItlMemoryPath receipt (Get-ItlMemoryRecordKey $Binding ([string](Get-ItlCatalogField $attempt 'datasetId' '')) ([string]$record.noteId))
                 $retired=Read-ItlMemoryJson $retirement
                 if($retired -and $retired.state -ceq 'retired' -and $retired.noteId -ceq $record.noteId -and
-                    (Get-Item -LiteralPath $retirement).LastWriteTimeUtc -ge $file.LastWriteTimeUtc -and
+                    (Get-Item -LiteralPath $retirement).LastWriteTimeUtc -ge (ConvertTo-ItlMemoryUtc (Get-ItlCatalogField $record.intent 'at' '')) -and
                     (Remove-ItlMemoryUnsentDraft $Binding ([string]$record.noteId) -Retired)){continue}
             }
             $label=[string]$record.intent.datasetName
