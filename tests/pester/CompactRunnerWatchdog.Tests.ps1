@@ -375,12 +375,15 @@ exit $payload.exitCode
         }
     }
 
-    It 'keeps a real check-dev-branch live while its post-run assessment and report outlast the watchdog' {
+    It 'keeps a real check-dev-branch live while its preflight, post-run assessment and report outlast the watchdog' {
         # PM5 2026-11-16/17 (itldev/branch2): YAxUnit and the event log passed,
         # then the assessment (39 s) and the user report (71 s) ran without a
         # stage update or heartbeat and the runner killed the finished check as
         # RUNNER_STATUS_STALE. Runners are already done here; only the slow
         # assessment remains, and each silent window exceeds the 20 s watchdog.
+        # PM5 2026-11-27 (itldev/branch4): after a large master merge the Vanessa
+        # preflight stayed silent at stage start and three checks were stopped
+        # before the load; here it also outlasts the watchdog.
         $tempRoot = Join-Path $TestDrive 'check tail путь'
         $savedEnvironment = @{}
         foreach ($name in @('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS','ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS','ITL_RUNNER_OPERATION_TIMEOUT_SECONDS')) {
@@ -412,7 +415,10 @@ function Restore-ConfigDumpInfoLoadSnapshot {}
 function Remove-ConfigDumpInfoLoadSnapshot {}
 function Get-ItlVerificationExecutionDecision { param($Component) [pscustomobject]@{component=$Component;run=$false;reason='fixture runners finished'} }
 function Invoke-DevBranchVanessaRuntimeRelease {}
-function Assert-VanessaVerificationPreflight {}
+function Assert-VanessaVerificationPreflight {
+    Start-Sleep -Seconds 25
+    [IO.File]::WriteAllText((Join-Path $ProjectRoot 'preflight.txt'),'preflight')
+}
 function Test-ItlFullVerificationProofEligible { $true }
 function Test-ItlDiagnosticVerificationScope { $false }
 function Ensure-DevBranchEventLogBaseline { $script:fixtureState }
@@ -460,6 +466,7 @@ exit $payload.exitCode
             $summary.stage | Should -BeExactly 'complete'
             $summary.status | Should -Be 'succeeded'
             $result.exitCode | Should -Be 0
+            [IO.File]::ReadAllText((Join-Path $tempRoot 'preflight.txt')) | Should -BeExactly 'preflight'
             [IO.File]::ReadAllText((Join-Path $tempRoot 'report-written.txt')) | Should -BeExactly 'report'
             [IO.File]::ReadAllText((Join-Path $tempRoot 'history.txt')) | Should -BeExactly 'partial/2'
             # Each silent window is 25 s against a 20 s watchdog, so the success

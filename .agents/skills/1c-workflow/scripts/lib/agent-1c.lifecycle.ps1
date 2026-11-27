@@ -22624,7 +22624,11 @@ function Invoke-DevBranchCheck {
         }
     }
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
-    Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
+    # PM5 2026-11-27 (itldev/branch4): after a refresh merged a large master
+    # delta, selecting Vanessa scenarios here stayed silent for over 100 s at
+    # stage start and the runner watchdog stopped three checks before the load.
+    Set-RunStage -Stage 'vanessa.preflight' -Detail 'Checking the Vanessa suite and selecting its scenarios.'
+    Invoke-WithRunStatusHeartbeat { Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit }
     $fullProofEligible = Test-ItlFullVerificationProofEligible -Trigger $trigger -ExplicitComponents $explicit
     if ($trigger -eq "repair") {
         $repairSession = Get-ItlMatchingVerificationRepairSession

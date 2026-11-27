@@ -1003,7 +1003,12 @@ try {
         $alwaysOn | Should -BeLessOrEqual 3100
         $schemaBytes=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $lines[1].result -Depth 20 -Compress))
         $remember.inputSchema.properties.status.description | Should -Not -BeNullOrEmpty
-        $schemaBytes | Should -BeLessOrEqual 4550
+        $remember.inputSchema.properties.status.description | Should -Match '\b400\b'
+        $remember.inputSchema.properties.dataset_name.description | Should -Match '\bproject\b'
+        # PM5 week to 2026-11-27: 13 of 110 remember calls omitted dataset_name and 7
+        # standing ones exceeded 400 characters, each costing a repeated call. Two
+        # field hints add 105 bytes (about 30 tokens) to tools/list: 4,520 -> 4,625.
+        $schemaBytes | Should -BeLessOrEqual 4650
     }
 
     # improve-scoped-memory-adoption
@@ -1239,6 +1244,29 @@ try {
         @($journal.entries|Where-Object {$_.tool -ceq 'retire_note' -and (Get-ItlCatalogField $_ 'retired')}).Count | Should -Be 1
         @($journal.entries|ForEach-Object {$_.cycleId}|Select-Object -Unique) | Should -Be @($b.cycleId,'next-cycle')
         [IO.File]::ReadAllText($usagePath,[Text.Encoding]::UTF8) | Should -Not -Match 'Поздний|Факт|старого чата'
+    }
+    It 'names an unknown argument and the accepted ones in visible tool content' {
+        # PM5 2026-11: agents sent fact, content, text or note instead of data;
+        # the bare code in JSON-RPC error data did not say which key was wrong.
+        $policy=Install-MemoryPolicyFixture $b.projectRoot
+        $b.policyProofs=@{cursor=(Get-ItlMemoryPolicyProof $policy $b.projectRoot)}
+        $path=Get-ItlMemoryPath binding $b.projectRoot
+        $null=Update-ItlMemoryJson $path {param($old) return $b}
+        $server=Start-MemoryServer $path
+        try{
+            $wire=Invoke-MemoryServerCall $server remember @{fact='Путь с пробелом';dataset_name='project'} -AsEnvelope
+            $wire.result.isError | Should -BeTrue
+            $refusal=$wire.result.content[0].text|ConvertFrom-Json
+            $refusal.message | Should -BeExactly 'MEMORY_ARGUMENT_UNKNOWN'
+            $refusal.data.continuation | Should -Match '\bfact\b'
+            $refusal.data.continuation | Should -Match '\bdata\b'
+            $refusal.data.continuation | Should -Match '\bdataset_name\b'
+            $refusal.data.continuation | Should -Not -Match 'Путь'
+            $status=Invoke-MemoryServerCall $server memory_status @{local_only=$true;scope='project'} -AsEnvelope
+            ($status.result.content[0].text|ConvertFrom-Json).data.continuation | Should -Match '\bscope\b'
+            @((Invoke-MemoryServerCall $server memory_status @{local_only=$true}).pending).Count | Should -Be 0
+        }finally{$serverErrors=Stop-MemoryServer $server}
+        $serverErrors | Should -BeNullOrEmpty
     }
     It 'extends a previous-workflow binding when the new server starts' {
         # update-workflow may leave the client configuration untouched; the
