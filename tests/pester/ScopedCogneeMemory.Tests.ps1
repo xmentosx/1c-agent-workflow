@@ -1003,7 +1003,12 @@ try {
         $alwaysOn | Should -BeLessOrEqual 3100
         $schemaBytes=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $lines[1].result -Depth 20 -Compress))
         $remember.inputSchema.properties.status.description | Should -Not -BeNullOrEmpty
-        $schemaBytes | Should -BeLessOrEqual 4550
+        $remember.inputSchema.properties.status.description | Should -Match '\b400\b'
+        $remember.inputSchema.properties.dataset_name.description | Should -Match '\bproject\b'
+        # PM5 week to 2026-11-27: 13 of 110 remember calls omitted dataset_name and 7
+        # standing ones exceeded 400 characters, each costing a repeated call. Two
+        # field hints add 105 bytes (about 30 tokens) to tools/list: 4,520 -> 4,625.
+        $schemaBytes | Should -BeLessOrEqual 4650
     }
 
     # improve-scoped-memory-adoption
@@ -1240,6 +1245,29 @@ try {
         @($journal.entries|ForEach-Object {$_.cycleId}|Select-Object -Unique) | Should -Be @($b.cycleId,'next-cycle')
         [IO.File]::ReadAllText($usagePath,[Text.Encoding]::UTF8) | Should -Not -Match 'Поздний|Факт|старого чата'
     }
+    It 'names an unknown argument and the accepted ones in visible tool content' {
+        # PM5 2026-11: agents sent fact, content, text or note instead of data;
+        # the bare code in JSON-RPC error data did not say which key was wrong.
+        $policy=Install-MemoryPolicyFixture $b.projectRoot
+        $b.policyProofs=@{cursor=(Get-ItlMemoryPolicyProof $policy $b.projectRoot)}
+        $path=Get-ItlMemoryPath binding $b.projectRoot
+        $null=Update-ItlMemoryJson $path {param($old) return $b}
+        $server=Start-MemoryServer $path
+        try{
+            $wire=Invoke-MemoryServerCall $server remember @{fact='Путь с пробелом';dataset_name='project'} -AsEnvelope
+            $wire.result.isError | Should -BeTrue
+            $refusal=$wire.result.content[0].text|ConvertFrom-Json
+            $refusal.message | Should -BeExactly 'MEMORY_ARGUMENT_UNKNOWN'
+            $refusal.data.continuation | Should -Match '\bfact\b'
+            $refusal.data.continuation | Should -Match '\bdata\b'
+            $refusal.data.continuation | Should -Match '\bdataset_name\b'
+            $refusal.data.continuation | Should -Not -Match 'Путь'
+            $status=Invoke-MemoryServerCall $server memory_status @{local_only=$true;scope='project'} -AsEnvelope
+            ($status.result.content[0].text|ConvertFrom-Json).data.continuation | Should -Match '\bscope\b'
+            @((Invoke-MemoryServerCall $server memory_status @{local_only=$true}).pending).Count | Should -Be 0
+        }finally{$serverErrors=Stop-MemoryServer $server}
+        $serverErrors | Should -BeNullOrEmpty
+    }
     It 'extends a previous-workflow binding when the new server starts' {
         # update-workflow may leave the client configuration untouched; the
         # first server of the new workflow then extends the binding itself.
@@ -1448,7 +1476,7 @@ try {
         @($offline.standing).Count | Should -Be 0
         @($offline.index).Count | Should -Be 0
     }
-    It 'bounds the whole status answer at 3000 tokens with project standing notes first' {
+    It 'bounds the whole status answer at 4500 tokens with project standing notes first' {
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.memory-tokens.ps1')
         $b.memoryProjection.knowledgeAreas=@{planning=@{availableIn=@('prof');memoryHomeProductId='corp'}}
         $limits=Get-ItlMemoryLevelLimits
@@ -1463,10 +1491,10 @@ try {
         $status=Invoke-ItlMemoryStatus $b
         $tokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $status -Depth 30 -Compress)
         $tokens.measurement | Should -BeExactly 'measured-encode-ordinary'
-        $tokens.cl100k_base | Should -BeLessOrEqual 3000
-        $tokens.o200k_base | Should -BeLessOrEqual 3000
+        $tokens.cl100k_base | Should -BeLessOrEqual 4500
+        $tokens.o200k_base | Should -BeLessOrEqual 4500
         # The bound is used, not merely respected.
-        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeGreaterThan 2700
+        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeGreaterThan 4200
         # Standing notes come first and in level order, project first.
         @($status.standing).Count | Should -BeGreaterThan 0
         $status.standing[0].level | Should -BeExactly project
@@ -1489,10 +1517,12 @@ try {
         # PM5 after a batch of writes: the four newest receipts filled the local
         # part and the user's workplace rules, last in level order, fell into more.
         $rule=('Постоянное правило работы с конфигурацией клиента и его стендом. '*8).Substring(0,400)
-        # Thirteen rules fit the bound alone, not together with four receipts.
-        foreach($kind in @('project','organization','workplace')){
-            $dataset=Get-ScopeDataset $b $kind
-            for($number=1;$number -le (Get-ItlMemoryLevelLimits)[$kind].standing;$number++){$null=Add-FixtureNote $dataset "$kind-rule-$number" $rule -Standing -Title "Правило $kind $number"}
+        # The 21 rules of all level maxima fit the bound alone, not together with
+        # the four receipts the local part lists.
+        $b.memoryProjection.knowledgeAreas=@{planning=@{availableIn=@('prof');memoryHomeProductId='corp'}}
+        foreach($kind in @('project','workspace','organization','product','host','workplace')){
+            $dataset=Get-ScopeDataset $b $kind;$area=if($kind -eq 'product'){'planning'}else{''}
+            for($number=1;$number -le (Get-ItlMemoryLevelLimits)[$kind].standing;$number++){$null=Add-FixtureNote $dataset "$kind-rule-$number" $rule -Standing -Title "Правило $kind $number" -Area $area}
         }
         $evidence=@(@{source='user';reference='chat 2026-11-19'})
         for($number=1;$number -le 4;$number++){$null=Invoke-ItlMemoryRemember $b ("Проверенный факт номер $number о стенде клиента и его конфигурации.") 'itl_project_customer' "fact-$number" @{} $evidence verified}
@@ -1501,17 +1531,18 @@ try {
         $status=Invoke-ItlMemoryStatus $b
         @($status.receipts).Count | Should -Be 0
         $status.confirmedReceipts | Should -Match 'local_only=true'
-        @($status.standing).Count | Should -Be 13
+        @($status.standing).Count | Should -Be 21
         # Writes still to reconcile are listed, but give way to the rules.
         foreach($file in @(Get-ChildItem -LiteralPath (Join-Path (Get-ItlMemoryHome) 'receipt') -File -Filter '*.json')){
             $null=Update-ItlMemoryJson $file.FullName {param($old) $old.state='unconfirmed';return $old}
         }
         $status=Invoke-ItlMemoryStatus $b
         $tokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $status -Depth 30 -Compress)
-        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 3000
+        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 4500
         @($status.standing|Where-Object level -EQ workplace).Count | Should -Be 3
         @($status.standing|Where-Object level -EQ organization).Count | Should -Be 5
         @($status.standing|Where-Object level -EQ project).Count | Should -Be 5
+        @($status.standing|Where-Object level -EQ product).Count | Should -Be 3
         @($status.receipts).Count | Should -BeGreaterThan 0
         @($status.receipts).Count | Should -BeLessThan 4
         $status.localTrimmed | Should -Match 'local_only=true'
@@ -1534,13 +1565,33 @@ try {
         for($number=1;$number -le 4;$number++){$null=Invoke-ItlMemoryRemember $b ("Проверенный факт номер $number о стенде клиента.") (Resolve-ItlMemoryDatasetName $b project) "fact-$number" @{} $evidence verified}
         $status=Invoke-ItlMemoryStatus $b
         $tokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $status -Depth 30 -Compress)
-        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 3000
+        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 4500
         @($status.standing).Count | Should -Be 5
         # A product rule keeps its dataset: the product level may hold several.
         @($status.standing|Where-Object level -EQ product)[0].dataset | Should -BeExactly (Get-ScopeDataset $b product).label
         @($status.standing|Where-Object level -NE product|Where-Object {$_.Contains('dataset')}).Count | Should -Be 0
         (@($status.index|ForEach-Object {$_.more})|Measure-Object -Sum).Sum | Should -Be 0
         (@($status.index|ForEach-Object {@($_.notes).Count})|Measure-Object -Sum).Sum | Should -Be 41
+    }
+    It 'shows organization and product titles beside a full project index' {
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.memory-tokens.ps1')
+        # PM5 2026-11-27 after cleanup: 31 project notes filled the 3000-token
+        # answer; 19 organization and 18 product titles were only counted in more.
+        $b.memoryProjection.knowledgeAreas=@{planning=@{availableIn=@('prof');memoryHomeProductId='corp'}}
+        $rule=('Требование пользователя к данным редактора планов и тяжёлым формам. '*6).Substring(0,360)
+        $shape=[ordered]@{project=@(2,29);product=@(1,17);organization=@(0,19);workplace=@(2,0);host=@(0,1);taskCycle=@(0,4)}
+        foreach($kind in $shape.Keys){
+            $dataset=Get-ScopeDataset $b $kind;$area=if($kind -eq 'product'){'planning'}else{''}
+            for($number=1;$number -le $shape[$kind][0];$number++){$null=Add-FixtureNote $dataset "$kind-rule-$number" $rule -Standing -Title "Правило $kind $number" -Area $area}
+            for($number=1;$number -le $shape[$kind][1];$number++){$null=Add-FixtureNote $dataset "$kind-note-$number" 'Обычная заметка.' -Title "Особенность PM5 уровня ${kind}, случай ${number}: условие и обход" -Area $area}
+        }
+        $status=Invoke-ItlMemoryStatus $b
+        $tokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $status -Depth 30 -Compress)
+        [Math]::Max($tokens.cl100k_base,$tokens.o200k_base) | Should -BeLessOrEqual 4500
+        @($status.standing).Count | Should -Be 5
+        @(@($status.index|Where-Object level -EQ organization)[0].notes).Count | Should -Be 19
+        @(@($status.index|Where-Object level -EQ product)[0].notes).Count | Should -Be 17
+        (@($status.index|ForEach-Object {$_.more})|Measure-Object -Sum).Sum | Should -Be 0
     }
     It 'names organization notes for ITL defects the installed registry lists as fixed' {
         $registryPath=Join-Path $RepoRoot '.agents/skills/1c-workflow/references/known-defects.json'
