@@ -727,6 +727,11 @@ function Get-VanessaFeatureTestClientRequirements {
     $unresolved = New-Object System.Collections.Generic.List[object]
     $maximumConcurrency = 0
     $requiresExtensionTestClient = $false
+    # TESTMANAGER keeps every TestClient connected until a close step or the end of the whole run
+    # (ЗакрытьTestClientПослеЗапускаСценариев), so open clients carry over between scenarios and
+    # features in FeaturesToRun order; resetting per scenario undercounts and forbids a second client.
+    $active = @{}
+    $currentClientKey = ""
     $normalizedFilterTags = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
     $wantedTags = @{}
     foreach ($filterTag in $normalizedFilterTags) { $wantedTags[$filterTag.ToLowerInvariant()] = $true }
@@ -752,8 +757,6 @@ function Get-VanessaFeatureTestClientRequirements {
             continue
         }
         foreach ($instance in $instances) {
-            $active = @{}
-            $currentClientKey = ""
             $awaitDirectClientTableHeader = $false
             $awaitDirectClientTableRow = $false
             foreach ($step in @($scenario.steps.ToArray())) {
