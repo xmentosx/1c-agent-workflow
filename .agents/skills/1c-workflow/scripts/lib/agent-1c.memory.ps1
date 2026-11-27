@@ -1161,6 +1161,19 @@ function Get-ItlMemoryLocalContext {
             $record=Read-ItlMemoryJson $file.FullName
             if(-not $record){continue}
             if($record.state -eq 'durable' -or $record.projectId -cne $project -or ($NoteId -and $record.noteId -cne $NoteId)){continue}
+            # PM5 2026-11-27: two sent drafts stayed pending for days after
+            # retire_note had retired their notes, because the retirement only
+            # discarded unsent drafts. A retirement receipt written after the
+            # draft settles it; that retirement also rewrote the draft file, so
+            # the draft's own time is the one in its intent.
+            $attempt=Get-ItlCatalogField $record 'attempt'
+            if($attempt){
+                $retirement=Get-ItlMemoryPath receipt (Get-ItlMemoryRecordKey $Binding ([string](Get-ItlCatalogField $attempt 'datasetId' '')) ([string]$record.noteId))
+                $retired=Read-ItlMemoryJson $retirement
+                if($retired -and $retired.state -ceq 'retired' -and $retired.noteId -ceq $record.noteId -and
+                    (Get-Item -LiteralPath $retirement).LastWriteTimeUtc -ge (ConvertTo-ItlMemoryUtc (Get-ItlCatalogField $record.intent 'at' '')) -and
+                    (Remove-ItlMemoryUnsentDraft $Binding ([string]$record.noteId) -Retired)){continue}
+            }
             $label=[string]$record.intent.datasetName
             $task=@($Binding.provider.datasets|Where-Object {$_.label -ceq $label -and $_.scopeKind -eq 'taskCycle'}).Count -gt 0 -or $label -like 'itl_task_*'
             if($task -and $record.cycleId -cne $currentCycle -and -not ($History -and $NoteId)){continue}
@@ -1297,7 +1310,17 @@ function Get-ItlMemoryOverview {
     }
     # A product row of an inapplicable knowledge area is not this context's.
     $rows=@($rows|Where-Object {-not $_.parsed -or $_.dataset.scopeKind -ne 'product' -or (Test-ItlMemoryAreaApplicable $Binding $_.parsed.area ([string]$_.dataset.scopeId))})
-    $order={param($items) @($items|Sort-Object @{Expression={if($_.parsed -and $_.parsed.status -ceq 'candidate'){1}else{0}}},@{Expression={$_.updatedAt};Descending=$true})}
+    # PM5 2026-11-27: about 40 notes a week filled the project rows, and the
+    # newest change alone pushed out older notes that are still recalled. A
+    # note ranks by the later of its last change and its last use here (a
+    # recall card or a write), so notes nobody touched go to more first.
+    $noteUse=Get-ItlMemoryNoteUse $Binding
+    $lastTouched={param($row)
+        $at=ConvertTo-ItlMemoryUtc $row.updatedAt
+        if($noteUse.Contains($row.dataId)){$used=ConvertTo-ItlMemoryUtc $noteUse[$row.dataId];if($used -gt $at){$at=$used}}
+        $at
+    }
+    $order={param($items) @($items|Sort-Object @{Expression={if($_.parsed -and $_.parsed.status -ceq 'candidate'){1}else{0}}},@{Expression={& $lastTouched $_};Descending=$true})}
     $levels=[ordered]@{}
     foreach($kind in $limits.Keys){$levels[$kind]=@{rows=@(& $order @($rows|Where-Object {$_.dataset.scopeKind -eq $kind}));more=0}}
     # Names of the previous format: status and title come from the original.
@@ -1501,17 +1524,19 @@ function Invoke-ItlMemoryStatus {
 }
 
 function Remove-ItlMemoryUnsentDraft {
-    param([object]$Binding,[string]$NoteId)
+    param([object]$Binding,[string]$NoteId,[switch]$Retired)
     # A draft without attempt never reached the backend. Discard it under its
     # record guard, keeping a private audit copy beside the preserved sources.
+    # Retired: the exact note is confirmed retired, so a sent draft of it can
+    # no longer land or be confirmed either; it is discarded the same way.
     $path=Join-Path (Join-Path (Join-Path (Get-ItlMemoryHome) 'pending') $Binding.identity.workspaceId) ((Get-ItlCatalogHash $NoteId)+'.json')
     $outcome=@{discarded=$false}
     if(Test-Path -LiteralPath $path){
         $null=Update-ItlMemoryJson $path {param($old)
-            if(-not $old -or $old.state -eq 'durable' -or $old.noteId -cne $NoteId -or (Get-ItlCatalogField $old 'attempt')){return $old}
-            $audit=Join-Path (Join-Path (Join-Path (Get-ItlMemoryHome) 'source') $Binding.identity.workspaceId) ((Get-ItlCatalogHash $NoteId)+'.discarded.json')
+            if(-not $old -or $old.state -eq 'durable' -or $old.noteId -cne $NoteId -or ((Get-ItlCatalogField $old 'attempt') -and -not $Retired)){return $old}
+            $audit=Join-Path (Join-Path (Join-Path (Get-ItlMemoryHome) 'source') $Binding.identity.workspaceId) ((Get-ItlCatalogHash $NoteId)+$(if($Retired){'.retired.json'}else{'.discarded.json'}))
             [void][IO.Directory]::CreateDirectory((Split-Path -Parent $audit))
-            $old['state']='discarded';$old['discardedAt']=[DateTime]::UtcNow.ToString('o')
+            $old['state']=$(if($Retired){'retired'}else{'discarded'});$old['discardedAt']=[DateTime]::UtcNow.ToString('o')
             Write-Utf8TextAtomic $audit (ConvertTo-Json -InputObject $old -Depth 60 -Compress)
             $outcome.discarded=$true
             return $null
@@ -1549,17 +1574,41 @@ function Invoke-ItlMemoryRetire {
     $null=Update-ItlMemoryJson $path {param($old)
         if($old.state -ne 'retirement-unconfirmed'){throw 'MEMORY_WRITE_IN_FLIGHT'};return $receipt
     }
-    # A retired note can never accept its unsent update; do not leave it pending.
-    if($receipt.state -eq 'retired'){$null=Remove-ItlMemoryUnsentDraft $Binding $NoteId}
+    # A retired note can never accept its update, sent or not; do not leave
+    # it pending.
+    if($receipt.state -eq 'retired'){$null=Remove-ItlMemoryUnsentDraft $Binding $NoteId -Retired}
     return $receipt
+}
+
+function ConvertTo-ItlMemoryUtc {
+    param([object]$Value)
+    $parsed=[DateTime]::MinValue
+    if([DateTime]::TryParse([string]$Value,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal,[ref]$parsed)){return $parsed}
+    return [DateTime]::MinValue
+}
+
+function Get-ItlMemoryNoteUse {
+    param([object]$Binding)
+    # data ID -> last use from this copy's journal; an unreadable journal
+    # leaves the index ordered by last change alone.
+    $uses=@{}
+    try{
+        $journal=Read-ItlMemoryJson (Get-ItlMemoryPath usage ([string]$Binding.identity.workspaceId))
+        $recorded=Get-ItlCatalogField $journal 'noteUse' $null
+        foreach($id in @(Get-ItlCatalogKeys $recorded)){$uses[[string]$id]=[string](Get-ItlCatalogField $recorded $id '')}
+    }catch{}
+    return $uses
 }
 
 function Add-ItlMemoryUsage {
     param([object]$Binding,[string]$Tool,[string]$SessionId,[string]$Outcome='ok',[object]$Result=$null,[Collections.IDictionary]$Trace=@{})
     # Private call journal of this working copy: what was called and how it
     # ended, never the query or a fact. A journal failure changes no result.
+    # noteUse keeps the last use of each note (data ID only) for the index
+    # order: a recall card or a durable write.
     try{
         $entry=[ordered]@{at=[DateTime]::UtcNow.ToString('o');tool=$Tool;session=$SessionId;cycleId=[string](Get-ItlCatalogField $Binding 'cycleId' '');outcome=($Outcome -split ':')[0]}
+        $usedIds=@()
         $kind=[regex]::Match($Outcome,'kind=([a-z-]+)')
         if($kind.Success){$entry['recordKind']=$kind.Groups[1].Value}
         if($Tool -eq 'recall' -and $Trace.Contains('elapsedMs')){
@@ -1569,7 +1618,10 @@ function Add-ItlMemoryUsage {
             $entry['readOutcome']=if($Outcome -ne 'ok'){'failed'}elseif($Result.coverage -in @('partial','unavailable')){$Result.coverage}elseif(-not @($Result.cards).Count){'empty'}else{'cards'}
         }
         if($Result -is [Collections.IDictionary]){
-            if($Result.Contains('cards')){$entry['cards']=@($Result['cards']).Count}
+            if($Result.Contains('cards')){
+                $entry['cards']=@($Result['cards']).Count
+                if($Tool -eq 'recall' -and $Outcome -eq 'ok'){$usedIds=@(@($Result['cards'])|ForEach-Object {[string](Get-ItlCatalogField (Get-ItlCatalogField $_ 'source') 'dataId' '')})}
+            }
             $state=[string](Get-ItlCatalogField $Result 'state' '');$operation=[string](Get-ItlCatalogField $Result 'operation' '')
             if($Tool -eq 'remember' -and $state -in @('rejected','unconfirmed')){
                 $entry['outcome']=$state
@@ -1577,6 +1629,7 @@ function Add-ItlMemoryUsage {
             }
             if($state -eq 'durable' -and $operation -in @('saved','updated')){
                 $entry[$operation]=1
+                $usedIds+=[string](Get-ItlCatalogField $Result 'dataId' '')
                 $scopeKind=[string](Get-ItlCatalogField $Result 'scopeKind' '')
                 if($scopeKind){$entry['scopeKind']=$scopeKind}
             }
@@ -1586,7 +1639,14 @@ function Add-ItlMemoryUsage {
         $null=Update-ItlMemoryJson (Get-ItlMemoryPath usage $workspaceId) {param($old)
             $entries=@(if($old){@($old.entries)})+@($entry)
             if($entries.Count -gt 200){$entries=@($entries[($entries.Count-200)..($entries.Count-1)])}
-            return [ordered]@{schemaVersion=1;workspaceId=$workspaceId;entries=$entries}
+            $previous=Get-ItlCatalogField $old 'noteUse' $null
+            $uses=[ordered]@{}
+            foreach($id in @(Get-ItlCatalogKeys $previous)){$uses[$id]=[string](Get-ItlCatalogField $previous $id '')}
+            foreach($id in @($usedIds|Where-Object {$_ -cmatch '^[a-fA-F0-9-]{36}$'})){$uses.Remove($id);$uses[$id]=$entry.at}
+            # Bounded like the call list: the 500 most recently used notes.
+            $keep=@($uses.Keys|Sort-Object {$uses[$_]} -Descending|Select-Object -First 500)
+            $noteUse=[ordered]@{};foreach($id in @($uses.Keys)){if($keep -ccontains $id){$noteUse[$id]=$uses[$id]}}
+            return [ordered]@{schemaVersion=1;workspaceId=$workspaceId;entries=$entries;noteUse=$noteUse}
         }
     }catch{}
 }

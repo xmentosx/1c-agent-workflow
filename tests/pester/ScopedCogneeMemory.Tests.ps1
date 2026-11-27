@@ -596,6 +596,28 @@
         @((Invoke-ItlMemoryStatus $b -LocalOnly).pending).Count | Should -Be 0
         @($script:Calls|Where-Object path -EQ '/api/v1/remember').Count | Should -Be 1
     }
+    It 'settles a sent pending write of a retired note' {
+        $script:BodyLoss=$true
+        $null=Invoke-ItlMemoryRemember $b 'Отправленное правило' 'itl_project_customer' 'sent-retired'
+        (Invoke-ItlMemoryStatus $b -LocalOnly).pending[0].sent | Should -BeTrue
+        $script:BodyLoss=$false
+        (Invoke-ItlMemoryRetire $b 'itl_project_customer' 'sent-retired').state | Should -Be retired
+        @((Invoke-ItlMemoryStatus $b -LocalOnly).pending).Count | Should -Be 0
+        $sourceRoot=Join-Path (Join-Path (Get-ItlMemoryHome) 'source') $b.identity.workspaceId
+        (Read-ItlMemoryJson (Join-Path $sourceRoot ((Get-ItlCatalogHash 'sent-retired')+'.retired.json'))).intent.data | Should -Be 'Отправленное правило'
+        # A copy whose earlier helper retired the note but kept the sent draft:
+        # the retirement receipt settles it at the next status.
+        $script:BodyLoss=$true
+        $null=Invoke-ItlMemoryRemember $b 'Старый черновик' 'itl_project_customer' 'kept-draft'
+        $script:BodyLoss=$false
+        $receipt=Get-ItlMemoryPath receipt (Get-ItlMemoryRecordKey $b (Get-ProjectDataset $b).datasetId 'kept-draft')
+        Write-Utf8TextAtomic $receipt (ConvertTo-Json -Compress -InputObject @{schemaVersion=1;noteId='kept-draft';datasetId=(Get-ProjectDataset $b).datasetId;dataId=[guid]::NewGuid().ToString();state='retired'})
+        # That retirement also rewrote the draft file after its receipt.
+        $draft=Join-Path (Join-Path (Join-Path (Get-ItlMemoryHome) 'pending') $b.identity.workspaceId) ((Get-ItlCatalogHash 'kept-draft')+'.json')
+        [IO.File]::SetLastWriteTimeUtc($draft,[DateTime]::UtcNow.AddMinutes(1))
+        @((Invoke-ItlMemoryStatus $b -LocalOnly).pending).Count | Should -Be 0
+        (Read-ItlMemoryJson (Join-Path $sourceRoot ((Get-ItlCatalogHash 'kept-draft')+'.retired.json'))).state | Should -Be retired
+    }
     It 'does not create a duplicate private dataset after an uncertain creation' {
         $private=@(Get-ItlMemoryPrivateScopes $b)[0]
         $b.provider.datasets=@($b.provider.datasets|Where-Object scopeKind -NE taskCycle)
@@ -1592,6 +1614,26 @@ try {
         @(@($status.index|Where-Object level -EQ organization)[0].notes).Count | Should -Be 19
         @(@($status.index|Where-Object level -EQ product)[0].notes).Count | Should -Be 17
         (@($status.index|ForEach-Object {$_.more})|Measure-Object -Sum).Sum | Should -Be 0
+    }
+    It 'keeps a recalled older note in a full index and drops the oldest untouched one first' {
+        # PM5 2026-11-27: about 40 notes a week; the newest change alone pushed
+        # older notes that agents still recalled out of the 30 project rows.
+        $dataset=Get-ScopeDataset $b project;$ids=@()
+        for($number=1;$number -le 32;$number++){$ids+=Add-FixtureNote $dataset "aged-$number" 'Заметка.' -Title "Заметка проекта $number"}
+        $projectTitles={@(@((Invoke-ItlMemoryStatus $b).index|Where-Object level -EQ project)[0].notes)}
+        $shown=& $projectTitles
+        $shown | Should -Not -Contain 'Заметка проекта 1'
+        $shown | Should -Contain 'Заметка проекта 3'
+        Add-ItlMemoryUsage $b recall 'session-use' 'ok' ([ordered]@{cards=@([ordered]@{noteId='aged-1';source=@{dataset=$dataset.label;dataId=$ids[0]}});coverage='bounded'})
+        $shown=& $projectTitles
+        $shown.Count | Should -Be 30
+        $shown | Should -Contain 'Заметка проекта 1'
+        $shown | Should -Not -Contain 'Заметка проекта 2'
+        $shown | Should -Not -Contain 'Заметка проекта 3'
+        # The journal keeps data IDs only, never a title or a fact.
+        $journal=[IO.File]::ReadAllText((Get-ItlMemoryPath usage $b.identity.workspaceId))
+        $journal | Should -Match $ids[0]
+        $journal | Should -Not -Match 'Заметка'
     }
     It 'names organization notes for ITL defects the installed registry lists as fixed' {
         $registryPath=Join-Path $RepoRoot '.agents/skills/1c-workflow/references/known-defects.json'

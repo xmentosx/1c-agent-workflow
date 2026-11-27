@@ -6026,6 +6026,15 @@ function Publish-ItlGitSourceCacheCheckout {
         if ([DateTime]::UtcNow -ge $deadlineUtc) { break }
         Start-Sleep -Milliseconds 250
     }
+    if ($root -ceq $prepare) {
+        # Gate 2026-11-20: a returned preparation once failed as "not a git
+        # repository" and passed alone. Verify it again after the wait so a
+        # damaged one is named with its path and the last target state.
+        $kept = Get-ItlGitSourceCacheState -Root $prepare -Repo $Repo -ExpectedCommit $Commit
+        if (-not $kept.valid) {
+            throw "$($CodePrefix)_SOURCE_NOT_READY: path='$prepare' expectedCommit='$Commit' state='$($kept.reason)' target='$target' targetEntry='$entry'. Preserve this diagnostic copy and repeat the original operation; this source was not used."
+        }
+    }
     if ($null -ne $targetState) {
         Write-Warning "$($CodePrefix)_CACHE_RECOVERED path='$target' expectedCommit='$Commit' result='verified source ready' source='$root' diagnostic='$diagnostic'. Unknown directories remain untouched."
     }
