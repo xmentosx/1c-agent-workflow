@@ -130,7 +130,9 @@ two requests in flight). Originals are read only for standing notes, which are
 confirmed and fully checked by their original, and for at most six names of the
 previous format; index rows carry no IDs and only the knowledge area of a
 product row is checked. Order: project, workspace, organization, product, host,
-workplace, task; inside a level verified before candidate, newest change first.
+workplace, task; inside a level verified before candidate, then by the later of
+the last change and the last use from this copy (a recall card or a write), so
+untouched notes are counted in `more` first.
 Maxima (standing/index rows): task -/10, workspace 2/10, workplace 3/10, host
 3/10, project 5/30, product 3/20 per level, organization 5/30. The whole answer
 is bounded at 4500 tokens by the recall counter; what does not fit is counted in
