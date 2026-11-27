@@ -1011,6 +1011,29 @@ $text = [IO.File]::ReadAllText((Join-Path $Source 'content/skills/grill-me/agent
         }
     }
 
+    It 'names a private preparation damaged while the exact path stays unavailable' {
+        & {
+            . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+            $ItlGitSourceCacheReleaseWaitSeconds = 0
+            $originalEntryKind = (Get-Command Get-ItlGitSourceCacheEntryKind).ScriptBlock
+            # The exact path stays delete-pending, so the private preparation
+            # is returned; here it loses its .git before that.
+            function Get-ItlGitSourceCacheEntryKind {
+                param([string]$Path)
+                foreach ($prepared in @(Get-ChildItem -LiteralPath (Split-Path -Parent $Path) -Directory -Filter 'prepare-*')) {
+                    Remove-Item -LiteralPath (Join-Path $prepared.FullName '.git') -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                return 'pending'
+            }
+            { Sync-AiRules1cCheckout } | Should -Throw "*AI_RULES_SOURCE_NOT_READY*prepare-*targetEntry='pending'*repeat the original operation*"
+            Test-Path -LiteralPath (Join-Path $fixture.project 'installed.yaml') | Should -BeFalse
+            Set-Item Function:Get-ItlGitSourceCacheEntryKind -Value $originalEntryKind
+            Remove-Variable -Name ItlGitSourceCacheReleaseWaitSeconds
+            $retried = Sync-AiRules1cCheckout
+            $retried.commit | Should -Be $fixture.old
+        }
+    }
+
     It 'rejects a dirty user source without changing it and accepts its clean pinned version' {
         & {
             . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
