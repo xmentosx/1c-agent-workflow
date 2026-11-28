@@ -250,7 +250,12 @@ function Get-OneCUiLeaseCountdownSeconds {
 }
 
 function Get-OneCUiLeasePauseLimitSeconds {
-    return (Get-OneCIntegerSetting -Name 'ONEC_UI_LEASE_PAUSE_LIMIT_SECONDS' -Default 600 -Minimum 1 -Maximum 86400 -Guidance 'It bounds a paused consent and the wait for a pause in user input.')
+    return (Get-OneCIntegerSetting -Name 'ONEC_UI_LEASE_PAUSE_LIMIT_SECONDS' -Default 600 -Minimum 1 -Maximum 86400 -Guidance 'It bounds the wait for a pause in user input and can shorten explicit desktop consent pauses.')
+}
+
+function Get-OneCUiConsentPauseLimitSeconds {
+    $limit = Get-OneCIntegerSetting -Name 'ONEC_UI_LEASE_PAUSE_LIMIT_SECONDS' -Default 10800 -Minimum 1 -Maximum 86400 -Guidance 'It can shorten the three-hour limit for explicit desktop consent pauses.'
+    return [Math]::Min(10800, $limit)
 }
 
 function Initialize-OneCForegroundType {

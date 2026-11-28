@@ -362,6 +362,13 @@ function Write-ItlOnDemandLaunchDescriptor {
     return $path
 }
 
+function Get-ItlOnDemandMcpTransportTimeoutSeconds {
+    param([string]$Family)
+    # The facade still applies its ordinary budget while the consent clock is running.
+    if ($Family -eq 'vanessa-ui') { return 11400 }
+    return 600
+}
+
 function Get-ItlOnDemandMcpEndpointDescriptors {
     param([switch]$PreserveExistingAuxiliaryWrappers)
     $executable = Get-ItlOnDemandMcpExecutablePath
@@ -377,7 +384,7 @@ function Get-ItlOnDemandMcpEndpointDescriptors {
             command = $executable
             args = @("serve", "--family", $family, "--project-root", $root, "--catalog", $definition.catalogPath, "--helper", $helper, "--surface", "gateway", "--idle-timeout", "10m")
             startupTimeoutSeconds = 20
-            toolTimeoutSeconds = 600
+            toolTimeoutSeconds = Get-ItlOnDemandMcpTransportTimeoutSeconds -Family $family
         }
     }
     foreach ($contour in @(Get-AuxiliaryContourDefinitions)) {
@@ -459,7 +466,7 @@ function New-ItlOnDemandAuxiliaryEndpointDescriptor {
         env = [ordered]@{}
         enabled = $true
         startupTimeoutSeconds = 20
-        toolTimeoutSeconds = 600
+        toolTimeoutSeconds = Get-ItlOnDemandMcpTransportTimeoutSeconds -Family $Family
     }
 }
 

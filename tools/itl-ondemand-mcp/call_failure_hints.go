@@ -41,7 +41,7 @@ func (route *progressRoute) lastProgress() (*progressSnapshot, uint64) {
 }
 
 func phaseDeadlineExceeded(ctx context.Context, err error) bool {
-	return errors.Is(err, context.DeadlineExceeded) || (ctx != nil && errors.Is(ctx.Err(), context.DeadlineExceeded))
+	return errors.Is(err, context.DeadlineExceeded) || (ctx != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded))
 }
 
 // The request phase expired while the backend still owned the call. The facade

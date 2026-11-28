@@ -237,6 +237,19 @@ selection step itself repeats a lost or unactivated selection up to two times,
 each after a 1.5 s input pause, and accepts one only when that attempt changed the
 field to the requested value; a refusal is never repeated.
 
+On 2026-11-27 the user approved suspending the operation clock on explicit
+desktop consent pause. The PM5 branch2 Vanessa MCP call closed the panel at its
+step deadline, about 43 seconds after dispatch. The existing per-group window
+helper owns the pause, releases the desktop mutex, and publishes a snapshot of
+its bounded pause to Vanessa, the verification runner and the Vanessa facade.
+They preserve the remaining ordinary budget and retain their existing
+cancellation and cleanup paths. The paused step retains its existing 1C
+session and infobase admission until it settles. An explicit caller deadline
+stays authoritative.
+The transport allowance covers one three-hour pause plus the ordinary MCP
+budget. The matching component pins keep older request clients on the original
+protocol behavior. No installed data migration is required.
+
 On 2026-11-02 the user approved [Windows MCP storage retention](mcp-storage-retention.md),
 including conditional Sunday 03:30 detached VHD compaction on dev-ermakov. The
 existing host lease/scheduler delegates eligibility to native owners; current,

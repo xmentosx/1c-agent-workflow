@@ -4,7 +4,7 @@ param(
     [string]$PlatformBin = "C:\Program Files\1cv8\8.3.27.2130\bin",
     [string]$WorkRoot = "C:\itlvabld",
     [ValidateSet("1.2.043.28", "1.2.043.42")][string]$UpstreamVersion = "1.2.043.28",
-    [ValidateSet("itl-r1", "itl-r2", "itl-r3", "itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10", "itl-r11", "itl-r12", "itl-r13", "itl-r14", "itl-r15", "itl-r16", "itl-r17", "itl-r18", "itl-r19")][string]$DownstreamRevision = "itl-r8",
+    [ValidateSet("itl-r1", "itl-r2", "itl-r3", "itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10", "itl-r11", "itl-r12", "itl-r13", "itl-r14", "itl-r15", "itl-r16", "itl-r17", "itl-r18", "itl-r19", "itl-r20")][string]$DownstreamRevision = "itl-r8",
     [string]$ResumeWorkDirectory = "",
     [switch]$KeepWork,
     [switch]$Force

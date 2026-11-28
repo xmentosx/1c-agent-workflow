@@ -7668,7 +7668,7 @@ function Publish-NativeWaitRunStatus {
     # budget and evidence. The generic native heartbeat must refresh the helper
     # status without overwriting that diagnosis.
     if ([int]$script:RunStallTimeoutRemainingSeconds -gt 0 -or
-        [string]$script:RunLiveness -in @('stalled-suspected','stalled-timeout','probe-running')) {
+        [string]$script:RunLiveness -in @('stalled-suspected','stalled-timeout','probe-running','waiting-desktop-consent')) {
         $Monitor.lastPublishedAtUtc = $now
         Write-RunStatus -Status 'running'
         return
@@ -7765,7 +7765,8 @@ function Invoke-NativeProcessAndWaitResult {
         [switch]$RequirePostExitProbeOnFailure,
         [ValidateRange(0, 1048576)][int]$MaxWorkingSetMb = 0,
         [string]$StdoutPath = '',
-        [string]$StderrPath = ''
+        [string]$StderrPath = '',
+        [scriptblock]$DeadlinePauseProbe = $null
     )
 
     if ([bool]$StdoutPath -ne [bool]$StderrPath) { throw 'NATIVE_PROCESS_OUTPUT_PATH_PAIR_REQUIRED' }
@@ -7867,6 +7868,8 @@ function Invoke-NativeProcessAndWaitResult {
     $terminationError = ""
     $monitorStartedAtUtc = [DateTime]::UtcNow
     $deadline = if ($TimeoutSeconds -gt 0) { $monitorStartedAtUtc.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
+    $originalDeadline = $deadline
+    $pausedMs = 0L
     $heartbeatLogs = @()
     if ($script:LastLogPath) { $heartbeatLogs += [string]$script:LastLogPath }
     $runStatusMonitor = New-NativeWaitRunStatusMonitor -LogPaths $heartbeatLogs
@@ -7874,7 +7877,15 @@ function Invoke-NativeProcessAndWaitResult {
         $postExitProbeDeadlineUtc = $null
         $probeObservedAt = $null
         $finished = $false
-        while (-not $finished -and [DateTime]::UtcNow -lt $deadline) {
+        while (-not $finished) {
+            $observedAt = [DateTime]::UtcNow
+            $pause = $null
+            if ($null -ne $DeadlinePauseProbe -and $TimeoutSeconds -gt 0) {
+                $pause = & $DeadlinePauseProbe $observedAt
+                if ($null -ne $pause) { $pausedMs = [Math]::Max($pausedMs, [long]$pause.elapsedMs) }
+                $deadline = $originalDeadline.AddMilliseconds($pausedMs)
+            }
+            if ($observedAt -ge $deadline) { break }
             try {
                 $launcherExited = [bool]$process.HasExited
                 if ($launcherExited -and $null -eq $launcherExitCode) {
@@ -7949,6 +7960,9 @@ function Invoke-NativeProcessAndWaitResult {
                         observedAtUtc = $probeObservedAtUtc
                         elapsedSeconds = [int][Math]::Floor(($probeObservedAtUtc - $monitorStartedAtUtc).TotalSeconds)
                         timeoutSeconds = $TimeoutSeconds
+                        pausedMs = $pausedMs
+                        pauseRemainingMs = $(if ($null -ne $pause) { [long]$pause.remainingMs } else { 0L })
+                        pauseRequestId = $(if ($null -ne $pause) { [string]$pause.requestId } else { '' })
                         timeoutRemainingSeconds = $(if ($TimeoutSeconds -gt 0) {
                             [int][Math]::Max(0, [Math]::Ceiling(($deadline - $probeObservedAtUtc).TotalSeconds))
                         } else {
@@ -9004,6 +9018,7 @@ function Invoke-Enterprise {
         [int]$TimeoutSeconds = 0,
         [scriptblock]$OnTimeout = $null,
         [scriptblock]$CompletionProbe = $null,
+        [scriptblock]$DeadlinePauseProbe = $null,
         [switch]$RequireOwnedProcessRelease,
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
         [ValidateRange(0, 64)][int]$ExpectedSessionCount = 0,
@@ -9130,6 +9145,7 @@ function Invoke-Enterprise {
                     -TimeoutSeconds $TimeoutSeconds `
                     -OnTimeout $OnTimeout `
                     -CompletionProbe $effectiveCompletionProbe `
+                    -DeadlinePauseProbe $DeadlinePauseProbe `
                     -CompletionGraceSeconds $nativeCompletionGraceSeconds `
                     -PostExitProbeSeconds $postExitProbeSeconds `
                     -RequirePostExitProbeOnFailure:$RequireOwnedProcessRelease

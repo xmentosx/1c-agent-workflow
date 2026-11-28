@@ -684,7 +684,7 @@ Describe 'Vanessa 1.2.043.42-itl-r17 execute_feature_step outcome' {
 
 Describe 'Dropdown policy in Vanessa r19' {
     It 'resolves all four override sources and rejects conflicting scenario tags' {
-        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19/file-operations.patch'))
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r20/file-operations.patch'))
         $form = Get-FocusNewSide 'VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl' $patch
         $method = Get-FocusMethod $form 'ITLПараметрыСписка'
         $prefix = @'
@@ -733,7 +733,7 @@ ITLРежимСпискаMCP = Истина;
         # wm22, 2026-11-23: a list opened under its own lease closed while the scenario
         # paused before the selection. Opening, inspecting, closing and input by string
         # run in the background; each selection reopens the list inside one lease.
-        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19/file-operations.patch'))
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r20/file-operations.patch'))
         foreach ($name in 'ITLВОткрытойФормеЯОткрываюВыпадающийСписокСЗаголовкомПлатформа', 'ITLВТаблицеЯОткрываюВыпадающийСписокПлатформа',
             'ITLЯЗакрываюВыпадающийСписокПлатформа', 'ITLВТаблицеЯЗакрываюВыпадающийСписокПлатформа', 'ITLСделатьВводПоСтрокеВПолеВВодаПлатформа',
             'ITLОткрытьВыпадающийСписокПлатформа', 'ITLОткрытьСписокДляОперации', 'ITLЗапомнитьОткрытыйСписок') {
@@ -756,7 +756,7 @@ ITLРежимСпискаMCP = Истина;
     }
 
     It 'reports a lost foreground as a failed selection and keeps the original error of a failed step' {
-        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19/file-operations.patch'))
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r20/file-operations.patch'))
         $form = Get-FocusNewSide 'VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl' $patch
         $methods = foreach ($name in 'ITLПереоткрытьСписокВАренде', 'ITLЗавершитьВыборИзСписка', 'ITLПроверитьОтветПомощникаОкон', 'ITLОписаниеОкнаПомощника', 'ITLЗакрытьСписок', 'ITLСписокОткрыт') { Get-FocusMethod $form $name }
         $prefix = @'
@@ -849,7 +849,7 @@ ITLЗакрытьСписок(Поле);
     It 'repeats a selection that lost the foreground at most twice and accepts one the field already shows' {
         # PM5 branch4, 2026-11-25: a user working at the computer clicked the taskbar while a
         # selection held the foreground; 1C closed the list and the regular check failed.
-        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19/file-operations.patch'))
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r20/file-operations.patch'))
         $form = Get-FocusNewSide 'VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl' $patch
         $client = Get-FocusNewSide 'VanessaAutomation/Forms/КлиентТестирования/Ext/Form/Module.bsl' $patch
         $vanessa = Join-Path $TestDrive 'Ванесса повтора выбора.os'
@@ -943,7 +943,7 @@ ITLЗакрытьСписок(Поле);
         # wm22 facade run, 2026-11-23: the MCP library sends a synchronous answer itself, so the
         # scope of select_from_dropdown ended only with the next call and the completion panel
         # appeared about nine seconds after the selection.
-        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19/file-operations.patch'))
+        $patch = [IO.File]::ReadAllText((Join-Path $script:FocusRepo 'third-party/vanessa-automation/1.2.043.42-itl-r20/file-operations.patch'))
         $mcp = Get-FocusNewSide 'VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl' $patch
         $methods = foreach ($name in 'ITLЗавершитьСинхронныйВызов', 'ВыполнитьПоследовательностьДействийФормы') { Get-FocusMethod $mcp $name }
         # The patch hunk starts below the header of the manage_form_elements handler; its body is the changed part.

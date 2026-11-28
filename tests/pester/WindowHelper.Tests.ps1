@@ -2,7 +2,7 @@
     $script:WhRepo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
     $script:WhLib = Join-Path $script:WhRepo '.agents/skills/1c-workflow/scripts/lib'
     $script:WhAssets = Join-Path $script:WhRepo '.agents/skills/1c-workflow/assets/window-helper'
-    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r19'
+    $script:WhRevision = Join-Path $script:WhRepo 'third-party/vanessa-automation/1.2.043.42-itl-r20'
     foreach ($module in 'agent-1c.runtime-values.ps1', 'agent-1c.core.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1', 'agent-1c.window-helper.ps1') {
         . (Join-Path $script:WhLib $module)
     }
@@ -100,6 +100,7 @@ Describe 'Agent 1C window mode and settings' {
         Get-OneCWindowMode | Should -Be 'hidden'
         Get-OneCUiLeaseCountdownSeconds | Should -Be 10
         Get-OneCUiLeasePauseLimitSeconds | Should -Be 600
+        Get-OneCUiConsentPauseLimitSeconds | Should -Be 10800
     }
 
     It 'accepts visible and 0 and rejects other values with guidance' {
@@ -114,6 +115,71 @@ Describe 'Agent 1C window mode and settings' {
 }
 
 Describe 'Window helper pause panel' {
+    It 'keeps explicit consent pending across the step deadline and settles the pause once' {
+        Add-Type -AssemblyName System.Windows.Forms
+        $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes((Get-ItlWindowHelperExecutable)))
+        $dir = Join-Path $TestDrive 'Согласие на паузе'
+        foreach ($folder in 'requests', 'responses', 'journal') {
+            [void][IO.Directory]::CreateDirectory((Join-Path $dir $folder))
+        }
+        $paths = $assembly.GetType('Itl.WindowHelper.GroupPaths').GetConstructors()[0].Invoke([object[]]@([string]$dir))
+        $config = $assembly.GetType('Itl.WindowHelper.GroupConfig').GetConstructors()[0].Invoke([object[]]@())
+        $config.ConsentPauseLimitSeconds = 30
+        $type = $assembly.GetType('Itl.WindowHelper.HelperContext')
+        $flags = [Reflection.BindingFlags]'NonPublic,Instance'
+        $helper = $type.GetConstructors()[0].Invoke([object[]]@($paths, $config))
+        try {
+            $request = $assembly.GetType('Itl.WindowHelper.LeaseRequest').GetConstructors()[0].Invoke([object[]]@())
+            $request.Id = 'pause-fixture'
+            $request.Scope = 'scenario:1'
+            $request.PauseAware = $true
+            $request.DeadlineUtc = [DateTime]::UtcNow.AddSeconds(20)
+            $state = $type.GetField('state', $flags)
+            $state.SetValue($helper, [Enum]::Parse($state.FieldType, 'Consent'))
+            $type.GetField('stateSince', $flags).SetValue($helper, [DateTime]::UtcNow)
+            $type.GetField('current', $flags).SetValue($helper, $request)
+            $null = $type.GetMethod('EnterPause', $flags).Invoke($helper, @())
+
+            $paused = Get-ItlWindowHelperPause -Directory $dir -NowUtc ([DateTime]::UtcNow)
+            $paused.requestId | Should -Be $request.Id
+            $paused.remainingMs | Should -BeGreaterThan 0
+            $request.DeadlineUtc = [DateTime]::UtcNow.AddSeconds(-1)
+            $deadline = $request.DeadlineUtc
+            $null = $type.GetMethod('OnStateTick', $flags).Invoke($helper, @())
+            $state.GetValue($helper).ToString() | Should -Be 'Paused'
+            $finishAt = [DateTime]$type.GetField('pauseSince', $flags).GetValue($helper)
+            $finishAt = $finishAt.AddSeconds(10)
+            $type.GetMethod('FinishPause', $flags).Invoke($helper, @($finishAt)) | Should -BeTrue
+            $request.DeadlineUtc | Should -Be ($deadline.AddSeconds(10))
+            $settled = Get-ItlWindowHelperPause -Directory $dir -NowUtc $finishAt
+            $settled.elapsedMs | Should -Be 10000
+            $settled.remainingMs | Should -Be 0
+
+            $null = $type.GetMethod('DeclineScope', $flags).Invoke($helper, @('user-cancel'))
+            $response = [IO.File]::ReadAllText((Join-Path $dir 'responses\pause-fixture.json')) | ConvertFrom-Json
+            $response.reason | Should -Be 'user-cancel'
+            (Get-ItlWindowHelperPause -Directory $dir -NowUtc $finishAt).elapsedMs | Should -Be 10000
+
+            $request.Id = 'expiry-fixture'
+            $request.Scope = 'scenario:2'
+            $request.DeadlineUtc = [DateTime]::UtcNow.AddSeconds(20)
+            $state.SetValue($helper, [Enum]::Parse($state.FieldType, 'Consent'))
+            $type.GetField('stateSince', $flags).SetValue($helper, [DateTime]::UtcNow)
+            $type.GetField('current', $flags).SetValue($helper, $request)
+            $null = $type.GetMethod('EnterPause', $flags).Invoke($helper, @())
+            $now = [DateTime]::UtcNow
+            $type.GetField('pauseSince', $flags).SetValue($helper, $now.AddSeconds(-31))
+            $type.GetField('pauseUntil', $flags).SetValue($helper, $now.AddSeconds(-1))
+            $null = $type.GetMethod('OnStateTick', $flags).Invoke($helper, @())
+            $response = [IO.File]::ReadAllText((Join-Path $dir 'responses\expiry-fixture.json')) | ConvertFrom-Json
+            $response.reason | Should -Be 'pause-limit'
+            $state.GetValue($helper).ToString() | Should -Be 'Idle'
+            (Get-ItlWindowHelperPause -Directory $dir -NowUtc $now).elapsedMs | Should -Be 40000
+        } finally {
+            $helper.Dispose()
+        }
+    }
+
     It 'cycles the four working-area corners and reopens in the last selected corner' {
         Add-Type -AssemblyName System.Windows.Forms
         $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes((Get-ItlWindowHelperExecutable)))
@@ -1104,7 +1170,7 @@ Describe 'Window channel operation contract' {
         $protocol.protocol | Should -Be 1
     }
 
-    It 'runs the r13 Vanessa channel client against the real helper: status, decline, restart and a missing channel' {
+    It 'exercises Vanessa channel status, decline, restart and a reply after the original pause deadline' {
         $patch = [IO.File]::ReadAllText((Join-Path $script:WhRevision 'file-operations.patch'), [Text.Encoding]::UTF8)
         $section = @($patch -split '(?m)(?=^diff --git )' | Where-Object { $_.StartsWith('diff --git a/VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl') })[0]
         $builder = New-Object Text.StringBuilder
@@ -1115,7 +1181,7 @@ Describe 'Window channel operation contract' {
             if ($line[0] -eq '+' -or $line[0] -eq ' ') { [void]$builder.Append($line.Substring(1) + "`n") }
         }
         $form = $builder.ToString()
-        $methods = 'ITLУдалитьФайлПомощникаОкон', 'ITLПрочитатьJSONПомощникаОкон', 'ITLПомощникОконЖив', 'ITLОтправитьЗапросПомощникуОкон', 'ITLПерезапуститьПомощникОкон', 'ITLЗапросПомощникуОкон', 'ITLПроверитьОтветПомощникаОкон', 'ITLОписаниеОкнаПомощника', 'ITLОбластьУправления', 'ITLДобавитьШагЗапросаУправления' | ForEach-Object {
+        $methods = 'ITLУдалитьФайлПомощникаОкон', 'ITLПрочитатьJSONПомощникаОкон', 'ITLПомощникОконЖив', 'ITLОтправитьЗапросПомощникуОкон', 'ITLПродлениеИзПаузы', 'ITLПерезапуститьПомощникОкон', 'ITLЗапросПомощникуОкон', 'ITLПроверитьОтветПомощникаОкон', 'ITLОписаниеОкнаПомощника', 'ITLОбластьУправления', 'ITLДобавитьШагЗапросаУправления' | ForEach-Object {
             $match = [regex]::Match($form, '(?ms)^(?:Функция|Процедура) ' + [regex]::Escape($_) + '\(.*?^Конец(?:Функции|Процедуры)[^\n]*')
             $match.Success | Should -BeTrue -Because $_
             $match.Value
@@ -1135,13 +1201,39 @@ Describe 'Window channel operation contract' {
 Перем МассивСценариевДляВыполнения;
 Перем ТекИД_СценарияВМассиве;
 Перем ТекИД_ШагаВМассиве;
+Перем ПробныйКанал;
+Перем НачалоПробы;
+Перем ИдПробы;
 Функция ITLКаталогКаналаОкон() Возврат Каталог; КонецФункции
 Функция ИдентификаторЗадачиMCP() Возврат ИдЗадачиMCP; КонецФункции
 Функция ИдетВыполнениеСценариев() Возврат Истина; КонецФункции
 Функция ФайлСуществуетКомандаСистемы(Имя) Возврат (Новый Файл(Имя)).Существует(); КонецФункции
 Процедура УдалитьФайлыКомандаСистемы(Имя) УдалитьФайлы(Имя); КонецПроцедуры
 Процедура ЗаписатьЛогВЖРОшибка(Где, Текст) Сообщить("LOG " + Где + ": " + Текст); КонецПроцедуры
-Процедура ITLПаузаМс(Мс) Приостановить(Мс); КонецПроцедуры
+Процедура ЗаписатьОтветПробы(Путь, Значение)
+	Запись = Новый ЗаписьJSON;
+	Запись.ОткрытьФайл(Путь);
+	ЗаписатьJSON(Запись, Значение);
+	Запись.Закрыть();
+КонецПроцедуры
+Процедура ITLПаузаМс(Мс)
+	Приостановить(Мс);
+	Если НЕ ЗначениеЗаполнено(ПробныйКанал) Тогда
+		Возврат;
+	КонецЕсли;
+	Если НЕ ЗначениеЗаполнено(ИдПробы) Тогда
+		Запросы = НайтиФайлы(ПробныйКанал + "\requests", "*.json");
+		Запрос = ITLПрочитатьJSONПомощникаОкон(Запросы[0].ПолноеИмя);
+		Если Запрос.pauseAware <> Истина Тогда
+			ВызватьИсключение "Missing pauseAware on the lease request";
+		КонецЕсли;
+		ИдПробы = Запрос.id;
+		ЗаписатьОтветПробы(ПробныйКанал + "\pause.json", Новый Структура("requestId,requestExtensionMs", ИдПробы, 15000));
+		ЗаписатьОтветПробы(ПробныйКанал + "\responses\" + ИдПробы + ".ack", "accepted");
+	ИначеЕсли ТекущаяУниверсальнаяДатаВМиллисекундах() - НачалоПробы >= 5500 Тогда
+		ЗаписатьОтветПробы(ПробныйКанал + "\responses\" + ИдПробы + ".json", Новый Структура("status", "ok"));
+	КонецЕсли;
+КонецПроцедуры
 Функция ВыполнитьКомандуОСБезПоказаЧерногоОкна(Команда)
 	Код = 0;
 	ЗапуститьПриложение(Команда, , Истина, Код);
@@ -1183,22 +1275,49 @@ ITLЗапросПомощникуОкон("status", Новый Структур�
 ЗапуститьПриложение("taskkill /F /PID " + Формат(ПИД, "ЧГ="), , Истина);
 Ответ = ITLЗапросПомощникуОкон("status", Новый Структура, 5);
 Сообщить("RESTARTED " + Ответ.status + " pid=" + Формат(Ответ.helperPid, "ЧГ="));
+ИмяПаузы = Каталог + "\pause.json";
+ЗаписьПаузы = Новый ЗаписьJSON;
+ЗаписьПаузы.ОткрытьФайл(ИмяПаузы);
+ЗаписатьJSON(ЗаписьПаузы, Новый Структура("requestId,requestExtensionMs", "probe", 15000));
+ЗаписьПаузы.Закрыть();
+Если ITLПродлениеИзПаузы(ИмяПаузы, "probe", 0) <> 15000
+	Или ITLПродлениеИзПаузы(ИмяПаузы, "different-request", 0) <> 0 Тогда
+	ВызватьИсключение "Desktop consent extension must match the waiting lease request";
+КонецЕсли;
 Каталог = "";
 Сообщить("UNAVAILABLE " + Ошибка("ITLПроверитьОтветПомощникаОкон(ITLЗапросПомощникуОкон(""lease"", Новый Структура, 5), ""ввод ОС"")"));
+ПробныйКанал = АргументыКоманднойСтроки[2];
+НачалоПробы = ТекущаяУниверсальнаяДатаВМиллисекундах();
+Ответ = ITLОтправитьЗапросПомощникуОкон(ПробныйКанал, "lease", Новый Структура("scope", "scenario:3"), 0);
+Если Ответ = Неопределено Или Ответ.status <> "ok" Тогда
+	ВызватьИсключение "Vanessa abandoned the paused lease at its original deadline";
+КонецЕсли;
 '@
         $probePath = Join-Path $TestDrive 'Проба канала окон.os'
         [IO.File]::WriteAllText($probePath, ($stubs + "`n" + ($methods -join "`n") + "`n" + $body), [Text.UTF8Encoding]::new($true))
+        $pauseChannel = Join-Path $TestDrive 'Ожидание согласия с пробелом'
+        [void][IO.Directory]::CreateDirectory((Join-Path $pauseChannel 'responses'))
         $start = [Diagnostics.ProcessStartInfo]::new()
         $start.FileName = (Get-Command oscript -ErrorAction Stop).Source
-        $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-encoding=utf-8', $probePath, $group.directory, [string](Get-WhHelperPid $group.directory))
+        $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-encoding=utf-8', $probePath, $group.directory, [string](Get-WhHelperPid $group.directory), $pauseChannel)
         $start.UseShellExecute = $false; $start.CreateNoWindow = $true
         $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
         $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false); $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
-        $process = [Diagnostics.Process]::Start($start)
-        $stdout = $process.StandardOutput.ReadToEndAsync(); $stderr = $process.StandardError.ReadToEndAsync()
-        $process.WaitForExit(90000) | Should -BeTrue
-        $output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
-        $process.ExitCode | Should -Be 0 -Because $output
+        $pauseLock = [IO.File]::Open((Join-Path $pauseChannel 'helper.lock'), 'CreateNew', 'ReadWrite', 'None')
+        $process = $null
+        try {
+            $process = [Diagnostics.Process]::Start($start)
+            $stdout = $process.StandardOutput.ReadToEndAsync(); $stderr = $process.StandardError.ReadToEndAsync()
+            $process.WaitForExit(90000) | Should -BeTrue
+            $output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
+            $process.ExitCode | Should -Be 0 -Because $output
+        } finally {
+            if ($process) {
+                if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit(5000) | Out-Null }
+                $process.Dispose()
+            }
+            $pauseLock.Dispose()
+        }
         $output | Should -Match 'STATUS ok clients=0'
         $output | Should -Match 'LEASE declined no-client'
         $output | Should -Match 'DECLINED .*ITL_UI_CONTROL_DECLINED: .*\(no-client\)'
@@ -1255,8 +1374,8 @@ ITLЗапросПомощникуОкон("status", Новый Структур�
         }
         $patch | Should -Not -Match '(?m)^\+.*<WindowOpeningMode>(LockOwnerWindow|LockWholeInterface)</WindowOpeningMode>'
         $manifest = Get-Content -LiteralPath (Join-Path $script:WhRevision 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.downstreamRevision | Should -Be 'itl-r19'
-        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r19.cfe'
+        $manifest.downstreamRevision | Should -Be 'itl-r20'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r20.cfe'
         foreach ($form in $forms) { $manifest.patch.expectedChangedPaths | Should -Contain "lib/VAExtension/DataProcessors/$form/Forms/Форма/Ext/Form.xml" }
     }
     It 'calls no server-only date function from the added thin-client channel code' {

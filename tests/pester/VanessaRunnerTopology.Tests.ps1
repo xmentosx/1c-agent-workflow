@@ -173,6 +173,63 @@
         @($requirements.requiredProfiles) | Should -Be @('Редактор')
     }
 
+    It "allows a second TestClient when a later scenario connects another profile while an earlier one stays open" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-carried-client " + [guid]::NewGuid().ToString("N"))
+        try {
+            $featureText = "# language: ru`nФункционал: Канбан`nСценарий: Администратор готовит доску`n  Дано я подключаю профиль TestClient ""Администратор""`nСценарий: Редактор проверяет доску`n  Дано я подключаю профиль TestClient ""Редактор""`n  И я закрываю TestClient ""Редактор"""
+            $fixture = New-VanessaRunnerFixture `
+                -Root $tempRoot `
+                -FeatureText $featureText `
+                -ManifestText '{"schemaVersion":1,"maxConcurrency":2,"profiles":[{"name":"Администратор","user":"admin"},{"name":"Редактор","user":"editor"}]}'
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
+                $paramsPath = New-VanessaParamsFile `
+                    -FeaturePath $fixture.featurePath `
+                    -RunDirectory $fixture.runDirectory `
+                    -StatusPath (Join-Path $fixture.runDirectory "status.json") `
+                    -State $fixture.state `
+                    -TestPort 48051 `
+                    -TestPorts @(48051, 48052) `
+                    -TestClientTopology $topology
+                $params = Get-Content -Raw -Encoding UTF8 $paramsPath | ConvertFrom-Json
+                $onlyOneClientKey = Get-EncodedVanessaKey "0KDQsNC30YDQtdGI0LXQvdC+0JfQsNC/0YPRgdC60LDRgtGM0KLQvtC70YzQutC+0J7QtNC40L3QmtC70LjQtdC90YLQotC10YHRgtC40YDQvtCy0LDQvdC40Y8="
+
+                $topology.requiredTestClientSlots | Should -Be 2
+                $params.PSObject.Properties[$onlyOneClientKey].Value | Should -BeFalse
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "carries open TestClients across features of one run and releases them on close steps" {
+        $first = Join-Path $TestDrive 'Первая фича.feature'
+        $second = Join-Path $TestDrive 'Вторая фича.feature'
+        [IO.File]::WriteAllText($first, @'
+Функционал: Первая
+Сценарий: Администратор
+    Дано я подключаю профиль TestClient "Администратор"
+'@)
+        [IO.File]::WriteAllText($second, @'
+Функционал: Вторая
+Сценарий: Редактор
+    Дано я подключаю профиль TestClient "Редактор"
+    И я закрываю все TestClient
+Сценарий: Наблюдатель
+    Дано я подключаю профиль TestClient "Наблюдатель"
+'@)
+        $requirements = & {
+            . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+            [pscustomobject]@{
+                carried = Get-VanessaFeatureTestClientRequirements -FeatureFiles @($first, $second)
+                single = Get-VanessaFeatureTestClientRequirements -FeatureFiles @($first)
+            }
+        }
+        $requirements.carried.maximumConcurrency | Should -Be 2
+        $requirements.single.maximumConcurrency | Should -Be 1
+    }
+
     It "binds the generic TestClient opener to the first product profile in an execution-only feature copy" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-default-profile-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -338,7 +395,8 @@
     }
 
     It 'reserves peak client capacity per database for <layout> scenarios' -TestCases @(
-        @{layout='sequential';separator="`nСценарий: Другой пользователь";expected=1},
+        @{layout='sequential';separator="`n  И я закрываю TestClient `"Alpha`"`nСценарий: Другой пользователь";expected=1},
+        @{layout='carried';separator="`nСценарий: Другой пользователь";expected=2},
         @{layout='simultaneous';separator='';expected=2}
     ) {
         param($layout,$separator,$expected)
@@ -373,7 +431,8 @@
                 $admissions = @(Get-VanessaTestClientAdmissionTargets -Topology $topology -DefaultState $fixture.state)
                 $runResources = @(Get-VanessaTestClientDatabaseResources -Topology $topology -DefaultState $fixture.state)
                 $topology.profiles | Should -HaveCount 2
-                $topology.requiredTestClientSlots | Should -Be 1
+                # Unfiltered, Alpha stays open while Beta connects: global peak 2, one session per database.
+                $topology.requiredTestClientSlots | Should -Be $(if ($filter) {1} else {2})
                 $runResources | Should -HaveCount 2
                 $admissions | Should -HaveCount $(if ($filter) {1} else {2})
                 foreach ($admission in $admissions) { $admission.requiredSessions | Should -Be 1 }

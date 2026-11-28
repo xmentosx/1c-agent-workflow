@@ -234,6 +234,7 @@ function Start-ItlWindowHelperGroup {
             owner = $Owner
             countdownSeconds = Get-OneCUiLeaseCountdownSeconds
             pauseLimitSeconds = Get-OneCUiLeasePauseLimitSeconds
+            consentPauseLimitSeconds = Get-OneCUiConsentPauseLimitSeconds
             roots = @($Roots | Where-Object { $_ -gt 0 })
             # The Vanessa patch restarts a missing or hung helper with this executable.
             executable = $exe
@@ -269,6 +270,30 @@ function Read-ItlWindowHelperJournal {
         try { $entries += ($line | ConvertFrom-Json) } catch { }
     }
     return $entries
+}
+
+function Get-ItlWindowHelperPause {
+    param([string]$Directory, [datetime]$NowUtc)
+    $path = Join-Path $Directory 'pause.json'
+    if (-not [IO.File]::Exists($path)) { return }
+    try {
+        $snapshot = [IO.File]::ReadAllText($path) | ConvertFrom-Json
+        $elapsedMs = [long]$snapshot.totalPausedMs
+        $remainingMs = 0
+        if ($snapshot.startedUtc -and $snapshot.untilUtc) {
+            $started = ([DateTimeOffset]$snapshot.startedUtc).UtcDateTime
+            $until = ([DateTimeOffset]$snapshot.untilUtc).UtcDateTime
+            if ($started -le $NowUtc -and $until -gt $started -and ($until - $started).TotalHours -le 3) {
+                $through = if ($NowUtc -lt $until) { $NowUtc } else { $until }
+                $elapsedMs += [long]($through - $started).TotalMilliseconds
+                $remainingMs = [long][Math]::Max(0, ($until - $NowUtc).TotalMilliseconds)
+            }
+        }
+        return [pscustomobject]@{ elapsedMs = $elapsedMs; remainingMs = $remainingMs; requestId = [string]$snapshot.requestId }
+    } catch {
+        # A concurrent replacement may briefly prevent opening the snapshot.
+        return
+    }
 }
 
 function Get-ItlWindowHelperLeaseSummary {
